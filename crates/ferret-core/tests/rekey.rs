@@ -22,8 +22,6 @@ use ferret_core::{
 use serde_json::json;
 
 const BASE_SEQ: u64 = 77;
-/// The old checkpoint is a few writes behind the top.
-const CP_SEQ: u64 = 74;
 /// Floors of the pinned record: the new wraps get these plus one.
 const PASSWORD_FLOOR: u64 = 3;
 const RECOVERY_FLOOR: u64 = 1;
@@ -164,7 +162,7 @@ struct Inputs {
 
 fn inputs(f: &Fixture) -> Inputs {
     Inputs {
-        cp: f.checkpoint(CP_SEQ),
+        cp: f.checkpoint(BASE_SEQ),
         pinned: pinned_for(&f.old, PASSWORD_FLOOR, RECOVERY_FLOOR),
         base_seq: BASE_SEQ,
         manifest: f.manifest.clone(),
@@ -481,6 +479,20 @@ fn rekey_generations_and_manifest_rev_come_from_the_floors_not_the_caller() {
     let b = rekey_full(&f, &i, &mut TestRng::new(b"g"), |_, _| {}).unwrap();
     assert_eq!(b.wraps[0].kek_generation, 10);
     assert_eq!(b.wraps[1].kek_generation, 6);
+    // Stale floors: the pinned record is behind the old manifest (the
+    // password wrap at 3, the recovery wrap at 1), so the generations follow
+    // the manifest, not the lower floors.
+    let mut stale = inputs(&f);
+    stale.pinned = pinned_for(&f.old, 1, 0);
+    let b = rekey_full(&f, &stale, &mut TestRng::new(b"s"), |_, _| {}).unwrap();
+    assert_eq!(b.wraps[0].kek_generation, PASSWORD_FLOOR + 1);
+    assert_eq!(b.wraps[1].kek_generation, RECOVERY_FLOOR + 1);
+    // One floor above the manifest and one below.
+    let mut mixed = inputs(&f);
+    mixed.pinned = pinned_for(&f.old, 1, 6);
+    let b = rekey_full(&f, &mixed, &mut TestRng::new(b"s"), |_, _| {}).unwrap();
+    assert_eq!(b.wraps[0].kek_generation, PASSWORD_FLOOR + 1);
+    assert_eq!(b.wraps[1].kek_generation, 7);
     // A floor of the password wrap that cannot be raised, or a missing
     // floor, makes no plan (and draws nothing).
     let mut draws = ReplayRng::new(vec![]);
@@ -574,8 +586,7 @@ fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
     let mut draws = ReplayRng::new(vec![]);
     let failure = |kind| Some(Error::Checkpoint(kind));
 
-    // A server that hides a live item: with a checkpoint behind the top, the
-    // item is "hidden or rolled back"; with the checkpoint at the top, the
+    // A server that hides a live item: the checkpoint is at the top, so the
     // state is not the checkpoint's.
     for victim in 0..f.items.len() {
         let r = rekey_with(&f, &mut draws, |items, _| {
@@ -583,29 +594,18 @@ fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
         });
         assert_eq!(
             r.err(),
-            failure(CheckpointFailure::HiddenOrRolledBack),
-            "hide item {victim}"
-        );
-        let mut at_top = inputs(&f);
-        at_top.cp = f.checkpoint(BASE_SEQ);
-        let r = rekey_full(&f, &at_top, &mut draws, |items, _| {
-            items.remove(victim);
-        });
-        assert_eq!(
-            r.err(),
             failure(CheckpointFailure::TopDigestMismatch),
-            "hide item {victim} at the top"
+            "hide item {victim}"
         );
     }
 
     // An item at an older revision than the checkpoint's.
-    let mut older = f.items[0].1.clone();
     let body = ItemBody::new(ItemType::Login, "Old", 1);
-    older = encrypt_item(
+    let older = encrypt_item(
         &mut TestRng::new(b"older"),
         &f.old,
         f.items[0].0,
-        older.rev - 1,
+        f.items[0].1.rev - 1,
         &body,
         None,
     )
@@ -613,8 +613,38 @@ fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
     let r = rekey_with(&f, &mut draws, |items, _| items[0].1 = older.clone());
     assert_eq!(r.err(), failure(CheckpointFailure::LowerRev));
 
-    // A live row that the checkpoint does not have: fine behind the top (a
-    // newer item), an error at the top.
+    // A tombstone at an older revision than the checkpoint's.
+    let older_tomb = make_tombstone(
+        &mut TestRng::new(b"older-tomb"),
+        &f.old,
+        f.tombs[0].0,
+        f.tombs[0].1.rev - 1,
+    )
+    .unwrap();
+    let r = rekey_with(&f, &mut draws, |_, tombs| tombs[0].1 = older_tomb.clone());
+    assert_eq!(r.err(), failure(CheckpointFailure::LowerRev));
+
+    // The old manifest at an older revision than the checkpoint's.
+    let mut stale_manifest = inputs(&f);
+    stale_manifest.manifest = encrypt_manifest(
+        &mut TestRng::new(b"older-manifest"),
+        &f.old,
+        OLD_MANIFEST_REV - 1,
+        &decrypt_manifest(
+            &f.old,
+            f.manifest.rev,
+            &f.manifest.envelope,
+            &f.manifest.tag,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        rekey_full(&f, &stale_manifest, &mut draws, |_, _| {}).err(),
+        failure(CheckpointFailure::LowerRev)
+    );
+
+    // A live row that the checkpoint does not have, at the top.
     let extra = encrypt_item(
         &mut TestRng::new(b"extra"),
         &f.old,
@@ -624,27 +654,19 @@ fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
         None,
     )
     .unwrap();
-    let mut at_top = inputs(&f);
-    at_top.cp = f.checkpoint(BASE_SEQ);
-    let r = rekey_full(&f, &at_top, &mut draws, |items, _| {
+    let r = rekey_with(&f, &mut draws, |items, _| {
         items.push((item_id(0x4e), extra.clone()));
     });
     assert_eq!(r.err(), failure(CheckpointFailure::TopDigestMismatch));
 
-    // The checkpoint must verify, and must not be for a later seq.
+    // The checkpoint must verify.
     let mut bad = inputs(&f);
     bad.cp.mac[0] ^= 1;
     assert_eq!(
         rekey_full(&f, &bad, &mut draws, |_, _| {}).err(),
         failure(CheckpointFailure::BadMac)
     );
-    let mut ahead = inputs(&f);
-    ahead.base_seq = CP_SEQ - 1;
-    assert_eq!(
-        rekey_full(&f, &ahead, &mut draws, |_, _| {}).err(),
-        failure(CheckpointFailure::SeqAboveTop)
-    );
-    // The old manifest is checked too: its tag, and that it is the manifest.
+    // The old manifest is checked too: its tag.
     let mut bad_manifest = inputs(&f);
     bad_manifest.manifest.tag[0] ^= 1;
     assert_eq!(
@@ -655,33 +677,54 @@ fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
 }
 
 #[test]
-fn rekey_accepts_a_purged_tombstone_and_a_newer_item() {
+fn rekey_requires_a_current_checkpoint() {
+    let f = fixture();
+    let mut draws = ReplayRng::new(vec![]);
+    let refused = Some(Error::Malformed(MalformedKind::Entries));
+    // A checkpoint behind `base_seq` leaves the rows written since without
+    // protection: an item written after it, which the server hides, would
+    // be dropped for good. The rows passed here are consistent with the stale
+    // checkpoint (they are exactly its state, as when the server hides the
+    // newer item), and the rekey is still refused, with no draws.
+    for seq in [0, BASE_SEQ - 3, BASE_SEQ - 1] {
+        let mut behind = inputs(&f);
+        behind.cp = f.checkpoint(seq);
+        assert_eq!(
+            rekey_full(&f, &behind, &mut draws, |_, _| {}).err(),
+            refused,
+            "checkpoint at {seq}"
+        );
+    }
+    // A checkpoint above `base_seq` is refused as well.
+    let mut ahead = inputs(&f);
+    ahead.cp = f.checkpoint(BASE_SEQ + 1);
+    assert_eq!(rekey_full(&f, &ahead, &mut draws, |_, _| {}).err(), refused);
+    let mut lower_base = inputs(&f);
+    lower_base.base_seq = BASE_SEQ - 1;
+    assert_eq!(
+        rekey_full(&f, &lower_base, &mut draws, |_, _| {}).err(),
+        refused
+    );
+    assert_eq!(draws.remaining(), 0);
+    // At `base_seq` it works.
+    rekey_with(&f, &mut TestRng::new(b"current"), |_, _| {}).unwrap();
+}
+
+#[test]
+fn rekey_accepts_a_purged_tombstone() {
     let f = fixture();
     // The server dropped a tombstone: the new state simply has one less.
-    let mut at_top = inputs(&f);
-    at_top.cp = f.checkpoint(BASE_SEQ);
-    let b = rekey_full(&f, &at_top, &mut TestRng::new(b"p"), |_, tombs| {
+    let b = rekey_with(&f, &mut TestRng::new(b"p"), |_, tombs| {
         tombs.remove(0);
     })
     .unwrap();
     assert_eq!(b.tombstones.len(), 1);
-    // A newer item behind the top (written after the checkpoint) is included.
-    let body = ItemBody::new(ItemType::Login, "New", 1);
-    let new_item = encrypt_item(
-        &mut TestRng::new(b"new"),
-        &f.old,
-        item_id(0x4e),
-        1,
-        &body,
-        None,
-    )
-    .unwrap();
-    let b = rekey_with(&f, &mut TestRng::new(b"n"), |items, _| {
-        items.push((item_id(0x4e), new_item.clone()));
+    let b = rekey_with(&f, &mut TestRng::new(b"p"), |_, tombs| {
+        tombs.clear();
     })
     .unwrap();
-    assert_eq!(b.items.len(), f.items.len() + 1);
-    assert_eq!(b.checkpoint.entries.len(), 56 * (5 + 2 + 1));
+    assert!(b.tombstones.is_empty());
+    assert_eq!(b.checkpoint.entries.len(), 56 * (4 + 1));
 }
 
 #[test]

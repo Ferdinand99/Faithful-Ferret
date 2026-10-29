@@ -1938,8 +1938,6 @@ struct RekeyCase {
     password_gen: u64,
     recovery_gen: u64,
     manifest_rev: u64,
-    /// How far the old checkpoint is behind `base_seq`.
-    cp_lag: u64,
 }
 
 const PW_ID: u8 = 0x70;
@@ -1975,6 +1973,11 @@ struct OldState {
 }
 
 fn old_state(c: &RekeyCase, seed: &str) -> Result<OldState, Error> {
+    old_state_lag(c, seed, 0)
+}
+
+/// The old state with a checkpoint that is `lag` behind `base_seq`.
+fn old_state_lag(c: &RekeyCase, seed: &str, lag: u64) -> Result<OldState, Error> {
     let mut olds = Vec::new();
     for (b, rev, plain) in &c.items {
         let it = seal_item(
@@ -2030,7 +2033,7 @@ fn old_state(c: &RekeyCase, seed: &str) -> Result<OldState, Error> {
     });
     let cp = make_cp(
         &c.ctx.keys()?.k_head,
-        c.base_seq - c.cp_lag,
+        c.base_seq - lag,
         entries_bytes(&ents),
     )?;
     Ok(OldState {
@@ -2118,7 +2121,6 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 4,
             recovery_gen: 2,
             manifest_rev: 9,
-            cp_lag: 0,
         },
         RekeyCase {
             name: "empty_vault_later_epoch",
@@ -2130,7 +2132,6 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 1,
             recovery_gen: 1,
             manifest_rev: 2,
-            cp_lag: 0,
         },
         RekeyCase {
             name: "one_item",
@@ -2142,7 +2143,6 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 3,
             recovery_gen: 3,
             manifest_rev: 0x0102_0304_0506_0708,
-            cp_lag: 5,
         },
     ];
 
@@ -2412,25 +2412,51 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         broken,
         "checkpoint_lower_rev",
     );
-    // The same, with a checkpoint that is behind the top.
-    let c3 = &valid[2];
-    let st3 = old_state(c3, "rekey/refused3")?;
-    let mut broken = rekey_input(c3, &st3);
-    broken["items"] = json!([]);
+    // The checkpoint must be for base_seq itself: behind it, or above it, is
+    // refused (the client makes a fresh one before it rekeys).
+    let behind = old_state_lag(c, "rekey/refused", 5)?;
     refused(
-        "hidden_item_below_top",
-        "a live item is missing and the checkpoint is behind the top",
-        broken,
-        "checkpoint_hidden_or_rolled_back",
+        "checkpoint_behind",
+        "the old checkpoint is behind base_seq",
+        rekey_input(c, &behind),
+        "malformed_entries",
     );
-    // A checkpoint above the top.
     let mut broken = base();
     broken["base_seq"] = rev_s(c.base_seq - 1);
     refused(
         "checkpoint_above_top",
         "the old checkpoint is for a seq above base_seq",
         broken,
-        "checkpoint_seq_above_top",
+        "malformed_entries",
+    );
+    // A row below the checkpoint's revision: the old manifest, a tombstone.
+    let older_manifest = seal_manifest(
+        "rekey/refused/older-manifest",
+        &c.ctx,
+        st.manifest.rev - 1,
+        &st.manifest.plain,
+    )?;
+    let mut broken = base();
+    broken["old_manifest"] = json!({
+        "rev": rev_s(older_manifest.rev),
+        "envelope": h(&older_manifest.envelope),
+        "tag": h(&older_manifest.tag),
+    });
+    refused(
+        "manifest_below_checkpoint_rev",
+        "the old manifest is at a lower revision than the checkpoint's",
+        broken,
+        "checkpoint_lower_rev",
+    );
+    let older_tomb = old_tomb(&c.ctx, "rekey/refused/older-tomb", 0x51, tombs[0].1 - 1)?;
+    let mut broken = base();
+    broken["tombstones"][0]["rev"] = rev_s(tombs[0].1 - 1);
+    broken["tombstones"][0]["tomb"] = h(&older_tomb);
+    refused(
+        "tombstone_below_checkpoint_rev",
+        "a tombstone at a lower revision than the checkpoint's",
+        broken,
+        "checkpoint_lower_rev",
     );
     let mut broken = base();
     broken["old_checkpoint"]["mac"] = h(&flip_arr(&st.cp.mac, 0));

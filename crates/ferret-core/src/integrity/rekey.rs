@@ -24,23 +24,30 @@
 //!
 //! # What is checked first
 //!
-//! Before anything is drawn or built, the rows the caller passes (the items,
-//! the tombstones and the old manifest) are checked against the old
-//! checkpoint at `base_seq` with the rules of [`verify_checkpoint`], so a
-//! server that hides a row in the download cannot make the rekey drop it:
-//! a live row that the checkpoint has but the caller did not pass is an
-//! error (`HiddenOrRolledBack`, or `TopDigestMismatch` when the checkpoint
-//! is at `base_seq`, which the server requires to be its top), and so is a
-//! row at `base_seq` that the checkpoint does not have. The checkpoint is
-//! the last one the client verified; a client that has none makes one from
-//! its own verified cache.
+//! The old checkpoint must be a current one: `old_checkpoint.seq` must equal
+//! `base_seq` (the seq the server requires to be its top). Otherwise the
+//! rekey is `Malformed(Entries)` and nothing is drawn. The caller makes a
+//! fresh checkpoint from its own verified state, and uploads it, just
+//! before it rekeys. This is what closes the gap behind the last checkpoint:
+//! with the checkpoint at the top, a row that the server hides in the
+//! download is missing from the rows and the rekey is refused, so the atomic
+//! request cannot drop it.
 //!
-//! The generations of the two new wraps are the pinned floors plus one, and
-//! the new manifest's revision is the old manifest's plus one; none of them
-//! is supplied by the caller. The pinned record must be for this account,
-//! vault, epoch and `pk_a`, and must have floors for the password and the
-//! recovery wrap (seed them from the manifest with
-//! `Pinned::seed_from_manifest`).
+//! Before anything is drawn, the rows the caller passes (the items, the
+//! tombstones and the old manifest) are tag-verified (tombstones are
+//! verified under the old `K_del`) and checked against the old checkpoint
+//! with the rules of [`verify_checkpoint`] at the top: every row has an
+//! entry with the same `rev` and hash, a live entry has its row
+//! (`TopDigestMismatch` otherwise), and only a tombstone entry may lack a
+//! row (the server purged it). The bodies of the items are opened later,
+//! inside the re-sealing, after the first draw.
+//!
+//! The generations of the two new wraps are `max(pinned floor, generation in
+//! the old manifest) + 1`, and the new manifest's revision is the old
+//! manifest's plus one; none of them is supplied by the caller. The pinned
+//! record must be for this account, vault, epoch and `pk_a`, and must have
+//! floors for the password and the recovery wrap (seed them from the
+//! manifest with `Pinned::seed_from_manifest`).
 //!
 //! The caller signs the request with the **old** vault:
 //! `auth_sign(&old, AuthOp::Rekey, nonce, body)`.
@@ -64,7 +71,7 @@ use crate::error::{Error, MalformedKind, PinnedField};
 use crate::ids::{ItemId, MethodId};
 use crate::item::{Manifest, ManifestEntry};
 use crate::keys::{UnlockedVault, VaultContext, recovery_public_key};
-use crate::pinning::{MethodKey, Pinned};
+use crate::pinning::{MAX_GENERATION, MethodKey, Pinned};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, RecoveryKey, VaultKey};
 use crate::wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};
@@ -160,15 +167,36 @@ fn next(rev: u64) -> Result<u64, Error> {
     rev.checked_add(1).ok_or_else(malformed)
 }
 
+/// The generation a new wrap of `method_type` gets according to the old
+/// manifest: the highest it lists for that type, plus one; 0 if it lists
+/// none. Above the pinning maximum is `Malformed(PinnedRecord)`.
+fn manifest_next(manifest: &Manifest, method_type: u8) -> Result<u64, Error> {
+    let highest = manifest
+        .methods
+        .iter()
+        .filter(|e| e.method_type == method_type)
+        .map(|e| e.kek_generation)
+        .max();
+    let Some(highest) = highest else {
+        return Ok(0);
+    };
+    let next = highest
+        .checked_add(1)
+        .filter(|g| *g <= MAX_GENERATION)
+        .ok_or(Error::Malformed(MalformedKind::PinnedRecord))?;
+    Ok(next)
+}
+
 impl UnlockedVault {
     /// Builds a full rekey as described in the module documentation.
     ///
     /// Input that cannot make a valid plan is refused before any random
-    /// number is drawn: an `item_id` twice (or the manifest's), a `rev` of
-    /// `u64::MAX`, a password method that is not `Method::Password`, a
-    /// generation above the pinning maximum. Every item and tombstone is
-    /// opened under the old keys first, and an item that does not open is
-    /// `Decrypt` for the whole rekey.
+    /// number is drawn: a checkpoint that is not for `base_seq`, an `item_id`
+    /// twice (or the manifest's), a `rev` of `u64::MAX`, a password method
+    /// that is not `Method::Password`, a generation above the pinning
+    /// maximum, a tag or tombstone that does not verify, rows that are not
+    /// the state of the checkpoint. After the first draw, an item whose
+    /// body does not open is `Decrypt` for the whole rekey.
     ///
     /// The result is checked before it is returned: every tag and
     /// tombstone, the bodies, the two wraps, the manifest, and the
@@ -181,6 +209,11 @@ impl UnlockedVault {
         input: &RekeyInput<'_>,
     ) -> Result<RekeyBundle, Error> {
         let old = *self.context();
+        // A checkpoint that is behind `base_seq` leaves the newest rows
+        // unprotected, and a rekey replaces the whole state.
+        if input.old_checkpoint.seq != input.base_seq {
+            return Err(malformed());
+        }
         let (password_id, password_method) = &input.password_method;
         if !matches!(password_method, Method::Password { .. }) {
             return Err(Error::Unsupported);
@@ -199,8 +232,8 @@ impl UnlockedVault {
         if pinned.pk_a != self.auth_public_key() {
             return Err(Error::Pinned(PinnedField::AuthKey));
         }
-        let password_generation = pinned.next_generation(&MethodKey::Password)?;
-        let recovery_generation = pinned.next_generation(&MethodKey::Recovery)?;
+        let floor_password = pinned.next_generation(&MethodKey::Password)?;
+        let floor_recovery = pinned.next_generation(&MethodKey::Recovery)?;
         if input.old_manifest.item_id != ItemId::MANIFEST {
             return Err(Error::Malformed(MalformedKind::Envelope));
         }
@@ -250,7 +283,9 @@ impl UnlockedVault {
             rows.push(ServerRow::deleted(self, t.item_id, t.rev, t.tomb)?);
         }
         let m = &input.old_manifest;
-        decrypt_manifest(self, m.rev, m.envelope, m.tag)?;
+        let old_manifest = decrypt_manifest(self, m.rev, m.envelope, m.tag)?;
+        let password_generation = floor_password.max(manifest_next(&old_manifest, TYPE_PASSWORD)?);
+        let recovery_generation = floor_recovery.max(manifest_next(&old_manifest, TYPE_RECOVERY)?);
         rows.push(ServerRow::live(
             self,
             ItemId::MANIFEST,

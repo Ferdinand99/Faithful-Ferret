@@ -1,8 +1,8 @@
 {
   "files": {
     "ERRORS.md": "1a87018cab614d61287dbbadfba068e299295ee3bce6dc9977567d16b251c101",
-    "OPS.md": "c99c53b7c0ab626fa933ea36150190d719a045dbbefc494748c10ee48a8ae820",
-    "VERSION": "917df3320d778ddbaa5c5c7742bc4046bf803c36ed2b050f30844ed206783469",
+    "OPS.md": "c834cb7c9651d1e1f8b1b20480ef5d39abc2c100317d6ccef967458ecd9b86b0",
+    "VERSION": "25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e",
     "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
@@ -22,7 +22,7 @@
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
     "internal/padding.json": "d4e0ea9bc004d79cf61e021624d78d67aa1ae212ae7ea7bac43c0cd93332fef7",
     "internal/proofs.json": "76b032e16403f6a0a8885c3f95b78dea4faf4ef58b0a3caf7a3d1197625bbdc9",
-    "internal/rekey.json": "1589400944f9f4fbce7c07ec3617a1052c78294672c00673a70a547da519ea52",
+    "internal/rekey.json": "6f1f2decad96ec5ae373c77a8f3ef7641dfc6e67bde1b6568972594a357e38f6",
     "internal/tlv.json": "c3dc2e66943111dece887836a1a852d0c95892f85dd6794863626a679a8316f1",
     "internal/tomb-tag.json": "775a642f5590a1759e76501e602406b476b0cab6e00b99db5d6204df0d01d18b",
     "internal/unicode.json": "94e5b7a569bc8ce153d186a3b300fe10445fcaa5ec8935ff6c4d628b53a5b398",
@@ -31,5 +31,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 10
+  "version": 11
 }
