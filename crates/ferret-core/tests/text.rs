@@ -370,8 +370,11 @@ fn long_runs_of_combining_marks_are_bounded() {
     assert_eq!(mp(&marks, MpPolicy::WithSecretKey).err(), Some(too_long()));
     let edge = format!("a{}", "\u{0301}".repeat(1_024));
     assert_eq!(mp(&edge, MpPolicy::WithSecretKey).err(), Some(too_long()));
+    // A generous wall-clock bound: an unbounded normalizer needs minutes for
+    // these inputs, while an unoptimized build on a busy CI runner needs
+    // about 5 seconds for the bounded path.
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
+        started.elapsed() < std::time::Duration::from_secs(30),
         "took {:?}",
         started.elapsed()
     );
