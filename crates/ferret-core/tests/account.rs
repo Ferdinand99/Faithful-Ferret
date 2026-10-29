@@ -12,6 +12,7 @@
 mod common;
 
 use common::*;
+use ferret_core::cbor::Value;
 use ferret_core::testing::integrity::recovery_key_bytes as recovery_key_bytes_of;
 use ferret_core::testing::keys::{derived_keys, export_key_bytes, unlocked_vault_keys};
 use ferret_core::testing::opaque::{Server, TestKsf, register_finish_with};
@@ -20,12 +21,12 @@ use ferret_core::testing::vector::Outcome;
 use ferret_core::testing::{ReplayRng, TestRng};
 use ferret_core::{
     AccountId, AuthOp, AuthPublicKey, Error, ExportKey, InputError, ItemBody, ItemId, ItemType,
-    Kek, KsfProfile, MalformedKind, ManifestRow, MasterPassword, Method, MethodId, MethodKey,
-    MpPolicy, NewAccount, NewAccountIds, NewPassword, OpaqueInput, PinState, Pinned, PinnedField,
-    RecoveryInput, RecoveryKey, RecoveryPublicKey, RegistrationFinished, SecretKey, ServerRow,
-    ServerView, UnlockedVault, VaultContext, change_password, create_account, decrypt_item,
-    decrypt_manifest, encode_recovery_key, encode_secret_key, encrypt_item, parse_setup_qr,
-    recover, recovery_public_key, unwrap_vk, verify_auth_proof, verify_checkpoint,
+    Kek, KsfProfile, MalformedKind, Manifest, ManifestEntry, ManifestRow, MasterPassword, Method,
+    MethodId, MethodKey, MpPolicy, NewAccount, NewAccountIds, NewPassword, OpaqueInput, PinState,
+    Pinned, PinnedField, RecoveryInput, RecoveryKey, RecoveryPublicKey, RegistrationFinished,
+    SecretKey, ServerRow, ServerView, UnlockedVault, VaultContext, change_password, create_account,
+    decrypt_item, decrypt_manifest, encode_recovery_key, encode_secret_key, encrypt_item,
+    parse_setup_qr, recover, recovery_public_key, unwrap_vk, verify_auth_proof, verify_checkpoint,
     verify_recovery_proof, verify_recovery_setup, verify_secret_key_entry,
 };
 use serde_json::json;
@@ -1168,11 +1169,32 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
         Some(Error::Decrypt)
     );
     // A manifest that names another recovery wrap than the one given.
-    let mut other_wrap = s.account.wraps[1].clone();
-    other_wrap.method_id = method_id(0x79);
-    // (The AAD has the method id, so the wrap itself no longer opens; the
-    // check on the manifest is reached with a wrap that does.)
-    let _ = other_wrap;
+    let manifest = sealed_manifest(
+        &s,
+        4,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x79), 1),
+        ],
+        vec![],
+    );
+    let reg = register(&s.server, &input, "r5/d");
+    assert_eq!(
+        recover(
+            &mut no_draws(),
+            &RecoveryInput {
+                ctx: &c,
+                rk_code: &code,
+                rk_wrap: &s.account.wraps[1],
+                manifest: sealed_row(&manifest),
+                new_recovery_method_id: method_id(0x73),
+            },
+            password(&input, reg, KsfProfile::P1),
+            PinState::FirstUse,
+        )
+        .err(),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
 }
 
 #[test]
@@ -1532,4 +1554,304 @@ fn account_vectors_from_file() {
     let report = run_vectors();
     assert!(report.failures.is_empty(), "{:#?}", report.failures);
     assert!(report.passed >= 12, "{} cases", report.passed);
+}
+
+// ------------------------------------------------- fix round 1 (review)
+
+/// A manifest sealed with the account's vault, at revision `rev`.
+fn sealed_manifest(
+    s: &Setup,
+    rev: u64,
+    methods: Vec<ManifestEntry>,
+    extra: Vec<(String, Value)>,
+) -> ferret_core::SealedItem {
+    let mut manifest = Manifest::new(1, methods);
+    manifest.extra = extra;
+    ferret_core::encrypt_manifest(&mut rng("manifest"), &s.account.vault, rev, &manifest).unwrap()
+}
+
+/// The SK-bit downgrade in its real direction: the device pinned an account
+/// that has a secret key, the new password (15 characters, so it meets the
+/// floor) has none. Nothing is drawn.
+#[test]
+fn change_password_refuses_dropping_the_secret_key() {
+    let s = create("f1", true);
+    let pinned = pinned_of(&s);
+    assert!(pinned.sk_bit);
+    let input = new_input(PASSWORD_2, MpPolicy::WithoutSecretKey, None);
+    assert!(input.meets_creation_floor() && !input.includes_secret_key());
+    let reg = register(&s.server, &input, "f1");
+    assert_eq!(
+        change_password(
+            &mut no_draws(),
+            &s.account.vault,
+            password(&input, reg, KsfProfile::P1),
+            &pinned,
+            &s.account.wraps[0],
+            &row(&s.account),
+        )
+        .err(),
+        Some(Error::Pinned(PinnedField::SkBit))
+    );
+}
+
+#[test]
+fn recover_refuses_dropping_the_secret_key() {
+    let s = create("f2", true);
+    let code = rk_code(&s);
+    let pinned = pinned_of(&s);
+    let input = new_input(PASSWORD_2, MpPolicy::WithoutSecretKey, None);
+    assert!(input.meets_creation_floor() && !input.includes_secret_key());
+    let reg = register(&s.server, &input, "f2");
+    let c = ctx1();
+    assert_eq!(
+        recover(
+            &mut no_draws(),
+            &RecoveryInput {
+                ctx: &c,
+                rk_code: &code,
+                rk_wrap: &s.account.wraps[1],
+                manifest: row(&s.account),
+                new_recovery_method_id: method_id(0x73),
+            },
+            password(&input, reg, KsfProfile::P1),
+            PinState::Pinned(&pinned),
+        )
+        .err(),
+        Some(Error::Pinned(PinnedField::SkBit))
+    );
+}
+
+#[test]
+fn recover_needs_a_new_recovery_method_id() {
+    let s = create("f3", true);
+    let code = rk_code(&s);
+    let key = sk(0x5a);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let c = ctx1();
+    // A manifest with a passkey as well.
+    let manifest = sealed_manifest(
+        &s,
+        4,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::passkey(method_id(0x75), 3, vec![1, 2, 3]),
+            ManifestEntry::new(2, method_id(0x71), 1),
+        ],
+        vec![],
+    );
+    let go = |new_id: u8, draws: bool| {
+        let reg = register(&s.server, &input, "f3");
+        let data = RecoveryInput {
+            ctx: &c,
+            rk_code: &code,
+            rk_wrap: &s.account.wraps[1],
+            manifest: sealed_row(&manifest),
+            new_recovery_method_id: method_id(new_id),
+        };
+        if draws {
+            recover(
+                &mut rng("f3/draws"),
+                &data,
+                password(&input, reg, KsfProfile::P1),
+                PinState::FirstUse,
+            )
+        } else {
+            recover(
+                &mut no_draws(),
+                &data,
+                password(&input, reg, KsfProfile::P1),
+                PinState::FirstUse,
+            )
+        }
+    };
+    let entries = Error::Malformed(MalformedKind::Entries);
+    // The password wrap's id, and the passkey's.
+    assert_eq!(go(0x70, false).err(), Some(entries));
+    assert_eq!(go(0x75, false).err(), Some(entries));
+    // A fresh id, and the old recovery wrap's own id (it is replaced).
+    let fresh = go(0x73, true).unwrap();
+    assert_eq!(fresh.recovery_wrap.method_id, method_id(0x73));
+    let same = go(0x71, true).unwrap();
+    assert_eq!(same.recovery_wrap.method_id, method_id(0x71));
+}
+
+#[test]
+fn a_manifest_without_exactly_one_password_and_recovery_entry_is_refused() {
+    let s = create("f4", true);
+    let code = rk_code(&s);
+    let key = sk(0x5a);
+    let pinned = pinned_of(&s);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let c = ctx1();
+    let entries = Error::Malformed(MalformedKind::Entries);
+    let shapes: Vec<(&str, Vec<ManifestEntry>)> = vec![
+        (
+            "two password entries",
+            vec![
+                ManifestEntry::new(1, method_id(0x70), 1),
+                ManifestEntry::new(1, method_id(0x76), 1),
+                ManifestEntry::new(2, method_id(0x71), 1),
+            ],
+        ),
+        (
+            "two recovery entries",
+            vec![
+                ManifestEntry::new(1, method_id(0x70), 1),
+                ManifestEntry::new(2, method_id(0x71), 1),
+                ManifestEntry::new(2, method_id(0x77), 1),
+            ],
+        ),
+        (
+            "no password entry",
+            vec![ManifestEntry::new(2, method_id(0x71), 1)],
+        ),
+        (
+            "no recovery entry",
+            vec![ManifestEntry::new(1, method_id(0x70), 1)],
+        ),
+    ];
+    for (what, methods) in shapes {
+        let manifest = sealed_manifest(&s, 4, methods, vec![]);
+        let reg = register(&s.server, &input, "f4/a");
+        assert_eq!(
+            recover(
+                &mut no_draws(),
+                &RecoveryInput {
+                    ctx: &c,
+                    rk_code: &code,
+                    rk_wrap: &s.account.wraps[1],
+                    manifest: sealed_row(&manifest),
+                    new_recovery_method_id: method_id(0x73),
+                },
+                password(&input, reg, KsfProfile::P1),
+                PinState::FirstUse,
+            )
+            .err(),
+            Some(entries),
+            "recover: {what}"
+        );
+        // A change of password reads only the password entry: a second or a
+        // missing recovery entry is not its business.
+        let password_shape_bad = what.contains("password");
+        let reg = register(&s.server, &input, "f4/b");
+        let result = change_password(
+            &mut rng("f4/change"),
+            &s.account.vault,
+            password(&input, reg, KsfProfile::P1),
+            &pinned,
+            &s.account.wraps[0],
+            &sealed_row(&manifest),
+        );
+        if password_shape_bad {
+            assert_eq!(result.err(), Some(entries), "change: {what}");
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+/// A manifest with a passkey entry and unknown keys at both levels: the
+/// flows change only the password and recovery entries.
+#[test]
+fn the_other_manifest_entries_and_unknown_keys_survive_a_change_and_a_recovery() {
+    let s = create("f5", true);
+    let key = sk(0x5a);
+    let passkey = {
+        let mut e = ManifestEntry::passkey(method_id(0x75), 4, vec![9, 8, 7]);
+        e.extra = vec![("aaguid".into(), Value::text("abc"))];
+        e
+    };
+    let mut password_entry = ManifestEntry::new(1, method_id(0x70), 1);
+    password_entry.extra = vec![("note".into(), Value::uint(5))];
+    let mut recovery_entry = ManifestEntry::new(2, method_id(0x71), 1);
+    recovery_entry.extra = vec![("created".into(), Value::uint(77))];
+    let top_extra: Vec<(String, Value)> = vec![
+        ("future".into(), Value::uint(7)),
+        ("label".into(), Value::text("kept")),
+    ];
+    let methods = vec![
+        password_entry.clone(),
+        passkey.clone(),
+        recovery_entry.clone(),
+    ];
+    let manifest = sealed_manifest(&s, 4, methods, top_extra.clone());
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+
+    // Change of password.
+    let pinned = pinned_of(&s);
+    let reg = register(&s.server, &input, "f5/a");
+    let changed = change_password(
+        &mut rng("f5/change"),
+        &s.account.vault,
+        password(&input, reg, KsfProfile::P1),
+        &pinned,
+        &s.account.wraps[0],
+        &sealed_row(&manifest),
+    )
+    .unwrap();
+    let after = decrypt_manifest(
+        &s.account.vault,
+        changed.manifest.rev,
+        &changed.manifest.envelope,
+        &changed.manifest.tag,
+    )
+    .unwrap();
+    assert_eq!(changed.manifest.rev, 5);
+    assert_eq!(after.extra, top_extra);
+    let mut want_password = password_entry.clone();
+    want_password.kek_generation = 2;
+    assert_eq!(
+        after.methods,
+        vec![want_password, passkey.clone(), recovery_entry.clone()]
+    );
+
+    // Recovery.
+    let code = rk_code(&s);
+    let reg = register(&s.server, &input, "f5/b");
+    let c = ctx1();
+    let rec = recover(
+        &mut rng("f5/recover"),
+        &RecoveryInput {
+            ctx: &c,
+            rk_code: &code,
+            rk_wrap: &s.account.wraps[1],
+            manifest: sealed_row(&manifest),
+            new_recovery_method_id: method_id(0x73),
+        },
+        password(&input, reg, KsfProfile::P1),
+        PinState::FirstUse,
+    )
+    .unwrap();
+    let after = decrypt_manifest(
+        &rec.vault,
+        rec.manifest.rev,
+        &rec.manifest.envelope,
+        &rec.manifest.tag,
+    )
+    .unwrap();
+    assert_eq!(after.extra, top_extra);
+    let mut want_password = password_entry;
+    want_password.kek_generation = 2;
+    let mut want_recovery = recovery_entry;
+    want_recovery.method_id = method_id(0x73);
+    want_recovery.kek_generation = 2;
+    assert_eq!(after.methods, vec![want_password, passkey, want_recovery]);
+}
+
+#[test]
+fn the_password_change_proof_is_made_only_by_its_own_vault() {
+    let s = create("f6", true);
+    let pinned = pinned_of(&s);
+    let (changed, _) = change(&s, &pinned, PASSWORD_2, KsfProfile::P1, "f6").unwrap();
+    assert_eq!(changed.pk_a, s.account.pk_a);
+    let nonce = [1; 32];
+    changed.sign(&s.account.vault, &nonce, b"body").unwrap();
+    // Another open vault (another vault key) does not sign it.
+    let other = unlocked(0x07);
+    assert_ne!(other.auth_public_key(), changed.pk_a);
+    assert_eq!(
+        changed.sign(&other, &nonce, b"body").err(),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
 }

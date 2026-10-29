@@ -406,14 +406,19 @@ pub struct PasswordChange {
     /// The OPAQUE server public key the registration showed. It has been
     /// compared with the pinned one when there is one.
     pub server_public_key: [u8; 32],
+    /// `pk_a` of the vault the change was made for. [`PasswordChange::sign`]
+    /// signs only with the vault that has this key.
+    pub pk_a: [u8; 32],
 }
 
 impl PasswordChange {
     /// The operation of the request's proof.
     pub const OP: AuthOp = AuthOp::UnlockMethodPasswordPut;
 
-    /// Signs the request with `sk_a` of `vault` (the vault the change was made
-    /// for), for [`PasswordChange::OP`]. `body` is the exact bytes that are
+    /// Signs the request with `sk_a` of `vault`, for [`PasswordChange::OP`].
+    /// `vault` must be the vault the change was made for (its `pk_a` is
+    /// compared with [`PasswordChange::pk_a`]; another vault is
+    /// `pinned_auth_key`). `body` is the exact bytes that are
     /// sent.
     ///
     /// Spec: Fase 1 § 4.6.
@@ -423,6 +428,9 @@ impl PasswordChange {
         nonce: &[u8; 32],
         body: &[u8],
     ) -> Result<[u8; 64], Error> {
+        if vault.auth_public_key() != self.pk_a {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
         auth_sign(vault, Self::OP, nonce, body)
     }
 }
@@ -533,6 +541,7 @@ pub fn change_password<R: SecureRng>(
         wrap,
         manifest: sealed,
         server_public_key: registration.server_public_key,
+        pk_a: vault.auth_public_key(),
     })
 }
 
@@ -693,6 +702,17 @@ pub fn recover<R: SecureRng>(
         return Err(entries_error());
     }
     let password_method_id = password_entry.method_id;
+    // The new recovery wrap needs an id of its own: not the password
+    // wrap's and not any other method's in the manifest (only the old
+    // recovery entry, which it replaces, may share it).
+    if old
+        .methods
+        .iter()
+        .enumerate()
+        .any(|(i, e)| i != recovery_index && e.method_id == new_recovery_method_id)
+    {
+        return Err(entries_error());
+    }
     let mut password_generation = after(password_entry.kek_generation)?;
     if let Some(floor) = password_floor {
         password_generation = password_generation.max(after(floor)?);

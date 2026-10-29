@@ -486,6 +486,26 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
         ),
         "malformed_pinned_record",
     )?;
+    // The attack the SK bit guards against: the device pinned an account with
+    // a secret key and the new password has none (15 characters, so it meets
+    // the floor without one).
+    let reg_new_nosk = registration(&server, PASSWORD_2, None, "new-nosk")?;
+    m.err(
+        "account/change-password/011",
+        "the device pinned an account with a secret key and the new password has none",
+        "account.change_password",
+        merge(
+            change_input(
+                &reg_new_nosk,
+                "without_secret_key",
+                &good_pin,
+                &manifest,
+                false,
+            ),
+            json!({ "input_secret_key": null }),
+        ),
+        "pinned_sk_bit",
+    )?;
 
     // ---- recover
     let recover_input = |code: &str, reg: &Value, pinned: Option<&Value>, sign: bool| {
@@ -624,6 +644,26 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
             json!({ "policy": "unlock" }),
         ),
         "input_too_short",
+    )?;
+    m.err(
+        "account/recover/010",
+        "the device pinned an account with a secret key and the new password has none",
+        "account.recover",
+        merge(
+            recover_input(&rk_code, &reg_new_nosk, Some(&good_pin), false),
+            json!({ "policy": "without_secret_key", "input_secret_key": null }),
+        ),
+        "pinned_sk_bit",
+    )?;
+    m.err(
+        "account/recover/011",
+        "the new recovery wrap would get the id of the password wrap",
+        "account.recover",
+        merge(
+            recover_input(&rk_code, &reg_new, None, false),
+            json!({ "new_recovery_method_id": h(&[0x70; 16]) }),
+        ),
+        "malformed_entries",
     )?;
 
     // ---- confirmation at setup
