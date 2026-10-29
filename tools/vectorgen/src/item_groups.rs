@@ -18,6 +18,7 @@ use ferret_core::testing::{ReplayRng, hex_encode};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+pub(crate) mod export;
 pub(crate) mod integrity;
 
 // ------------------------------------------------------------ hand-made CBOR

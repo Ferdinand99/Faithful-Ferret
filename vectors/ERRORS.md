@@ -33,7 +33,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_cbor_int` | A CBOR integer outside the range of `i64` and `u64`. |
 | `malformed_cbor_trailing` | Bytes after the first CBOR data item. |
 | `malformed_item_body` | An item body or manifest that does not have the shape of the schema. |
-| `malformed_export_header` | Export file header is malformed. |
+| `malformed_export_header` | Export file header is malformed, or the file is too short for its header, wrapped key and body. |
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
