@@ -77,7 +77,7 @@ pub use item::{
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;
 pub use opaque::{
-    LoginFinished, LoginState, OPAQUE_CONTEXT, RegistrationFinished, RegistrationState,
+    LoginFinished, LoginState, OPAQUE_CONTEXT, PinState, RegistrationFinished, RegistrationState,
     opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
 };
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};

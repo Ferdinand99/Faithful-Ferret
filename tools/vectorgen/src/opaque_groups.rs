@@ -162,7 +162,7 @@ fn run_login(
     password: &str,
     sk: Option<[u8; 16]>,
     server_profile: u32,
-    pinned: Option<&ferret_core::Pinned>,
+    pin: ferret_core::PinState<'_>,
 ) -> Result<LoginOutcome, ferret_core::Error> {
     let pw = input_of(password, sk).map_err(|_| ferret_core::Error::Unsupported)?;
     let mut replay = ferret_core::testing::ReplayRng::new(
@@ -172,7 +172,7 @@ fn run_login(
             .collect(),
     );
     let (_ke1, state) = opaque_login_start(&mut replay, &pw)?;
-    let done = opaque_login_finish(&mut replay, state, &pw, &r.ke2, server_profile, pinned)?;
+    let done = opaque_login_finish(&mut replay, state, &pw, &r.ke2, server_profile, pin)?;
     Ok((
         done.ke3,
         ferret_core::testing::keys::export_key_bytes(&done.export_key),
@@ -260,7 +260,8 @@ pub(crate) fn opaque() -> Result<Vec<u8>, Error> {
     // ---- login, valid
     let ok_a = round("a/login", &a, pw_a, None, false)?;
     let (ke3, export_key, server_key) =
-        run_login(&ok_a, pw_a, None, 1, None).map_err(|e| format!("login a: {}", e.code()))?;
+        run_login(&ok_a, pw_a, None, 1, ferret_core::PinState::FirstUse)
+            .map_err(|e| format!("login a: {}", e.code()))?;
     assert_eq!(export_key, a.export_key, "login and registration agree");
     let login_expect = |round: &Round, ke3: &[u8], export_key: &[u8; 64], server_key: &[u8; 32]| {
         json!({
@@ -284,8 +285,9 @@ pub(crate) fn opaque() -> Result<Vec<u8>, Error> {
     ));
 
     let ok_b = round("b/login", &b, pw_b, Some(sk_b), false)?;
-    let (ke3_b, export_b, server_key_b) = run_login(&ok_b, pw_b, Some(sk_b), 1, None)
-        .map_err(|e| format!("login b: {}", e.code()))?;
+    let (ke3_b, export_b, server_key_b) =
+        run_login(&ok_b, pw_b, Some(sk_b), 1, ferret_core::PinState::FirstUse)
+            .map_err(|e| format!("login b: {}", e.code()))?;
     assert_eq!(export_b, b.export_key);
     cases.push(with_rng(
         valid_case(
@@ -557,7 +559,7 @@ pub(crate) fn opaque() -> Result<Vec<u8>, Error> {
 
     // The pinned helper is also used to check the cases at generation time.
     let pin_ok = pinned_record(1, false, Some(a.server_key));
-    run_login(&ok_a, pw_a, None, 1, Some(&pin_ok))
+    run_login(&ok_a, pw_a, None, 1, ferret_core::PinState::Pinned(&pin_ok))
         .map_err(|e| format!("pinned login: {}", e.code()))?;
 
     render(&VectorFile {

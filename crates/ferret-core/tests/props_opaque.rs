@@ -9,8 +9,8 @@ use ferret_core::testing::TestRng;
 use ferret_core::testing::keys::export_key_bytes;
 use ferret_core::testing::opaque::{Server, TestKsf, login_finish_with, register_finish_with};
 use ferret_core::{
-    Error, KdfParams, MalformedKind, MasterPassword, OPAQUE_CONTEXT, SecretKey, opaque_login_start,
-    opaque_register_start,
+    Error, KdfParams, MalformedKind, MasterPassword, OPAQUE_CONTEXT, PinState, SecretKey,
+    opaque_login_start, opaque_register_start,
 };
 use proptest::prelude::*;
 
@@ -76,7 +76,7 @@ proptest! {
                 .login_start(rng, Some(&reg.record), CRED, &ke1)
                 .unwrap();
             let done = login_finish_with(
-                rng, state, attempt, &ke2, &ksf, Some(OPAQUE_CONTEXT), None,
+                rng, state, attempt, &ke2, &ksf, Some(OPAQUE_CONTEXT), PinState::FirstUse,
             )?;
             Ok::<_, Error>((done, server_state))
         };
@@ -123,7 +123,7 @@ proptest! {
         let pw = input("correct horse battery", None);
         let mut rng = TestRng::new(b"arbitrary");
         let (_ke1, state) = opaque_login_start(&mut rng, &pw).unwrap();
-        match login_finish_with(&mut rng, state, &pw, &bytes, &ksf, Some(OPAQUE_CONTEXT), None) {
+        match login_finish_with(&mut rng, state, &pw, &bytes, &ksf, Some(OPAQUE_CONTEXT), PinState::FirstUse) {
             Ok(_) => prop_assert!(false, "accepted"),
             Err(e) => prop_assert!(
                 matches!(e, Error::Decrypt | Error::Malformed(MalformedKind::OpaqueMessage)),

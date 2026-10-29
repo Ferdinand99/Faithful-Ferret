@@ -12,7 +12,7 @@
 use ferret_core::testing::TestRng;
 use ferret_core::testing::opaque::{TestKsf, login_finish_with, register_finish_with};
 use ferret_core::{
-    Error, KdfParams, MalformedKind, MasterPassword, OPAQUE_CONTEXT, opaque_login_start,
+    Error, KdfParams, MalformedKind, MasterPassword, OPAQUE_CONTEXT, PinState, opaque_login_start,
     opaque_register_start,
 };
 use libfuzzer_sys::fuzz_target;
@@ -32,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
 
     // 1. The bytes as KE2.
     let (_ke1, state) = opaque_login_start(&mut rng, &pw).expect("login start");
-    match login_finish_with(&mut rng, state, &pw, data, &ksf, Some(OPAQUE_CONTEXT), None) {
+    match login_finish_with(&mut rng, state, &pw, data, &ksf, Some(OPAQUE_CONTEXT), PinState::FirstUse) {
         Ok(_) => panic!("random bytes were accepted as a KE2"),
         Err(Error::Decrypt | Error::Malformed(MalformedKind::OpaqueMessage)) => {}
         Err(other) => panic!("unexpected error {other:?}"),

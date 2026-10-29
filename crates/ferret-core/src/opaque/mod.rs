@@ -14,6 +14,14 @@
 //! with a salt of 16 zero bytes and an output of 64 bytes, its parameters
 //! from the [`crate::KsfProfile`] (see `suite.rs` and `ksf.rs`).
 //!
+//! # Pinning
+//!
+//! `opaque_login_finish` takes a [`PinState`]. The server key pin at login is
+//! defence in depth: a changed key fails the envelope check first and shows as
+//! `Decrypt`. The detection of a changed key is the comparison of
+//! `RegistrationFinished::server_public_key` with the pinned key on every
+//! re-registration (Task 9); see `client.rs` for the whole argument.
+//!
 //! # `opaque-ke` and the duplicate crates
 //!
 //! `opaque-ke` 4.0.1 is built on the previous generation of RustCrypto
@@ -28,7 +36,7 @@ pub(crate) mod ksf;
 pub(crate) mod suite;
 
 pub use client::{
-    LoginFinished, LoginState, RegistrationFinished, RegistrationState, opaque_login_finish,
-    opaque_login_start, opaque_register_finish, opaque_register_start,
+    LoginFinished, LoginState, PinState, RegistrationFinished, RegistrationState,
+    opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
 };
 pub use suite::OPAQUE_CONTEXT;

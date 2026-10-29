@@ -20,7 +20,7 @@ use ferret_core::testing::prim::{argon2_run_count, argon2id_unchecked};
 use ferret_core::testing::vector::Outcome;
 use ferret_core::{
     Error, ExportKey, InputError, KDF_FLOOR, KdfParams, KsfProfile, LoginFinished, LoginState,
-    MalformedKind, MasterPassword, OPAQUE_CONTEXT, OpaqueInput, Pinned, PinnedField,
+    MalformedKind, MasterPassword, OPAQUE_CONTEXT, OpaqueInput, PinState, Pinned, PinnedField,
     RegistrationFinished, RegistrationState, SecretKey, SecureRng, VaultId, opaque_login_finish,
     opaque_login_start, opaque_register_finish, opaque_register_start,
 };
@@ -218,7 +218,7 @@ fn profile_unknown_is_hard_error_before_argon() {
     for unknown in [0u32, 2, 3, 255, 257, u32::MAX] {
         let (_acc, pw, state, ke2) = ready_login(None);
         let before = argon2_run_count();
-        let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, unknown, None)
+        let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, unknown, PinState::FirstUse)
             .err()
             .unwrap();
         assert_eq!(err, Error::KdfProfileUnknown, "profile {unknown}");
@@ -236,7 +236,7 @@ fn profile_below_pinned_is_downgrade_error() {
     // A device that pinned profile 2 (a later release) sees the server state 1.
     let pin = pinned(2, false, None);
     let before = argon2_run_count();
-    let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, 1, Some(&pin))
+    let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, 1, PinState::Pinned(&pin))
         .err()
         .unwrap();
     assert_eq!(err, Error::KdfProfileDowngrade);
@@ -262,7 +262,7 @@ fn sk_bit_mismatch_with_pinned_is_hard_error_before_argon() {
         let (_acc, pw, state, ke2) = ready_login(with_sk);
         let before = argon2_run_count();
         let pin = pinned(1, pinned_bit, None);
-        let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, 1, Some(&pin))
+        let err = opaque_login_finish(&mut rng("x"), state, &pw, &ke2, 1, PinState::Pinned(&pin))
             .err()
             .unwrap();
         assert_eq!(err, Error::Pinned(PinnedField::SkBit));
@@ -292,7 +292,7 @@ fn opaque_roundtrip_against_server() {
             &ke2,
             &small(),
             Some(OPAQUE_CONTEXT),
-            None,
+            PinState::FirstUse,
         )
         .unwrap();
         // The same export key as at registration.
@@ -328,7 +328,7 @@ fn wrong_password_wrong_sk_and_missing_sk_are_one_error() {
             &ke2,
             &small(),
             Some(OPAQUE_CONTEXT),
-            None,
+            PinState::FirstUse,
         )
         .err()
         .unwrap();
@@ -384,7 +384,7 @@ fn opaque_context_is_ferret_v1_opaque() {
         &ke2,
         &small(),
         Some(OPAQUE_CONTEXT),
-        None,
+        PinState::FirstUse,
     )
     .err()
     .unwrap();
@@ -399,7 +399,7 @@ fn opaque_context_is_ferret_v1_opaque() {
         &ke2,
         &small(),
         Some(b"ferret/v1/opaque "),
-        None,
+        PinState::FirstUse,
     )
     .err()
     .unwrap();
@@ -414,7 +414,7 @@ fn opaque_context_is_ferret_v1_opaque() {
             &ke2,
             &small(),
             Some(OPAQUE_CONTEXT),
-            None
+            PinState::FirstUse
         )
         .is_ok()
     );
@@ -440,7 +440,7 @@ fn opaque_identifiers_are_none() {
         &ke2,
         &small(),
         Some(OPAQUE_CONTEXT),
-        None,
+        PinState::FirstUse,
     )
     .err()
     .unwrap();
@@ -482,7 +482,7 @@ fn draws_are_blind_then_nonce_and_blind_seed_nonce() {
         &ke2,
         &small(),
         Some(OPAQUE_CONTEXT),
-        None,
+        PinState::FirstUse,
     )
     .unwrap();
     assert_eq!(
@@ -495,10 +495,10 @@ fn draws_are_blind_then_nonce_and_blind_seed_nonce() {
 // ------------------------------------------------------ server's key pin
 
 #[test]
-fn pinned_server_key_is_checked_and_first_use_is_trusted() {
+fn first_use_is_trusted_and_a_pinned_key_shown_again_is_accepted() {
     let pw = input("correct horse battery", None);
     let acc = register(Server::new(&mut rng("k/server")), &pw, &small(), "k/reg");
-    let run = |pin: Option<&Pinned>| {
+    let run = |pin: PinState<'_>| {
         let (state, _server, ke2) = login_up_to_ke2(&acc, &pw, "k/login");
         login_finish_with(
             &mut rng("k/fin"),
@@ -510,27 +510,88 @@ fn pinned_server_key_is_checked_and_first_use_is_trusted() {
             pin,
         )
     };
-    // First use: no pin at all, and a record with no server key yet (TOFU):
-    // accepted, and the key is returned to be pinned.
+    // First use (trust on first use): accepted, and the key is returned to
+    // be pinned.
     assert_eq!(
-        run(None).unwrap().finished.server_public_key,
+        run(PinState::FirstUse).unwrap().finished.server_public_key,
         acc.server_public_key
     );
-    assert_eq!(
-        run(Some(&pinned(1, false, None)))
-            .unwrap()
-            .finished
-            .server_public_key,
-        acc.server_public_key
-    );
+    // A record with no server key pinned yet (TOFU of the key): accepted.
+    assert!(run(PinState::Pinned(&pinned(1, false, None))).is_ok());
     // The pinned key shown again: accepted.
-    assert!(run(Some(&pinned(1, false, Some(acc.server_public_key)))).is_ok());
-    // Another key: a hard error that is not "wrong password".
-    let mut other = acc.server_public_key;
-    other[0] ^= 1;
-    let err = run(Some(&pinned(1, false, Some(other)))).err().unwrap();
-    assert_eq!(err, Error::Pinned(PinnedField::ServerKey));
-    assert_eq!(err.code(), "pinned_server_key");
+    let pin = pinned(1, false, Some(acc.server_public_key));
+    assert!(run(PinState::Pinned(&pin)).is_ok());
+}
+
+/// A server that keeps the account's record and OPRF seed but presents
+/// another OPAQUE key pair is *not* reported as `pinned_server_key` at login:
+/// the server's key is covered by the envelope's MAC, so the envelope fails
+/// first and the client sees the single authentication error. (The detection
+/// of a changed key is the comparison of `RegistrationFinished::server_public_key`
+/// with the pinned key on re-registration; the comparison at login is
+/// defence in depth, exercised by the vector `opaque/login/017`.)
+#[test]
+fn a_changed_server_key_at_login_is_decrypt() {
+    let pw = input("correct horse battery", None);
+    let acc = register(Server::new(&mut rng("k/server")), &pw, &small(), "k/reg");
+    let other = Server::new(&mut rng("k/other"));
+    assert_ne!(other.public_key(), acc.server_public_key);
+    let moved = Account {
+        server: acc.server.with_key_of(&other),
+        record: acc.record.clone(),
+        export_key: ExportKey::from_test_bytes(export_bytes(&acc.export_key)),
+        server_public_key: other.public_key(),
+    };
+    assert_eq!(moved.server.public_key(), other.public_key());
+    // The pinned record has the old key, as a device that has used the
+    // account before.
+    let pin = pinned(1, false, Some(acc.server_public_key));
+    for state_of_pin in [PinState::FirstUse, PinState::Pinned(&pin)] {
+        let (state, _server, ke2) = login_up_to_ke2(&moved, &pw, "k/login");
+        let err = login_finish_with(
+            &mut rng("k/fin"),
+            state,
+            &pw,
+            &ke2,
+            &small(),
+            Some(OPAQUE_CONTEXT),
+            state_of_pin,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err, Error::Decrypt);
+    }
+    // Control: the unmoved server logs in.
+    let (state, _server, ke2) = login_up_to_ke2(&acc, &pw, "k/login");
+    assert!(
+        login_finish_with(
+            &mut rng("k/fin"),
+            state,
+            &pw,
+            &ke2,
+            &small(),
+            Some(OPAQUE_CONTEXT),
+            PinState::Pinned(&pin),
+        )
+        .is_ok()
+    );
+}
+
+/// Re-registration is where a changed key is seen: the response carries the
+/// server's key, and `RegistrationFinished::server_public_key` differs from
+/// the pinned one. (Task 9 turns that into the U19 warning.)
+#[test]
+fn registration_shows_the_server_key_for_the_caller_to_compare() {
+    let pw = input("correct horse battery", None);
+    let acc = register(Server::new(&mut rng("r/server")), &pw, &small(), "r/reg");
+    let other = Server::new(&mut rng("r/other"));
+    let moved = acc.server.with_key_of(&other);
+    let mut r = rng("r/again");
+    let (request, state) = opaque_register_start(&mut r, &pw).unwrap();
+    let response = moved.register_response(CRED, &request).unwrap();
+    let done = register_finish_with(&mut r, state, &pw, &response, &small()).unwrap();
+    assert_eq!(done.server_public_key, other.public_key());
+    assert_ne!(done.server_public_key, acc.server_public_key);
 }
 
 // --------------------------------------------------- malformed messages
@@ -573,7 +634,7 @@ fn opaque_rejects_malformed_server_messages() {
             &bytes,
             &small(),
             Some(OPAQUE_CONTEXT),
-            None,
+            PinState::FirstUse,
         )
         .err()
         .unwrap_or_else(|| panic!("{what}: accepted"));
@@ -639,7 +700,7 @@ fn every_changed_byte_of_ke2_is_refused() {
             &bad,
             &small(),
             Some(OPAQUE_CONTEXT),
-            None,
+            PinState::FirstUse,
         )
         .err()
         .unwrap_or_else(|| panic!("byte {i} changed: accepted"));
@@ -711,7 +772,7 @@ fn opaque_session_key_is_not_exposed() {
         &ke2,
         &small(),
         Some(OPAQUE_CONTEXT),
-        None,
+        PinState::FirstUse,
     )
     .unwrap();
     let LoginFinished {
@@ -813,7 +874,7 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                     &pw,
                     &hex(&i["ke2"]),
                     i["server_profile"].as_u64().unwrap() as u32,
-                    pin.as_ref(),
+                    pin.as_ref().map_or(PinState::FirstUse, PinState::Pinned),
                 )?;
                 Ok(Outcome {
                     output: json!({

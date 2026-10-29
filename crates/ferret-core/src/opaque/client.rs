@@ -17,18 +17,40 @@
 //!
 //! 1. the profile number the server states against the client's own table
 //!    ([`Error::KdfProfileUnknown`]);
-//! 2. with a pinned record: the SK bit of the input against the pinned bit
-//!    ([`PinnedField::SkBit`]; the bit never comes from the server) and the
-//!    profile against the pinned one ([`Error::KdfProfileDowngrade`]);
+//! 2. with [`PinState::Pinned`]: the SK bit of the input against the pinned
+//!    bit ([`PinnedField::SkBit`]; the bit never comes from the server) and
+//!    the profile against the pinned one ([`Error::KdfProfileDowngrade`]);
 //! 3. the profile's parameters against the floor and ceiling
 //!    ([`Error::KdfOutOfRange`]);
 //! 4. the length of the server's message ([`MalformedKind::OpaqueMessage`]).
 //!
 //! After `opaque-ke` has opened the envelope and verified the server's MAC,
 //! the server public key it showed is compared with the pinned one
-//! ([`PinnedField::ServerKey`]). If none is pinned yet, the key is returned
-//! and the first successful unlock pins it (trust on first use, plan U19; see
-//! [`crate::Pinned`]).
+//! ([`PinnedField::ServerKey`]).
+//!
+//! # The server key pin is defence in depth at login
+//!
+//! The server's public key is part of what the envelope's MAC covers. A
+//! server that shows another key together with the old record therefore fails
+//! the envelope check first, and the client sees [`Error::Decrypt`] ("wrong
+//! password"), not [`PinnedField::ServerKey`]. The comparison at the end of the
+//! login can only fire for a record that was made under the other key, which
+//! is a case that does not occur on the wire. It stays as a second line.
+//!
+//! The place where a changed server key is detected, and the clear warning of
+//! plan U19 can be given, is registration: on every re-registration of a known
+//! account (change of password, KSF upgrade, recovery) the caller must compare
+//! [`RegistrationFinished::server_public_key`] with the pinned key
+//! (Task 9, account flows). On a first registration it pins the key.
+//!
+//! # First use
+//!
+//! [`PinState::FirstUse`] is trust on first use: no SK-bit check, no downgrade
+//! check, no key comparison, and the key the server shows is returned in
+//! [`LoginFinished::server_public_key`] for the first successful unlock to pin
+//! (plan U19; see [`crate::Pinned`]). It is a variant the caller has to
+//! choose, so a device that holds a record cannot skip the checks by leaving
+//! an argument out.
 //!
 //! # Errors
 //!
@@ -36,7 +58,9 @@
 //! any tampered server message that parses are all the single
 //! [`Error::Decrypt`]. A message of the wrong length, or one that holds a
 //! point that is not on the curve, is [`MalformedKind::OpaqueMessage`]: that
-//! depends on the server's bytes only, never on a secret.
+//! depends on the server's bytes only, never on a secret, and it is found
+//! before any key stretching. So a tampered `KE2` is `Decrypt` when it parses
+//! and `malformed_opaque_message` when it does not.
 //!
 //! # Randomness
 //!
@@ -430,13 +454,42 @@ pub fn opaque_login_start<R: SecureRng>(
     Ok((ke1, LoginState(state)))
 }
 
+/// What the device knows about the account when it logs in.
+///
+/// Spec: Fase 1 § 4.2 ("Pinning og SK-bit"); plan U19.
+#[derive(Clone, Copy)]
+pub enum PinState<'a> {
+    /// A device that has never unlocked this account. **Trust on first
+    /// use:** none of the pin checks is made, and the server's key is
+    /// returned for the first successful unlock to pin. The profile still
+    /// has to be in the client's table and inside the floor and ceiling, and
+    /// the SK bit is whatever the user answered when the input was built.
+    FirstUse,
+    /// A device with a pinned record: the SK bit, the profile and the server
+    /// key are checked against it.
+    Pinned(&'a Pinned),
+}
+
+impl PinState<'_> {
+    fn record(&self) -> Option<&Pinned> {
+        match self {
+            PinState::FirstUse => None,
+            PinState::Pinned(p) => Some(p),
+        }
+    }
+}
+
 /// Login, step 2: checks the profile and the pins, runs the key stretching,
 /// opens the envelope and returns `KE3` and the export key.
 ///
 /// `server_profile` is the number the server states; the parameters come
-/// from the client's own table and never from the server. With `pinned`, the
-/// SK bit of `input`, the profile and (when it is pinned) the OPAQUE server
-/// public key must agree with the record. See the module docs for the order
+/// from the client's own table and never from the server. With
+/// [`PinState::Pinned`], the SK bit of `input`, the profile and (when it is
+/// pinned) the OPAQUE server public key must agree with the record;
+/// [`PinState::FirstUse`] is trust on first use. The server key comparison is
+/// defence in depth here: a changed key shows up as `Decrypt` first (see the
+/// module docs), and the real detection is the comparison of the key that
+/// `opaque_register_finish` returns. See the module docs for the order
 /// of the checks and for the errors.
 ///
 /// Spec: Fase 1 § 4.2 ("Innlogging", step 2, "Pinning og SK-bit"); RFC 9807
@@ -447,10 +500,10 @@ pub fn opaque_login_finish<R: SecureRng>(
     input: &OpaqueInput,
     ke2: &[u8],
     server_profile: u32,
-    pinned: Option<&Pinned>,
+    pin: PinState<'_>,
 ) -> Result<LoginFinished, Error> {
     let profile = KsfProfile::from_wire(server_profile)?;
-    if let Some(pin) = pinned {
+    if let Some(pin) = pin.record() {
         if input.includes_secret_key() != pin.sk_bit {
             return Err(Error::Pinned(PinnedField::SkBit));
         }
@@ -461,7 +514,7 @@ pub fn opaque_login_finish<R: SecureRng>(
     check_kdf_params(profile.params())?;
     let ksf = FerretKsf::new(profile);
     // The session key is dropped (and wiped) with the `LoggedIn`.
-    let done = finish_login(rng, st, input, ke2, &ksf, Some(OPAQUE_CONTEXT), pinned)?;
+    let done = finish_login(rng, st, input, ke2, &ksf, Some(OPAQUE_CONTEXT), pin)?;
     Ok(LoginFinished {
         ke3: done.ke3,
         export_key: done.export_key,
@@ -479,7 +532,7 @@ pub(crate) fn finish_login<R: SecureRng>(
     ke2: &[u8],
     ksf: &FerretKsf,
     context: Option<&[u8]>,
-    pinned: Option<&Pinned>,
+    pin: PinState<'_>,
 ) -> Result<LoggedIn, Error> {
     let done = prod::login_finish(
         rng,
@@ -490,17 +543,17 @@ pub(crate) fn finish_login<R: SecureRng>(
         Identifiers::default(),
         ksf,
     )?;
-    check_server_key(pinned, &done.server_public_key)?;
+    check_server_key(pin, &done.server_public_key)?;
     Ok(done)
 }
 
 /// The pin check on the server's OPAQUE public key: a pinned key must be
 /// shown again exactly; without a pinned key anything is accepted (trust on
-/// first use).
+/// first use). Defence in depth: see the module docs.
 ///
 /// Spec: plan U19; Fase 1 § 4.2 ("Pinning og SK-bit").
-fn check_server_key(pinned: Option<&Pinned>, shown: &[u8; 32]) -> Result<(), Error> {
-    match pinned.and_then(|p| p.server_public_key.as_ref()) {
+fn check_server_key(pin: PinState<'_>, shown: &[u8; 32]) -> Result<(), Error> {
+    match pin.record().and_then(|p| p.server_public_key.as_ref()) {
         Some(pinned_key) if pinned_key != shown => Err(Error::Pinned(PinnedField::ServerKey)),
         _ => Ok(()),
     }

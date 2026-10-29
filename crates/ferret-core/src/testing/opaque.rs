@@ -6,10 +6,10 @@
 //! other parameters, no session key).
 
 use crate::error::{Error, MalformedKind};
+use crate::opaque::PinState;
 use crate::opaque::client::{self, KE2_LEN, REGISTRATION_RESPONSE_LEN, Rng06, prod, rfc};
 use crate::opaque::ksf::FerretKsf;
 use crate::opaque::suite::{FerretSuite, OPAQUE_CONTEXT};
-use crate::pinning::Pinned;
 use crate::prim::KdfParams;
 use crate::rng::SecureRng;
 use crate::text::OpaqueInput;
@@ -74,6 +74,24 @@ impl Server {
     pub fn with_identities(mut self, client: &[u8], server: &[u8]) -> Self {
         self.identities = Some((client.to_vec(), server.to_vec()));
         self
+    }
+
+    /// This server's OPRF seed and records with the key pair of `other`: what
+    /// a server does that keeps its database and presents another OPAQUE
+    /// public key.
+    #[must_use]
+    pub fn with_key_of(&self, other: &Server) -> Server {
+        let mine = self.setup.serialize();
+        let theirs = other.setup.serialize();
+        // OPRF seed (64) ‖ private key (32) ‖ dummy public key (32).
+        assert_eq!(mine.len(), 128);
+        let mut bytes = mine.to_vec();
+        bytes[64..96].copy_from_slice(&theirs[64..96]);
+        Server {
+            setup: ServerSetup::<FerretSuite>::deserialize(&bytes).expect("a valid setup"),
+            context: self.context.clone(),
+            identities: self.identities.clone(),
+        }
     }
 
     /// The same server with another context.
@@ -244,9 +262,9 @@ pub fn login_finish_with<R: SecureRng>(
     ke2: &[u8],
     ksf: &TestKsf,
     context: Option<&[u8]>,
-    pinned: Option<&Pinned>,
+    pin: PinState<'_>,
 ) -> Result<LoginWithSession, Error> {
-    let done = client::finish_login(rng, st, input, ke2, &ksf.0, context, pinned)?;
+    let done = client::finish_login(rng, st, input, ke2, &ksf.0, context, pin)?;
     Ok(LoginWithSession {
         finished: LoginFinished {
             ke3: done.ke3,
