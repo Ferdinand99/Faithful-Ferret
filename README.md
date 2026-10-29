@@ -85,6 +85,7 @@ The Rust cryptographic core lives at the repository root as a Cargo workspace:
 - `bindings/wasm/`: the WebAssembly binding for the web vault and the browser extension (added later).
 - `tools/vectorgen/`: generates and checks the test vectors.
 - `vectors/`: the cross-platform test vectors that every client must pass.
+- `ct/`: the small single-file constant-time code (Crockford coding) that the core includes and the constant-time analyzer reads.
 - `docker/`, `scripts/`: the build image and scripts for building and testing on a Docker host.
 - `site/`, `assets/`: the website and brand assets.
 

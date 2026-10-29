@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 /// The `commit` field is a fixed marker, not a git hash: a hash would change
 /// the file with every commit and break the byte-for-byte `vectorgen check`.
 /// Vectors are versioned by `vectors/VERSION` instead.
-fn generator() -> Generator {
+pub(crate) fn generator() -> Generator {
     Generator {
         tool: "ferret-vectorgen".into(),
         core: env!("CARGO_PKG_VERSION").into(),
@@ -23,7 +23,7 @@ fn generator() -> Generator {
     }
 }
 
-fn valid_case(
+pub(crate) fn valid_case(
     id: &str,
     title: &str,
     op: &str,
@@ -47,7 +47,14 @@ fn valid_case(
     }
 }
 
-fn invalid_case(id: &str, title: &str, op: &str, tags: Vec<Tag>, input: Value, code: &str) -> Case {
+pub(crate) fn invalid_case(
+    id: &str,
+    title: &str,
+    op: &str,
+    tags: Vec<Tag>,
+    input: Value,
+    code: &str,
+) -> Case {
     Case {
         id: id.into(),
         title: title.into(),

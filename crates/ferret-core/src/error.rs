@@ -20,6 +20,8 @@ pub enum InputError {
     NotUtf8,
     /// Contains a forbidden or unassigned character.
     ForbiddenCharacter,
+    /// An export password equal to the master password.
+    SameAsMasterPassword,
 }
 
 /// Which structure was malformed.
@@ -36,6 +38,9 @@ pub enum MalformedKind {
     Tlv,
     /// Checkpoint entries.
     Entries,
+    /// Recovery or secret key code: wrong prefix or a letter outside the
+    /// alphabet.
+    Code,
 }
 
 /// Why a checkpoint did not verify.
@@ -109,11 +114,13 @@ impl Error {
         Error::InvalidInput(InputError::TooLong),
         Error::InvalidInput(InputError::NotUtf8),
         Error::InvalidInput(InputError::ForbiddenCharacter),
+        Error::InvalidInput(InputError::SameAsMasterPassword),
         Error::Malformed(MalformedKind::Envelope),
         Error::Malformed(MalformedKind::Cbor),
         Error::Malformed(MalformedKind::ExportHeader),
         Error::Malformed(MalformedKind::Tlv),
         Error::Malformed(MalformedKind::Entries),
+        Error::Malformed(MalformedKind::Code),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -144,6 +151,7 @@ impl Error {
                 InputError::TooLong => "input_too_long",
                 InputError::NotUtf8 => "input_not_utf8",
                 InputError::ForbiddenCharacter => "input_forbidden_character",
+                InputError::SameAsMasterPassword => "input_same_as_master_password",
             },
             Error::Malformed(kind) => match kind {
                 MalformedKind::Envelope => "malformed_envelope",
@@ -151,6 +159,7 @@ impl Error {
                 MalformedKind::ExportHeader => "malformed_export_header",
                 MalformedKind::Tlv => "malformed_tlv",
                 MalformedKind::Entries => "malformed_entries",
+                MalformedKind::Code => "malformed_code",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",

@@ -19,11 +19,13 @@ share the single code `decrypt`, with no cause.
 | `input_too_long` | Input longer than the maximum. |
 | `input_not_utf8` | Input is not valid UTF-8. |
 | `input_forbidden_character` | Input contains a forbidden or unassigned character. |
+| `input_same_as_master_password` | The export password is equal to the master password. |
 | `malformed_envelope` | Item or manifest envelope is malformed. |
 | `malformed_cbor` | CBOR body is malformed. |
 | `malformed_export_header` | Export file header is malformed. |
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |
+| `malformed_code` | Recovery or secret key code with a wrong prefix or a letter outside the alphabet. |
 | `too_large` | Larger than the allowed size. |
 | `read_only_schema` | The item has a newer schema and is read-only. |
 | `tombstone_invalid` | A tombstone failed verification. |

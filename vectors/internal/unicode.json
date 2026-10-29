@@ -1,0 +1,2352 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "unicode",
+  "suite": 1,
+  "spec": "Fase 1 § 3.1, § 4.1",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "unicode/nfkd/001",
+      "title": "ASCII is unchanged",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0066 U+0065 U+0072 U+0072 U+0065 U+0074",
+            "repeat": 1
+          }
+        ],
+        "text": "ferret"
+      },
+      "expect": {
+        "nfkd": "666572726574"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/002",
+      "title": "empty text",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "",
+            "repeat": 1
+          }
+        ],
+        "text": ""
+      },
+      "expect": {
+        "nfkd": ""
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/003",
+      "title": "ligature fi",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FB01",
+            "repeat": 1
+          }
+        ],
+        "text": "ﬁ"
+      },
+      "expect": {
+        "nfkd": "6669"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/004",
+      "title": "ligature fl",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FB02",
+            "repeat": 1
+          }
+        ],
+        "text": "ﬂ"
+      },
+      "expect": {
+        "nfkd": "666c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/005",
+      "title": "ligature ffi",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FB03",
+            "repeat": 1
+          }
+        ],
+        "text": "ﬃ"
+      },
+      "expect": {
+        "nfkd": "666669"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/006",
+      "title": "long s t ligature",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FB05",
+            "repeat": 1
+          }
+        ],
+        "text": "ﬅ"
+      },
+      "expect": {
+        "nfkd": "7374"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/007",
+      "title": "ligature ij",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0133",
+            "repeat": 1
+          }
+        ],
+        "text": "ĳ"
+      },
+      "expect": {
+        "nfkd": "696a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/008",
+      "title": "fullwidth digits",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FF11 U+FF12 U+FF13",
+            "repeat": 1
+          }
+        ],
+        "text": "１２３"
+      },
+      "expect": {
+        "nfkd": "313233"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/009",
+      "title": "fullwidth letters",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FF21 U+FF42",
+            "repeat": 1
+          }
+        ],
+        "text": "Ａｂ"
+      },
+      "expect": {
+        "nfkd": "4162"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/010",
+      "title": "circled digit one",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+2460",
+            "repeat": 1
+          }
+        ],
+        "text": "①"
+      },
+      "expect": {
+        "nfkd": "31"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/011",
+      "title": "superscript two",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00B2",
+            "repeat": 1
+          }
+        ],
+        "text": "²"
+      },
+      "expect": {
+        "nfkd": "32"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/012",
+      "title": "roman numeral eight",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+2167",
+            "repeat": 1
+          }
+        ],
+        "text": "Ⅷ"
+      },
+      "expect": {
+        "nfkd": "56494949"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/013",
+      "title": "square kg",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+338F",
+            "repeat": 1
+          }
+        ],
+        "text": "㎏"
+      },
+      "expect": {
+        "nfkd": "6b67"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/014",
+      "title": "vulgar fraction one half",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00BD",
+            "repeat": 1
+          }
+        ],
+        "text": "½"
+      },
+      "expect": {
+        "nfkd": "31e2818432"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/015",
+      "title": "apostrophe n",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0149",
+            "repeat": 1
+          }
+        ],
+        "text": "ŉ"
+      },
+      "expect": {
+        "nfkd": "cabc6e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/016",
+      "title": "dz with caron",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+01C6",
+            "repeat": 1
+          }
+        ],
+        "text": "ǆ"
+      },
+      "expect": {
+        "nfkd": "647acc8c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/017",
+      "title": "degree celsius",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+2103",
+            "repeat": 1
+          }
+        ],
+        "text": "℃"
+      },
+      "expect": {
+        "nfkd": "c2b043"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/018",
+      "title": "no-break space becomes a space",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00A0",
+            "repeat": 1
+          }
+        ],
+        "text": " "
+      },
+      "expect": {
+        "nfkd": "20"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/019",
+      "title": "ideographic space becomes a space",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+3000",
+            "repeat": 1
+          }
+        ],
+        "text": "　"
+      },
+      "expect": {
+        "nfkd": "20"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/020",
+      "title": "mathematical bold capital A",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+1D400",
+            "repeat": 1
+          }
+        ],
+        "text": "𝐀"
+      },
+      "expect": {
+        "nfkd": "41"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/021",
+      "title": "Arabic ligature of 18 letters",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FDFA",
+            "repeat": 1
+          }
+        ],
+        "text": "ﷺ"
+      },
+      "expect": {
+        "nfkd": "d8b5d984d98920d8a7d984d984d98720d8b9d984d98ad98720d988d8b3d984d985"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/022",
+      "title": "halfwidth katakana ka with voiced mark",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+FF76 U+FF9E",
+            "repeat": 1
+          }
+        ],
+        "text": "ｶﾞ"
+      },
+      "expect": {
+        "nfkd": "e382abe38299"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/023",
+      "title": "Hangul syllable han",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+D55C",
+            "repeat": 1
+          }
+        ],
+        "text": "한"
+      },
+      "expect": {
+        "nfkd": "e18492e185a1e186ab"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/024",
+      "title": "Hangul syllable ga (no final)",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+AC00",
+            "repeat": 1
+          }
+        ],
+        "text": "가"
+      },
+      "expect": {
+        "nfkd": "e18480e185a1"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/025",
+      "title": "last Hangul syllable",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+D7A3",
+            "repeat": 1
+          }
+        ],
+        "text": "힣"
+      },
+      "expect": {
+        "nfkd": "e18492e185b5e18782"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/026",
+      "title": "Hangul jamo are already decomposed",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+1112 U+1161 U+11AB",
+            "repeat": 1
+          }
+        ],
+        "text": "한"
+      },
+      "expect": {
+        "nfkd": "e18492e185a1e186ab"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/027",
+      "title": "e acute, precomposed",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00E9",
+            "repeat": 1
+          }
+        ],
+        "text": "é"
+      },
+      "expect": {
+        "nfkd": "65cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/028",
+      "title": "e acute, combining",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0065 U+0301",
+            "repeat": 1
+          }
+        ],
+        "text": "é"
+      },
+      "expect": {
+        "nfkd": "65cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/029",
+      "title": "n tilde",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00F1",
+            "repeat": 1
+          }
+        ],
+        "text": "ñ"
+      },
+      "expect": {
+        "nfkd": "6ecc83"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/030",
+      "title": "e circumflex acute (Vietnamese)",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+1EBF",
+            "repeat": 1
+          }
+        ],
+        "text": "ế"
+      },
+      "expect": {
+        "nfkd": "65cc82cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/031",
+      "title": "Greek dialytika tonos",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0344",
+            "repeat": 1
+          }
+        ],
+        "text": "̈́"
+      },
+      "expect": {
+        "nfkd": "cc88cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/032",
+      "title": "combining marks are put in canonical order",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0061 U+0301 U+0323",
+            "repeat": 1
+          }
+        ],
+        "text": "ạ́"
+      },
+      "expect": {
+        "nfkd": "61cca3cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/033",
+      "title": "combining marks already in order",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0061 U+0323 U+0301",
+            "repeat": 1
+          }
+        ],
+        "text": "ạ́"
+      },
+      "expect": {
+        "nfkd": "61cca3cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/034",
+      "title": "long s with dot above and dot below (UAX #15)",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+1E9B U+0323",
+            "repeat": 1
+          }
+        ],
+        "text": "ẛ̣"
+      },
+      "expect": {
+        "nfkd": "73cca3cc87"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/035",
+      "title": "Angstrom sign",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+212B",
+            "repeat": 1
+          }
+        ],
+        "text": "Å"
+      },
+      "expect": {
+        "nfkd": "41cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/036",
+      "title": "A with ring above",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00C5",
+            "repeat": 1
+          }
+        ],
+        "text": "Å"
+      },
+      "expect": {
+        "nfkd": "41cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/037",
+      "title": "Ohm sign",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+2126",
+            "repeat": 1
+          }
+        ],
+        "text": "Ω"
+      },
+      "expect": {
+        "nfkd": "cea9"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/038",
+      "title": "Devanagari qa (composition exclusion)",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0958",
+            "repeat": 1
+          }
+        ],
+        "text": "क़"
+      },
+      "expect": {
+        "nfkd": "e0a495e0a4bc"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/039",
+      "title": "Norwegian letters in NFC",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00E6 U+00F8 U+00E5",
+            "repeat": 1
+          }
+        ],
+        "text": "æøå"
+      },
+      "expect": {
+        "nfkd": "c3a6c3b861cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/040",
+      "title": "Norwegian letters in NFD",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00E6 U+00F8 U+0061 U+030A",
+            "repeat": 1
+          }
+        ],
+        "text": "æøå"
+      },
+      "expect": {
+        "nfkd": "c3a6c3b861cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/041",
+      "title": "capital Norwegian letters in NFC",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+00C6 U+00D8 U+00C5",
+            "repeat": 1
+          }
+        ],
+        "text": "ÆØÅ"
+      },
+      "expect": {
+        "nfkd": "c386c39841cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/042",
+      "title": "emoji outside the BMP",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+1F600",
+            "repeat": 1
+          }
+        ],
+        "text": "😀"
+      },
+      "expect": {
+        "nfkd": "f09f9880"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/nfkd/043",
+      "title": "zero width joiner is kept",
+      "op": "text.nfkd",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "escapes": "U+0061 U+200D U+0062",
+            "repeat": 1
+          }
+        ],
+        "text": "a‍b"
+      },
+      "expect": {
+        "nfkd": "61e2808d62"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/001",
+      "title": "twelve characters with a secret key",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijkl"
+      },
+      "expect": {
+        "mp": "6162636465666768696a6b6c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/002",
+      "title": "fifteen characters without a secret key",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "without_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C U+006D U+006E U+006F",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijklmno"
+      },
+      "expect": {
+        "mp": "6162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/003",
+      "title": "fifteen characters with a secret key",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C U+006D U+006E U+006F",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijklmno"
+      },
+      "expect": {
+        "mp": "6162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/004",
+      "title": "twelve a with ring in NFD: 12 NFC characters, 24 scalars",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+030A",
+            "repeat": 12
+          }
+        ],
+        "text": "åååååååååååå"
+      },
+      "expect": {
+        "mp": "61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/005",
+      "title": "twelve a with ring in NFC gives the same bytes as NFD",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+00E5",
+            "repeat": 12
+          }
+        ],
+        "text": "åååååååååååå"
+      },
+      "expect": {
+        "mp": "61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a61cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/006",
+      "title": "twelve fullwidth digits",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+FF11",
+            "repeat": 12
+          }
+        ],
+        "text": "１１１１１１１１１１１１"
+      },
+      "expect": {
+        "mp": "313131313131313131313131"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/007",
+      "title": "twelve Hangul syllables",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+D55C",
+            "repeat": 12
+          }
+        ],
+        "text": "한한한한한한한한한한한한"
+      },
+      "expect": {
+        "mp": "e18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186abe18492e185a1e186ab"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/008",
+      "title": "Norwegian letters, NFC and NFD of the same text",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+00E6 U+00F8 U+00E5",
+            "repeat": 4
+          }
+        ],
+        "text": "æøåæøåæøåæøå"
+      },
+      "expect": {
+        "mp": "c3a6c3b861cc8ac3a6c3b861cc8ac3a6c3b861cc8ac3a6c3b861cc8a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/009",
+      "title": "spaces and an emoji with a joiner sequence",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+1F468 U+200D U+1F469 U+200D U+1F467 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+            "repeat": 1
+          }
+        ],
+        "text": "correct horse 👨‍👩‍👧 battery"
+      },
+      "expect": {
+        "mp": "636f727265637420686f72736520f09f91a8e2808df09f91a9e2808df09f91a72062617474657279"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/010",
+      "title": "private use and soft hyphen are assigned and allowed",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+E000 U+00AD U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "­abcdefghijkl"
+      },
+      "expect": {
+        "mp": "ee8080c2ad6162636465666768696a6b6c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/011",
+      "title": "twelve ligatures count as twelve",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+FB01",
+            "repeat": 12
+          }
+        ],
+        "text": "ﬁﬁﬁﬁﬁﬁﬁﬁﬁﬁﬁﬁ"
+      },
+      "expect": {
+        "mp": "666966696669666966696669666966696669666966696669"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/012",
+      "title": "512 e acute: 1 024 scalars after NFKD",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+00E9",
+            "repeat": 512
+          }
+        ]
+      },
+      "expect": {
+        "mp": "65cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc8165cc81"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/013",
+      "title": "1 024 scalars",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061",
+            "repeat": 1024
+          }
+        ]
+      },
+      "expect": {
+        "mp": "61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/014",
+      "title": "1 024 four-byte scalars: exactly 4 096 bytes",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+1F600",
+            "repeat": 1024
+          }
+        ]
+      },
+      "expect": {
+        "mp": "f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/valid/015",
+      "title": "1 024 three-byte scalars",
+      "op": "text.mp",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "without_secret_key",
+        "segments": [
+          {
+            "escapes": "U+20AC",
+            "repeat": 1024
+          }
+        ]
+      },
+      "expect": {
+        "mp": "e282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ace282ac"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/mp/invalid/001",
+      "title": "eleven characters with a secret key",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijk"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/002",
+      "title": "fourteen characters without a secret key",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "without_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C U+006D U+006E",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijklmn"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/003",
+      "title": "twelve characters without a secret key",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "without_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijkl"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/004",
+      "title": "eleven a with ring in NFD: 22 scalars but 11 NFC characters",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+030A",
+            "repeat": 11
+          }
+        ],
+        "text": "ååååååååååå"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/005",
+      "title": "eleven a with ring in NFC",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+00E5",
+            "repeat": 11
+          }
+        ],
+        "text": "ååååååååååå"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/006",
+      "title": "eleven ligatures: 22 scalars after NFKD but 11 characters",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+FB01",
+            "repeat": 11
+          }
+        ],
+        "text": "ﬁﬁﬁﬁﬁﬁﬁﬁﬁﬁﬁ"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/007",
+      "title": "empty",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "",
+            "repeat": 1
+          }
+        ],
+        "text": ""
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/mp/invalid/008",
+      "title": "1 025 scalars",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061",
+            "repeat": 1025
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "unicode/mp/invalid/009",
+      "title": "1 025 four-byte scalars: more than 4 096 bytes",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+1F600",
+            "repeat": 1025
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "unicode/mp/invalid/010",
+      "title": "600 ligatures: 600 characters but 1 200 scalars after NFKD",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+FB01",
+            "repeat": 600
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "unicode/mp/invalid/011",
+      "title": "513 e acute: 1 026 scalars after NFKD",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+00E9",
+            "repeat": 513
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "unicode/mp/invalid/012",
+      "title": "1 000 e with acute in NFD",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0065 U+0301",
+            "repeat": 1000
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "unicode/mp/invalid/013",
+      "title": "U+0000",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0000 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/014",
+      "title": "tab U+0009",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0009 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/015",
+      "title": "line feed U+000A",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+000A U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/016",
+      "title": "U+001F",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+001F U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/017",
+      "title": "delete U+007F",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+007F U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/018",
+      "title": "next line U+0085 (Cc)",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0085 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/019",
+      "title": "U+009F (Cc)",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+009F U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/020",
+      "title": "unassigned U+0378",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0378 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef͸ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/021",
+      "title": "noncharacter U+FFFF",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+FFFF U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef￿ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/022",
+      "title": "noncharacter U+FFFE",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+FFFE U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef￾ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/023",
+      "title": "noncharacter U+FDD0",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+FDD0 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef﷐ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/024",
+      "title": "noncharacter U+1FFFF",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+1FFFF U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef🿿ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/025",
+      "title": "unassigned U+E0080",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+E0080 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef󠂀ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/026",
+      "title": "last code point U+10FFFF",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+10FFFF U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef􏿿ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/027",
+      "title": "first assigned in Unicode 17: Saudi riyal sign U+20C1",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+20C1 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef⃁ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/028",
+      "title": "first assigned in Unicode 17: CJK extension J U+323B0",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+323B0 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef𲎰ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/029",
+      "title": "first assigned in Unicode 17: Sidetic U+10940",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+10940 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdef𐥀ghijkl"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/030",
+      "title": "a tab in a text that is also too long: forbidden character wins",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0009 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061 U+0061",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/031",
+      "title": "a tab in a text that is also too short: forbidden character wins",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0009 U+0062",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/mp/invalid/032",
+      "title": "encoded surrogate U+D800",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6ceda080"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/033",
+      "title": "overlong slash",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6cc0af"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/034",
+      "title": "byte 0xff",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6cff"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/035",
+      "title": "truncated three-byte sequence",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6ce282"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/036",
+      "title": "above U+10FFFF",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6cf4908080"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/037",
+      "title": "continuation byte alone",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "6162636465666768696a6b6c80"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/mp/invalid/038",
+      "title": "invalid UTF-8 and a tab: invalid UTF-8 wins",
+      "op": "text.mp",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "utf8": "61626309646566ff"
+      },
+      "expect_error": "input_not_utf8"
+    },
+    {
+      "id": "unicode/opaque_input/001",
+      "title": "with a secret key: mp, 0x00, SK",
+      "op": "text.opaque_input",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "secret_key": "101112131415161718191a1b1c1d1e1f",
+        "segments": [
+          {
+            "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+            "repeat": 1
+          }
+        ],
+        "text": "correct horse battery"
+      },
+      "expect": {
+        "opaque_input": "636f727265637420686f727365206261747465727900101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/opaque_input/002",
+      "title": "without a secret key: mp alone",
+      "op": "text.opaque_input",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "without_secret_key",
+        "secret_key": null,
+        "segments": [
+          {
+            "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+            "repeat": 1
+          }
+        ],
+        "text": "correct horse battery"
+      },
+      "expect": {
+        "opaque_input": "636f727265637420686f7273652062617474657279"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/opaque_input/003",
+      "title": "the NFKD form is what goes in",
+      "op": "text.opaque_input",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "secret_key": "101112131415161718191a1b1c1d1e1f",
+        "segments": [
+          {
+            "escapes": "U+00E5 U+FB01 U+FF11 U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069",
+            "repeat": 1
+          }
+        ],
+        "text": "åﬁ１abcdefghi"
+      },
+      "expect": {
+        "opaque_input": "61cc8a66693161626364656667686900101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/opaque_input/004",
+      "title": "a secret key that contains a zero byte",
+      "op": "text.opaque_input",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "policy": "with_secret_key",
+        "secret_key": "101112001415161718191a1b1c1d1e1f",
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C U+006D U+006E U+006F U+0070 U+0071 U+0072 U+0073 U+0074",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijklmnopqrst"
+      },
+      "expect": {
+        "opaque_input": "6162636465666768696a6b6c6d6e6f707172737400101112001415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/export_password/valid/001",
+      "title": "twelve characters, no master password given",
+      "op": "text.export_password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": null,
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijkl"
+      },
+      "expect": {
+        "export_password": "6162636465666768696a6b6c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/export_password/valid/002",
+      "title": "twelve characters, different from the master password",
+      "op": "text.export_password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": {
+          "segments": [
+            {
+              "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+              "repeat": 1
+            }
+          ],
+          "text": "correct horse battery"
+        },
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijkl"
+      },
+      "expect": {
+        "export_password": "6162636465666768696a6b6c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/export_password/valid/003",
+      "title": "NFKD like the master password",
+      "op": "text.export_password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": null,
+        "segments": [
+          {
+            "escapes": "U+00E5 U+FB01 U+FF11 U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069",
+            "repeat": 1
+          }
+        ],
+        "text": "åﬁ１abcdefghi"
+      },
+      "expect": {
+        "export_password": "61cc8a666931616263646566676869"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/export_password/valid/004",
+      "title": "one character different from the master password",
+      "op": "text.export_password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": {
+          "segments": [
+            {
+              "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+007A",
+              "repeat": 1
+            }
+          ],
+          "text": "correct horse batterz"
+        },
+        "segments": [
+          {
+            "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+            "repeat": 1
+          }
+        ],
+        "text": "correct horse battery"
+      },
+      "expect": {
+        "export_password": "636f727265637420686f7273652062617474657279"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "unicode/export_password/invalid/001",
+      "title": "eleven characters",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": null,
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0067 U+0068 U+0069 U+006A U+006B",
+            "repeat": 1
+          }
+        ],
+        "text": "abcdefghijk"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "unicode/export_password/invalid/002",
+      "title": "equal to the master password",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": {
+          "segments": [
+            {
+              "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+              "repeat": 1
+            }
+          ],
+          "text": "correct horse battery"
+        },
+        "segments": [
+          {
+            "escapes": "U+0063 U+006F U+0072 U+0072 U+0065 U+0063 U+0074 U+0020 U+0068 U+006F U+0072 U+0073 U+0065 U+0020 U+0062 U+0061 U+0074 U+0074 U+0065 U+0072 U+0079",
+            "repeat": 1
+          }
+        ],
+        "text": "correct horse battery"
+      },
+      "expect_error": "input_same_as_master_password"
+    },
+    {
+      "id": "unicode/export_password/invalid/003",
+      "title": "equal to the master password after normalization (NFC and NFD)",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": {
+          "segments": [
+            {
+              "escapes": "U+0061 U+030A",
+              "repeat": 12
+            }
+          ],
+          "text": "åååååååååååå"
+        },
+        "segments": [
+          {
+            "escapes": "U+00E5",
+            "repeat": 12
+          }
+        ],
+        "text": "åååååååååååå"
+      },
+      "expect_error": "input_same_as_master_password"
+    },
+    {
+      "id": "unicode/export_password/invalid/004",
+      "title": "equal after NFKD (fullwidth digits and plain digits)",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": {
+          "segments": [
+            {
+              "escapes": "U+0031",
+              "repeat": 12
+            }
+          ],
+          "text": "111111111111"
+        },
+        "segments": [
+          {
+            "escapes": "U+FF11",
+            "repeat": 12
+          }
+        ],
+        "text": "１１１１１１１１１１１１"
+      },
+      "expect_error": "input_same_as_master_password"
+    },
+    {
+      "id": "unicode/export_password/invalid/005",
+      "title": "a tab",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": null,
+        "segments": [
+          {
+            "escapes": "U+0061 U+0062 U+0063 U+0064 U+0065 U+0066 U+0009 U+0067 U+0068 U+0069 U+006A U+006B U+006C",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "unicode/export_password/invalid/006",
+      "title": "1 025 scalars",
+      "op": "text.export_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "master_password": null,
+        "segments": [
+          {
+            "escapes": "U+0061",
+            "repeat": 1025
+          }
+        ]
+      },
+      "expect_error": "input_too_long"
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "0c1b58ccb1497ad0124ec8d415128edc4b84839c09165d9d2a1433ae98588a37",
-    "OPS.md": "ff52e5943a88f644aeaa91de5c6ae5e0e4854d06bcf87f9d6116b34c54bdfa47",
-    "VERSION": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+    "ERRORS.md": "7aa780a8fea6144e266288aa72affada5c73746817fc0258b44bdae9b6b5e7af",
+    "OPS.md": "39cccd9a0ccc30be80742ce1837585eb66f72096f980f83e96bb8f927f2a6993",
+    "VERSION": "7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d",
     "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
@@ -15,10 +15,12 @@
     "external/wycheproof/hmac_sha256_test.json": "2d201cfa61d1bf95e6f5d07d96634b4a348b31e8eaa277ad7c8d09677b7a743f",
     "external/wycheproof/xchacha20_poly1305_test.json": "a79de072571b90eb40c3a63ce0c7f75dcb4b62323c8870228e1f61dcc61d63a9",
     "external/xchacha-draft-03.json": "e8ec9a4feafa2aaf227f18b72fccc78a3346a83b84c02f51054dd35755768933",
+    "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
     "internal/kdf.json": "6d7e742772883f86c333e3b40e887b02185254c755a20742a49d5a6f0368767b",
     "internal/tlv.json": "c3dc2e66943111dece887836a1a852d0c95892f85dd6794863626a679a8316f1",
+    "internal/unicode.json": "94e5b7a569bc8ce153d186a3b300fe10445fcaa5ec8935ff6c4d628b53a5b398",
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 2
+  "version": 4
 }

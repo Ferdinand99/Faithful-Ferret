@@ -15,6 +15,7 @@
 
 pub mod prim;
 mod replay_rng;
+pub mod text;
 pub mod vector;
 
 pub use replay_rng::{ReplayError, ReplayRng, TestRng};

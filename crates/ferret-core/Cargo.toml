@@ -25,6 +25,10 @@ ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["zer
 hkdf = "=0.13.0"
 hmac = { version = "=0.13.0", features = ["zeroize"] }
 sha2 = { version = "=0.11.1", default-features = false, features = ["zeroize"] }
+# Text handling (Fase 1 section 3.1): NFKD with the Unicode 16.0 tables and the
+# "assigned" check. 0.1.24 is Unicode 16.0 (0.1.25 is 17.0); the tests lock it.
+unicode-normalization = { version = "=0.1.24", default-features = false }
+unicode-general-category = "=1.1.0"
 # Only behind `test-support`:
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "=1.0.154", optional = true }

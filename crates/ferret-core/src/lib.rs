@@ -32,6 +32,7 @@
     )
 )]
 
+pub mod codes;
 pub mod error;
 pub mod ids;
 pub mod prim;
@@ -39,8 +40,10 @@ pub mod rng;
 pub mod secret;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod text;
 pub mod tlv;
 
+pub use codes::{decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key};
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
@@ -51,4 +54,5 @@ pub use secret::{
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};
+pub use text::{ExportPassword, MasterPassword, MpPolicy, OpaqueInput};
 pub use tlv::Tlv;

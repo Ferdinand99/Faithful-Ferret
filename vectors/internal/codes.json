@@ -1,0 +1,1515 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "codes",
+  "suite": 1,
+  "spec": "Fase 1 § 6.1, § 6.2",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "codes/rk_encode/001",
+      "title": "all zero bytes",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/002",
+      "title": "all 0xff bytes",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "expect": {
+        "code": "FFR1-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZG-CWD7"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/003",
+      "title": "bytes 0, 1, 2, ...",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/004",
+      "title": "first symbol is 1",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "0800000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "code": "FFR1-1000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-MXE6"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/005",
+      "title": "derived from a label",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "2cc3fa979844330168a777dabbcb8d172410dd4fef99d09ca2809a06b174108d"
+      },
+      "expect": {
+        "code": "FFR1-5K1Z-N5WR-8GSG-2T57-EZDB-QJWD-2WJ1-1QAF-XYCX-1752-G2D0-DCBM-226G-ME1X"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/006",
+      "title": "derived from a label",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "c5269a4e55ff715ecd70b4edd52fc2137515628e6ac44acf10410e330a6d88f3"
+      },
+      "expect": {
+        "code": "FFR1-RMK9-MKJN-ZXRN-XKBG-PKPX-ABY2-2DTH-ARME-DB24-NKRG-8473-62KD-H3SG-HBHB"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/007",
+      "title": "derived from a label",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "a1cafcf6cd6b853615a66d8f049f374d9bf171411c026a11caf3016fe7ac44d9"
+      },
+      "expect": {
+        "code": "FFR1-M75F-SXPD-DE2K-C5D6-DP7G-97SQ-9PDZ-2WA1-3G16-M4EA-YC0P-ZSXC-8KCG-0G84"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_encode/008",
+      "title": "derived from a label",
+      "op": "code.rk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "3f6e6b9c0ce2c9d4f034e367417785ed9a1bb3239a8b91f5c1a4f6d698f7fd48"
+      },
+      "expect": {
+        "code": "FFR1-7XQ6-Q70C-WB4X-9W1M-WDKM-2XW5-XPD1-QCS3-KA5S-3XE1-MKVD-D67Q-ZN40-RD8D"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/001",
+      "title": "canonical code, all zero",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect": {
+        "key": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/002",
+      "title": "canonical code, all 0xff",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZG-CWD7"
+      },
+      "expect": {
+        "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/003",
+      "title": "canonical code, bytes 0, 1, 2",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/004",
+      "title": "lower case",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "ffr1-000g-40r4-0m30-e209-185g-r38e-1w81-24gk-2gah-c5rr-34d1-p70x-3rfg-gvx2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/005",
+      "title": "spaces instead of dashes",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1 000G 40R4 0M30 E209 185G R38E 1W81 24GK 2GAH C5RR 34D1 P70X 3RFG GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/006",
+      "title": "no separators at all",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1000G40R40M30E209185GR38E1W8124GK2GAHC5RR34D1P70X3RFGGVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/007",
+      "title": "extra spaces and dashes everywhere",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": " FFR1 - 000G - 40R4 - 0M30 - E209 - 185G - R38E - 1W81 - 24GK - 2GAH - C5RR - 34D1 - P70X - 3RFG - GVX2 "
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/008",
+      "title": "tabs between the groups",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1\t000G\t40R4\t0M30\tE209\t185G\tR38E\t1W81\t24GK\t2GAH\tC5RR\t34D1\tP70X\t3RFG\tGVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/009",
+      "title": "a line break inside the code, as in a wrapped paste",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-\r\nE209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2\n"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/010",
+      "title": "no-break spaces between the groups",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1 000G 40R4 0M30 E209 185G R38E 1W81 24GK 2GAH C5RR 34D1 P70X 3RFG GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/011",
+      "title": "en dashes instead of hyphens",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1–000G–40R4–0M30–E209–185G–R38E–1W81–24GK–2GAH–C5RR–34D1–P70X–3RFG–GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/012",
+      "title": "em dashes instead of hyphens",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1—000G—40R4—0M30—E209—185G—R38E—1W81—24GK—2GAH—C5RR—34D1—P70X—3RFG—GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/013",
+      "title": "letter O read as zero",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-OOOO-8NFH"
+      },
+      "expect": {
+        "key": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/014",
+      "title": "lower case o read as zero",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-oooo-8NFH"
+      },
+      "expect": {
+        "key": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/015",
+      "title": "letter I read as one",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-I000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-MXE6"
+      },
+      "expect": {
+        "key": "0800000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/016",
+      "title": "lower case l read as one",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-l000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-MXE6"
+      },
+      "expect": {
+        "key": "0800000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/017",
+      "title": "prefix with a lower case letter and L for the one",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "ffrl-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/018",
+      "title": "derived from a label (1)",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-5K1Z-N5WR-8GSG-2T57-EZDB-QJWD-2WJ1-1QAF-XYCX-1752-G2D0-DCBM-226G-ME1X"
+      },
+      "expect": {
+        "key": "2cc3fa979844330168a777dabbcb8d172410dd4fef99d09ca2809a06b174108d"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/019",
+      "title": "derived from a label (2)",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-RMK9-MKJN-ZXRN-XKBG-PKPX-ABY2-2DTH-ARME-DB24-NKRG-8473-62KD-H3SG-HBHB"
+      },
+      "expect": {
+        "key": "c5269a4e55ff715ecd70b4edd52fc2137515628e6ac44acf10410e330a6d88f3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/020",
+      "title": "derived from a label (3)",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-M75F-SXPD-DE2K-C5D6-DP7G-97SQ-9PDZ-2WA1-3G16-M4EA-YC0P-ZSXC-8KCG-0G84"
+      },
+      "expect": {
+        "key": "a1cafcf6cd6b853615a66d8f049f374d9bf171411c026a11caf3016fe7ac44d9"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/021",
+      "title": "derived from a label (4)",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-7XQ6-Q70C-WB4X-9W1M-WDKM-2XW5-XPD1-QCS3-KA5S-3XE1-MKVD-D67Q-ZN40-RD8D"
+      },
+      "expect": {
+        "key": "3f6e6b9c0ce2c9d4f034e367417785ed9a1bb3239a8b91f5c1a4f6d698f7fd48"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/invalid/001",
+      "title": "last check letter changed",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX0"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/rk_decode/invalid/002",
+      "title": "first check letter changed",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-0VX2"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/rk_decode/invalid/003",
+      "title": "first data letter changed",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-2000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/rk_decode/invalid/004",
+      "title": "a data letter in the middle changed",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-00Z0-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/rk_decode/invalid/005",
+      "title": "spare bit set in the last data letter",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0001-8NFH"
+      },
+      "expect_error": "non_canonical"
+    },
+    {
+      "id": "codes/rk_decode/invalid/006",
+      "title": "all 4 spare bits of the last data letter set on an all-ones key",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-CWD7"
+      },
+      "expect_error": "non_canonical"
+    },
+    {
+      "id": "codes/rk_decode/invalid/007",
+      "title": "spare bit and a wrong check: the check is reported",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0001-8NF2"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/rk_decode/invalid/008",
+      "title": "empty",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": ""
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/rk_decode/invalid/009",
+      "title": "only the prefix",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/rk_decode/invalid/010",
+      "title": "last group missing",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/rk_decode/invalid/011",
+      "title": "one letter missing",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/rk_decode/invalid/012",
+      "title": "one letter too many",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX20"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/rk_decode/invalid/013",
+      "title": "more than 64 letters",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX20000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/rk_decode/invalid/014",
+      "title": "the prefix of the other kind of code",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-ADBV4-05MTP-024ZC-0G8BS-8NP3X-GS57W"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/015",
+      "title": "no prefix",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/016",
+      "title": "prefix version 2",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR2-000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/017",
+      "title": "letter U is not in the alphabet",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000U-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/018",
+      "title": "lower case u is not in the alphabet",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000u-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/019",
+      "title": "a symbol character is not in the alphabet",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000!-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/rk_decode/invalid/020",
+      "title": "a tab in place of a letter is dropped as a separator: one letter short",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000\t-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/rk_decode/invalid/021",
+      "title": "underscores are not separators",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1_000G_40R4_0M30_E209_185G_R38E_1W81_24GK_2GAH_C5RR_34D1_P70X_3RFG_GVX2"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/rk_decode/invalid/022",
+      "title": "a letter outside the alphabet in the check",
+      "op": "code.rk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFU"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_encode/001",
+      "title": "all zero bytes",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "00000000000000000000000000000000"
+      },
+      "expect": {
+        "code": "FFS1-00000-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/002",
+      "title": "all 0xff bytes",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "ffffffffffffffffffffffffffffffff"
+      },
+      "expect": {
+        "code": "FFS1-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-W61VN"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/003",
+      "title": "bytes 0, 1, 2, ...",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPTJ"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/004",
+      "title": "first symbol is 1",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "08000000000000000000000000000000"
+      },
+      "expect": {
+        "code": "FFS1-10000-00000-00000-00000-00000-0F272"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/005",
+      "title": "derived from a label",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "6633f664bb2b725b33d05b19893fe242"
+      },
+      "expect": {
+        "code": "FFS1-CRSZC-S5V5D-S5PCY-GBCCR-JFZ28-89JTT"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/006",
+      "title": "derived from a label",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "6c3616bfcdca37af14b6493238702da0"
+      },
+      "expect": {
+        "code": "FFS1-DGV1D-FYDS8-VTY55-P94S3-GW1DM-0TDGS"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/007",
+      "title": "derived from a label",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "b92c78a939e9fa22b13f6a9e1904e673"
+      },
+      "expect": {
+        "code": "FFS1-Q4P7H-A9SX7-X25C9-ZDAF1-J176E-C1Q4E"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_encode/008",
+      "title": "derived from a label",
+      "op": "code.sk.encode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "key": "b2f9af8d941653b50b6c0184dcdc4891"
+      },
+      "expect": {
+        "code": "FFS1-PBWTZ-3CM2S-9VA2V-C062D-SQ28J-4RY34"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/001",
+      "title": "canonical code, all zero",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-00000-00000-00000-00000-00000-0N99X"
+      },
+      "expect": {
+        "key": "00000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/002",
+      "title": "canonical code, all 0xff",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-W61VN"
+      },
+      "expect": {
+        "key": "ffffffffffffffffffffffffffffffff"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/003",
+      "title": "canonical code, bytes 0, 1, 2",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/004",
+      "title": "lower case",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "ffs1-000g4-0r40m-30e20-9185g-r38e1-wpptj"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/005",
+      "title": "spaces instead of dashes",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1 000G4 0R40M 30E20 9185G R38E1 WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/006",
+      "title": "no separators at all",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1000G40R40M30E209185GR38E1WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/007",
+      "title": "extra spaces and dashes everywhere",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": " FFS1 - 000G4 - 0R40M - 30E20 - 9185G - R38E1 - WPPTJ "
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/008",
+      "title": "tabs between the groups",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1\t000G4\t0R40M\t30E20\t9185G\tR38E1\tWPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/009",
+      "title": "a line break inside the code, as in a wrapped paste",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E\r\n20-9185G-R38E1-WPPTJ\n"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/010",
+      "title": "no-break spaces between the groups",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1 000G4 0R40M 30E20 9185G R38E1 WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/011",
+      "title": "en dashes instead of hyphens",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1–000G4–0R40M–30E20–9185G–R38E1–WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/012",
+      "title": "em dashes instead of hyphens",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1—000G4—0R40M—30E20—9185G—R38E1—WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/013",
+      "title": "letter O read as zero",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-OOOOO-OOOOO-OOOOO-OOOOO-OOOOO-ON99X"
+      },
+      "expect": {
+        "key": "00000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/014",
+      "title": "lower case o read as zero",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-ooooo-ooooo-ooooo-ooooo-ooooo-oN99X"
+      },
+      "expect": {
+        "key": "00000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/015",
+      "title": "letter I read as one",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-I0000-00000-00000-00000-00000-0F272"
+      },
+      "expect": {
+        "key": "08000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/016",
+      "title": "lower case l read as one",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-l0000-00000-00000-00000-00000-0F272"
+      },
+      "expect": {
+        "key": "08000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/017",
+      "title": "prefix with a lower case letter and L for the one",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "ffsl-000G4-0R40M-30E20-9185G-R38E1-WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/018",
+      "title": "derived from a label (1)",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-CRSZC-S5V5D-S5PCY-GBCCR-JFZ28-89JTT"
+      },
+      "expect": {
+        "key": "6633f664bb2b725b33d05b19893fe242"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/019",
+      "title": "derived from a label (2)",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-DGV1D-FYDS8-VTY55-P94S3-GW1DM-0TDGS"
+      },
+      "expect": {
+        "key": "6c3616bfcdca37af14b6493238702da0"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/020",
+      "title": "derived from a label (3)",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-Q4P7H-A9SX7-X25C9-ZDAF1-J176E-C1Q4E"
+      },
+      "expect": {
+        "key": "b92c78a939e9fa22b13f6a9e1904e673"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/021",
+      "title": "derived from a label (4)",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-PBWTZ-3CM2S-9VA2V-C062D-SQ28J-4RY34"
+      },
+      "expect": {
+        "key": "b2f9af8d941653b50b6c0184dcdc4891"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/invalid/001",
+      "title": "last check letter changed",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPT0"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/sk_decode/invalid/002",
+      "title": "first check letter changed",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-W0PTJ"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/sk_decode/invalid/003",
+      "title": "first data letter changed",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-20000-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/sk_decode/invalid/004",
+      "title": "a data letter in the middle changed",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-00000-00000-000Z0-00000-00000-0N99X"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/sk_decode/invalid/005",
+      "title": "spare bit set in the last data letter",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-00000-00000-00000-00000-00000-1N99X"
+      },
+      "expect_error": "non_canonical"
+    },
+    {
+      "id": "codes/sk_decode/invalid/006",
+      "title": "all 2 spare bits of the last data letter set on an all-ones key",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-Z61VN"
+      },
+      "expect_error": "non_canonical"
+    },
+    {
+      "id": "codes/sk_decode/invalid/007",
+      "title": "spare bit and a wrong check: the check is reported",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-00000-00000-00000-00000-00000-1N992"
+      },
+      "expect_error": "checksum"
+    },
+    {
+      "id": "codes/sk_decode/invalid/008",
+      "title": "empty",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": ""
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/sk_decode/invalid/009",
+      "title": "only the prefix",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/sk_decode/invalid/010",
+      "title": "last group missing",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/sk_decode/invalid/011",
+      "title": "one letter missing",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPT"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/sk_decode/invalid/012",
+      "title": "one letter too many",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPTJ0"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/sk_decode/invalid/013",
+      "title": "more than 64 letters",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E20-9185G-R38E1-WPPTJ0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/sk_decode/invalid/014",
+      "title": "the prefix of the other kind of code",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-ADBV-405M-TP02-4ZC0-G8BS-8NP3-XJTK-8ABJ-4RRN-TR8P-X143-PV9T-XTCG-5A72"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/015",
+      "title": "no prefix",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "000G4-0R40M-30E20-9185G-R38E1-WPPTJ"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/016",
+      "title": "prefix version 2",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS2-000G4-0R40M-30E20-9185G-R38E1-WPPTJ"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/017",
+      "title": "letter U is not in the alphabet",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000U0-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/018",
+      "title": "lower case u is not in the alphabet",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000u0-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/019",
+      "title": "a symbol character is not in the alphabet",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000!0-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": "malformed_code"
+    },
+    {
+      "id": "codes/sk_decode/invalid/020",
+      "title": "a tab in place of a letter is dropped as a separator: one letter short",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000\t0-00000-00000-00000-00000-0N99X"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "codes/sk_decode/invalid/021",
+      "title": "underscores are not separators",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1_000G4_0R40M_30E20_9185G_R38E1_WPPTJ"
+      },
+      "expect_error": "input_too_long"
+    },
+    {
+      "id": "codes/sk_decode/invalid/022",
+      "title": "a letter outside the alphabet in the check",
+      "op": "code.sk.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-00000-00000-00000-00000-00000-0N99U"
+      },
+      "expect_error": "malformed_code"
+    }
+  ]
+}
