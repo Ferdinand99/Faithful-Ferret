@@ -1,0 +1,9 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+  # getrandom selects its browser backend via cfg, not only via the feature.
+  "--cfg", "getrandom_backend=\"wasm_js\"",
+  # Let linear memory grow up to 1 GiB. The export format caps Argon2id at
+  # 512 MiB on import and writes 256 MiB; the 64 MiB login profile is far below.
+  # Without an explicit maximum, engines pick their own cap.
+  "-C", "link-arg=--max-memory=1073741824",
+]

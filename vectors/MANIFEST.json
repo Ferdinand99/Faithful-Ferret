@@ -1,0 +1,10 @@
+{
+  "files": {
+    "ERRORS.md": "0c1b58ccb1497ad0124ec8d415128edc4b84839c09165d9d2a1433ae98588a37",
+    "OPS.md": "9d295046bcdd269e8824e49ab0d3ab952594179c3ae6a33cc3a0e6854d24ca28",
+    "VERSION": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
+  },
+  "format": "ferret-vectors-manifest/1",
+  "version": 1
+}
