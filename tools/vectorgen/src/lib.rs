@@ -15,6 +15,7 @@ mod groups;
 mod item_groups;
 mod key_groups;
 mod text_groups;
+mod totp_groups;
 
 use ferret_core::testing::{hex_encode, vector::VectorFile};
 use serde_json::{Map, Value, json};
@@ -62,6 +63,7 @@ const GROUPS: &[Group] = &[
     ("internal/proofs.json", item_groups::integrity::proofs),
     ("internal/rekey.json", item_groups::integrity::rekey),
     ("internal/export.json", item_groups::export::export),
+    ("internal/totp.json", totp_groups::totp),
 ];
 
 /// Serializes a vector file the way every generated file is written:

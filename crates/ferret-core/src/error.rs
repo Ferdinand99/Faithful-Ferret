@@ -69,6 +69,9 @@ pub enum MalformedKind {
     /// The pinned record: a value out of range or a record that would grow
     /// without bound.
     PinnedRecord,
+    /// An `otpauth://` address or a TOTP setting: wrong scheme or type, an
+    /// unknown or repeated parameter, bad base32, a value out of range.
+    Otpauth,
 }
 
 /// Why a checkpoint did not verify.
@@ -190,6 +193,7 @@ impl Error {
         Error::Malformed(MalformedKind::Entries),
         Error::Malformed(MalformedKind::Code),
         Error::Malformed(MalformedKind::PinnedRecord),
+        Error::Malformed(MalformedKind::Otpauth),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -249,6 +253,7 @@ impl Error {
                 MalformedKind::Entries => "malformed_entries",
                 MalformedKind::Code => "malformed_code",
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
+                MalformedKind::Otpauth => "malformed_otpauth",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",
