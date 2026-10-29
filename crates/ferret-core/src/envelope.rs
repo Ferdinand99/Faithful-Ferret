@@ -369,7 +369,7 @@ pub(crate) fn seal_item_padded<R: SecureRng>(
 }
 
 /// An item must not use the reserved id of the manifest.
-fn check_item_id(item_id: &ItemId) -> Result<(), Error> {
+pub(crate) fn check_item_id(item_id: &ItemId) -> Result<(), Error> {
     if *item_id == ItemId::MANIFEST {
         return Err(malformed());
     }
@@ -568,7 +568,7 @@ pub fn decrypt_manifest(
 /// edited.
 ///
 /// Spec: Fase 1 § 4.7 (rekey wraps every item key again and re-seals).
-#[allow(dead_code, clippy::too_many_arguments)] // first used by Task 6 (rekey)
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reseal_item<R: SecureRng>(
     rng: &mut R,
     old: &UnlockedVault,

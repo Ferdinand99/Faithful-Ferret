@@ -6,8 +6,14 @@
 //!
 //! ```text
 //! { "v": 1, "vk_epoch": u64,
-//!   "methods": [ { "t": u8 method_type, "id": bytes(16), "g": u64 } ] }
+//!   "methods": [ { "t": u8 method_type, "id": bytes(16), "g": u64,
+//!                  "c": bytes? } ] }
 //! ```
+//!
+//! `c` is the credential id of a passkey (`t` = 3). It is what ties a
+//! passkey's `kek_generation` floor to the credential: the manifest is
+//! authenticated, so the floor never has to rely on a `method_id` to
+//! credential mapping that the server supplies.
 //!
 //! Like the item body, every object keeps the keys it does not know and
 //! writes them again after the known ones.
@@ -32,17 +38,33 @@ pub struct ManifestEntry {
     pub method_id: MethodId,
     /// The current `kek_generation` of the method.
     pub kek_generation: u64,
+    /// The credential id of a passkey method (`t` = 3), if the entry states
+    /// it.
+    pub credential_id: Option<Vec<u8>>,
     /// Keys this version does not know, in the order they were read.
     pub extra: Vec<(String, Value)>,
 }
 
 impl ManifestEntry {
-    /// An entry without unknown keys.
+    /// An entry without unknown keys and without a credential id.
     pub fn new(method_type: u8, method_id: MethodId, kek_generation: u64) -> Self {
         Self {
             method_type,
             method_id,
             kek_generation,
+            credential_id: None,
+            extra: Vec::new(),
+        }
+    }
+
+    /// The entry of a passkey method: `method_type` 3 with its credential
+    /// id.
+    pub fn passkey(method_id: MethodId, kek_generation: u64, credential_id: Vec<u8>) -> Self {
+        Self {
+            method_type: 3,
+            method_id,
+            kek_generation,
+            credential_id: Some(credential_id),
             extra: Vec::new(),
         }
     }
@@ -61,10 +83,15 @@ impl ManifestEntry {
             .map_err(|_| bad())?;
         let method_id = MethodId::from_bytes(id.as_slice().try_into().map_err(|_| bad())?);
         let kek_generation = e.take("g").and_then(|v| v.as_u64()).ok_or_else(bad)?;
+        let credential_id = match e.take("c") {
+            None => None,
+            Some(v) => Some(v.into_bytes().map_err(|_| bad())?),
+        };
         Ok(Self {
             method_type,
             method_id,
             kek_generation,
+            credential_id,
             extra: e.into_rest(),
         })
     }
@@ -78,6 +105,9 @@ impl ManifestEntry {
             ),
             ("g".to_owned(), Value::uint(self.kek_generation)),
         ];
+        if let Some(credential_id) = &self.credential_id {
+            m.push(("c".to_owned(), Value::Bytes(credential_id.clone())));
+        }
         m.extend(self.extra.iter().cloned());
         Value::Map(m)
     }

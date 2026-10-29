@@ -1063,6 +1063,7 @@ fn sample_manifest() -> Manifest {
                 method_type: 3,
                 method_id: MethodId::from_bytes([0x72; 16]),
                 kek_generation: u64::MAX,
+                credential_id: None,
                 extra: vec![("label".into(), txt("YubiKey"))],
             },
         ],

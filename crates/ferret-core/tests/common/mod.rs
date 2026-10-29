@@ -136,3 +136,43 @@ pub fn segments(input: &Value) -> Vec<u8> {
 pub fn unlocked(b: u8) -> ferret_core::UnlockedVault {
     ferret_core::UnlockedVault::from_vault_key(ctx(), vk(b)).unwrap()
 }
+
+/// 16 bytes from a hex JSON string.
+pub fn id16(v: &Value) -> [u8; 16] {
+    hexn(v)
+}
+
+/// The vault described by the common fields of a vector input
+/// (`account_id`, `vault_id`, `vk_epoch`, `vk`).
+pub fn vault_of(input: &Value) -> ferret_core::UnlockedVault {
+    let ctx = VaultContext {
+        account_id: AccountId::from_bytes(id16(&input["account_id"])),
+        vault_id: VaultId::from_bytes(id16(&input["vault_id"])),
+        vk_epoch: u64s(&input["vk_epoch"]),
+    };
+    ferret_core::UnlockedVault::from_vault_key(ctx, VaultKey::from_test_bytes(hexn(&input["vk"])))
+        .unwrap()
+}
+
+/// A vector file with only the cases whose `op` satisfies `keep`.
+pub fn load_ops(
+    file: &str,
+    keep: impl Fn(&str) -> bool,
+) -> ferret_core::testing::vector::VectorFile {
+    let mut f =
+        ferret_core::testing::vector::load(&vectors_dir().join("internal").join(file)).unwrap();
+    f.cases.retain(|c| keep(&c.op));
+    f
+}
+
+/// Panics with the failing case ids unless every case passed, and at least
+/// `min` cases ran.
+pub fn assert_all_passed(report: &ferret_core::testing::vector::RunReport, min: usize) {
+    assert!(
+        report.failures.is_empty(),
+        "{} failed: {:?}",
+        report.failures.len(),
+        report.failures
+    );
+    assert!(report.passed >= min, "only {} cases ran", report.passed);
+}

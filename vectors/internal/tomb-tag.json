@@ -1,0 +1,886 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "tomb-tag",
+  "suite": 1,
+  "spec": "Fase 1 § 8.4 and § 8.6",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "tomb-tag/tomb_seal/first",
+      "title": "a tombstone at revision 2",
+      "op": "tomb.seal",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "fdbd38f6b91f4699f32ce291234456b0757a08721942743b"
+      ],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "aad": "01000e6665727265742f76312f746f6d620200010103000101110010303132333435363738393a3b3c3d3e3f1200104142434445464748494a4b4c4d4e4f502200080000000000000002",
+        "k_del": "6aaffc4e03e7f5f7d6caf16ec5bede959d33fa133dd905a15917003f1d4895c2"
+      },
+      "expect": {
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_verify/first",
+      "title": "verifies: a tombstone at revision 2",
+      "op": "tomb.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_seal/other_vault",
+      "title": "a tombstone in a later epoch, large revision",
+      "op": "tomb.seal",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "e950c2f1b93572d9f3e552e8e5eb3c06a764ce911d344eb2"
+      ],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "item_id": "42434445464748494a4b4c4d4e4f5051",
+        "rev": "72623859790382856",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "aad": "01000e6665727265742f76312f746f6d6202000101030001011100103132333435363738393a3b3c3d3e3f4012001042434445464748494a4b4c4d4e4f50512200080102030405060708",
+        "k_del": "1f5188efdcdc2a00867b5bb796ed2273bfb63801506a49c55819e043fc03f897"
+      },
+      "expect": {
+        "tomb": "e950c2f1b93572d9f3e552e8e5eb3c06a764ce911d344eb25663adb50f036a4eae91064c9713e1d7"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_verify/other_vault",
+      "title": "verifies: a tombstone in a later epoch, large revision",
+      "op": "tomb.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "item_id": "42434445464748494a4b4c4d4e4f5051",
+        "rev": "72623859790382856",
+        "tomb": "e950c2f1b93572d9f3e552e8e5eb3c06a764ce911d344eb25663adb50f036a4eae91064c9713e1d7",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_seal/same_item_next_rev",
+      "title": "the same item at the next revision",
+      "op": "tomb.seal",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "7ab339d67c24659a18c2bc272d22a577d230b74293070097"
+      ],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "aad": "01000e6665727265742f76312f746f6d620200010103000101110010303132333435363738393a3b3c3d3e3f1200104142434445464748494a4b4c4d4e4f502200080000000000000003",
+        "k_del": "6aaffc4e03e7f5f7d6caf16ec5bede959d33fa133dd905a15917003f1d4895c2"
+      },
+      "expect": {
+        "tomb": "7ab339d67c24659a18c2bc272d22a577d230b74293070097e7c6852190babde3cc857d246787f224"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_verify/same_item_next_rev",
+      "title": "verifies: the same item at the next revision",
+      "op": "tomb.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tomb": "7ab339d67c24659a18c2bc272d22a577d230b74293070097e7c6852190babde3cc857d246787f224",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/item_id",
+      "title": "another item_id",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4445464748494a4b4c4d4e4f50515253",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/rev",
+      "title": "another rev",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/vault_id",
+      "title": "another vault_id, same keys otherwise",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "32333435363738393a3b3c3d3e3f4041",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/epoch",
+      "title": "another vk_epoch",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "2"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/vault_key",
+      "title": "another vault key",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "62636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f8081",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/account_id",
+      "title": "another account (another K_del)",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "12131415161718191a1b1c1d1e1f2021",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/nonce_bit",
+      "title": "a flipped bit in the nonce",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fcbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a6",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/tag_bit",
+      "title": "a flipped bit in the tag",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a7",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/short",
+      "title": "39 bytes",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/long",
+      "title": "41 bytes",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "fdbd38f6b91f4699f32ce291234456b0757a08721942743b357fa2e78b234a73c021545e2114f1a600",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/empty",
+      "title": "no bytes",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/under_k_head",
+      "title": "sealed under K_head",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eafa2d37d02efba6ddff4941edaca4840c5",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/under_k_meta",
+      "title": "sealed under K_meta",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaf9dafdb2cdfd2f8e6843b3fe1d18ec39f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/under_vault_key",
+      "title": "sealed under VK",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaff072caf126c3da14c2c276facb0efba2",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/under_item_key",
+      "title": "sealed under an item key",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eafb3b3b6247e220a0472ee70236a388a3a",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/aad_version",
+      "title": "version 2 in the AAD",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaf8c1dee981d4baba9804ece755378f92a",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/aad_suite",
+      "title": "suite 2 in the AAD",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eafd568ac01cfcc2a42bf0fd24f22ea98e4",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/aad_label",
+      "title": "the item label instead of the tomb label",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaf01ad291e69bed93b5d019453b5a5b98d",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/aad_no_version",
+      "title": "no version field in the AAD",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "2",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaf4c702497886177a7fb1babd2a710e2d5",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/tomb_invalid/manifest_id",
+      "title": "the reserved manifest item_id cannot be deleted",
+      "op": "tomb.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "item_id": "00000000000000000000000000000000",
+        "rev": "1",
+        "tomb": "80ea1a334349d1e0e0df01c8d25a7c39a98a3ef55e286eaf399cc78caf1e43272da4f8d20e513a87",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "expect_error": "tombstone_invalid"
+    },
+    {
+      "id": "tomb-tag/item_tag/item_a",
+      "title": "an item",
+      "op": "item.tag",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6974656d2d7461671200104142434445464748494a4b4c4d4e4f502200080000000000000003350020599a73ce1670acba4f3f8cea0e93f7f0865a0e3bcc3f1b3e026a8607c5ec3999"
+      },
+      "expect": {
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag_verify/item_a",
+      "title": "verifies: an item",
+      "op": "item.tag.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag/item_b",
+      "title": "an item in a later epoch",
+      "op": "item.tag",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "envelope": "0101013239c2da1e85bcf6a9349da6a7cb79c860a3bd6b0b8385a59eb4cbbc94aa55764aa73c20d20e0120e0b5068e0b640f95fcbe0883a906dec9fdd0a6fb76a8292292f20b48e7aa0c044b46ee90dd0d35ad750f0c8b158a3be6e77c09c36d11f141096e81c563042c6413501a481c8e34bb94a22a20eeab6fa25e9155096da12c80b6b60df70cf0b3c2bf4330f8280f67ce3f758c7b3e8c9e5a82bf101739cb47b086b830bd9c0cc8e160eb0a03ff7dc99a5cfb5b072ec3f84a867a7f0e930662c3406d1c00642808e6e143f6025c2639108a80d6b0d7b58df8b7571d26900fb2ad885a71e75bd91516741f3b3bee6c83846e11a2e4d7570329c98acea0239a4cbde53fe260d33bc8593578d3cfb0f269df204a06fc3b154023d5133552aa7ccc76788aeeb9d71a0d36eef63529440637070f6832d8367a0fb7ab2c5edd29b7f62ea9b5f7f5ff6c58a04465da133d9cae1ca3f8b173cf1cc3002a8b326258467bc7d07f20c994dad68576a4fee84a485df5",
+        "item_id": "42434445464748494a4b4c4d4e4f5051",
+        "rev": "9",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6974656d2d74616712001042434445464748494a4b4c4d4e4f5051220008000000000000000935002080584423eabd239b01d6d71460032d4c42bf8d5986b36f41a78bcdc90605b47d"
+      },
+      "expect": {
+        "tag": "62f31f0015190a349074cd82d5c583517e07fc8b2a2624e604911a6693f9b40a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag_verify/item_b",
+      "title": "verifies: an item in a later epoch",
+      "op": "item.tag.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "envelope": "0101013239c2da1e85bcf6a9349da6a7cb79c860a3bd6b0b8385a59eb4cbbc94aa55764aa73c20d20e0120e0b5068e0b640f95fcbe0883a906dec9fdd0a6fb76a8292292f20b48e7aa0c044b46ee90dd0d35ad750f0c8b158a3be6e77c09c36d11f141096e81c563042c6413501a481c8e34bb94a22a20eeab6fa25e9155096da12c80b6b60df70cf0b3c2bf4330f8280f67ce3f758c7b3e8c9e5a82bf101739cb47b086b830bd9c0cc8e160eb0a03ff7dc99a5cfb5b072ec3f84a867a7f0e930662c3406d1c00642808e6e143f6025c2639108a80d6b0d7b58df8b7571d26900fb2ad885a71e75bd91516741f3b3bee6c83846e11a2e4d7570329c98acea0239a4cbde53fe260d33bc8593578d3cfb0f269df204a06fc3b154023d5133552aa7ccc76788aeeb9d71a0d36eef63529440637070f6832d8367a0fb7ab2c5edd29b7f62ea9b5f7f5ff6c58a04465da133d9cae1ca3f8b173cf1cc3002a8b326258467bc7d07f20c994dad68576a4fee84a485df5",
+        "item_id": "42434445464748494a4b4c4d4e4f5051",
+        "rev": "9",
+        "tag": "62f31f0015190a349074cd82d5c583517e07fc8b2a2624e604911a6693f9b40a",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag/manifest",
+      "title": "the manifest has a tag under the reserved id",
+      "op": "item.tag",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "010102d37ae20ad9346d78df6700bad218a71aac211c5d4a6a4762a398abaa6dffcdce9890f2a5ab2a17191ffd43f20c4ab898b8a8c1fad33ead0db4304fef9c720ae8e84eb4c6ee840d7947f18bc93d7af43111673fae854d958d7e16833ea102528759720110682402ee2810d30f101a711321e7f50b811993ac472dd1e88f7fad5471d0bd542b02e7410e95979e6563c949dda2d0ea57a60d8e47d962dc99c04fa15ff95aec4ca8b863e2b61d245bcc95725abba6746ad57ce29917b1185b3a2a175e5da3fc2eeaa53d67d5eea4301b8690a4a885cd26bf6114325c64b429511e832f65ca9eb516defba874ad164dbdd7a800b6b1d78335aa7c7757c45415264817ea443bf402553687181c93938e3e20c8fb9b59ecce628e529030dad922fab688375d92ab2d7da1d2",
+        "item_id": "00000000000000000000000000000000",
+        "rev": "5",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6974656d2d7461671200100000000000000000000000000000000022000800000000000000053500204acb258ec1cbfc4935750cf4b78abbbdff9a5a2a39cee32c07c5b671446a831e"
+      },
+      "expect": {
+        "tag": "9259845e9fb9d753cc76c51c8e1e6008e0fcc9ca4eace8c5abe9ddf0addd6421"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag_verify/manifest",
+      "title": "verifies: the manifest has a tag under the reserved id",
+      "op": "item.tag.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "010102d37ae20ad9346d78df6700bad218a71aac211c5d4a6a4762a398abaa6dffcdce9890f2a5ab2a17191ffd43f20c4ab898b8a8c1fad33ead0db4304fef9c720ae8e84eb4c6ee840d7947f18bc93d7af43111673fae854d958d7e16833ea102528759720110682402ee2810d30f101a711321e7f50b811993ac472dd1e88f7fad5471d0bd542b02e7410e95979e6563c949dda2d0ea57a60d8e47d962dc99c04fa15ff95aec4ca8b863e2b61d245bcc95725abba6746ad57ce29917b1185b3a2a175e5da3fc2eeaa53d67d5eea4301b8690a4a885cd26bf6114325c64b429511e832f65ca9eb516defba874ad164dbdd7a800b6b1d78335aa7c7757c45415264817ea443bf402553687181c93938e3e20c8fb9b59ecce628e529030dad922fab688375d92ab2d7da1d2",
+        "item_id": "00000000000000000000000000000000",
+        "rev": "5",
+        "tag": "9259845e9fb9d753cc76c51c8e1e6008e0fcc9ca4eace8c5abe9ddf0addd6421",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/item_id",
+      "title": "another item_id",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "434445464748494a4b4c4d4e4f505152",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/rev",
+      "title": "another rev",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "4",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/blob_bit",
+      "title": "a flipped bit in the blob",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68dfacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/blob_longer",
+      "title": "one byte more in the blob",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d600",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/tag_bit",
+      "title": "a flipped bit in the tag",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515733f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/vault_key",
+      "title": "another vault key (another K_head)",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "62636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f8081",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/epoch",
+      "title": "another vk_epoch (another K_head)",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2f72af9d515633f828cbc515121c12131e4489f2e7d20bbe56536a089de48dfc",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "2"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/other_blob_same_ids",
+      "title": "the tag of another blob with the same item_id and rev",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "c7251b68fc32aefe3e8de2292fb5fddc22ca398b569b95da0e33e1fa4ffb230f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/under_k_del",
+      "title": "a tag made with K_del",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "d733b15dc602a36a83cfb4567df65e7b2e1969a93539f933f75018858cc55493",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "tomb-tag/item_tag_invalid/label",
+      "title": "a tag made with another label",
+      "op": "item.tag.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "envelope": "0101011a844899e1fa1ec970cee04bbdf0025f00d48f83e282c50d0f550af6a57991a931a874310af6c1d6e1981484e0189678513bb27eeb3bc2a62fc4e07240c070de9f680b4bb707508c46ba9f41aea32e94e6d2fdb85ecccec3253c5d5b9d795f0b68deacd653064934b1f0feae59f94c7da6ce46e29b2512abe34877dd1e1d0ab0b7162ff4e01c3c4335ab6a3621737924e393aae49329feea0ca63742bfd55d98d11b64c81496d00b28db18f85ec301c45a01d34cdf7bccd0365ae8517949374457d079487a7317dc8b81cdcd841c4b7fc46471344f38934e5638ada125e1e02d17c0f1108208bfca2690b9dbf893ec16a3a77402a14d5a6e0f8a90bbb983e465fd78d204fc7a0776458c3c3c7335573405e3ba2eaf41c373b290ebc5dbd578b1f3b4eed4ef8650b59a3c79d8e573f41bf46d9f49c3b429aef5dfa5e17b0a2b64ac503940e8d4879d77a21bd15302faabb79c083b3c091d8c1752aa4db51d93441a1992a97e1d2c883ea047ecd8e881d6",
+        "item_id": "4142434445464748494a4b4c4d4e4f50",
+        "rev": "3",
+        "tag": "2628ea773ec84d2389e514bf0392b703d764a8b502e2f1904476b9a52a78809e",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    }
+  ]
+}
