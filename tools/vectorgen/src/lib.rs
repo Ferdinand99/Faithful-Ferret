@@ -14,6 +14,7 @@
 mod groups;
 mod item_groups;
 mod key_groups;
+mod opaque_groups;
 mod text_groups;
 mod totp_groups;
 
@@ -63,6 +64,7 @@ const GROUPS: &[Group] = &[
     ("internal/proofs.json", item_groups::integrity::proofs),
     ("internal/rekey.json", item_groups::integrity::rekey),
     ("internal/export.json", item_groups::export::export),
+    ("internal/opaque.json", opaque_groups::opaque),
     ("internal/totp.json", totp_groups::totp),
 ];
 

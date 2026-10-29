@@ -34,6 +34,14 @@ unicode-general-category = "=1.1.0"
 # CBOR (Fase 1 section 5.2): only the low-level `Decoder`/`Encoder`; the strict
 # rules live in `cbor::decode`. No `derive`, no `half` (f16 is rejected).
 minicbor = { version = "=2.3.1", default-features = false, features = ["alloc"] }
+# OPAQUE (Fase 1 section 4.2, RFC 9807). opaque-ke 4.0.1 sits on the previous
+# RustCrypto generation (digest 0.10, rand 0.8, curve25519-dalek 4), so it
+# brings a second set of those crates; every duplicate is listed in deny.toml
+# with its reason. `argon2` is NOT enabled here: the key stretching function is
+# our own wrapper over argon2 0.6 (`opaque::ksf`). `sha2_010` is the SHA-512 of
+# opaque-ke's 3DH suite and is used for nothing else.
+opaque-ke = { version = "=4.0.1", default-features = false, features = ["ristretto255"] }
+sha2_010 = { package = "sha2", version = "=0.10.9", default-features = false }
 # Only behind `test-support`:
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "=1.0.154", optional = true }
@@ -55,3 +63,6 @@ proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 # will use, here for the Wycheproof vectors.
 argon2_05 = { package = "argon2", version = "=0.5.3", default-features = false, features = ["alloc"] }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"] }
+# RFC 9497 (OPRF) vectors for ristretto255-SHA512, run against the very voprf
+# that opaque-ke uses (already in the tree; no new crate version).
+voprf = { version = "=0.5.0", default-features = false, features = ["ristretto255-ciphersuite", "danger"] }

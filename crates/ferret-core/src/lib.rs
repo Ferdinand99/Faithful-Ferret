@@ -42,6 +42,7 @@ pub mod integrity;
 pub mod item;
 pub mod keys;
 pub mod ksf_profile;
+pub mod opaque;
 pub mod pinning;
 pub mod prim;
 pub mod rng;
@@ -76,6 +77,10 @@ pub use item::{
 };
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;
+pub use opaque::{
+    LoginFinished, LoginState, OPAQUE_CONTEXT, PinState, RegistrationFinished, RegistrationState,
+    opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
+};
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
 pub use rng::{OsRng, SecureRng};

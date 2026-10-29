@@ -69,6 +69,11 @@ pub enum MalformedKind {
     /// The pinned record: a value out of range or a record that would grow
     /// without bound.
     PinnedRecord,
+    /// An OPAQUE message from the server that has the wrong length or holds
+    /// something that is not a group element or key. Only the structure is
+    /// reported: a message that parses but does not authenticate is
+    /// [`Error::Decrypt`].
+    OpaqueMessage,
     /// An `otpauth://` address or a TOTP setting: wrong scheme or type, an
     /// unknown or repeated parameter, bad base32, a value out of range.
     Otpauth,
@@ -193,6 +198,7 @@ impl Error {
         Error::Malformed(MalformedKind::Entries),
         Error::Malformed(MalformedKind::Code),
         Error::Malformed(MalformedKind::PinnedRecord),
+        Error::Malformed(MalformedKind::OpaqueMessage),
         Error::Malformed(MalformedKind::Otpauth),
         Error::TooLarge,
         Error::ReadOnlySchema,
@@ -253,6 +259,7 @@ impl Error {
                 MalformedKind::Entries => "malformed_entries",
                 MalformedKind::Code => "malformed_code",
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
+                MalformedKind::OpaqueMessage => "malformed_opaque_message",
                 MalformedKind::Otpauth => "malformed_otpauth",
             },
             Error::TooLarge => "too_large",

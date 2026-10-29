@@ -103,11 +103,13 @@ impl MasterPassword {
             buf.push(0x00);
             buf.extend_from_slice(sk.expose());
         }
-        OpaqueInput(buf)
+        OpaqueInput {
+            bytes: buf,
+            with_sk: sk.is_some(),
+        }
     }
 
     /// The normalized bytes.
-    #[allow(dead_code)] // first used by Task 8 (OPAQUE client)
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -121,20 +123,32 @@ impl MasterPassword {
 }
 
 /// The password input of OPAQUE (`mp` or `mp ‖ 0x00 ‖ SK`).
+///
+/// It remembers whether a secret key went in, so that the OPAQUE login can
+/// check that against the SK bit pinned on the device before any key
+/// stretching is done (Fase 1 § 4.2: the SK bit is never taken from the
+/// server).
 #[derive(Zeroize, ZeroizeOnDrop)]
-pub struct OpaqueInput(Zeroizing<Vec<u8>>);
+pub struct OpaqueInput {
+    bytes: Zeroizing<Vec<u8>>,
+    with_sk: bool,
+}
 
 impl OpaqueInput {
     /// The input bytes.
-    #[allow(dead_code)] // first used by Task 8 (OPAQUE client)
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.0
+        &self.bytes
+    }
+
+    /// Whether the input has the secret key appended.
+    pub fn includes_secret_key(&self) -> bool {
+        self.with_sk
     }
 
     /// Start of the buffer and its capacity (see `MasterPassword::test_buffer`).
     #[cfg(feature = "test-support")]
     pub fn test_buffer(&self) -> (*const u8, usize) {
-        (self.0.as_ptr(), self.0.capacity())
+        (self.bytes.as_ptr(), self.bytes.capacity())
     }
 }
 
