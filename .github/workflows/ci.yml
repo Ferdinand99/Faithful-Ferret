@@ -28,6 +28,9 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+      # ct/harness/*.rs is included into the core with include!, which cargo fmt
+      # does not follow.
+      - run: rustfmt --check --edition 2024 ct/harness/*.rs
 
   clippy:
     name: Clippy (${{ matrix.target }})
