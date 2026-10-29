@@ -20,6 +20,7 @@ share the single code `decrypt`, with no cause.
 | `input_not_utf8` | Input is not valid UTF-8. |
 | `input_forbidden_character` | Input contains a forbidden or unassigned character. |
 | `input_same_as_master_password` | The export password is equal to the master password. |
+| `input_secret_key_mismatch` | The secret key given to an account flow is not the one in the OPAQUE input, or only one of them has a secret key. |
 | `malformed_envelope` | Item or manifest envelope is malformed. |
 | `malformed_cbor` | CBOR is malformed: syntax error, truncated input, bad UTF-8 or a reserved byte. |
 | `malformed_cbor_duplicate_key` | A CBOR map has the same key twice. |
@@ -38,6 +39,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_entries` | Checkpoint entries are malformed. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
 | `malformed_opaque_message` | An OPAQUE message from the server with the wrong length, or one that holds something that is not a group element or key. A message that parses but does not authenticate is `decrypt`. |
+| `malformed_setup_qr` | The setup QR payload of the emergency sheet is not in the exact format, or a field that goes into it (server address, e-mail) is not allowed. |
 | `malformed_otpauth` | An `otpauth://` address or TOTP setting that is not allowed: wrong scheme or type, an unknown or repeated parameter, bad base32, or digits or period out of range. |
 | `malformed_origin` | The origin is not one a passkey may be used from: not `https` (or `http://localhost`), an IP host, `null`, `about:blank`, `data:`, `file:`, an opaque origin, or not a valid host. |
 | `malformed_rp_id` | The RP ID is not the host of the origin or a dot-delimited suffix of it, is a public suffix, carries a port, or is not a valid domain. |

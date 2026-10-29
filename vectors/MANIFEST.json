@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "061a121636320672559c6e07a048601776364403d15542f571f425bbe884f968",
-    "OPS.md": "a52c7473a21a67be66206fa5092993813e67f71c18c85564d383d232814ad280",
-    "VERSION": "e6c21e8d260fe71882debdb339d2402a2ca7648529bc2303f48649bce0380017",
+    "ERRORS.md": "2e895695381fef71fbe3a0047a9e99b86cb718683e38379738b9e8c0ee5219cc",
+    "OPS.md": "d3813371b8e506ac0bee7bd034abb71d7e92f389b577db9b2e988483bb3b8980",
+    "VERSION": "54183f4323f377b737433a1e98229ead0fdc686f93bab057ecb612daa94002b5",
     "external/SOURCE.md": "afe26b63233f4360c3c04c47d5e508fc1324e0313394f015bde26bc0ee91ee6d",
     "external/publicsuffix-test_psl.txt": "8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d",
     "external/rfc4226-hotp.json": "11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198",
@@ -20,6 +20,7 @@
     "external/wycheproof/hmac_sha256_test.json": "2d201cfa61d1bf95e6f5d07d96634b4a348b31e8eaa277ad7c8d09677b7a743f",
     "external/wycheproof/xchacha20_poly1305_test.json": "a79de072571b90eb40c3a63ce0c7f75dcb4b62323c8870228e1f61dcc61d63a9",
     "external/xchacha-draft-03.json": "e8ec9a4feafa2aaf227f18b72fccc78a3346a83b84c02f51054dd35755768933",
+    "internal/account.json": "dc8b669d504793ff9736a1335cd0c7fbe2ba159188ac1b22300e4aa5715bda6b",
     "internal/cbor-limits.json": "213ba4185cef58fa6bf75660cd6297fe99ffae5c730bb1d8e91b12514eec8520",
     "internal/checkpoint.json": "3b8dd1bb2b7c32cbeadcb1ba37ac838e0cba563ef1641808ab93ebd0e517d061",
     "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
@@ -32,6 +33,7 @@
     "internal/passkey.json": "a5b01e069d30bd5ae30494f9f6a6d6dcd38397015457c46f2c99748b7bf4a8f5",
     "internal/proofs.json": "76b032e16403f6a0a8885c3f95b78dea4faf4ef58b0a3caf7a3d1197625bbdc9",
     "internal/rekey.json": "6f1f2decad96ec5ae373c77a8f3ef7641dfc6e67bde1b6568972594a357e38f6",
+    "internal/sheet.json": "911a0e20e08879912cbcf5a74dfeb828635bb29ae86f5561311831560012d07e",
     "internal/tlv.json": "c3dc2e66943111dece887836a1a852d0c95892f85dd6794863626a679a8316f1",
     "internal/tomb-tag.json": "775a642f5590a1759e76501e602406b476b0cab6e00b99db5d6204df0d01d18b",
     "internal/totp.json": "4d3a33abc6f22a10db5e6569e8eb361e37c322d1749fded11a8aa0ed344edcb7",
@@ -41,5 +43,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 16
+  "version": 17
 }
