@@ -58,3 +58,10 @@ path = "fuzz_targets/fuzz_opaque_messages.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_otpauth"
+path = "fuzz_targets/fuzz_otpauth.rs"
+test = false
+doc = false
+bench = false

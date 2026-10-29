@@ -74,6 +74,9 @@ pub enum MalformedKind {
     /// reported: a message that parses but does not authenticate is
     /// [`Error::Decrypt`].
     OpaqueMessage,
+    /// An `otpauth://` address or a TOTP setting: wrong scheme or type, an
+    /// unknown or repeated parameter, bad base32, a value out of range.
+    Otpauth,
 }
 
 /// Why a checkpoint did not verify.
@@ -196,6 +199,7 @@ impl Error {
         Error::Malformed(MalformedKind::Code),
         Error::Malformed(MalformedKind::PinnedRecord),
         Error::Malformed(MalformedKind::OpaqueMessage),
+        Error::Malformed(MalformedKind::Otpauth),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -256,6 +260,7 @@ impl Error {
                 MalformedKind::Code => "malformed_code",
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
                 MalformedKind::OpaqueMessage => "malformed_opaque_message",
+                MalformedKind::Otpauth => "malformed_otpauth",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",

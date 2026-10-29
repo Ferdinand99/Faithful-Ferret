@@ -22,6 +22,7 @@ pub mod pinning;
 pub mod prim;
 mod replay_rng;
 pub mod text;
+pub mod totp;
 pub mod vector;
 
 pub use replay_rng::{ReplayError, ReplayRng, TestRng};

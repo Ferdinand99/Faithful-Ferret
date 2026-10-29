@@ -1,6 +1,6 @@
 # Sources of the specification vectors
 
-These six files hold the published test vectors of the standards that the
+These files hold the published test vectors of the standards that the
 core builds on. They contain only the numbers printed in the documents, in a
 small JSON layout of our own (lowercase hex, no prefix). They were extracted
 from the document text by a script and then checked byte for byte by the test
@@ -14,6 +14,8 @@ suite, which runs every case against the implementation.
 | `xchacha-draft-03.json` | draft-irtf-cfrg-xchacha-03 | Appendix A.3.1, AEAD_XCHACHA20_POLY1305 | IETF Trust (draft text, test data) |
 | `rfc9807-opaque-ristretto255.json` | RFC 9807, OPAQUE | Appendix C.1.1 and C.1.2 (real test vectors 1 and 2) | IETF Trust (RFC text, test data) |
 | `rfc9497-oprf-ristretto255.json` | RFC 9497, OPRF | Appendix A.1.1 (ristretto255-SHA512, OPRF mode, test vectors 1 and 2) | IETF Trust (RFC text, test data) |
+| `rfc6238-totp.json` | RFC 6238, TOTP | Appendix B, the 18 test values (SHA-1, SHA-256, SHA-512 at six times, eight digits) | IETF Trust (RFC text, test data) |
+| `rfc4226-hotp.json` | RFC 4226, HOTP | Appendix D, the ten test values (counter 0 to 9) with the HMAC-SHA-1 digests | IETF Trust (RFC text, test data) |
 
 ## Where the text came from
 
@@ -38,6 +40,10 @@ Retrieved 2026-10-29.
 | `xchacha-draft-03.json` | `e8ec9a4feafa2aaf227f18b72fccc78a3346a83b84c02f51054dd35755768933` |
 | `rfc9807-opaque-ristretto255.json` | `0e711c486e101c05ed5c3a685a24eb61e46224d4d4febf1df9534145aac6c2ec` |
 | `rfc9497-oprf-ristretto255.json` | `2dd137ce56560149b25b547b7cc8070aa918f843026310f01700b1e7c009211b` |
+| `rfc6238-totp.json` | `315bf51a41feecc1febb6be3245f16d8f84529f141a73d5290b6733afd691499` |
+| `rfc4226-hotp.json` | `11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198` |
+
+The two OTP files (RFC 4226 and RFC 6238, URLs `https://www.rfc-editor.org/rfc/rfc4226.txt` and `https://www.rfc-editor.org/rfc/rfc6238.txt`) were entered from the printed tables and then recomputed with an independent HMAC implementation (Python `hmac`, `hashlib`) on 2026-10-29; every value agreed. RFC 6238 uses a seed per algorithm: `12345678901234567890` (20 bytes) for SHA-1, the same digits extended to 32 bytes for SHA-256 and to 64 bytes for SHA-512.
 
 The message of RFC 8032 test "1024" is 1023 bytes long, as printed in the RFC.
 
