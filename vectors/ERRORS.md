@@ -37,6 +37,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
+| `malformed_otpauth` | An `otpauth://` address or TOTP setting that is not allowed: wrong scheme or type, an unknown or repeated parameter, bad base32, or digits or period out of range. |
 | `malformed_code` | Recovery or secret key code with a wrong prefix or a letter outside the alphabet. |
 | `too_large` | Larger than the allowed size. |
 | `read_only_schema` | The item has a newer schema and is read-only. |

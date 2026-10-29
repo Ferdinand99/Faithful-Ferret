@@ -50,6 +50,7 @@ pub mod secret;
 pub mod testing;
 pub mod text;
 pub mod tlv;
+pub mod totp;
 pub mod wrap;
 
 pub use codes::{decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key};
@@ -88,4 +89,7 @@ pub use text::{
     ExportPassword, MasterPassword, MpPolicy, OpaqueInput, PIN_MAX_DIGITS, PIN_MIN_DIGITS, Pin,
 };
 pub use tlv::Tlv;
+pub use totp::{
+    TotpAlgorithm, TotpParams, TotpSecret, parse_otpauth, totp_code, totp_seconds_left,
+};
 pub use wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};

@@ -1,0 +1,1445 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "totp",
+  "suite": 1,
+  "spec": "Fase 1 § 5.2 (F-31); RFC 4226; RFC 6238",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "totp/accept-google-style/1",
+      "title": "Google Authenticator style address",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/Example:alice@example.com?secret=CAIREEYUCULBOGAZ&issuer=Example"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "Example",
+        "label": "alice@example.com",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-defaults/1",
+      "title": "only the secret: SHA1, 6 digits, 30 s, no issuer",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/bob?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "bob",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-all-parameters-sha256/1",
+      "title": "every allowed parameter, SHA256, 8 digits, 60 s",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/Corp:carol?secret=GAYTEMZUGU3DOOBZHI5TYPJ6H5AECQSDIRCUMR2IJFFEWTCNJZHQ&issuer=Corp&algorithm=SHA256&digits=8&period=60"
+      },
+      "expect": {
+        "algorithm": "SHA256",
+        "digits": 8,
+        "issuer": "Corp",
+        "label": "carol",
+        "period": 60,
+        "secret": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-sha512-7-digits-120s/1",
+      "title": "SHA512, 7 digits, 120 s (the longest period)",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/dave?secret=IBAUEQ2EIVDEOSCJJJFUYTKOJ5IFCUSTKRKVMV2YLFNFWXC5LZPWAYLCMNSGKZTHNBUWU23MNVXG64DROJZXI5LWO54HS6T3PR6X47Y&algorithm=SHA512&digits=7&period=120"
+      },
+      "expect": {
+        "algorithm": "SHA512",
+        "digits": 7,
+        "issuer": null,
+        "label": "dave",
+        "period": 120,
+        "secret": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-period-1/1",
+      "title": "period 1 s (the shortest) and 8 digits",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/e?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=1&digits=8"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 8,
+        "issuer": null,
+        "label": "e",
+        "period": 1,
+        "secret": "202122232425262728292a2b2c2d2e2f30313233"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-issuer-in-label-only/1",
+      "title": "issuer only as the label prefix (%3A)",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/Example%3Afrank?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "Example",
+        "label": "frank",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-issuer-parameter-wins/1",
+      "title": "the issuer parameter wins over the label prefix",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/Old:gina?secret=CAIREEYUCULBOGAZ&issuer=New"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "New",
+        "label": "gina",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-label-space-after-colon/1",
+      "title": "a space after the colon of the label is dropped",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/Example:%20hal?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "Example",
+        "label": "hal",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-label-unicode-and-plus/1",
+      "title": "percent-encoded UTF-8 and a plus sign in the label",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/%C3%86gir:a+b@x.no?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "Ægir",
+        "label": "a+b@x.no",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-issuer-plus-is-space/1",
+      "title": "a plus in a parameter value is a space",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/ida?secret=CAIREEYUCULBOGAZ&issuer=Big+Co"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": "Big Co",
+        "label": "ida",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-lowercase-secret/1",
+      "title": "lower case secret",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/jo?secret=caireeyuculbogaz"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "jo",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-spaces-in-secret/1",
+      "title": "groups of four letters separated by %20, + and a raw space",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/kim?secret=CAIR%20EEYU+CULB OGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "kim",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-fill-padded/1",
+      "title": "11 byte secret, fill padded",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/lee?secret=MBQWEY3EMVTGO2DJNI======"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "lee",
+        "period": 30,
+        "secret": "606162636465666768696a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-fill-unpadded/1",
+      "title": "11 byte secret, fill unpadded",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/lee?secret=MBQWEY3EMVTGO2DJNI"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "lee",
+        "period": 30,
+        "secret": "606162636465666768696a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-fill-percent-encoded/1",
+      "title": "the fill as %3D",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/lee?secret=MBQWEY3EMVTGO2DJNI%3D%3D%3D%3D%3D%3D"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "lee",
+        "period": 30,
+        "secret": "606162636465666768696a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-secret-128-bytes/1",
+      "title": "a secret of exactly 128 bytes (the longest)",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/max?secret=KBIVEU2UKVLFOWCZLJNVYXK6L5QGCYTDMRSWMZ3INFVGW3DNNZXXA4LSON2HK5TXPB4XU634PV7H7AEBQKBYJBMGQ6EITCULRSGY5D4QSGJJHFEVS2LZRGM2TOOJ3HU7UCQ2FI5EUWTKPKFJVKV2ZLNOV6YLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "max",
+        "period": 30,
+        "secret": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-secret-1-byte/1",
+      "title": "a secret of one byte",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/min?secret=ME"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "min",
+        "period": 30,
+        "secret": "61"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-spare-bits-ignored/1",
+      "title": "spare bits at the end of the secret are ignored",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/spare?secret=OBYXE43UOV3HO6DZPJ5XY7L6P5"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "spare",
+        "period": 30,
+        "secret": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/accept-empty-label/1",
+      "title": "an empty label",
+      "op": "totp.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect": {
+        "algorithm": "SHA1",
+        "digits": 6,
+        "issuer": null,
+        "label": "",
+        "period": 30,
+        "secret": "10111213141516171819"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/reject-hotp-type/1",
+      "title": "type hotp",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://hotp/x?secret=CAIREEYUCULBOGAZ&counter=1"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-type-uppercase/1",
+      "title": "type TOTP in capitals",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://TOTP/x?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-no-type/1",
+      "title": "no type before the label",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://x?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-scheme-http/1",
+      "title": "another scheme",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "https://totp/x?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-scheme-uppercase/1",
+      "title": "scheme in capitals",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "OTPAUTH://totp/x?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-no-query/1",
+      "title": "no query at all",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-unknown-parameter/1",
+      "title": "an unknown parameter",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&foo=bar"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-counter-parameter/1",
+      "title": "counter on a totp address",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&counter=1"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-image-parameter/1",
+      "title": "an image parameter",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&image=https%3A%2F%2Fexample.com%2Fi.png"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-parameter-name-case/1",
+      "title": "parameter names are case sensitive",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?SECRET=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-parameter-name-encoded-unknown/1",
+      "title": "an encoded name that is not on the list",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&%66oo=1"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-duplicate-secret/1",
+      "title": "the secret twice",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-duplicate-secret-encoded/1",
+      "title": "the secret twice, one name percent-encoded",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&%73ecret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-duplicate-digits/1",
+      "title": "digits twice",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=6&digits=8"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-no-secret/1",
+      "title": "no secret",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?issuer=Example"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-empty-secret/1",
+      "title": "an empty secret",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret="
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-blank-secret/1",
+      "title": "a secret of spaces only",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=%20%20%20"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-invalid-letter-1/1",
+      "title": "the digit 1 is not base32",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=JBSWY3DP1HPK3PXP"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-invalid-letter-8/1",
+      "title": "the digit 8 is not base32",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=JBSWY3DP8HPK3PXP"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-invalid-letter-dash/1",
+      "title": "a hyphen is not base32",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=JBSW-Y3DP-EHPK-3PXP"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-one-letter/1",
+      "title": "one letter cannot be a byte string",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=M"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-three-letters/1",
+      "title": "three letters cannot be a byte string",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=MFR"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-fill-wrong-count/1",
+      "title": "the wrong number of fill signs",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=MFRGG=="
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-fill-inside/1",
+      "title": "a fill sign inside the secret",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=MFRG=GZDFMZTWQ2LK"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-fill-only/1",
+      "title": "fill signs only",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret========="
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-secret-129-bytes/1",
+      "title": "a secret of 129 bytes",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=KBIVEU2UKVLFOWCZLJNVYXK6L5QGCYTDMRSWMZ3INFVGW3DNNZXXA4LSON2HK5TXPB4XU634PV7H7AEBQKBYJBMGQ6EITCULRSGY5D4QSGJJHFEVS2LZRGM2TOOJ3HU7UCQ2FI5EUWTKPKFJVKV2ZLNOV6YLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM7UA"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "totp/reject-uri-too-long/1",
+      "title": "an address of 2049 bytes",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "totp/reject-label-too-long/1",
+      "title": "a label of 257 bytes",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "totp/reject-digits-5/1",
+      "title": "5 digits",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=5"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-digits-9/1",
+      "title": "9 digits",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=9"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-digits-leading-zero/1",
+      "title": "digits with a leading zero",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=06"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-digits-sign/1",
+      "title": "digits with a plus sign",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=%2B6"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-digits-text/1",
+      "title": "digits that are not a number",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits=six"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-digits-empty/1",
+      "title": "empty digits",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&digits="
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-period-0/1",
+      "title": "period 0",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&period=0"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-period-121/1",
+      "title": "period 121",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&period=121"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-period-huge/1",
+      "title": "a period that overflows",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&period=99999999999999999999"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-period-negative/1",
+      "title": "a negative period",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&period=-30"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-algorithm-md5/1",
+      "title": "algorithm MD5",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&algorithm=MD5"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-algorithm-sha224/1",
+      "title": "algorithm SHA224",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&algorithm=SHA224"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-algorithm-lowercase/1",
+      "title": "algorithm in lower case",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&algorithm=sha1"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-algorithm-hyphen/1",
+      "title": "algorithm SHA-1",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&algorithm=SHA-1"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-fragment/1",
+      "title": "a fragment",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ#frag"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-bad-percent/1",
+      "title": "a percent sign without two hex digits",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x%zz?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-truncated-percent/1",
+      "title": "a percent sign at the end of a value",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&issuer=a%4"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-control-in-label/1",
+      "title": "an encoded NUL in the label",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/a%00b?secret=CAIREEYUCULBOGAZ"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-control-in-issuer/1",
+      "title": "an encoded line feed in the issuer",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&issuer=a%0Ab"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-raw-control/1",
+      "title": "a raw tab in the address",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&issuer=a\tb"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-invalid-utf8/1",
+      "title": "an encoded byte that is not UTF-8",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&issuer=%FF"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-empty-pair/1",
+      "title": "an empty pair between two ampersands",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&&issuer=A"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-trailing-ampersand/1",
+      "title": "a trailing ampersand",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-pair-without-equals/1",
+      "title": "a parameter without a value sign",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ&issuer"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/reject-semicolon-separator/1",
+      "title": "a semicolon is not a separator",
+      "op": "totp.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "uri": "otpauth://totp/x?secret=CAIREEYUCULBOGAZ;issuer=A"
+      },
+      "expect_error": "malformed_otpauth"
+    },
+    {
+      "id": "totp/sha1-t0/1",
+      "title": "SHA1, 6 digits, 30 s at 0",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "0",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "143905",
+        "seconds_left": 30
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-t29/1",
+      "title": "SHA1, 6 digits, 30 s at 29",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "29",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "143905",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-t30/1",
+      "title": "SHA1, 6 digits, 30 s at 30",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "30",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "548515",
+        "seconds_left": 30
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-t59/1",
+      "title": "SHA1, 6 digits, 30 s at 59",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "59",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "548515",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-t1111111109/1",
+      "title": "SHA1, 6 digits, 30 s at 1111111109",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "1111111109",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "596942",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-t-max/1",
+      "title": "SHA1, 6 digits, 30 s at 18446744073709551615",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "18446744073709551615",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "249075",
+        "seconds_left": 15
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha256-t59/1",
+      "title": "SHA256, 8 digits, 30 s at 59",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "59",
+        "uri": "otpauth://totp/c?secret=GAYTEMZUGU3DOOBZHI5TYPJ6H5AECQSDIRCUMR2IJFFEWTCNJZHQ&algorithm=SHA256&digits=8"
+      },
+      "expect": {
+        "code": "16885907",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha256-t1234567890/1",
+      "title": "SHA256, 8 digits, 30 s at 1234567890",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "1234567890",
+        "uri": "otpauth://totp/c?secret=GAYTEMZUGU3DOOBZHI5TYPJ6H5AECQSDIRCUMR2IJFFEWTCNJZHQ&algorithm=SHA256&digits=8"
+      },
+      "expect": {
+        "code": "89637658",
+        "seconds_left": 30
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha512-t59/1",
+      "title": "SHA512, 7 digits, 30 s at 59",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "59",
+        "uri": "otpauth://totp/c?secret=IBAUEQ2EIVDEOSCJJJFUYTKOJ5IFCUSTKRKVMV2YLFNFWXC5LZPWAYLCMNSGKZTHNBUWU23MNVXG64DROJZXI5LWO54HS6T3PR6X47Y&algorithm=SHA512&digits=7"
+      },
+      "expect": {
+        "code": "5151077",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha512-t20000000000/1",
+      "title": "SHA512, 7 digits, 30 s at 20000000000",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "20000000000",
+        "uri": "otpauth://totp/c?secret=IBAUEQ2EIVDEOSCJJJFUYTKOJ5IFCUSTKRKVMV2YLFNFWXC5LZPWAYLCMNSGKZTHNBUWU23MNVXG64DROJZXI5LWO54HS6T3PR6X47Y&algorithm=SHA512&digits=7"
+      },
+      "expect": {
+        "code": "9658745",
+        "seconds_left": 10
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period60-t119/1",
+      "title": "SHA1, 8 digits, 60 s at 119",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "119",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=60&digits=8"
+      },
+      "expect": {
+        "code": "51548515",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period60-t120/1",
+      "title": "SHA1, 8 digits, 60 s at 120",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "120",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=60&digits=8"
+      },
+      "expect": {
+        "code": "48102196",
+        "seconds_left": 60
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period1-t5/1",
+      "title": "SHA1, 6 digits, 1 s at 5",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "5",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=1"
+      },
+      "expect": {
+        "code": "955293",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period1-t6/1",
+      "title": "SHA1, 6 digits, 1 s at 6",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "6",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=1"
+      },
+      "expect": {
+        "code": "510127",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period120-t119/1",
+      "title": "SHA1, 6 digits, 120 s at 119",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "119",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=120"
+      },
+      "expect": {
+        "code": "143905",
+        "seconds_left": 1
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/period120-t120/1",
+      "title": "SHA1, 6 digits, 120 s at 120",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "120",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT&period=120"
+      },
+      "expect": {
+        "code": "548515",
+        "seconds_left": 120
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-long-key/1",
+      "title": "SHA1 with a 100 byte key (longer than the 64 byte block)",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "1700000000",
+        "uri": "otpauth://totp/c?secret=QCAYFA4EQWDIPCEJRKFYZDMOR6IJDEUTSSKZNF4YTGNJXHE5T2P2BINCUOSKLJVHVCU2VK5MVWXK7MFRWKZ3JNNWW64LTOV3XS635P6AYHBMHRGFY3D4RSOKZPGM3TWP2DI5FU6U2XLNPWGZ3LN5ZXO637QODYXD"
+      },
+      "expect": {
+        "code": "099760",
+        "seconds_left": 10
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha512-short-digits/1",
+      "title": "SHA512 with the default 6 digits",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "1700000001",
+        "uri": "otpauth://totp/c?secret=IBAUEQ2EIVDEOSCJJJFUYTKOJ5IFCUSTKRKVMV2YLFNFWXC5LZPWAYLCMNSGKZTHNBUWU23MNVXG64DROJZXI5LWO54HS6T3PR6X47Y&algorithm=SHA512"
+      },
+      "expect": {
+        "code": "613960",
+        "seconds_left": 9
+      },
+      "expect_error": null
+    },
+    {
+      "id": "totp/sha1-leading-zero/1",
+      "title": "a code that starts with zero is zero padded",
+      "op": "totp.code",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "unix_seconds": "210",
+        "uri": "otpauth://totp/c?secret=EAQSEIZEEUTCOKBJFIVSYLJOF4YDCMRT"
+      },
+      "expect": {
+        "code": "013556",
+        "seconds_left": 30
+      },
+      "expect_error": null
+    }
+  ]
+}
