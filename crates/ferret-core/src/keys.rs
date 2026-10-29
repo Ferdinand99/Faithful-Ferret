@@ -153,13 +153,11 @@ impl UnlockedVault {
     }
 
     /// The vault key.
-    #[allow(dead_code)] // first used by Task 5 (item key wraps)
     pub(crate) fn vault_key(&self) -> &VaultKey {
         &self.vk
     }
 
     /// `K_head`.
-    #[allow(dead_code)] // first used by Task 6 (item tags, checkpoints)
     pub(crate) fn k_head(&self) -> &KHead {
         &self.k_head
     }
@@ -171,7 +169,6 @@ impl UnlockedVault {
     }
 
     /// `K_meta`.
-    #[allow(dead_code)] // first used by Task 5 (manifest)
     pub(crate) fn k_meta(&self) -> &KMeta {
         &self.k_meta
     }

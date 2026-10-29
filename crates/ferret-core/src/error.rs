@@ -30,8 +30,31 @@ pub enum InputError {
 pub enum MalformedKind {
     /// Item or manifest envelope.
     Envelope,
-    /// CBOR body.
+    /// CBOR: syntax error, truncated input, bad UTF-8 or a reserved byte.
     Cbor,
+    /// CBOR: a map with the same key twice.
+    CborDuplicateKey,
+    /// CBOR: indefinite length (`0x5f`, `0x7f`, `0x9f`, `0xbf`).
+    CborIndefinite,
+    /// CBOR: a tag (the allow-list is empty in v1).
+    CborTag,
+    /// CBOR: more than 16 levels of arrays and maps.
+    CborDepth,
+    /// CBOR: an array or map with more than 10 000 entries.
+    CborCount,
+    /// CBOR: text or bytes longer than 64 KiB.
+    CborSize,
+    /// CBOR: a map key that is not text.
+    CborKeyType,
+    /// CBOR: `undefined` or a simple value other than `true`, `false`, `null`.
+    CborSimple,
+    /// CBOR: an integer outside the range of `i64` and `u64`.
+    CborInt,
+    /// CBOR: bytes after the first data item.
+    CborTrailing,
+    /// An item body or manifest whose CBOR does not have the shape of
+    /// Appendix B (a missing or mistyped field).
+    ItemBody,
     /// Export file header.
     ExportHeader,
     /// TLV encoding.
@@ -149,6 +172,17 @@ impl Error {
         Error::InvalidInput(InputError::SameAsMasterPassword),
         Error::Malformed(MalformedKind::Envelope),
         Error::Malformed(MalformedKind::Cbor),
+        Error::Malformed(MalformedKind::CborDuplicateKey),
+        Error::Malformed(MalformedKind::CborIndefinite),
+        Error::Malformed(MalformedKind::CborTag),
+        Error::Malformed(MalformedKind::CborDepth),
+        Error::Malformed(MalformedKind::CborCount),
+        Error::Malformed(MalformedKind::CborSize),
+        Error::Malformed(MalformedKind::CborKeyType),
+        Error::Malformed(MalformedKind::CborSimple),
+        Error::Malformed(MalformedKind::CborInt),
+        Error::Malformed(MalformedKind::CborTrailing),
+        Error::Malformed(MalformedKind::ItemBody),
         Error::Malformed(MalformedKind::ExportHeader),
         Error::Malformed(MalformedKind::Tlv),
         Error::Malformed(MalformedKind::Entries),
@@ -197,6 +231,17 @@ impl Error {
             Error::Malformed(kind) => match kind {
                 MalformedKind::Envelope => "malformed_envelope",
                 MalformedKind::Cbor => "malformed_cbor",
+                MalformedKind::CborDuplicateKey => "malformed_cbor_duplicate_key",
+                MalformedKind::CborIndefinite => "malformed_cbor_indefinite",
+                MalformedKind::CborTag => "malformed_cbor_tag",
+                MalformedKind::CborDepth => "malformed_cbor_depth",
+                MalformedKind::CborCount => "malformed_cbor_count",
+                MalformedKind::CborSize => "malformed_cbor_size",
+                MalformedKind::CborKeyType => "malformed_cbor_key_type",
+                MalformedKind::CborSimple => "malformed_cbor_simple",
+                MalformedKind::CborInt => "malformed_cbor_int",
+                MalformedKind::CborTrailing => "malformed_cbor_trailing",
+                MalformedKind::ItemBody => "malformed_item_body",
                 MalformedKind::ExportHeader => "malformed_export_header",
                 MalformedKind::Tlv => "malformed_tlv",
                 MalformedKind::Entries => "malformed_entries",

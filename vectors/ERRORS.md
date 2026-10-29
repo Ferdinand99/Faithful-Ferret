@@ -21,7 +21,18 @@ share the single code `decrypt`, with no cause.
 | `input_forbidden_character` | Input contains a forbidden or unassigned character. |
 | `input_same_as_master_password` | The export password is equal to the master password. |
 | `malformed_envelope` | Item or manifest envelope is malformed. |
-| `malformed_cbor` | CBOR body is malformed. |
+| `malformed_cbor` | CBOR is malformed: syntax error, truncated input, bad UTF-8 or a reserved byte. |
+| `malformed_cbor_duplicate_key` | A CBOR map has the same key twice. |
+| `malformed_cbor_indefinite` | CBOR with an indefinite length. |
+| `malformed_cbor_tag` | CBOR with a tag (the allow-list is empty in v1). |
+| `malformed_cbor_depth` | CBOR nested deeper than 16 levels. |
+| `malformed_cbor_count` | A CBOR array or map with more than 10 000 entries. |
+| `malformed_cbor_size` | CBOR text or bytes longer than 64 KiB. |
+| `malformed_cbor_key_type` | A CBOR map key that is not text. |
+| `malformed_cbor_simple` | CBOR `undefined` or a simple value other than `true`, `false`, `null`. |
+| `malformed_cbor_int` | A CBOR integer outside the range of `i64` and `u64`. |
+| `malformed_cbor_trailing` | Bytes after the first CBOR data item. |
+| `malformed_item_body` | An item body or manifest that does not have the shape of the schema. |
 | `malformed_export_header` | Export file header is malformed. |
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |

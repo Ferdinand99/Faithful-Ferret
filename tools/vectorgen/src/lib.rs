@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod groups;
+mod item_groups;
 mod key_groups;
 mod text_groups;
 
@@ -50,6 +51,9 @@ const GROUPS: &[Group] = &[
     ("internal/codes.json", text_groups::codes),
     ("internal/wrap.json", key_groups::wrap),
     ("internal/unlock.json", key_groups::unlock),
+    ("internal/cbor-limits.json", item_groups::cbor_limits),
+    ("internal/padding.json", item_groups::padding),
+    ("internal/item.json", item_groups::item),
 ];
 
 /// Serializes a vector file the way every generated file is written:

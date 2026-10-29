@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 // ------------------------------------------------------------ hand-made TLV
 
 /// `tag ‖ len(u16be) ‖ value`.
-fn t(tag: u8, value: &[u8]) -> Vec<u8> {
+pub(crate) fn t(tag: u8, value: &[u8]) -> Vec<u8> {
     let len = u16::try_from(value.len()).unwrap_or(u16::MAX);
     let mut out = vec![tag];
     out.extend_from_slice(&len.to_be_bytes());
@@ -28,15 +28,15 @@ fn t(tag: u8, value: &[u8]) -> Vec<u8> {
     out
 }
 
-fn label(s: &str) -> Vec<u8> {
+pub(crate) fn label(s: &str) -> Vec<u8> {
     t(0x01, s.as_bytes())
 }
 
-fn cat(parts: &[Vec<u8>]) -> Vec<u8> {
+pub(crate) fn cat(parts: &[Vec<u8>]) -> Vec<u8> {
     parts.concat()
 }
 
-fn hk(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], Error> {
+pub(crate) fn hk(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], Error> {
     let mut out = [0u8; 32];
     hkdf_sha256(salt, ikm, info, &mut out).map_err(|e| format!("hkdf failed: {e}"))?;
     Ok(out)
@@ -55,13 +55,13 @@ fn stretch(pin: &str, device_salt: &[u8; 16]) -> Result<[u8; 32], Error> {
     Ok(out)
 }
 
-fn arr<const N: usize>(start: u8) -> [u8; N] {
+pub(crate) fn arr<const N: usize>(start: u8) -> [u8; N] {
     let mut out = [0u8; N];
     out.copy_from_slice(&pattern(start, N));
     out
 }
 
-fn h(bytes: &[u8]) -> Value {
+pub(crate) fn h(bytes: &[u8]) -> Value {
     json!(hex_encode(bytes))
 }
 
@@ -94,14 +94,14 @@ fn kek_pin_mobile(pin: &str, device_salt: &[u8; 16], dev: &[u8; 32]) -> Result<[
     hk(&salt, &ikm, b"ferret/v1/kek/pin")
 }
 
-struct VkKeys {
-    k_head: [u8; 32],
-    k_del: [u8; 32],
-    k_meta: [u8; 32],
-    seed_a: [u8; 32],
+pub(crate) struct VkKeys {
+    pub(crate) k_head: [u8; 32],
+    pub(crate) k_del: [u8; 32],
+    pub(crate) k_meta: [u8; 32],
+    pub(crate) seed_a: [u8; 32],
 }
 
-fn vk_derive(
+pub(crate) fn vk_derive(
     account: &[u8; 16],
     vault: &[u8; 16],
     epoch: u64,
@@ -451,7 +451,7 @@ fn seal(
     Ok(blob)
 }
 
-fn draw<const N: usize>(seed: &str) -> [u8; N] {
+pub(crate) fn draw<const N: usize>(seed: &str) -> [u8; N] {
     let mut rng = TestRng::new(seed.as_bytes());
     let mut out = [0u8; N];
     rng.fill(&mut out);

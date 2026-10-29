@@ -106,3 +106,33 @@ pub fn all_methods() -> Vec<Method> {
         Method::Device,
     ]
 }
+
+/// Concatenates the `segments` of a vector input `{ "segments": [...] }`:
+/// each `hex` repeated `repeat` times.
+pub fn segments(input: &Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    for seg in input["segments"].as_array().unwrap() {
+        if let Some(keys) = seg.get("keys") {
+            // `count` map entries: the five-digit counter as a CBOR text,
+            // then `value_hex`.
+            let value =
+                ferret_core::testing::hex_decode(keys["value_hex"].as_str().unwrap()).unwrap();
+            for i in 0..keys["count"].as_u64().unwrap() {
+                out.push(0x65);
+                out.extend_from_slice(format!("{i:05}").as_bytes());
+                out.extend_from_slice(&value);
+            }
+            continue;
+        }
+        let unit = ferret_core::testing::hex_decode(seg["hex"].as_str().unwrap()).unwrap();
+        for _ in 0..seg["repeat"].as_u64().unwrap() {
+            out.extend_from_slice(&unit);
+        }
+    }
+    out
+}
+
+/// An unlocked vault with the vault key `[b; 32]` in the context `ctx()`.
+pub fn unlocked(b: u8) -> ferret_core::UnlockedVault {
+    ferret_core::UnlockedVault::from_vault_key(ctx(), vk(b)).unwrap()
+}

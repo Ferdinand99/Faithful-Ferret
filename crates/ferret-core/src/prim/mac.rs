@@ -12,7 +12,6 @@ pub(crate) const HMAC_SHA256_LEN: usize = 32;
 /// Compare tags with [`super::ct::ct_eq`], never with `==`.
 ///
 /// Spec: Fase 1 § 3 (HMAC-SHA256 for item tags and checkpoints).
-#[allow(dead_code)] // first used by Task 6 (item tags, checkpoints)
 pub(crate) fn hmac_sha256(key: &[u8], msg: &[u8]) -> Result<[u8; HMAC_SHA256_LEN], Error> {
     // HMAC accepts keys of every length, so this cannot fail; the error is
     // mapped instead of unwrapped because the core never panics.
