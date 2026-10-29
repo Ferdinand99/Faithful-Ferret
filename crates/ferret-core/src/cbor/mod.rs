@@ -21,7 +21,9 @@ mod decode;
 mod encode;
 mod value;
 
-pub use decode::{MAX_BYTES, MAX_DEPTH, MAX_ITEMS, decode, decode_prefix};
-pub use encode::{encode, encoded_len};
+pub use decode::{
+    MAX_BYTES, MAX_DEPTH, MAX_ITEMS, decode, decode_limited, decode_prefix, decode_prefix_limited,
+};
+pub use encode::{encode, encoded_len, node_count};
 pub use value::Value;
 pub(crate) use value::{Entries, redacted_debug};

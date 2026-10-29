@@ -273,6 +273,12 @@ fn export_password_equal_to_master_is_refused() {
         ExportPassword::new(PASSWORD.as_bytes(), Some(&mp)).err(),
         Some(Error::InvalidInput(InputError::SameAsMasterPassword))
     );
+    // `new_checked` has no way to skip the comparison.
+    assert_eq!(
+        ExportPassword::new_checked(PASSWORD.as_bytes(), &mp).err(),
+        Some(Error::InvalidInput(InputError::SameAsMasterPassword))
+    );
+    assert!(ExportPassword::new_checked(b"another password!", &mp).is_ok());
     // Another password is fine, and a short one is refused when creating.
     assert!(ExportPassword::new(b"another password!", Some(&mp)).is_ok());
     assert_eq!(
@@ -506,6 +512,183 @@ fn export_checks_size_of_body_before_argon() {
     let before = argon2_run_count();
     assert_eq!(import_decrypt(&pw(), &f), Err(Error::TooLarge));
     assert_eq!(argon2_run_count(), before);
+}
+
+#[test]
+fn export_body_limit_is_exact() {
+    use ferret_core::testing::export::export_encrypt_raw_unchecked;
+    const MAX: usize = 128 * 1024 * 1024;
+    let file = small_file();
+    let floor = header_with_params(&file, 65_536, 3, 1);
+    let head = floor[..header_len(&floor) + 72].to_vec();
+    // Read: a body of exactly 128 MiB gets past the length check and fails
+    // only to authenticate (Argon2id runs once); one byte more is refused
+    // before Argon2id.
+    let mut at = head.clone();
+    at.resize(head.len() + MAX, 0);
+    let before = argon2_run_count();
+    assert_eq!(import_decrypt(&pw(), &at), Err(Error::Decrypt));
+    assert_eq!(argon2_run_count(), before + 1);
+    at.push(0);
+    assert_eq!(import_decrypt(&pw(), &at), Err(Error::TooLarge));
+    assert_eq!(argon2_run_count(), before + 1);
+    drop(at);
+    // Written: a plaintext of 128 MiB minus the nonce and tag fits; one more
+    // byte does not.
+    let fits = vec![0u8; MAX - 40];
+    let out = export_encrypt_raw_unchecked(&mut rng("max"), &pw(), SMALL, NOW, &fits).unwrap();
+    assert_eq!(out.len(), header_len(&out) + 72 + MAX);
+    drop(out);
+    let too_big = vec![0u8; MAX - 39];
+    assert_eq!(
+        export_encrypt_raw_unchecked(&mut rng("max"), &pw(), SMALL, NOW, &too_big),
+        Err(Error::TooLarge)
+    );
+}
+
+#[test]
+fn export_header_is_read_from_a_bounded_prefix() {
+    // 30 MiB of one array holding 3 200 arrays of 10 000 zeros: within every
+    // per-container limit, and about 30 million nodes. The reader must
+    // refuse it after looking at 256 bytes, not after building the tree.
+    let mut file = vec![0x99, 0x0c, 0x80]; // array(3200)
+    for _ in 0..3_200 {
+        file.extend_from_slice(&[0x99, 0x27, 0x10]); // array(10000)
+        file.resize(file.len() + 10_000, 0x00);
+    }
+    assert!(file.len() > 30 * 1024 * 1024);
+    let bad = Err(Error::Malformed(MalformedKind::ExportHeader));
+    let started = std::time::Instant::now();
+    assert_eq!(parse_export_header(&file).map(|(h, _)| h), bad);
+    assert_eq!(
+        import_decrypt(&pw(), &file),
+        Err(Error::Malformed(MalformedKind::ExportHeader))
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "took {:?}",
+        started.elapsed()
+    );
+    // The same answer as for the first 256 bytes alone: nothing past them
+    // was read.
+    assert_eq!(
+        parse_export_header(&file[..256]).map(|(h, _)| h),
+        parse_export_header(&file).map(|(h, _)| h)
+    );
+    // A real header is far below the bound.
+    assert!(header_len(&small_file()) < 128);
+}
+
+#[test]
+fn export_version_is_checked_before_the_parameters() {
+    let file = small_file();
+    let (h, _) = parse_export_header(&file).unwrap();
+    for (v, suite) in [(2u64, 1u64), (1, 2)] {
+        let mut value = header_value(
+            Value::uint(u64::MAX),
+            Value::uint(u64::MAX),
+            Value::int(-1),
+            &h.salt,
+        );
+        if let Value::Map(e) = &mut value {
+            e[0].1 = Value::uint(v);
+            e[1].1 = Value::uint(suite);
+        }
+        let f = with_header(&file, &cbor::encode(&value).unwrap());
+        assert_eq!(import_decrypt(&pw(), &f), Err(Error::Unsupported));
+    }
+}
+
+#[test]
+fn import_stops_at_the_node_limit_of_a_hostile_body() {
+    use ferret_core::testing::export::export_encrypt_raw_unchecked;
+    // An authentic body that is an array of 101 arrays of `inner` zeros.
+    let exact = |inner: u16| {
+        let mut body = vec![0x98, 0x65];
+        for _ in 0..101 {
+            body.extend_from_slice(&[0x99, (inner >> 8) as u8, inner as u8]);
+            body.resize(body.len() + usize::from(inner), 0x00);
+        }
+        body
+    };
+    // 1 + 101 * 10 001 = 1 010 102 nodes; before: 101 +101 * 10 000 = 1 010 101 nodes: over the limit of 1 000 000.
+    let file = export_encrypt_raw_unchecked(&mut rng("hostile"), &pw(), SMALL, NOW, &exact(10_000))
+        .unwrap();
+    assert_eq!(
+        import_decrypt_unchecked(&pw(), &file),
+        Err(Error::Malformed(MalformedKind::CborCount))
+    );
+    // 1 + 101 + 101 * 9 800 = 990 902 nodes read fine as CBOR; it is the
+    // shape that is wrong, not the size.
+    let file = export_encrypt_raw_unchecked(&mut rng("hostile"), &pw(), SMALL, NOW, &exact(9_800))
+        .unwrap();
+    assert_eq!(
+        import_decrypt_unchecked(&pw(), &file),
+        Err(Error::Malformed(MalformedKind::ItemBody))
+    );
+}
+
+#[test]
+fn export_of_10000_small_items_roundtrips_within_the_node_limit() {
+    let many: Vec<ExportItem> = (0..10_000u32)
+        .map(|i| {
+            let mut id = [1u8; 16];
+            id[..4].copy_from_slice(&i.to_be_bytes());
+            let mut b = ItemBody::new(ItemType::Login, format!("Item {i}"), NOW);
+            b.fields = vec![Field {
+                id: "u".into(),
+                label: "User".into(),
+                kind: FieldKind::Text,
+                value: format!("user{i}"),
+                extra: vec![],
+            }];
+            b.urls = vec![UrlEntry {
+                url: format!("https://site{i}.example"),
+                matching: UrlMatch::Host,
+                extra: vec![],
+            }];
+            ExportItem {
+                item_id: ItemId::from_bytes(id),
+                body: b,
+            }
+        })
+        .collect();
+    let file = export_encrypt_unchecked(&mut rng("many"), &pw(), SMALL, NOW, &many).unwrap();
+    let back = import_decrypt_unchecked(&pw(), &file).unwrap();
+    assert_eq!(back.len(), 10_000);
+    assert_eq!(back, many);
+}
+
+#[test]
+fn export_refuses_to_write_a_body_over_the_node_limit() {
+    // 10 000 items with 100 fields each: about 4 million nodes. The reader
+    // would refuse the file, so the writer does not make it.
+    let mut b = ItemBody::new(ItemType::Login, "wide", NOW);
+    b.fields = (0..100)
+        .map(|n| Field {
+            id: n.to_string(),
+            label: "l".into(),
+            kind: FieldKind::Text,
+            value: "v".into(),
+            extra: vec![],
+        })
+        .collect();
+    let wide: Vec<ExportItem> = (0..2_000u32)
+        .map(|i| {
+            let mut id = [1u8; 16];
+            id[..4].copy_from_slice(&i.to_be_bytes());
+            ExportItem {
+                item_id: ItemId::from_bytes(id),
+                body: b.clone(),
+            }
+        })
+        .collect();
+    let mut none = ReplayRng::new(vec![]);
+    assert_eq!(
+        export_encrypt_unchecked(&mut none, &pw(), SMALL, NOW, &wide),
+        Err(Error::TooLarge)
+    );
+    none.finish().unwrap();
 }
 
 // ------------------------------------------------------------- tampering
@@ -936,19 +1119,25 @@ fn csv_of_one_name(name: &str) -> Vec<Vec<String>> {
 
 #[test]
 fn plain_csv_neutralizes_formulas() {
-    for bad in ["=1+1", "+x", "-x", "@x", "\tx", "\rx", "=", "-", "@SUM(A1)"] {
+    for bad in [
+        "=1+1", "+x", "-x", "@x", "\tx", "\rx", "=", "-", "@SUM(A1)",
+        // After leading spaces (some importers trim first).
+        " =x", "   +x", " -x", "  @x", " \tx", " \rx", "\t =x",
+    ] {
         let rows = csv_of_one_name(bad);
         assert_eq!(rows[1][2], format!("'{bad}"), "{bad:?}");
     }
     // Everything else is unchanged, also text that has these characters
-    // elsewhere, a leading space, and an apostrophe.
+    // elsewhere, leading spaces before something else, and an apostrophe.
     for fine in [
         "plain",
         "a=b",
         "x+y",
         "x-y",
         "a@b.c",
-        " =x",
+        " x",
+        "  1+1",
+        " 'x",
         "'x",
         "1+1",
         "",

@@ -61,6 +61,21 @@ pub fn encoded_len(value: &Value) -> usize {
     }
 }
 
+/// The number of nodes the decoder counts for `value` (see
+/// [`super::decode_limited`]): every value, array and map is one, and every
+/// map key is one more. Saturates.
+pub fn node_count(value: &Value) -> usize {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .fold(1usize, |n, v| n.saturating_add(node_count(v))),
+        Value::Map(entries) => entries.iter().fold(1usize, |n, (_, v)| {
+            n.saturating_add(1).saturating_add(node_count(v))
+        }),
+        _ => 1,
+    }
+}
+
 /// Encodes `value`.
 ///
 /// Fails with the same `Malformed(..)` kinds the decoder would give for the

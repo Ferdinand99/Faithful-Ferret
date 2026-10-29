@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "53e183b584e351a87e1dd57842ddec19fb1536905a996484450985cc6723467b",
-    "OPS.md": "370948c56bcb5841144ff794ede1ddc6b9c9c4846068571aae34507418ddbc91",
-    "VERSION": "a1fb50e6c86fae1679ef3351296fd6713411a08cf8dd1790a4fd05fae8688164",
+    "ERRORS.md": "41305cc51dece8cf840ab63ada2d462125e48cce6746d92dad00a57f59c51051",
+    "OPS.md": "a8da897857fed7ac266fc033082d59bc650d68df53817efdf847a50bed6265ab",
+    "VERSION": "1a252402972f6057fa53cc172b52b9ffca698e18311facd0f3b06ecaaef79e17",
     "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
@@ -18,7 +18,7 @@
     "internal/cbor-limits.json": "213ba4185cef58fa6bf75660cd6297fe99ffae5c730bb1d8e91b12514eec8520",
     "internal/checkpoint.json": "3b8dd1bb2b7c32cbeadcb1ba37ac838e0cba563ef1641808ab93ebd0e517d061",
     "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
-    "internal/export.json": "69174551f07dce1b97da8358266bc6548f68443e5b78499c01964ab87ad7b7c6",
+    "internal/export.json": "2667db3c3817c8bea5ce7ed0b2abaaac0f485952a81b6dd713b253dc536ed156",
     "internal/item.json": "c53fff03cdd3153c5a75407ab1f92be79a6d78bfd9259a5c7fbcc08d35a58dda",
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
     "internal/padding.json": "d4e0ea9bc004d79cf61e021624d78d67aa1ae212ae7ea7bac43c0cd93332fef7",
@@ -32,5 +32,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 12
+  "version": 13
 }

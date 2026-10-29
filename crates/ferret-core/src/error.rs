@@ -40,7 +40,8 @@ pub enum MalformedKind {
     CborTag,
     /// CBOR: more than 16 levels of arrays and maps.
     CborDepth,
-    /// CBOR: an array or map with more than 10 000 entries.
+    /// CBOR: an array or map with more than 10 000 entries, or (where the
+    /// caller sets a limit, as for an export body) too many nodes in all.
     CborCount,
     /// CBOR: text or bytes longer than 64 KiB.
     CborSize,

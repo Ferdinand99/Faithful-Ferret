@@ -36,7 +36,9 @@ fn pw() -> ExportPassword {
 /// Any characters at all, also control characters, quotes, commas, line
 /// breaks and the characters that start a formula.
 fn text() -> impl Strategy<Value = String> {
-    let special = prop::sample::select(vec!['=', '+', '-', '@', '\t', '\r', '\n', ',', '"', '\'']);
+    let special = prop::sample::select(vec![
+        '=', '+', '-', '@', '\t', '\r', '\n', ',', '"', '\'', ' ',
+    ]);
     prop::collection::vec(prop_oneof![3 => any::<char>(), 2 => special], 0..16)
         .prop_map(|v| v.into_iter().collect())
 }
@@ -167,7 +169,10 @@ proptest! {
         let text = export_plain_csv(&items, &o).unwrap();
         let rows = parse_csv(&text);
         prop_assert_eq!(rows.len(), items.len() + 1);
-        let formula = |s: &str| s.starts_with(['=', '+', '-', '@', '\t', '\r']);
+        let formula = |s: &str| {
+            s.trim_start_matches(' ')
+                .starts_with(['=', '+', '-', '@', '\t', '\r'])
+        };
         let neutral = |s: &str| if formula(s) { format!("'{s}") } else { s.to_string() };
         let width = rows[0].len();
         for (item, row) in items.iter().zip(&rows[1..]) {

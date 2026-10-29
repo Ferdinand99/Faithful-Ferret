@@ -89,7 +89,22 @@ pub const EK_WRAP_LEN: usize = 72;
 pub const MAX_BODY_LEN: usize = 128 * 1024 * 1024;
 
 /// The most items in one export (the array limit of Fase 1 § 5.2).
+///
+/// A vault holds at most 10 000 items in v1 (Fase 1 § 8.2), so an export
+/// never needs more.
 pub const MAX_ITEMS: usize = cbor::MAX_ITEMS as usize;
+
+/// The most nodes the CBOR of an export body may have (see
+/// [`cbor::decode_limited`]). An honest body of 10 000 small items has about
+/// 350 000. The cap bounds the tree a hostile, authentic body can make the
+/// reader build (32 bytes a node) to about 32 MB for the tree itself.
+pub const MAX_BODY_NODES: usize = 1_000_000;
+
+/// The header is read from at most this many bytes of the file. A header is
+/// under 100 bytes even with the longest integer heads, so a file that has a
+/// longer first CBOR element is not an export, and the reader never builds a
+/// tree out of the (possibly huge) rest of the file before it knows that.
+const MAX_HEADER_LEN: usize = 256;
 
 /// The `v` of the header and of the body.
 const FORMAT_VERSION: u64 = 1;
@@ -212,7 +227,8 @@ fn kdf_param(value: &Value) -> Result<u32, Error> {
 ///
 /// Spec: Fase 1 § 6.4 (the header is one CBOR element stored as written).
 pub fn parse_export_header(file: &[u8]) -> Result<(ExportHeader, usize), Error> {
-    let (value, used) = cbor::decode_prefix(file).map_err(|_| bad())?;
+    let bounded = file.get(..MAX_HEADER_LEN).unwrap_or(file);
+    let (value, used) = cbor::decode_prefix(bounded).map_err(|_| bad())?;
     let [v, suite, kdf, created_at] = exact_map(value, ["v", "suite", "kdf", "created_at"])?;
     let [salt, m, t, p] = exact_map(kdf, ["salt", "m", "t", "p"])?;
     let v = v.as_u64().ok_or_else(bad)?;
@@ -223,14 +239,16 @@ pub fn parse_export_header(file: &[u8]) -> Result<(ExportHeader, usize), Error> 
         .map_err(|_| bad())?
         .try_into()
         .map_err(|_| bad())?;
+    // `v` and `suite` first: a file from a newer version may have parameters
+    // this version does not understand, and "newer version" is the answer.
+    if v != FORMAT_VERSION || suite != u64::from(SUITE) {
+        return Err(Error::Unsupported);
+    }
     let kdf = KdfParams {
         m_kib: kdf_param(&m)?,
         t: kdf_param(&t)?,
         p: kdf_param(&p)?,
     };
-    if v != FORMAT_VERSION || suite != u64::from(SUITE) {
-        return Err(Error::Unsupported);
-    }
     Ok((
         ExportHeader {
             created_at,
@@ -283,8 +301,8 @@ pub(crate) fn derive_k_exp(
 /// `cbor{ v: 1, items: [ { id, body } ] }`.
 ///
 /// An item that is read-only (a newer `schema`), the reserved manifest id
-/// or a repeated id is refused, as is a list over the 10 000 items that the
-/// CBOR rules allow.
+/// or a repeated id is refused, as is a list over [`MAX_ITEMS`] or a body
+/// with more than [`MAX_BODY_NODES`] CBOR nodes ([`Error::TooLarge`]).
 fn encode_items(items: &[ExportItem]) -> Result<Zeroizing<Vec<u8>>, Error> {
     if items.len() > MAX_ITEMS {
         return Err(Error::TooLarge);
@@ -307,6 +325,10 @@ fn encode_items(items: &[ExportItem]) -> Result<Zeroizing<Vec<u8>>, Error> {
         ("v".into(), Value::uint(FORMAT_VERSION)),
         ("items".into(), Value::Array(list)),
     ]);
+    // A body the reader would refuse is not written.
+    if cbor::node_count(&body) > MAX_BODY_NODES {
+        return Err(Error::TooLarge);
+    }
     cbor::encode(&body).map(Zeroizing::new)
 }
 
@@ -314,7 +336,7 @@ fn encode_items(items: &[ExportItem]) -> Result<Zeroizing<Vec<u8>>, Error> {
 /// entry are refused (a later format changes `v`); unknown keys inside a body
 /// are kept by [`ItemBody`].
 fn decode_items(plain: &[u8]) -> Result<Vec<ExportItem>, Error> {
-    let value = cbor::decode(plain)?;
+    let value = cbor::decode_limited(plain, MAX_BODY_NODES)?;
     let [v, items] = exact_map(value, ["v", "items"]).map_err(|_| bad_body())?;
     match v.as_u64() {
         Some(FORMAT_VERSION) => {}
@@ -349,8 +371,10 @@ fn decode_items(plain: &[u8]) -> Result<Vec<ExportItem>, Error> {
 ///
 /// Draws, in this order: the salt (16 bytes), `EK` (32), the nonce of
 /// `ek_wrap` (24), the nonce of the body (24). `kdf` is checked against the
-/// floor and ceiling first ([`Error::KdfOutOfRange`]); use [`EXPORT_KDF`].
-/// The items are checked before anything is drawn.
+/// floor and ceiling first ([`Error::KdfOutOfRange`]); the glue must pass
+/// [`EXPORT_KDF`], and must make `pw` with `ExportPassword::new_checked` so
+/// that it differs from the master password. The items are checked before
+/// anything is drawn.
 ///
 /// Spec: Fase 1 § 6.4.
 pub fn export_encrypt<R: SecureRng>(

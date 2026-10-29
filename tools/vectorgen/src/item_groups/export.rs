@@ -234,10 +234,13 @@ fn jstr(s: &str) -> String {
     out
 }
 
-/// One CSV cell: `'` in front of a cell that starts like a formula, then
-/// RFC 4180 quoting.
+/// One CSV cell: `'` in front of a cell that starts like a formula (after any
+/// leading spaces), then RFC 4180 quoting.
 fn csv_cell(s: &str) -> String {
-    let neutral = if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+    let neutral = if s
+        .trim_start_matches(' ')
+        .starts_with(['=', '+', '-', '@', '\t', '\r'])
+    {
         format!("'{s}")
     } else {
         s.to_string()
@@ -876,6 +879,13 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
         None,
         Some("unsupported"),
     ));
+    cases.push(header_case(
+        "007",
+        "version 2 with a memory size that does not fit 32 bits: the version is reported first",
+        &a.with_header(&header_bytes(2, 1, salt, 4_294_967_296, 2, 2, CREATED_AT)),
+        None,
+        Some("unsupported"),
+    ));
 
     // ---- refused: layout, no Argon2id run (run by every binding)
     let ps =
@@ -1217,7 +1227,11 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
 
     // ---- plain exports
     let formulas: Vec<XItem> = [
-        "=1+1", "+x", "-x", "@x", "\tx", "\rx", "plain", "a=b", " =x", "'x", "",
+        "=1+1", "+x", "-x", "@x", "\tx", "\rx", "plain", "a=b", "'x", "",
+        // after leading spaces
+        " =x", "   +x", " -x", "  @x", " \tx", " \rx", "\t =x",
+        // spaces before something else: unchanged
+        " x", "  1+1", " 'x",
     ]
     .iter()
     .enumerate()
@@ -1225,7 +1239,7 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
     .collect();
     cases.push(plain_case(
         "csv-001",
-        "names that start like a formula get a leading apostrophe, others do not",
+        "names that start like a formula, also after spaces, get a leading apostrophe; others do not",
         "export.plain.csv",
         &formulas,
         false,

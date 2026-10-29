@@ -23,14 +23,56 @@
 //! private key or PRF seed, whatever the options say.
 //!
 //! **Formula injection.** A spreadsheet reads a cell that starts with `=`,
-//! `+`, `-`, `@`, tab or CR as a formula. Every CSV cell that starts with
-//! one of these gets `'` in front of it (before quoting). The header cells
+//! `+`, `-`, `@`, tab or CR as a formula, and some importers skip leading
+//! spaces first. Every CSV cell whose first character after any leading
+//! spaces is one of these gets `'` at the very start of the cell (before
+//! quoting), so `" =x"` becomes `"' =x"`. The header cells
 //! are fixed text and are not changed.
 
 use super::ExportItem;
 use crate::cbor::Value;
 use crate::error::Error;
 use zeroize::Zeroizing;
+
+/// Where the formatting code writes. It runs twice: once to count the bytes,
+/// then into a buffer reserved at exactly that size, so the buffer never
+/// grows and no smaller copy of the secrets is freed unwiped.
+enum Sink {
+    Count(usize),
+    Buf(Zeroizing<String>),
+}
+
+impl Sink {
+    fn s(&mut self, s: &str) {
+        match self {
+            Sink::Count(n) => *n = n.saturating_add(s.len()),
+            Sink::Buf(b) => b.push_str(s),
+        }
+    }
+
+    fn c(&mut self, c: char) {
+        match self {
+            Sink::Count(n) => *n = n.saturating_add(c.len_utf8()),
+            Sink::Buf(b) => b.push(c),
+        }
+    }
+}
+
+/// Runs `write` to count, and again into a buffer of that size.
+fn two_pass(write: impl Fn(&mut Sink)) -> String {
+    let mut count = Sink::Count(0);
+    write(&mut count);
+    let n = match count {
+        Sink::Count(n) => n,
+        Sink::Buf(_) => 0,
+    };
+    let mut out = Sink::Buf(Zeroizing::new(String::with_capacity(n)));
+    write(&mut out);
+    match out {
+        Sink::Buf(mut b) => core::mem::take(&mut *b),
+        Sink::Count(_) => String::new(),
+    }
+}
 
 /// What the plaintext exports include.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -47,24 +89,24 @@ const PASSKEY_SECRETS: [&str; 3] = ["priv", "prf_seed_uv", "prf_seed_nouv"];
 ///
 /// The text holds every secret in clear; the caller must treat it so.
 pub fn export_plain_json(items: &[ExportItem], o: &PlainExportOptions) -> Result<String, Error> {
-    let mut out = String::new();
-    out.push_str("{\"v\":1,\"items\":[");
-    for (i, item) in items.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
+    Ok(two_pass(|out| {
+        out.s("{\"v\":1,\"items\":[");
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                out.c(',');
+            }
+            out.s("{\"id\":\"");
+            push_hex(out, item.item_id.as_bytes());
+            out.s("\",\"body\":");
+            let mut body = item.body.to_value();
+            if !o.include_passkeys {
+                strip_passkey_secrets(&mut body);
+            }
+            push_json(out, &body);
+            out.c('}');
         }
-        out.push_str("{\"id\":\"");
-        push_hex(&mut out, item.item_id.as_bytes());
-        out.push_str("\",\"body\":");
-        let mut body = item.body.to_value();
-        if !o.include_passkeys {
-            strip_passkey_secrets(&mut body);
-        }
-        push_json(&mut out, &body);
-        out.push('}');
-    }
-    out.push_str("]}");
-    Ok(out)
+        out.s("]}");
+    }))
 }
 
 /// Removes the secret keys from the passkey object of a body.
@@ -85,42 +127,42 @@ fn hex_digit(n: u8) -> char {
     char::from_digit(u32::from(n & 15), 16).unwrap_or('0')
 }
 
-fn push_hex(out: &mut String, bytes: &[u8]) {
+fn push_hex(out: &mut Sink, bytes: &[u8]) {
     for b in bytes {
-        out.push(hex_digit(b >> 4));
-        out.push(hex_digit(*b));
+        out.c(hex_digit(b >> 4));
+        out.c(hex_digit(*b));
     }
 }
 
 /// A JSON string: `"`, `\` and the control characters below U+0020 escaped
 /// (RFC 8259 § 7); everything else as it is.
-fn push_json_string(out: &mut String, s: &str) {
-    out.push('"');
+fn push_json_string(out: &mut Sink, s: &str) {
+    out.c('"');
     for c in s.chars() {
         match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
+            '"' => out.s("\\\""),
+            '\\' => out.s("\\\\"),
+            '\n' => out.s("\\n"),
+            '\r' => out.s("\\r"),
+            '\t' => out.s("\\t"),
+            '\u{8}' => out.s("\\b"),
+            '\u{c}' => out.s("\\f"),
             c if u32::from(c) < 0x20 => {
-                out.push_str("\\u00");
+                out.s("\\u00");
                 push_hex(out, &[u8::try_from(u32::from(c)).unwrap_or(0)]);
             }
-            c => out.push(c),
+            c => out.c(c),
         }
     }
-    out.push('"');
+    out.c('"');
 }
 
 /// A float as a JSON number, or `null` when it has none.
-fn push_float(out: &mut String, x: f64) {
+fn push_float(out: &mut Sink, x: f64) {
     if x.is_finite() {
-        out.push_str(&x.to_string());
+        out.s(&x.to_string());
     } else {
-        out.push_str("null");
+        out.s("null");
     }
 }
 
@@ -137,42 +179,42 @@ fn half_to_f64(bits: u16) -> f64 {
     }
 }
 
-fn push_json(out: &mut String, value: &Value) {
+fn push_json(out: &mut Sink, value: &Value) {
     match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(true) => out.push_str("true"),
-        Value::Bool(false) => out.push_str("false"),
-        Value::Int(n) => out.push_str(&n.to_string()),
+        Value::Null => out.s("null"),
+        Value::Bool(true) => out.s("true"),
+        Value::Bool(false) => out.s("false"),
+        Value::Int(n) => out.s(&n.to_string()),
         Value::Float(bits) => push_float(out, f64::from_bits(*bits)),
         Value::Float32(bits) => push_float(out, f64::from(f32::from_bits(*bits))),
         Value::Float16(bits) => push_float(out, half_to_f64(*bits)),
         Value::Bytes(b) => {
-            out.push('"');
+            out.c('"');
             push_hex(out, b);
-            out.push('"');
+            out.c('"');
         }
         Value::Text(s) => push_json_string(out, s),
         Value::Array(items) => {
-            out.push('[');
+            out.c('[');
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    out.push(',');
+                    out.c(',');
                 }
                 push_json(out, item);
             }
-            out.push(']');
+            out.c(']');
         }
         Value::Map(entries) => {
-            out.push('{');
+            out.c('{');
             for (i, (key, item)) in entries.iter().enumerate() {
                 if i > 0 {
-                    out.push(',');
+                    out.c(',');
                 }
                 push_json_string(out, key);
-                out.push(':');
+                out.c(':');
                 push_json(out, item);
             }
-            out.push('}');
+            out.c('}');
         }
     }
 }
@@ -182,6 +224,13 @@ fn push_json(out: &mut String, value: &Value) {
 /// The first characters that make a spreadsheet read a cell as a formula.
 /// Spec: Fase 1 § 6.4.
 const FORMULA_STARTS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// Whether a spreadsheet may read the cell as a formula: it starts with one of
+/// [`FORMULA_STARTS`], also after leading spaces (some importers trim before
+/// they look).
+fn is_formula(text: &str) -> bool {
+    text.trim_start_matches(' ').starts_with(FORMULA_STARTS)
+}
 
 /// The fixed columns, before the custom fields.
 const FIXED_COLUMNS: [&str; 11] = [
@@ -199,42 +248,46 @@ const FIXED_COLUMNS: [&str; 11] = [
 ];
 
 /// Writes one cell: neutralised first, then quoted if it needs to be.
-/// Written straight into `out`, so that no copy of the text is made.
-fn push_cell(out: &mut String, text: &str) {
+/// Written straight into `out`: no copy of the text is made.
+fn push_cell(out: &mut Sink, text: &str) {
     let quote = text.contains([',', '"', '\r', '\n']);
     if quote {
-        out.push('"');
+        out.c('"');
     }
-    if text.starts_with(FORMULA_STARTS) {
-        out.push('\'');
+    if is_formula(text) {
+        out.c('\'');
     }
     for c in text.chars() {
         if quote && c == '"' {
-            out.push('"');
+            out.c('"');
         }
-        out.push(c);
+        out.c(c);
     }
     if quote {
-        out.push('"');
+        out.c('"');
     }
 }
 
-fn push_row<'a>(out: &mut String, cells: impl IntoIterator<Item = &'a str>) {
+fn push_row<'a>(out: &mut Sink, cells: impl IntoIterator<Item = &'a str>) {
     for (i, cell) in cells.into_iter().enumerate() {
         if i > 0 {
-            out.push(',');
+            out.c(',');
         }
         push_cell(out, cell);
     }
-    out.push_str("\r\n");
+    out.s("\r\n");
 }
 
 /// The row of one item. The only copy of item text made on the way is the
 /// joined address cell, which is wiped.
-fn push_item_row(out: &mut String, item: &ExportItem, width: usize) {
+fn push_item_row(out: &mut Sink, item: &ExportItem, width: usize) {
     let b = &item.body;
-    let mut id = String::new();
-    push_hex(&mut id, item.item_id.as_bytes());
+    let id: String = item
+        .item_id
+        .as_bytes()
+        .iter()
+        .flat_map(|b| [hex_digit(b >> 4), hex_digit(*b)])
+        .collect();
     let urls = Zeroizing::new(
         b.urls
             .iter()
@@ -285,10 +338,10 @@ pub fn export_plain_csv(items: &[ExportItem], _o: &PlainExportOptions) -> Result
         header.push(format!("field_{n}_kind"));
         header.push(format!("field_{n}_value"));
     }
-    let mut out = String::new();
-    push_row(&mut out, header.iter().map(String::as_str));
-    for item in items {
-        push_item_row(&mut out, item, width);
-    }
-    Ok(out)
+    Ok(two_pass(|out| {
+        push_row(out, header.iter().map(String::as_str));
+        for item in items {
+            push_item_row(out, item, width);
+        }
+    }))
 }

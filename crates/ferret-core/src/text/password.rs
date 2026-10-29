@@ -162,6 +162,17 @@ impl ExportPassword {
         Ok(Self(bytes))
     }
 
+    /// [`ExportPassword::new`] with the master password required: an export
+    /// password that normalizes to the same bytes as `mp` is rejected with
+    /// `input_same_as_master_password`. This is the constructor for the export
+    /// flow, where the master password is known because the vault is open, so
+    /// the check cannot be left out by passing `None`.
+    ///
+    /// Spec: Fase 1 section 6.4.
+    pub fn new_checked(utf8: &[u8], mp: &MasterPassword) -> Result<Self, Error> {
+        Self::new(utf8, Some(mp))
+    }
+
     /// Normalizes the password of an export file that is being opened: the
     /// maximum length and the character rules, but no minimum length and no
     /// comparison with the master password (those apply when the file is
