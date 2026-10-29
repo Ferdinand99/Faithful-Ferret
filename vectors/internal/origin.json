@@ -1,0 +1,2006 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "origin",
+  "suite": 1,
+  "spec": "Fase 1 § 9.2",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "origin/canonical/valid/001",
+      "title": "canonical origin of \"https://example.com\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/002",
+      "title": "canonical origin of \"HTTPS://EXAMPLE.COM\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "HTTPS://EXAMPLE.COM",
+        "raw_utf8": "48545450533a2f2f4558414d504c452e434f4d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/003",
+      "title": "canonical origin of \"https://EXAMPLE.com.\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://EXAMPLE.com.",
+        "raw_utf8": "68747470733a2f2f4558414d504c452e636f6d2e"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/004",
+      "title": "canonical origin of \"https://Bücher.example\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://Bücher.example",
+        "raw_utf8": "68747470733a2f2f42c3bc636865722e6578616d706c65"
+      },
+      "expect": {
+        "host": "xn--bcher-kva.example",
+        "origin": "https://xn--bcher-kva.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/005",
+      "title": "canonical origin of \"https://xn--bcher-kva.example\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://xn--bcher-kva.example",
+        "raw_utf8": "68747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c65"
+      },
+      "expect": {
+        "host": "xn--bcher-kva.example",
+        "origin": "https://xn--bcher-kva.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/006",
+      "title": "canonical origin of \"https://münchen.de\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://münchen.de",
+        "raw_utf8": "68747470733a2f2f6dc3bc6e6368656e2e6465"
+      },
+      "expect": {
+        "host": "xn--mnchen-3ya.de",
+        "origin": "https://xn--mnchen-3ya.de"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/007",
+      "title": "canonical origin of \"https://日本語.jp\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://日本語.jp",
+        "raw_utf8": "68747470733a2f2fe697a5e69cace8aa9e2e6a70"
+      },
+      "expect": {
+        "host": "xn--wgv71a119e.jp",
+        "origin": "https://xn--wgv71a119e.jp"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/008",
+      "title": "canonical origin of \"https://☃.net\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://☃.net",
+        "raw_utf8": "68747470733a2f2fe298832e6e6574"
+      },
+      "expect": {
+        "host": "xn--n3h.net",
+        "origin": "https://xn--n3h.net"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/009",
+      "title": "canonical origin of \"https://пример.рф\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://пример.рф",
+        "raw_utf8": "68747470733a2f2fd0bfd180d0b8d0bcd0b5d1802ed180d184"
+      },
+      "expect": {
+        "host": "xn--e1afmkfd.xn--p1ai",
+        "origin": "https://xn--e1afmkfd.xn--p1ai"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/010",
+      "title": "canonical origin of \"https://你好.com\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://你好.com",
+        "raw_utf8": "68747470733a2f2fe4bda0e5a5bd2e636f6d"
+      },
+      "expect": {
+        "host": "xn--6qq79v.com",
+        "origin": "https://xn--6qq79v.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/011",
+      "title": "canonical origin of \"https://ｅｘａｍｐｌｅ.com\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://ｅｘａｍｐｌｅ.com",
+        "raw_utf8": "68747470733a2f2fefbd85efbd98efbd81efbd8defbd90efbd8cefbd852e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/012",
+      "title": "canonical origin of \"https://straße.de\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://straße.de",
+        "raw_utf8": "68747470733a2f2f73747261c39f652e6465"
+      },
+      "expect": {
+        "host": "xn--strae-oqa.de",
+        "origin": "https://xn--strae-oqa.de"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/013",
+      "title": "canonical origin of \"https://example.com:443\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:443",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a343433"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/014",
+      "title": "canonical origin of \"https://example.com:8443\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:8443",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com:8443"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/015",
+      "title": "canonical origin of \"https://a.b:8443\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a.b:8443",
+        "raw_utf8": "68747470733a2f2f612e623a38343433"
+      },
+      "expect": {
+        "host": "a.b",
+        "origin": "https://a.b:8443"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/016",
+      "title": "canonical origin of \"https://a.b:08443\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a.b:08443",
+        "raw_utf8": "68747470733a2f2f612e623a3038343433"
+      },
+      "expect": {
+        "host": "a.b",
+        "origin": "https://a.b:8443"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/017",
+      "title": "canonical origin of \"https://EXAMPLE.COM:8443\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://EXAMPLE.COM:8443",
+        "raw_utf8": "68747470733a2f2f4558414d504c452e434f4d3a38343433"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com:8443"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/018",
+      "title": "canonical origin of \"https://example.com:80\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:80",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3830"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com:80"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/019",
+      "title": "canonical origin of \"http://localhost\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://localhost",
+        "raw_utf8": "687474703a2f2f6c6f63616c686f7374"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "http://localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/020",
+      "title": "canonical origin of \"http://localhost:3000\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://localhost:3000",
+        "raw_utf8": "687474703a2f2f6c6f63616c686f73743a33303030"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "http://localhost:3000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/021",
+      "title": "canonical origin of \"http://localhost:80\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://localhost:80",
+        "raw_utf8": "687474703a2f2f6c6f63616c686f73743a3830"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "http://localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/022",
+      "title": "canonical origin of \"http://LOCALHOST.\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://LOCALHOST.",
+        "raw_utf8": "687474703a2f2f4c4f43414c484f53542e"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "http://localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/023",
+      "title": "canonical origin of \"https://localhost\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://localhost",
+        "raw_utf8": "68747470733a2f2f6c6f63616c686f7374"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "https://localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/024",
+      "title": "canonical origin of \"https://a.github.io\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a.github.io",
+        "raw_utf8": "68747470733a2f2f612e6769746875622e696f"
+      },
+      "expect": {
+        "host": "a.github.io",
+        "origin": "https://a.github.io"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/025",
+      "title": "canonical origin of \"https://github.io\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://github.io",
+        "raw_utf8": "68747470733a2f2f6769746875622e696f"
+      },
+      "expect": {
+        "host": "github.io",
+        "origin": "https://github.io"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/026",
+      "title": "canonical origin of \"https://sub.example.co.uk\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://sub.example.co.uk",
+        "raw_utf8": "68747470733a2f2f7375622e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "host": "sub.example.co.uk",
+        "origin": "https://sub.example.co.uk"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/027",
+      "title": "canonical origin of \"https://a-b.example\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a-b.example",
+        "raw_utf8": "68747470733a2f2f612d622e6578616d706c65"
+      },
+      "expect": {
+        "host": "a-b.example",
+        "origin": "https://a-b.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/028",
+      "title": "canonical origin of \"https://123.example\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://123.example",
+        "raw_utf8": "68747470733a2f2f3132332e6578616d706c65"
+      },
+      "expect": {
+        "host": "123.example",
+        "origin": "https://123.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/029",
+      "title": "canonical origin of \"https://xn--n3h.net\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://xn--n3h.net",
+        "raw_utf8": "68747470733a2f2f786e2d2d6e33682e6e6574"
+      },
+      "expect": {
+        "host": "xn--n3h.net",
+        "origin": "https://xn--n3h.net"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/valid/030",
+      "title": "canonical origin of \"https://a.b.c.d.e.f.example\"",
+      "op": "origin.canonical",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a.b.c.d.e.f.example",
+        "raw_utf8": "68747470733a2f2f612e622e632e642e652e662e6578616d706c65"
+      },
+      "expect": {
+        "host": "a.b.c.d.e.f.example",
+        "origin": "https://a.b.c.d.e.f.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/canonical/invalid/031",
+      "title": "\"null\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "null",
+        "raw_utf8": "6e756c6c"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/032",
+      "title": "\"about:blank\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "about:blank",
+        "raw_utf8": "61626f75743a626c616e6b"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/033",
+      "title": "\"about:srcdoc\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "about:srcdoc",
+        "raw_utf8": "61626f75743a737263646f63"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/034",
+      "title": "\"srcdoc\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "srcdoc",
+        "raw_utf8": "737263646f63"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/035",
+      "title": "\"data:text/html,<h1>x</h1>\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "data:text/html,<h1>x</h1>",
+        "raw_utf8": "646174613a746578742f68746d6c2c3c68313e783c2f68313e"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/036",
+      "title": "\"file:///etc/passwd\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "file:///etc/passwd",
+        "raw_utf8": "66696c653a2f2f2f6574632f706173737764"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/037",
+      "title": "\"file://host/share\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "file://host/share",
+        "raw_utf8": "66696c653a2f2f686f73742f7368617265"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/038",
+      "title": "\"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10",
+        "raw_utf8": "626c6f623a68747470733a2f2f6578616d706c652e636f6d2f32663663316630652d366135322d346635352d396436652d306331623362336639613130"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/039",
+      "title": "\"javascript:alert(1)\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "javascript:alert(1)",
+        "raw_utf8": "6a6176617363726970743a616c657274283129"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/040",
+      "title": "\"chrome-extension://abcdefghijklmnopabcdefghijklmnop\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+        "raw_utf8": "6368726f6d652d657874656e73696f6e3a2f2f6162636465666768696a6b6c6d6e6f706162636465666768696a6b6c6d6e6f70"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/041",
+      "title": "\"ftp://example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "ftp://example.com",
+        "raw_utf8": "6674703a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/042",
+      "title": "\"ws://example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "ws://example.com",
+        "raw_utf8": "77733a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/043",
+      "title": "\"\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "",
+        "raw_utf8": ""
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/044",
+      "title": "\"example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "example.com",
+        "raw_utf8": "6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/045",
+      "title": "\"//example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "//example.com",
+        "raw_utf8": "2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/046",
+      "title": "\"https://\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://",
+        "raw_utf8": "68747470733a2f2f"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/047",
+      "title": "\"https://:443\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://:443",
+        "raw_utf8": "68747470733a2f2f3a343433"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/048",
+      "title": "\"http://example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://example.com",
+        "raw_utf8": "687474703a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/049",
+      "title": "\"http://localhost.example\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://localhost.example",
+        "raw_utf8": "687474703a2f2f6c6f63616c686f73742e6578616d706c65"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/050",
+      "title": "\"http://sub.localhost\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://sub.localhost",
+        "raw_utf8": "687474703a2f2f7375622e6c6f63616c686f7374"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/051",
+      "title": "\"http://127.0.0.1\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://127.0.0.1",
+        "raw_utf8": "687474703a2f2f3132372e302e302e31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/052",
+      "title": "\"https://127.0.0.1\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://127.0.0.1",
+        "raw_utf8": "68747470733a2f2f3132372e302e302e31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/053",
+      "title": "\"https://1.2.3.4:8443\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://1.2.3.4:8443",
+        "raw_utf8": "68747470733a2f2f312e322e332e343a38343433"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/054",
+      "title": "\"https://[::1]\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://[::1]",
+        "raw_utf8": "68747470733a2f2f5b3a3a315d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/055",
+      "title": "\"https://[::1]:8443\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://[::1]:8443",
+        "raw_utf8": "68747470733a2f2f5b3a3a315d3a38343433"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/056",
+      "title": "\"http://[::1]\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "http://[::1]",
+        "raw_utf8": "687474703a2f2f5b3a3a315d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/057",
+      "title": "\"https://0x7f.0.0.1\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://0x7f.0.0.1",
+        "raw_utf8": "68747470733a2f2f307837662e302e302e31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/058",
+      "title": "\"https://2130706433\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://2130706433",
+        "raw_utf8": "68747470733a2f2f32313330373036343333"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/059",
+      "title": "\"https://127.1\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://127.1",
+        "raw_utf8": "68747470733a2f2f3132372e31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/060",
+      "title": "\"https://１２７.０.０.１\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://１２７.０.０.１",
+        "raw_utf8": "68747470733a2f2fefbc91efbc92efbc972eefbc902eefbc902eefbc91"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/061",
+      "title": "\"https://example.com:\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/062",
+      "title": "\"https://example.com:0\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:0",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a30"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/063",
+      "title": "\"https://example.com:65536\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:65536",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3635353336"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/064",
+      "title": "\"https://example.com:abc\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com:abc",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3a616263"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/065",
+      "title": "\"https://user@example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://user@example.com",
+        "raw_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/066",
+      "title": "\"https://user:pw@example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://user:pw@example.com",
+        "raw_utf8": "68747470733a2f2f757365723a7077406578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/067",
+      "title": "\"https://example.com/\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com/",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d2f"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/068",
+      "title": "\"https://example.com/path\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com/path",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d2f70617468"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/069",
+      "title": "\"https://example.com?x=1\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com?x=1",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d3f783d31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/070",
+      "title": "\"https://example.com#frag\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com#frag",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d2366726167"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/071",
+      "title": "\"https://exa mple.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://exa mple.com",
+        "raw_utf8": "68747470733a2f2f657861206d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/072",
+      "title": "\" https://example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": " https://example.com",
+        "raw_utf8": "2068747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/073",
+      "title": "\"https://example.com\\n\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com\n",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d0a"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/074",
+      "title": "\"https://example.com\\\\\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com\\",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d5c"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/075",
+      "title": "\"https://exa%6Dple.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://exa%6Dple.com",
+        "raw_utf8": "68747470733a2f2f657861253644706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/076",
+      "title": "\"https://*.example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://*.example.com",
+        "raw_utf8": "68747470733a2f2f2a2e6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/077",
+      "title": "\"https://-example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://-example.com",
+        "raw_utf8": "68747470733a2f2f2d6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/078",
+      "title": "\"https://example-.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example-.com",
+        "raw_utf8": "68747470733a2f2f6578616d706c652d2e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/079",
+      "title": "\"https://exa_mple.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://exa_mple.com",
+        "raw_utf8": "68747470733a2f2f6578615f6d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/080",
+      "title": "\"https://a..b\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://a..b",
+        "raw_utf8": "68747470733a2f2f612e2e62"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/081",
+      "title": "\"https://.example.com\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://.example.com",
+        "raw_utf8": "68747470733a2f2f2e6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/canonical/invalid/082",
+      "title": "\"https://example.com..\" is not an origin a passkey may be used from",
+      "op": "origin.canonical",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "raw": "https://example.com..",
+        "raw_utf8": "68747470733a2f2f6578616d706c652e636f6d2e2e"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "origin/rp_id/valid/001",
+      "title": "RP ID \"login.example.com\" for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "login.example.com",
+        "rp_id_utf8": "6c6f67696e2e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "rp_id": "login.example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/002",
+      "title": "RP ID \"example.com\" for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "example.com",
+        "rp_id_utf8": "6578616d706c652e636f6d"
+      },
+      "expect": {
+        "rp_id": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/003",
+      "title": "RP ID \"LOGIN.Example.COM\" for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "LOGIN.Example.COM",
+        "rp_id_utf8": "4c4f47494e2e4578616d706c652e434f4d"
+      },
+      "expect": {
+        "rp_id": "login.example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/004",
+      "title": "RP ID \"login.example.com.\" for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "login.example.com.",
+        "rp_id_utf8": "6c6f67696e2e6578616d706c652e636f6d2e"
+      },
+      "expect": {
+        "rp_id": "login.example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/005",
+      "title": "RP ID \"com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "com",
+        "rp_id_utf8": "636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/006",
+      "title": "RP ID \"ample.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "ample.com",
+        "rp_id_utf8": "616d706c652e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/007",
+      "title": "RP ID \"ogin.example.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "ogin.example.com",
+        "rp_id_utf8": "6f67696e2e6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/008",
+      "title": "RP ID \"other.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "other.com",
+        "rp_id_utf8": "6f746865722e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/009",
+      "title": "RP ID \"sub.login.example.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "sub.login.example.com",
+        "rp_id_utf8": "7375622e6c6f67696e2e6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/010",
+      "title": "RP ID \"example.com:443\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "example.com:443",
+        "rp_id_utf8": "6578616d706c652e636f6d3a343433"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/011",
+      "title": "RP ID \"https://example.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "https://example.com",
+        "rp_id_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/012",
+      "title": "RP ID \"\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "",
+        "rp_id_utf8": ""
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/013",
+      "title": "RP ID \".example.com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": ".example.com",
+        "rp_id_utf8": "2e6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/014",
+      "title": "RP ID \"example..com\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "example..com",
+        "rp_id_utf8": "6578616d706c652e2e636f6d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/015",
+      "title": "RP ID \"127.0.0.1\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "127.0.0.1",
+        "rp_id_utf8": "3132372e302e302e31"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/016",
+      "title": "RP ID \"[::1]\" is refused for \"https://login.example.com\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "origin_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d",
+        "rp_id": "[::1]",
+        "rp_id_utf8": "5b3a3a315d"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/017",
+      "title": "RP ID \"example.com\" for \"https://example.com:8443\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com:8443",
+        "origin_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433",
+        "rp_id": "example.com",
+        "rp_id_utf8": "6578616d706c652e636f6d"
+      },
+      "expect": {
+        "rp_id": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/018",
+      "title": "RP ID \"example.com:8443\" is refused for \"https://example.com:8443\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com:8443",
+        "origin_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433",
+        "rp_id": "example.com:8443",
+        "rp_id_utf8": "6578616d706c652e636f6d3a38343433"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/019",
+      "title": "RP ID \"a.github.io\" for \"https://a.github.io\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://a.github.io",
+        "origin_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "rp_id": "a.github.io",
+        "rp_id_utf8": "612e6769746875622e696f"
+      },
+      "expect": {
+        "rp_id": "a.github.io"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/020",
+      "title": "RP ID \"github.io\" is refused for \"https://a.github.io\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://a.github.io",
+        "origin_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "rp_id": "github.io",
+        "rp_id_utf8": "6769746875622e696f"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/021",
+      "title": "RP ID \"io\" is refused for \"https://a.github.io\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://a.github.io",
+        "origin_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "rp_id": "io",
+        "rp_id_utf8": "696f"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/022",
+      "title": "RP ID \"github.io\" is refused for \"https://github.io\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://github.io",
+        "origin_utf8": "68747470733a2f2f6769746875622e696f",
+        "rp_id": "github.io",
+        "rp_id_utf8": "6769746875622e696f"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/023",
+      "title": "RP ID \"vercel.app\" is refused for \"https://x.y.vercel.app\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://x.y.vercel.app",
+        "origin_utf8": "68747470733a2f2f782e792e76657263656c2e617070",
+        "rp_id": "vercel.app",
+        "rp_id_utf8": "76657263656c2e617070"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/024",
+      "title": "RP ID \"y.vercel.app\" for \"https://x.y.vercel.app\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://x.y.vercel.app",
+        "origin_utf8": "68747470733a2f2f782e792e76657263656c2e617070",
+        "rp_id": "y.vercel.app",
+        "rp_id_utf8": "792e76657263656c2e617070"
+      },
+      "expect": {
+        "rp_id": "y.vercel.app"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/025",
+      "title": "RP ID \"x.y.vercel.app\" for \"https://x.y.vercel.app\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://x.y.vercel.app",
+        "origin_utf8": "68747470733a2f2f782e792e76657263656c2e617070",
+        "rp_id": "x.y.vercel.app",
+        "rp_id_utf8": "782e792e76657263656c2e617070"
+      },
+      "expect": {
+        "rp_id": "x.y.vercel.app"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/026",
+      "title": "RP ID \"co.uk\" is refused for \"https://www.example.co.uk\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://www.example.co.uk",
+        "origin_utf8": "68747470733a2f2f7777772e6578616d706c652e636f2e756b",
+        "rp_id": "co.uk",
+        "rp_id_utf8": "636f2e756b"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/027",
+      "title": "RP ID \"uk\" is refused for \"https://www.example.co.uk\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://www.example.co.uk",
+        "origin_utf8": "68747470733a2f2f7777772e6578616d706c652e636f2e756b",
+        "rp_id": "uk",
+        "rp_id_utf8": "756b"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/028",
+      "title": "RP ID \"example.co.uk\" for \"https://www.example.co.uk\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://www.example.co.uk",
+        "origin_utf8": "68747470733a2f2f7777772e6578616d706c652e636f2e756b",
+        "rp_id": "example.co.uk",
+        "rp_id_utf8": "6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "rp_id": "example.co.uk"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/029",
+      "title": "RP ID \"foo.ck\" is refused for \"https://a.foo.ck\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://a.foo.ck",
+        "origin_utf8": "68747470733a2f2f612e666f6f2e636b",
+        "rp_id": "foo.ck",
+        "rp_id_utf8": "666f6f2e636b"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/030",
+      "title": "RP ID \"a.foo.ck\" for \"https://a.foo.ck\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://a.foo.ck",
+        "origin_utf8": "68747470733a2f2f612e666f6f2e636b",
+        "rp_id": "a.foo.ck",
+        "rp_id_utf8": "612e666f6f2e636b"
+      },
+      "expect": {
+        "rp_id": "a.foo.ck"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/031",
+      "title": "RP ID \"www.ck\" for \"https://www.ck\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://www.ck",
+        "origin_utf8": "68747470733a2f2f7777772e636b",
+        "rp_id": "www.ck",
+        "rp_id_utf8": "7777772e636b"
+      },
+      "expect": {
+        "rp_id": "www.ck"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/032",
+      "title": "RP ID \"ck\" is refused for \"https://www.ck\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://www.ck",
+        "origin_utf8": "68747470733a2f2f7777772e636b",
+        "rp_id": "ck",
+        "rp_id_utf8": "636b"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/033",
+      "title": "RP ID \"intranet\" is refused for \"https://intranet\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://intranet",
+        "origin_utf8": "68747470733a2f2f696e7472616e6574",
+        "rp_id": "intranet",
+        "rp_id_utf8": "696e7472616e6574"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/invalid/034",
+      "title": "RP ID \"intranet\" is refused for \"https://app.intranet\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://app.intranet",
+        "origin_utf8": "68747470733a2f2f6170702e696e7472616e6574",
+        "rp_id": "intranet",
+        "rp_id_utf8": "696e7472616e6574"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/035",
+      "title": "RP ID \"app.intranet\" for \"https://app.intranet\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://app.intranet",
+        "origin_utf8": "68747470733a2f2f6170702e696e7472616e6574",
+        "rp_id": "app.intranet",
+        "rp_id_utf8": "6170702e696e7472616e6574"
+      },
+      "expect": {
+        "rp_id": "app.intranet"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/036",
+      "title": "RP ID \"bücher.example\" for \"https://bücher.example\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://bücher.example",
+        "origin_utf8": "68747470733a2f2f62c3bc636865722e6578616d706c65",
+        "rp_id": "bücher.example",
+        "rp_id_utf8": "62c3bc636865722e6578616d706c65"
+      },
+      "expect": {
+        "rp_id": "xn--bcher-kva.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/037",
+      "title": "RP ID \"xn--bcher-kva.example\" for \"https://bücher.example\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://bücher.example",
+        "origin_utf8": "68747470733a2f2f62c3bc636865722e6578616d706c65",
+        "rp_id": "xn--bcher-kva.example",
+        "rp_id_utf8": "786e2d2d62636865722d6b76612e6578616d706c65"
+      },
+      "expect": {
+        "rp_id": "xn--bcher-kva.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/038",
+      "title": "RP ID \"example\" is refused for \"https://bücher.example\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://bücher.example",
+        "origin_utf8": "68747470733a2f2f62c3bc636865722e6578616d706c65",
+        "rp_id": "example",
+        "rp_id_utf8": "6578616d706c65"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/039",
+      "title": "RP ID \"localhost\" for \"http://localhost\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "http://localhost",
+        "origin_utf8": "687474703a2f2f6c6f63616c686f7374",
+        "rp_id": "localhost",
+        "rp_id_utf8": "6c6f63616c686f7374"
+      },
+      "expect": {
+        "rp_id": "localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/valid/040",
+      "title": "RP ID \"localhost\" for \"http://localhost:3000\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "http://localhost:3000",
+        "origin_utf8": "687474703a2f2f6c6f63616c686f73743a33303030",
+        "rp_id": "localhost",
+        "rp_id_utf8": "6c6f63616c686f7374"
+      },
+      "expect": {
+        "rp_id": "localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "origin/rp_id/invalid/041",
+      "title": "RP ID \"localhost\" is refused for \"https://foo.localhost\"",
+      "op": "origin.rp_id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://foo.localhost",
+        "origin_utf8": "68747470733a2f2f666f6f2e6c6f63616c686f7374",
+        "rp_id": "localhost",
+        "rp_id_utf8": "6c6f63616c686f7374"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "origin/rp_id/valid/042",
+      "title": "RP ID \"foo.localhost\" for \"https://foo.localhost\"",
+      "op": "origin.rp_id",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://foo.localhost",
+        "origin_utf8": "68747470733a2f2f666f6f2e6c6f63616c686f7374",
+        "rp_id": "foo.localhost",
+        "rp_id_utf8": "666f6f2e6c6f63616c686f7374"
+      },
+      "expect": {
+        "rp_id": "foo.localhost"
+      },
+      "expect_error": null
+    }
+  ]
+}

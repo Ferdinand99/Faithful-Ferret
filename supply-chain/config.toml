@@ -27,7 +27,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.autocfg]]
 version = "1.5.1"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.base16ct]]
 version = "0.2.0"
@@ -35,7 +35,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.base16ct]]
 version = "1.0.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.base64ct]]
 version = "1.8.3"
@@ -91,7 +91,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.cpubits]]
 version = "0.1.1"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.cpufeatures]]
 version = "0.2.17"
@@ -107,7 +107,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.crypto-bigint]]
 version = "0.7.10"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.crypto-common]]
 version = "0.1.7"
@@ -135,7 +135,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.der]]
 version = "0.8.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.derive-where]]
 version = "1.7.0"
@@ -155,7 +155,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ecdsa]]
 version = "0.17.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.ed25519]]
 version = "3.0.0"
@@ -171,7 +171,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.elliptic-curve]]
 version = "0.14.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.ff]]
 version = "0.13.1"
@@ -179,7 +179,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ff]]
 version = "0.14.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.fiat-crypto]]
 version = "0.2.9"
@@ -203,7 +203,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.group]]
 version = "0.14.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.hkdf]]
 version = "0.12.4"
@@ -225,6 +225,42 @@ criteria = "safe-to-deploy"
 version = "0.4.15"
 criteria = "safe-to-deploy"
 
+[[exemptions.icu_collections]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_locale_core]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_normalizer]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_normalizer_data]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_properties]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_properties_data]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.icu_provider]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.idna]]
+version = "0.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.idna_adapter]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.inout]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
@@ -239,6 +275,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.libc]]
 version = "0.2.191"
+criteria = "safe-to-deploy"
+
+[[exemptions.litemap]]
+version = "0.8.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.memchr]]
@@ -259,7 +299,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.p256]]
 version = "0.14.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.password-hash]]
 version = "0.5.0"
@@ -275,19 +315,23 @@ criteria = "safe-to-deploy"
 
 [[exemptions.pkcs8]]
 version = "0.11.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.poly1305]]
 version = "0.9.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.potential_utf]]
+version = "0.1.6"
+criteria = "safe-to-deploy"
+
 [[exemptions.primefield]]
 version = "0.14.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.primeorder]]
 version = "0.14.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.proc-macro2]]
 version = "1.0.107"
@@ -327,7 +371,7 @@ criteria = "safe-to-run"
 
 [[exemptions.rfc6979]]
 version = "0.6.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.rustc_version]]
 version = "0.4.0"
@@ -343,7 +387,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.sec1]]
 version = "0.8.1"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.serde]]
 version = "1.0.229"
@@ -363,7 +407,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serdect]]
 version = "0.4.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.sha1]]
 version = "0.11.0"
@@ -381,9 +425,17 @@ criteria = "safe-to-deploy"
 version = "3.0.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.smallvec]]
+version = "1.16.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.spki]]
 version = "0.8.1"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
+
+[[exemptions.stable_deref_trait]]
+version = "1.2.1"
+criteria = "safe-to-deploy"
 
 [[exemptions.subtle]]
 version = "2.6.1"
@@ -395,6 +447,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
 version = "3.0.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.synstructure]]
+version = "0.14.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.tinystr]]
+version = "0.8.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.tinyvec]]
@@ -415,6 +475,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.universal-hash]]
 version = "0.6.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.utf8_iter]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.utf_types]]
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.version_check]]
@@ -443,7 +511,27 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wnaf]]
 version = "0.14.1"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
+
+[[exemptions.writeable]]
+version = "0.6.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.yoke]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.yoke-derive]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerofrom]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerofrom-derive]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
 
 [[exemptions.zeroize]]
 version = "1.9.1"
@@ -451,6 +539,18 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zeroize_derive]]
 version = "1.5.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerotrie]]
+version = "0.2.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerovec]]
+version = "0.11.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerovec-derive]]
+version = "0.11.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.zmij]]

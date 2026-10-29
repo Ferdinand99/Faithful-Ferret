@@ -42,6 +42,11 @@ minicbor = { version = "=2.3.1", default-features = false, features = ["alloc"] 
 # opaque-ke's 3DH suite and is used for nothing else.
 opaque-ke = { version = "=4.0.1", default-features = false, features = ["ristretto255"] }
 sha2_010 = { package = "sha2", version = "=0.10.9", default-features = false }
+# Passkeys (Fase 1 section 9): ECDSA P-256 (ES256) with PKCS#8 and SPKI, and
+# IDNA (UTS 46) for the A-labels of origins and RP IDs. The Public Suffix List
+# is an embedded snapshot, matched in `passkey::psl`.
+p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"] }
+idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
 # Only behind `test-support`:
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "=1.0.154", optional = true }
@@ -59,10 +64,8 @@ serde_json = "=1.0.154"
 static_assertions = "=1.1.0"
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 # Independent Argon2 implementation (previous generation) to cross-check the
-# profile 1 known answers; and the ECDSA P-256 verifier that the passkey code
-# will use, here for the Wycheproof vectors.
+# profile 1 known answers.
 argon2_05 = { package = "argon2", version = "=0.5.3", default-features = false, features = ["alloc"] }
-p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"] }
 # RFC 9497 (OPRF) vectors for ristretto255-SHA512, run against the very voprf
 # that opaque-ke uses (already in the tree; no new crate version).
 voprf = { version = "=0.5.0", default-features = false, features = ["ristretto255-ciphersuite", "danger"] }

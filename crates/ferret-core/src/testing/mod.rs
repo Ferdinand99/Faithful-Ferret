@@ -18,6 +18,7 @@ pub mod integrity;
 pub mod item;
 pub mod keys;
 pub mod opaque;
+pub mod passkey;
 pub mod pinning;
 pub mod prim;
 mod replay_rng;

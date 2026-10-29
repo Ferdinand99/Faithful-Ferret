@@ -77,6 +77,15 @@ pub enum MalformedKind {
     /// An `otpauth://` address or a TOTP setting: wrong scheme or type, an
     /// unknown or repeated parameter, bad base32, a value out of range.
     Otpauth,
+    /// An origin that is not one a passkey may be used from: not `https` (or
+    /// `http://localhost`), an IP host, an opaque origin, or not valid.
+    Origin,
+    /// An RP ID that the origin may not use: not the host or a suffix of it,
+    /// a public suffix, or not a valid domain.
+    RpId,
+    /// A WebAuthn request that is wrong in itself (user handle length,
+    /// `evalByCredential` naming a credential that is not allowed).
+    WebauthnOptions,
 }
 
 /// Why a checkpoint did not verify.
@@ -159,6 +168,9 @@ pub enum Error {
     NonCanonical,
     /// Passkey: user verification missing, cancelled or no match (same value).
     NotAllowed,
+    /// Passkey `create`: a credential in `excludeCredentials` is already
+    /// stored for this RP (WebAuthn `InvalidStateError`).
+    InvalidState,
     /// Not supported by this build or version.
     Unsupported,
     /// A value pinned on this device was contradicted. A hard error with a
@@ -200,6 +212,9 @@ impl Error {
         Error::Malformed(MalformedKind::PinnedRecord),
         Error::Malformed(MalformedKind::OpaqueMessage),
         Error::Malformed(MalformedKind::Otpauth),
+        Error::Malformed(MalformedKind::Origin),
+        Error::Malformed(MalformedKind::RpId),
+        Error::Malformed(MalformedKind::WebauthnOptions),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -214,6 +229,7 @@ impl Error {
         Error::Checksum,
         Error::NonCanonical,
         Error::NotAllowed,
+        Error::InvalidState,
         Error::Unsupported,
         Error::Pinned(PinnedField::ServerUrl),
         Error::Pinned(PinnedField::AccountId),
@@ -261,6 +277,9 @@ impl Error {
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
                 MalformedKind::OpaqueMessage => "malformed_opaque_message",
                 MalformedKind::Otpauth => "malformed_otpauth",
+                MalformedKind::Origin => "malformed_origin",
+                MalformedKind::RpId => "malformed_rp_id",
+                MalformedKind::WebauthnOptions => "malformed_webauthn_options",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",
@@ -278,6 +297,7 @@ impl Error {
             Error::Checksum => "checksum",
             Error::NonCanonical => "non_canonical",
             Error::NotAllowed => "not_allowed",
+            Error::InvalidState => "invalid_state",
             Error::Unsupported => "unsupported",
             Error::Pinned(field) => match field {
                 PinnedField::ServerUrl => "pinned_server_url",

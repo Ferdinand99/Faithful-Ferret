@@ -72,3 +72,16 @@ check the OPRF that OPAQUE builds on, in the `voprf` crate that `opaque-ke`
 uses: `DeriveKeyPair` from the seed and key info, the blinded element, the
 evaluated element and the output. The VOPRF and POPRF modes of the RFC are
 not used by OPAQUE and are not included.
+
+## Public Suffix List test file
+
+`publicsuffix-test_psl.txt` is the upstream test file of the Public Suffix List, unchanged (78 `checkPublicSuffix` cases, dedicated to the public domain under CC0 1.0, as its header says).
+
+| | |
+|---|---|
+| URL | `https://raw.githubusercontent.com/publicsuffix/list/9dfbe81931367b3f0af21035c36ae7eeb830dd88/tests/test_psl.txt` |
+| Commit | `9dfbe81931367b3f0af21035c36ae7eeb830dd88` (the commit of the embedded list snapshot, `VERSION: 2026-10-28_13-15-55_UTC`) |
+| SHA-256 | `8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d` |
+| Retrieved | 2026-10-29 |
+
+It is run against the embedded snapshot by `tests/origin.rs` (`psl_upstream_test_file`). When the snapshot is refreshed with `scripts/update-psl.sh`, replace this file with the one from the new commit and update the commit and the hash here.

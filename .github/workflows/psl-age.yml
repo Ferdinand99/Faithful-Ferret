@@ -1,0 +1,25 @@
+# The embedded Public Suffix List snapshot must not be older than 90 days
+# (Fase 1 section 9.2). Checked once a week and on release pull requests, so an
+# unrelated pull request never fails because of the date. Refresh the snapshot
+# with scripts/update-psl.sh.
+name: PSL age
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  psl-age:
+    name: Public Suffix List snapshot age
+    # On pull requests only for release-please branches.
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: scripts/check-psl-age.sh

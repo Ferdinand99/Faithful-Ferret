@@ -6,3 +6,4 @@
 /vectors/** text eol=lf
 /docker/** text eol=lf
 *.lock text eol=lf
+*.dat text eol=lf

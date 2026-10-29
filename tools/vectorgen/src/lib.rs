@@ -15,6 +15,8 @@ mod groups;
 mod item_groups;
 mod key_groups;
 mod opaque_groups;
+mod origin_groups;
+mod passkey_groups;
 mod text_groups;
 mod totp_groups;
 
@@ -66,6 +68,8 @@ const GROUPS: &[Group] = &[
     ("internal/export.json", item_groups::export::export),
     ("internal/opaque.json", opaque_groups::opaque),
     ("internal/totp.json", totp_groups::totp),
+    ("internal/origin.json", origin_groups::origin),
+    ("internal/passkey.json", passkey_groups::passkey),
 ];
 
 /// Serializes a vector file the way every generated file is written:

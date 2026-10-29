@@ -39,6 +39,9 @@ share the single code `decrypt`, with no cause.
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
 | `malformed_opaque_message` | An OPAQUE message from the server with the wrong length, or one that holds something that is not a group element or key. A message that parses but does not authenticate is `decrypt`. |
 | `malformed_otpauth` | An `otpauth://` address or TOTP setting that is not allowed: wrong scheme or type, an unknown or repeated parameter, bad base32, or digits or period out of range. |
+| `malformed_origin` | The origin is not one a passkey may be used from: not `https` (or `http://localhost`), an IP host, `null`, `about:blank`, `data:`, `file:`, an opaque origin, or not a valid host. |
+| `malformed_rp_id` | The RP ID is not the host of the origin or a dot-delimited suffix of it, is a public suffix, carries a port, or is not a valid domain. |
+| `malformed_webauthn_options` | A WebAuthn request that is wrong in itself: a user handle of 0 or more than 64 bytes, or `evalByCredential` naming a credential that is not in `allowCredentials`. |
 | `malformed_code` | Recovery or secret key code with a wrong prefix or a letter outside the alphabet. |
 | `too_large` | Larger than the allowed size. |
 | `read_only_schema` | The item has a newer schema and is read-only. |
@@ -54,6 +57,7 @@ share the single code `decrypt`, with no cause.
 | `checksum` | Recovery or secret key checksum error. |
 | `non_canonical` | Recovery or secret key is valid but not in canonical form. |
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |
+| `invalid_state` | Passkey `create`: a credential in `excludeCredentials` is already stored for this RP ID (WebAuthn `InvalidStateError`). Given only after the user has consented. |
 | `unsupported` | Not supported by this build or version. |
 | `pinned_server_url` | The server address differs from the one pinned on this device. |
 | `pinned_vault_id` | The vault differs from the one pinned on this device. |
