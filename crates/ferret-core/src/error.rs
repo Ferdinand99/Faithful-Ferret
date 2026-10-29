@@ -46,8 +46,6 @@ pub enum MalformedKind {
     CborSize,
     /// CBOR: a map key that is not text.
     CborKeyType,
-    /// CBOR: a half or single precision float.
-    CborFloat,
     /// CBOR: `undefined` or a simple value other than `true`, `false`, `null`.
     CborSimple,
     /// CBOR: an integer outside the range of `i64` and `u64`.
@@ -181,7 +179,6 @@ impl Error {
         Error::Malformed(MalformedKind::CborCount),
         Error::Malformed(MalformedKind::CborSize),
         Error::Malformed(MalformedKind::CborKeyType),
-        Error::Malformed(MalformedKind::CborFloat),
         Error::Malformed(MalformedKind::CborSimple),
         Error::Malformed(MalformedKind::CborInt),
         Error::Malformed(MalformedKind::CborTrailing),
@@ -241,7 +238,6 @@ impl Error {
                 MalformedKind::CborCount => "malformed_cbor_count",
                 MalformedKind::CborSize => "malformed_cbor_size",
                 MalformedKind::CborKeyType => "malformed_cbor_key_type",
-                MalformedKind::CborFloat => "malformed_cbor_float",
                 MalformedKind::CborSimple => "malformed_cbor_simple",
                 MalformedKind::CborInt => "malformed_cbor_int",
                 MalformedKind::CborTrailing => "malformed_cbor_trailing",

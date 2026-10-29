@@ -41,6 +41,8 @@ pub fn encoded_len(value: &Value) -> usize {
             let arg = if *n < 0 { !*n } else { *n };
             head_len(u64::try_from(arg).unwrap_or(u64::MAX))
         }
+        Value::Float16(_) => 3,
+        Value::Float32(_) => 5,
         Value::Float(_) => 9,
         Value::Bytes(b) => head_len(len_u64(b.len())).saturating_add(b.len()),
         Value::Text(s) => head_len(len_u64(s.len())).saturating_add(s.len()),
@@ -87,8 +89,21 @@ fn write(enc: &mut Encoder<Vec<u8>>, value: &Value, depth: usize) -> Result<(), 
                 return Err(malformed(MalformedKind::CborInt));
             }
         }
+        // Floats are written as the bits they were read with.
+        Value::Float16(bits) => {
+            let w = enc.writer_mut();
+            w.push(0xf9);
+            w.extend_from_slice(&bits.to_be_bytes());
+        }
+        Value::Float32(bits) => {
+            let w = enc.writer_mut();
+            w.push(0xfa);
+            w.extend_from_slice(&bits.to_be_bytes());
+        }
         Value::Float(bits) => {
-            enc.f64(f64::from_bits(*bits)).map_err(write_error)?;
+            let w = enc.writer_mut();
+            w.push(0xfb);
+            w.extend_from_slice(&bits.to_be_bytes());
         }
         Value::Bytes(b) => {
             if b.len() > MAX_BYTES {

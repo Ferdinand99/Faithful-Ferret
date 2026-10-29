@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "685256a3f31b67dce3294bb93f34c0b5b36f46eb7ac9114f61dd8a9d98659f66",
-    "OPS.md": "216fbb55f74123e500a948596d0709dc305100c9776bd91644a6cdcb73965b76",
-    "VERSION": "10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58",
+    "ERRORS.md": "1a87018cab614d61287dbbadfba068e299295ee3bce6dc9977567d16b251c101",
+    "OPS.md": "c2fc47a25fcd956b8c974c35d6bfffec5146312c00532c3ad1959f92a0cf72fa",
+    "VERSION": "aa67a169b0bba217aa0aa88a65346920c84c42447c36ba5f7ea65f422c1fe5d8",
     "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
@@ -15,9 +15,9 @@
     "external/wycheproof/hmac_sha256_test.json": "2d201cfa61d1bf95e6f5d07d96634b4a348b31e8eaa277ad7c8d09677b7a743f",
     "external/wycheproof/xchacha20_poly1305_test.json": "a79de072571b90eb40c3a63ce0c7f75dcb4b62323c8870228e1f61dcc61d63a9",
     "external/xchacha-draft-03.json": "e8ec9a4feafa2aaf227f18b72fccc78a3346a83b84c02f51054dd35755768933",
-    "internal/cbor-limits.json": "b6008120d67f6ac4ffb3d9d0608f01ac1ece624f906ddce9f37625818a3a6c77",
+    "internal/cbor-limits.json": "213ba4185cef58fa6bf75660cd6297fe99ffae5c730bb1d8e91b12514eec8520",
     "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
-    "internal/item.json": "20b35ec5776da21d1a7ecd4b576c328798f754864330bfa5e909176d961b6b11",
+    "internal/item.json": "c53fff03cdd3153c5a75407ab1f92be79a6d78bfd9259a5c7fbcc08d35a58dda",
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
     "internal/padding.json": "d4e0ea9bc004d79cf61e021624d78d67aa1ae212ae7ea7bac43c0cd93332fef7",
     "internal/tlv.json": "c3dc2e66943111dece887836a1a852d0c95892f85dd6794863626a679a8316f1",
@@ -27,5 +27,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 7
+  "version": 8
 }

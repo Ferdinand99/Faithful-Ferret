@@ -438,6 +438,10 @@ pub struct ItemBody {
     pub device: Option<String>,
     /// Keys this version does not know, in the order they were read.
     pub extra: Vec<(String, Value)>,
+    /// Set when the body was read from a schema above 1. It stays set when
+    /// the caller changes `schema`, so a lossy copy of a future item can
+    /// never be written back as schema 1.
+    from_future_schema: bool,
 }
 
 redacted_debug!(Field, UrlEntry, Totp, Passkey, ItemBody);
@@ -459,13 +463,15 @@ impl ItemBody {
             favorite: false,
             device: None,
             extra: Vec::new(),
+            from_future_schema: false,
         }
     }
 
-    /// Whether this body has a newer schema than the one this version
-    /// writes. Such a body can be shown and never written.
+    /// Whether this body is read-only: it has a newer schema than the one
+    /// this version writes, or it was read from one. Such a body can be shown
+    /// and never written.
     pub fn is_read_only(&self) -> bool {
-        self.schema > SCHEMA
+        self.schema > SCHEMA || self.from_future_schema
     }
 
     /// Reads a body from CBOR bytes.
@@ -503,6 +509,7 @@ impl ItemBody {
             favorite: r.require("favorite", boolean, || false)?,
             device: r.get("device", text)?,
             extra: r.finish(),
+            from_future_schema: schema > SCHEMA,
         };
         let read_only = body.is_read_only();
         Ok(DecodedItem { body, read_only })

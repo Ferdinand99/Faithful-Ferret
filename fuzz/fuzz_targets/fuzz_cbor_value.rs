@@ -29,7 +29,12 @@ fn check(v: &Value, depth: usize) {
                 check(item, depth + 1);
             }
         }
-        Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_) => {}
+        Value::Null
+        | Value::Bool(_)
+        | Value::Int(_)
+        | Value::Float(_)
+        | Value::Float16(_)
+        | Value::Float32(_) => {}
     }
 }
 

@@ -36,6 +36,7 @@
 
 use crate::error::{Error, MalformedKind};
 use crate::ids::{ItemId, VaultId};
+use crate::item::body::SCHEMA;
 use crate::item::pad::{self, is_padded_len};
 use crate::item::{DecodedItem, ItemBody, Manifest};
 use crate::keys::UnlockedVault;
@@ -99,13 +100,27 @@ pub struct EnvelopeView<'a> {
 /// Splits an envelope into its parts and checks its structure, without any
 /// key.
 ///
-/// * longer than 65 536 bytes: `TooLarge`;
-/// * a `version` or `suite` other than 1: `Unsupported`;
-/// * any other `kind` than 1 or 2, a missing part, or a body whose padded
-///   length is not one of the padding classes: `Malformed(Envelope)`.
+/// * longer than 65 536 bytes: `TooLarge` (public, checked first);
+/// * a `version`, `suite` or `kind` byte that is not a supported one:
+///   `Decrypt`, the same error as any other change to the envelope. Suite 1
+///   is the only suite. A server must not be able to make the client say
+///   "update the app" by flipping a header byte; the bytes are also bound by
+///   the AAD (Fase 1 § 5.3, all change gives a decryption error). When a
+///   second suite exists, values that are structurally unsupported but
+///   otherwise well formed may map to `Unsupported`, and only after review;
+/// * a missing part, or a body whose padded length is not one of the padding
+///   classes: `Malformed(Envelope)`.
 ///
-/// Spec: Fase 1 § 5.1 and plan U6.
+/// Spec: Fase 1 § 5.1 and § 5.3, plan U6.
 pub fn parse_envelope(bytes: &[u8]) -> Result<EnvelopeView<'_>, Error> {
+    parse_as(bytes, None)
+}
+
+/// [`parse_envelope`], and when `expected` is given the `kind` byte must be
+/// that one: a different (even supported) kind is the same `Decrypt`, so
+/// flipping the kind byte of an item to the manifest's is not told apart from
+/// any other change.
+fn parse_as(bytes: &[u8], expected: Option<u8>) -> Result<EnvelopeView<'_>, Error> {
     if bytes.len() > MAX_ENVELOPE_LEN {
         return Err(Error::TooLarge);
     }
@@ -113,16 +128,15 @@ pub fn parse_envelope(bytes: &[u8]) -> Result<EnvelopeView<'_>, Error> {
         .split_first_chunk::<HEADER_LEN>()
         .ok_or_else(malformed)?;
     let [version, suite, kind] = *header;
-    if version != VERSION || suite != SUITE {
-        return Err(Error::Unsupported);
+    let kind_ok = kind == KIND_ITEM || kind == KIND_MANIFEST;
+    if version != VERSION || suite != SUITE || !kind_ok || expected.is_some_and(|k| k != kind) {
+        return Err(Error::Decrypt);
     }
-    let (ik_wrap, body) = match kind {
-        KIND_ITEM => {
-            let (wrap, body) = rest.split_at_checked(IK_WRAP_LEN).ok_or_else(malformed)?;
-            (Some(wrap), body)
-        }
-        KIND_MANIFEST => (None, rest),
-        _ => return Err(malformed()),
+    let (ik_wrap, body) = if kind == KIND_ITEM {
+        let (wrap, body) = rest.split_at_checked(IK_WRAP_LEN).ok_or_else(malformed)?;
+        (Some(wrap), body)
+    } else {
+        (None, rest)
     };
     let padded = body.len().checked_sub(OVERHEAD).ok_or_else(malformed)?;
     if !is_padded_len(padded) {
@@ -289,7 +303,7 @@ fn existing_key(
     item_id: &ItemId,
     existing: &[u8],
 ) -> Result<KeyWrap, Error> {
-    let view = parse_envelope(existing)?;
+    let view = parse_as(existing, Some(KIND_ITEM))?;
     let Some(ik_wrap) = view.ik_wrap else {
         return Err(malformed());
     };
@@ -384,7 +398,8 @@ pub fn encrypt_item<R: SecureRng>(
     existing: Option<&[u8]>,
 ) -> Result<SealedItem, Error> {
     check_item_id(&item_id)?;
-    if body.is_read_only() {
+    // Only schema 1, and nothing that came from a newer schema.
+    if body.schema != SCHEMA || body.is_read_only() {
         return Err(Error::ReadOnlySchema);
     }
     let cbor = body.to_cbor()?;
@@ -426,7 +441,7 @@ pub(crate) fn open_item_padded(
     envelope: &[u8],
     tag: &[u8; 32],
 ) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let view = parse_envelope(envelope)?;
+    let view = parse_as(envelope, Some(KIND_ITEM))?;
     let Some(ik_wrap) = view.ik_wrap else {
         return Err(malformed());
     };
@@ -482,8 +497,23 @@ pub fn encrypt_manifest<R: SecureRng>(
     rev: u64,
     manifest: &Manifest,
 ) -> Result<SealedItem, Error> {
+    // The manifest says for which epoch it is; it must be the epoch of the
+    // key that seals it.
+    if manifest.vk_epoch != vault.context().vk_epoch {
+        return Err(Error::Malformed(MalformedKind::ItemBody));
+    }
     let cbor = Zeroizing::new(manifest.to_cbor()?);
-    let padded = pad::pad(&cbor)?;
+    seal_manifest_cbor(rng, vault, rev, &cbor)
+}
+
+/// Pads and seals manifest CBOR as it is.
+pub(crate) fn seal_manifest_cbor<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    rev: u64,
+    cbor: &[u8],
+) -> Result<SealedItem, Error> {
+    let padded = pad::pad(cbor)?;
     let item_id = ItemId::MANIFEST;
     let aad = body_aad(
         AadHeader::new(KIND_MANIFEST),
@@ -508,10 +538,7 @@ pub fn decrypt_manifest(
     envelope: &[u8],
     tag: &[u8; 32],
 ) -> Result<Manifest, Error> {
-    let view = parse_envelope(envelope)?;
-    if view.kind != KIND_MANIFEST {
-        return Err(malformed());
-    }
+    let view = parse_as(envelope, Some(KIND_MANIFEST))?;
     let item_id = ItemId::MANIFEST;
     verify_item_tag(vault, item_id, rev, envelope, tag)?;
     let aad = body_aad(
@@ -522,7 +549,13 @@ pub fn decrypt_manifest(
         rev,
     )?;
     let padded = aead_open(vault.k_meta().expose(), &aad, view.body)?;
-    Manifest::from_cbor(plaintext_of(&padded)?)
+    let manifest = Manifest::from_cbor(plaintext_of(&padded)?)?;
+    // Authentic, but for another epoch than the key that opened it: a writer
+    // bug, treated as any other failure so that no caller sees it.
+    if manifest.vk_epoch != vault.context().vk_epoch {
+        return Err(Error::Decrypt);
+    }
+    Ok(manifest)
 }
 
 /// Seals an item again under another vault state, for a full rekey, without
@@ -547,6 +580,16 @@ pub(crate) fn reseal_item<R: SecureRng>(
     tag: &[u8; 32],
 ) -> Result<SealedItem, Error> {
     check_item_id(&item_id)?;
+    // A rekey stays in the same account and vault, moves to a later epoch,
+    // and gives the item a later revision.
+    let (o, n) = (old.context(), new.context());
+    if o.account_id != n.account_id
+        || o.vault_id != n.vault_id
+        || n.vk_epoch <= o.vk_epoch
+        || new_rev <= old_rev
+    {
+        return Err(malformed());
+    }
     let padded = open_item_padded(old, item_id, old_rev, envelope, tag)?;
     seal_item_plaintext(rng, new, item_id, new_rev, &padded, None)
 }

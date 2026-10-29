@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
         }
         Err(e) => assert!(matches!(
             e.code(),
-            "malformed_envelope" | "unsupported" | "too_large"
+            "malformed_envelope" | "decrypt" | "too_large"
         )),
     }
     let vault = UnlockedVault::from_vault_key(

@@ -103,12 +103,6 @@ fn cbor_rejects_each_limit() {
             text_of(65_537),
             MalformedKind::CborSize,
         ),
-        (
-            "float32",
-            vec![0xfa, 0x3f, 0x80, 0x00, 0x00],
-            MalformedKind::CborFloat,
-        ),
-        ("float16", vec![0xf9, 0x3c, 0x00], MalformedKind::CborFloat),
         ("undefined", vec![0xf7], MalformedKind::CborSimple),
         ("simple 16", vec![0xf0], MalformedKind::CborSimple),
         ("simple 255", vec![0xf8, 0xff], MalformedKind::CborSimple),
@@ -158,19 +152,17 @@ fn every_limit_has_its_own_code() {
         "malformed_cbor_depth",
         "malformed_cbor_count",
         "malformed_cbor_size",
-        "malformed_cbor_float",
         "malformed_cbor_simple",
         "malformed_cbor_key_type",
         "malformed_cbor_trailing",
     ];
-    let inputs: [Vec<u8>; 10] = [
+    let inputs: [Vec<u8>; 9] = [
         vec![0xa2, 0x61, b'a', 0x01, 0x61, b'a', 0x02],
         vec![0x9f, 0xff],
         vec![0xc1, 0x00],
         nested_arrays(17),
         array_of_zeros(10_001),
         text_of(65_537),
-        vec![0xfa, 0, 0, 0, 0],
         vec![0xf7],
         vec![0xa1, 0x01, 0x02],
         vec![0x00, 0x00],
@@ -367,4 +359,53 @@ fn cbor_limits_vectors_from_file() {
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.passed, file.cases.len());
+}
+
+#[test]
+fn floats_of_every_width_are_kept_as_their_bits() {
+    for bytes in [
+        vec![0xf9, 0x3c, 0x00],
+        vec![0xf9, 0x7e, 0x01],
+        vec![0xfa, 0x3f, 0x80, 0x00, 0x00],
+        vec![0xfa, 0x7f, 0xc0, 0x00, 0x01],
+        vec![0xfb, 0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a],
+        vec![0xfb, 0x7f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+    ] {
+        let v = dec(&bytes).unwrap();
+        assert_eq!(cbor::encode(&v).unwrap(), bytes);
+        assert_eq!(cbor::encoded_len(&v), bytes.len());
+    }
+    assert_eq!(dec(&[0xf9, 0x3c, 0x00]).unwrap(), Value::Float16(0x3c00));
+    assert_eq!(
+        dec(&[0xfa, 0x3f, 0x80, 0, 0]).unwrap(),
+        Value::Float32(0x3f80_0000)
+    );
+    // Cut short.
+    assert_eq!(code(&[0xf9, 0x3c]), "malformed_cbor");
+    assert_eq!(code(&[0xfa, 0x3f, 0x80]), "malformed_cbor");
+    assert_eq!(code(&[0xfb, 0x3f]), "malformed_cbor");
+    // Floats are not map keys and count as values in arrays.
+    assert_eq!(
+        code(&[0xa1, 0xfa, 0, 0, 0, 0, 0x00]),
+        "malformed_cbor_key_type"
+    );
+    assert!(dec(&[0x82, 0xf9, 0x3c, 0x00, 0xfa, 0, 0, 0, 0]).is_ok());
+}
+
+#[test]
+fn value_debug_shows_kinds_and_sizes_only() {
+    let v = Value::Map(vec![
+        ("password".into(), Value::text("hunter2-secret")),
+        ("key".into(), Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef])),
+        ("list".into(), Value::Array(vec![Value::uint(31337)])),
+    ]);
+    let shown = format!("{v:?}");
+    assert_eq!(shown, "Map(3)");
+    for part in [
+        format!("{:?}", Value::text("hunter2-secret")),
+        format!("{:?}", Value::Bytes(vec![0xde, 0xad])),
+        format!("{:?}", Value::uint(31337)),
+    ] {
+        assert!(!part.contains("hunter2") && !part.contains("dead") && !part.contains("31337"));
+    }
 }

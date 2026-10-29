@@ -232,6 +232,72 @@
       "expect_error": null
     },
     {
+      "id": "cbor-limits/float32/001",
+      "title": "a single precision float is read and written back as it was",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "fa3f800000",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 5,
+        "sha256": "d7b6f18ee10d10b31160f7cd0514d0a358f45fccc2dd8da51bce9d8e4392d1cd"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/float16/001",
+      "title": "a half precision float is read and written back as it was",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f93c00",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 3,
+        "sha256": "d823dcdc2d6aaab28aef32ce978988f5108ff31130f79d7f77117826d2cebc15"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/float32_nan_payload/001",
+      "title": "a single precision NaN keeps its bits",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "fa7fc00001",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 5,
+        "sha256": "a88d463aed9c76a91d11cf801de99c5d235cd7fd101d60f50fc3972c51eec427"
+      },
+      "expect_error": null
+    },
+    {
       "id": "cbor-limits/bytes_empty/001",
       "title": "empty byte string",
       "op": "cbor.decode",
@@ -736,42 +802,6 @@
       "expect_error": "malformed_cbor_size"
     },
     {
-      "id": "cbor-limits/float32/001",
-      "title": "a single precision float",
-      "op": "cbor.decode",
-      "status": "invalid",
-      "tags": [],
-      "synthetic": true,
-      "rng": [],
-      "input": {
-        "segments": [
-          {
-            "hex": "fa3f800000",
-            "repeat": 1
-          }
-        ]
-      },
-      "expect_error": "malformed_cbor_float"
-    },
-    {
-      "id": "cbor-limits/float16/001",
-      "title": "a half precision float",
-      "op": "cbor.decode",
-      "status": "invalid",
-      "tags": [],
-      "synthetic": true,
-      "rng": [],
-      "input": {
-        "segments": [
-          {
-            "hex": "f93c00",
-            "repeat": 1
-          }
-        ]
-      },
-      "expect_error": "malformed_cbor_float"
-    },
-    {
       "id": "cbor-limits/undefined/001",
       "title": "undefined",
       "op": "cbor.decode",
@@ -945,6 +975,58 @@
         ]
       },
       "expect_error": "malformed_cbor"
+    },
+    {
+      "id": "cbor-limits/map_10000/001",
+      "title": "a map of 10 000 entries",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "ba00002710",
+            "repeat": 1
+          },
+          {
+            "keys": {
+              "count": 10000,
+              "value_hex": "00"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "len": 70003,
+        "sha256": "c2335d4cbe1e72fdbd25f85e645d2ea6ee3c803c61fc2ba27c67dadca3a9295f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/map_10001/001",
+      "title": "a map of 10 001 entries",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "ba00002711",
+            "repeat": 1
+          },
+          {
+            "keys": {
+              "count": 10001,
+              "value_hex": "00"
+            }
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_count"
     }
   ]
 }

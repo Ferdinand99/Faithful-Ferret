@@ -45,6 +45,8 @@ fn leaf() -> impl Strategy<Value = Value> {
         any::<u64>().prop_map(Value::uint),
         any::<i64>().prop_map(Value::int),
         any::<u64>().prop_map(Value::Float),
+        any::<u32>().prop_map(Value::Float32),
+        any::<u16>().prop_map(Value::Float16),
         prop::collection::vec(any::<u8>(), 0..40).prop_map(Value::Bytes),
         text().prop_map(Value::Text),
     ]
@@ -176,20 +178,18 @@ fn body() -> impl Strategy<Value = ItemBody> {
         |(
             (item_type, name, fields, urls, totp, passkey, notes),
             (created, modified, favorite, device, extra),
-        )| ItemBody {
-            schema: 1,
-            item_type,
-            name,
-            fields,
-            urls,
-            totp,
-            passkey,
-            notes,
-            created,
-            modified,
-            favorite,
-            device,
-            extra,
+        )| {
+            let mut body = ItemBody::new(item_type, name, created);
+            body.fields = fields;
+            body.urls = urls;
+            body.totp = totp;
+            body.passkey = passkey;
+            body.notes = notes;
+            body.modified = modified;
+            body.favorite = favorite;
+            body.device = device;
+            body.extra = extra;
+            body
         },
     )
 }

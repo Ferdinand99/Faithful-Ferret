@@ -8,12 +8,11 @@ mod common;
 
 use common::*;
 use ferret_core::cbor::{self, Value};
-use ferret_core::envelope::{
-    HEADER_LEN, IK_WRAP_LEN, KIND_ITEM, KIND_MANIFEST, MAX_ENVELOPE_LEN, VERSION,
-};
+use ferret_core::envelope::{IK_WRAP_LEN, KIND_ITEM, KIND_MANIFEST, MAX_ENVELOPE_LEN, VERSION};
 use ferret_core::item::pad::MAX_PLAINTEXT;
 use ferret_core::testing::item::{
-    Sabotage, intermediate, open_plaintext, reseal, seal_plaintext, seal_with,
+    Sabotage, intermediate, open_plaintext, reseal, seal_manifest_plaintext, seal_plaintext,
+    seal_with,
 };
 use ferret_core::testing::prim::{aead_open_count, hmac_sha256};
 use ferret_core::testing::vector::{self, Outcome};
@@ -306,18 +305,9 @@ fn item_any_bit_flip_fails() {
             let mut e = sealed.envelope.clone();
             e[byte] ^= 1 << bit;
             let err = decrypt_item(&vault, id, 1, &e, &sealed.tag).unwrap_err();
-            if byte < HEADER_LEN {
-                // The header is checked before any key is used.
-                assert!(
-                    matches!(
-                        err,
-                        Error::Unsupported | Error::Malformed(MalformedKind::Envelope)
-                    ),
-                    "byte {byte} bit {bit}: {err:?}"
-                );
-            } else {
-                assert_eq!(err, Error::Decrypt, "byte {byte} bit {bit}");
-            }
+            // The header bytes too: a flipped version, suite or kind is the
+            // same error as any other change.
+            assert_eq!(err, Error::Decrypt, "byte {byte} bit {bit}");
         }
     }
     for byte in 0..32 {
@@ -539,16 +529,19 @@ fn parse_envelope_checks_the_structure_before_any_key() {
         f(&mut v);
         parse_envelope(&v).unwrap_err()
     };
-    assert_eq!(with(&|v| v[0] = 2), Error::Unsupported);
-    assert_eq!(with(&|v| v[0] = 0), Error::Unsupported);
-    assert_eq!(with(&|v| v[1] = 2), Error::Unsupported);
+    // An unknown version, suite or kind is the single error of any change.
+    assert_eq!(with(&|v| v[0] = 2), Error::Decrypt);
+    assert_eq!(with(&|v| v[0] = 0), Error::Decrypt);
+    assert_eq!(with(&|v| v[1] = 2), Error::Decrypt);
+    assert_eq!(with(&|v| v[2] = 0), Error::Decrypt);
+    assert_eq!(with(&|v| v[2] = 3), Error::Decrypt);
+    // The size limit comes before the header.
     assert_eq!(
-        with(&|v| v[2] = 0),
-        Error::Malformed(MalformedKind::Envelope)
-    );
-    assert_eq!(
-        with(&|v| v[2] = 3),
-        Error::Malformed(MalformedKind::Envelope)
+        with(&|v| {
+            v[0] = 9;
+            v.resize(MAX_ENVELOPE_LEN + 1, 0);
+        }),
+        Error::TooLarge
     );
     assert_eq!(
         with(&|v| v.truncate(2)),
@@ -974,7 +967,7 @@ fn an_edit_cannot_take_the_key_of_another_item() {
         &full_body(),
         Some(&m.envelope),
     );
-    assert_eq!(r.unwrap_err(), Error::Malformed(MalformedKind::Envelope));
+    assert_eq!(r.unwrap_err(), Error::Decrypt);
     let r = encrypt_item(
         &mut rng("b"),
         &vault,
@@ -1164,11 +1157,11 @@ fn manifest_is_bound_to_rev_vault_kind_and_key() {
     );
     assert_eq!(
         decrypt_manifest(&vault, 6, &item.envelope, &item.tag).unwrap_err(),
-        Error::Malformed(MalformedKind::Envelope)
+        Error::Decrypt
     );
     assert_eq!(
         decrypt_item(&vault, item_id(1), 6, &s.envelope, &s.tag).unwrap_err(),
-        Error::Malformed(MalformedKind::Envelope)
+        Error::Decrypt
     );
     // Every bit of the sealed part.
     for byte in 3..s.envelope.len() {
@@ -1394,4 +1387,181 @@ fn constants_match_the_spec() {
     assert_eq!(KIND_MANIFEST, 2);
     assert_eq!(MAX_ENVELOPE_LEN, 65_536);
     assert_eq!(hex_encode(&[VERSION]), "01");
+}
+
+// ---------------------------------------------------------- fix round 1
+
+#[test]
+fn encrypt_item_requires_schema_1() {
+    let vault = unlocked(0x5a);
+    // Schema 0 would be written and could never be read again.
+    let mut body = ItemBody::new(ItemType::Note, "n", 1);
+    body.schema = 0;
+    let r = encrypt_item(&mut rng("s0"), &vault, item_id(1), 1, &body, None);
+    assert_eq!(r.unwrap_err(), Error::ReadOnlySchema);
+    // A future item, changed to schema 1 by the caller, is still read-only.
+    let s = seal_plaintext(
+        &mut rng("s2"),
+        &vault,
+        item_id(1),
+        1,
+        &schema2_bytes(),
+        None,
+    )
+    .unwrap();
+    let got = open(&vault, 1, &s).unwrap();
+    assert!(got.read_only);
+    let mut lowered = got.body.clone();
+    lowered.schema = 1;
+    assert!(lowered.is_read_only(), "the flag outlives the number");
+    for existing in [None, Some(s.envelope.as_slice())] {
+        let r = encrypt_item(&mut rng("w"), &vault, item_id(1), 2, &lowered, existing);
+        assert_eq!(r.unwrap_err(), Error::ReadOnlySchema);
+    }
+    // A fresh schema 1 body still writes.
+    let ok = ItemBody::new(ItemType::Note, "n", 1);
+    assert!(!ok.is_read_only());
+    seal(&vault, 1, 1, &ok, None, "ok");
+}
+
+#[test]
+fn the_manifest_must_name_the_epoch_of_its_key() {
+    let vault = unlocked(0x5a); // epoch 1
+    let wrong = Manifest::new(
+        2,
+        vec![ManifestEntry::new(1, MethodId::from_bytes([1; 16]), 1)],
+    );
+    let mut r = ReplayRng::new(vec![]);
+    assert_eq!(
+        encrypt_manifest(&mut r, &vault, 1, &wrong).unwrap_err(),
+        Error::Malformed(MalformedKind::ItemBody)
+    );
+    r.finish().unwrap();
+    // An authentic manifest for another epoch (a writer bug) is not returned.
+    let s = seal_manifest_plaintext(&mut rng("m"), &vault, 1, &wrong.to_cbor().unwrap()).unwrap();
+    assert_eq!(
+        decrypt_manifest(&vault, 1, &s.envelope, &s.tag).unwrap_err(),
+        Error::Decrypt
+    );
+    // The right epoch works.
+    let good = Manifest::new(1, wrong.methods.clone());
+    let s = encrypt_manifest(&mut rng("m"), &vault, 1, &good).unwrap();
+    assert_eq!(
+        decrypt_manifest(&vault, 1, &s.envelope, &s.tag).unwrap(),
+        good
+    );
+}
+
+#[test]
+fn reseal_keeps_account_vault_and_moves_forward() {
+    let old = unlocked(0x5a);
+    let s = seal(&old, 4, 3, &full_body(), None, "old");
+    let next = |account: u8, vault: u8, epoch: u64| {
+        UnlockedVault::from_vault_key(
+            VaultContext {
+                account_id: ferret_core::AccountId::from_bytes([account; 16]),
+                vault_id: VaultId::from_bytes([vault; 16]),
+                vk_epoch: epoch,
+            },
+            vk(0x6b),
+        )
+        .unwrap()
+    };
+    let go = |new: &UnlockedVault, new_rev: u64| {
+        reseal(
+            &mut rng("r"),
+            &old,
+            new,
+            item_id(4),
+            3,
+            new_rev,
+            &s.envelope,
+            &s.tag,
+        )
+    };
+    let bad = Error::Malformed(MalformedKind::Envelope);
+    assert_eq!(go(&next(0x11, 0x22, 2), 4).unwrap().rev, 4);
+    assert_eq!(
+        go(&next(0x12, 0x22, 2), 4).unwrap_err(),
+        bad,
+        "other account"
+    );
+    assert_eq!(go(&next(0x11, 0x23, 2), 4).unwrap_err(), bad, "other vault");
+    assert_eq!(go(&next(0x11, 0x22, 1), 4).unwrap_err(), bad, "same epoch");
+    assert_eq!(
+        go(&next(0x11, 0x22, 0), 4).unwrap_err(),
+        bad,
+        "earlier epoch"
+    );
+    assert_eq!(
+        go(&next(0x11, 0x22, 2), 3).unwrap_err(),
+        bad,
+        "same revision"
+    );
+    assert_eq!(
+        go(&next(0x11, 0x22, 2), 2).unwrap_err(),
+        bad,
+        "earlier revision"
+    );
+}
+
+#[test]
+fn floats_in_unknown_fields_are_kept_and_in_known_fields_refused() {
+    let vault = unlocked(0x5a);
+    let mut body = ItemBody::new(ItemType::Note, "n", 1);
+    body.extra = vec![
+        ("f16".into(), Value::Float16(0x3c00)),
+        ("f32".into(), Value::Float32(0x7fc0_0001)),
+        ("f64".into(), Value::Float(0x7ff0_0000_0000_0001)),
+        ("nested".into(), Value::Array(vec![Value::Float32(1)])),
+    ];
+    let s = seal(&vault, 1, 1, &body, None, "floats");
+    let got = open(&vault, 1, &s).unwrap().body;
+    assert_eq!(got.extra, body.extra);
+    // The same bits on the wire.
+    let plain = got.to_cbor().unwrap();
+    assert!(
+        plain
+            .windows(5)
+            .any(|w| w == [0xfa, 0x7f, 0xc0, 0x00, 0x01])
+    );
+    // In a known field it is not a name, a number or a flag.
+    for (key, value) in [
+        ("name", Value::Float32(0x3f80_0000)),
+        ("created", Value::float(1.0)),
+        ("favorite", Value::Float16(0)),
+    ] {
+        assert_eq!(
+            ItemBody::from_cbor(&body_cbor_with(key, value)).unwrap_err(),
+            Error::Malformed(MalformedKind::ItemBody),
+            "{key}"
+        );
+    }
+}
+
+fn body_cbor_with(key: &str, value: Value) -> Vec<u8> {
+    let mut m = vec![
+        ("schema".to_owned(), Value::uint(1)),
+        ("type".to_owned(), txt("note")),
+        ("name".to_owned(), txt("n")),
+        ("fields".to_owned(), Value::Array(vec![])),
+        ("urls".to_owned(), Value::Array(vec![])),
+        ("created".to_owned(), Value::uint(1)),
+        ("modified".to_owned(), Value::uint(1)),
+        ("favorite".to_owned(), Value::Bool(false)),
+    ];
+    for entry in &mut m {
+        if entry.0 == key {
+            entry.1 = value.clone();
+        }
+    }
+    cbor::encode(&Value::Map(m)).unwrap()
+}
+
+#[test]
+fn debug_of_a_value_and_of_a_manifest_entry_shows_no_contents() {
+    let mut entry = ManifestEntry::new(1, MethodId::from_bytes([1; 16]), 1);
+    entry.extra = vec![("note".into(), Value::text("secret-note"))];
+    assert!(!format!("{entry:?}").contains("secret-note"));
+    assert!(!format!("{:?}", Value::text("secret-note")).contains("secret"));
 }

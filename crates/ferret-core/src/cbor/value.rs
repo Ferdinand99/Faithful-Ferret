@@ -12,7 +12,7 @@ use zeroize::Zeroize;
 /// The value wipes its text and bytes when it is dropped, because a body
 /// holds passwords and key material. That means a `Value` cannot be taken
 /// apart by moving fields out of a pattern; use the `into_*` methods.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Value {
     /// `null`.
     Null,
@@ -23,6 +23,11 @@ pub enum Value {
     Int(i128),
     /// A 64-bit float, as its bit pattern. Use [`Value::float`].
     Float(u64),
+    /// A half precision float, as its bit pattern. Only unknown fields may
+    /// hold one; they are kept and written back as they were.
+    Float16(u16),
+    /// A single precision float, as its bit pattern. Same as `Float16`.
+    Float32(u32),
     /// A byte string.
     Bytes(Vec<u8>),
     /// A text string.
@@ -118,6 +123,8 @@ impl Zeroize for Value {
             Value::Null | Value::Bool(_) => {}
             Value::Int(n) => n.zeroize(),
             Value::Float(bits) => bits.zeroize(),
+            Value::Float16(bits) => bits.zeroize(),
+            Value::Float32(bits) => bits.zeroize(),
             Value::Bytes(b) => b.zeroize(),
             Value::Text(s) => s.zeroize(),
             Value::Array(items) => {
@@ -133,6 +140,25 @@ impl Zeroize for Value {
                 }
                 entries.clear();
             }
+        }
+    }
+}
+
+/// `Debug` shows the kind and the size, never the contents: a value from a
+/// body can hold a password or key bytes.
+impl ::core::fmt::Debug for Value {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        match self {
+            Value::Null => f.write_str("Null"),
+            Value::Bool(_) => f.write_str("Bool"),
+            Value::Int(_) => f.write_str("Int"),
+            Value::Float(_) => f.write_str("Float"),
+            Value::Float16(_) => f.write_str("Float16"),
+            Value::Float32(_) => f.write_str("Float32"),
+            Value::Bytes(b) => write!(f, "Bytes({})", b.len()),
+            Value::Text(s) => write!(f, "Text({})", s.len()),
+            Value::Array(a) => write!(f, "Array({})", a.len()),
+            Value::Map(m) => write!(f, "Map({})", m.len()),
         }
     }
 }

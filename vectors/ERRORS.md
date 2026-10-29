@@ -29,7 +29,6 @@ share the single code `decrypt`, with no cause.
 | `malformed_cbor_count` | A CBOR array or map with more than 10 000 entries. |
 | `malformed_cbor_size` | CBOR text or bytes longer than 64 KiB. |
 | `malformed_cbor_key_type` | A CBOR map key that is not text. |
-| `malformed_cbor_float` | A half or single precision CBOR float. |
 | `malformed_cbor_simple` | CBOR `undefined` or a simple value other than `true`, `false`, `null`. |
 | `malformed_cbor_int` | A CBOR integer outside the range of `i64` and `u64`. |
 | `malformed_cbor_trailing` | Bytes after the first CBOR data item. |

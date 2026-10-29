@@ -5,9 +5,9 @@
 //! low-level `minicbor::Decoder`, and [`encode`] writes the same tree again.
 //!
 //! The data model ([`Value`]) is what the format allows and nothing more:
-//! `null`, booleans, integers in `u64`/`i64`, `f64`, bytes, text, definite
-//! arrays and maps with text keys. Everything else (tags, indefinite
-//! lengths, half and single floats, `undefined`, other simple values, keys
+//! `null`, booleans, integers in `u64`/`i64`, floats (kept as their bits),
+//! bytes, text, definite arrays and maps with text keys. Everything else
+//! (tags, indefinite lengths, `undefined`, other simple values, keys
 //! that are not text, duplicate keys, nesting deeper than 16, more than
 //! 10 000 entries, text or bytes over 64 KiB) is rejected, each with its own
 //! stable `malformed_cbor_*` code.

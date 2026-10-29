@@ -44,4 +44,4 @@ holds the op name in backticks.
 
 Text input is either `{ "utf8": hex }` (bytes, used for input that is not UTF-8) or `{ "segments": [ { "escapes": "U+0061 U+030A", "repeat": 12 } ] }`: the text is the concatenation of the segments, each segment being its code points repeated `repeat` times. A short text may also carry `"text"` for reading; it must equal the segments.
 
-Byte segments are `{ "segments": [ { "hex": hex, "repeat": number } ] }`: the bytes are the concatenation of each `hex` repeated `repeat` times, so a body of 61 439 bytes is a few lines.
+Byte segments are `{ "segments": [ ... ] }`: the bytes are the concatenation of the segments. A segment is `{ "hex": hex, "repeat": number }` (the bytes repeated), so a body of 61 439 bytes is a few lines, or `{ "keys": { "count": number, "value_hex": hex } }`: `count` map entries, each the five-digit counter as a CBOR text ("00000", "00001", ...) followed by the bytes `value_hex`, with no map head.

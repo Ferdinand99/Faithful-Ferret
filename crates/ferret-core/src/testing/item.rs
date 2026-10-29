@@ -8,7 +8,7 @@
 
 use crate::envelope::{
     AadHeader, HEADER_LEN, KIND_ITEM, SealOpts, SealedItem, body_aad, item_key_aad, item_tag,
-    open_item_padded, parse_envelope, reseal_item, seal_item_padded,
+    open_item_padded, parse_envelope, reseal_item, seal_item_padded, seal_manifest_cbor,
 };
 use crate::error::Error;
 use crate::ids::ItemId;
@@ -158,4 +158,15 @@ pub fn reseal<R: SecureRng>(
     tag: &[u8; 32],
 ) -> Result<SealedItem, Error> {
     reseal_item(rng, old, new, item_id, old_rev, new_rev, envelope, tag)
+}
+
+/// Pads `cbor` as it is (no reading) and seals it as the manifest, so that a
+/// manifest that is authentic and wrong can be made.
+pub fn seal_manifest_plaintext<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    rev: u64,
+    cbor: &[u8],
+) -> Result<SealedItem, Error> {
+    seal_manifest_cbor(rng, vault, rev, cbor)
 }

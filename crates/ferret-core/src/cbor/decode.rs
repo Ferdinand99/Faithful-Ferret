@@ -64,8 +64,9 @@ fn item(d: &mut Decoder<'_>, depth: usize) -> Result<Value, Error> {
         Type::I8 | Type::I16 | Type::I32 | Type::I64 => d.i64().map(Value::int).map_err(syntax),
         // A negative integer below -2^63 (head `0x3b` with the top bit set).
         Type::Int => Err(malformed(MalformedKind::CborInt)),
-        Type::F64 => d.f64().map(Value::float).map_err(syntax),
-        Type::F16 | Type::F32 => Err(malformed(MalformedKind::CborFloat)),
+        Type::F16 => float::<2>(d).map(|b| Value::Float16(u16::from_be_bytes(b))),
+        Type::F32 => float::<4>(d).map(|b| Value::Float32(u32::from_be_bytes(b))),
+        Type::F64 => float::<8>(d).map(|b| Value::Float(u64::from_be_bytes(b))),
         Type::Undefined | Type::Simple => Err(malformed(MalformedKind::CborSimple)),
         Type::Tag => Err(malformed(MalformedKind::CborTag)),
         Type::BytesIndef | Type::StringIndef | Type::ArrayIndef | Type::MapIndef => {
@@ -106,6 +107,23 @@ fn item(d: &mut Decoder<'_>, depth: usize) -> Result<Value, Error> {
         }
         Type::Break | Type::Unknown(_) => Err(malformed(MalformedKind::Cbor)),
     }
+}
+
+/// Reads a float of `N` bytes after its head byte, as the bits it was
+/// written with (so a NaN payload survives). The tree can hold half, single
+/// and double floats so that unknown fields keep them; the typed layer
+/// refuses them where a known field is not a float.
+fn float<const N: usize>(d: &mut Decoder<'_>) -> Result<[u8; N], Error> {
+    let at = d.position();
+    let start = at.checked_add(1).ok_or(malformed(MalformedKind::Cbor))?;
+    let end = start.checked_add(N).ok_or(malformed(MalformedKind::Cbor))?;
+    let bits = d
+        .input()
+        .get(start..end)
+        .and_then(|b| <[u8; N]>::try_from(b).ok())
+        .ok_or(malformed(MalformedKind::Cbor))?;
+    d.set_position(end);
+    Ok(bits)
 }
 
 /// One level deeper, or the depth error.

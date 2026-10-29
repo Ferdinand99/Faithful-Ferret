@@ -170,8 +170,40 @@ fn cat_bytes(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
 }
 
+/// A map of `count` entries with the keys "00000", "00001", ... and the
+/// value 0, written as a long head plus a `keys` segment.
+fn map_case(name: &str, title: &str, count: u64, expect: Result<(), &str>) -> Case {
+    let id = format!("cbor-limits/{name}/001");
+    let mut long_head = vec![0xba];
+    long_head.extend_from_slice(&u32::try_from(count).unwrap_or(0).to_be_bytes());
+    let input = json!({ "segments": [
+        { "hex": hex_encode(&long_head), "repeat": 1 },
+        { "keys": { "count": count, "value_hex": "00" } },
+    ] });
+    match expect {
+        Ok(()) => {
+            // Written back with the shortest head.
+            let mut bytes = cb::head(5, count);
+            for i in 0..count {
+                bytes.extend_from_slice(&cb::text(&format!("{i:05}")));
+                bytes.push(0);
+            }
+            valid_case(
+                &id,
+                title,
+                "cbor.decode",
+                vec![],
+                input,
+                json!({ "len": bytes.len(), "sha256": sha(&bytes) }),
+            )
+        }
+        Err(code) => invalid_case(&id, title, "cbor.decode", vec![], input, code),
+    }
+}
+
 pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
     let mut cases = Vec::new();
+    let mut maps = Vec::new();
     let mut ok = |name: &str, title: &str, bytes: Vec<u8>, again: Option<Vec<u8>>| {
         cases.push(cbor_case(
             &format!("cbor-limits/{name}/001"),
@@ -192,6 +224,24 @@ pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
     ok("nint_minus_1", "negative -1", cb::nint(-1), None);
     ok("nint_min", "negative -2^63", cb::nint(i64::MIN), None);
     ok("float_1_5", "float64 1.5", cb::float(1.5), None);
+    ok(
+        "float32",
+        "a single precision float is read and written back as it was",
+        vec![0xfa, 0x3f, 0x80, 0x00, 0x00],
+        None,
+    );
+    ok(
+        "float16",
+        "a half precision float is read and written back as it was",
+        vec![0xf9, 0x3c, 0x00],
+        None,
+    );
+    ok(
+        "float32_nan_payload",
+        "a single precision NaN keeps its bits",
+        vec![0xfa, 0x7f, 0xc0, 0x00, 0x01],
+        None,
+    );
     ok("bytes_empty", "empty byte string", cb::bytes(&[]), None);
     ok("text_empty", "empty text", cb::text(""), None);
     ok(
@@ -237,6 +287,14 @@ pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
         ten_thousand,
         Some(cb::array(&vec![cb::uint(0); 10_000])),
     );
+    // Maps of 10 000 and 10 001 entries: keys "00000", "00001", ... and the
+    // value `00`, written as a `keys` segment.
+    maps.push(map_case(
+        "map_10000",
+        "a map of 10 000 entries",
+        10_000,
+        Ok(()),
+    ));
     let mut text_max = vec![0x7a, 0x00, 0x01, 0x00, 0x00];
     text_max.extend(std::iter::repeat_n(b'a', 65_536));
     ok(
@@ -254,6 +312,12 @@ pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
         None,
     );
 
+    maps.push(map_case(
+        "map_10001",
+        "a map of 10 001 entries",
+        10_001,
+        Err("malformed_cbor_count"),
+    ));
     let mut bad = |name: &str, title: &str, bytes: Vec<u8>, code: &str| {
         cases.push(cbor_case(
             &format!("cbor-limits/{name}/001"),
@@ -341,18 +405,6 @@ pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
         "malformed_cbor_size",
     );
     bad(
-        "float32",
-        "a single precision float",
-        vec![0xfa, 0x3f, 0x80, 0x00, 0x00],
-        "malformed_cbor_float",
-    );
-    bad(
-        "float16",
-        "a half precision float",
-        vec![0xf9, 0x3c, 0x00],
-        "malformed_cbor_float",
-    );
-    bad(
         "undefined",
         "undefined",
         vec![0xf7],
@@ -408,6 +460,7 @@ pub(crate) fn cbor_limits() -> Result<Vec<u8>, Error> {
         "malformed_cbor",
     );
 
+    cases.extend(maps);
     file("cbor-limits", "Fase 1 § 5.2", cases)
 }
 
@@ -999,6 +1052,14 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
             ]),
         ),
         ("mid".into(), cb::null()),
+        (
+            "floats".into(),
+            cb::array(&[
+                vec![0xf9, 0x3c, 0x00],
+                vec![0xfa, 0x3f, 0x80, 0x00, 0x00],
+                cb::float(0.1),
+            ]),
+        ),
     ];
     let wallet = Body::new("wallet", "Unknown type");
     let mut future = Body::new("login", "From the future");
@@ -1208,6 +1269,22 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
         "malformed_item_body",
     );
     inv(
+        "float_in_a_known_field",
+        "a float where the name must be text",
+        cb::map(&[
+            ("schema", cb::uint(1)),
+            ("type", cb::text("note")),
+            ("name", vec![0xfa, 0x3f, 0x80, 0x00, 0x00]),
+            ("fields", cb::array(&[])),
+            ("urls", cb::array(&[])),
+            ("created", cb::uint(1)),
+            ("modified", cb::uint(1)),
+            ("favorite", cb::boolean(false)),
+        ]),
+        id(0x31),
+        "malformed_item_body",
+    );
+    inv(
         "cbor_tag",
         "a body that is not CBOR the decoder accepts",
         vec![0xc1, 0x00],
@@ -1319,18 +1396,12 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
         )
     };
     for (name, title, input, code) in [
-        header(0, 2, "unsupported", "version_2", "version 2"),
-        header(0, 0, "unsupported", "version_0", "version 0"),
-        header(1, 2, "unsupported", "suite_2", "suite 2"),
-        header(2, 3, "malformed_envelope", "kind_3", "kind 3"),
-        header(2, 0, "malformed_envelope", "kind_0", "kind 0"),
-        header(
-            2,
-            2,
-            "malformed_envelope",
-            "kind_2",
-            "an item as a manifest",
-        ),
+        header(0, 2, "decrypt", "version_2", "version 2"),
+        header(0, 0, "decrypt", "version_0", "version 0"),
+        header(1, 2, "decrypt", "suite_2", "suite 2"),
+        header(2, 3, "decrypt", "kind_3", "kind 3"),
+        header(2, 0, "decrypt", "kind_0", "kind 0"),
+        header(2, 2, "decrypt", "kind_2", "an item as a manifest"),
     ] {
         bad(&name, &format!("the header says {title}"), input, &code);
     }
@@ -1690,6 +1761,18 @@ fn manifest_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         ));
         sealed.push(s);
     }
+    // Sealing a manifest for another epoch than the vault's is refused.
+    let mut input = c1.input();
+    input["rev"] = json!("1");
+    input["manifest"] = h(&manifest_cbor(1, 2, &[method(1, 0x70, 1, &[])], &[]));
+    cases.push(invalid_case(
+        "item/manifest_seal_invalid/epoch_mismatch",
+        "the manifest says epoch 2 and the vault is at epoch 1",
+        "item.manifest.seal",
+        vec![],
+        input,
+        "malformed_item_body",
+    ));
     let base = &sealed[0];
     let k = base.ctx.keys()?;
     let mut bad = |name: &str, title: &str, input: Value, code: &str| {
@@ -1766,7 +1849,7 @@ fn manifest_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         "kind_item",
         "the header says item: a manifest has no ik_wrap",
         manifest_open_input(&base.ctx, base.rev, &as_item, &base.tag),
-        "malformed_envelope",
+        "decrypt",
     );
     bad(
         "version_2",
@@ -1781,7 +1864,7 @@ fn manifest_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             },
             &base.tag,
         ),
-        "unsupported",
+        "decrypt",
     );
     // A manifest that is authentic and has the wrong shape.
     let v2 = seal_manifest("item/manifest/v2", &c1, 1, &manifest_cbor(2, 1, &[], &[]))?;
@@ -1790,6 +1873,24 @@ fn manifest_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         "an authentic manifest with v = 2",
         manifest_open_input(&v2.ctx, v2.rev, &v2.envelope, &v2.tag),
         "unsupported",
+    );
+    // The manifest says epoch 2, the key that seals it is epoch 1.
+    let wrong_epoch = seal_manifest(
+        "item/manifest/wrong_epoch",
+        &c1,
+        1,
+        &manifest_cbor(1, 2, &[method(1, 0x70, 1, &[])], &[]),
+    )?;
+    bad(
+        "epoch_mismatch",
+        "an authentic manifest for another epoch than its key",
+        manifest_open_input(
+            &wrong_epoch.ctx,
+            wrong_epoch.rev,
+            &wrong_epoch.envelope,
+            &wrong_epoch.tag,
+        ),
+        "decrypt",
     );
     let short_id = seal_manifest(
         "item/manifest/short_id",
