@@ -34,12 +34,25 @@ fn syntax(_: minicbor::decode::Error) -> Error {
 ///
 /// Spec: Fase 1 § 5.2.
 pub fn decode(input: &[u8]) -> Result<Value, Error> {
-    let mut d = Decoder::new(input);
-    let value = item(&mut d, 0)?;
-    if d.position() != input.len() {
+    let (value, used) = decode_prefix(input)?;
+    if used != input.len() {
         return Err(malformed(MalformedKind::CborTrailing));
     }
     Ok(value)
+}
+
+/// Decodes the first data item of `input` and reports how many bytes it
+/// used. Bytes after the item are not an error here: the caller owns them.
+/// Used where a CBOR element is followed by other data and its exact bytes
+/// matter (the export file header, whose bytes are the AAD).
+///
+/// The rules and limits are those of [`decode`].
+///
+/// Spec: Fase 1 § 5.2 and § 6.4.
+pub fn decode_prefix(input: &[u8]) -> Result<(Value, usize), Error> {
+    let mut d = Decoder::new(input);
+    let value = item(&mut d, 0)?;
+    Ok((value, d.position()))
 }
 
 /// How many bytes are left to read.

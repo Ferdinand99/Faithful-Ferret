@@ -55,7 +55,8 @@ pub enum MalformedKind {
     /// An item body or manifest whose CBOR does not have the shape of
     /// Appendix B (a missing or mistyped field).
     ItemBody,
-    /// Export file header.
+    /// Export file header, or the layout of the file around it (a file too
+    /// short to hold the wrapped content key and a body).
     ExportHeader,
     /// TLV encoding.
     Tlv,

@@ -172,7 +172,6 @@ impl ExportPassword {
     }
 
     /// The normalized bytes.
-    #[allow(dead_code)] // first used by Task 7 (export)
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
     }
