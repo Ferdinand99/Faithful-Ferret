@@ -314,6 +314,30 @@
       "expect_error": null
     },
     {
+      "id": "checkpoint/make/live_zero_hash",
+      "title": "a live row whose hash is 32 zero bytes",
+      "op": "checkpoint.make",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "entries": [
+          {
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "1"
+          }
+        ],
+        "seq": "40",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
+    },
+    {
       "id": "checkpoint/make/duplicate_item_id",
       "title": "two rows with the same item_id",
       "op": "checkpoint.make",
@@ -728,6 +752,127 @@
           }
         ],
         "top_seq": "45",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "checkpoint/verify/top_purged_tombstone",
+      "title": "at the top, a tombstone entry without a row is accepted (the server purged it)",
+      "op": "checkpoint.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "checkpoint": {
+          "digest": "1b9285bae30cdad91d5e6534b22c0d14ff2e413eeeee2e5a512b5df22ff04454",
+          "entries": "000000000000000000000000000000000000000000000004bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f24142434445464748494a4b4c4d4e4f5000000000000000033d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a942434445464748494a4b4c4d4e4f505100000000000000055c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000007f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01000000000000000132f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a6180808080808080808080808080808001000000000000000624106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9affffffffffffffffffffffffffffffff00000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "ecd233afc5bfd766692a99d52ed97def47bad7397333f9bf4323100cb088f568",
+          "seq": "40"
+        },
+        "rows": [
+          {
+            "hash": "5c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "hash": "24106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9a",
+            "item_id": "80808080808080808080808080808001",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "3d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a9",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f2",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "32f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a61",
+            "item_id": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "40",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "checkpoint/verify/top_purged_one_tombstone",
+      "title": "at the top, one purged tombstone, the other rows as they were",
+      "op": "checkpoint.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "checkpoint": {
+          "digest": "1b9285bae30cdad91d5e6534b22c0d14ff2e413eeeee2e5a512b5df22ff04454",
+          "entries": "000000000000000000000000000000000000000000000004bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f24142434445464748494a4b4c4d4e4f5000000000000000033d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a942434445464748494a4b4c4d4e4f505100000000000000055c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000007f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01000000000000000132f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a6180808080808080808080808080808001000000000000000624106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9affffffffffffffffffffffffffffffff00000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "ecd233afc5bfd766692a99d52ed97def47bad7397333f9bf4323100cb088f568",
+          "seq": "40"
+        },
+        "rows": [
+          {
+            "item_id": "ffffffffffffffffffffffffffffffff",
+            "rev": "1",
+            "state": "deleted"
+          },
+          {
+            "hash": "5c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "hash": "24106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9a",
+            "item_id": "80808080808080808080808080808001",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "3d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a9",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f2",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "32f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a61",
+            "item_id": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "40",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
         "vk_epoch": "1"
@@ -2461,8 +2606,67 @@
       "expect_error": "checkpoint_same_rev_different_hash"
     },
     {
-      "id": "checkpoint/verify_invalid/top_missing_tombstone",
-      "title": "at the top, a tombstone is missing (no longer the same state)",
+      "id": "checkpoint/verify_invalid/top_missing_live",
+      "title": "at the top, a live item is missing",
+      "op": "checkpoint.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "checkpoint": {
+          "digest": "1b9285bae30cdad91d5e6534b22c0d14ff2e413eeeee2e5a512b5df22ff04454",
+          "entries": "000000000000000000000000000000000000000000000004bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f24142434445464748494a4b4c4d4e4f5000000000000000033d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a942434445464748494a4b4c4d4e4f505100000000000000055c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000007f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01000000000000000132f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a6180808080808080808080808080808001000000000000000624106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9affffffffffffffffffffffffffffffff00000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "ecd233afc5bfd766692a99d52ed97def47bad7397333f9bf4323100cb088f568",
+          "seq": "40"
+        },
+        "rows": [
+          {
+            "item_id": "ffffffffffffffffffffffffffffffff",
+            "rev": "1",
+            "state": "deleted"
+          },
+          {
+            "hash": "24106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9a",
+            "item_id": "80808080808080808080808080808001",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "3d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a9",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f2",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "32f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a61",
+            "item_id": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "40",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_top_digest_mismatch"
+    },
+    {
+      "id": "checkpoint/verify_invalid/top_missing_manifest",
+      "title": "at the top, the manifest row is missing",
       "op": "checkpoint.verify",
       "status": "invalid",
       "tags": [],
@@ -2501,6 +2705,70 @@
             "state": "live"
           },
           {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "32f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a61",
+            "item_id": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "40",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_top_digest_mismatch"
+    },
+    {
+      "id": "checkpoint/verify_invalid/top_tombstone_higher_rev",
+      "title": "at the top, a tombstone at a higher revision than the checkpoint's",
+      "op": "checkpoint.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "checkpoint": {
+          "digest": "1b9285bae30cdad91d5e6534b22c0d14ff2e413eeeee2e5a512b5df22ff04454",
+          "entries": "000000000000000000000000000000000000000000000004bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f24142434445464748494a4b4c4d4e4f5000000000000000033d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a942434445464748494a4b4c4d4e4f505100000000000000055c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000007f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01000000000000000132f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a6180808080808080808080808080808001000000000000000624106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9affffffffffffffffffffffffffffffff00000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "ecd233afc5bfd766692a99d52ed97def47bad7397333f9bf4323100cb088f568",
+          "seq": "40"
+        },
+        "rows": [
+          {
+            "item_id": "ffffffffffffffffffffffffffffffff",
+            "rev": "1",
+            "state": "deleted"
+          },
+          {
+            "hash": "5c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "hash": "24106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9a",
+            "item_id": "80808080808080808080808080808001",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "3d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a9",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "9",
+            "state": "deleted"
+          },
+          {
             "hash": "bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f2",
             "item_id": "00000000000000000000000000000000",
             "rev": "4",
@@ -2519,6 +2787,77 @@
         "vk_epoch": "1"
       },
       "expect_error": "checkpoint_top_digest_mismatch"
+    },
+    {
+      "id": "checkpoint/verify_invalid/live_row_with_zero_hash",
+      "title": "a live row whose hash is 32 zero bytes",
+      "op": "checkpoint.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "checkpoint": {
+          "digest": "1b9285bae30cdad91d5e6534b22c0d14ff2e413eeeee2e5a512b5df22ff04454",
+          "entries": "000000000000000000000000000000000000000000000004bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f24142434445464748494a4b4c4d4e4f5000000000000000033d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a942434445464748494a4b4c4d4e4f505100000000000000055c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000007f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01000000000000000132f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a6180808080808080808080808080808001000000000000000624106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9affffffffffffffffffffffffffffffff00000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "ecd233afc5bfd766692a99d52ed97def47bad7397333f9bf4323100cb088f568",
+          "seq": "40"
+        },
+        "rows": [
+          {
+            "item_id": "ffffffffffffffffffffffffffffffff",
+            "rev": "1",
+            "state": "deleted"
+          },
+          {
+            "hash": "5c0dc2e3ebbc2b23e8303d7080e668c4a36ae26cb9cd780f8b76a35ad2890fb1",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "hash": "24106501b4a5fc5ceddc1dcfa79653b046a01a8e70949dc24450a90927e2eb9a",
+            "item_id": "80808080808080808080808080808001",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "3d5460dbbf34729236ea41c8e5f64e8b3d2899bba8d39a69bbb424cacde513a9",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "bfaf9cf96f1fdf8a573d8e7428b11f72a7686ed3f30f3043fa18a629e096a1f2",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "32f0fc5f3c7285c6aa65f00ebb065e5c1073c7b6a8d559565cbaa9019b283a61",
+            "item_id": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f01",
+            "rev": "1",
+            "state": "live"
+          },
+          {
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "45",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
     },
     {
       "id": "checkpoint/verify_invalid/duplicate_rows",

@@ -22,8 +22,28 @@
 //! * a new manifest, with the two methods, and a new checkpoint under
 //!   `K_head'`.
 //!
+//! # What is checked first
+//!
+//! Before anything is drawn or built, the rows the caller passes (the items,
+//! the tombstones and the old manifest) are checked against the old
+//! checkpoint at `base_seq` with the rules of [`verify_checkpoint`], so a
+//! server that hides a row in the download cannot make the rekey drop it:
+//! a live row that the checkpoint has but the caller did not pass is an
+//! error (`HiddenOrRolledBack`, or `TopDigestMismatch` when the checkpoint
+//! is at `base_seq`, which the server requires to be its top), and so is a
+//! row at `base_seq` that the checkpoint does not have. The checkpoint is
+//! the last one the client verified; a client that has none makes one from
+//! its own verified cache.
+//!
+//! The generations of the two new wraps are the pinned floors plus one, and
+//! the new manifest's revision is the old manifest's plus one; none of them
+//! is supplied by the caller. The pinned record must be for this account,
+//! vault, epoch and `pk_a`, and must have floors for the password and the
+//! recovery wrap (seed them from the manifest with
+//! `Pinned::seed_from_manifest`).
+//!
 //! The caller signs the request with the **old** vault:
-//! `vault.auth_sign(MutationOp::Rekey, nonce, body)`.
+//! `auth_sign(&old, AuthOp::Rekey, nonce, body)`.
 //!
 //! # Draws
 //!
@@ -36,15 +56,15 @@
 use super::checkpoint::{
     Checkpoint, CheckpointEntry, ServerRow, make_checkpoint, verify_checkpoint,
 };
-use super::tomb::{Tombstone, make_tombstone, verify_tombstone};
+use super::tomb::{Tombstone, make_tombstone};
 use crate::envelope::{
     SealedItem, check_item_id, decrypt_manifest, encrypt_manifest, open_item_padded, reseal_item,
 };
-use crate::error::{Error, MalformedKind};
+use crate::error::{Error, MalformedKind, PinnedField};
 use crate::ids::{ItemId, MethodId};
 use crate::item::{Manifest, ManifestEntry};
 use crate::keys::{UnlockedVault, VaultContext, recovery_public_key};
-use crate::pinning::MAX_GENERATION;
+use crate::pinning::{MethodKey, Pinned};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, RecoveryKey, VaultKey};
 use crate::wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};
@@ -86,6 +106,10 @@ pub struct RekeyInput<'a> {
     /// The server `seq` the request is based on; the server applies the
     /// request only if this is its top. The new checkpoint is made for it.
     pub base_seq: u64,
+    /// The last checkpoint the client verified (any `seq` up to `base_seq`).
+    pub old_checkpoint: &'a Checkpoint,
+    /// The current manifest row (its `item_id` is `ItemId::MANIFEST`).
+    pub old_manifest: RekeyItem<'a>,
     /// Every live item.
     pub items: &'a [RekeyItem<'a>],
     /// Every tombstone the server still has.
@@ -94,14 +118,11 @@ pub struct RekeyInput<'a> {
     pub password_kek: &'a Kek,
     /// The id and method of the password wrap (`Method::Password`).
     pub password_method: (MethodId, Method),
-    /// The `kek_generation` of the new password wrap: the old one plus one.
-    pub password_next_generation: u64,
     /// The id of the new recovery wrap.
     pub recovery_method_id: MethodId,
-    /// The `kek_generation` of the new recovery wrap: the old one plus one.
-    pub recovery_next_generation: u64,
-    /// The revision of the new manifest: the old one plus one.
-    pub manifest_rev: u64,
+    /// The pinned record of this device: it gives the generations of the new
+    /// wraps (the floors plus one).
+    pub pinned: &'a Pinned,
 }
 
 /// A complete rekey plan. It holds secrets (the new vault and the new
@@ -164,14 +185,26 @@ impl UnlockedVault {
         if !matches!(password_method, Method::Password { .. }) {
             return Err(Error::Unsupported);
         }
-        for generation in [
-            input.password_next_generation,
-            input.recovery_next_generation,
-        ] {
-            if generation > MAX_GENERATION {
-                return Err(Error::Malformed(MalformedKind::PinnedRecord));
-            }
+        // The pinned record must be this vault's, at this epoch.
+        let pinned = input.pinned;
+        if pinned.account_id != old.account_id {
+            return Err(Error::Pinned(PinnedField::AccountId));
         }
+        if pinned.vault_id != old.vault_id {
+            return Err(Error::Pinned(PinnedField::VaultId));
+        }
+        if pinned.vk_epoch_max != old.vk_epoch {
+            return Err(Error::Pinned(PinnedField::VkEpoch));
+        }
+        if pinned.pk_a != self.auth_public_key() {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
+        let password_generation = pinned.next_generation(&MethodKey::Password)?;
+        let recovery_generation = pinned.next_generation(&MethodKey::Recovery)?;
+        if input.old_manifest.item_id != ItemId::MANIFEST {
+            return Err(Error::Malformed(MalformedKind::Envelope));
+        }
+        let manifest_rev = next(input.old_manifest.rev)?;
         let mut seen: BTreeSet<[u8; 16]> = BTreeSet::new();
         let ids = input
             .items
@@ -196,6 +229,37 @@ impl UnlockedVault {
             next(tomb.rev)?;
         }
 
+        // The rows must be the whole state the old checkpoint describes.
+        let mut rows: Vec<ServerRow> = Vec::with_capacity(
+            input
+                .items
+                .len()
+                .saturating_add(input.tombstones.len())
+                .saturating_add(1),
+        );
+        for item in input.items {
+            rows.push(ServerRow::live(
+                self,
+                item.item_id,
+                item.rev,
+                item.envelope,
+                item.tag,
+            )?);
+        }
+        for t in input.tombstones {
+            rows.push(ServerRow::deleted(self, t.item_id, t.rev, t.tomb)?);
+        }
+        let m = &input.old_manifest;
+        decrypt_manifest(self, m.rev, m.envelope, m.tag)?;
+        rows.push(ServerRow::live(
+            self,
+            ItemId::MANIFEST,
+            m.rev,
+            m.envelope,
+            m.tag,
+        )?);
+        verify_checkpoint(self, input.old_checkpoint, &rows, input.base_seq)?;
+
         // The new vault.
         let new = UnlockedVault::from_vault_key(new_ctx, VaultKey::generate(rng))?;
 
@@ -216,7 +280,6 @@ impl UnlockedVault {
         }
         let mut tombstones = Vec::with_capacity(input.tombstones.len());
         for t in input.tombstones {
-            verify_tombstone(self, t.item_id, t.rev, t.tomb)?;
             tombstones.push((
                 t.item_id,
                 make_tombstone(rng, &new, t.item_id, next(t.rev)?)?,
@@ -230,7 +293,7 @@ impl UnlockedVault {
             new.vault_key(),
             input.password_kek,
             *password_id,
-            input.password_next_generation,
+            password_generation,
             password_method.clone(),
         )?;
         let recovery_key = RecoveryKey::generate(rng);
@@ -241,7 +304,7 @@ impl UnlockedVault {
             new.vault_key(),
             &recovery_kek,
             input.recovery_method_id,
-            input.recovery_next_generation,
+            recovery_generation,
             Method::Recovery,
         )?;
         let pk_r = recovery_public_key(&recovery_key, &new_ctx.account_id)?;
@@ -250,15 +313,11 @@ impl UnlockedVault {
         let manifest_plain = Manifest::new(
             new_ctx.vk_epoch,
             vec![
-                ManifestEntry::new(TYPE_PASSWORD, *password_id, input.password_next_generation),
-                ManifestEntry::new(
-                    TYPE_RECOVERY,
-                    input.recovery_method_id,
-                    input.recovery_next_generation,
-                ),
+                ManifestEntry::new(TYPE_PASSWORD, *password_id, password_generation),
+                ManifestEntry::new(TYPE_RECOVERY, input.recovery_method_id, recovery_generation),
             ],
         );
-        let manifest = encrypt_manifest(rng, &new, input.manifest_rev, &manifest_plain)?;
+        let manifest = encrypt_manifest(rng, &new, manifest_rev, &manifest_plain)?;
 
         // The checkpoint of the new state.
         let mut entries: Vec<CheckpointEntry> = Vec::with_capacity(

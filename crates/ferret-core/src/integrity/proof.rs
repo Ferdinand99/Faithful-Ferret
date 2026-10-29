@@ -106,22 +106,114 @@ pub(crate) fn proof_message(
         .finish()
 }
 
+/// The operations that `sk_a` signs: [`MutationOp`] without `recover`.
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum AuthOp {
+    /// `unlock-method.add`
+    UnlockMethodAdd,
+    /// `unlock-method.remove`
+    UnlockMethodRemove,
+    /// `unlock-method.password.put`
+    UnlockMethodPasswordPut,
+    /// `unlock-method.recovery.put`
+    UnlockMethodRecoveryPut,
+    /// `rekey`: signed by the old `sk_a`.
+    Rekey,
+}
+
+impl AuthOp {
+    /// Every operation, in the order of the design.
+    pub const ALL: [AuthOp; 5] = [
+        AuthOp::UnlockMethodAdd,
+        AuthOp::UnlockMethodRemove,
+        AuthOp::UnlockMethodPasswordPut,
+        AuthOp::UnlockMethodRecoveryPut,
+        AuthOp::Rekey,
+    ];
+
+    /// The same operation in the full list.
+    pub const fn op(self) -> MutationOp {
+        match self {
+            AuthOp::UnlockMethodAdd => MutationOp::UnlockMethodAdd,
+            AuthOp::UnlockMethodRemove => MutationOp::UnlockMethodRemove,
+            AuthOp::UnlockMethodPasswordPut => MutationOp::UnlockMethodPasswordPut,
+            AuthOp::UnlockMethodRecoveryPut => MutationOp::UnlockMethodRecoveryPut,
+            AuthOp::Rekey => MutationOp::Rekey,
+        }
+    }
+
+    /// The ASCII name that goes into the proof.
+    pub const fn name(self) -> &'static str {
+        self.op().name()
+    }
+
+    /// The operation with this name, if `sk_a` signs it.
+    pub fn from_name(name: &str) -> Option<AuthOp> {
+        AuthOp::ALL.into_iter().find(|op| op.name() == name)
+    }
+}
+
+impl MutationOp {
+    /// The operation as one that `sk_a` signs; `None` for `recover`.
+    pub const fn auth(self) -> Option<AuthOp> {
+        match self {
+            MutationOp::UnlockMethodAdd => Some(AuthOp::UnlockMethodAdd),
+            MutationOp::UnlockMethodRemove => Some(AuthOp::UnlockMethodRemove),
+            MutationOp::UnlockMethodPasswordPut => Some(AuthOp::UnlockMethodPasswordPut),
+            MutationOp::UnlockMethodRecoveryPut => Some(AuthOp::UnlockMethodRecoveryPut),
+            MutationOp::Recover => None,
+            MutationOp::Rekey => Some(AuthOp::Rekey),
+        }
+    }
+}
+
+/// `pk_a`, the key that checks proofs of [`AuthOp`]s. A different type from
+/// [`RecoveryPublicKey`], so the one cannot be passed for the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AuthPublicKey([u8; 32]);
+
+impl AuthPublicKey {
+    /// Wraps the 32 bytes of `pk_a`.
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// The 32 bytes.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+/// `pk_r`, the key that checks recovery proofs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RecoveryPublicKey([u8; 32]);
+
+impl RecoveryPublicKey {
+    /// Wraps the 32 bytes of `pk_r`.
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// The 32 bytes.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
 /// Signs a request with `sk_a`. The account and `vk_epoch` are those of
-/// `vault`; at a rekey that is the old vault. `op` must not be
-/// [`MutationOp::Recover`], which only `sk_r` signs: that is `Unsupported`.
+/// `vault`; at a rekey that is the old vault. `recover` is not an [`AuthOp`]:
+/// only `sk_r` signs it, with [`recovery_sign`].
 ///
 /// Spec: Fase 1 § 4.6.
 pub fn auth_sign(
     vault: &UnlockedVault,
-    op: MutationOp,
+    op: AuthOp,
     nonce: &[u8; 32],
     body: &[u8],
 ) -> Result<[u8; 64], Error> {
-    if op == MutationOp::Recover {
-        return Err(Error::Unsupported);
-    }
     let ctx = vault.context();
-    let message = proof_message(op, &ctx.account_id, nonce, ctx.vk_epoch, body)?;
+    let message = proof_message(op.op(), &ctx.account_id, nonce, ctx.vk_epoch, body)?;
     ed25519_sign(vault.auth_key(), &message)
 }
 
@@ -141,18 +233,17 @@ pub fn recovery_sign(
     ed25519_sign(&key, &message)
 }
 
-/// Checks a proof against `pk` (`pk_a`, or `pk_r` for [`MutationOp::Recover`]).
-/// The label follows from `op`. Every failure is `Decrypt`: a wrong key, op,
-/// account, nonce, epoch or body, a malformed key, or a signature that is
-/// not canonical.
+/// Checks the proof of an [`AuthOp`] against `pk_a`. Every failure is
+/// `Decrypt`: a wrong key, op, account, nonce, epoch or body, a malformed
+/// key, or a signature that is not canonical.
 ///
 /// A server checks in addition that `nonce` is unused and under five minutes
 /// old.
 ///
 /// Spec: Fase 1 § 4.6.
-pub fn verify_mutation_proof(
-    pk: &[u8; 32],
-    op: MutationOp,
+pub fn verify_auth_proof(
+    pk: &AuthPublicKey,
+    op: AuthOp,
     account_id: &AccountId,
     nonce: &[u8; 32],
     vk_epoch: u64,
@@ -160,6 +251,23 @@ pub fn verify_mutation_proof(
     sig: &[u8; 64],
 ) -> Result<(), Error> {
     let message =
-        proof_message(op, account_id, nonce, vk_epoch, body).map_err(|_| Error::Decrypt)?;
-    ed25519_verify(pk, &message, sig)
+        proof_message(op.op(), account_id, nonce, vk_epoch, body).map_err(|_| Error::Decrypt)?;
+    ed25519_verify(pk.as_bytes(), &message, sig)
+}
+
+/// Checks a recovery proof (`recover`, label `ferret/v1/recovery-req`)
+/// against `pk_r`. Every failure is `Decrypt`.
+///
+/// Spec: Fase 1 § 4.6.
+pub fn verify_recovery_proof(
+    pk: &RecoveryPublicKey,
+    account_id: &AccountId,
+    nonce: &[u8; 32],
+    vk_epoch: u64,
+    body: &[u8],
+    sig: &[u8; 64],
+) -> Result<(), Error> {
+    let message = proof_message(MutationOp::Recover, account_id, nonce, vk_epoch, body)
+        .map_err(|_| Error::Decrypt)?;
+    ed25519_verify(pk.as_bytes(), &message, sig)
 }

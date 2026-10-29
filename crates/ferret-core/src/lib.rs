@@ -59,9 +59,10 @@ pub use envelope::{
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use integrity::{
-    Checkpoint, CheckpointEntry, MutationOp, RekeyBundle, RekeyInput, RekeyItem, RekeyTombstone,
-    RowState, ServerRow, Tombstone, auth_sign, make_checkpoint, make_tombstone, recovery_sign,
-    verify_checkpoint, verify_mutation_proof, verify_tombstone,
+    AuthOp, AuthPublicKey, Checkpoint, CheckpointEntry, MutationOp, RecoveryPublicKey, RekeyBundle,
+    RekeyInput, RekeyItem, RekeyTombstone, RowState, ServerRow, Tombstone, auth_sign,
+    make_checkpoint, make_tombstone, recovery_sign, verify_auth_proof, verify_checkpoint,
+    verify_recovery_proof, verify_tombstone,
 };
 pub use item::{
     DecodedItem, Field, FieldKind, ItemBody, ItemType, Manifest, ManifestEntry, Passkey, Totp,

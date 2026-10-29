@@ -112,11 +112,12 @@ pub struct MethodFloor {
 /// What the pinned record needs from the decrypted method manifest (Fase 1
 /// § 4.3, F-07): the `kek_generation` of every server-stored method.
 ///
-/// Build it with [`MethodManifestView::from_manifest`]: the credential id of
-/// a passkey floor comes from the authenticated manifest entry, never from a
-/// mapping the server supplies. The view holds at most one entry per key and
-/// at most [`MAX_FLOORS`] entries; [`Pinned::seed_from_manifest`] refuses
-/// anything else.
+/// Made from a decrypted [`Manifest`] only: the credential id of a passkey
+/// floor comes from the authenticated manifest entry, never from a mapping
+/// the server supplies. [`Pinned::seed_from_manifest`] takes the manifest and
+/// builds the view itself, so a client cannot seed floors from a hand-made
+/// list. (A view can be built by hand only with `test-support`.) It holds at
+/// most one entry per key and at most [`MAX_FLOORS`] entries.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct MethodManifestView {
     /// The methods, at most one entry per key.
@@ -136,7 +137,7 @@ impl MethodManifestView {
     ///   guess.
     ///
     /// Spec: Fase 1 § 4.3 (method manifest, F-07).
-    pub fn from_manifest(manifest: &Manifest) -> Result<Self, Error> {
+    pub(crate) fn from_manifest(manifest: &Manifest) -> Result<Self, Error> {
         let mut methods: Vec<MethodFloor> = Vec::new();
         for entry in &manifest.methods {
             let key = match entry.method_type {
@@ -276,9 +277,38 @@ impl Pinned {
         }
     }
 
+    /// The `kek_generation` a new wrap of `key` gets: the floor plus one. A
+    /// key without a floor, or a generation past [`MAX_GENERATION`], is
+    /// `Malformed(PinnedRecord)`: seed the floors from the manifest first.
+    pub(crate) fn next_generation(&self, key: &MethodKey) -> Result<u64, Error> {
+        let next = self
+            .floor(key)
+            .and_then(|floor| floor.checked_add(1))
+            .ok_or_else(malformed)?;
+        if next > MAX_GENERATION {
+            return Err(malformed());
+        }
+        Ok(next)
+    }
+
     /// Seeds the floors of methods this device never unlocks with from the
-    /// decrypted method manifest. A floor only goes up. Everything is
+    /// decrypted method manifest. Password and recovery entries are keyed by
+    /// type, a passkey by the credential id in its entry; PIN, device and
+    /// unknown method types give no floor. A floor only goes up. Everything is
     /// checked first; on an error the record is unchanged.
+    ///
+    /// The manifest must be for the pinned epoch or a later one, and gives
+    /// `Malformed(ItemBody)` for a passkey entry without a credential id or
+    /// two entries for one key.
+    pub fn seed_from_manifest(&mut self, manifest: &Manifest) -> Result<(), Error> {
+        if manifest.vk_epoch < self.vk_epoch_max {
+            return Err(Error::Pinned(PinnedField::VkEpoch));
+        }
+        let view = MethodManifestView::from_manifest(manifest)?;
+        self.seed_from_view(&view)
+    }
+
+    /// The seeding step of [`Pinned::seed_from_manifest`] for a view.
     ///
     /// The view must have at most one entry per key and at most
     /// [`MAX_FLOORS`] entries (a longer view is refused before it is
@@ -286,7 +316,7 @@ impl Pinned {
     /// `malformed_pinned_record` for a repeated key, a generation above
     /// [`MAX_GENERATION`], an over-long credential id, or more than
     /// [`MAX_FLOORS`] floors in total.
-    pub fn seed_from_manifest(&mut self, view: &MethodManifestView) -> Result<(), Error> {
+    pub(crate) fn seed_from_view(&mut self, view: &MethodManifestView) -> Result<(), Error> {
         if view.methods.len() > MAX_FLOORS {
             return Err(malformed());
         }

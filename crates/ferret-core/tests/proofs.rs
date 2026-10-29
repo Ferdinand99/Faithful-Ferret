@@ -8,11 +8,12 @@ mod common;
 use common::*;
 use ferret_core::recovery_public_key;
 use ferret_core::testing::integrity::mutation_proof_message;
-use ferret_core::testing::keys::recovery_seed;
-use ferret_core::testing::prim::{ed25519_public_key, ed25519_verify};
+use ferret_core::testing::keys::{derived_keys, recovery_seed};
+use ferret_core::testing::prim::{ed25519_public_key, ed25519_sign, ed25519_verify};
 use ferret_core::testing::vector::Outcome;
 use ferret_core::{
-    AccountId, Error, MutationOp, RecoveryKey, auth_sign, recovery_sign, verify_mutation_proof,
+    AccountId, AuthOp, AuthPublicKey, Error, MutationOp, RecoveryKey, RecoveryPublicKey, auth_sign,
+    recovery_sign, verify_auth_proof, verify_recovery_proof,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -22,10 +23,6 @@ const BODY: &[u8] = br#"{"method_type":3}"#;
 
 fn rk() -> RecoveryKey {
     RecoveryKey::from_test_bytes([0xc0; 32])
-}
-
-fn name_to_op(name: &str) -> Option<MutationOp> {
-    MutationOp::from_name(name)
 }
 
 /// The proof message of Fase 1 § 4.6, written out field by field.
@@ -53,10 +50,7 @@ fn mutation_proof_message_is_exact_tlv() {
     let vault = unlocked(0x5a);
     let c = ctx();
     let pk = vault.auth_public_key();
-    for op in MutationOp::ALL {
-        if op == MutationOp::Recover {
-            continue;
-        }
+    for op in AuthOp::ALL {
         let sig = auth_sign(&vault, op, &NONCE, BODY).unwrap();
         let message = hand_message(
             "ferret/v1/mutation",
@@ -70,7 +64,7 @@ fn mutation_proof_message_is_exact_tlv() {
         // verifier that is not the proof code.
         ed25519_verify(&pk, &message, &sig).unwrap();
         assert_eq!(
-            mutation_proof_message(op, &c.account_id, &NONCE, 1, BODY).unwrap(),
+            mutation_proof_message(op.op(), &c.account_id, &NONCE, 1, BODY).unwrap(),
             message
         );
     }
@@ -79,9 +73,10 @@ fn mutation_proof_message_is_exact_tlv() {
 #[test]
 fn mutation_proof_verifies_for_each_op() {
     assert_eq!(MutationOp::ALL.len(), 6);
+    assert_eq!(AuthOp::ALL.len(), 5);
     let vault = unlocked(0x5a);
     let c = ctx();
-    let pk = vault.auth_public_key();
+    let pk = AuthPublicKey::new(vault.auth_public_key());
     let names: Vec<&str> = MutationOp::ALL.iter().map(|op| op.name()).collect();
     assert_eq!(
         names,
@@ -95,19 +90,24 @@ fn mutation_proof_verifies_for_each_op() {
         ]
     );
     for op in MutationOp::ALL {
-        assert_eq!(name_to_op(op.name()), Some(op));
-        if op == MutationOp::Recover {
-            // sk_a does not sign a recovery request.
-            assert_eq!(auth_sign(&vault, op, &NONCE, BODY), Err(Error::Unsupported));
-            continue;
+        assert_eq!(MutationOp::from_name(op.name()), Some(op));
+        // `recover` is the one operation that is not an AuthOp.
+        assert_eq!(op.auth().is_none(), op == MutationOp::Recover);
+        if let Some(auth) = op.auth() {
+            assert_eq!(auth.op(), op);
+            assert_eq!(AuthOp::from_name(op.name()), Some(auth));
+        } else {
+            assert_eq!(AuthOp::from_name(op.name()), None);
         }
+    }
+    for op in AuthOp::ALL {
         let sig = auth_sign(&vault, op, &NONCE, BODY).unwrap();
-        verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &sig).unwrap();
+        verify_auth_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &sig).unwrap();
         // It is for this op only.
-        for other in MutationOp::ALL {
+        for other in AuthOp::ALL {
             if other != op {
                 assert_eq!(
-                    verify_mutation_proof(&pk, other, &c.account_id, &NONCE, 1, BODY, &sig),
+                    verify_auth_proof(&pk, other, &c.account_id, &NONCE, 1, BODY, &sig),
                     Err(Error::Decrypt),
                     "{} as {}",
                     op.name(),
@@ -115,39 +115,52 @@ fn mutation_proof_verifies_for_each_op() {
                 );
             }
         }
+        // And it is not a recovery proof, whatever key checks it.
+        assert_eq!(
+            verify_recovery_proof(
+                &RecoveryPublicKey::new(*pk.as_bytes()),
+                &c.account_id,
+                &NONCE,
+                1,
+                BODY,
+                &sig
+            ),
+            Err(Error::Decrypt)
+        );
     }
-    assert_eq!(name_to_op("unlock-method.frobnicate"), None);
-    assert_eq!(name_to_op(""), None);
-    assert_eq!(name_to_op("Rekey"), None);
+    assert_eq!(MutationOp::from_name("unlock-method.frobnicate"), None);
+    assert_eq!(MutationOp::from_name(""), None);
+    assert_eq!(MutationOp::from_name("Rekey"), None);
+    assert_eq!(AuthOp::from_name("recover"), None);
 }
 
 #[test]
 fn mutation_proof_fails_if_body_nonce_op_or_epoch_changed() {
     let vault = unlocked(0x5a);
     let c = ctx();
-    let pk = vault.auth_public_key();
-    let op = MutationOp::UnlockMethodAdd;
+    let pk = AuthPublicKey::new(vault.auth_public_key());
+    let op = AuthOp::UnlockMethodAdd;
     let sig = auth_sign(&vault, op, &NONCE, BODY).unwrap();
-    verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &sig).unwrap();
+    verify_auth_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &sig).unwrap();
     let bad = Err(Error::Decrypt);
     assert_eq!(
-        verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 1, b"{}", &sig),
+        verify_auth_proof(&pk, op, &c.account_id, &NONCE, 1, b"{}", &sig),
         bad
     );
     let mut body2 = BODY.to_vec();
     body2[3] ^= 1;
     assert_eq!(
-        verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 1, &body2, &sig),
+        verify_auth_proof(&pk, op, &c.account_id, &NONCE, 1, &body2, &sig),
         bad
     );
     assert_eq!(
-        verify_mutation_proof(&pk, op, &c.account_id, &[0xa1; 32], 1, BODY, &sig),
+        verify_auth_proof(&pk, op, &c.account_id, &[0xa1; 32], 1, BODY, &sig),
         bad
     );
     assert_eq!(
-        verify_mutation_proof(
+        verify_auth_proof(
             &pk,
-            MutationOp::UnlockMethodRemove,
+            AuthOp::UnlockMethodRemove,
             &c.account_id,
             &NONCE,
             1,
@@ -157,11 +170,11 @@ fn mutation_proof_fails_if_body_nonce_op_or_epoch_changed() {
         bad
     );
     assert_eq!(
-        verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 2, BODY, &sig),
+        verify_auth_proof(&pk, op, &c.account_id, &NONCE, 2, BODY, &sig),
         bad
     );
     assert_eq!(
-        verify_mutation_proof(
+        verify_auth_proof(
             &pk,
             op,
             &AccountId::from_bytes([0x12; 16]),
@@ -173,9 +186,25 @@ fn mutation_proof_fails_if_body_nonce_op_or_epoch_changed() {
         bad
     );
     // Another public key, a flipped bit, a malformed key.
+    let other = AuthPublicKey::new(unlocked(0x5b).auth_public_key());
     assert_eq!(
-        verify_mutation_proof(
-            &unlocked(0x5b).auth_public_key(),
+        verify_auth_proof(&other, op, &c.account_id, &NONCE, 1, BODY, &sig),
+        bad
+    );
+    for i in [0usize, 31, 32, 63] {
+        let mut flipped = sig;
+        flipped[i] ^= 1;
+        assert_eq!(
+            verify_auth_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &flipped),
+            bad,
+            "byte {i}"
+        );
+    }
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    assert_eq!(
+        verify_auth_proof(
+            &AuthPublicKey::new(identity),
             op,
             &c.account_id,
             &NONCE,
@@ -185,32 +214,17 @@ fn mutation_proof_fails_if_body_nonce_op_or_epoch_changed() {
         ),
         bad
     );
-    for i in [0usize, 31, 32, 63] {
-        let mut flipped = sig;
-        flipped[i] ^= 1;
-        assert_eq!(
-            verify_mutation_proof(&pk, op, &c.account_id, &NONCE, 1, BODY, &flipped),
-            bad,
-            "byte {i}"
-        );
-    }
-    let mut identity = [0u8; 32];
-    identity[0] = 1;
-    assert_eq!(
-        verify_mutation_proof(&identity, op, &c.account_id, &NONCE, 1, BODY, &sig),
-        bad
-    );
 }
 
 #[test]
 fn the_epoch_in_the_proof_is_the_signing_vaults() {
     // At a rekey the old vault signs, so the proof carries the old epoch.
     let old = unlocked(0x5a);
-    let sig = auth_sign(&old, MutationOp::Rekey, &NONCE, BODY).unwrap();
+    let sig = auth_sign(&old, AuthOp::Rekey, &NONCE, BODY).unwrap();
     let c = ctx();
-    verify_mutation_proof(
-        &old.auth_public_key(),
-        MutationOp::Rekey,
+    verify_auth_proof(
+        &AuthPublicKey::new(old.auth_public_key()),
+        AuthOp::Rekey,
         &c.account_id,
         &NONCE,
         1,
@@ -223,8 +237,8 @@ fn the_epoch_in_the_proof_is_the_signing_vaults() {
 #[test]
 fn proofs_are_deterministic() {
     let vault = unlocked(0x5a);
-    let a = auth_sign(&vault, MutationOp::Rekey, &NONCE, BODY).unwrap();
-    let b = auth_sign(&vault, MutationOp::Rekey, &NONCE, BODY).unwrap();
+    let a = auth_sign(&vault, AuthOp::Rekey, &NONCE, BODY).unwrap();
+    let b = auth_sign(&vault, AuthOp::Rekey, &NONCE, BODY).unwrap();
     assert_eq!(a, b);
 }
 
@@ -252,9 +266,8 @@ fn recovery_proof_uses_sk_r_and_recovery_label() {
         mutation_proof_message(MutationOp::Recover, &c.account_id, &NONCE, 1, BODY).unwrap(),
         message
     );
-    verify_mutation_proof(
-        &pk_r,
-        MutationOp::Recover,
+    verify_recovery_proof(
+        &RecoveryPublicKey::new(pk_r),
         &c.account_id,
         &NONCE,
         1,
@@ -263,11 +276,10 @@ fn recovery_proof_uses_sk_r_and_recovery_label() {
     )
     .unwrap();
 
-    // Not against pk_a, and not with the mutation label or another op.
+    // Not against pk_a, and not as an auth proof of any op, with either key.
     assert_eq!(
-        verify_mutation_proof(
-            &pk_a,
-            MutationOp::Recover,
+        verify_recovery_proof(
+            &RecoveryPublicKey::new(pk_a),
             &c.account_id,
             &NONCE,
             1,
@@ -276,38 +288,39 @@ fn recovery_proof_uses_sk_r_and_recovery_label() {
         ),
         Err(Error::Decrypt)
     );
+    for op in AuthOp::ALL {
+        for pk in [pk_r, pk_a] {
+            assert_eq!(
+                verify_auth_proof(
+                    &AuthPublicKey::new(pk),
+                    op,
+                    &c.account_id,
+                    &NONCE,
+                    1,
+                    BODY,
+                    &sig
+                ),
+                Err(Error::Decrypt)
+            );
+        }
+    }
+    // Another epoch.
     assert_eq!(
-        verify_mutation_proof(
-            &pk_r,
-            MutationOp::Rekey,
+        verify_recovery_proof(
+            &RecoveryPublicKey::new(pk_r),
             &c.account_id,
             &NONCE,
-            1,
+            2,
             BODY,
             &sig
         ),
         Err(Error::Decrypt)
     );
-    assert!(
-        ed25519_verify(
-            &pk_r,
-            &hand_message(
-                "ferret/v1/mutation",
-                "recover",
-                &c.account_id,
-                &NONCE,
-                1,
-                BODY
-            ),
-            &sig
-        )
-        .is_err()
-    );
-    // And a proof by sk_a with the recover op fields is not a recovery proof.
-    let forged = ferret_core::testing::prim::ed25519_sign(
-        &ferret_core::testing::keys::derived_keys(&ctx(), &vk(0x5a))
-            .unwrap()
-            .seed_a,
+    // The mutation label with the recover op fields is not a recovery proof,
+    // even when sk_a signs it.
+    let seed_a = derived_keys(&ctx(), &vk(0x5a)).unwrap().seed_a;
+    let forged = ed25519_sign(
+        &seed_a,
         &hand_message(
             "ferret/v1/mutation",
             "recover",
@@ -319,9 +332,8 @@ fn recovery_proof_uses_sk_r_and_recovery_label() {
     )
     .unwrap();
     assert_eq!(
-        verify_mutation_proof(
-            &pk_a,
-            MutationOp::Recover,
+        verify_recovery_proof(
+            &RecoveryPublicKey::new(pk_a),
             &c.account_id,
             &NONCE,
             1,
@@ -359,7 +371,9 @@ fn run() -> ferret_core::testing::vector::RunReport {
         match case.op.as_str() {
             "proof.sign" => {
                 let vault = vault_of(input);
-                let op = name_to_op(input["op"].as_str().unwrap()).unwrap();
+                // `recover` is not an AuthOp: sk_a does not sign it.
+                let op =
+                    AuthOp::from_name(input["op"].as_str().unwrap()).ok_or(Error::Unsupported)?;
                 let nonce: [u8; 32] = hexn(&input["nonce"]);
                 let body = hex(&input["body"]);
                 let sig = auth_sign(&vault, op, &nonce, &body)?;
@@ -367,7 +381,7 @@ fn run() -> ferret_core::testing::vector::RunReport {
                 Ok(Outcome {
                     output: json!({ "proof": he(&sig), "pk_a": he(&vault.auth_public_key()) }),
                     intermediate: Some(json!({
-                        "message": he(&mutation_proof_message(op, &ctx.account_id, &nonce, ctx.vk_epoch, &body)?),
+                        "message": he(&mutation_proof_message(op.op(), &ctx.account_id, &nonce, ctx.vk_epoch, &body)?),
                     })),
                 })
             }
@@ -391,16 +405,33 @@ fn run() -> ferret_core::testing::vector::RunReport {
             "proof.verify" => {
                 // A name that is not on the list is refused like any other
                 // bad proof.
-                let op = name_to_op(input["op"].as_str().unwrap()).ok_or(Error::Decrypt)?;
-                verify_mutation_proof(
-                    &hexn(&input["pk"]),
-                    op,
-                    &AccountId::from_bytes(id16(&input["account_id"])),
-                    &hexn(&input["nonce"]),
-                    u64s(&input["vk_epoch"]),
-                    &hex(&input["body"]),
-                    &hexn(&input["proof"]),
-                )?;
+                let op =
+                    MutationOp::from_name(input["op"].as_str().unwrap()).ok_or(Error::Decrypt)?;
+                let pk: [u8; 32] = hexn(&input["pk"]);
+                let account = AccountId::from_bytes(id16(&input["account_id"]));
+                let nonce: [u8; 32] = hexn(&input["nonce"]);
+                let epoch = u64s(&input["vk_epoch"]);
+                let body = hex(&input["body"]);
+                let sig: [u8; 64] = hexn(&input["proof"]);
+                match op.auth() {
+                    Some(auth) => verify_auth_proof(
+                        &AuthPublicKey::new(pk),
+                        auth,
+                        &account,
+                        &nonce,
+                        epoch,
+                        &body,
+                        &sig,
+                    )?,
+                    None => verify_recovery_proof(
+                        &RecoveryPublicKey::new(pk),
+                        &account,
+                        &nonce,
+                        epoch,
+                        &body,
+                        &sig,
+                    )?,
+                }
                 Ok(Outcome {
                     output: json!({ "ok": true }),
                     intermediate: None,

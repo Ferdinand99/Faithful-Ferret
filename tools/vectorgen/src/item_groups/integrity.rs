@@ -884,6 +884,23 @@ fn checkpoint_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             },
         ],
     )?;
+    // A live row whose hash is 32 zero bytes would read back as a tombstone.
+    cases.push(invalid_case(
+        "checkpoint/make/live_zero_hash",
+        "a live row whose hash is 32 zero bytes",
+        "checkpoint.make",
+        vec![],
+        make_input(
+            &c1,
+            seq,
+            &[Ent {
+                id: id(0x41),
+                rev: 1,
+                hash: Some([0; 32]),
+            }],
+        ),
+        "malformed_entries",
+    ));
     // Duplicate item ids are refused.
     let mut dup = state.clone();
     dup.push(live(0x41, 9, "dup"));
@@ -980,6 +997,25 @@ fn checkpoint_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         &cp,
         gone,
         seq + 5,
+    );
+    let purged: Vec<Row> = same.iter().copied().filter(|r| r.hash.is_some()).collect();
+    ok(
+        "top_purged_tombstone",
+        "at the top, a tombstone entry without a row is accepted (the server purged it)",
+        &c1,
+        &cp,
+        purged,
+        seq,
+    );
+    let mut purged_one = same.clone();
+    purged_one.retain(|r| r.id != id(0x43));
+    ok(
+        "top_purged_one_tombstone",
+        "at the top, one purged tombstone, the other rows as they were",
+        &c1,
+        &cp,
+        purged_one,
+        seq,
     );
     let mut deleted_later = same.clone();
     for r in &mut deleted_later {
@@ -1339,16 +1375,60 @@ fn checkpoint_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         seq,
         "checkpoint_same_rev_different_hash",
     );
-    let mut missing_tomb = same.clone();
-    missing_tomb.retain(|r| r.id != id(0x43));
+    for (name, title, wanted) in [
+        (
+            "top_missing_live",
+            "at the top, a live item is missing",
+            id(0x42),
+        ),
+        (
+            "top_missing_manifest",
+            "at the top, the manifest row is missing",
+            [0u8; 16],
+        ),
+    ] {
+        bad(
+            name,
+            title,
+            &c1,
+            cp_json(&cp),
+            without(wanted),
+            seq,
+            "checkpoint_top_digest_mismatch",
+        );
+    }
+    // A tombstone row that the checkpoint has as a tombstone at an older
+    // revision is a roll back even at the top.
+    let mut tomb_other_rev = same.clone();
+    for r in &mut tomb_other_rev {
+        if r.id == id(0x43) {
+            r.rev = 9;
+        }
+    }
     bad(
-        "top_missing_tombstone",
-        "at the top, a tombstone is missing (no longer the same state)",
+        "top_tombstone_higher_rev",
+        "at the top, a tombstone at a higher revision than the checkpoint's",
         &c1,
         cp_json(&cp),
-        missing_tomb,
+        tomb_other_rev,
         seq,
         "checkpoint_top_digest_mismatch",
+    );
+    // A live row whose hash is 32 zero bytes cannot be told from a tombstone.
+    let mut zero_row = same.clone();
+    zero_row.push(Row {
+        id: id(0x44),
+        rev: 1,
+        hash: Some([0; 32]),
+    });
+    bad(
+        "live_row_with_zero_hash",
+        "a live row whose hash is 32 zero bytes",
+        &c1,
+        cp_json(&cp),
+        zero_row,
+        seq + 5,
+        "malformed_entries",
     );
     // Rows.
     let mut twice_row = same.clone();
@@ -1853,9 +1933,13 @@ struct RekeyCase {
     base_seq: u64,
     items: Vec<(u8, u64, Vec<u8>)>,
     tombs: Vec<(u8, u64)>,
+    /// The generations of the new wraps and the revision of the new
+    /// manifest; the old ones (the floors, the old manifest) are one less.
     password_gen: u64,
     recovery_gen: u64,
     manifest_rev: u64,
+    /// How far the old checkpoint is behind `base_seq`.
+    cp_lag: u64,
 }
 
 const PW_ID: u8 = 0x70;
@@ -1881,11 +1965,94 @@ fn old_tomb(ctx: &Ctx, seed: &str, item: u8, rev: u64) -> Result<Vec<u8>, Error>
     )
 }
 
-fn rekey_input(c: &RekeyCase, olds: &[OldItem], tombs: &[(u8, u64, Vec<u8>)]) -> Value {
+/// The old state the server holds: items, tombstones, the manifest and the
+/// last checkpoint the client verified.
+struct OldState {
+    olds: Vec<OldItem>,
+    tombs: Vec<(u8, u64, Vec<u8>)>,
+    manifest: Sealed,
+    cp: Cp,
+}
+
+fn old_state(c: &RekeyCase, seed: &str) -> Result<OldState, Error> {
+    let mut olds = Vec::new();
+    for (b, rev, plain) in &c.items {
+        let it = seal_item(
+            &format!("{seed}/old{b:02x}"),
+            &c.ctx,
+            id(*b),
+            *rev,
+            plain,
+            None,
+            &GOOD_ITEM,
+        )?;
+        olds.push(OldItem { item: it });
+    }
+    let mut tombs = Vec::new();
+    for (b, rev) in &c.tombs {
+        tombs.push((
+            *b,
+            *rev,
+            old_tomb(&c.ctx, &format!("{seed}/t{b:02x}"), *b, *rev)?,
+        ));
+    }
+    let manifest = seal_manifest(
+        &format!("{seed}/old-manifest"),
+        &c.ctx,
+        c.manifest_rev - 1,
+        &manifest_cbor(
+            1,
+            c.ctx.epoch,
+            &[
+                manifest_method(1, &arr(PW_ID), c.password_gen - 1),
+                manifest_method(2, &arr(REC_ID), c.recovery_gen - 1),
+            ],
+            &[],
+        ),
+    )?;
+    let mut ents: Vec<Ent> = olds
+        .iter()
+        .map(|o| Ent {
+            id: o.item.id,
+            rev: o.item.rev,
+            hash: Some(sha_raw(&[&o.item.envelope])),
+        })
+        .collect();
+    ents.extend(tombs.iter().map(|(b, rev, _)| Ent {
+        id: id(*b),
+        rev: *rev,
+        hash: None,
+    }));
+    ents.push(Ent {
+        id: [0; 16],
+        rev: manifest.rev,
+        hash: Some(sha_raw(&[&manifest.envelope])),
+    });
+    let cp = make_cp(
+        &c.ctx.keys()?.k_head,
+        c.base_seq - c.cp_lag,
+        entries_bytes(&ents),
+    )?;
+    Ok(OldState {
+        olds,
+        tombs,
+        manifest,
+        cp,
+    })
+}
+
+fn rekey_input(c: &RekeyCase, st: &OldState) -> Value {
     let mut i = c.ctx.input();
     i["base_seq"] = rev_s(c.base_seq);
+    i["old_checkpoint"] = cp_json(&st.cp);
+    i["old_manifest"] = json!({
+        "rev": rev_s(st.manifest.rev),
+        "envelope": h(&st.manifest.envelope),
+        "tag": h(&st.manifest.tag),
+    });
     i["items"] = Value::Array(
-        olds.iter()
+        st.olds
+            .iter()
             .map(|o| {
                 json!({
                     "item_id": h(&o.item.id),
@@ -1897,7 +2064,7 @@ fn rekey_input(c: &RekeyCase, olds: &[OldItem], tombs: &[(u8, u64, Vec<u8>)]) ->
             .collect(),
     );
     i["tombstones"] = Value::Array(
-        tombs
+        st.tombs
             .iter()
             .map(|(b, rev, tomb)| {
                 json!({ "item_id": h(&id(*b)), "rev": rev_s(*rev), "tomb": h(tomb) })
@@ -1907,10 +2074,10 @@ fn rekey_input(c: &RekeyCase, olds: &[OldItem], tombs: &[(u8, u64, Vec<u8>)]) ->
     i["password_kek"] = h(&arr::<32>(KEK_PW));
     i["password_method_id"] = h(&arr::<16>(PW_ID));
     i["password_ksf_profile"] = json!(1);
-    i["password_next_generation"] = rev_s(c.password_gen);
     i["recovery_method_id"] = h(&arr::<16>(REC_ID));
-    i["recovery_next_generation"] = rev_s(c.recovery_gen);
-    i["manifest_rev"] = rev_s(c.manifest_rev);
+    // The pinned floors: the generations of the new wraps are these plus one.
+    i["password_floor"] = rev_s(c.password_gen - 1);
+    i["recovery_floor"] = rev_s(c.recovery_gen - 1);
     i
 }
 
@@ -1951,6 +2118,7 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 4,
             recovery_gen: 2,
             manifest_rev: 9,
+            cp_lag: 0,
         },
         RekeyCase {
             name: "empty_vault_later_epoch",
@@ -1962,6 +2130,7 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 1,
             recovery_gen: 1,
             manifest_rev: 2,
+            cp_lag: 0,
         },
         RekeyCase {
             name: "one_item",
@@ -1973,32 +2142,15 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             password_gen: 3,
             recovery_gen: 3,
             manifest_rev: 0x0102_0304_0506_0708,
+            cp_lag: 5,
         },
     ];
 
     for c in &valid {
         let seed = format!("rekey/{}", c.name);
-        let mut olds = Vec::new();
-        for (b, rev, plain) in &c.items {
-            let it = seal_item(
-                &format!("{seed}/old{b:02x}"),
-                &c.ctx,
-                id(*b),
-                *rev,
-                plain,
-                None,
-                &GOOD_ITEM,
-            )?;
-            olds.push(OldItem { item: it });
-        }
-        let mut old_tombs = Vec::new();
-        for (b, rev) in &c.tombs {
-            old_tombs.push((
-                *b,
-                *rev,
-                old_tomb(&c.ctx, &format!("{seed}/t{b:02x}"), *b, *rev)?,
-            ));
-        }
+        let st = old_state(c, &seed)?;
+        let olds = &st.olds;
+        let old_tombs = &st.tombs;
 
         // ---- the new state, worked out from the specification
         let vk_new: [u8; 32] = draw(&format!("{seed}/vk"));
@@ -2010,7 +2162,7 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         let nk = new_ctx.keys()?;
         let mut draws: Vec<Vec<u8>> = vec![vk_new.to_vec()];
         let mut new_items = Vec::new();
-        for o in &olds {
+        for o in olds {
             let it = seal_padded(
                 &format!("{seed}/new{:02x}", o.item.id[0]),
                 &new_ctx,
@@ -2025,7 +2177,7 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             new_items.push(it);
         }
         let mut new_tombs = Vec::new();
-        for (b, rev, _) in &old_tombs {
+        for (b, rev, _) in old_tombs {
             let nonce: [u8; 24] = draw(&format!("{seed}/t{b:02x}/new-nonce"));
             let tomb = seal_raw(
                 &nonce,
@@ -2113,7 +2265,7 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         });
         let cp = make_cp(&nk.k_head, c.base_seq, entries_bytes(&ents))?;
 
-        let input = rekey_input(c, &olds, &old_tombs);
+        let input = rekey_input(c, &st);
         let expect = json!({
             "vk_epoch": new_ctx.epoch.to_string(),
             "vk": h(&vk_new),
@@ -2145,71 +2297,34 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         cases.push(with_rng(case, &draws));
     }
 
-    // ---- refused: nothing is returned
-    let c = &valid[0];
-    let seed = "rekey/refused";
-    let mut olds = Vec::new();
-    for (b, rev, plain) in &c.items {
-        let it = seal_item(
-            &format!("{seed}/old{b:02x}"),
-            &c.ctx,
-            id(*b),
-            *rev,
-            plain,
-            None,
-            &GOOD_ITEM,
-        )?;
-        olds.push(OldItem { item: it });
-    }
-    let tombs: Vec<(u8, u64, Vec<u8>)> = c
-        .tombs
-        .iter()
-        .map(|(b, rev)| {
-            Ok((
-                *b,
-                *rev,
-                old_tomb(&c.ctx, &format!("{seed}/t{b:02x}"), *b, *rev)?,
-            ))
-        })
-        .collect::<Result<_, Error>>()?;
-    let vk_new: [u8; 32] = draw("rekey/refused/vk");
-    // The draws made before the failure: the new vault key, and a full set
-    // of draws for each item that was sealed again.
-    let per_item = |n: usize| -> Result<Vec<Vec<u8>>, Error> {
-        let mut d = vec![vk_new.to_vec()];
-        for o in olds.iter().take(n) {
-            let ik: [u8; 32] = draw(&format!("rekey/refused/draw/{:02x}/ik", o.item.id[0]));
-            let a: [u8; 24] = draw(&format!("rekey/refused/draw/{:02x}/a", o.item.id[0]));
-            let b: [u8; 24] = draw(&format!("rekey/refused/draw/{:02x}/b", o.item.id[0]));
-            d.extend([ik.to_vec(), a.to_vec(), b.to_vec()]);
-        }
-        Ok(d)
-    };
-    let mut refused = |name: &str, title: &str, input: Value, code: &str, draws: Vec<Vec<u8>>| {
-        let case = invalid_case(
+    // ---- refused: nothing is returned, and nothing is drawn, because the
+    // rows are checked against the old checkpoint before the plan is built.
+    let mut refused = |name: &str, title: &str, input: Value, code: &str| {
+        cases.push(invalid_case(
             &format!("rekey/refused/{name}"),
             title,
             "rekey.run",
             vec![],
             input,
             code,
-        );
-        cases.push(with_rng(case, &draws));
+        ));
     };
+    // The first case: the checkpoint is at the top (`base_seq`).
+    let c = &valid[0];
+    let st = old_state(c, "rekey/refused")?;
+    let tombs = &st.tombs;
+    let olds = &st.olds;
+    let base = || rekey_input(c, &st);
 
-    // The first item has a wrong tag: only the new vault key was drawn.
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     broken["items"][0]["tag"] = h(&flip_arr(&olds[0].item.tag, 0));
     refused(
         "first_item_bad_tag",
         "the first item has a wrong tag",
         broken,
         "decrypt",
-        per_item(0)?,
     );
-    // The last item is damaged: four items were sealed again and are thrown
-    // away with the rest.
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     let last = olds.len() - 1;
     broken["items"][last]["envelope"] = h(&flip_at(&olds[last].item.envelope, 200));
     refused(
@@ -2217,67 +2332,164 @@ fn rekey_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         "the last item is damaged: no partial result",
         broken,
         "decrypt",
-        per_item(4)?,
     );
-    // An item under the wrong id.
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     broken["items"][1]["item_id"] = h(&id(0x4f));
     refused(
         "item_wrong_id",
         "an item under another item_id",
         broken,
         "decrypt",
-        per_item(1)?,
     );
-    // A forged tombstone, after all items.
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     broken["tombstones"][1]["tomb"] = h(&flip_at(&tombs[1].2, 30));
-    // The first tombstone was made again (one more draw) before the second failed.
-    let mut draws = per_item(5)?;
-    draws.push(draw::<24>("rekey/refused/draw/tomb").to_vec());
     refused(
         "forged_tombstone",
         "a forged tombstone is not turned into a real one",
         broken,
         "tombstone_invalid",
-        draws,
     );
-    // Input that cannot make a plan: nothing is drawn.
-    let mut broken = rekey_input(c, &olds, &tombs);
+    // A server that hides a row in the download.
+    for (name, title, at) in [
+        (
+            "hidden_item_at_top",
+            "a live item is missing and the checkpoint is at the top",
+            1usize,
+        ),
+        (
+            "hidden_item_at_top_other",
+            "another live item is missing at the top",
+            3,
+        ),
+    ] {
+        let mut broken = base();
+        if let Some(list) = broken["items"].as_array_mut() {
+            list.remove(at);
+        }
+        refused(name, title, broken, "checkpoint_top_digest_mismatch");
+    }
+    // A row the checkpoint does not have, at the top.
+    let extra = seal_item(
+        "rekey/refused/extra",
+        &c.ctx,
+        id(0x4e),
+        1,
+        &Body::new("note", "extra").cbor(),
+        None,
+        &GOOD_ITEM,
+    )?;
+    let mut broken = base();
+    if let Some(list) = broken["items"].as_array_mut() {
+        list.push(json!({
+            "item_id": h(&extra.id), "rev": rev_s(extra.rev),
+            "envelope": h(&extra.envelope), "tag": h(&extra.tag),
+        }));
+    }
+    refused(
+        "extra_item_at_top",
+        "a live item that the checkpoint does not have, at the top",
+        broken,
+        "checkpoint_top_digest_mismatch",
+    );
+    // An item at a lower revision than the checkpoint's: a rolled back row.
+    let older = seal_item(
+        "rekey/refused/older",
+        &c.ctx,
+        olds[0].item.id,
+        olds[0].item.rev - 1,
+        &olds[0].item.plain,
+        None,
+        &GOOD_ITEM,
+    )?;
+    let mut broken = base();
+    broken["items"][0] = json!({
+        "item_id": h(&older.id), "rev": rev_s(older.rev),
+        "envelope": h(&older.envelope), "tag": h(&older.tag),
+    });
+    refused(
+        "rolled_back_item",
+        "an old revision of an item that the checkpoint has newer",
+        broken,
+        "checkpoint_lower_rev",
+    );
+    // The same, with a checkpoint that is behind the top.
+    let c3 = &valid[2];
+    let st3 = old_state(c3, "rekey/refused3")?;
+    let mut broken = rekey_input(c3, &st3);
+    broken["items"] = json!([]);
+    refused(
+        "hidden_item_below_top",
+        "a live item is missing and the checkpoint is behind the top",
+        broken,
+        "checkpoint_hidden_or_rolled_back",
+    );
+    // A checkpoint above the top.
+    let mut broken = base();
+    broken["base_seq"] = rev_s(c.base_seq - 1);
+    refused(
+        "checkpoint_above_top",
+        "the old checkpoint is for a seq above base_seq",
+        broken,
+        "checkpoint_seq_above_top",
+    );
+    let mut broken = base();
+    broken["old_checkpoint"]["mac"] = h(&flip_arr(&st.cp.mac, 0));
+    refused(
+        "checkpoint_bad_mac",
+        "the old checkpoint does not verify",
+        broken,
+        "checkpoint_bad_mac",
+    );
+    // The old manifest.
+    let mut broken = base();
+    broken["old_manifest"]["tag"] = h(&flip_arr(&st.manifest.tag, 0));
+    refused(
+        "manifest_bad_tag",
+        "the old manifest has a wrong tag",
+        broken,
+        "decrypt",
+    );
+    // Input that cannot make a plan.
+    let mut broken = base();
     broken["tombstones"][0]["item_id"] = h(&olds[0].item.id);
     refused(
         "duplicate_item_id",
         "an item_id in the items and the tombstones",
         broken,
         "malformed_entries",
-        vec![],
     );
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     broken["items"][0]["rev"] = rev_s(u64::MAX);
     refused(
         "rev_overflow",
         "a revision that cannot be raised",
         broken,
         "malformed_entries",
-        vec![],
     );
-    let mut broken = rekey_input(c, &olds, &tombs);
+    let mut broken = base();
     broken["items"][0]["item_id"] = h(&[0; 16]);
     refused(
         "manifest_id",
         "an item with the manifest's item_id",
         broken,
         "malformed_envelope",
-        vec![],
     );
-    let mut broken = rekey_input(c, &olds, &tombs);
-    broken["password_next_generation"] = rev_s(u64::from(u32::MAX) + 1);
+    // The pinned floors.
+    let mut broken = base();
+    broken["password_floor"] = rev_s(u64::from(u32::MAX));
     refused(
         "generation_too_high",
-        "a generation that no pinned device accepts",
+        "a floor whose next generation no pinned device accepts",
         broken,
         "malformed_pinned_record",
-        vec![],
+    );
+    let mut broken = base();
+    broken["recovery_floor"] = Value::Null;
+    refused(
+        "no_recovery_floor",
+        "no floor for the recovery wrap (seed the floors from the manifest first)",
+        broken,
+        "malformed_pinned_record",
     );
     Ok(())
 }

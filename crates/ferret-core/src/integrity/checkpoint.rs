@@ -21,15 +21,21 @@
 //! 3. every live entry must be shown by the server with the same or a higher
 //!    `rev`; at the same `rev` the hash must be the same; a deleted row must
 //!    have a higher `rev`. A missing row is
-//!    [`CheckpointFailure::HiddenOrRolledBack`], a lower `rev`
+//!    [`CheckpointFailure::HiddenOrRolledBack`] (at the top, see 5), a lower `rev`
 //!    [`CheckpointFailure::LowerRev`], another hash at the same `rev`
 //!    [`CheckpointFailure::SameRevDifferentHash`];
 //! 4. a tombstone entry may be missing (tombstones are dropped after 400
 //!    days), but a live row with a lower `rev` than the tombstone is
 //!    [`CheckpointFailure::LiveBehindTombstone`];
-//! 5. when the server's top is the checkpoint's `seq`, the digest is also
-//!    computed again from the rows
-//!    ([`CheckpointFailure::TopDigestMismatch`]).
+//! 5. when the server's top is the checkpoint's `seq`, the rows must be
+//!    exactly the entries: every row has an entry with the same `rev` and
+//!    hash, and a live entry has its row. Only a tombstone entry may lack
+//!    a row (it has been purged). Anything else is
+//!    [`CheckpointFailure::TopDigestMismatch`].
+//!
+//! A live row whose hash is 32 zero bytes cannot be told from a tombstone in
+//! `entries`, so it is refused (`Malformed(Entries)`); a SHA-256 output never
+//! has that value.
 //!
 //! A checkpoint whose `seq` is above the server's top is
 //! [`CheckpointFailure::SeqAboveTop`].
@@ -204,6 +210,10 @@ pub fn encode_entries(entries: &[CheckpointEntry]) -> Result<Vec<u8>, Error> {
     {
         return Err(malformed_entries());
     }
+    // A live row whose hash is 32 zero bytes would read back as a tombstone.
+    if sorted.iter().any(|e| e.live_hash == Some(TOMB_HASH)) {
+        return Err(malformed_entries());
+    }
     let mut out = Vec::with_capacity(sorted.len().saturating_mul(ENTRY_LEN));
     for e in &sorted {
         out.extend_from_slice(e.item_id.as_bytes());
@@ -296,10 +306,17 @@ fn fail(kind: CheckpointFailure) -> Error {
 ///
 /// The checks run in this order and the first failure is returned: MAC,
 /// digest, the entries' shape, `seq` against the top, each entry against its
-/// row, and last the digest recomputed from the rows when the top is the
-/// checkpoint's `seq`.
+/// row, and last, when the top is the checkpoint's `seq`, each row against
+/// its entry.
 ///
-/// `rows` with the same `item_id` twice are `Malformed(Entries)`.
+/// At the top the rows must be exactly the entries, with one exception: a
+/// **tombstone** entry without a row is accepted (the server drops
+/// tombstones after 400 days). A **live** entry without a row is
+/// `TopDigestMismatch`, and so is a row that has no entry, or another `rev`
+/// or hash than its entry.
+///
+/// `rows` with the same `item_id` twice, or a live row whose hash is 32 zero
+/// bytes, are `Malformed(Entries)`.
 ///
 /// Spec: Fase 1 § 8.6.
 pub fn verify_checkpoint(
@@ -331,34 +348,58 @@ pub fn verify_checkpoint(
         return Err(malformed_entries());
     }
 
+    if sorted
+        .iter()
+        .any(|r| matches!(r.state, RowState::Live { blob_sha256 } if blob_sha256 == TOMB_HASH))
+    {
+        return Err(malformed_entries());
+    }
+    let at_top = server_top_seq == cp.seq;
+
     // 3 and 4. Each entry against its row.
     for entry in &entries {
         let row = sorted
             .binary_search_by(|r| r.item_id.as_bytes().cmp(entry.item_id.as_bytes()))
             .ok()
             .and_then(|i| sorted.get(i));
-        check_entry(entry, row.copied())?;
+        check_entry(entry, row.copied(), at_top)?;
     }
 
-    // 5. At the top, the rows must be exactly the entries.
-    if server_top_seq == cp.seq {
-        let mut from_rows: Vec<CheckpointEntry> = sorted.iter().map(|r| r.entry()).collect();
-        sort_entries(&mut from_rows);
-        let again: [u8; 32] = Sha256::digest(encode_entries(&from_rows)?).into();
-        if !ct_eq(&again, &cp.digest) {
-            return Err(fail(CheckpointFailure::TopDigestMismatch));
+    // 5. At the top, every row must be an entry, with the same revision and
+    // the same hash (or both deleted). An entry without a row was checked
+    // above: only a tombstone may be missing.
+    if at_top {
+        for row in &sorted {
+            let found = entries
+                .binary_search_by(|e| e.item_id.as_bytes().cmp(row.item_id.as_bytes()))
+                .ok()
+                .and_then(|i| entries.get(i));
+            match found {
+                Some(e) if e.rev == row.rev && e.live_hash == row.entry().live_hash => {}
+                _ => return Err(fail(CheckpointFailure::TopDigestMismatch)),
+            }
         }
     }
     Ok(())
 }
 
 /// One entry of the checkpoint against the row the server shows for it.
-fn check_entry(entry: &CheckpointEntry, row: Option<&ServerRow>) -> Result<(), Error> {
+fn check_entry(
+    entry: &CheckpointEntry,
+    row: Option<&ServerRow>,
+    at_top: bool,
+) -> Result<(), Error> {
     match entry.live_hash {
         // 3. A live entry.
         Some(hash) => {
             let Some(row) = row else {
-                return Err(fail(CheckpointFailure::HiddenOrRolledBack));
+                // At the top nothing may be missing, so the state is simply
+                // not the checkpoint's.
+                return Err(fail(if at_top {
+                    CheckpointFailure::TopDigestMismatch
+                } else {
+                    CheckpointFailure::HiddenOrRolledBack
+                }));
             };
             if row.rev < entry.rev {
                 return Err(fail(CheckpointFailure::LowerRev));

@@ -8,9 +8,9 @@ mod common;
 use common::*;
 use ferret_core::testing::TestRng;
 use ferret_core::{
-    CheckpointEntry, CheckpointFailure, Error, ItemId, MutationOp, RowState, ServerRow, auth_sign,
-    item_tag, make_checkpoint, make_tombstone, verify_checkpoint, verify_item_tag,
-    verify_mutation_proof, verify_tombstone,
+    AuthOp, AuthPublicKey, CheckpointEntry, CheckpointFailure, Error, ItemId, RowState, ServerRow,
+    auth_sign, item_tag, make_checkpoint, make_tombstone, verify_auth_proof, verify_checkpoint,
+    verify_item_tag, verify_tombstone,
 };
 use proptest::prelude::*;
 use std::collections::BTreeMap;
@@ -247,39 +247,39 @@ proptest! {
         let vault = unlocked(0x5a);
         let c = ctx();
         let ops = [
-            MutationOp::UnlockMethodAdd,
-            MutationOp::UnlockMethodRemove,
-            MutationOp::UnlockMethodPasswordPut,
-            MutationOp::UnlockMethodRecoveryPut,
-            MutationOp::Rekey,
+            AuthOp::UnlockMethodAdd,
+            AuthOp::UnlockMethodRemove,
+            AuthOp::UnlockMethodPasswordPut,
+            AuthOp::UnlockMethodRecoveryPut,
+            AuthOp::Rekey,
         ];
         let op = ops[op_index];
-        let pk = vault.auth_public_key();
+        let pk = AuthPublicKey::new(vault.auth_public_key());
         let sig = auth_sign(&vault, op, &nonce, &body).unwrap();
-        prop_assert!(verify_mutation_proof(&pk, op, &c.account_id, &nonce, 1, &body, &sig).is_ok());
+        prop_assert!(verify_auth_proof(&pk, op, &c.account_id, &nonce, 1, &body, &sig).is_ok());
         if !body.is_empty() {
             let mut changed = body.clone();
             let i = at.index(changed.len());
             changed[i] ^= 1 << bit;
             prop_assert_eq!(
-                verify_mutation_proof(&pk, op, &c.account_id, &nonce, 1, &changed, &sig),
+                verify_auth_proof(&pk, op, &c.account_id, &nonce, 1, &changed, &sig),
                 Err(Error::Decrypt)
             );
         }
         let mut longer = body.clone();
         longer.push(0);
         prop_assert_eq!(
-            verify_mutation_proof(&pk, op, &c.account_id, &nonce, 1, &longer, &sig),
+            verify_auth_proof(&pk, op, &c.account_id, &nonce, 1, &longer, &sig),
             Err(Error::Decrypt)
         );
         let mut n2 = nonce;
         n2[0] ^= 1;
         prop_assert_eq!(
-            verify_mutation_proof(&pk, op, &c.account_id, &n2, 1, &body, &sig),
+            verify_auth_proof(&pk, op, &c.account_id, &n2, 1, &body, &sig),
             Err(Error::Decrypt)
         );
         prop_assert_eq!(
-            verify_mutation_proof(&pk, op, &c.account_id, &nonce, 2, &body, &sig),
+            verify_auth_proof(&pk, op, &c.account_id, &nonce, 2, &body, &sig),
             Err(Error::Decrypt)
         );
     }

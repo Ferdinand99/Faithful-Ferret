@@ -20,6 +20,9 @@ pub use checkpoint::{
     Checkpoint, CheckpointEntry, ENTRY_LEN, MAX_ENTRIES, RowState, ServerRow, blob_hash,
     encode_entries, make_checkpoint, parse_entries, verify_checkpoint,
 };
-pub use proof::{MutationOp, auth_sign, recovery_sign, verify_mutation_proof};
+pub use proof::{
+    AuthOp, AuthPublicKey, MutationOp, RecoveryPublicKey, auth_sign, recovery_sign,
+    verify_auth_proof, verify_recovery_proof,
+};
 pub use rekey::{RekeyBundle, RekeyInput, RekeyItem, RekeyTombstone};
 pub use tomb::{TOMB_LEN, Tombstone, make_tombstone, verify_tombstone};

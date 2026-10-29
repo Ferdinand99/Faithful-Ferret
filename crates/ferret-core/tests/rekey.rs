@@ -8,18 +8,26 @@ use common::*;
 use ferret_core::envelope::IK_WRAP_LEN;
 use ferret_core::testing::item::{intermediate, open_plaintext, seal_plaintext};
 use ferret_core::testing::keys::{recovery_seed, unlocked_vault_keys, wrap_aad};
+use ferret_core::testing::pinning::view_from_manifest;
 use ferret_core::testing::vector::Outcome;
 use ferret_core::testing::{ReplayRng, TestRng};
 use ferret_core::{
-    Error, ItemBody, ItemId, ItemType, Kek, MalformedKind, Method, MethodId, MethodManifestView,
-    MutationOp, RecoveryKey, RekeyBundle, RekeyInput, RekeyItem, RekeyTombstone, SealedItem,
+    AuthOp, AuthPublicKey, Checkpoint, CheckpointEntry, CheckpointFailure, Error, ItemBody, ItemId,
+    ItemType, Kek, MalformedKind, Manifest, ManifestEntry, Method, MethodId, MethodKey, Pinned,
+    PinnedField, RecoveryKey, RekeyBundle, RekeyInput, RekeyItem, RekeyTombstone, SealedItem,
     ServerRow, Tombstone, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest, encrypt_item,
-    make_tombstone, recovery_public_key, unwrap_vk, verify_checkpoint, verify_mutation_proof,
-    verify_tombstone,
+    encrypt_manifest, make_checkpoint, make_tombstone, recovery_public_key, unwrap_vk,
+    verify_auth_proof, verify_checkpoint, verify_tombstone,
 };
 use serde_json::json;
 
 const BASE_SEQ: u64 = 77;
+/// The old checkpoint is a few writes behind the top.
+const CP_SEQ: u64 = 74;
+/// Floors of the pinned record: the new wraps get these plus one.
+const PASSWORD_FLOOR: u64 = 3;
+const RECOVERY_FLOOR: u64 = 1;
+const OLD_MANIFEST_REV: u64 = 8;
 
 fn item_id(b: u8) -> ItemId {
     ItemId::from_bytes([b; 16])
@@ -29,10 +37,29 @@ fn kek() -> Kek {
     Kek::from_test_bytes([0xd0; 32])
 }
 
+fn pinned_for(vault: &UnlockedVault, password: u64, recovery: u64) -> Pinned {
+    let c = vault.context();
+    Pinned {
+        server_url: "https://ferret.example".into(),
+        account_id: c.account_id,
+        vault_id: c.vault_id,
+        ksf_profile: 1,
+        kek_generation_max: vec![
+            (MethodKey::Password, password),
+            (MethodKey::Recovery, recovery),
+        ],
+        vk_epoch_max: c.vk_epoch,
+        sk_bit: true,
+        pk_a: vault.auth_public_key(),
+        server_public_key: None,
+    }
+}
+
 struct Fixture {
     old: UnlockedVault,
     items: Vec<(ItemId, SealedItem)>,
     tombs: Vec<(ItemId, Tombstone)>,
+    manifest: SealedItem,
     plain: Vec<(ItemId, Vec<u8>, Vec<u8>)>,
 }
 
@@ -82,17 +109,71 @@ fn fixture() -> Fixture {
             make_tombstone(&mut rng, &old, item_id(0x52), 2).unwrap(),
         ),
     ];
+    let manifest = encrypt_manifest(
+        &mut rng,
+        &old,
+        OLD_MANIFEST_REV,
+        &Manifest::new(
+            1,
+            vec![
+                ManifestEntry::new(1, method_id(0x70), PASSWORD_FLOOR),
+                ManifestEntry::new(2, method_id(0x71), RECOVERY_FLOOR),
+            ],
+        ),
+    )
+    .unwrap();
     Fixture {
         old,
         items,
         tombs,
+        manifest,
         plain,
     }
 }
 
-fn rekey_with<R: ferret_core::SecureRng>(
+impl Fixture {
+    /// The checkpoint of the old state as a client would have made it at
+    /// `seq`.
+    fn checkpoint(&self, seq: u64) -> Checkpoint {
+        let mut entries: Vec<CheckpointEntry> = self
+            .items
+            .iter()
+            .map(|(id, s)| CheckpointEntry::live(*id, s.rev, &s.envelope))
+            .collect();
+        entries.extend(
+            self.tombs
+                .iter()
+                .map(|(id, t)| CheckpointEntry::tombstone(*id, t.rev)),
+        );
+        entries.push(CheckpointEntry::live(
+            ItemId::MANIFEST,
+            self.manifest.rev,
+            &self.manifest.envelope,
+        ));
+        make_checkpoint(&self.old, seq, entries).unwrap()
+    }
+}
+
+/// Everything a rekey takes, so a test can change one part.
+struct Inputs {
+    cp: Checkpoint,
+    pinned: Pinned,
+    base_seq: u64,
+    manifest: SealedItem,
+}
+
+fn inputs(f: &Fixture) -> Inputs {
+    Inputs {
+        cp: f.checkpoint(CP_SEQ),
+        pinned: pinned_for(&f.old, PASSWORD_FLOOR, RECOVERY_FLOOR),
+        base_seq: BASE_SEQ,
+        manifest: f.manifest.clone(),
+    }
+}
+
+fn rekey_full<R: ferret_core::SecureRng>(
     f: &Fixture,
-    vault: &UnlockedVault,
+    i: &Inputs,
     rng: &mut R,
     edit: impl FnOnce(&mut Vec<(ItemId, SealedItem)>, &mut Vec<(ItemId, Tombstone)>),
 ) -> Result<RekeyBundle, Error> {
@@ -118,21 +199,34 @@ fn rekey_with<R: ferret_core::SecureRng>(
         .collect();
     let k = kek();
     let input = RekeyInput {
-        base_seq: BASE_SEQ,
+        base_seq: i.base_seq,
+        old_checkpoint: &i.cp,
+        old_manifest: RekeyItem {
+            item_id: ItemId::MANIFEST,
+            rev: i.manifest.rev,
+            envelope: &i.manifest.envelope,
+            tag: &i.manifest.tag,
+        },
         items: &ritems,
         tombstones: &rtombs,
+        pinned: &i.pinned,
         password_kek: &k,
         password_method: (method_id(0x70), password_method()),
-        password_next_generation: 4,
         recovery_method_id: method_id(0x71),
-        recovery_next_generation: 2,
-        manifest_rev: 9,
     };
-    vault.rekey(rng, &input)
+    f.old.rekey(rng, &input)
+}
+
+fn rekey_with<R: ferret_core::SecureRng>(
+    f: &Fixture,
+    rng: &mut R,
+    edit: impl FnOnce(&mut Vec<(ItemId, SealedItem)>, &mut Vec<(ItemId, Tombstone)>),
+) -> Result<RekeyBundle, Error> {
+    rekey_full(f, &inputs(f), rng, edit)
 }
 
 fn rekey(f: &Fixture, seed: &str) -> RekeyBundle {
-    rekey_with(f, &f.old, &mut TestRng::new(seed.as_bytes()), |_, _| {}).unwrap()
+    rekey_with(f, &mut TestRng::new(seed.as_bytes()), |_, _| {}).unwrap()
 }
 
 #[test]
@@ -276,7 +370,8 @@ fn rekey_password_wrap_uses_same_kek_new_aad_generation_plus_one() {
     let pw = &b.wraps[0];
     assert!(matches!(pw.method, Method::Password { .. }));
     assert_eq!(pw.method_id, method_id(0x70));
-    assert_eq!(pw.kek_generation, 4);
+    // The pinned floor plus one.
+    assert_eq!(pw.kek_generation, PASSWORD_FLOOR + 1);
     assert_eq!(pw.wrap.len(), 104, "with the key commitment");
     // The same KEK_pw opens it, in the new epoch, to the new vault.
     let opened = unwrap_vk(&new_ctx, &kek(), pw).unwrap();
@@ -326,11 +421,15 @@ fn rekey_drops_prf_and_device() {
         .collect();
     assert_eq!(
         listed,
-        vec![(1, method_id(0x70), 4), (2, method_id(0x71), 2)]
+        vec![
+            (1, method_id(0x70), PASSWORD_FLOOR + 1),
+            (2, method_id(0x71), RECOVERY_FLOOR + 1)
+        ]
     );
-    assert_eq!(b.manifest.rev, 9);
+    // The old manifest's revision plus one.
+    assert_eq!(b.manifest.rev, OLD_MANIFEST_REV + 1);
     // It seeds the pinning floors without a passkey or local method.
-    let view = MethodManifestView::from_manifest(&m).unwrap();
+    let view = view_from_manifest(&m).unwrap();
     assert_eq!(view.methods.len(), 2);
     // The old vault cannot open the new manifest.
     assert!(
@@ -352,7 +451,7 @@ fn rekey_recovery_wrap_new_rk() {
     let rec = &b.wraps[1];
     assert!(matches!(rec.method, Method::Recovery));
     assert_eq!(rec.method_id, method_id(0x71));
-    assert_eq!(rec.kek_generation, 2);
+    assert_eq!(rec.kek_generation, RECOVERY_FLOOR + 1);
     assert_eq!(rec.wrap.len(), 72);
     let new_ctx = *b.vault.context();
     let kek_rk = Kek::from_recovery_key(&account, &b.recovery_key).unwrap();
@@ -375,38 +474,214 @@ fn rekey_recovery_wrap_new_rk() {
 }
 
 #[test]
+fn rekey_generations_and_manifest_rev_come_from_the_floors_not_the_caller() {
+    let f = fixture();
+    let mut i = inputs(&f);
+    i.pinned = pinned_for(&f.old, 9, 5);
+    let b = rekey_full(&f, &i, &mut TestRng::new(b"g"), |_, _| {}).unwrap();
+    assert_eq!(b.wraps[0].kek_generation, 10);
+    assert_eq!(b.wraps[1].kek_generation, 6);
+    // A floor of the password wrap that cannot be raised, or a missing
+    // floor, makes no plan (and draws nothing).
+    let mut draws = ReplayRng::new(vec![]);
+    for (pw, rec) in [
+        (ferret_core::pinning::MAX_GENERATION, 1),
+        (1, ferret_core::pinning::MAX_GENERATION),
+    ] {
+        let mut i = inputs(&f);
+        i.pinned = pinned_for(&f.old, pw, rec);
+        assert_eq!(
+            rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+            Some(Error::Malformed(MalformedKind::PinnedRecord))
+        );
+    }
+    for missing in [MethodKey::Password, MethodKey::Recovery] {
+        let mut i = inputs(&f);
+        i.pinned.kek_generation_max.retain(|(k, _)| *k != missing);
+        assert_eq!(
+            rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+            Some(Error::Malformed(MalformedKind::PinnedRecord)),
+            "{missing:?}"
+        );
+    }
+    // A pinned record of another account, vault, epoch or key.
+    let mut i = inputs(&f);
+    i.pinned.account_id = ferret_core::AccountId::from_bytes([9; 16]);
+    assert_eq!(
+        rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+    let mut i = inputs(&f);
+    i.pinned.vault_id = ferret_core::VaultId::from_bytes([9; 16]);
+    assert_eq!(
+        rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+        Some(Error::Pinned(PinnedField::VaultId))
+    );
+    let mut i = inputs(&f);
+    i.pinned.vk_epoch_max = 2;
+    assert_eq!(
+        rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+        Some(Error::Pinned(PinnedField::VkEpoch))
+    );
+    let mut i = inputs(&f);
+    i.pinned.pk_a = [7; 32];
+    assert_eq!(
+        rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+    assert_eq!(draws.remaining(), 0);
+}
+
+#[test]
 fn rekey_is_all_or_nothing() {
     let f = fixture();
     // A damaged tag on the first, a middle and the last item.
     for victim in [0usize, 1, 3] {
-        let r = rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |items, _| {
+        let r = rekey_with(&f, &mut TestRng::new(b"x"), |items, _| {
             items[victim].1.tag[0] ^= 1;
         });
         assert_eq!(r.err(), Some(Error::Decrypt), "item {victim}");
     }
     // A damaged envelope.
-    let r = rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |items, _| {
+    let r = rekey_with(&f, &mut TestRng::new(b"x"), |items, _| {
         let n = items[3].1.envelope.len();
         items[3].1.envelope[n - 1] ^= 1;
     });
     assert_eq!(r.err(), Some(Error::Decrypt));
     // An item from another vault state (the wrong revision).
-    let r = rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |items, _| {
+    let r = rekey_with(&f, &mut TestRng::new(b"x"), |items, _| {
         items[2].1.rev += 1;
     });
     assert_eq!(r.err(), Some(Error::Decrypt));
     // A forged tombstone is not turned into a real one.
-    let r = rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |_, tombs| {
+    let r = rekey_with(&f, &mut TestRng::new(b"x"), |_, tombs| {
         tombs[1].1.tomb[10] ^= 1;
     });
     assert_eq!(r.err(), Some(Error::TombstoneInvalid));
     // A tombstone from another item.
-    let r = rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |_, tombs| {
+    let r = rekey_with(&f, &mut TestRng::new(b"x"), |_, tombs| {
         tombs[0].0 = item_id(0x53);
     });
     assert_eq!(r.err(), Some(Error::TombstoneInvalid));
     // The same inputs, undamaged, work.
-    rekey_with(&f, &f.old, &mut TestRng::new(b"x"), |_, _| {}).unwrap();
+    rekey_with(&f, &mut TestRng::new(b"x"), |_, _| {}).unwrap();
+}
+
+#[test]
+fn rekey_refuses_rows_that_are_not_the_state_of_the_old_checkpoint() {
+    let f = fixture();
+    // Nothing is drawn for any of these: a draw would panic the replay RNG.
+    let mut draws = ReplayRng::new(vec![]);
+    let failure = |kind| Some(Error::Checkpoint(kind));
+
+    // A server that hides a live item: with a checkpoint behind the top, the
+    // item is "hidden or rolled back"; with the checkpoint at the top, the
+    // state is not the checkpoint's.
+    for victim in 0..f.items.len() {
+        let r = rekey_with(&f, &mut draws, |items, _| {
+            items.remove(victim);
+        });
+        assert_eq!(
+            r.err(),
+            failure(CheckpointFailure::HiddenOrRolledBack),
+            "hide item {victim}"
+        );
+        let mut at_top = inputs(&f);
+        at_top.cp = f.checkpoint(BASE_SEQ);
+        let r = rekey_full(&f, &at_top, &mut draws, |items, _| {
+            items.remove(victim);
+        });
+        assert_eq!(
+            r.err(),
+            failure(CheckpointFailure::TopDigestMismatch),
+            "hide item {victim} at the top"
+        );
+    }
+
+    // An item at an older revision than the checkpoint's.
+    let mut older = f.items[0].1.clone();
+    let body = ItemBody::new(ItemType::Login, "Old", 1);
+    older = encrypt_item(
+        &mut TestRng::new(b"older"),
+        &f.old,
+        f.items[0].0,
+        older.rev - 1,
+        &body,
+        None,
+    )
+    .unwrap();
+    let r = rekey_with(&f, &mut draws, |items, _| items[0].1 = older.clone());
+    assert_eq!(r.err(), failure(CheckpointFailure::LowerRev));
+
+    // A live row that the checkpoint does not have: fine behind the top (a
+    // newer item), an error at the top.
+    let extra = encrypt_item(
+        &mut TestRng::new(b"extra"),
+        &f.old,
+        item_id(0x4e),
+        1,
+        &body,
+        None,
+    )
+    .unwrap();
+    let mut at_top = inputs(&f);
+    at_top.cp = f.checkpoint(BASE_SEQ);
+    let r = rekey_full(&f, &at_top, &mut draws, |items, _| {
+        items.push((item_id(0x4e), extra.clone()));
+    });
+    assert_eq!(r.err(), failure(CheckpointFailure::TopDigestMismatch));
+
+    // The checkpoint must verify, and must not be for a later seq.
+    let mut bad = inputs(&f);
+    bad.cp.mac[0] ^= 1;
+    assert_eq!(
+        rekey_full(&f, &bad, &mut draws, |_, _| {}).err(),
+        failure(CheckpointFailure::BadMac)
+    );
+    let mut ahead = inputs(&f);
+    ahead.base_seq = CP_SEQ - 1;
+    assert_eq!(
+        rekey_full(&f, &ahead, &mut draws, |_, _| {}).err(),
+        failure(CheckpointFailure::SeqAboveTop)
+    );
+    // The old manifest is checked too: its tag, and that it is the manifest.
+    let mut bad_manifest = inputs(&f);
+    bad_manifest.manifest.tag[0] ^= 1;
+    assert_eq!(
+        rekey_full(&f, &bad_manifest, &mut draws, |_, _| {}).err(),
+        Some(Error::Decrypt)
+    );
+    assert_eq!(draws.remaining(), 0);
+}
+
+#[test]
+fn rekey_accepts_a_purged_tombstone_and_a_newer_item() {
+    let f = fixture();
+    // The server dropped a tombstone: the new state simply has one less.
+    let mut at_top = inputs(&f);
+    at_top.cp = f.checkpoint(BASE_SEQ);
+    let b = rekey_full(&f, &at_top, &mut TestRng::new(b"p"), |_, tombs| {
+        tombs.remove(0);
+    })
+    .unwrap();
+    assert_eq!(b.tombstones.len(), 1);
+    // A newer item behind the top (written after the checkpoint) is included.
+    let body = ItemBody::new(ItemType::Login, "New", 1);
+    let new_item = encrypt_item(
+        &mut TestRng::new(b"new"),
+        &f.old,
+        item_id(0x4e),
+        1,
+        &body,
+        None,
+    )
+    .unwrap();
+    let b = rekey_with(&f, &mut TestRng::new(b"n"), |items, _| {
+        items.push((item_id(0x4e), new_item.clone()));
+    })
+    .unwrap();
+    assert_eq!(b.items.len(), f.items.len() + 1);
+    assert_eq!(b.checkpoint.entries.len(), 56 * (5 + 2 + 1));
 }
 
 #[test]
@@ -414,18 +689,18 @@ fn rekey_refuses_input_that_cannot_make_a_plan() {
     let f = fixture();
     let mut draws = ReplayRng::new(vec![]);
     // Nothing is drawn: a draw would panic the replay RNG.
-    let dup = rekey_with(&f, &f.old, &mut draws, |items, tombs| {
+    let dup = rekey_with(&f, &mut draws, |items, tombs| {
         tombs[0].0 = items[0].0;
     });
     assert_eq!(dup.err(), Some(Error::Malformed(MalformedKind::Entries)));
-    let manifest_id = rekey_with(&f, &f.old, &mut draws, |_, tombs| {
+    let manifest_id = rekey_with(&f, &mut draws, |_, tombs| {
         tombs[0].0 = ItemId::MANIFEST;
     });
     assert_eq!(
         manifest_id.err(),
         Some(Error::Malformed(MalformedKind::Envelope))
     );
-    let overflow = rekey_with(&f, &f.old, &mut draws, |items, _| {
+    let overflow = rekey_with(&f, &mut draws, |items, _| {
         items[0].1.rev = u64::MAX;
     });
     assert_eq!(
@@ -435,31 +710,40 @@ fn rekey_refuses_input_that_cannot_make_a_plan() {
     assert_eq!(draws.remaining(), 0);
 
     // The password method must be a password method.
+    let i = inputs(&f);
     let k = kek();
     let input = RekeyInput {
-        base_seq: 0,
+        base_seq: i.base_seq,
+        old_checkpoint: &i.cp,
+        old_manifest: RekeyItem {
+            item_id: ItemId::MANIFEST,
+            rev: i.manifest.rev,
+            envelope: &i.manifest.envelope,
+            tag: &i.manifest.tag,
+        },
         items: &[],
         tombstones: &[],
+        pinned: &i.pinned,
         password_kek: &k,
         password_method: (method_id(0x70), Method::Recovery),
-        password_next_generation: 2,
         recovery_method_id: method_id(0x71),
-        recovery_next_generation: 2,
-        manifest_rev: 2,
     };
     assert_eq!(
         f.old.rekey(&mut draws, &input).err(),
         Some(Error::Unsupported)
     );
-    // A generation that no pinned device accepts.
-    let input = RekeyInput {
+    // The old manifest must carry the manifest's reserved id.
+    let wrong_id = RekeyInput {
+        old_manifest: RekeyItem {
+            item_id: item_id(5),
+            ..input.old_manifest
+        },
         password_method: (method_id(0x70), password_method()),
-        password_next_generation: u64::from(u32::MAX) + 1,
         ..input
     };
     assert_eq!(
-        f.old.rekey(&mut draws, &input).err(),
-        Some(Error::Malformed(MalformedKind::PinnedRecord))
+        f.old.rekey(&mut draws, &wrong_id).err(),
+        Some(Error::Malformed(MalformedKind::Envelope))
     );
 }
 
@@ -492,7 +776,7 @@ fn rekey_new_checkpoint_verifies_under_new_k_head() {
     // It is signed with the new K_head only.
     assert_eq!(
         verify_checkpoint(&f.old, &b.checkpoint, &rows, BASE_SEQ).err(),
-        Some(Error::Checkpoint(ferret_core::CheckpointFailure::BadMac))
+        Some(Error::Checkpoint(CheckpointFailure::BadMac))
     );
     // The old rows (the old state) are not what this checkpoint describes.
     let old_rows: Vec<ServerRow> = f
@@ -510,11 +794,11 @@ fn rekey_request_is_signed_by_the_old_key() {
     let nonce = [7u8; 32];
     let body = b"{\"rekey\":true}";
     // The caller signs the request body with the old vault.
-    let proof = auth_sign(&f.old, MutationOp::Rekey, &nonce, body).unwrap();
+    let proof = auth_sign(&f.old, AuthOp::Rekey, &nonce, body).unwrap();
     let account = f.old.context().account_id;
-    verify_mutation_proof(
-        &f.old.auth_public_key(),
-        MutationOp::Rekey,
+    verify_auth_proof(
+        &AuthPublicKey::new(f.old.auth_public_key()),
+        AuthOp::Rekey,
         &account,
         &nonce,
         1,
@@ -525,9 +809,9 @@ fn rekey_request_is_signed_by_the_old_key() {
     // The new pk_a does not verify it: a device that pinned the old pk_a
     // checks the rekey with that one.
     assert!(
-        verify_mutation_proof(
-            &b.pk_a,
-            MutationOp::Rekey,
+        verify_auth_proof(
+            &AuthPublicKey::new(b.pk_a),
+            AuthOp::Rekey,
             &account,
             &nonce,
             1,
@@ -542,15 +826,29 @@ fn rekey_request_is_signed_by_the_old_key() {
 fn rekey_can_be_repeated() {
     let f = fixture();
     let b = rekey(&f, "a");
-    let f2 = Fixture {
-        old: b.vault,
-        items: b.items,
-        tombs: b.tombstones,
+    let second = Fixture {
+        items: b.items.clone(),
+        tombs: b.tombstones.clone(),
+        manifest: b.manifest.clone(),
         plain: vec![],
+        // The next rekey starts from the new vault.
+        old: b.vault,
     };
-    let b2 = rekey_with(&f2, &f2.old, &mut TestRng::new(b"second"), |_, _| {}).unwrap();
+    let i = Inputs {
+        cp: b.checkpoint,
+        pinned: pinned_for(
+            &second.old,
+            b.wraps[0].kek_generation,
+            b.wraps[1].kek_generation,
+        ),
+        base_seq: BASE_SEQ,
+        manifest: b.manifest,
+    };
+    let b2 = rekey_full(&second, &i, &mut TestRng::new(b"second"), |_, _| {}).unwrap();
     assert_eq!(b2.vk_epoch, 3);
     assert_eq!(b2.items[0].1.rev, f.items[0].1.rev + 2);
+    assert_eq!(b2.wraps[0].kek_generation, PASSWORD_FLOOR + 2);
+    assert_eq!(b2.manifest.rev, OLD_MANIFEST_REV + 2);
 }
 
 fn run_vectors() -> ferret_core::testing::vector::RunReport {
@@ -603,19 +901,43 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
             .collect();
         let k = Kek::from_test_bytes(hexn(&input["password_kek"]));
         assert_eq!(input["password_ksf_profile"], json!(1));
+        let old_cp = Checkpoint {
+            seq: u64s(&input["old_checkpoint"]["seq"]),
+            digest: hexn(&input["old_checkpoint"]["digest"]),
+            mac: hexn(&input["old_checkpoint"]["mac"]),
+            entries: hex(&input["old_checkpoint"]["entries"]),
+        };
+        let m = &input["old_manifest"];
+        let (m_envelope, m_tag) = (hex(&m["envelope"]), hexn::<32>(&m["tag"]));
+        // The floors of the pinned record; a null floor is a missing one.
+        let mut pinned = pinned_for(&vault, 0, 0);
+        pinned.kek_generation_max.clear();
+        for (key, name) in [
+            (MethodKey::Password, "password_floor"),
+            (MethodKey::Recovery, "recovery_floor"),
+        ] {
+            if !input[name].is_null() {
+                pinned.kek_generation_max.push((key, u64s(&input[name])));
+            }
+        }
         let rekey_input = RekeyInput {
             base_seq: u64s(&input["base_seq"]),
+            old_checkpoint: &old_cp,
+            old_manifest: RekeyItem {
+                item_id: ItemId::MANIFEST,
+                rev: u64s(&m["rev"]),
+                envelope: &m_envelope,
+                tag: &m_tag,
+            },
             items: &ritems,
             tombstones: &rtombs,
+            pinned: &pinned,
             password_kek: &k,
             password_method: (
                 MethodId::from_bytes(id16(&input["password_method_id"])),
                 password_method(),
             ),
-            password_next_generation: u64s(&input["password_next_generation"]),
             recovery_method_id: MethodId::from_bytes(id16(&input["recovery_method_id"])),
-            recovery_next_generation: u64s(&input["recovery_next_generation"]),
-            manifest_rev: u64s(&input["manifest_rev"]),
         };
         let b = vault.rekey(rng, &rekey_input)?;
         let keys = unlocked_vault_keys(&b.vault);
@@ -657,5 +979,5 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
 
 #[test]
 fn rekey_vectors_from_file() {
-    assert_all_passed(&run_vectors(), 10);
+    assert_all_passed(&run_vectors(), 20);
 }

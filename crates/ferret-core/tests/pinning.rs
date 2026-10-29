@@ -15,6 +15,20 @@ use ferret_core::{
     wrap_vk,
 };
 
+use ferret_core::testing::pinning::{seed_from_view, view_from_manifest};
+
+/// Seeding from a view that a test made by hand (only possible with
+/// `test-support`; a release seeds from a decrypted manifest).
+trait SeedView {
+    fn seed_from_manifest_view(&mut self, view: &MethodManifestView) -> Result<(), Error>;
+}
+
+impl SeedView for Pinned {
+    fn seed_from_manifest_view(&mut self, view: &MethodManifestView) -> Result<(), Error> {
+        seed_from_view(self, view)
+    }
+}
+
 const URL: &str = "https://ferret.example";
 const SERVER_KEY: [u8; 32] = [0x99; 32];
 const KEK: [u8; 32] = [9; 32];
@@ -501,7 +515,7 @@ fn the_record_has_a_size_cap() {
         })
         .collect();
     f.pinned
-        .seed_from_manifest(&MethodManifestView { methods })
+        .seed_from_manifest_view(&MethodManifestView { methods })
         .unwrap();
     assert_eq!(f.pinned.kek_generation_max.len(), MAX_FLOORS);
 
@@ -514,7 +528,7 @@ fn the_record_has_a_size_cap() {
         }],
     };
     assert_eq!(
-        f.pinned.seed_from_manifest(&one_more),
+        f.pinned.seed_from_manifest_view(&one_more),
         Err(Error::Malformed(MalformedKind::PinnedRecord))
     );
     assert_eq!(f.pinned, before);
@@ -531,7 +545,7 @@ fn the_record_has_a_size_cap() {
     // An existing key can still be raised at the cap.
     assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![0; 16])), Some(1));
     f.pinned
-        .seed_from_manifest(&MethodManifestView {
+        .seed_from_manifest_view(&MethodManifestView {
             methods: vec![MethodFloor {
                 key: MethodKey::Prf(vec![0; 16]),
                 kek_generation: 5,
@@ -553,7 +567,7 @@ fn the_record_has_a_size_cap() {
     };
     let mut g = fixture();
     assert_eq!(
-        g.pinned.seed_from_manifest(&long),
+        g.pinned.seed_from_manifest_view(&long),
         Err(Error::Malformed(MalformedKind::PinnedRecord))
     );
 }
@@ -573,7 +587,7 @@ fn seed_from_manifest_sets_floors_for_wraps_never_unlocked_with() {
             },
         ],
     };
-    f.pinned.seed_from_manifest(&view_of(3)).unwrap();
+    f.pinned.seed_from_manifest_view(&view_of(3)).unwrap();
     assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
     assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(2));
 
@@ -588,7 +602,7 @@ fn seed_from_manifest_sets_floors_for_wraps_never_unlocked_with() {
     unlock(&mut f, &cur_rec).unwrap();
 
     // Floors only go up: an older manifest does not lower them.
-    f.pinned.seed_from_manifest(&view_of(1)).unwrap();
+    f.pinned.seed_from_manifest_view(&view_of(1)).unwrap();
     assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
     assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(2));
 
@@ -606,7 +620,7 @@ fn seed_from_manifest_sets_floors_for_wraps_never_unlocked_with() {
             },
         ],
     };
-    assert!(f.pinned.seed_from_manifest(&bad).is_err());
+    assert!(f.pinned.seed_from_manifest_view(&bad).is_err());
     assert_eq!(f.pinned, before);
 }
 
@@ -708,7 +722,7 @@ fn seed_from_manifest_refuses_a_repeated_key() {
                 methods: vec![floor_of(a), floor_of(b)],
             };
             assert_eq!(
-                f.pinned.seed_from_manifest(&view),
+                f.pinned.seed_from_manifest_view(&view),
                 Err(Error::Malformed(MalformedKind::PinnedRecord))
             );
             assert_eq!(f.pinned, before);
@@ -731,7 +745,7 @@ fn seed_from_manifest_refuses_a_repeated_key() {
             },
         ],
     };
-    assert!(f.pinned.seed_from_manifest(&view).is_err());
+    assert!(f.pinned.seed_from_manifest_view(&view).is_err());
     assert_eq!(f.pinned, before);
 }
 
@@ -756,7 +770,8 @@ fn seed_from_manifest_stops_before_scanning_a_long_view() {
         .collect();
     for methods in [distinct, huge] {
         assert_eq!(
-            f.pinned.seed_from_manifest(&MethodManifestView { methods }),
+            f.pinned
+                .seed_from_manifest_view(&MethodManifestView { methods }),
             Err(Error::Malformed(MalformedKind::PinnedRecord))
         );
         assert_eq!(f.pinned, before);
@@ -769,7 +784,7 @@ fn seed_from_manifest_stops_before_scanning_a_long_view() {
         })
         .collect();
     f.pinned
-        .seed_from_manifest(&MethodManifestView { methods: fits })
+        .seed_from_manifest_view(&MethodManifestView { methods: fits })
         .unwrap();
     assert_eq!(f.pinned.kek_generation_max.len(), MAX_FLOORS);
 }
@@ -783,7 +798,7 @@ fn a_passkey_floor_is_keyed_by_the_credential_id_in_the_manifest() {
         entry(2, 0x71, 3),
         ManifestEntry::passkey(method_id(0x75), 6, credential.clone()),
     ]);
-    let view = MethodManifestView::from_manifest(&manifest).unwrap();
+    let view = view_from_manifest(&manifest).unwrap();
     assert_eq!(
         view.methods,
         vec![
@@ -801,7 +816,7 @@ fn a_passkey_floor_is_keyed_by_the_credential_id_in_the_manifest() {
             },
         ]
     );
-    f.pinned.seed_from_manifest(&view).unwrap();
+    f.pinned.seed_from_manifest_view(&view).unwrap();
     assert_eq!(
         floor(&f.pinned, &MethodKey::Prf(credential.clone())),
         Some(6)
@@ -852,7 +867,7 @@ fn from_manifest_takes_only_server_methods_with_what_it_needs() {
         entry(5, 0x79, 9),
         entry(9, 0x7a, 9),
     ]);
-    let view = MethodManifestView::from_manifest(&m).unwrap();
+    let view = view_from_manifest(&m).unwrap();
     assert_eq!(
         view.methods,
         vec![MethodFloor {
@@ -861,7 +876,7 @@ fn from_manifest_takes_only_server_methods_with_what_it_needs() {
         }]
     );
     assert!(
-        MethodManifestView::from_manifest(&manifest_with(vec![]))
+        view_from_manifest(&manifest_with(vec![]))
             .unwrap()
             .methods
             .is_empty()
@@ -870,7 +885,7 @@ fn from_manifest_takes_only_server_methods_with_what_it_needs() {
     // A passkey entry without a credential id cannot make a floor.
     let missing = manifest_with(vec![entry(3, 0x75, 1)]);
     assert_eq!(
-        MethodManifestView::from_manifest(&missing),
+        view_from_manifest(&missing),
         Err(Error::Malformed(MalformedKind::ItemBody))
     );
     // Two entries for one key are not guessed at.
@@ -883,7 +898,7 @@ fn from_manifest_takes_only_server_methods_with_what_it_needs() {
         ],
     ] {
         assert_eq!(
-            MethodManifestView::from_manifest(&manifest_with(pair)),
+            view_from_manifest(&manifest_with(pair)),
             Err(Error::Malformed(MalformedKind::ItemBody))
         );
     }
@@ -892,13 +907,7 @@ fn from_manifest_takes_only_server_methods_with_what_it_needs() {
         ManifestEntry::passkey(method_id(0x75), 1, vec![1]),
         ManifestEntry::passkey(method_id(0x76), 2, vec![2]),
     ]);
-    assert_eq!(
-        MethodManifestView::from_manifest(&two)
-            .unwrap()
-            .methods
-            .len(),
-        2
-    );
+    assert_eq!(view_from_manifest(&two).unwrap().methods.len(), 2);
 }
 
 #[test]
@@ -926,4 +935,45 @@ fn the_manifest_entry_carries_the_credential_id() {
         Manifest::from_cbor(&bytes),
         Err(Error::Malformed(MalformedKind::ItemBody))
     );
+}
+
+#[test]
+fn seed_from_manifest_takes_the_decrypted_manifest_only() {
+    let mut f = fixture();
+    let manifest = manifest_with(vec![
+        entry(1, 0x70, 2),
+        entry(2, 0x71, 3),
+        ManifestEntry::passkey(method_id(0x75), 6, vec![0xa5; 20]),
+    ]);
+    f.pinned.seed_from_manifest(&manifest).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(2));
+    assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![0xa5; 20])), Some(6));
+
+    // A floor only goes up: an older manifest changes nothing.
+    let older = manifest_with(vec![entry(1, 0x70, 1), entry(2, 0x71, 1)]);
+    f.pinned.seed_from_manifest(&older).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
+
+    // A manifest from an earlier epoch than the pinned one, and one that
+    // cannot make floors, leave the record as it was.
+    let before = f.pinned.clone();
+    f.pinned.vk_epoch_max = 3;
+    let pinned_later = f.pinned.clone();
+    assert_eq!(
+        f.pinned.seed_from_manifest(&manifest),
+        Err(Error::Pinned(PinnedField::VkEpoch))
+    );
+    assert_eq!(f.pinned, pinned_later);
+    f.pinned.vk_epoch_max = before.vk_epoch_max;
+    for bad in [
+        manifest_with(vec![entry(3, 0x75, 1)]),
+        manifest_with(vec![entry(1, 0x70, 1), entry(1, 0x72, 9)]),
+    ] {
+        assert_eq!(
+            f.pinned.seed_from_manifest(&bad),
+            Err(Error::Malformed(MalformedKind::ItemBody))
+        );
+        assert_eq!(f.pinned, before);
+    }
 }

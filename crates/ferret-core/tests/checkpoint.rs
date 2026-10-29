@@ -502,7 +502,8 @@ fn checkpoint_rejects_live_row_older_than_tombstone() {
     );
 }
 
-// Check 5: at the top, the digest is computed again from the rows.
+// Check 5: at the top, the rows must be exactly the entries (a purged
+// tombstone excepted).
 #[test]
 fn checkpoint_top_seq_digest_recomputed() {
     let vault = unlocked(0x5a);
@@ -528,11 +529,49 @@ fn checkpoint_top_seq_digest_recomputed() {
         failure(F::TopDigestMismatch)
     );
 
-    // A tombstone that has gone missing.
+    // A tombstone that has been purged is accepted, at the top too.
     let mut no_tomb = rows.clone();
     no_tomb.pop();
+    verify_checkpoint(&vault, &c, &no_tomb, SEQ).unwrap();
+
+    // A live entry without its row is not, at the top: the state is not the
+    // checkpoint's (below the top it is a hidden or rolled back item).
+    for gone in [0usize, 1, 2] {
+        let mut hidden = rows.clone();
+        hidden.remove(gone);
+        assert_eq!(
+            verify_checkpoint(&vault, &c, &hidden, SEQ),
+            failure(F::TopDigestMismatch),
+            "row {gone}"
+        );
+        assert_eq!(
+            verify_checkpoint(&vault, &c, &hidden, SEQ + 1),
+            failure(F::HiddenOrRolledBack),
+            "row {gone}"
+        );
+    }
+
+    // A purged tombstone does not excuse an extra row.
+    let mut both = no_tomb.clone();
+    both.push(row_live(0x44, 1, 0xdd));
     assert_eq!(
-        verify_checkpoint(&vault, &c, &no_tomb, SEQ),
+        verify_checkpoint(&vault, &c, &both, SEQ),
+        failure(F::TopDigestMismatch)
+    );
+
+    // A tombstone row at another revision than its entry, and a live row
+    // where the checkpoint has a tombstone at a higher revision, are not the
+    // checkpoint's state.
+    let mut tomb_up = rows.clone();
+    tomb_up[3] = row_dead(0x43, 9);
+    assert_eq!(
+        verify_checkpoint(&vault, &c, &tomb_up, SEQ),
+        failure(F::TopDigestMismatch)
+    );
+    let mut revived = rows.clone();
+    revived[3] = row_live(0x43, 3, 0xcc);
+    assert_eq!(
+        verify_checkpoint(&vault, &c, &revived, SEQ),
         failure(F::TopDigestMismatch)
     );
 
@@ -710,4 +749,37 @@ fn checkpoint_vectors_from_file() {
         }
     });
     assert_all_passed(&report, 40);
+}
+
+#[test]
+fn a_live_hash_of_32_zero_bytes_is_refused() {
+    // It would read back as a tombstone, so it never gets into an entry list.
+    let vault = unlocked(0x5a);
+    let zero = CheckpointEntry {
+        item_id: item_id(1),
+        rev: 1,
+        live_hash: Some([0; 32]),
+    };
+    assert_eq!(
+        make_checkpoint(&vault, 1, vec![zero]).err(),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    assert_eq!(
+        encode_entries(&[zero]).err(),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    // A server row like that is refused as well, whatever the entries.
+    let c = cp(&vault, base());
+    let mut rows = rows_of(&base());
+    rows.push(ServerRow {
+        item_id: item_id(0x44),
+        rev: 1,
+        state: RowState::Live {
+            blob_sha256: [0; 32],
+        },
+    });
+    assert_eq!(
+        verify_checkpoint(&vault, &c, &rows, SEQ + 1),
+        Err(Error::Malformed(MalformedKind::Entries))
+    );
 }
