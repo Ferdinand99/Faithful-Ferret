@@ -24,9 +24,19 @@ allow = [
 
 [bans]
 multiple-versions = "deny"
+# Dev-dependencies count too, so the list below is the complete set of
+# approved duplicate versions.
+multiple-versions-include-dev = true
 # Duplicate versions are listed here, each with a reason. Later tasks add the
 # ones they introduce (for example the OPAQUE dependencies that need digest 0.10).
 skip = [
+  { crate = "argon2@0.5.3", reason = "the independent cross-check implementation of Argon2id used only by tests (`argon2_05`), kept next to argon2 0.6 on purpose" },
+  { crate = "blake2@0.10", reason = "dev-only: pulled in by argon2 0.5.3 (previous digest generation)" },
+  { crate = "block-buffer@0.10", reason = "dev-only: pulled in by argon2 0.5.3 via digest 0.10" },
+  { crate = "cpufeatures@0.2", reason = "dev-only: pulled in by argon2 0.5.3" },
+  { crate = "crypto-common@0.1", reason = "dev-only: pulled in by argon2 0.5.3 via digest 0.10" },
+  { crate = "digest@0.10", reason = "dev-only: pulled in by argon2 0.5.3 via blake2 0.10" },
+  { crate = "rand_core@0.6", reason = "dev-only: pulled in by argon2 0.5.3 via password-hash 0.5" },
   { crate = "syn@2", reason = "build-time proc-macro dependency only: wasm-bindgen-macro-support (getrandom wasm_js backend, wasm32 target) still uses syn 2, the serde and zeroize derives use syn 3" },
 ]
 deny = [

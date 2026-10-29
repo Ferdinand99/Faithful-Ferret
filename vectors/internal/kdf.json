@@ -1,0 +1,264 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "kdf",
+  "suite": 1,
+  "spec": "Fase 1 § 4.1",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "kdf/argon2id/valid/001",
+      "title": "profile 1, 32 bytes",
+      "op": "kdf.argon2id",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect": {
+        "hash": "8aa7fc45b5e24a64c72a683283e56ad23b586908dbc6c2853f48417fe440e506"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/argon2id/valid/002",
+      "title": "floor memory and passes with four lanes",
+      "op": "kdf.argon2id",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 4,
+        "password": "616e6f746865722073796e7468657469632070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect": {
+        "hash": "1e2305be9dc6812fa4bd3292fe74f61b59bb21f9c259544e468f73441dfd30ee"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/argon2id/valid/003",
+      "title": "profile 1, 64 bytes of output",
+      "op": "kdf.argon2id",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 64,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect": {
+        "hash": "5e6ce2f18283e1de33eab45b340fc5cd3ab9b64c80682694fab57b27adca86b34a2a3f188f8f64440199a653a2dc98c7b497006b789f57c85bce39f5ab05328d"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/argon2id/invalid/001",
+      "title": "memory one KiB below the floor",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65535,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/002",
+      "title": "one pass below the floor",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 2
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/003",
+      "title": "zero lanes",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 0,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/004",
+      "title": "five lanes",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 5,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/005",
+      "title": "memory one KiB above 1 GiB",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 1048577,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/006",
+      "title": "memory one KiB above the 512 MiB ceiling",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 524289,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 3
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/007",
+      "title": "seventeen passes",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 17
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/008",
+      "title": "all zero",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 0,
+        "out_len": 32,
+        "p": 0,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 0
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/009",
+      "title": "all maximum",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 4294967295,
+        "out_len": 32,
+        "p": 4294967295,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "000102030405060708090a0b0c0d0e0f",
+        "t": 4294967295
+      },
+      "expect_error": "kdf_out_of_range"
+    },
+    {
+      "id": "kdf/argon2id/invalid/010",
+      "title": "salt of seven bytes is too short",
+      "op": "kdf.argon2id",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "m_kib": 65536,
+        "out_len": 32,
+        "p": 1,
+        "password": "66657272657420746573742070617373776f7264",
+        "salt": "00010203040506",
+        "t": 3
+      },
+      "expect_error": "input_too_short"
+    }
+  ]
+}

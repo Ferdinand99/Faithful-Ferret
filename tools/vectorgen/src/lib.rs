@@ -11,6 +11,8 @@
 
 #![forbid(unsafe_code)]
 
+mod groups;
+
 use ferret_core::testing::{hex_encode, vector::VectorFile};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -39,7 +41,10 @@ pub type Error = Box<dyn std::error::Error>;
 type Group = (&'static str, fn() -> Result<Vec<u8>, Error>);
 
 /// The registered groups. Each task that adds a vector file adds one line.
-const GROUPS: &[Group] = &[];
+const GROUPS: &[Group] = &[
+    ("internal/kdf.json", groups::kdf),
+    ("internal/tlv.json", groups::tlv),
+];
 
 /// Serializes a vector file the way every generated file is written:
 /// pretty JSON, two-space indent, trailing newline.
