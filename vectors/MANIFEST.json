@@ -1,12 +1,14 @@
 {
   "files": {
-    "ERRORS.md": "41305cc51dece8cf840ab63ada2d462125e48cce6746d92dad00a57f59c51051",
-    "OPS.md": "a8da897857fed7ac266fc033082d59bc650d68df53817efdf847a50bed6265ab",
-    "VERSION": "1a252402972f6057fa53cc172b52b9ffca698e18311facd0f3b06ecaaef79e17",
-    "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
+    "ERRORS.md": "59810086c2dfffc770a452379d8f13e5c945faf3ddce305ec71595a98966d5dc",
+    "OPS.md": "1ca5f339c2e5e8cccae8cb0df8cd9983819ad9dc6a0fbb2143c3ae41d631818c",
+    "VERSION": "9a92adbc0cee38ef658c71ce1b1bf8c65668f166bfb213644c895ccb1ad07a25",
+    "external/SOURCE.md": "3a41b10fad0ec90b9892b79e311d5a88f416dc51fb2fdfb32251920b88dc7f4f",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
     "external/rfc9106-argon2id.json": "e2d6d0b9641c99593b92193be462d0444d23db70d0568a3d1a15a84e28210268",
+    "external/rfc9497-oprf-ristretto255.json": "2dd137ce56560149b25b547b7cc8070aa918f843026310f01700b1e7c009211b",
+    "external/rfc9807-opaque-ristretto255.json": "0e711c486e101c05ed5c3a685a24eb61e46224d4d4febf1df9534145aac6c2ec",
     "external/wycheproof/SOURCE.md": "fe6c41ace52bd6e937fba2c6cb68f4268ee28b357252648de976b10ec8e9dd70",
     "external/wycheproof/chacha20_poly1305_test.json": "fe61d25f90e1bde4461d00eafe61049e5f29bd999f36b766df9cda90906ad53d",
     "external/wycheproof/ecdsa_secp256r1_sha256_test.json": "182db4f3e230f6f9fa9f800d2a614dede30284b8e8438bbfe1171905402e9332",
@@ -21,6 +23,7 @@
     "internal/export.json": "2667db3c3817c8bea5ce7ed0b2abaaac0f485952a81b6dd713b253dc536ed156",
     "internal/item.json": "c53fff03cdd3153c5a75407ab1f92be79a6d78bfd9259a5c7fbcc08d35a58dda",
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
+    "internal/opaque.json": "a2f13cb734fe77e47a7dc08f8acafe7500947f1fde67ad8b3fcf616e988dc748",
     "internal/padding.json": "d4e0ea9bc004d79cf61e021624d78d67aa1ae212ae7ea7bac43c0cd93332fef7",
     "internal/proofs.json": "76b032e16403f6a0a8885c3f95b78dea4faf4ef58b0a3caf7a3d1197625bbdc9",
     "internal/rekey.json": "6f1f2decad96ec5ae373c77a8f3ef7641dfc6e67bde1b6568972594a357e38f6",
@@ -32,5 +35,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 13
+  "version": 14
 }

@@ -37,6 +37,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
+| `malformed_opaque_message` | An OPAQUE message from the server with the wrong length, or one that holds something that is not a group element or key. A message that parses but does not authenticate is `decrypt`. |
 | `malformed_code` | Recovery or secret key code with a wrong prefix or a letter outside the alphabet. |
 | `too_large` | Larger than the allowed size. |
 | `read_only_schema` | The item has a newer schema and is read-only. |

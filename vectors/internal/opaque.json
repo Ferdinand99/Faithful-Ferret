@@ -1,0 +1,571 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "opaque",
+  "suite": 1,
+  "spec": "Fase 1 § 4.1, § 4.2 and plan U1, U19; RFC 9807",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "opaque/register/001",
+      "title": "register, no secret key",
+      "op": "opaque.register",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "db918b5b8f46c3bc2f8bdbfdc5691ba91d01e3089fd0841404e9357d187eb44acab73efed4a8482320deb9765522266bb2e472f41f7873e3626e2fd1d4cb40cf",
+        "d6078a74102ec139e81cb9922247000c17df56687bd343517d578025437fcabb"
+      ],
+      "input": {
+        "ksf_profile": 1,
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "response": "40cdb5bd2310bd6bc7ed882ae665180f9fbba315d4086d0f293f862493ef4e7736e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820",
+        "secret_key": null
+      },
+      "expect": {
+        "export_key": "bbe27c3d117e2095ac113c19e82855f7b866457eeedffa7d7a40da475dcb7c8c54d7bbf381b15abb29c2b90e21550eaf85d08887a5127a484126ece36bd78ec9",
+        "record": "84ca68a53cca301219addab78438fb041099c99c78b55cc71962d866d1b6b23963c7343dc90534df36739b4de2d9a96400ee8738ae1b501d9e4ebf7a944ba00d1882fcc4802644594ba28a0b2de39d73eadbdca9e459c11361e487ca2176d305d6078a74102ec139e81cb9922247000c17df56687bd343517d578025437fcabb5c284d2455fbd42f80a8f0a87561d01345e75e71559f66a5c4e8a6757b78a1fc85a2a082728ba145e4c9279c044309be5d8bd1de4eebb18a65d4a3714df7dca9",
+        "request": "907a5560041e73b7c1116a2f83302e6f1e653aebe504fc15e46763354df17d57",
+        "server_public_key": "36e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "opaque/register/002",
+      "title": "register, NFKD password with a secret key",
+      "op": "opaque.register",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "91bfd5324dba3f9af01f07d228ca7a2b52fa319b21515c46a5b3035d63868bbea75c17a945a2ccd44658c58b5e4b968f4306559084e3c1638d0eed9f81f1e320",
+        "9433b15b9d86a450804203248319686e59e214db181e5055956ac11291c2c5b6"
+      ],
+      "input": {
+        "ksf_profile": 1,
+        "password": "åndrés ÆØÅ pass①",
+        "password_hex": "61cc8a6e6472c3a97320c386c398c3852070617373e291a0",
+        "response": "3a3706ce83c67859cc70f17a5fea9c09aac0b5293299b4fe47afa93cb47cbd03bc0e2a2167261752d587704b6fb5455a02bf66411b380fbffbfcc909de8dc821",
+        "secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      },
+      "expect": {
+        "export_key": "823ec424eb6168518f33f056b43f66c0f500e38c966a66760f97d807136d4175cf0db05b0eaadb10c0edc304ae965c8e98cb888608733572f62cada8307dfd27",
+        "record": "ae29fb95e3ca65b93045f37ab9d443cd4a2446cae3381b97091b3991099af67c3fd91c10fdd2ccf4d338fe20c332e6debe9b58a0a10e54777cad61a085f9d39097ddb7af2237c6be438bea3396391a3963db9c8c460c7556addbf2ac440e517e9433b15b9d86a450804203248319686e59e214db181e5055956ac11291c2c5b68cdee85e8f3f127ebdc9ada0223ffce10d2fc565e0034750925bc1181f15bc45143b0b7ae1cbc5c68812a4919bb541356fcfa22724c5387b7a3add933fbe9d46",
+        "request": "d45c0ebef7e9ca6bd2413fc58d648102312ea3d111bcba7c66aec3e44a093936",
+        "server_public_key": "bc0e2a2167261752d587704b6fb5455a02bf66411b380fbffbfcc909de8dc821"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "opaque/login/001",
+      "title": "login, no secret key",
+      "op": "opaque.login",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect": {
+        "export_key": "bbe27c3d117e2095ac113c19e82855f7b866457eeedffa7d7a40da475dcb7c8c54d7bbf381b15abb29c2b90e21550eaf85d08887a5127a484126ece36bd78ec9",
+        "ke1": "1667bde1e8f5526ec13ae79057e11589f6d40051a369f406420931ad7e4e0a4ab31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcdb21e22ea9b5f7afaeae1d34301cdc285c28389e3c85ef98339c905ba2a211467",
+        "ke3": "83ac07ba1bb8f64985da03b932ce1480af32d2eddd5ff4bae623d70b59c508e05ed88b9fbd22579520f9520f9c2ee9fa2ffe43496c9ce0bc8e6bd02a8637c940",
+        "server_public_key": "36e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "opaque/login/002",
+      "title": "login, NFKD password with a secret key",
+      "op": "opaque.login",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "15407a8e6a0c6b4815b38076cca417df6f08999fc41f5cccab8b4661ad7717fb41a474caef49bb2d5b4f4cc3f22ff357b6d5fa26db87fb3bf2ea351c83b389d9",
+        "2c10c49ec400d68c3944b5782e2843cb3c0afc8753248b5efa1b08d9c8178714",
+        "1a74a1e6b48fbcea2c4ca2884ad1fdae787eacc9ec8d012faa4f9e9391836cf1"
+      ],
+      "input": {
+        "ke2": "385985c931b2e7cb2ac14845f8b023eda731c552987ec5ce891d88811b9bcf37c077426028f3228dd7a1be4541ec1c03a8c05956845e90fc043eeb3b62ed928c3ce23aa10c0306174da9f90dcbf80ffeedd73dc44813ba271d5111386af3e7f27f3fb0dd2c80fab6b972dca00ea74246d1598bd541e0b1dc7c6bb4d4266ca9a8b7a3604752e6a3dfc659b213a33f364f02f72fe44879cce60cf681f42ab5b68f8ba879e1615629ffd6dcc878746e72224cbeb694ac4c1063dd4805c67049d47a592b99a88ec4f83505ccbbff9faf5dda04ecdac437077263f9a8ff5e3b3380c0cc0f65db76286cfe9b104180c3b1dad435521302412902587707f403739570454705a463014218550c53a2729e6fc10ad5dfb6c042bf9450e51bc1e170ffb409f81b3f84aba6ad0db98c3b70ccd5ae856c060544a6fcc740ebea1513e912bcf5",
+        "password": "åndrés ÆØÅ pass①",
+        "password_hex": "61cc8a6e6472c3a97320c386c398c3852070617373e291a0",
+        "pinned": null,
+        "secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "server_profile": 1
+      },
+      "expect": {
+        "export_key": "823ec424eb6168518f33f056b43f66c0f500e38c966a66760f97d807136d4175cf0db05b0eaadb10c0edc304ae965c8e98cb888608733572f62cada8307dfd27",
+        "ke1": "8caa5a11cde7fb53015c73cf1fbbd7e2e1e80bd2e51835e4c31dd70378a008791a74a1e6b48fbcea2c4ca2884ad1fdae787eacc9ec8d012faa4f9e9391836cf174c9355420b68503605879d31ad35d862a44c2a9c3e2a4d25db3c6f26cb6b64e",
+        "ke3": "8476a61568059dbf9c2722c78f02f41074364b335898afcbf24978dda24be5d7aab8d49acb82157ebeece4e5d0426295b7eb8d94d5e340b12d6a46df259e613b",
+        "server_public_key": "bc0e2a2167261752d587704b6fb5455a02bf66411b380fbffbfcc909de8dc821"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "opaque/login/003",
+      "title": "login with a pinned record that agrees (profile, SK bit, server key)",
+      "op": "opaque.login",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": {
+          "ksf_profile": 1,
+          "server_public_key": "36e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820",
+          "sk_bit": false
+        },
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect": {
+        "export_key": "bbe27c3d117e2095ac113c19e82855f7b866457eeedffa7d7a40da475dcb7c8c54d7bbf381b15abb29c2b90e21550eaf85d08887a5127a484126ece36bd78ec9",
+        "ke1": "1667bde1e8f5526ec13ae79057e11589f6d40051a369f406420931ad7e4e0a4ab31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcdb21e22ea9b5f7afaeae1d34301cdc285c28389e3c85ef98339c905ba2a211467",
+        "ke3": "83ac07ba1bb8f64985da03b932ce1480af32d2eddd5ff4bae623d70b59c508e05ed88b9fbd22579520f9520f9c2ee9fa2ffe43496c9ce0bc8e6bd02a8637c940",
+        "server_public_key": "36e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "opaque/login/004",
+      "title": "wrong password",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "1a4863a4e6c54f9d6a47bdca3ba3c7060385b34eae5d72f7eeb727f9d58fcdc77ec51788e3d3de856a0d6be90990ef8db74a37bfe6188a5b337f083f23cd7f24",
+        "8e76bc24fb263d9219090fa86953547060572b4e501c3f5342db9ab7cd031dec",
+        "8e66ab45a0a68cbc25ab4dd816ce996ca81fa2f4fd9273c6f3f23f04ffdc5afb"
+      ],
+      "input": {
+        "ke2": "e6b78a4745e3b3431b3f7d7acab1b7527085677d1c8611d63ec99fdb4386a87cc13e1ed2056ddb383795d6db28d6faa35a674462d04b9df038a94a39ca452ffb99813d7357c155f4c2fe59223da12136f39773a42949ad37231d9f3c3ee5f020e83a2864478768eaa69f11e3efd94595030fd8a1b9c53947c4e8d5135231cfd94018afb4c6fca8267dc87c3a7ff8e1f1a051668dbc9813115d4b397543380cd56b57b47ebd846e3f311056f37dff5d4810b9e87e98edb90749a4330c4a501d946b3597e09ceb8fa32db7670d895a3d8606a9d117ac403be1a201d3ddf08a4eca2cd5d48ef5886e808dca032cd3c503cd3f235128fbf5c20cacd64f5461a3281a6b2b82ecc82098214c39d82b2040d0ad2ed1143e087a2481e7e70c9c5051320c34436f2098bae35aa573447db82c82abdda5832525aceb041868c7cfbecb4861",
+        "password": "correct horse battery stapl3",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c33",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/005",
+      "title": "right password, wrong secret key",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "c360875333c610a9b7984022b0bb2336e4fd3f1083ca34e4888ca5bfdf55082ff5f5304eb1810beae980c0f5c72ba91f1f6af7ddac0f51724c66b76e4dc60e0c",
+        "c3d450b1b719dac4197f6a396841dcccb27ecdabd185f37b905625dd5ea6876d",
+        "5134d8291e7a1531adb3e14544a17dc9531eb8b3c3fbd4856286dee90f7da08f"
+      ],
+      "input": {
+        "ke2": "c420ab299d2541c15598587359173f1dea616bf4add00d868f2a8054e3b4682a7df62d854f9063cf31fde2b5331393f907940fde19b30ef75cacb454bb2f8951557102f33e6b54975e3c2c042f3d4e5270b71b5d2ed40e1628cddccc044ad128504204ca1e1351e5be742394ee79643c20930fa1bd9a0fe73e0915456be0a7229acd4c2f6d13b69368663287c8d3b1cbd1420f9d384de50c7448e09f6615f285a0efc68f079453881317e75488ba81f205dbd0a9ae0f2a0b0f706c4dbb8e1b638d8dd0f9445c274f092abcaeb0dbde98565f5abe5aed23c6a78061c81cf8c5b39667e4100439a3b3e78c28d0beda6569f76d76efabdfbe4fb647a53e59f122771213a4b92203dba21f2db23dd5e6bcc346680e0c9b753111721286be34a04661d6251f4cdb56a5db53987659efef017d2cb7c417d36f7cbdbcc06ddd0d61e3d4",
+        "password": "åndrés ÆØÅ pass①",
+        "password_hex": "61cc8a6e6472c3a97320c386c398c3852070617373e291a0",
+        "pinned": null,
+        "secret_key": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/006",
+      "title": "right password, secret key left out",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "da9dba215ed4f98f56a4521adbaef46cbfeefa8b326d8a1a52305426b83294c960c17a6655b41bbd3a510a9fdc6e38caa400acd9a71d1f98b56c364c14198548",
+        "5840122a145fc9357ccd1708b79945e6b6051a7e36eec8b0d5357d8a9ebd39c3",
+        "bd7046fcedf3a07f25dc1060ad521b8c47d9c0b1f6d05f057d20710a2d9cef14"
+      ],
+      "input": {
+        "ke2": "126fb40910b12db8d69b3630925e8f1e04ae94a1c0ee140dd278595449d564155c76cfe684a467c6811679dd256c99a24ab881621635e6a8f15fed931882f318e78b39e4c9953882e84bfd9ad655689531cc60a9d137501c9636ae707f3863ad38a005aa94719079cf0545e6e47c2af8bdb4da89bd42926c4260c4733d40f68494be0a84d10d282084e60683500f67427dc3192c6cc9e44f1c1a15d5214e43d7ecaf5d8b4eb6e0a1767a134b7b64067028cca96fa2bef22c69233f912207842a867d0c2119f5f291b7bee16f2d66fcd4336297d9150fea9fd1b5e4745dae55c578d7cff2f4bd15772546ba701b5ca69859ece24ee78bad4b383db60984151253b0a748b07339de8ff5b1a66f0f4b40ef0a67ce1746f9e71699b879414f560a56eafaa531564947f8088d3923d88d4f47cc6bc83161a4a83ab5aee3343e467766",
+        "password": "åndrés ÆØÅ pass①",
+        "password_hex": "61cc8a6e6472c3a97320c386c398c3852070617373e291a0",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/007",
+      "title": "KE2 with the server MAC changed",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6a",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/008",
+      "title": "KE2 with a byte of the masked response changed",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a9e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/009",
+      "title": "server with another context (ferret/v1/other)",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "86c3be6ed657d126e37d77617e68139b62adb6874f8adcb65ecbe35bcf1e8496b34a099f37f9e592b3ec35680fd97c9827d553bcac021ae8798bddcb79093de4",
+        "2f65d1e51050ffda9fd651e953eae250969036b97b571e2cee681ff7ba37d958",
+        "2565b3e254655554ff5cbcef3dca0a2b89cc006d0719799a47326d8daade4a32"
+      ],
+      "input": {
+        "ke2": "56b904c8772902ed852aa4bb2e574c853c672586a60274bd089d8127de340c513ab428cf369a77958f5c8f3698b93757b22635828ec7a3ff1d35f2a18fafdf42b108420a192ce3582789bfd5479e9778ea0d171f339e2643f0f1e55cbbda2bb855f033f2e3510185e2b97a370fc25e7bf2e988aa7e464b20e8dad1c2cdac35076c089759acdc482b664f2a54140fe8eac523daab89f21b2df49be2d21b6446f2844927f226b2c82090fd3344bd4445d802fb3d380eadc269520f82f6b7f0e0ac21d3a4d495ad99e851191f5c5d2364ac174e314ddbaec0073402230211a61767e4b3e060abf544a7bf0fcd8c6045832001369fac086164023368fd36f333d0449899ad35519179838f5bf0c63917a65d3644c8d4015fa57be4d975492cb57911fb394f0682755df28ccc0bf345eded9f7497f57e7c57363665302881a73e207c",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/010",
+      "title": "unknown account (the server's fake record)",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "838ff949efbcafc52722462db6c99717b57ee702bbb4a01f0e609012a2c1157eed1d887a3cedb8ae5e082593f2f7db46907ea16f32454d20081e31eeed08aefc",
+        "3279eaa72ded2a394b2152ca965b56c7f55556e6fa6bd30dd5ddecf9265020e4",
+        "a2bda91cc82a1a9d0a642dbd2a7ca6354b274eeb9ef854af942fc3327a983c60"
+      ],
+      "input": {
+        "ke2": "1c6ff030392bf4185af30819f9a44a0beb499dfbc9d63c886d0fa8a4992415614afc9cc78d6591584391b42eb91fef0b6b9b7cd5f33e2942bbd7e6f5c56ca96c5e23218721721f35532b02bf9458704469b8eb8cbd2fa7cec094b911b29e1305c4b557be1922d1a97c66808e80e89a58b4f1c1bcafe341682d57183c2bd6ddc02254c7111e5811db9e35c390662f8adf92b1bf5cd2bd5fdd2df9ea1d86f04363c358f6922fe995241c50d3b6406719203d8af9982d5df13f0dc48a26dd0741a952e0b4e697b27adeb146e1299a104392552038a23de5d097fc91365120d9aa823a0271b6e4783f3fa32a9d32ee2cb7706e0548bf0041f1f12f6470ee7c94b514aae89d34571e2814479216b370b674e94d3d32d5b8fb8e37ee8f4782f1ee669796b86a43416ae29f42ce8b2854392d197f33f30313aef0554882dfec58eb1a77",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "opaque/login/011",
+      "title": "server states profile 2 (unknown)",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 2
+      },
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "opaque/login/012",
+      "title": "server states profile 0 (unknown)",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 0
+      },
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "opaque/login/013",
+      "title": "server states profile 4294967295 (unknown)",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 4294967295
+      },
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "opaque/login/014",
+      "title": "profile 1 against a device that pinned profile 2",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": {
+          "ksf_profile": 2,
+          "server_public_key": null,
+          "sk_bit": false
+        },
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "kdf_profile_downgrade"
+    },
+    {
+      "id": "opaque/login/015",
+      "title": "no secret key where the device pinned an account with one",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": {
+          "ksf_profile": 1,
+          "server_public_key": null,
+          "sk_bit": true
+        },
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "pinned_sk_bit"
+    },
+    {
+      "id": "opaque/login/016",
+      "title": "secret key where the device pinned an account without one",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "15407a8e6a0c6b4815b38076cca417df6f08999fc41f5cccab8b4661ad7717fb41a474caef49bb2d5b4f4cc3f22ff357b6d5fa26db87fb3bf2ea351c83b389d9",
+        "2c10c49ec400d68c3944b5782e2843cb3c0afc8753248b5efa1b08d9c8178714",
+        "1a74a1e6b48fbcea2c4ca2884ad1fdae787eacc9ec8d012faa4f9e9391836cf1"
+      ],
+      "input": {
+        "ke2": "385985c931b2e7cb2ac14845f8b023eda731c552987ec5ce891d88811b9bcf37c077426028f3228dd7a1be4541ec1c03a8c05956845e90fc043eeb3b62ed928c3ce23aa10c0306174da9f90dcbf80ffeedd73dc44813ba271d5111386af3e7f27f3fb0dd2c80fab6b972dca00ea74246d1598bd541e0b1dc7c6bb4d4266ca9a8b7a3604752e6a3dfc659b213a33f364f02f72fe44879cce60cf681f42ab5b68f8ba879e1615629ffd6dcc878746e72224cbeb694ac4c1063dd4805c67049d47a592b99a88ec4f83505ccbbff9faf5dda04ecdac437077263f9a8ff5e3b3380c0cc0f65db76286cfe9b104180c3b1dad435521302412902587707f403739570454705a463014218550c53a2729e6fc10ad5dfb6c042bf9450e51bc1e170ffb409f81b3f84aba6ad0db98c3b70ccd5ae856c060544a6fcc740ebea1513e912bcf5",
+        "password": "åndrés ÆØÅ pass①",
+        "password_hex": "61cc8a6e6472c3a97320c386c398c3852070617373e291a0",
+        "pinned": {
+          "ksf_profile": 1,
+          "server_public_key": null,
+          "sk_bit": false
+        },
+        "secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "server_profile": 1
+      },
+      "expect_error": "pinned_sk_bit"
+    },
+    {
+      "id": "opaque/login/017",
+      "title": "server public key differs from the pinned one",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": {
+          "ksf_profile": 1,
+          "server_public_key": "37e24a17cacb5eda64b9510aaa5df15d9bd62ad40727bfc36dc994c8cf3ea820",
+          "sk_bit": false
+        },
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "pinned_server_key"
+    },
+    {
+      "id": "opaque/login/018",
+      "title": "KE2 one byte short",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "malformed_opaque_message"
+    },
+    {
+      "id": "opaque/login/019",
+      "title": "KE2 one byte long",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "7e9651b15aca98653450ae5088b888fbefdbfb8179cdadce43e5038134f5a61eceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b00",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "malformed_opaque_message"
+    },
+    {
+      "id": "opaque/login/020",
+      "title": "KE2 whose evaluated element is not a group element",
+      "op": "opaque.login",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "95fbee82f5c8680f4fe8c765027bb88ef032874a190a229eba37387e7cb199379106a3e01d2bafe3b390cc6713eb01a42b66625f3d9d28c0ddf3b03439ebb9b7",
+        "3d6eb856ff9f8152e0f2a00941c27691edb2d44c40f2ed1b207b70aff65b9b5e",
+        "b31c3e6222bfb7f736417d976eab1075a19b85492d10a01fdefe92ce5f8f3dcd"
+      ],
+      "input": {
+        "ke2": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeceb1b903aba89116438fadd11cf37dbd59dfd34143c3b85799f3be40e90bc7298b7878b9a18a1e8279478ac3c0ccbb9e0a8a2a3bcc0da7e286615227e648d31cdb5b1ab6b9852a1544fde69f709a842b7dd9ab6961fb77374976f462f7b6b1c04c6055bbfa91c0c14d64b06ba3e52768467fc9bfcb3896e6e427e1ef0b360525c07b5bc8a6989c1d3af1041f5a9959d2e2b266f70fe3d7e6897642b0f33f73fa6dbd37215734bcc5379cb3591bc21e131beba351e0feba3b6e893fe4a2368612aeb988d2d163d3ddb4578a73df59891d4f8b1d45f4dc562b538cb59f45ca2b22d4094ed13f527530720d49680230def3b43bd537de2247ae3449516b494407ae9fd647f50bc2f06074ed2ccf423e8a0032211bcc96812cf0d482012d5b15ff6b",
+        "password": "correct horse battery staple",
+        "password_hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "pinned": null,
+        "secret_key": null,
+        "server_profile": 1
+      },
+      "expect_error": "malformed_opaque_message"
+    }
+  ]
+}
