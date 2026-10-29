@@ -32,6 +32,7 @@
     )
 )]
 
+pub mod account;
 pub mod cbor;
 pub mod codes;
 pub mod envelope;
@@ -48,6 +49,7 @@ pub mod pinning;
 pub mod prim;
 pub mod rng;
 pub mod secret;
+pub mod sheet;
 #[cfg(feature = "test-support")]
 pub mod testing;
 pub mod text;
@@ -55,6 +57,11 @@ pub mod tlv;
 pub mod totp;
 pub mod wrap;
 
+pub use account::{
+    FIRST_EPOCH, FIRST_GENERATION, FIRST_MANIFEST_REV, FIRST_SEQ, ManifestRow, NewAccount,
+    NewAccountIds, NewPassword, PasswordChange, Recovered, RecoveryInput, change_password,
+    create_account, recover, verify_recovery_setup, verify_secret_key_entry,
+};
 pub use codes::{decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key};
 pub use envelope::{
     SealedItem, decrypt_item, decrypt_manifest, encrypt_item, encrypt_manifest, item_tag,
@@ -93,6 +100,10 @@ pub use rng::{OsRng, SecureRng};
 pub use secret::{
     AuthSeed, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput,
     PrfSeed, RecoveryKey, SecretKey, VaultKey,
+};
+pub use sheet::{
+    AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, SetupQr, account_id_text,
+    emergency_sheet, parse_setup_qr, setup_qr_payload,
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};

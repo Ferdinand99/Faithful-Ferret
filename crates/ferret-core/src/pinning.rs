@@ -39,7 +39,10 @@
 //! The record has a fixed upper size ([`MAX_FLOORS`], [`MAX_URL_LEN`],
 //! [`MAX_CREDENTIAL_ID_LEN`]) and rejects generations above
 //! [`MAX_GENERATION`] as malformed, so a hostile value cannot brick later
-//! unlocks or make the record grow without bound.
+//! unlocks or make the record grow without bound. [`Pinned::validate`] checks
+//! the same limits on a record that comes from storage, and refuses two
+//! floors for one key; the unlock entry points, the rekey and the account
+//! flows call it on every use.
 //!
 //! # What may change
 //!
@@ -228,12 +231,16 @@ fn check_floor(key: &MethodKey, generation: u64) -> Result<(), Error> {
 
 impl Pinned {
     /// The first unlock of an account on this device: opens `rec` with `kek`
-    /// and pins what it showed. The caller has already checked `ksf`
-    /// against the client's own table and the floor, and `sk_bit` comes from
-    /// the user. `rec` must be a server-side wrap.
+    /// and pins what it showed. `sk_bit` comes from the user. `rec` must be a
+    /// server-side wrap.
+    ///
+    /// The KSF profile is taken from the wrap, never from the caller: a
+    /// password wrap states its profile in its AAD, which the unwrap
+    /// authenticates. Any other wrap (recovery, passkey) says nothing about
+    /// it, so the record starts at the lowest profile of the table and
+    /// rises at the first password unlock.
     pub fn first_unlock(
         server_url: &str,
-        ksf: KsfProfile,
         sk_bit: bool,
         server_public_key: Option<[u8; 32]>,
         ctx: &VaultContext,
@@ -245,6 +252,10 @@ impl Pinned {
         if server_url.len() > MAX_URL_LEN {
             return Err(malformed());
         }
+        let ksf = match &rec.method {
+            Method::Password { ksf } => *ksf,
+            _ => KsfProfile::P1,
+        };
         let vault = unwrap_vk(ctx, kek, rec)?;
         let pinned = Pinned {
             server_url: server_url.to_owned(),
@@ -260,8 +271,68 @@ impl Pinned {
         Ok((pinned, vault))
     }
 
+    /// The record of an account this device has just created: the password
+    /// and the recovery wrap at their first generation, the first epoch, and
+    /// the OPAQUE server key the registration showed.
+    pub(crate) fn for_new_account(
+        server_url: &str,
+        ctx: &VaultContext,
+        ksf: KsfProfile,
+        sk_bit: bool,
+        pk_a: [u8; 32],
+        server_public_key: [u8; 32],
+        generations: (u64, u64),
+    ) -> Result<Pinned, Error> {
+        let pinned = Pinned {
+            server_url: server_url.to_owned(),
+            account_id: ctx.account_id,
+            vault_id: ctx.vault_id,
+            ksf_profile: ksf.number(),
+            kek_generation_max: vec![
+                (MethodKey::Password, generations.0),
+                (MethodKey::Recovery, generations.1),
+            ],
+            vk_epoch_max: ctx.vk_epoch,
+            sk_bit,
+            pk_a,
+            server_public_key: Some(server_public_key),
+        };
+        pinned.validate()?;
+        Ok(pinned)
+    }
+
+    /// Checks a record that comes from storage (or from anywhere but this
+    /// module): the server address is at most [`MAX_URL_LEN`] bytes, there are
+    /// at most [`MAX_FLOORS`] floors, each with a generation up to
+    /// [`MAX_GENERATION`] and (for a passkey) a credential id of at most
+    /// [`MAX_CREDENTIAL_ID_LEN`] bytes, and no key has two floors. The first
+    /// floor of a repeated key would otherwise win and a later, higher one
+    /// would be ignored. Any other record is `Malformed(PinnedRecord)`.
+    ///
+    /// The unlock entry points and the account flows call it on every use,
+    /// so a damaged or edited record is refused before anything else
+    /// happens. Call it as well when the record is loaded, to report the
+    /// problem there.
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.server_url.len() > MAX_URL_LEN || self.kek_generation_max.len() > MAX_FLOORS {
+            return Err(malformed());
+        }
+        for (i, (key, generation)) in self.kek_generation_max.iter().enumerate() {
+            check_floor(key, *generation)?;
+            if self
+                .kek_generation_max
+                .iter()
+                .take(i)
+                .any(|(earlier, _)| earlier == key)
+            {
+                return Err(malformed());
+            }
+        }
+        Ok(())
+    }
+
     /// The floor recorded for `key`.
-    fn floor(&self, key: &MethodKey) -> Option<u64> {
+    pub(crate) fn floor(&self, key: &MethodKey) -> Option<u64> {
         self.kek_generation_max
             .iter()
             .find(|(k, _)| k == key)
@@ -368,6 +439,7 @@ impl Pinned {
     ) -> Result<UnlockedVault, Error> {
         let ctx = seen.context;
         let key = MethodKey::of(&rec.method).ok_or(Error::Unsupported)?;
+        self.validate()?;
 
         // 1. The pins.
         if ctx.account_id != self.account_id {
@@ -436,6 +508,7 @@ impl Pinned {
         if MethodKey::of(&rec.method).is_some() {
             return Err(Error::Unsupported);
         }
+        self.validate()?;
         let ctx = VaultContext {
             account_id: self.account_id,
             vault_id: self.vault_id,

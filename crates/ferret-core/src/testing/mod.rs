@@ -13,6 +13,7 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod account;
 pub mod export;
 pub mod integrity;
 pub mod item;

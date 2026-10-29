@@ -22,6 +22,9 @@ pub enum InputError {
     ForbiddenCharacter,
     /// An export password equal to the master password.
     SameAsMasterPassword,
+    /// The secret key handed to an account flow is not the one in the OPAQUE
+    /// input (or one is there and the other is not).
+    SecretKeyMismatch,
 }
 
 /// Which structure was malformed.
@@ -86,6 +89,9 @@ pub enum MalformedKind {
     /// A WebAuthn request that is wrong in itself (user handle length,
     /// `evalByCredential` naming a credential that is not allowed).
     WebauthnOptions,
+    /// The setup QR payload of the emergency sheet, or a field that goes into
+    /// it.
+    SetupQr,
 }
 
 /// Why a checkpoint did not verify.
@@ -192,6 +198,7 @@ impl Error {
         Error::InvalidInput(InputError::NotUtf8),
         Error::InvalidInput(InputError::ForbiddenCharacter),
         Error::InvalidInput(InputError::SameAsMasterPassword),
+        Error::InvalidInput(InputError::SecretKeyMismatch),
         Error::Malformed(MalformedKind::Envelope),
         Error::Malformed(MalformedKind::Cbor),
         Error::Malformed(MalformedKind::CborDuplicateKey),
@@ -215,6 +222,7 @@ impl Error {
         Error::Malformed(MalformedKind::Origin),
         Error::Malformed(MalformedKind::RpId),
         Error::Malformed(MalformedKind::WebauthnOptions),
+        Error::Malformed(MalformedKind::SetupQr),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -255,6 +263,7 @@ impl Error {
                 InputError::NotUtf8 => "input_not_utf8",
                 InputError::ForbiddenCharacter => "input_forbidden_character",
                 InputError::SameAsMasterPassword => "input_same_as_master_password",
+                InputError::SecretKeyMismatch => "input_secret_key_mismatch",
             },
             Error::Malformed(kind) => match kind {
                 MalformedKind::Envelope => "malformed_envelope",
@@ -280,6 +289,7 @@ impl Error {
                 MalformedKind::Origin => "malformed_origin",
                 MalformedKind::RpId => "malformed_rp_id",
                 MalformedKind::WebauthnOptions => "malformed_webauthn_options",
+                MalformedKind::SetupQr => "malformed_setup_qr",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",

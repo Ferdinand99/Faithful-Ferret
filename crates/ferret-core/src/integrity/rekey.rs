@@ -220,6 +220,7 @@ impl UnlockedVault {
         }
         // The pinned record must be this vault's, at this epoch.
         let pinned = input.pinned;
+        pinned.validate()?;
         if pinned.account_id != old.account_id {
             return Err(Error::Pinned(PinnedField::AccountId));
         }

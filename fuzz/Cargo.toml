@@ -81,3 +81,10 @@ path = "fuzz_targets/fuzz_webauthn_options.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_sheet"
+path = "fuzz_targets/fuzz_sheet.rs"
+test = false
+doc = false
+bench = false

@@ -55,7 +55,13 @@ impl MpPolicy {
 /// scalar values and 4 096 bytes after NFKD; at least 12 (with SK) or 15
 /// (without SK) characters, counted in NFC scalar values (plan U9 a).
 #[derive(Zeroize, ZeroizeOnDrop)]
-pub struct MasterPassword(Zeroizing<Vec<u8>>);
+pub struct MasterPassword {
+    bytes: Zeroizing<Vec<u8>>,
+    /// The creation policy this password was checked against, if it was made
+    /// with [`MasterPassword::new`]; `None` for [`MasterPassword::for_unlock`].
+    #[zeroize(skip)]
+    checked: Option<MpPolicy>,
+}
 
 impl MasterPassword {
     /// Validates and normalizes `utf8`.
@@ -70,7 +76,10 @@ impl MasterPassword {
         if nfc_len < policy.min_len() {
             return Err(Error::InvalidInput(InputError::TooShort));
         }
-        Ok(Self(bytes))
+        Ok(Self {
+            bytes,
+            checked: Some(policy),
+        })
     }
 
     /// Normalizes a master password that already exists, for unlocking or
@@ -82,12 +91,20 @@ impl MasterPassword {
     /// `input_too_long`.
     pub fn for_unlock(utf8: &[u8]) -> Result<Self, Error> {
         let Normalized { bytes, .. } = normalize_password(utf8)?;
-        Ok(Self(bytes))
+        Ok(Self {
+            bytes,
+            checked: None,
+        })
     }
 
     /// The OPAQUE password input: `mp`, or `mp ‖ 0x00 ‖ SK` with the 16 raw
     /// bytes of the secret key. The separator is unambiguous because `mp`
     /// never contains U+0000.
+    ///
+    /// The input remembers whether it meets the creation floor of this
+    /// password (see [`OpaqueInput::meets_creation_floor`]): only a password
+    /// made with [`MasterPassword::new`] does, and one checked against
+    /// [`MpPolicy::WithSecretKey`] only when `sk` is given.
     ///
     /// Spec: Fase 1 section 4.1 step 3.
     pub fn opaque_input(&self, sk: Option<&SecretKey>) -> OpaqueInput {
@@ -97,28 +114,35 @@ impl MasterPassword {
             0
         };
         // Reserved at once so that the buffer is never reallocated.
-        let mut buf = Zeroizing::new(Vec::with_capacity(self.0.len().saturating_add(extra)));
-        buf.extend_from_slice(&self.0);
+        let mut buf = Zeroizing::new(Vec::with_capacity(self.bytes.len().saturating_add(extra)));
+        buf.extend_from_slice(&self.bytes);
         if let Some(sk) = sk {
             buf.push(0x00);
             buf.extend_from_slice(sk.expose());
         }
+        let floor_met = match self.checked {
+            // 15 characters satisfy both policies.
+            Some(MpPolicy::WithoutSecretKey) => true,
+            Some(MpPolicy::WithSecretKey) => sk.is_some(),
+            None => false,
+        };
         OpaqueInput {
             bytes: buf,
             with_sk: sk.is_some(),
+            floor_met,
         }
     }
 
     /// The normalized bytes.
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 
     /// Start of the buffer and its capacity, so that a test in a separate
     /// crate can check that a wipe clears the whole allocation.
     #[cfg(feature = "test-support")]
     pub fn test_buffer(&self) -> (*const u8, usize) {
-        (self.0.as_ptr(), self.0.capacity())
+        (self.bytes.as_ptr(), self.bytes.capacity())
     }
 }
 
@@ -132,6 +156,7 @@ impl MasterPassword {
 pub struct OpaqueInput {
     bytes: Zeroizing<Vec<u8>>,
     with_sk: bool,
+    floor_met: bool,
 }
 
 impl OpaqueInput {
@@ -143,6 +168,35 @@ impl OpaqueInput {
     /// Whether the input has the secret key appended.
     pub fn includes_secret_key(&self) -> bool {
         self.with_sk
+    }
+
+    /// Whether the password behind this input was checked with
+    /// [`MasterPassword::new`] against the creation floor that fits the
+    /// input: at least 12 characters when a secret key is part of it, at
+    /// least 15 when it is not (E8). The account flows that set a password
+    /// (creation, change, recovery) refuse an input for which this is false,
+    /// so a password made with [`MasterPassword::for_unlock`] cannot be set.
+    ///
+    /// The zxcvbn estimate and the blocklist that the design asks for without
+    /// a secret key are the client's: they are not part of the core.
+    pub fn meets_creation_floor(&self) -> bool {
+        self.floor_met
+    }
+
+    /// Whether the last 16 bytes of the input, after a `0x00` separator, are
+    /// exactly `sk`, compared in constant time. False for an input without a
+    /// secret key.
+    pub(crate) fn ends_with_secret_key(&self, sk: &SecretKey) -> bool {
+        if !self.with_sk {
+            return false;
+        }
+        let len = self.bytes.len();
+        let Some(split) = len.checked_sub(SecretKey::LEN.saturating_add(1)) else {
+            return false;
+        };
+        let (_, tail) = self.bytes.split_at(split);
+        let (separator, key) = tail.split_at(1);
+        separator == [0x00] && ct_eq(key, sk.expose())
     }
 
     /// Start of the buffer and its capacity (see `MasterPassword::test_buffer`).
