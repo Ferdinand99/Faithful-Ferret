@@ -4,12 +4,17 @@
 
 use crate::error::Error;
 use crate::keys::{self, UnlockedVault, VaultContext};
-use crate::secret::{Kek, RecoveryKey, VaultKey};
+use crate::secret::{ExportKey, Kek, RecoveryKey, VaultKey};
 use crate::wrap::{self, WrapRecord};
 
 /// The 32 bytes of a KEK.
 pub fn kek_bytes(kek: &Kek) -> [u8; 32] {
     *kek.expose()
+}
+
+/// The 64 bytes of an OPAQUE export key.
+pub fn export_key_bytes(k: &ExportKey) -> [u8; 64] {
+    *k.expose()
 }
 
 /// The 32 bytes of a vault key.

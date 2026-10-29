@@ -14,6 +14,7 @@
 mod groups;
 mod item_groups;
 mod key_groups;
+mod opaque_groups;
 mod text_groups;
 
 use ferret_core::testing::{hex_encode, vector::VectorFile};
@@ -62,6 +63,7 @@ const GROUPS: &[Group] = &[
     ("internal/proofs.json", item_groups::integrity::proofs),
     ("internal/rekey.json", item_groups::integrity::rekey),
     ("internal/export.json", item_groups::export::export),
+    ("internal/opaque.json", opaque_groups::opaque),
 ];
 
 /// Serializes a vector file the way every generated file is written:

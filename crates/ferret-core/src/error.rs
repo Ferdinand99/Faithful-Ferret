@@ -69,6 +69,11 @@ pub enum MalformedKind {
     /// The pinned record: a value out of range or a record that would grow
     /// without bound.
     PinnedRecord,
+    /// An OPAQUE message from the server that has the wrong length or holds
+    /// something that is not a group element or key. Only the structure is
+    /// reported: a message that parses but does not authenticate is
+    /// [`Error::Decrypt`].
+    OpaqueMessage,
 }
 
 /// Why a checkpoint did not verify.
@@ -190,6 +195,7 @@ impl Error {
         Error::Malformed(MalformedKind::Entries),
         Error::Malformed(MalformedKind::Code),
         Error::Malformed(MalformedKind::PinnedRecord),
+        Error::Malformed(MalformedKind::OpaqueMessage),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -249,6 +255,7 @@ impl Error {
                 MalformedKind::Entries => "malformed_entries",
                 MalformedKind::Code => "malformed_code",
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
+                MalformedKind::OpaqueMessage => "malformed_opaque_message",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",

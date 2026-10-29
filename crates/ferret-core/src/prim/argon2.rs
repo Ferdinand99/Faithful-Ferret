@@ -94,6 +94,18 @@ pub(crate) fn argon2id_unchecked(
     derive(pwd, salt, Some(secret), ad, p, out)
 }
 
+/// [`argon2id_unchecked`] without secret and associated data: the shape of
+/// the OPAQUE key stretching function. Only for `test-support`.
+#[cfg(feature = "test-support")]
+pub(crate) fn argon2id_unchecked_plain(
+    pwd: &[u8],
+    salt: &[u8],
+    p: KdfParams,
+    out: &mut [u8],
+) -> Result<(), Error> {
+    derive(pwd, salt, None, &[], p, out)
+}
+
 /// Shared by the checked and unchecked paths.
 ///
 /// The memory blocks are allocated here, not inside the `argon2` crate, so
