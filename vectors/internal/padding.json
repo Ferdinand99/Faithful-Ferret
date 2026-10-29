@@ -1,0 +1,1165 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "padding",
+  "suite": 1,
+  "spec": "Fase 1 § 5.2 and plan U6",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "padding/apply/00000",
+      "title": "0 bytes of plaintext are padded to 256",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": []
+        }
+      },
+      "expect": {
+        "padded_len": 256,
+        "padded_sha256": "84cd11fd4d28f21c91b609d25791cf1d47658bcde950faefdcf9b00d2ce89e43"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00001",
+      "title": "1 bytes of plaintext are padded to 256",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 256,
+        "padded_sha256": "41f628e0b313a7236a9f5b7ade5ed8068281cb5e92b7ceaff3f7af8e862114db"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00254",
+      "title": "254 bytes of plaintext are padded to 256",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 254
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 256,
+        "padded_sha256": "09d76849c03a2f6edf16f38de9793679be6e9a9560e4206229974fd5d13400c3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00255",
+      "title": "255 bytes of plaintext are padded to 256",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 255
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 256,
+        "padded_sha256": "cca763ad3ba3c9318243b9bf1a56ace4ffc4d705e01f667897e874507d7fa8de"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00256",
+      "title": "256 bytes of plaintext are padded to 512",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 256
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 512,
+        "padded_sha256": "a0206e5575259106616ba50e42b2f737d6bff8ef5f17f53bf729a749690c5c4e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00257",
+      "title": "257 bytes of plaintext are padded to 512",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 257
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 512,
+        "padded_sha256": "878099149b5e11da62378e3635dbe6a147c4b879d58889569723e105caa060a3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00510",
+      "title": "510 bytes of plaintext are padded to 512",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 510
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 512,
+        "padded_sha256": "eb8ac59f4e77f707f58fb868e0e14db28cfe58a5ecc6aca1dfcf51d279a00013"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00511",
+      "title": "511 bytes of plaintext are padded to 512",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 511
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 512,
+        "padded_sha256": "788fbfd984dab33a9881cb723b7d634c0ad3f4892268abb9971125091f2a11dd"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00512",
+      "title": "512 bytes of plaintext are padded to 1024",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 512
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 1024,
+        "padded_sha256": "2d81d97420343236408025911274d3b013bc5f5a7f1600ccfc6e2cab7f2de5ce"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/00513",
+      "title": "513 bytes of plaintext are padded to 1024",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 513
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 1024,
+        "padded_sha256": "9900219248405933fb5dcdb90a85d78af541f41042e6fe96c3b4ac41ba08e3d9"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/01022",
+      "title": "1022 bytes of plaintext are padded to 1024",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 1022
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 1024,
+        "padded_sha256": "bf89e8db05870f536a6d7448b3eb4540ea94fdb7310c521b00c066584db0d468"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/01023",
+      "title": "1023 bytes of plaintext are padded to 1024",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 1023
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 1024,
+        "padded_sha256": "fc8ecbf1c97b5e4f0d4485934b07f7f7cac558a4964034e427233aeb9682b542"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/01024",
+      "title": "1024 bytes of plaintext are padded to 2048",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 1024
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 2048,
+        "padded_sha256": "d4d7fe30d287fc88516fac6fa299a84800df3ccdc58c9355d9edd8d0e6ac9e5f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/01025",
+      "title": "1025 bytes of plaintext are padded to 2048",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 1025
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 2048,
+        "padded_sha256": "f96c55aa144b99fd42fa0eb0488e2b249420316965f30b0b8a1be287434a6dd5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/02046",
+      "title": "2046 bytes of plaintext are padded to 2048",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 2046
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 2048,
+        "padded_sha256": "aa737e092301c4155488a6602da302ec8110eef6437a783785c0dd1520e9122b"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/02047",
+      "title": "2047 bytes of plaintext are padded to 2048",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 2047
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 2048,
+        "padded_sha256": "c47b72e7e5d7bcf7ebc59a09df1c782639857dc2ed677529da12345c83861258"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/02048",
+      "title": "2048 bytes of plaintext are padded to 4096",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 2048
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 4096,
+        "padded_sha256": "bf6b9df59c13bf661cb78ca4d42a6d8d6147bb8a53876d5e29ad02b64541f6e8"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/02049",
+      "title": "2049 bytes of plaintext are padded to 4096",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 2049
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 4096,
+        "padded_sha256": "242d718187a0f00be5d01d2b61addcb7867cad94359935891b5a987708d52f21"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/04094",
+      "title": "4094 bytes of plaintext are padded to 4096",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 4094
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 4096,
+        "padded_sha256": "fdfd5443b7eae6c877fcd9bf4e3df051df3c4c002c8c5e83ff32355434a73075"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/04095",
+      "title": "4095 bytes of plaintext are padded to 4096",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 4095
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 4096,
+        "padded_sha256": "564ec3fbb5f25a5ed205c1b3a38c94991727788104fd4ec6fdc84e71ae7abc5f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/04096",
+      "title": "4096 bytes of plaintext are padded to 8192",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 4096
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 8192,
+        "padded_sha256": "cadd96bd0604fdb1b0c520bc832ac45dfc61273e123f7e3a82c559dcb236c7f2"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/04097",
+      "title": "4097 bytes of plaintext are padded to 8192",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 4097
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 8192,
+        "padded_sha256": "bfa809af286c7720191109c17e6b3924dc05ee4fe9e7478e455ce16e96343b58"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/08190",
+      "title": "8190 bytes of plaintext are padded to 8192",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 8190
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 8192,
+        "padded_sha256": "f8b7b0404d28ff9285ee3375da231b7a121d3d33b24b3b027493b82ec52fc9c5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/08191",
+      "title": "8191 bytes of plaintext are padded to 8192",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 8191
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 8192,
+        "padded_sha256": "bae693e44bb4daf2accada73f1609df36b029fb691ad4b3d667e87d4e9faa379"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/08192",
+      "title": "8192 bytes of plaintext are padded to 12288",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 8192
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 12288,
+        "padded_sha256": "9c44726da421adb8dafa906cd6b386fcfe8cd99b77dec6f84bfc97ea6e7793c1"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/08193",
+      "title": "8193 bytes of plaintext are padded to 12288",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 8193
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 12288,
+        "padded_sha256": "019bea37038ab7998d63df617a09b22ed8a4069bad758f408f72af257ef9b8f2"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/12287",
+      "title": "12287 bytes of plaintext are padded to 12288",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 12287
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 12288,
+        "padded_sha256": "78bdb969d1f89c30cc82b945586ceb51abfe4390f8309b0e84b0847f12467374"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/12288",
+      "title": "12288 bytes of plaintext are padded to 16384",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 12288
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 16384,
+        "padded_sha256": "105260fc47979345f783cd50fbc43ac586e1c5183402bfa4933cebf0b80c7d7c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/61438",
+      "title": "61438 bytes of plaintext are padded to 61440",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 61438
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 61440,
+        "padded_sha256": "434f140e523278c6a8374df05df54fcd76dfaa5ff9efc6b738ffcc3e1b477c12"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply/61439",
+      "title": "61439 bytes of plaintext are padded to 61440",
+      "op": "pad.apply",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 61439
+            }
+          ]
+        }
+      },
+      "expect": {
+        "padded_len": 61440,
+        "padded_sha256": "89f106b841c321ec6328079dae4e558b2d7a94510bbee928d08d16082e272551"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/apply_too_large/61440",
+      "title": "61440 bytes of plaintext do not fit 61 440",
+      "op": "pad.apply",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 61440
+            }
+          ]
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "padding/apply_too_large/61441",
+      "title": "61441 bytes of plaintext do not fit 61 440",
+      "op": "pad.apply",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 61441
+            }
+          ]
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "padding/apply_too_large/65535",
+      "title": "65535 bytes of plaintext do not fit 61 440",
+      "op": "pad.apply",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 65535
+            }
+          ]
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "padding/apply_too_large/70000",
+      "title": "70000 bytes of plaintext do not fit 61 440",
+      "op": "pad.apply",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "plain": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 70000
+            }
+          ]
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "padding/remove/empty",
+      "title": "padding removed from a plaintext that is empty",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "80",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 255
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 0,
+        "plain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/one_byte",
+      "title": "padding removed from a plaintext that is one_byte",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "6180",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 254
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 1,
+        "plain_sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/ends_in_marker_byte",
+      "title": "padding removed from a plaintext that is ends_in_marker_byte",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "618080",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 253
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 2,
+        "plain_sha256": "119792a4ff6ca25186b81fe68e4e9da6870d1d77463da46b2a7497d46dc18a70"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/ends_in_zeros",
+      "title": "padding removed from a plaintext that is ends_in_zeros",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "6100000080",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 251
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 4,
+        "plain_sha256": "a2d398922901344d08180dc41d3e9d73d8c148c7f6e092835bbb28e02dbcf184"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/only_zeros",
+      "title": "padding removed from a plaintext that is only_zeros",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000080",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 215
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 40,
+        "plain_sha256": "2c34ce1df23b838c5abf2a7f6437cca3d3067ed509ff25f11df6b11b582b51eb"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/fills_the_class_but_one",
+      "title": "padding removed from a plaintext that is fills_the_class_but_one",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 255
+            },
+            {
+              "hex": "80",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 255,
+        "plain_sha256": "b0f3323e7a3cad8ae6778340cc2a17ae0cb31c818df3767cda7c3dd423725e90"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/long",
+      "title": "padding removed from a plaintext that is long",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 4095
+            },
+            {
+              "hex": "80",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 4095,
+        "plain_sha256": "e2e8bab8dad4a3879ffed30a624fee2310f39141d454c57f89e908e527dfd8cd"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove/largest",
+      "title": "padding removed from a plaintext that is largest",
+      "op": "pad.remove",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "61",
+              "repeat": 61439
+            },
+            {
+              "hex": "80",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "plain_len": 61439,
+        "plain_sha256": "ceb2349ea595519a62d852704c9ba0822b9e70dc514ba5bb57adcfce964c8a59"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "padding/remove_invalid/no_marker_zeros",
+      "title": "256 zero bytes",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "00",
+              "repeat": 256
+            }
+          ]
+        }
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "padding/remove_invalid/empty",
+      "title": "no bytes at all",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": []
+        }
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "padding/remove_invalid/no_marker_data",
+      "title": "data and no marker",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "01020304",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "padding/remove_invalid/nonzero_in_tail",
+      "title": "a one in the zeros after the marker",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "68656c6c6f80",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 194
+            },
+            {
+              "hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "padding/remove_invalid/nonzero_last_byte",
+      "title": "the last byte is 1",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "68656c6c6f80",
+              "repeat": 1
+            },
+            {
+              "hex": "00",
+              "repeat": 249
+            },
+            {
+              "hex": "01",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "padding/remove_invalid/marker_then_ff",
+      "title": "a marker followed by 0xff",
+      "op": "pad.remove",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "padded": {
+          "segments": [
+            {
+              "hex": "80ff",
+              "repeat": 1
+            }
+          ]
+        }
+      },
+      "expect_error": "decrypt"
+    }
+  ]
+}

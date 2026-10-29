@@ -1,0 +1,950 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "cbor-limits",
+  "suite": 1,
+  "spec": "Fase 1 § 5.2",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "cbor-limits/null/001",
+      "title": "null",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f6",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "b0b2988b6bbe724bacda5e9e524736de0bc7dae41c46b4213c50e1d35d4e5f13"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/true/001",
+      "title": "true",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f5",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "27abdeddfe8503496adeb623466caa47da5f63abd2bc6fa19f6cfcb73ecfed70"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/false/001",
+      "title": "false",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f4",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "2017ff3461395672aa0aa4f64894fd2f95a4b120e2690e8951656d79adc2eed2"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/uint_zero/001",
+      "title": "unsigned 0",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "00",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/uint_23/001",
+      "title": "unsigned 23, one byte",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "17",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "8f11b05da785e43e713d03774c6bd3405d99cd3024af334ffd68db663aa37034"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/uint_24/001",
+      "title": "unsigned 24, two bytes",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "1818",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 2,
+        "sha256": "7c6348f7ea8a4e831aafe688a2557d7a3ab0be8549cdb190a029956ade971b15"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/uint_max/001",
+      "title": "unsigned 2^64 - 1",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "1bffffffffffffffff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 9,
+        "sha256": "2d7cb0927d162df726656d7155780f0486760e4327b537b54d0187e57209517c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/nint_minus_1/001",
+      "title": "negative -1",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "20",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/nint_min/001",
+      "title": "negative -2^63",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "3b7fffffffffffffff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 9,
+        "sha256": "67e32b647dedafb41220d36a02052aef91939a03a6fa875a68645cc07f290606"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/float_1_5/001",
+      "title": "float64 1.5",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "fb3ff8000000000000",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 9,
+        "sha256": "3a447a89cc973d3a3de5cf77ad9948f4b23c1c07621cdfef84ae78345505e516"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/bytes_empty/001",
+      "title": "empty byte string",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "40",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "c3641f8544d7c02f3580b07c0f9887f0c6a27ff5ab1d4a3e29caf197cfc299ae"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/text_empty/001",
+      "title": "empty text",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "60",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "8d33f520a3c4cef80d2453aef81b612bfe1cb44c8b2025630ad38662763f13d3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/text_utf8/001",
+      "title": "text with a non-ASCII letter",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "62c3a5",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 3,
+        "sha256": "f1f9bd44ee76b8136e1b58b5a676e8471bef30754bead5dd2919bd288cab110c"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/array_empty/001",
+      "title": "empty array",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "80",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/map_empty/001",
+      "title": "empty map",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a0",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "c19a797fa1fd590cd2e5b42d1cf5f246e29b91684e2f87404b81dc345c7a56a0"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/map_order/001",
+      "title": "map keys keep their order",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a3617a01616102616d03",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 10,
+        "sha256": "637f2800166316b6a5ad3e60fe936e2b524c5897310a76b1ab26b0178670dd84"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/non_shortest_head/001",
+      "title": "5 written in two bytes is read, and written back in one",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "1805",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 1,
+        "sha256": "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/text_long_head/001",
+      "title": "a one-byte text with a four-byte length head is read, and written back short",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "7a0000000161",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 2,
+        "sha256": "961b6dd3ede3cb8ecbaacbd68de040cd78eb2ed5889130cceb4c49268ea4d506"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/depth_16/001",
+      "title": "16 nested arrays",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "8181818181818181818181818181818100",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect": {
+        "len": 17,
+        "sha256": "c5d57cb61a5122f903251eac0d242c1b75c4d031aac0c4c254a99f6cc1c83cd8"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/array_10000/001",
+      "title": "an array of 10 000 entries",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "9a00002710",
+            "repeat": 1
+          },
+          {
+            "hex": "00",
+            "repeat": 10000
+          }
+        ]
+      },
+      "expect": {
+        "len": 10003,
+        "sha256": "c91ebcf70932d750a047582d8f8044d6e11c1f1085844ff590541a56d66dda8f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/text_65536/001",
+      "title": "a text of 65 536 bytes",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "7a00010000",
+            "repeat": 1
+          },
+          {
+            "hex": "61",
+            "repeat": 65536
+          }
+        ]
+      },
+      "expect": {
+        "len": 65541,
+        "sha256": "8836d76bfab15ca6dc8b9626b2ce023c8e30461ba4933a4e4f50d2244a52c350"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/bytes_65536/001",
+      "title": "a byte string of 65 536 bytes",
+      "op": "cbor.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "5a00010000",
+            "repeat": 1
+          },
+          {
+            "hex": "07",
+            "repeat": 65536
+          }
+        ]
+      },
+      "expect": {
+        "len": 65541,
+        "sha256": "e7a8b6576a911b98e1412280c7edcb5298ddfc4a52e28da97b64c0a0cff74f26"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "cbor-limits/duplicate_key/001",
+      "title": "a map with the same key twice",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a2616101616102",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_duplicate_key"
+    },
+    {
+      "id": "cbor-limits/duplicate_key_nested/001",
+      "title": "a duplicate key in a nested map",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "81a2616bf6616bf6",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_duplicate_key"
+    },
+    {
+      "id": "cbor-limits/indefinite_array/001",
+      "title": "an indefinite array (0x9f)",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "9fff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_indefinite"
+    },
+    {
+      "id": "cbor-limits/indefinite_map/001",
+      "title": "an indefinite map (0xbf)",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "bfff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_indefinite"
+    },
+    {
+      "id": "cbor-limits/indefinite_text/001",
+      "title": "an indefinite text (0x7f)",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "7f6161ff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_indefinite"
+    },
+    {
+      "id": "cbor-limits/indefinite_bytes/001",
+      "title": "an indefinite byte string (0x5f)",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "5f4101ff",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_indefinite"
+    },
+    {
+      "id": "cbor-limits/tag_1/001",
+      "title": "tag 1 (epoch time)",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "c100",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_tag"
+    },
+    {
+      "id": "cbor-limits/tag_in_map/001",
+      "title": "a tag inside a map value",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a16161c06178",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_tag"
+    },
+    {
+      "id": "cbor-limits/depth_17/001",
+      "title": "17 nested arrays",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "818181818181818181818181818181818100",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_depth"
+    },
+    {
+      "id": "cbor-limits/array_10001/001",
+      "title": "an array of 10 001 entries",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "9a00002711",
+            "repeat": 1
+          },
+          {
+            "hex": "00",
+            "repeat": 10001
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_count"
+    },
+    {
+      "id": "cbor-limits/text_65537/001",
+      "title": "a text of 65 537 bytes",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "7a00010001",
+            "repeat": 1
+          },
+          {
+            "hex": "61",
+            "repeat": 65537
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_size"
+    },
+    {
+      "id": "cbor-limits/bytes_65537/001",
+      "title": "a byte string of 65 537 bytes",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "5a00010001",
+            "repeat": 1
+          },
+          {
+            "hex": "07",
+            "repeat": 65537
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_size"
+    },
+    {
+      "id": "cbor-limits/float32/001",
+      "title": "a single precision float",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "fa3f800000",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_float"
+    },
+    {
+      "id": "cbor-limits/float16/001",
+      "title": "a half precision float",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f93c00",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_float"
+    },
+    {
+      "id": "cbor-limits/undefined/001",
+      "title": "undefined",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f7",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_simple"
+    },
+    {
+      "id": "cbor-limits/simple_16/001",
+      "title": "simple value 16",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "f0",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_simple"
+    },
+    {
+      "id": "cbor-limits/key_integer/001",
+      "title": "a map key that is an integer",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a10102",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_key_type"
+    },
+    {
+      "id": "cbor-limits/key_bytes/001",
+      "title": "a map key that is a byte string",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "a1416102",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_key_type"
+    },
+    {
+      "id": "cbor-limits/trailing/001",
+      "title": "a byte after the item",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "0000",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_trailing"
+    },
+    {
+      "id": "cbor-limits/int_below_i64_min/001",
+      "title": "an integer below -2^63",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "3b8000000000000000",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor_int"
+    },
+    {
+      "id": "cbor-limits/empty/001",
+      "title": "no input",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": []
+      },
+      "expect_error": "malformed_cbor"
+    },
+    {
+      "id": "cbor-limits/truncated/001",
+      "title": "an array that stops early",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "8200",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor"
+    },
+    {
+      "id": "cbor-limits/bad_utf8/001",
+      "title": "a text that is not UTF-8",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "62c328",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor"
+    },
+    {
+      "id": "cbor-limits/declared_count_missing/001",
+      "title": "10 000 entries declared and none present",
+      "op": "cbor.decode",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "segments": [
+          {
+            "hex": "9a00002710",
+            "repeat": 1
+          }
+        ]
+      },
+      "expect_error": "malformed_cbor"
+    }
+  ]
+}
