@@ -253,6 +253,86 @@
     },
     {
       "id": "codes/rk_decode/valid/008",
+      "title": "tabs between the groups",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1\t000G\t40R4\t0M30\tE209\t185G\tR38E\t1W81\t24GK\t2GAH\tC5RR\t34D1\tP70X\t3RFG\tGVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/009",
+      "title": "a line break inside the code, as in a wrapped paste",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1-000G-40R4-0M30-\r\nE209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2\n"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/010",
+      "title": "no-break spaces between the groups",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1 000G 40R4 0M30 E209 185G R38E 1W81 24GK 2GAH C5RR 34D1 P70X 3RFG GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/011",
+      "title": "en dashes instead of hyphens",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1–000G–40R4–0M30–E209–185G–R38E–1W81–24GK–2GAH–C5RR–34D1–P70X–3RFG–GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/012",
+      "title": "em dashes instead of hyphens",
+      "op": "code.rk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFR1—000G—40R4—0M30—E209—185G—R38E—1W81—24GK—2GAH—C5RR—34D1—P70X—3RFG—GVX2"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/rk_decode/valid/013",
       "title": "letter O read as zero",
       "op": "code.rk.decode",
       "status": "valid",
@@ -268,7 +348,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/009",
+      "id": "codes/rk_decode/valid/014",
       "title": "lower case o read as zero",
       "op": "code.rk.decode",
       "status": "valid",
@@ -284,7 +364,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/010",
+      "id": "codes/rk_decode/valid/015",
       "title": "letter I read as one",
       "op": "code.rk.decode",
       "status": "valid",
@@ -300,7 +380,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/011",
+      "id": "codes/rk_decode/valid/016",
       "title": "lower case l read as one",
       "op": "code.rk.decode",
       "status": "valid",
@@ -316,7 +396,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/012",
+      "id": "codes/rk_decode/valid/017",
       "title": "prefix with a lower case letter and L for the one",
       "op": "code.rk.decode",
       "status": "valid",
@@ -332,7 +412,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/013",
+      "id": "codes/rk_decode/valid/018",
       "title": "derived from a label (1)",
       "op": "code.rk.decode",
       "status": "valid",
@@ -348,7 +428,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/014",
+      "id": "codes/rk_decode/valid/019",
       "title": "derived from a label (2)",
       "op": "code.rk.decode",
       "status": "valid",
@@ -364,7 +444,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/015",
+      "id": "codes/rk_decode/valid/020",
       "title": "derived from a label (3)",
       "op": "code.rk.decode",
       "status": "valid",
@@ -380,7 +460,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/rk_decode/valid/016",
+      "id": "codes/rk_decode/valid/021",
       "title": "derived from a label (4)",
       "op": "code.rk.decode",
       "status": "valid",
@@ -462,7 +542,7 @@
     },
     {
       "id": "codes/rk_decode/invalid/006",
-      "title": "all four spare bits of the last data letter set on an all-ones key",
+      "title": "all 4 spare bits of the last data letter set on an all-ones key",
       "op": "code.rk.decode",
       "status": "invalid",
       "tags": [],
@@ -644,7 +724,7 @@
     },
     {
       "id": "codes/rk_decode/invalid/020",
-      "title": "a tab in place of a letter is not a separator",
+      "title": "a tab in place of a letter is dropped as a separator: one letter short",
       "op": "code.rk.decode",
       "status": "invalid",
       "tags": [],
@@ -653,18 +733,18 @@
       "input": {
         "code": "FFR1-000\t-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-8NFH"
       },
-      "expect_error": "malformed_code"
+      "expect_error": "input_too_short"
     },
     {
       "id": "codes/rk_decode/invalid/021",
-      "title": "tabs in place of dashes count as letters",
+      "title": "underscores are not separators",
       "op": "code.rk.decode",
       "status": "invalid",
       "tags": [],
       "synthetic": true,
       "rng": [],
       "input": {
-        "code": "FFR1\t000G\t40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-GVX2"
+        "code": "FFR1_000G_40R4_0M30_E209_185G_R38E_1W81_24GK_2GAH_C5RR_34D1_P70X_3RFG_GVX2"
       },
       "expect_error": "input_too_long"
     },
@@ -923,6 +1003,86 @@
     },
     {
       "id": "codes/sk_decode/valid/008",
+      "title": "tabs between the groups",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1\t000G4\t0R40M\t30E20\t9185G\tR38E1\tWPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/009",
+      "title": "a line break inside the code, as in a wrapped paste",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1-000G4-0R40M-30E\r\n20-9185G-R38E1-WPPTJ\n"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/010",
+      "title": "no-break spaces between the groups",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1 000G4 0R40M 30E20 9185G R38E1 WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/011",
+      "title": "en dashes instead of hyphens",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1–000G4–0R40M–30E20–9185G–R38E1–WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/012",
+      "title": "em dashes instead of hyphens",
+      "op": "code.sk.decode",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "code": "FFS1—000G4—0R40M—30E20—9185G—R38E1—WPPTJ"
+      },
+      "expect": {
+        "key": "000102030405060708090a0b0c0d0e0f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "codes/sk_decode/valid/013",
       "title": "letter O read as zero",
       "op": "code.sk.decode",
       "status": "valid",
@@ -938,7 +1098,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/009",
+      "id": "codes/sk_decode/valid/014",
       "title": "lower case o read as zero",
       "op": "code.sk.decode",
       "status": "valid",
@@ -954,7 +1114,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/010",
+      "id": "codes/sk_decode/valid/015",
       "title": "letter I read as one",
       "op": "code.sk.decode",
       "status": "valid",
@@ -970,7 +1130,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/011",
+      "id": "codes/sk_decode/valid/016",
       "title": "lower case l read as one",
       "op": "code.sk.decode",
       "status": "valid",
@@ -986,7 +1146,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/012",
+      "id": "codes/sk_decode/valid/017",
       "title": "prefix with a lower case letter and L for the one",
       "op": "code.sk.decode",
       "status": "valid",
@@ -1002,7 +1162,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/013",
+      "id": "codes/sk_decode/valid/018",
       "title": "derived from a label (1)",
       "op": "code.sk.decode",
       "status": "valid",
@@ -1018,7 +1178,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/014",
+      "id": "codes/sk_decode/valid/019",
       "title": "derived from a label (2)",
       "op": "code.sk.decode",
       "status": "valid",
@@ -1034,7 +1194,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/015",
+      "id": "codes/sk_decode/valid/020",
       "title": "derived from a label (3)",
       "op": "code.sk.decode",
       "status": "valid",
@@ -1050,7 +1210,7 @@
       "expect_error": null
     },
     {
-      "id": "codes/sk_decode/valid/016",
+      "id": "codes/sk_decode/valid/021",
       "title": "derived from a label (4)",
       "op": "code.sk.decode",
       "status": "valid",
@@ -1132,7 +1292,7 @@
     },
     {
       "id": "codes/sk_decode/invalid/006",
-      "title": "all four spare bits of the last data letter set on an all-ones key",
+      "title": "all 2 spare bits of the last data letter set on an all-ones key",
       "op": "code.sk.decode",
       "status": "invalid",
       "tags": [],
@@ -1314,7 +1474,7 @@
     },
     {
       "id": "codes/sk_decode/invalid/020",
-      "title": "a tab in place of a letter is not a separator",
+      "title": "a tab in place of a letter is dropped as a separator: one letter short",
       "op": "code.sk.decode",
       "status": "invalid",
       "tags": [],
@@ -1323,18 +1483,18 @@
       "input": {
         "code": "FFS1-000\t0-00000-00000-00000-00000-0N99X"
       },
-      "expect_error": "malformed_code"
+      "expect_error": "input_too_short"
     },
     {
       "id": "codes/sk_decode/invalid/021",
-      "title": "tabs in place of dashes count as letters",
+      "title": "underscores are not separators",
       "op": "code.sk.decode",
       "status": "invalid",
       "tags": [],
       "synthetic": true,
       "rng": [],
       "input": {
-        "code": "FFS1\t000G4\t0R40M-30E20-9185G-R38E1-WPPTJ"
+        "code": "FFS1_000G4_0R40M_30E20_9185G_R38E1_WPPTJ"
       },
       "expect_error": "input_too_long"
     },

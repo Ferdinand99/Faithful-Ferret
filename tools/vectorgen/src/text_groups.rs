@@ -772,7 +772,17 @@ fn ref_encode(kind: Kind, key: &[u8]) -> String {
 /// or the error code. The order of the checks is the one documented in
 /// `codes.rs`.
 fn ref_decode(kind: Kind, text: &str) -> Result<Vec<u8>, &'static str> {
-    let letters: Vec<u8> = text.bytes().filter(|b| *b != b'-' && *b != b' ').collect();
+    let is_separator = |c: &char| {
+        matches!(
+            c,
+            '-' | ' ' | '\t' | '\n' | '\r' | '\u{000C}' | '\u{00A0}' | '\u{2013}' | '\u{2014}'
+        )
+    };
+    let letters: Vec<u8> = text
+        .chars()
+        .filter(|c| !is_separator(c))
+        .flat_map(|c| c.to_string().into_bytes())
+        .collect();
     if letters.len() > 64 {
         return Err("input_too_long");
     }
@@ -954,6 +964,36 @@ fn kind_cases(kind: Kind, cases: &mut Vec<Case>) {
     );
     ok(
         cases,
+        "tabs between the groups",
+        &code_count.replace('-', "\t"),
+        &counting,
+    );
+    ok(
+        cases,
+        "a line break inside the code, as in a wrapped paste",
+        &format!("{}\r\n{}\n", &code_count[..20], &code_count[20..]),
+        &counting,
+    );
+    ok(
+        cases,
+        "no-break spaces between the groups",
+        &code_count.replace('-', "\u{00A0}"),
+        &counting,
+    );
+    ok(
+        cases,
+        "en dashes instead of hyphens",
+        &code_count.replace('-', "\u{2013}"),
+        &counting,
+    );
+    ok(
+        cases,
+        "em dashes instead of hyphens",
+        &code_count.replace('-', "\u{2014}"),
+        &counting,
+    );
+    ok(
+        cases,
         "letter O read as zero",
         &code_zero.replace('0', "O"),
         &zero,
@@ -1040,7 +1080,10 @@ fn kind_cases(kind: Kind, cases: &mut Vec<Case>) {
     );
     bad(
         cases,
-        "all four spare bits of the last data letter set on an all-ones key",
+        &format!(
+            "all {} spare bits of the last data letter set on an all-ones key",
+            kind.data_symbols * 5 - kind.key_len * 8
+        ),
         &with_letter(&code_full, kind.data_symbols - 1, 'Z'),
         "non_canonical",
     );
@@ -1119,14 +1162,14 @@ fn kind_cases(kind: Kind, cases: &mut Vec<Case>) {
     );
     bad(
         cases,
-        "a tab in place of a letter is not a separator",
+        "a tab in place of a letter is dropped as a separator: one letter short",
         &with_letter(&code_zero, 3, '\t'),
-        "malformed_code",
+        "input_too_short",
     );
     bad(
         cases,
-        "tabs in place of dashes count as letters",
-        &code_count.replacen('-', "	", 2),
+        "underscores are not separators",
+        &code_count.replace('-', "_"),
         "input_too_long",
     );
     bad(

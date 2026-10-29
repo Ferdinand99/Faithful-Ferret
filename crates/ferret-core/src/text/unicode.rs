@@ -38,11 +38,15 @@ pub fn is_allowed(c: char) -> bool {
     )
 }
 
-/// NFKD of `s`. Not bounded; use it for text of a known size. Passwords go
-/// through `normalize_password`, which bounds the work and the memory.
+/// NFKD of `s`. Not bounded in time or memory; use it for text of a known
+/// size. Passwords go through `normalize_password`, which bounds both.
+///
+/// The exact UTF-8 size of the result is computed first (one extra pass), so
+/// the string is allocated once and never regrown: no unwiped copy of the
+/// text is left behind by a reallocation.
 pub fn nfkd(s: &str) -> Zeroizing<String> {
-    // Reserving the input size avoids most regrowth for typical text.
-    let mut out = Zeroizing::new(String::with_capacity(s.len()));
+    let size: usize = s.nfkd().map(char::len_utf8).sum();
+    let mut out = Zeroizing::new(String::with_capacity(size));
     out.extend(s.nfkd());
     out
 }
@@ -64,8 +68,14 @@ pub(crate) struct Normalized {
 ///    locked tables. `ForbiddenCharacter`. This is checked on the input;
 ///    NFKD maps assigned characters to assigned, non-control ones (a test
 ///    checks every scalar value).
-/// 3. NFKD must be at most [`MAX_SCALARS`] scalars and [`MAX_BYTES`] bytes.
-///    `TooLong`. The work stops at the limit.
+/// 3. The input must have at most [`MAX_SCALARS`] scalars, and its NFKD at
+///    most [`MAX_SCALARS`] scalars and [`MAX_BYTES`] bytes. `TooLong`. Every
+///    input scalar gives at least one NFKD scalar, so the first test is
+///    exact, and it runs before any normalization: the normalizer buffers a
+///    run of combining marks (on the heap beyond four) until the next
+///    starter, so without it a long run would cost unbounded memory and time
+///    and leave an unwiped copy. After it, the buffers hold at most 1 024
+///    entries. The NFKD stream then stops at the limit.
 /// 4. The length of the NFC form of the input is returned for the caller's
 ///    minimum check.
 ///
@@ -74,6 +84,9 @@ pub(crate) fn normalize_password(utf8: &[u8]) -> Result<Normalized, Error> {
     let text = core::str::from_utf8(utf8).map_err(|_| Error::InvalidInput(InputError::NotUtf8))?;
     if !text.chars().all(is_allowed) {
         return Err(Error::InvalidInput(InputError::ForbiddenCharacter));
+    }
+    if text.chars().nth(MAX_SCALARS).is_some() {
+        return Err(Error::InvalidInput(InputError::TooLong));
     }
     let mut bytes = Zeroizing::new(Vec::with_capacity(MAX_BYTES));
     let mut scalars = 0usize;

@@ -17,7 +17,7 @@ holds the op name in backticks.
 | `text.opaque_input` | `MasterPassword::new`, then `MasterPassword::opaque_input` | `opaque_input_build` | Text input, `"policy"` and `"secret_key"` (hex, 16 bytes, or `null`). `expect` is `{ "opaque_input": hex }`: `mp`, or `mp`, `0x00`, `SK`. |
 | `text.export_password` | `ExportPassword::new` | `export_password_check` | Text input and `"master_password"`: a text input (checked with the policy `with_secret_key`) or `null`. `expect` is `{ "export_password": hex }`, the NFKD bytes. |
 | `code.rk.encode` | `encode_recovery_key` | `recovery_key_encode` | `{ "key": hex }` (32 bytes). `expect` is `{ "code": "FFR1-..." }`. |
-| `code.rk.decode` | `decode_recovery_key` | `recovery_key_decode` | `{ "code": string }`. `expect` is `{ "key": hex }`. |
+| `code.rk.decode` | `decode_recovery_key` | `recovery_key_decode` | `{ "code": string }`; separators are dropped before reading: `-`, ASCII whitespace, U+00A0, U+2013, U+2014. `expect` is `{ "key": hex }`. |
 | `code.sk.encode` | `encode_secret_key` | `secret_key_encode` | `{ "key": hex }` (16 bytes). `expect` is `{ "code": "FFS1-..." }`. |
 | `code.sk.decode` | `decode_secret_key` | `secret_key_decode` | `{ "code": string }`. `expect` is `{ "key": hex }`. |
 

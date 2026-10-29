@@ -10,8 +10,10 @@
 //! * SK: 128 bits padded with 2 zero bits give 26 symbols, then 4 check
 //!   symbols from `SHA-256("ferret/v1/sk-check" ‖ SK)`. That is 30 symbols,
 //!   shown as 6 groups of 5, behind the prefix `FFS1-`.
-//! * Reading: upper or lower case; `O` is `0`, `I` and `L` are `1`; `-` and
-//!   spaces are removed. A code is rejected if the prefix or length is wrong,
+//! * Reading: upper or lower case; `O` is `0`, `I` and `L` are `1`; separators
+//!   are removed (see [`is_separator`]: `-`, ASCII whitespace including tab,
+//!   CR and LF, no-break space, en dash and em dash, so that a pasted code
+//!   survives line breaks and typographic dashes). A code is rejected if the prefix or length is wrong,
 //!   a letter is not in the alphabet, the check symbols do not match, or the
 //!   spare bits are not zero. All of this happens before any key derivation
 //!   (the functions here start none).
@@ -103,6 +105,13 @@ fn encode<const KEY: usize, const DATA: usize>(
     out
 }
 
+/// True for the characters that are dropped before a code is read: `-`, ASCII
+/// whitespace (space, tab, line feed, form feed, carriage return), U+00A0
+/// no-break space, U+2013 en dash and U+2014 em dash.
+pub fn is_separator(c: char) -> bool {
+    c == '-' || c.is_ascii_whitespace() || matches!(c, '\u{00A0}' | '\u{2013}' | '\u{2014}')
+}
+
 /// Reads a code into `KEY` bytes. See the module documentation for the rules
 /// and `Error` for what each failure maps to.
 ///
@@ -115,20 +124,21 @@ fn decode<const KEY: usize, const DATA: usize>(
     layout: &Layout,
     code: &str,
 ) -> Result<Zeroizing<[u8; KEY]>, Error> {
-    // Drop dashes and spaces; keep everything else, in a fixed buffer that is
-    // wiped afterwards.
+    // Drop the separators; keep everything else (the UTF-8 bytes of any other
+    // character, which are then letters outside the alphabet or make the
+    // length wrong), in a fixed buffer that is wiped afterwards.
     let mut letters = Zeroizing::new([0u8; MAX_LETTERS]);
     let mut slots = letters.iter_mut();
     let mut count = 0usize;
-    for byte in code.bytes() {
-        if byte == b'-' || byte == b' ' {
-            continue;
+    let mut encoded = Zeroizing::new([0u8; 4]);
+    for c in code.chars().filter(|c| !is_separator(*c)) {
+        for &byte in c.encode_utf8(&mut *encoded).as_bytes() {
+            let Some(slot) = slots.next() else {
+                return Err(Error::InvalidInput(InputError::TooLong));
+            };
+            *slot = byte;
+            count = count.saturating_add(1);
         }
-        let Some(slot) = slots.next() else {
-            return Err(Error::InvalidInput(InputError::TooLong));
-        };
-        *slot = byte;
-        count = count.saturating_add(1);
     }
     let Some(read) = letters.get(..count) else {
         return Err(Error::Malformed(MalformedKind::Code));
@@ -190,7 +200,7 @@ pub fn encode_recovery_key(rk: &RecoveryKey) -> Zeroizing<String> {
 ///
 /// Spec: Fase 1 section 6.1 (F-26): "Lesing".
 pub fn decode_recovery_key(s: &str) -> Result<RecoveryKey, Error> {
-    decode::<32, 52>(&RK_LAYOUT, s).map(|key| RecoveryKey::from_array(*key))
+    decode::<32, 52>(&RK_LAYOUT, s).map(|mut key| RecoveryKey::from_array_wiping(&mut key))
 }
 
 /// The code of a secret key: `FFS1-` and 6 groups of 5 symbols, 30 symbols in
@@ -205,7 +215,7 @@ pub fn encode_secret_key(sk: &SecretKey) -> Zeroizing<String> {
 ///
 /// Spec: Fase 1 section 6.2 ("Lesing som for RK").
 pub fn decode_secret_key(s: &str) -> Result<SecretKey, Error> {
-    decode::<16, 26>(&SK_LAYOUT, s).map(|key| SecretKey::from_array(*key))
+    decode::<16, 26>(&SK_LAYOUT, s).map(|mut key| SecretKey::from_array_wiping(&mut key))
 }
 
 #[cfg(test)]

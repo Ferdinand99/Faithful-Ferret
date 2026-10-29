@@ -347,6 +347,114 @@ fn mp_length_rules() {
 }
 
 #[test]
+fn long_runs_of_combining_marks_are_bounded() {
+    // The normalizer holds a run of combining marks until the next starter.
+    // The scalar limit is checked on the input first, so the run never gets
+    // there: this returns at once and allocates no big buffer.
+    let started = std::time::Instant::now();
+    let bomb = format!("a{}", "\u{0301}".repeat(1_000_000));
+    for policy in [MpPolicy::WithSecretKey, MpPolicy::WithoutSecretKey] {
+        assert_eq!(mp(&bomb, policy).err(), Some(too_long()));
+    }
+    assert_eq!(
+        MasterPassword::for_unlock(bomb.as_bytes()).err(),
+        Some(too_long())
+    );
+    assert_eq!(
+        ExportPassword::new(bomb.as_bytes(), None).err(),
+        Some(too_long())
+    );
+    // The same with marks that decompose further, and with a run of 1 025
+    // scalars, the smallest case that must be refused.
+    let marks = format!("a{}", "\u{0344}".repeat(500_000));
+    assert_eq!(mp(&marks, MpPolicy::WithSecretKey).err(), Some(too_long()));
+    let edge = format!("a{}", "\u{0301}".repeat(1_024));
+    assert_eq!(mp(&edge, MpPolicy::WithSecretKey).err(), Some(too_long()));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+
+    // A run that fits is accepted: 1 000 marks, 1 001 scalars after NFKD.
+    let fits = format!("a{}", "\u{0301}".repeat(1_000));
+    let ok = mp(&fits, MpPolicy::WithSecretKey).unwrap();
+    assert_eq!(master_password_bytes(&ok).len(), 1 + 2 * 1_000);
+    // And exactly 1 024 scalars is the limit.
+    let limit = format!("a{}", "\u{0301}".repeat(1_023));
+    assert!(mp(&limit, MpPolicy::WithSecretKey).is_ok());
+}
+
+#[test]
+fn nfkd_allocates_once() {
+    // Exact size first: the capacity of the result is its length, also when
+    // NFKD is longer than the input in UTF-8.
+    for text in ["\u{00E5}", "a\u{030A}", "\u{FDFA}", "\u{FB03}", "plain", ""] {
+        let out = nfkd(text);
+        assert_eq!(out.capacity(), out.len(), "{text:?}");
+    }
+}
+
+#[test]
+fn unlock_and_open_have_no_minimum() {
+    // The creation floor applies when a password is created or changed.
+    for short in ["a", "abcdefghijk", "a\u{030A}"] {
+        assert_eq!(mp(short, MpPolicy::WithSecretKey).err(), Some(too_short()));
+        assert_eq!(
+            ExportPassword::new(short.as_bytes(), None).err(),
+            Some(too_short())
+        );
+        assert!(MasterPassword::for_unlock(short.as_bytes()).is_ok());
+        assert!(ExportPassword::for_open(short.as_bytes()).is_ok());
+    }
+    // Same bytes as the creation path when both accept.
+    let text = "\u{00E5}\u{FB01}\u{FF11}abcdefghi";
+    assert_eq!(
+        master_password_bytes(&MasterPassword::for_unlock(text.as_bytes()).unwrap()),
+        mp_bytes(text)
+    );
+    assert_eq!(
+        export_password_bytes(&ExportPassword::for_open(text.as_bytes()).unwrap()),
+        export_password_bytes(&ExportPassword::new(text.as_bytes(), None).unwrap())
+    );
+    // The maximum and the character rules still hold.
+    let mut bad_utf8 = b"abc".to_vec();
+    bad_utf8.push(0xff);
+    for result in [
+        MasterPassword::for_unlock(&bad_utf8).map(|_| ()),
+        ExportPassword::for_open(&bad_utf8).map(|_| ()),
+    ] {
+        assert_eq!(result.err(), Some(not_utf8()));
+    }
+    for result in [
+        MasterPassword::for_unlock(b"abc\tdef").map(|_| ()),
+        ExportPassword::for_open(b"abc\0def").map(|_| ()),
+        MasterPassword::for_unlock("abc\u{0378}".as_bytes()).map(|_| ()),
+    ] {
+        assert_eq!(result.err(), Some(forbidden()));
+    }
+    let long = "a".repeat(MAX_SCALARS + 1);
+    assert_eq!(
+        MasterPassword::for_unlock(long.as_bytes()).err(),
+        Some(too_long())
+    );
+    assert_eq!(
+        ExportPassword::for_open(long.as_bytes()).err(),
+        Some(too_long())
+    );
+    let ok = "a".repeat(MAX_SCALARS);
+    assert!(MasterPassword::for_unlock(ok.as_bytes()).is_ok());
+    assert!(ExportPassword::for_open(ok.as_bytes()).is_ok());
+    // Opening does not compare with the master password.
+    let master = mp("abcdefghijkl", MpPolicy::WithSecretKey).unwrap();
+    assert_eq!(
+        ExportPassword::new(b"abcdefghijkl", Some(&master)).err(),
+        Some(Error::InvalidInput(InputError::SameAsMasterPassword))
+    );
+    assert!(ExportPassword::for_open(b"abcdefghijkl").is_ok());
+}
+
+#[test]
 fn mp_error_precedence() {
     // not UTF-8, then forbidden characters, then too long, then too short.
     let mut bad = b"a\tb".to_vec();

@@ -24,6 +24,17 @@ macro_rules! secret_type {
                 Self(bytes)
             }
 
+            /// Takes the bytes out of `src` and wipes `src`. Unlike
+            /// `from_array`, no by-value copy of the key is left in the
+            /// caller's frame: the key is written straight into the new value.
+            #[allow(dead_code)] // used by the code readers only
+            pub(crate) fn from_array_wiping(src: &mut [u8; $len]) -> Self {
+                let mut key = Self([0u8; $len]);
+                key.0.copy_from_slice(src);
+                zeroize::Zeroize::zeroize(src);
+                key
+            }
+
             /// Draws fresh bytes from `rng`.
             #[allow(dead_code)] // first used by later tasks
             pub(crate) fn random<R: SecureRng>(rng: &mut R) -> Self {

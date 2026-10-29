@@ -1,7 +1,17 @@
 //! The master password and the export password.
 //!
 //! Spec: Fase 1 section 3.1 (F-23), section 4.1 steps 1 and 3, section 6.4;
-//! plan U9. Every buffer that holds password text is a `Zeroizing` value,
+//! plan U9.
+//!
+//! The minimum length (the creation floor) applies only when a password is
+//! created or changed: [`MasterPassword::new`] and [`ExportPassword::new`].
+//! The floor can be raised in a later release, and a user must never be
+//! refused at unlock or import because an existing password is now "too
+//! short". [`MasterPassword::for_unlock`] and [`ExportPassword::for_open`]
+//! normalize the same way and keep the maximum and the character rules, but
+//! have no minimum.
+//!
+//! Every buffer that holds password text is a `Zeroizing` value,
 //! and none of these types has `Clone`, `Debug` or `PartialEq`.
 
 use super::unicode::{Normalized, normalize_password};
@@ -52,11 +62,26 @@ impl MasterPassword {
     ///
     /// Errors, in this order of precedence: `input_not_utf8`,
     /// `input_forbidden_character`, `input_too_long`, `input_too_short`.
+    ///
+    /// Use this when a password is created or changed. To unlock an existing
+    /// account use [`MasterPassword::for_unlock`].
     pub fn new(utf8: &[u8], policy: MpPolicy) -> Result<Self, Error> {
         let Normalized { bytes, nfc_len } = normalize_password(utf8)?;
         if nfc_len < policy.min_len() {
             return Err(Error::InvalidInput(InputError::TooShort));
         }
+        Ok(Self(bytes))
+    }
+
+    /// Normalizes a master password that already exists, for unlocking or
+    /// signing in: the same bytes as [`MasterPassword::new`] gives, with the
+    /// maximum length and the character rules but no minimum length (the
+    /// creation floor may have been raised since the password was set).
+    ///
+    /// Errors: `input_not_utf8`, `input_forbidden_character`,
+    /// `input_too_long`.
+    pub fn for_unlock(utf8: &[u8]) -> Result<Self, Error> {
+        let Normalized { bytes, .. } = normalize_password(utf8)?;
         Ok(Self(bytes))
     }
 
@@ -134,6 +159,15 @@ impl ExportPassword {
         {
             return Err(Error::InvalidInput(InputError::SameAsMasterPassword));
         }
+        Ok(Self(bytes))
+    }
+
+    /// Normalizes the password of an export file that is being opened: the
+    /// maximum length and the character rules, but no minimum length and no
+    /// comparison with the master password (those apply when the file is
+    /// written). The file may come from a release with a lower floor.
+    pub fn for_open(utf8: &[u8]) -> Result<Self, Error> {
+        let Normalized { bytes, .. } = normalize_password(utf8)?;
         Ok(Self(bytes))
     }
 

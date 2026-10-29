@@ -382,7 +382,7 @@ fn code_rejects_wrong_prefix_and_length() {
     assert_eq!(sk_decode(&skc[..skc.len() - 1]).err(), Some(short));
     assert_eq!(sk_decode(&format!("{skc}0")).err(), Some(long));
     // Letters outside the alphabet, in data and in the check.
-    for bad in ['U', 'u', '!', '\t', '_', 'é'] {
+    for bad in ['U', 'u', '!', '_', 'é'] {
         for index in [0, 25, 51, 52, 55] {
             let text = replace_letter(&code, index, bad);
             let expected = if bad == 'é' { long } else { malformed };
@@ -391,7 +391,11 @@ fn code_rejects_wrong_prefix_and_length() {
     }
     // Only dashes and spaces are separators.
     assert_eq!(rk_decode(&code.replace('-', "_")).err(), Some(long));
-    assert_eq!(rk_decode(&code.replace('-', "\t")).err(), Some(long));
+    // A separator in place of a letter leaves the code one letter short.
+    assert_eq!(
+        rk_decode(&replace_letter(&code, 7, '\t')).err(),
+        Some(short)
+    );
 }
 
 #[test]
@@ -411,6 +415,48 @@ fn code_roundtrip_many_keys() {
         assert_eq!(rk_decode(&rk_text(key)).unwrap(), key);
         let short: [u8; 16] = key[..16].try_into().unwrap();
         assert_eq!(sk_decode(&sk_text(short)).unwrap(), short);
+    }
+}
+
+#[test]
+fn code_decode_accepts_pasted_separators() {
+    // Anything a copy and paste adds between the groups is dropped: tab,
+    // CR/LF, other ASCII whitespace, no-break space, en dash and em dash.
+    let key = pattern::<32>();
+    let canonical = rk_text(key);
+    for sep in [
+        "\t",
+        "\r\n",
+        "\n",
+        "\r",
+        "\u{000C}",
+        " ",
+        "\u{00A0}",
+        "\u{2013}",
+        "\u{2014}",
+        " \u{2013} ",
+        "\u{00A0}\u{2014}\n",
+    ] {
+        let typed = canonical.replace('-', sep);
+        assert_eq!(rk_decode(&typed).unwrap(), key, "{sep:?}");
+        let wrapped = format!("{sep}{typed}{sep}");
+        assert_eq!(rk_decode(&wrapped).unwrap(), key, "{sep:?} around");
+    }
+    let skey = pattern::<16>();
+    let typed = sk_text(skey).replace('-', "\u{2013}");
+    assert_eq!(sk_decode(&format!("{typed}\r\n")).unwrap(), skey);
+    for c in [
+        '\t', '\n', '\r', ' ', '\u{00A0}', '\u{2013}', '\u{2014}', '-',
+    ] {
+        assert!(ferret_core::codes::is_separator(c), "{c:?}");
+    }
+    // Other characters are not separators.
+    for c in [
+        '_', '.', ',', '\u{2012}', '\u{2212}', '\u{200B}', '\u{3000}', '\u{0000}',
+    ] {
+        assert!(!ferret_core::codes::is_separator(c), "{c:?}");
+        let bad = canonical.replacen('-', &c.to_string(), 1);
+        assert!(rk_decode(&bad).is_err(), "{c:?}");
     }
 }
 
