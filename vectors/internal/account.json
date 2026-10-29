@@ -838,6 +838,54 @@
       "expect_error": "malformed_pinned_record"
     },
     {
+      "id": "account/change-password/011",
+      "title": "the device pinned an account with a secret key and the new password has none",
+      "op": "account.change_password",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "ksf_profile": 1,
+          "method_id": "70707070707070707070707070707070",
+          "type": "password",
+          "wrap": "bca7186e9b9c23337a7abf07358153c60c4f647d3d53655d917005bb50abf601c59c068e1e5dd267ce8ce0fa2ea5047d549005870e328d7d2865c1b23c0088830e32c55e26007eef2d52e3a642de89087414f4a409f3e4215d7f51a3ecd1a8ed43742adf81b9dab6"
+        },
+        "input_secret_key": null,
+        "ksf_profile": 1,
+        "manifest": {
+          "envelope": "010102a9d0538f01186958875bb34c2e62f5983326a397099dabd4d90987fff618bbceea0d75bd2c9ab20fb0fddc39475a787c0874d0d53f072c2fd1a8d6432be0fc139617efd0db972319bdfc34757d6e66bd08f49de4f095724ecbc0be26f862fec38c71dab08621dd5e1ad721c99a1c0665c687bb43f1175e164a9711f59a07d4f8cdc0661a5843584c9bc5cfe88624219b868ff556440cd95b7d0cca487c6a9dbcd8d60a26d8e82192990359305866b4781743506283e65ae36c63d8080008bf098861c4a446d551127a8715c091c2ce7ec9b4d3fed32bcb1378451dd363a84f6c4938de3c4553d88a7ec118f6589a162c9cdfb4103fa451e1553c35f807c08587e87d19f6d54f6eecd7af2a644acbf7e3ff2da46636302e5152561e692284c1e388d5d7f5975a80a4",
+          "rev": "1",
+          "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
+        },
+        "password": "tr0ub4dor and three more words",
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "321393f6b780ee8422dc9cd249e45f94cf5ac0ea876ea1c878657c9f4bd26264",
+          "recovery_floor": "1",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "policy": "without_secret_key",
+        "registration": {
+          "export_key": "480b6ed46b2794d442196f2d0176a3c24e1a805672888419296faa5c5f69d7c88e3fb0ecfe205a97524a1ae66a9e58af68b7643c20f3b83f807bdca6ff23ab91",
+          "record": "d4e5a28e4decd667c01c25c56cbc656c3df84144cd3616c8a3c889eb058c251ce89868e2bbe3bc2dc50378b92af344095e27c085ea2996c2c9d31fc172a97fc100e15adc2be7e0e0fd4c49515aded5a3db9e27931dfcce5f727472fe1966205f17b557883e23837952bbed9d0366b2a0ab1ac45b2ff411169fd76803682906e19b76f2a93d5315f2082f63c8fc931315830c7b0a07c0f653fcfddde2e2273b9addb7cf10c7a117beaae02d7e733d7562edcb01f8d18dcb8663b11c5109697655",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "dba67c23e3462c1ea2405e06b3c2d576c816aa25df0163f0bde652f61e78428a",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_sk_bit"
+    },
+    {
       "id": "account/recover/001",
       "title": "recover on a new device: new password wrap, new recovery key, proof with the old one",
       "op": "account.recover",
@@ -1330,6 +1378,95 @@
         "vk_epoch": "1"
       },
       "expect_error": "input_too_short"
+    },
+    {
+      "id": "account/recover/010",
+      "title": "the device pinned an account with a secret key and the new password has none",
+      "op": "account.recover",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "input_secret_key": null,
+        "ksf_profile": 1,
+        "manifest": {
+          "envelope": "010102a9d0538f01186958875bb34c2e62f5983326a397099dabd4d90987fff618bbceea0d75bd2c9ab20fb0fddc39475a787c0874d0d53f072c2fd1a8d6432be0fc139617efd0db972319bdfc34757d6e66bd08f49de4f095724ecbc0be26f862fec38c71dab08621dd5e1ad721c99a1c0665c687bb43f1175e164a9711f59a07d4f8cdc0661a5843584c9bc5cfe88624219b868ff556440cd95b7d0cca487c6a9dbcd8d60a26d8e82192990359305866b4781743506283e65ae36c63d8080008bf098861c4a446d551127a8715c091c2ce7ec9b4d3fed32bcb1378451dd363a84f6c4938de3c4553d88a7ec118f6589a162c9cdfb4103fa451e1553c35f807c08587e87d19f6d54f6eecd7af2a644acbf7e3ff2da46636302e5152561e692284c1e388d5d7f5975a80a4",
+          "rev": "1",
+          "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
+        },
+        "new_recovery_method_id": "73737373737373737373737373737373",
+        "password": "tr0ub4dor and three more words",
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "321393f6b780ee8422dc9cd249e45f94cf5ac0ea876ea1c878657c9f4bd26264",
+          "recovery_floor": "1",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "policy": "without_secret_key",
+        "registration": {
+          "export_key": "480b6ed46b2794d442196f2d0176a3c24e1a805672888419296faa5c5f69d7c88e3fb0ecfe205a97524a1ae66a9e58af68b7643c20f3b83f807bdca6ff23ab91",
+          "record": "d4e5a28e4decd667c01c25c56cbc656c3df84144cd3616c8a3c889eb058c251ce89868e2bbe3bc2dc50378b92af344095e27c085ea2996c2c9d31fc172a97fc100e15adc2be7e0e0fd4c49515aded5a3db9e27931dfcce5f727472fe1966205f17b557883e23837952bbed9d0366b2a0ab1ac45b2ff411169fd76803682906e19b76f2a93d5315f2082f63c8fc931315830c7b0a07c0f653fcfddde2e2273b9addb7cf10c7a117beaae02d7e733d7562edcb01f8d18dcb8663b11c5109697655",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677"
+        },
+        "rk_code": "FFR1-RG53-MYTZ-JCF1-X9W5-E9D3-JTE6-70VR-ZT79-TX3F-R0NY-QH7G-3WHD-1BJG-VXG1",
+        "rk_wrap": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "18b6d81ee51d6c92f2f9ca1f3be315b77a13f4aedc428209cbbd4842fb7745f839aa25e94a161e4e7b1dd6c7e973a20ebe7cc45f7cd4225dbb871e8eb0be3778f7cb2c5d3dde1d3d"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "dba67c23e3462c1ea2405e06b3c2d576c816aa25df0163f0bde652f61e78428a",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_sk_bit"
+    },
+    {
+      "id": "account/recover/011",
+      "title": "the new recovery wrap would get the id of the password wrap",
+      "op": "account.recover",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "input_secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "ksf_profile": 1,
+        "manifest": {
+          "envelope": "010102a9d0538f01186958875bb34c2e62f5983326a397099dabd4d90987fff618bbceea0d75bd2c9ab20fb0fddc39475a787c0874d0d53f072c2fd1a8d6432be0fc139617efd0db972319bdfc34757d6e66bd08f49de4f095724ecbc0be26f862fec38c71dab08621dd5e1ad721c99a1c0665c687bb43f1175e164a9711f59a07d4f8cdc0661a5843584c9bc5cfe88624219b868ff556440cd95b7d0cca487c6a9dbcd8d60a26d8e82192990359305866b4781743506283e65ae36c63d8080008bf098861c4a446d551127a8715c091c2ce7ec9b4d3fed32bcb1378451dd363a84f6c4938de3c4553d88a7ec118f6589a162c9cdfb4103fa451e1553c35f807c08587e87d19f6d54f6eecd7af2a644acbf7e3ff2da46636302e5152561e692284c1e388d5d7f5975a80a4",
+          "rev": "1",
+          "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
+        },
+        "new_recovery_method_id": "70707070707070707070707070707070",
+        "password": "tr0ub4dor and three more words",
+        "pinned": null,
+        "policy": "with_secret_key",
+        "registration": {
+          "export_key": "bf1cf120e233ebf40c3c8167e9fff928dfd4fd7ca342b435e0c9252f436fccef141e94cdfb764c70a469c03cbc0b8c824bcc4c0c85de767f090b4c8249c93750",
+          "record": "0441591df9c3189109aa71e407d15c244ea28637cc2f09ae69bb6b56843c9409430a3d009fb5230e55f3824076099d1e683f5728f5d80601fb4ea97bae0dac44a52e4d7cab998cd4203a033bd3ebd4e0ea5e0ed2cabd56109d8e1acfa68f5b32aca874e9e71f0c990b3f9834b946233d0e38bafb5bfb316b5a27c3808422378254843b310a654db12759b64883090b53537b0fde10cd947e0b97999d5a75112134035b8b4d219234fcb3520d41a7fe2e302997c089a4d416ec8c502e33a83906",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677"
+        },
+        "rk_code": "FFR1-RG53-MYTZ-JCF1-X9W5-E9D3-JTE6-70VR-ZT79-TX3F-R0NY-QH7G-3WHD-1BJG-VXG1",
+        "rk_wrap": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "18b6d81ee51d6c92f2f9ca1f3be315b77a13f4aedc428209cbbd4842fb7745f839aa25e94a161e4e7b1dd6c7e973a20ebe7cc45f7cd4225dbb871e8eb0be3778f7cb2c5d3dde1d3d"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "dba67c23e3462c1ea2405e06b3c2d576c816aa25df0163f0bde652f61e78428a",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
     },
     {
       "id": "account/verify-recovery/001",
