@@ -77,6 +77,15 @@ pub enum MalformedKind {
     /// An `otpauth://` address or a TOTP setting: wrong scheme or type, an
     /// unknown or repeated parameter, bad base32, a value out of range.
     Otpauth,
+    /// An origin that is not one a passkey may be used from: not `https` (or
+    /// `http://localhost`), an IP host, an opaque origin, or not valid.
+    Origin,
+    /// An RP ID that the origin may not use: not the host or a suffix of it,
+    /// a public suffix, or not a valid domain.
+    RpId,
+    /// A WebAuthn request that is wrong in itself (user handle length,
+    /// `evalByCredential` naming a credential that is not allowed).
+    WebauthnOptions,
 }
 
 /// Why a checkpoint did not verify.
@@ -200,6 +209,9 @@ impl Error {
         Error::Malformed(MalformedKind::PinnedRecord),
         Error::Malformed(MalformedKind::OpaqueMessage),
         Error::Malformed(MalformedKind::Otpauth),
+        Error::Malformed(MalformedKind::Origin),
+        Error::Malformed(MalformedKind::RpId),
+        Error::Malformed(MalformedKind::WebauthnOptions),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -261,6 +273,9 @@ impl Error {
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
                 MalformedKind::OpaqueMessage => "malformed_opaque_message",
                 MalformedKind::Otpauth => "malformed_otpauth",
+                MalformedKind::Origin => "malformed_origin",
+                MalformedKind::RpId => "malformed_rp_id",
+                MalformedKind::WebauthnOptions => "malformed_webauthn_options",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",

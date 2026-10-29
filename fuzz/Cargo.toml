@@ -10,6 +10,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
+# For the `Arbitrary` derive in `fuzz_webauthn_options` (the version libfuzzer-sys already uses).
+arbitrary = { version = "=1.5.0", features = ["derive"] }
 # The fuzz targets use the same code as the release build; `test-support` is only
 # for the fixed vault key in `fuzz_envelope`, and this crate is never released.
 ferret-core = { path = "../crates/ferret-core", features = ["test-support"] }
@@ -62,6 +64,20 @@ bench = false
 [[bin]]
 name = "fuzz_otpauth"
 path = "fuzz_targets/fuzz_otpauth.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_origin_psl"
+path = "fuzz_targets/fuzz_origin_psl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_webauthn_options"
+path = "fuzz_targets/fuzz_webauthn_options.rs"
 test = false
 doc = false
 bench = false

@@ -1,0 +1,1716 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "passkey",
+  "suite": 1,
+  "spec": "Fase 1 § 9",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "passkey/create/valid/001",
+      "title": "create with UV, no prf",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/002",
+      "title": "create without UV when UV is only preferred: the UV flag is clear",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 89
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/003",
+      "title": "create with prf and no eval: ED and hmac-secret, two seeds, enabled",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+        "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": {
+            "eval": null
+          },
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 221
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": {
+            "enabled": true,
+            "first": null,
+            "second": null
+          },
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/004",
+      "title": "create with prf eval.first and UV: output from the UV seed",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+        "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": null
+            }
+          },
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 221
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": {
+            "enabled": true,
+            "first": "f625f1e055ca2bdbf76f77f2efee18f85cd6fb9cd1981fa5bf782f1ea3cd94d5",
+            "second": null
+          },
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/005",
+      "title": "create with prf eval first and second (empty) without UV: output from the no-UV seed",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+        "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+        "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": ""
+            }
+          },
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 217
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947d900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947d900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": {
+            "enabled": true,
+            "first": "e85c0a4e80658984b1df585c2762fd88eabecb1a8192f3cb0a35fcfeaecaed09",
+            "second": "d98e53e1a965e057c2e8b4bb6932df0e55fbb8f0ef405758a71b297cc308a65c"
+          },
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/006",
+      "title": "create for a parent domain of the origin, UV required and done",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://login.example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "required"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://login.example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/007",
+      "title": "create from an IDN origin with a port (the origin keeps the port, the RP ID has none)",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://xn--bcher-kva.example:8443",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "xn--bcher-kva.example",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4970ca6b73eaf2630a6b8d6aa59f106433bbe80b15e3f9d427af4363e5bce44365d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_data": "970ca6b73eaf2630a6b8d6aa59f106433bbe80b15e3f9d427af4363e5bce44365d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v\",\"origin\":\"https://xn--bcher-kva.example:8443\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/invalid/001",
+      "title": "UV required but not done: NotAllowed",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "required"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/create/invalid/002",
+      "title": "cross-origin frame: NotAllowed",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": false,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/create/invalid/003",
+      "title": "a credential in excludeCredentials is stored: NotAllowed",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [
+          "090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728",
+          "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+        ],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+          ],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/create/invalid/004",
+      "title": "RP ID is a public suffix (private domain)",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://a.github.io",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": "github.io",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/create/invalid/005",
+      "title": "challenge of 1 025 bytes",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/create/invalid/006",
+      "title": "user handle of 0 bytes",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey/create/invalid/007",
+      "title": "no user presence: NotAllowed",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": false,
+          "user_verified": false
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/create/invalid/008",
+      "title": "no ES256 among the algorithms",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey/create/invalid/009",
+      "title": "201 excludeCredentials",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credential_ids": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+          ],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/get/valid/001",
+      "title": "get with UV, no prf",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "flags": 29
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": null,
+        "signature": "3046022100fc373f7699e18654932432d8b888c82e86b6bf75bb166fb43cdd9e0f82bff458022100aa5244a34fd602325de2a7f9acc725edc267d1b0488516dde4fd56a1472b60e6",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/002",
+      "title": "get without UV when UV is discouraged: the UV flag is clear",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "discouraged"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "intermediate": {
+        "flags": 25
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471900000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": null,
+        "signature": "30440220220f67f4b0d115822831ccce6ab382deea283443d13ade34690475288173687102202c503e4fa6069ffd84693d77ae6873276af04b24d736a95d84a3d1f47169569d",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/003",
+      "title": "get with prf eval first and second and UV",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7"
+            },
+            "eval_by_credential": []
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "flags": 29
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": {
+          "first": "f625f1e055ca2bdbf76f77f2efee18f85cd6fb9cd1981fa5bf782f1ea3cd94d5",
+          "second": "e2a639be804da6c58368c62213cd0167ec289c971066575c9e811ef387f6d502"
+        },
+        "signature": "3046022100fc373f7699e18654932432d8b888c82e86b6bf75bb166fb43cdd9e0f82bff458022100aa5244a34fd602325de2a7f9acc725edc267d1b0488516dde4fd56a1472b60e6",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/004",
+      "title": "the same prf input without UV gives different outputs (other seed)",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7"
+            },
+            "eval_by_credential": []
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "intermediate": {
+        "flags": 25
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471900000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": {
+          "first": "e85c0a4e80658984b1df585c2762fd88eabecb1a8192f3cb0a35fcfeaecaed09",
+          "second": "9b21a0602cadc74fcaddab1a396209b669f05ccf5466dfe6a2def648dc44ad4d"
+        },
+        "signature": "30440220220f67f4b0d115822831ccce6ab382deea283443d13ade34690475288173687102202c503e4fa6069ffd84693d77ae6873276af04b24d736a95d84a3d1f47169569d",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/005",
+      "title": "evalByCredential wins over eval for the credential in use",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [
+            "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+          ],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": null
+            },
+            "eval_by_credential": [
+              {
+                "first": "e0e1e2e3e4e5e6e7",
+                "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+                "second": null
+              }
+            ]
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "flags": 29
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": {
+          "first": "21efe1d7a004cb3b84b42e11f48ef82d2c606098e8e023aecdb73db8c9005afd",
+          "second": null
+        },
+        "signature": "3046022100fc373f7699e18654932432d8b888c82e86b6bf75bb166fb43cdd9e0f82bff458022100aa5244a34fd602325de2a7f9acc725edc267d1b0488516dde4fd56a1472b60e6",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/006",
+      "title": "prf asked for but the passkey was made without prf: no results",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": {
+              "first": "c0c1c2c3c4c5c6c7",
+              "second": null
+            },
+            "eval_by_credential": []
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "flags": 29
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": null,
+        "signature": "3046022100fc373f7699e18654932432d8b888c82e86b6bf75bb166fb43cdd9e0f82bff458022100aa5244a34fd602325de2a7f9acc725edc267d1b0488516dde4fd56a1472b60e6",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/valid/007",
+      "title": "get from a subdomain with the exact stored RP ID, UV required and done",
+      "op": "passkey.get",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": "example.com",
+          "user_verification": "required"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "flags": 29
+      },
+      "expect": {
+        "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+        "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://login.example.com\",\"crossOrigin\":false}",
+        "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf": null,
+        "signature": "3044022030abf7f7497ceb6c80065c5c0fae7850bacd71938681663881a69c33756277a002203cc2b8e1e5f4bf66408b033d1d6e89443c59c03e88623fda2990e72793a92e02",
+        "user_handle": "707172737475767778797a7b7c7d7e7f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/get/invalid/001",
+      "title": "stored example.com, requested sub.example.com: NotAllowed",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://sub.example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/get/invalid/002",
+      "title": "UV required but not done: NotAllowed",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "required"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": false
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/get/invalid/003",
+      "title": "the credential is not in allowCredentials: NotAllowed",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [
+            "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526"
+          ],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/get/invalid/004",
+      "title": "evalByCredential without allowCredentials: NotSupported",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": null,
+            "eval_by_credential": [
+              {
+                "first": "01020304",
+                "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+                "second": null
+              }
+            ]
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey/get/invalid/005",
+      "title": "evalByCredential names a credential that is not allowed: SyntaxError",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [
+            "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+          ],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": {
+            "eval": null,
+            "eval_by_credential": [
+              {
+                "first": "01020304",
+                "id": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+                "second": null
+              }
+            ]
+          },
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey/get/invalid/006",
+      "title": "cross-origin frame: NotAllowed",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": null,
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": false,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/get/invalid/007",
+      "title": "RP ID is a public suffix",
+      "op": "passkey.get",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "request": {
+          "allow": [],
+          "challenge": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf": null,
+          "rp_id": "com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/prf/valid/001",
+      "title": "prf output for an empty input",
+      "op": "passkey.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "input": {
+          "segments": []
+        },
+        "seed": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50"
+      },
+      "expect": {
+        "output": "abb1a827ab6429c13e50c0c5db992d7cb1b2e216a57ece770d57241d89e23b80",
+        "salt": "6a7e64b2aa34c92736143a062fa149aff1bd8bb3f7ee6f346885481f9414a3d3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/prf/valid/002",
+      "title": "prf output for a 32-byte input",
+      "op": "passkey.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "input": {
+          "segments": [
+            {
+              "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+              "repeat": 1
+            }
+          ]
+        },
+        "seed": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50"
+      },
+      "expect": {
+        "output": "2b89a8d4f043997edee00497f412dcc45057206fef9ede1a812dacb325727836",
+        "salt": "dc1f4f3b3d759586245d5de7e2e115d2a056a2df27109db7cef9b4b3a89bb106"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/prf/valid/003",
+      "title": "prf output for a 1 024-byte input",
+      "op": "passkey.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "input": {
+          "segments": [
+            {
+              "hex": "ab",
+              "repeat": 1024
+            }
+          ]
+        },
+        "seed": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70"
+      },
+      "expect": {
+        "output": "2f55a78b5e97a90f773f5cbb8a523ee8611defd8230db3a5a054257d7b4a8084",
+        "salt": "71d58b691cd65eb2b33b7f0fbb4fbad6f16fadc89c879795b888b53ae87856c7"
+      },
+      "expect_error": null
+    }
+  ]
+}

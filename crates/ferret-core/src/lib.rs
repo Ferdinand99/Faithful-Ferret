@@ -43,6 +43,7 @@ pub mod item;
 pub mod keys;
 pub mod ksf_profile;
 pub mod opaque;
+pub mod passkey;
 pub mod pinning;
 pub mod prim;
 pub mod rng;
@@ -80,6 +81,11 @@ pub use ksf_profile::KsfProfile;
 pub use opaque::{
     LoginFinished, LoginState, OPAQUE_CONTEXT, PinState, RegistrationFinished, RegistrationState,
     opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
+};
+pub use passkey::{
+    CallerContext, CanonicalOrigin, CreateRequest, CreatedPasskey, GetRequest, PasskeyRecord, RpId,
+    UserVerification, UvOutcome, canonical_origin, passkey_create, passkey_get, prf_output,
+    validate_rp_id,
 };
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
