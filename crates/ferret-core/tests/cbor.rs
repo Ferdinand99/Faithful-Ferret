@@ -409,3 +409,28 @@ fn value_debug_shows_kinds_and_sizes_only() {
         assert!(!part.contains("hunter2") && !part.contains("dead") && !part.contains("31337"));
     }
 }
+
+#[test]
+fn node_limit_counts_values_and_map_keys() {
+    // [1, [2, 3], {"a": 4}] = array, 1, array, 2, 3, map, key, 4 = 8 nodes.
+    let bytes = [0x83, 0x01, 0x82, 0x02, 0x03, 0xa1, 0x61, b'a', 0x04];
+    let v = cbor::decode(&bytes).unwrap();
+    assert_eq!(cbor::node_count(&v), 8);
+    assert!(cbor::decode_limited(&bytes, 8).is_ok());
+    assert_eq!(
+        cbor::decode_limited(&bytes, 7),
+        Err(malformed(MalformedKind::CborCount))
+    );
+    // A scalar is one node; no limit at all is `decode`.
+    assert!(cbor::decode_limited(&[0x01], 1).is_ok());
+    assert!(cbor::decode_limited(&[0x01], 0).is_err());
+    assert_eq!(
+        cbor::decode(&bytes),
+        cbor::decode_limited(&bytes, usize::MAX)
+    );
+    // The prefix reader stops at the end of the first item.
+    let mut with_tail = bytes.to_vec();
+    with_tail.extend_from_slice(&[0xff, 0xff]);
+    assert_eq!(cbor::decode_prefix(&with_tail).unwrap().1, bytes.len());
+    assert!(cbor::decode_prefix_limited(&with_tail, 7).is_err());
+}

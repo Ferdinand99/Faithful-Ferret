@@ -44,3 +44,10 @@ path = "fuzz_targets/fuzz_checkpoint.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_export_file"
+path = "fuzz_targets/fuzz_export_file.rs"
+test = false
+doc = false
+bench = false

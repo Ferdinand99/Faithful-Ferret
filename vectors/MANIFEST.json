@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "1a87018cab614d61287dbbadfba068e299295ee3bce6dc9977567d16b251c101",
-    "OPS.md": "c834cb7c9651d1e1f8b1b20480ef5d39abc2c100317d6ccef967458ecd9b86b0",
-    "VERSION": "25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e",
+    "ERRORS.md": "41305cc51dece8cf840ab63ada2d462125e48cce6746d92dad00a57f59c51051",
+    "OPS.md": "a8da897857fed7ac266fc033082d59bc650d68df53817efdf847a50bed6265ab",
+    "VERSION": "1a252402972f6057fa53cc172b52b9ffca698e18311facd0f3b06ecaaef79e17",
     "external/SOURCE.md": "f0a1098962cea08c01243ff79d6f294fff8f2e58813e228cb1d8859f2446c38b",
     "external/rfc5869-hkdf.json": "4b631df5e9a80dd3c72dcd0cca75cb8a9f85120bbc4ee3c486b890c8c2544250",
     "external/rfc8032-ed25519.json": "35ce42facfcf313e9c7ec3e29463249c657d7d31a8be9f3ad68154ec2e3d6476",
@@ -18,6 +18,7 @@
     "internal/cbor-limits.json": "213ba4185cef58fa6bf75660cd6297fe99ffae5c730bb1d8e91b12514eec8520",
     "internal/checkpoint.json": "3b8dd1bb2b7c32cbeadcb1ba37ac838e0cba563ef1641808ab93ebd0e517d061",
     "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
+    "internal/export.json": "2667db3c3817c8bea5ce7ed0b2abaaac0f485952a81b6dd713b253dc536ed156",
     "internal/item.json": "c53fff03cdd3153c5a75407ab1f92be79a6d78bfd9259a5c7fbcc08d35a58dda",
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
     "internal/padding.json": "d4e0ea9bc004d79cf61e021624d78d67aa1ae212ae7ea7bac43c0cd93332fef7",
@@ -31,5 +32,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 11
+  "version": 13
 }

@@ -34,12 +34,58 @@ fn syntax(_: minicbor::decode::Error) -> Error {
 ///
 /// Spec: Fase 1 § 5.2.
 pub fn decode(input: &[u8]) -> Result<Value, Error> {
-    let mut d = Decoder::new(input);
-    let value = item(&mut d, 0)?;
-    if d.position() != input.len() {
+    decode_limited(input, usize::MAX)
+}
+
+/// Like [`decode`], and fails with `Malformed(CborCount)` if the data item
+/// has more than `max_nodes` nodes in all: every value counts one, also each
+/// array and map, and every map key counts one too.
+///
+/// The per-container limit of 10 000 entries and the depth of 16 still allow
+/// a tree of 10^16 nodes in principle, and a node can be one input byte and
+/// 32 bytes in memory. Where the input can be large (an export file body),
+/// the caller bounds the total here.
+///
+/// Spec: Fase 1 § 5.2; plan U15 (hostile export files).
+pub fn decode_limited(input: &[u8], max_nodes: usize) -> Result<Value, Error> {
+    let (value, used) = decode_prefix_limited(input, max_nodes)?;
+    if used != input.len() {
         return Err(malformed(MalformedKind::CborTrailing));
     }
     Ok(value)
+}
+
+/// Decodes the first data item of `input` and reports how many bytes it
+/// used. Bytes after the item are not an error here: the caller owns them.
+/// Used where a CBOR element is followed by other data and its exact bytes
+/// matter (the export file header, whose bytes are the AAD).
+///
+/// The rules and limits are those of [`decode`].
+///
+/// Spec: Fase 1 § 5.2 and § 6.4.
+pub fn decode_prefix(input: &[u8]) -> Result<(Value, usize), Error> {
+    decode_prefix_limited(input, usize::MAX)
+}
+
+/// [`decode_prefix`] with the node limit of [`decode_limited`].
+pub fn decode_prefix_limited(input: &[u8], max_nodes: usize) -> Result<(Value, usize), Error> {
+    let mut d = Decoder::new(input);
+    let mut budget = Budget(max_nodes);
+    let value = item(&mut d, 0, &mut budget)?;
+    Ok((value, d.position()))
+}
+
+/// How many more nodes may be read.
+struct Budget(usize);
+
+impl Budget {
+    fn spend(&mut self) -> Result<(), Error> {
+        self.0 = self
+            .0
+            .checked_sub(1)
+            .ok_or(malformed(MalformedKind::CborCount))?;
+        Ok(())
+    }
 }
 
 /// How many bytes are left to read.
@@ -56,7 +102,8 @@ fn count(len: Option<u64>) -> Result<usize, Error> {
     usize::try_from(len).map_err(|_| malformed(MalformedKind::CborCount))
 }
 
-fn item(d: &mut Decoder<'_>, depth: usize) -> Result<Value, Error> {
+fn item(d: &mut Decoder<'_>, depth: usize, budget: &mut Budget) -> Result<Value, Error> {
+    budget.spend()?;
     match d.datatype().map_err(syntax)? {
         Type::Null => d.null().map(|()| Value::Null).map_err(syntax),
         Type::Bool => d.bool().map(Value::Bool).map_err(syntax),
@@ -86,7 +133,7 @@ fn item(d: &mut Decoder<'_>, depth: usize) -> Result<Value, Error> {
             // One entry takes at least one byte.
             let mut items = Vec::with_capacity(n.min(remaining(d)));
             for _ in 0..n {
-                items.push(item(d, depth)?);
+                items.push(item(d, depth, budget)?);
             }
             Ok(Value::Array(items))
         }
@@ -97,11 +144,12 @@ fn item(d: &mut Decoder<'_>, depth: usize) -> Result<Value, Error> {
             let mut entries = Vec::with_capacity(n.min(remaining(d) / 2));
             let mut keys = BTreeSet::new();
             for _ in 0..n {
+                budget.spend()?;
                 let k = key(d)?;
                 if !keys.insert(k) {
                     return Err(malformed(MalformedKind::CborDuplicateKey));
                 }
-                entries.push((k.to_owned(), item(d, depth)?));
+                entries.push((k.to_owned(), item(d, depth, budget)?));
             }
             Ok(Value::Map(entries))
         }

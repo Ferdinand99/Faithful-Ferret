@@ -176,3 +176,35 @@ pub fn assert_all_passed(report: &ferret_core::testing::vector::RunReport, min: 
     );
     assert!(report.passed >= min, "only {} cases ran", report.passed);
 }
+
+/// Parses CSV text (RFC 4180) into rows of cells, for the checks below.
+pub fn parse_csv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = vec![];
+    let mut row = vec![];
+    let mut cell = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quoted, c) {
+            (true, '"') if chars.peek() == Some(&'"') => {
+                chars.next();
+                cell.push('"');
+            }
+            (true, '"') => quoted = false,
+            (true, c) => cell.push(c),
+            (false, '"') => quoted = true,
+            (false, ',') => row.push(std::mem::take(&mut cell)),
+            (false, '\r') => {
+                assert_eq!(chars.next(), Some('\n'), "a bare CR outside quotes");
+                row.push(std::mem::take(&mut cell));
+                rows.push(std::mem::take(&mut row));
+            }
+            (false, c) => cell.push(c),
+        }
+    }
+    assert!(
+        !quoted && cell.is_empty() && row.is_empty(),
+        "ends after a CRLF"
+    );
+    rows
+}

@@ -36,6 +36,7 @@ pub mod cbor;
 pub mod codes;
 pub mod envelope;
 pub mod error;
+pub mod export;
 pub mod ids;
 pub mod integrity;
 pub mod item;
@@ -57,6 +58,10 @@ pub use envelope::{
     parse_envelope, verify_item_tag,
 };
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField};
+pub use export::{
+    EXPORT_KDF, ExportHeader, ExportItem, PlainExportOptions, export_encrypt, export_plain_csv,
+    export_plain_json, import_decrypt, parse_export_header,
+};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use integrity::{
     AuthOp, AuthPublicKey, Checkpoint, CheckpointEntry, MutationOp, RecoveryPublicKey, RekeyBundle,

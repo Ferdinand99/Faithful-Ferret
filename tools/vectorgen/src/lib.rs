@@ -61,6 +61,7 @@ const GROUPS: &[Group] = &[
     ),
     ("internal/proofs.json", item_groups::integrity::proofs),
     ("internal/rekey.json", item_groups::integrity::rekey),
+    ("internal/export.json", item_groups::export::export),
 ];
 
 /// Serializes a vector file the way every generated file is written:
