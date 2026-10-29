@@ -8,14 +8,14 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
-  <img src="https://img.shields.io/badge/status-design%20phase-59d9c7.svg" alt="Status: design phase">
+  <img src="https://img.shields.io/badge/status-in%20development-59d9c7.svg" alt="Status: in development">
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: design phase. Nothing is usable yet, and there is no release date.** The design is approved and
-> the work starts with prototypes of the risky parts, then a published security design. There is no code to
-> install or run. Please do not store real passwords in anything built from this repository until a release
-> says it is ready.
+> **Status: in development. The cryptographic core is being written and is not for real passwords yet. There is no
+> release and no release date.** The design is approved, and the Rust core and its test vectors are now being built
+> in this repository. There is nothing to install or run. Please do not store real passwords in anything built from
+> this repository until a release says it is ready.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -76,6 +76,19 @@ Security is the top priority of the project, and this is how the design handles 
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
+
+## Repository layout
+
+The Rust cryptographic core lives at the repository root as a Cargo workspace:
+
+- `crates/ferret-core/`: the cryptographic core (safe Rust, no I/O).
+- `bindings/wasm/`: the WebAssembly binding for the web vault and the browser extension (added later).
+- `tools/vectorgen/`: generates and checks the test vectors.
+- `vectors/`: the cross-platform test vectors that every client must pass.
+- `docker/`, `scripts/`: the build image and scripts for building and testing on a Docker host.
+- `site/`, `assets/`: the website and brand assets.
+
+This project has had no external security audit.
 
 ## Roadmap
 

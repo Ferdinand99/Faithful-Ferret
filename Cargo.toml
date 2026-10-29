@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/ferret-core", "tools/vectorgen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# A panic must never unwind through the WASM boundary, and arithmetic
+# overflow must never wrap silently in release builds of the crypto core.
+panic = "abort"
+overflow-checks = true

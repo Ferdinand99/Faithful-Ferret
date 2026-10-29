@@ -1,0 +1,40 @@
+# cargo-deny policy. See the dependency policy: exact pins for anything that
+# touches cryptography, secrets or Unicode; crates.io only; no duplicate
+# versions without a documented reason.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "BSD-2-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Zlib",
+  "AGPL-3.0-or-later",
+]
+
+[bans]
+multiple-versions = "deny"
+# Duplicate versions are listed here, each with a reason. Later tasks add the
+# ones they introduce (for example the OPAQUE dependencies that need digest 0.10).
+skip = [
+  { crate = "syn@2", reason = "build-time proc-macro dependency only: wasm-bindgen-macro-support (getrandom wasm_js backend, wasm32 target) still uses syn 2, the serde and zeroize derives use syn 3" },
+]
+deny = [
+  { crate = "openssl", reason = "no OpenSSL in the core" },
+  { crate = "openssl-sys", reason = "no OpenSSL in the core" },
+  { crate = "native-tls", reason = "no OpenSSL in the core" },
+  { crate = "ring", reason = "one set of primitives: RustCrypto" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
