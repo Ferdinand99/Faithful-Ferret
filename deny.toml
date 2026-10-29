@@ -7,6 +7,15 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [advisories]
 yanked = "deny"
+ignore = [
+  # crypto-bigint 0.5.5 timing issue. It is reached only through elliptic-curve 0.13,
+  # which opaque-ke 4.0 and voprf 0.5 pull in. Our OPAQUE suite is ristretto255
+  # (curve25519-dalek); from elliptic-curve it uses only the hash-based ExpandMsgXmd,
+  # which does not touch crypto-bigint, so no secret data reaches the affected code.
+  # scripts/check-advisory-reach.sh keeps that dependency path narrow.
+  # Remove this entry when opaque-ke moves to elliptic-curve 0.14.
+  { id = "RUSTSEC-2026-0387", reason = "not reachable with secret data from the ristretto255 OPAQUE suite; remove when opaque-ke uses elliptic-curve 0.14" },
+]
 
 [licenses]
 allow = [
