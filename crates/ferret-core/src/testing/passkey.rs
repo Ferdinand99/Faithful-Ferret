@@ -2,9 +2,17 @@
 //! client data serializer with a free origin text, and the Public Suffix List
 //! snapshot's internals. Behind `test-support`; never part of a release.
 
+use crate::item::Passkey;
 use crate::passkey::{self, Ceremony, PasskeyRecord};
 use p256::ecdsa::SigningKey;
 use p256::pkcs8::DecodePrivateKey;
+
+/// The `passkey` member of the item body for `record`, with the key and the
+/// seeds as plain bytes (in a release they only exist inside a sealed
+/// envelope).
+pub fn item_of(record: &PasskeyRecord) -> Passkey {
+    record.to_item()
+}
 
 /// The private scalar `d` of the record's key (32 bytes, big-endian).
 pub fn private_scalar(record: &PasskeyRecord) -> Option<[u8; 32]> {
@@ -35,6 +43,17 @@ pub fn psl_rule_counts() -> (usize, usize, usize) {
 /// How many rule lines the snapshot file has.
 pub fn psl_rule_lines() -> usize {
     passkey::rule_lines()
+}
+
+/// How many of the last labels of `domain` (canonical, A-label) are its public
+/// suffix.
+pub fn public_suffix_labels(domain: &str) -> usize {
+    passkey::public_suffix_labels(domain)
+}
+
+/// The text of the embedded Public Suffix List snapshot.
+pub fn psl_snapshot_text() -> &'static str {
+    passkey::snapshot_text()
 }
 
 /// Whether `domain` (canonical, A-label) is a public suffix.

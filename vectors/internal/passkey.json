@@ -24,7 +24,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -88,7 +88,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -154,7 +154,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -226,7 +226,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -301,7 +301,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -374,7 +374,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://login.example.com",
         "request": {
           "algorithms": [
@@ -438,7 +438,7 @@
       ],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://xn--bcher-kva.example:8443",
         "request": {
           "algorithms": [
@@ -490,6 +490,78 @@
       "expect_error": null
     },
     {
+      "id": "passkey/create/valid/008",
+      "title": "an excluded id stored for another RP ID does not count",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [
+          {
+            "id": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
+            "rp_id": "other.example"
+          }
+        ],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "exclude": [
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+          ],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        }
+      },
+      "expect_error": null
+    },
+    {
       "id": "passkey/create/invalid/001",
       "title": "UV required but not done: NotAllowed",
       "op": "passkey.create",
@@ -499,7 +571,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -534,7 +606,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -561,7 +633,7 @@
     },
     {
       "id": "passkey/create/invalid/003",
-      "title": "a credential in excludeCredentials is stored: NotAllowed",
+      "title": "a credential in excludeCredentials is stored for this RP ID: InvalidStateError",
       "op": "passkey.create",
       "status": "invalid",
       "tags": [],
@@ -569,9 +641,15 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [
-          "090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728",
-          "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+        "existing_credentials": [
+          {
+            "id": "090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
+            "rp_id": "example.com"
+          }
         ],
         "origin": "https://example.com",
         "request": {
@@ -598,7 +676,7 @@
           "user_verified": true
         }
       },
-      "expect_error": "not_allowed"
+      "expect_error": "invalid_state"
     },
     {
       "id": "passkey/create/invalid/004",
@@ -610,7 +688,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://a.github.io",
         "request": {
           "algorithms": [
@@ -645,7 +723,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -680,7 +758,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -715,7 +793,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -750,7 +828,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [
@@ -784,7 +862,7 @@
       "rng": [],
       "input": {
         "created_ms": "1700000000000",
-        "existing_credential_ids": [],
+        "existing_credentials": [],
         "origin": "https://example.com",
         "request": {
           "algorithms": [

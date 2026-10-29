@@ -60,7 +60,7 @@ impl PasskeyPrivateKey {
 
     /// Reads a key from PKCS#8 DER (as stored in the item body). Rejects
     /// anything that is not a P-256 private key.
-    pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn from_pkcs8_der(der: &[u8]) -> Result<Self, Error> {
         let key = SigningKey::from_pkcs8_der(der).map_err(|_| bad_key())?;
         drop(key);
         Ok(Self {

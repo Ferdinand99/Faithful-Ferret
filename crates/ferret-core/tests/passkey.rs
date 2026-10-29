@@ -6,17 +6,19 @@
 mod common;
 
 use common::*;
+use ferret_core::VaultContext;
 use ferret_core::passkey::{
     AAGUID, CreatePrfResponse, CreateResponse, FLAG_AT, FLAG_BE, FLAG_BS, FLAG_ED, FLAG_UP,
     FLAG_UV, GetResponse, PasskeyPrivateKey, PrfCreate, PrfEval, PrfRequest, prf_output, prf_salt,
 };
-use ferret_core::testing::passkey::{client_data_json, private_scalar};
+use ferret_core::testing::passkey::{client_data_json, item_of, private_scalar};
 use ferret_core::testing::prim::hmac_sha256;
 use ferret_core::testing::vector::Outcome;
 use ferret_core::testing::{TestRng, hex_decode};
 use ferret_core::{
-    CallerContext, CreateRequest, Error, GetRequest, MalformedKind, Passkey, PasskeyRecord,
-    PrfSeed, UserVerification, UvOutcome, canonical_origin, passkey_create, passkey_get,
+    CallerContext, CreateRequest, Error, ExistingCredential, GetRequest, MalformedKind, Passkey,
+    PasskeyRecord, PrfSeed, UserVerification, UvOutcome, canonical_origin, passkey_create,
+    passkey_get,
 };
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -111,6 +113,17 @@ fn uv_kind(s: &str) -> UserVerification {
 
 fn hex_list(v: &Value) -> Vec<Vec<u8>> {
     v.as_array().unwrap().iter().map(hex).collect()
+}
+
+fn existing_of(v: &Value) -> Vec<ExistingCredential> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| ExistingCredential {
+            rp_id: e["rp_id"].as_str().unwrap().to_owned(),
+            cred_id: hex(&e["id"]),
+        })
+        .collect()
 }
 
 fn uv_of(v: &Value) -> UvOutcome {
@@ -227,10 +240,10 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                     &req,
                     &ctx_of(input),
                     uv_of(&input["uv"]),
-                    &hex_list(&input["existing_credential_ids"]),
+                    &existing_of(&input["existing_credentials"]),
                     u64s(&input["created_ms"]),
                 )?;
-                let item = created.record.to_item();
+                let item = item_of(&created.record);
                 let r = &created.response;
                 let auth = &r.authenticator_data;
                 Ok(Outcome {
@@ -588,13 +601,32 @@ fn uv_discouraged_without_uv_ok_flag_clear() {
 #[test]
 fn exclude_credentials_respected() {
     let (record, _) = make(&create_req(), YES);
-    let stored = vec![record.cred_id.clone(), vec![5; 32]];
+    let stored = vec![
+        ExistingCredential {
+            rp_id: "example.com".into(),
+            cred_id: record.cred_id.clone(),
+        },
+        ExistingCredential {
+            rp_id: "example.com".into(),
+            cred_id: vec![5; 32],
+        },
+    ];
     let mut req = create_req();
     req.exclude = vec![vec![1; 32], record.cred_id.clone()];
     let mut rng = TestRng::new(b"x");
     let c = ctx("https://example.com");
+    // A hit is InvalidStateError, after the presence check.
     assert_eq!(
         passkey_create(&mut rng, &req, &c, YES, &stored, 0).err(),
+        Some(Error::InvalidState)
+    );
+    assert_eq!(Error::InvalidState.code(), "invalid_state");
+    let no_presence = UvOutcome {
+        user_present: false,
+        user_verified: false,
+    };
+    assert_eq!(
+        passkey_create(&mut rng, &req, &c, no_presence, &stored, 0).err(),
         Some(Error::NotAllowed)
     );
     // Not excluded when the list names other credentials, or the store is empty.
@@ -602,6 +634,12 @@ fn exclude_credentials_respected() {
     assert!(passkey_create(&mut rng, &req, &c, YES, &stored, 0).is_ok());
     req.exclude = vec![record.cred_id.clone()];
     assert!(passkey_create(&mut rng, &req, &c, YES, &[], 0).is_ok());
+    // A credential stored for another RP ID is invisible to this request.
+    let other_rp = vec![ExistingCredential {
+        rp_id: "other.example".into(),
+        cred_id: record.cred_id.clone(),
+    }];
+    assert!(passkey_create(&mut rng, &req, &c, YES, &other_rp, 0).is_ok());
 }
 
 #[test]
@@ -650,7 +688,7 @@ fn prf_seed_chosen_by_actual_uv() {
     let (record, created) = make(&req, YES);
     assert_eq!(created.prf.as_ref().map(|p| p.enabled), Some(true));
     assert!(created.prf.unwrap().results.is_none());
-    let item = record.to_item();
+    let item = item_of(&record);
     let seed_uv = item.prf_seed_uv.clone().unwrap();
     let seed_nouv = item.prf_seed_nouv.clone().unwrap();
     assert_eq!(seed_uv.len(), 32);
@@ -689,7 +727,7 @@ fn prf_seed_chosen_by_actual_uv() {
 fn prf_not_requested_means_no_seeds() {
     let (record, created) = make(&create_req(), YES);
     assert!(created.prf.is_none());
-    let item = record.to_item();
+    let item = item_of(&record);
     assert!(item.prf_seed_uv.is_none() && item.prf_seed_nouv.is_none());
     assert!(!record.has_prf());
     // A get that asks for prf gets no results, not an error.
@@ -819,7 +857,7 @@ fn passkey_private_key_never_in_debug_or_clone() {
     });
     let mut rng = TestRng::new(b"debug");
     let c = passkey_create(&mut rng, &req, &ctx("https://example.com"), YES, &[], 0).unwrap();
-    let item = c.record.to_item();
+    let item = item_of(&c.record);
     let secret_hex = [
         he(&item.private_key),
         he(&private_scalar(&c.record).unwrap()),
@@ -846,11 +884,11 @@ fn record_roundtrips_through_the_item_body() {
     let mut req = create_req();
     req.prf = Some(PrfCreate::default());
     let (record, _) = make(&req, YES);
-    let item = record.to_item();
+    let item = item_of(&record);
     assert_eq!(item.sign_count, 0);
     assert_eq!(item.cred_id.len(), 32);
     let back = PasskeyRecord::from_item(&item).unwrap();
-    assert_eq!(back.to_item().private_key, item.private_key);
+    assert_eq!(item_of(&back).private_key, item.private_key);
     assert!(back.has_prf());
     // The key must be a P-256 PKCS#8 key; a seed must be 32 bytes.
     let mut bad = item.clone();
@@ -893,10 +931,42 @@ fn creation_draws_in_the_documented_order() {
     let mut rng = ferret_core::testing::ReplayRng::new(draws);
     let c = passkey_create(&mut rng, &req, &ctx("https://example.com"), YES, &[], 5).unwrap();
     rng.finish().unwrap();
-    let item = c.record.to_item();
+    let item = item_of(&c.record);
     assert_eq!(item.cred_id, vec![0xa1; 32]);
     assert_eq!(private_scalar(&c.record).unwrap(), [0x11; 32]);
     assert_eq!(item.prf_seed_uv.clone().unwrap(), vec![0x31; 32]);
     assert_eq!(item.prf_seed_nouv.clone().unwrap(), vec![0x51; 32]);
     assert_eq!(item.created, 5);
+}
+
+#[test]
+fn seal_passkey_item_keeps_the_key_inside_the_envelope() {
+    use ferret_core::{ItemId, UnlockedVault, decrypt_item, seal_passkey_item};
+    let vault = UnlockedVault::from_vault_key(ctx_vault(), vk(0x5a)).unwrap();
+    let mut req = create_req();
+    req.prf = Some(PrfCreate::default());
+    let (record, created) = make(&req, YES);
+    let key_der = item_of(&record).private_key.clone();
+    let seed = item_of(&record).prf_seed_uv.clone().unwrap();
+    let mut rng = TestRng::new(b"seal");
+    let id = ItemId::from_bytes([3; 16]);
+    let sealed =
+        seal_passkey_item(&mut rng, &vault, id, 1, &record, "example.com", 5, None).unwrap();
+    // The envelope is ciphertext: neither the key nor a seed is in it.
+    let contains = |needle: &[u8]| sealed.envelope.windows(needle.len()).any(|w| w == needle);
+    assert!(!contains(&key_der) && !contains(&seed));
+    // Opened again, the record still signs.
+    let opened = decrypt_item(&vault, id, 1, &sealed.envelope, &sealed.tag).unwrap();
+    let back = PasskeyRecord::from_item(opened.body.passkey.as_ref().unwrap()).unwrap();
+    assert!(back.has_prf());
+    let g = passkey_get(&back, &get_req(), &ctx("https://example.com"), YES).unwrap();
+    let vk = VerifyingKey::from_public_key_der(&created.public_key_spki).unwrap();
+    let mut msg = g.authenticator_data.clone();
+    msg.extend_from_slice(&Sha256::digest(&g.client_data_json));
+    vk.verify(&msg, &Signature::from_der(&g.signature).unwrap())
+        .unwrap();
+}
+
+fn ctx_vault() -> VaultContext {
+    common::ctx()
 }

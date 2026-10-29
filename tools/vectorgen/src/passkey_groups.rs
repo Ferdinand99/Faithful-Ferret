@@ -200,7 +200,8 @@ struct Create {
     user_id: Vec<u8>,
     algorithms: Vec<i64>,
     exclude: Vec<Vec<u8>>,
-    existing: Vec<Vec<u8>>,
+    /// `(rp_id, credential id)` of the passkeys already stored.
+    existing: Vec<(&'static str, Vec<u8>)>,
     uv_req: &'static str,
     prf: Option<Option<Eval>>,
     uv: Uv,
@@ -240,7 +241,7 @@ impl Create {
                 "prf": self.prf.as_ref().map(|p| json!({ "eval": p.as_ref().map(eval_json) })),
             },
             "uv": uv_json(&self.uv),
-            "existing_credential_ids": self.existing.iter().map(|e| hex(e)).collect::<Vec<_>>(),
+            "existing_credentials": self.existing.iter().map(|(rp, id)| json!({ "rp_id": rp, "id": hex(id) })).collect::<Vec<_>>(),
             "created_ms": "1700000000000",
         })
     }
@@ -576,6 +577,16 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
         "xn--bcher-kva.example",
     )?);
 
+    let mut c = Create::new(base);
+    c.exclude = vec![pat(1, 32), pat(2, 32)];
+    c.existing = vec![("other.example", pat(2, 32))];
+    cases.push(valid_create(
+        "passkey/create/valid/008",
+        "an excluded id stored for another RP ID does not count",
+        &c,
+        "example.com",
+    )?);
+
     // ---- create, invalid
     let mut c = Create::new(base);
     c.uv = UV_NO;
@@ -596,12 +607,12 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
     ));
     let mut c = Create::new(base);
     c.exclude = vec![pat(1, 32), pat(2, 32)];
-    c.existing = vec![pat(9, 32), pat(2, 32)];
+    c.existing = vec![("example.com", pat(9, 32)), ("example.com", pat(2, 32))];
     cases.push(invalid_create(
         "passkey/create/invalid/003",
-        "a credential in excludeCredentials is stored: NotAllowed",
+        "a credential in excludeCredentials is stored for this RP ID: InvalidStateError",
         &c,
-        "not_allowed",
+        "invalid_state",
     ));
     let mut c = Create::new("https://a.github.io");
     c.rp_id = Some("github.io");

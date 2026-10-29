@@ -5,8 +5,11 @@
 # The snapshot is the upstream list with the comments dropped, except the MPL
 # notice and the VERSION and COMMIT lines, which carry the date that the
 # snapshot age test reads. Private domains are kept (github.io, vercel.app).
-# Run this before every release; the test `psl_snapshot_is_not_older_than_90_days`
-# fails otherwise.
+# Run this before every release; `scripts/check-psl-age.sh` (weekly and on
+# release pull requests) fails when the snapshot is more than 90 days old.
+# It also fetches the upstream test file of the same commit into
+# vectors/external/; update its commit and hash in vectors/external/SOURCE.md
+# and review the diff (rule count, no removed ICANN top-level domains).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,4 +27,7 @@ sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
   grep -E '^// (VERSION|COMMIT): ' "$tmp"
   grep -v '^//' "$tmp" | grep -v '^[[:space:]]*$' | tr -d '\r'
 } > "$out"
+commit="$(grep -E '^// COMMIT: ' "$out" | cut -d' ' -f3)"
+curl -fsSL "https://raw.githubusercontent.com/publicsuffix/list/$commit/tests/test_psl.txt"   -o vectors/external/publicsuffix-test_psl.txt
+echo "test file: commit $commit, sha256 $(sha256sum vectors/external/publicsuffix-test_psl.txt | cut -d' ' -f1)"
 echo "wrote $out ($(wc -c < "$out") bytes)"

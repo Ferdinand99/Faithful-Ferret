@@ -168,6 +168,9 @@ pub enum Error {
     NonCanonical,
     /// Passkey: user verification missing, cancelled or no match (same value).
     NotAllowed,
+    /// Passkey `create`: a credential in `excludeCredentials` is already
+    /// stored for this RP (WebAuthn `InvalidStateError`).
+    InvalidState,
     /// Not supported by this build or version.
     Unsupported,
     /// A value pinned on this device was contradicted. A hard error with a
@@ -226,6 +229,7 @@ impl Error {
         Error::Checksum,
         Error::NonCanonical,
         Error::NotAllowed,
+        Error::InvalidState,
         Error::Unsupported,
         Error::Pinned(PinnedField::ServerUrl),
         Error::Pinned(PinnedField::AccountId),
@@ -293,6 +297,7 @@ impl Error {
             Error::Checksum => "checksum",
             Error::NonCanonical => "non_canonical",
             Error::NotAllowed => "not_allowed",
+            Error::InvalidState => "invalid_state",
             Error::Unsupported => "unsupported",
             Error::Pinned(field) => match field {
                 PinnedField::ServerUrl => "pinned_server_url",

@@ -57,6 +57,7 @@ share the single code `decrypt`, with no cause.
 | `checksum` | Recovery or secret key checksum error. |
 | `non_canonical` | Recovery or secret key is valid but not in canonical form. |
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |
+| `invalid_state` | Passkey `create`: a credential in `excludeCredentials` is already stored for this RP ID (WebAuthn `InvalidStateError`). Given only after the user has consented. |
 | `unsupported` | Not supported by this build or version. |
 | `pinned_server_url` | The server address differs from the one pinned on this device. |
 | `pinned_vault_id` | The vault differs from the one pinned on this device. |

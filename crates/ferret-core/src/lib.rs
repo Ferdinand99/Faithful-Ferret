@@ -83,9 +83,9 @@ pub use opaque::{
     opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
 };
 pub use passkey::{
-    CallerContext, CanonicalOrigin, CreateRequest, CreatedPasskey, GetRequest, PasskeyRecord, RpId,
-    UserVerification, UvOutcome, canonical_origin, passkey_create, passkey_get, prf_output,
-    validate_rp_id,
+    CallerContext, CanonicalOrigin, CreateRequest, CreatedPasskey, ExistingCredential, GetRequest,
+    PasskeyRecord, RpId, UserVerification, UvOutcome, canonical_origin, passkey_create,
+    passkey_get, prf_output, seal_passkey_item, validate_rp_id,
 };
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};

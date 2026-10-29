@@ -29,11 +29,15 @@
 //!
 //! A cancelled request, a missing user verification where the site requires
 //! it, a credential that does not exist for the RP, a wrong RP ID at signing
-//! time, a cross-origin request and an excluded credential all give the one
-//! value [`Error::NotAllowed`], so the page cannot tell them apart (Fase 1
-//! § 9.3, "Personvern"). A request that is wrong in itself (an origin that
-//! cannot be one, an RP ID the origin may not use, limits exceeded) has its
-//! own code.
+//! time and a cross-origin request all give the one value
+//! [`Error::NotAllowed`], so the page cannot tell them apart (Fase 1 § 9.3,
+//! "Personvern"). The one exception is `create` with a credential from
+//! `excludeCredentials` that is already stored for the RP: that is
+//! [`Error::InvalidState`] (WebAuthn's `InvalidStateError`, which sites use
+//! for "already registered"), given only after the user has consented, and
+//! only for credentials of the same RP ID. A request that is wrong in itself
+//! (an origin that cannot be one, an RP ID the origin may not use, limits
+//! exceeded) has its own code.
 
 mod authdata;
 mod client_data;
@@ -53,14 +57,18 @@ pub use prf::{
 pub use psl::{snapshot_commit, snapshot_date};
 
 #[cfg(any(test, feature = "test-support"))]
-#[cfg(any(test, feature = "test-support"))]
 pub(crate) use client_data::client_data_json_raw;
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) use psl::{is_public_suffix, rule_counts, rule_lines};
+pub(crate) use psl::{
+    is_public_suffix, public_suffix_labels, rule_counts, rule_lines, snapshot_text,
+};
 
 use crate::cbor::redacted_debug;
+use crate::envelope::{SealedItem, encrypt_item};
 use crate::error::{Error, MalformedKind};
-use crate::item::Passkey;
+use crate::ids::ItemId;
+use crate::item::{ItemBody, ItemType, Passkey};
+use crate::keys::UnlockedVault;
 use crate::rng::SecureRng;
 use crate::secret::PrfSeed;
 use authdata::{Attested, authenticator_data};
@@ -269,10 +277,11 @@ impl PasskeyRecord {
         })
     }
 
-    /// The `passkey` member of an item body, for sealing with the item. It
-    /// holds the private key and the seeds; it is never shown to the page or
-    /// the UI (Fase 1 § 9.1, Appendix B).
-    pub fn to_item(&self) -> Passkey {
+    /// The `passkey` member of an item body. Crate-private: it holds the
+    /// PKCS#8 key and the PRF seeds as plain bytes, which leave the core only
+    /// inside a sealed envelope ([`seal_passkey_item`]). `scripts/check-passkey-api.sh`
+    /// fails the build if a public item of this module returns such bytes.
+    pub(crate) fn to_item(&self) -> Passkey {
         Passkey {
             cred_id: self.cred_id.clone(),
             rp_id: self.rp_id.clone(),
@@ -338,6 +347,16 @@ pub struct GetResponse {
     pub prf: Option<PrfResults>,
 }
 
+/// A passkey that Ferret already stores, as far as `excludeCredentials` is
+/// concerned.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExistingCredential {
+    /// The RP ID it was made for (canonical).
+    pub rp_id: String,
+    /// The credential id.
+    pub cred_id: Vec<u8>,
+}
+
 /// A new passkey and the answer to the page. Store `record`; give `response`
 /// to the page.
 pub struct CreatedPasskey {
@@ -383,8 +402,11 @@ fn resolve_rp_id(ctx: &CallerContext, requested: Option<&str>) -> Result<RpId, E
 /// when the request has `prf`, `prf_seed_uv` and `prf_seed_nouv` (32 bytes
 /// each).
 ///
-/// `existing_credential_ids` are the ids of the passkeys Ferret already
-/// stores; if one is in `req.exclude` the answer is `NotAllowed`.
+/// `existing` lists the passkeys Ferret already stores, each with its RP ID.
+/// Only those for the RP ID of this request are compared with
+/// `req.exclude`; a hit is [`Error::InvalidState`] (WebAuthn's
+/// `InvalidStateError`). It comes after the presence check, so the user has
+/// consented before the page learns that the credential exists.
 ///
 /// Spec: Fase 1 § 9.1 to § 9.3, § 9.5; plan U13.
 pub fn passkey_create<R: SecureRng>(
@@ -392,19 +414,20 @@ pub fn passkey_create<R: SecureRng>(
     req: &CreateRequest,
     ctx: &CallerContext,
     uv: UvOutcome,
-    existing_credential_ids: &[Vec<u8>],
+    existing: &[ExistingCredential],
     created_ms: u64,
 ) -> Result<CreatedPasskey, Error> {
     req.validate()?;
     require_same_origin(ctx)?;
     let rp_id = resolve_rp_id(ctx, req.rp_id.as_deref())?;
     require_user(uv, req.user_verification)?;
-    if req
-        .exclude
+    // Only credentials for this RP ID count: an id stored for another RP must
+    // not tell the page anything (a cross-RP existence oracle).
+    if existing
         .iter()
-        .any(|id| existing_credential_ids.contains(id))
+        .any(|e| e.rp_id == rp_id.as_str() && req.exclude.contains(&e.cred_id))
     {
-        return Err(Error::NotAllowed);
+        return Err(Error::InvalidState);
     }
 
     let mut cred_id = vec![0u8; CREDENTIAL_ID_LEN];
@@ -522,6 +545,30 @@ pub fn passkey_get(
         user_handle: record.user_handle.clone(),
         prf,
     })
+}
+
+/// Seals a passkey into an item envelope, as a login item named `name`.
+///
+/// This is the one way a record leaves the core for storage: the PKCS#8 key
+/// and the PRF seeds go into the body and the body into the encrypted
+/// envelope; no plain bytes are returned. `existing` is the current envelope
+/// when the item is rewritten (the item key is kept).
+///
+/// Spec: Fase 1 § 9.1.
+#[allow(clippy::too_many_arguments)]
+pub fn seal_passkey_item<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    item_id: ItemId,
+    rev: u64,
+    record: &PasskeyRecord,
+    name: &str,
+    now_ms: u64,
+    existing: Option<&[u8]>,
+) -> Result<SealedItem, Error> {
+    let mut body = ItemBody::new(ItemType::Login, name, now_ms);
+    body.passkey = Some(record.to_item());
+    encrypt_item(rng, vault, item_id, rev, &body, existing)
 }
 
 /// The base64url form of a credential id, as it is shown to a page (`id`).

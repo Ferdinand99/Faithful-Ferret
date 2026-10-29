@@ -6,7 +6,9 @@
 mod common;
 
 use common::*;
-use ferret_core::testing::passkey::{is_public_suffix, psl_rule_counts, psl_rule_lines};
+use ferret_core::testing::passkey::{
+    is_public_suffix, psl_rule_counts, psl_rule_lines, psl_snapshot_text, public_suffix_labels,
+};
 use ferret_core::testing::vector::Outcome;
 use ferret_core::{Error, MalformedKind, canonical_origin, validate_rp_id};
 use serde_json::json;
@@ -101,34 +103,15 @@ fn origin_is_bounded() {
     assert!(canonical_origin(&label63).is_ok());
 }
 
-/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 #[test]
-fn psl_snapshot_is_not_older_than_90_days() {
+fn psl_snapshot_date_is_recorded() {
+    // The age limit (90 days) is checked by scripts/check-psl-age.sh, weekly
+    // and on release pull requests, not here: an ordinary test run must not
+    // depend on the clock.
     let (y, m, d) = ferret_core::passkey::snapshot_date().expect("VERSION line in the snapshot");
-    let snapshot_days = days_from_civil(i64::from(y), i64::from(m), i64::from(d));
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let today = i64::try_from(now_secs / 86_400).unwrap();
-    let age = today - snapshot_days;
-    assert!(
-        age <= 90,
-        "the Public Suffix List snapshot is {age} days old (VERSION {y}-{m:02}-{d:02}): \
-         run scripts/update-psl.sh and commit the new snapshot"
-    );
-    // A clock in the past would hide an old snapshot.
-    assert!(age >= -1, "the snapshot is dated in the future");
+    assert!(y >= 2026 && (1..=12).contains(&m) && (1..=31).contains(&d));
+    let text = psl_snapshot_text();
+    assert!(text.contains(&format!("// VERSION: {y}-{m:02}-{d:02}_")));
 }
 
 #[test]
@@ -169,5 +152,145 @@ fn origin_canonicalization_is_idempotent_on_the_vectors() {
         let once = canonical_origin(&utf8(&case.input["raw_utf8"])).unwrap();
         let twice = canonical_origin(once.as_str()).unwrap();
         assert_eq!(once, twice, "{}", case.id);
+    }
+}
+
+// ------------------------------------------------- upstream test file
+
+/// The registrable domain of `input` by the embedded list, as the upstream
+/// test file defines it: `None` for a public suffix, an empty name or a name
+/// with a leading dot.
+fn registrable_domain(input: &str) -> Option<String> {
+    if input.is_empty() || input.starts_with('.') {
+        return None;
+    }
+    let name = idna::domain_to_ascii(input).ok()?;
+    let labels: Vec<&str> = name.split('.').collect();
+    let suffix = public_suffix_labels(&name);
+    if suffix >= labels.len() {
+        return None;
+    }
+    Some(labels[labels.len() - suffix - 1..].join("."))
+}
+
+fn quoted(arg: &str) -> Option<String> {
+    let arg = arg.trim();
+    if arg == "null" {
+        None
+    } else {
+        Some(arg.trim_matches('\'').to_owned())
+    }
+}
+
+#[test]
+fn psl_upstream_test_file() {
+    // vectors/external/publicsuffix-test_psl.txt, unchanged (see SOURCE.md).
+    let text =
+        std::fs::read_to_string(vectors_dir().join("external/publicsuffix-test_psl.txt")).unwrap();
+    let mut n = 0;
+    for line in text.lines() {
+        let Some(args) = line
+            .strip_prefix("checkPublicSuffix(")
+            .and_then(|l| l.strip_suffix(");"))
+        else {
+            continue;
+        };
+        let (input, expected) = args.split_once(", ").unwrap();
+        let (input, expected) = (quoted(input), quoted(expected));
+        let want = expected.map(|e| idna::domain_to_ascii(&e).unwrap());
+        let got = input.as_deref().and_then(registrable_domain);
+        assert_eq!(got, want, "checkPublicSuffix({args})");
+        n += 1;
+    }
+    assert!(n == 78, "only {n} cases in the upstream file");
+}
+
+// ------------------------------------------------ reference matcher
+
+/// One rule of the list, labels from the right.
+struct Rule {
+    labels: Vec<String>,
+    exception: bool,
+}
+
+/// The algorithm of https://publicsuffix.org/list/ written out literally:
+/// every rule that matches label by label (`*` matches one label); the
+/// exception rule prevails, then the rule with the most labels; otherwise `*`.
+fn reference_suffix_labels(
+    name: &str,
+    rules: &std::collections::HashMap<String, Vec<Rule>>,
+) -> usize {
+    let labels: Vec<&str> = name.rsplit('.').collect();
+    let mut best = 1;
+    let mut exception = None;
+    for rule in rules.get(labels[0]).into_iter().flatten() {
+        if rule.labels.len() > labels.len() {
+            continue;
+        }
+        let matches = rule
+            .labels
+            .iter()
+            .zip(&labels)
+            .all(|(r, l)| r == "*" || r == l);
+        if !matches {
+            continue;
+        }
+        if rule.exception {
+            exception = Some(rule.labels.len() - 1);
+        } else {
+            best = best.max(rule.labels.len());
+        }
+    }
+    exception.unwrap_or(best)
+}
+
+#[test]
+fn psl_matcher_agrees_with_the_reference_on_every_rule() {
+    use std::collections::HashMap;
+    let mut rules: HashMap<String, Vec<Rule>> = HashMap::new();
+    let mut names: Vec<String> = Vec::new();
+    for line in psl_snapshot_text().lines() {
+        if line.starts_with("//") {
+            continue;
+        }
+        let Some(token) = line.split_whitespace().next() else {
+            continue;
+        };
+        let (exception, body) = match token.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, token),
+        };
+        let ascii = if body.is_ascii() {
+            body.to_owned()
+        } else {
+            idna::domain_to_ascii(body).unwrap()
+        };
+        let labels: Vec<String> = ascii.rsplit('.').map(str::to_owned).collect();
+        // Names around the rule: the rule itself (a wildcard filled in), one
+        // and two labels below it, `www` below it, and the parent of an
+        // exception.
+        let concrete = ascii.replace('*', "wild");
+        names.push(concrete.clone());
+        names.push(format!("x.{concrete}"));
+        names.push(format!("x.y.{concrete}"));
+        names.push(format!("www.{concrete}"));
+        if exception && let Some((_, parent)) = concrete.split_once('.') {
+            names.push(parent.to_owned());
+        }
+        if let Some(base) = ascii.strip_prefix("*.") {
+            names.push(base.to_owned());
+        }
+        rules
+            .entry(labels[0].clone())
+            .or_default()
+            .push(Rule { labels, exception });
+    }
+    assert!(names.len() > 40_000);
+    for name in &names {
+        assert_eq!(
+            public_suffix_labels(name),
+            reference_suffix_labels(name, &rules),
+            "{name}"
+        );
     }
 }

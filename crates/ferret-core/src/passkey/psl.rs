@@ -10,8 +10,9 @@
 //!
 //! The date of the snapshot is the `VERSION` line in the file itself;
 //! [`snapshot_date`] reads it, and the test
-//! `psl_snapshot_is_not_older_than_90_days` fails when it is more than 90 days
-//! old. The snapshot is refreshed at every release.
+//! `scripts/check-psl-age.sh`, run weekly and on release pull requests by
+//! `.github/workflows/psl-age.yml`, fails when it is more than 90 days old.
+//! The snapshot is refreshed at every release.
 //!
 //! The matching is the algorithm of <https://publicsuffix.org/list/>:
 //! 1. a rule matches a domain when its labels equal the domain's last labels,
@@ -80,6 +81,12 @@ fn build() -> Rules {
         }
     }
     r
+}
+
+/// The snapshot text, for the reference matcher in the tests.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn snapshot_text() -> &'static str {
+    SNAPSHOT
 }
 
 /// The number of rules in the snapshot (every kind), after the conversion of
