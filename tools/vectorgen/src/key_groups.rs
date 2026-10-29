@@ -72,12 +72,12 @@ fn kek_password(account: &[u8; 16], export_key: &[u8; 64]) -> Result<[u8; 32], E
     hk(&salt, export_key, b"ferret/v1/kek/password")
 }
 
-fn kek_recovery(account: &[u8; 16], rk: &[u8; 32]) -> Result<[u8; 32], Error> {
+pub(crate) fn kek_recovery(account: &[u8; 16], rk: &[u8; 32]) -> Result<[u8; 32], Error> {
     let salt = cat(&[label("ferret/v1/recovery"), t(0x10, account)]);
     hk(&salt, rk, b"ferret/v1/kek/recovery")
 }
 
-fn seed_r(account: &[u8; 16], rk: &[u8; 32]) -> Result<[u8; 32], Error> {
+pub(crate) fn seed_r(account: &[u8; 16], rk: &[u8; 32]) -> Result<[u8; 32], Error> {
     let salt = cat(&[label("ferret/v1/recovery-sign"), t(0x10, account)]);
     hk(&salt, rk, b"ferret/v1/recovery-sign")
 }
@@ -121,7 +121,7 @@ pub(crate) fn vk_derive(
     })
 }
 
-fn commit(kek: &[u8; 32]) -> Result<[u8; 32], Error> {
+pub(crate) fn commit(kek: &[u8; 32]) -> Result<[u8; 32], Error> {
     // HKDF with no salt: RFC 5869 treats it as HashLen zero bytes.
     hk(&[0u8; 32], kek, b"ferret/v1/commit")
 }

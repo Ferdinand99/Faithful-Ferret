@@ -1,0 +1,689 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "proofs",
+  "suite": 1,
+  "spec": "Fase 1 § 4.5 and § 4.6, plan U8",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "proofs/sign/unlock_method_add_json",
+      "title": "proof for unlock-method.add, json body",
+      "op": "proof.sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6d75746174696f6e360011756e6c6f636b2d6d6574686f642e616464100010101112131415161718191a1b1c1d1e1f330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf20000800000000000000013500206486732479427d6f2d96399946493bd3b06a021ddfd257bd372aee7c85df8109"
+      },
+      "expect": {
+        "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/unlock_method_add",
+      "title": "verifies: proof for unlock-method.add",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/sign/unlock_method_remove_empty",
+      "title": "proof for unlock-method.remove, empty body",
+      "op": "proof.sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.remove",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6d75746174696f6e360014756e6c6f636b2d6d6574686f642e72656d6f76651000101112131415161718191a1b1c1d1e1f20330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf2000080000000100000002350020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expect": {
+        "pk_a": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "4144b20b3cb388699799ff0181e2ade22c570a3b76837bf96b9e1213919e925d0e03bd5c406e0017744138b688c438b6961eceae375445f7ca6a820a284bf70e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/unlock_method_remove",
+      "title": "verifies: proof for unlock-method.remove",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.remove",
+        "pk": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "4144b20b3cb388699799ff0181e2ade22c570a3b76837bf96b9e1213919e925d0e03bd5c406e0017744138b688c438b6961eceae375445f7ca6a820a284bf70e",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/sign/unlock_method_password_put_binary",
+      "title": "proof for unlock-method.password.put, binary body",
+      "op": "proof.sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.password.put",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6d75746174696f6e36001a756e6c6f636b2d6d6574686f642e70617373776f72642e707574100010101112131415161718191a1b1c1d1e1f330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf200008000000000000000135002040aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+      },
+      "expect": {
+        "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "de7248f8282f3cd2a4a6116212eec5e906eaa6c6e952b53929c8dcd64a5c4532798fe3cbda0d5950707ebfa634ca5014a0d7f2d19e166b6a39b830e1830c0e0b"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/unlock_method_password_put",
+      "title": "verifies: proof for unlock-method.password.put",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.password.put",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "de7248f8282f3cd2a4a6116212eec5e906eaa6c6e952b53929c8dcd64a5c4532798fe3cbda0d5950707ebfa634ca5014a0d7f2d19e166b6a39b830e1830c0e0b",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/sign/unlock_method_recovery_put_json",
+      "title": "proof for unlock-method.recovery.put, json body",
+      "op": "proof.sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.recovery.put",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6d75746174696f6e36001a756e6c6f636b2d6d6574686f642e7265636f766572792e7075741000101112131415161718191a1b1c1d1e1f20330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf20000800000001000000023500206486732479427d6f2d96399946493bd3b06a021ddfd257bd372aee7c85df8109"
+      },
+      "expect": {
+        "pk_a": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "802c8f41b67dddbd506d6f60f085b3b93806dcd7a8360e1f033a130c92b077202ea91b152b005025960e050863430ea07b38953b0cbcf755e7864a834de6a20e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/unlock_method_recovery_put",
+      "title": "verifies: proof for unlock-method.recovery.put",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.recovery.put",
+        "pk": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "802c8f41b67dddbd506d6f60f085b3b93806dcd7a8360e1f033a130c92b077202ea91b152b005025960e050863430ea07b38953b0cbcf755e7864a834de6a20e",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/sign/rekey_binary",
+      "title": "proof for rekey, binary body",
+      "op": "proof.sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "rekey",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "6162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "message": "0100126665727265742f76312f6d75746174696f6e36000572656b65791000101112131415161718191a1b1c1d1e1f20330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf200008000000010000000235002040aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+      },
+      "expect": {
+        "pk_a": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "73d3d7b406c790eda0603944feb790380e7be2549454a84889cea5d8d361baba3f723e6c1b9b0b26277ad79d385c3f65a0014151c4d90be1fa4c007d0660a60a"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/rekey",
+      "title": "verifies: proof for rekey",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "rekey",
+        "pk": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "73d3d7b406c790eda0603944feb790380e7be2549454a84889cea5d8d361baba3f723e6c1b9b0b26277ad79d385c3f65a0014151c4d90be1fa4c007d0660a60a",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/sign_invalid/recover_with_auth_key",
+      "title": "sk_a does not sign a recover request",
+      "op": "proof.sign",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b7d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "proofs/recovery_sign/first",
+      "title": "recovery proof, label ferret/v1/recovery-req",
+      "op": "proof.recovery_sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "rk": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "vk_epoch": "1"
+      },
+      "intermediate": {
+        "message": "0100166665727265742f76312f7265636f766572792d7265713600077265636f766572100010101112131415161718191a1b1c1d1e1f330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf2000080000000000000001350020b55b2732d68d87d11daae09c549d65acf05d0a34c35aa6a9e5bccc12c224f3b7"
+      },
+      "expect": {
+        "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/recover_first",
+      "title": "verifies: a recovery proof against pk_r",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/recovery_sign/second",
+      "title": "recovery proof, label ferret/v1/recovery-req",
+      "op": "proof.recovery_sign",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "rk": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "vk_epoch": "4294967298"
+      },
+      "intermediate": {
+        "message": "0100166665727265742f76312f7265636f766572792d7265713600077265636f7665721000101112131415161718191a1b1c1d1e1f20330020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf2000080000000100000002350020b55b2732d68d87d11daae09c549d65acf05d0a34c35aa6a9e5bccc12c224f3b7"
+      },
+      "expect": {
+        "pk_r": "b3987aa85594b5b73cb7e15ed82af03ca35c52c1de6c822a40fbd18bfbc0a30d",
+        "proof": "841169cf6001bb11fa3c25a13a533ccebb14a52dd61220f47d7ba99bc043019f2c726f57980c6e1c5fd5e44542680eab613a33ab60b0bc51c5e9013abe73b301"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify/recover_second",
+      "title": "verifies: a recovery proof against pk_r",
+      "op": "proof.verify",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "b3987aa85594b5b73cb7e15ed82af03ca35c52c1de6c822a40fbd18bfbc0a30d",
+        "proof": "841169cf6001bb11fa3c25a13a533ccebb14a52dd61220f47d7ba99bc043019f2c726f57980c6e1c5fd5e44542680eab613a33ab60b0bc51c5e9013abe73b301",
+        "vk_epoch": "4294967298"
+      },
+      "expect": {
+        "ok": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "proofs/verify_invalid/body",
+      "title": "another body",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "78",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/body_bit",
+      "title": "one flipped bit in the body",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6474686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/nonce",
+      "title": "another nonce",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/op",
+      "title": "another op",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.remove",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/epoch",
+      "title": "another vk_epoch",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "2"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/account",
+      "title": "another account_id",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "12131415161718191a1b1c1d1e1f2021",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/public_key",
+      "title": "another public key",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "038dfba3a7018c928a7d0c4fcfe5690d79d3b334cdb1ac9c8f07d04601526bbf",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/signature_bit",
+      "title": "a flipped bit in R",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fa06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/signature_s_bit",
+      "title": "a flipped bit in S",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7a0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/s_plus_l",
+      "title": "S + L: the same equation, but S is not canonical",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8cb006c27ba88a65752a61df46cc5a4c4601c06c400f49cff901cde52dba25815",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/small_order_key",
+      "title": "the identity as the public key",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "0100000000000000000000000000000000000000000000000000000000000000",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/recovery_against_pk_a",
+      "title": "a recovery proof against pk_a",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/recovery_with_mutation_op",
+      "title": "a recovery proof verified as an unlock-method.add",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.add",
+        "pk": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/recovery_epoch",
+      "title": "a recovery proof with another vk_epoch",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d",
+        "vk_epoch": "2"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/recovery_body",
+      "title": "a recovery proof with another body",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b7d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "proof": "236d897a5451ffa3dffa7b2e1daff4e952d59f220380f4ce157b5d055e94fdc07ee4ed1abfd1a187eef998b62de26f0fa34a0d3e570cdbead78350fda5d4410d",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/mutation_label_for_recover",
+      "title": "the op recover signed with the mutation label",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b2277726170223a222e2e222c22706b5f61223a222e2e227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "recover",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "2966034091fa441a64dce2d9397564f581733661ec6bad2ba569e682d127eb400edb8f5e13978860181f5b6e686fda72935e3100c2ceffe269b65beb0ed7a103",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "proofs/verify_invalid/unknown_op",
+      "title": "an op that is not on the list",
+      "op": "proof.verify",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "body": "7b226d6574686f645f74797065223a332c226d6574686f645f6964223a223031227d",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "op": "unlock-method.frobnicate",
+        "pk": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "proof": "96516610f997f6aee1e1fb06a8555d1795d4a88b2bcf8ddb6d31cf26c9428dd8de2c76ca9f2594ff7b0926518ecbc5af601c06c400f49cff901cde52dba25805",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    }
+  ]
+}

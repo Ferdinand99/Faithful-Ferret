@@ -54,6 +54,13 @@ const GROUPS: &[Group] = &[
     ("internal/cbor-limits.json", item_groups::cbor_limits),
     ("internal/padding.json", item_groups::padding),
     ("internal/item.json", item_groups::item),
+    ("internal/tomb-tag.json", item_groups::integrity::tomb_tag),
+    (
+        "internal/checkpoint.json",
+        item_groups::integrity::checkpoint,
+    ),
+    ("internal/proofs.json", item_groups::integrity::proofs),
+    ("internal/rekey.json", item_groups::integrity::rekey),
 ];
 
 /// Serializes a vector file the way every generated file is written:
