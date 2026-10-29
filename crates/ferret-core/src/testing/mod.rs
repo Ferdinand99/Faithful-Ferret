@@ -13,6 +13,7 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod item;
 pub mod keys;
 pub mod prim;
 mod replay_rng;

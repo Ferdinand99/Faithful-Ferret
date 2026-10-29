@@ -1,0 +1,39 @@
+[package]
+name = "ferret-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+# The fuzz targets use the same code as the release build; `test-support` is only
+# for the fixed vault key in `fuzz_envelope`, and this crate is never released.
+ferret-core = { path = "../crates/ferret-core", features = ["test-support"] }
+
+# Not a member of the root workspace (cargo-fuzz builds it with its own flags).
+[workspace]
+
+[[bin]]
+name = "fuzz_cbor_value"
+path = "fuzz_targets/fuzz_cbor_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_item_body"
+path = "fuzz_targets/fuzz_item_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_envelope"
+path = "fuzz_targets/fuzz_envelope.rs"
+test = false
+doc = false
+bench = false

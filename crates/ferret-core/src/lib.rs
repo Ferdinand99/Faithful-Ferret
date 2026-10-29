@@ -32,9 +32,12 @@
     )
 )]
 
+pub mod cbor;
 pub mod codes;
+pub mod envelope;
 pub mod error;
 pub mod ids;
+pub mod item;
 pub mod keys;
 pub mod ksf_profile;
 pub mod pinning;
@@ -48,8 +51,16 @@ pub mod tlv;
 pub mod wrap;
 
 pub use codes::{decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key};
+pub use envelope::{
+    SealedItem, decrypt_item, decrypt_manifest, encrypt_item, encrypt_manifest, item_tag,
+    parse_envelope, verify_item_tag,
+};
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
+pub use item::{
+    DecodedItem, Field, FieldKind, ItemBody, ItemType, Manifest, ManifestEntry, Passkey, Totp,
+    UrlEntry, UrlMatch,
+};
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};

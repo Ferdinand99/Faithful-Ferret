@@ -20,6 +20,8 @@ allow = [
   "Zlib",
   "AGPL-3.0-only",
   "AGPL-3.0-or-later",
+  # minicbor (CBOR for item bodies): permissive, OSI approved.
+  "BlueOak-1.0.0",
 ]
 
 [bans]
