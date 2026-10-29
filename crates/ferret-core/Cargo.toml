@@ -11,17 +11,23 @@ publish.workspace = true
 default = []
 # Replay and test RNGs, the vector loader and runner. Never part of a release
 # build: see scripts/check-no-test-support.sh.
-test-support = ["dep:serde", "dep:serde_json", "dep:hmac", "dep:sha2"]
+test-support = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 getrandom = "=0.4.3"
 subtle = "=2.6.1"
 zeroize = { version = "=1.9.1", default-features = false, features = ["alloc", "derive"] }
+# Primitives (Fase 1 section 3). Exact pins; `zeroize` clears key schedules
+# and Argon2 state where the crate offers it.
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["zeroize"] }
+hkdf = "=0.13.0"
+hmac = { version = "=0.13.0", features = ["zeroize"] }
+sha2 = { version = "=0.11.1", default-features = false, features = ["zeroize"] }
 # Only behind `test-support`:
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "=1.0.154", optional = true }
-hmac = { version = "=0.13.0", optional = true }
-sha2 = { version = "=0.11.1", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 getrandom = { version = "=0.4.3", features = ["wasm_js"] }
@@ -34,3 +40,9 @@ ferret-vectorgen = { path = "../../tools/vectorgen" }
 serde = "=1.0.229"
 serde_json = "=1.0.154"
 static_assertions = "=1.1.0"
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+# Independent Argon2 implementation (previous generation) to cross-check the
+# profile 1 known answers; and the ECDSA P-256 verifier that the passkey code
+# will use, here for the Wycheproof vectors.
+argon2_05 = { package = "argon2", version = "=0.5.3", default-features = false, features = ["alloc"] }
+p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"] }

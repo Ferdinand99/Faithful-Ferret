@@ -13,6 +13,7 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod prim;
 mod replay_rng;
 pub mod vector;
 

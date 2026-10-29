@@ -17,3 +17,8 @@ codegen-units = 1
 # overflow must never wrap silently in release builds of the crypto core.
 panic = "abort"
 overflow-checks = true
+
+# Dependencies are compiled with optimizations even in debug and test builds:
+# Argon2id at 64 MiB is far too slow unoptimized.
+[profile.dev.package."*"]
+opt-level = 3

@@ -34,13 +34,16 @@
 
 pub mod error;
 pub mod ids;
+pub mod prim;
 pub mod rng;
 pub mod secret;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod tlv;
 
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
+pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
 pub use rng::{OsRng, SecureRng};
 pub use secret::{
     AuthSeed, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, PrfOutput, PrfSeed,
@@ -48,3 +51,4 @@ pub use secret::{
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};
+pub use tlv::Tlv;
