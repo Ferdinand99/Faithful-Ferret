@@ -65,9 +65,9 @@ use opaque_ke::{
     CipherSuite, ClientLogin, ClientLoginFinishParameters, ClientRegistration,
     ClientRegistrationFinishParameters, CredentialResponse, Identifiers, RegistrationResponse,
 };
+use zeroize::Zeroize;
 #[cfg(feature = "test-support")]
 use zeroize::Zeroizing;
-use zeroize::Zeroize;
 
 /// Length of a `RegistrationResponse`: the evaluated element and the
 /// server's public key, 32 + 32 bytes.
