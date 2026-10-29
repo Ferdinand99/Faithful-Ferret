@@ -3,6 +3,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use ed25519_dalek::Verifier as _;
 use ferret_core::testing::prim::{
     aead_open, aead_seal, argon2_run_count, argon2id, argon2id_unchecked, ct_eq,
     ed25519_public_key, ed25519_sign, ed25519_verify, hkdf_sha256, hmac_sha256,
@@ -496,6 +497,82 @@ fn rfc8032_test_vectors_1_2_3_1024_sha() {
             ed25519_verify(&other_key, &msg, &sig),
             Err(Error::Decrypt),
             "{id}"
+        );
+    }
+}
+
+/// The group order L of Ed25519, little-endian (RFC 8032 section 5.1).
+const GROUP_ORDER_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+];
+
+/// `s + L` as 32 little-endian bytes (no overflow for `s < L`).
+fn add_group_order(s: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let mut carry = 0u16;
+    for i in 0..32 {
+        let sum = u16::from(s[i]) + u16::from(GROUP_ORDER_LE[i]) + carry;
+        out[i] = (sum & 0xff) as u8;
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0);
+    out
+}
+
+#[test]
+fn ed25519_rejects_identity_key_with_zero_s() {
+    // The public key is the identity point (small order) and the signature is
+    // R = identity, S = 0. The plain RFC 8032 check [S]B = R + [k]A passes for
+    // every message; the strict check refuses small-order keys.
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    let mut sig = [0u8; 64];
+    sig[0] = 1; // R = identity, S = 0
+
+    for msg in [&b""[..], b"any message", &[0u8; 100]] {
+        // Guard: the lenient verifier of the same crate accepts it, so this
+        // test fails if `verify_strict` is ever swapped for `verify`.
+        let lenient = ed25519_dalek::VerifyingKey::from_bytes(&identity).unwrap();
+        assert!(
+            lenient
+                .verify(msg, &ed25519_dalek::Signature::from_bytes(&sig))
+                .is_ok(),
+            "the crate's plain verify should accept this signature"
+        );
+        assert_eq!(ed25519_verify(&identity, msg, &sig), Err(Error::Decrypt));
+    }
+}
+
+#[test]
+fn ed25519_rejects_small_order_r() {
+    // A small-order R (the identity) under an honest key with S = 0: refused
+    // as an ordinary bad signature.
+    let seed = [0x42u8; 32];
+    let public = ed25519_public_key(&seed);
+    let mut sig = [0u8; 64];
+    sig[0] = 1;
+    assert_eq!(ed25519_verify(&public, b"msg", &sig), Err(Error::Decrypt));
+}
+
+#[test]
+fn ed25519_rejects_non_canonical_s() {
+    let file = load_json("external/rfc8032-ed25519.json");
+    for case in file["cases"].as_array().unwrap() {
+        let public = hex32(&case["public_key"]);
+        let msg = hex(&case["message"]);
+        let sig: [u8; 64] = hex(&case["signature"]).try_into().unwrap();
+        assert_eq!(ed25519_verify(&public, &msg, &sig), Ok(()));
+
+        // S + L is the same scalar modulo L but not the canonical encoding.
+        let mut malleable = sig;
+        malleable[32..].copy_from_slice(&add_group_order(&sig[32..]));
+        assert_ne!(malleable, sig);
+        assert_eq!(
+            ed25519_verify(&public, &msg, &malleable),
+            Err(Error::Decrypt),
+            "{}: S + L must be rejected",
+            case["id"]
         );
     }
 }

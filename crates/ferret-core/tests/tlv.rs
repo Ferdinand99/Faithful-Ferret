@@ -148,6 +148,31 @@ fn tlv_label_must_be_ascii() {
 }
 
 #[test]
+fn tlv_label_requires_the_suite_prefix() {
+    assert_eq!(tlv::LABEL_PREFIX, "ferret/v1/");
+    for bad in [
+        "",
+        "wrap",
+        "ferret/v1",
+        "ferret/v2/wrap",
+        "Ferret/v1/wrap",
+        " ferret/v1/wrap",
+        "xferret/v1/wrap",
+    ] {
+        assert_eq!(
+            Tlv::new().label(bad).finish().unwrap_err(),
+            Error::Malformed(MalformedKind::Tlv),
+            "{bad:?}"
+        );
+    }
+    // The prefix alone (an empty rest) is a valid label.
+    assert_eq!(
+        Tlv::new().label("ferret/v1/").finish().unwrap()[..3],
+        [tag::LABEL, 0x00, 0x0a]
+    );
+}
+
+#[test]
 fn tlv_lengths_are_u16_big_endian() {
     let v = vec![7u8; 258];
     let got = Tlv::new()

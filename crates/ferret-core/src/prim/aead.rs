@@ -31,6 +31,7 @@ fn cipher(key: &[u8; 32]) -> XChaCha20Poly1305 {
 ///
 /// Spec: Fase 1 § 3.1 (`AEAD(key, nonce, pt, aad)` is XChaCha20-Poly1305,
 /// stored as `nonce (24) ‖ ct ‖ tag (16)`) and § 5.4.
+#[allow(dead_code)] // first used by Task 4 (wrap, unwrap)
 pub(crate) fn aead_seal<R: SecureRng>(
     rng: &mut R,
     key: &[u8; 32],
@@ -39,10 +40,12 @@ pub(crate) fn aead_seal<R: SecureRng>(
 ) -> Result<Vec<u8>, Error> {
     let mut nonce = [0u8; NONCE_LEN];
     rng.fill(&mut nonce);
-    let mut buf = Vec::with_capacity(pt.len().saturating_add(TAG_LEN));
+    // The buffer holds the plaintext until it is encrypted in place; wipe it
+    // on every path, including the error return.
+    let mut buf = Zeroizing::new(Vec::with_capacity(pt.len().saturating_add(TAG_LEN)));
     buf.extend_from_slice(pt);
     cipher(key)
-        .encrypt_in_place(&XNonce::from(nonce), aad, &mut buf)
+        .encrypt_in_place(&XNonce::from(nonce), aad, &mut *buf)
         .map_err(|_| Error::TooLarge)?;
     let mut out = Vec::with_capacity(NONCE_LEN.saturating_add(buf.len()));
     out.extend_from_slice(&nonce);
@@ -58,6 +61,7 @@ pub(crate) fn aead_seal<R: SecureRng>(
 ///
 /// Spec: Fase 1 § 3.1 and § 5.3 (one error for every authentication
 /// failure).
+#[allow(dead_code)] // first used by Task 4 (wrap, unwrap)
 pub(crate) fn aead_open(
     key: &[u8; 32],
     aad: &[u8],

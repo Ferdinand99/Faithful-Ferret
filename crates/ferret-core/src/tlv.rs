@@ -10,6 +10,9 @@
 
 use crate::error::{Error, MalformedKind};
 
+/// Every label of suite 1 starts with this prefix. Spec: Fase 1 § 3.1.
+pub const LABEL_PREFIX: &str = "ferret/v1/";
+
 /// Largest value a single TLV field can carry.
 pub const MAX_VALUE_LEN: usize = u16::MAX as usize;
 
@@ -127,11 +130,13 @@ impl Tlv {
         }
     }
 
-    /// Appends the `label` field (tag `0x01`). The label must be ASCII; a
-    /// label that is not, or that is longer than [`MAX_VALUE_LEN`], makes
-    /// [`Tlv::finish`] fail.
+    /// Appends the `label` field (tag `0x01`). The label must be ASCII and
+    /// start with [`LABEL_PREFIX`] (`ferret/v1/`, suite 1); any other label,
+    /// or one longer than [`MAX_VALUE_LEN`], makes [`Tlv::finish`] fail with
+    /// `Malformed(Tlv)`, so a mistyped label cannot silently change the
+    /// domain separation of an AAD or salt.
     pub fn label(mut self, s: &'static str) -> Self {
-        if !s.is_ascii() {
+        if !s.is_ascii() || !s.starts_with(LABEL_PREFIX) {
             self.failed = Some(Error::Malformed(MalformedKind::Tlv));
             return self;
         }

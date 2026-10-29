@@ -10,10 +10,6 @@
 //! Each function wraps a RustCrypto crate and adds no cryptography of its
 //! own. Failures of authentication are always [`crate::Error::Decrypt`].
 
-// The functions are first used by later tasks (and by the `test-support`
-// wrappers), so a plain build sees them unused.
-#![allow(dead_code)]
-
 pub(crate) mod aead;
 pub(crate) mod argon2;
 pub(crate) mod ct;

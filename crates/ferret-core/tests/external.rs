@@ -166,7 +166,17 @@ fn wycheproof_ed25519_verify() {
     println!("ed25519 verify: {tally:?}");
     assert_eq!(tally.valid, 117);
     assert_eq!(tally.invalid, 64);
-    assert_eq!(tally.acceptable_accepted + tally.acceptable_rejected, 29);
+    // The strict verifier pins the "acceptable" cases: the 8 small-order public
+    // keys are rejected and the 21 mixed-order ones are accepted. Swapping
+    // `verify_strict` for `verify` accepts all 8 and fails here.
+    assert_eq!(
+        tally.acceptable_rejected, 8,
+        "small-order keys are rejected"
+    );
+    assert_eq!(
+        tally.acceptable_accepted, 21,
+        "mixed-order keys are accepted"
+    );
 }
 
 #[test]
