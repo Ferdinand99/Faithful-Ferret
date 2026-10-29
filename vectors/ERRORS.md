@@ -25,6 +25,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_export_header` | Export file header is malformed. |
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed. |
+| `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
 | `malformed_code` | Recovery or secret key code with a wrong prefix or a letter outside the alphabet. |
 | `too_large` | Larger than the allowed size. |
 | `read_only_schema` | The item has a newer schema and is read-only. |
@@ -42,6 +43,7 @@ share the single code `decrypt`, with no cause.
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |
 | `unsupported` | Not supported by this build or version. |
 | `pinned_server_url` | The server address differs from the one pinned on this device. |
+| `pinned_vault_id` | The vault differs from the one pinned on this device. |
 | `pinned_account_id` | The account differs from the one pinned on this device. |
 | `pinned_kek_generation` | A wrap has a lower `kek_generation` than the highest seen on this device. |
 | `pinned_vk_epoch` | The vault has a lower `vk_epoch` than the highest seen on this device. |

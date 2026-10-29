@@ -385,7 +385,7 @@ struct W {
 }
 
 impl W {
-    /// `aad_wrap`, or the PIN AAD of § 7.2. `kdf` overrides the 12 `kdf`
+    /// `aad_wrap`, or the PIN AAD of § 7.2 (same field order, no generation). `kdf` overrides the 12 `kdf`
     /// bytes of a password wrap (profile 1 otherwise).
     fn aad(&self, kdf: Option<[u8; 12]>) -> Vec<u8> {
         if let M::Pin(device_salt) = &self.m {
@@ -393,7 +393,9 @@ impl W {
                 label("ferret/v1/pin"),
                 t(0x03, &[1]),
                 t(0x10, &self.account),
+                t(0x11, &self.vault),
                 t(0x14, &[4]),
+                t(0x13, &self.method_id),
                 t(0x20, &self.epoch.to_be_bytes()),
                 t(0x37, device_salt),
             ]);
@@ -766,12 +768,13 @@ pub(crate) fn unlock() -> Result<Vec<u8>, Error> {
             open_input(&w, &s.kek, &s.wrap),
         );
     }
-    // The PIN wrap's AAD binds neither the vault, the method id nor the
-    // generation (§ 7.2), so these three are for the other four only.
+    // The PIN wrap's AAD has no kek_generation (§ 7.2), so that field is for
+    // the other four only.
     for (name, s) in [
         ("password", pw),
         ("recovery", rec),
         ("prf", prf),
+        ("pin", pin),
         ("device", dev),
     ] {
         let mut w = s.w.clone();
@@ -788,6 +791,13 @@ pub(crate) fn unlock() -> Result<Vec<u8>, Error> {
             &format!("{name}: another method id"),
             open_input(&w, &s.kek, &s.wrap),
         );
+    }
+    for (name, s) in [
+        ("password", pw),
+        ("recovery", rec),
+        ("prf", prf),
+        ("device", dev),
+    ] {
         let mut w = s.w.clone();
         w.generation += 1;
         bad(

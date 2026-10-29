@@ -123,10 +123,11 @@ pub struct WrapRecord {
 /// with `kdf` (12 bytes) for `password`, `credential_id` and `prf_salt` for
 /// `prf`, and nothing for `recovery` and `device`.
 ///
-/// The `pin` wrap uses the shorter AAD of Fase 1 § 7.2 verbatim:
-/// `TLV[label="ferret/v1/pin", suite, account_id, method_type=4, vk_epoch,
-/// device_salt]`. It binds neither the vault, the method id nor the
-/// generation: the wrap exists only on this device.
+/// The `pin` wrap uses the AAD of Fase 1 § 7.2, in the same field order as
+/// `aad_wrap`: `TLV[label="ferret/v1/pin", suite, account_id, vault_id,
+/// method_type=4, method_id, vk_epoch, device_salt]`. It has no
+/// `kek_generation`: the wrap exists only on this device and is replaced,
+/// never rolled forward.
 pub(crate) fn wrap_aad(
     ctx: &VaultContext,
     method_id: &MethodId,
@@ -138,7 +139,9 @@ pub(crate) fn wrap_aad(
             .label(LABEL_PIN)
             .u8(tag::SUITE, SUITE)
             .bytes(tag::ACCOUNT_ID, ctx.account_id.as_bytes())?
+            .bytes(tag::VAULT_ID, ctx.vault_id.as_bytes())?
             .u8(tag::METHOD_TYPE, TYPE_PIN)
+            .bytes(tag::METHOD_ID, method_id.as_bytes())?
             .u64(tag::VK_EPOCH, ctx.vk_epoch)
             .bytes(tag::DEVICE_SALT, device_salt)?
             .finish();

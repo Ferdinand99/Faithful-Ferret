@@ -7,15 +7,16 @@
 //! with a TLV salt (Fase 1 § 3.1) and a fixed `info`. Intermediate key bytes
 //! live in [`Zeroizing`] buffers and are wiped on every path.
 
-use crate::error::{Error, InputError};
+use crate::error::Error;
 use crate::ids::{AccountId, VaultId};
 use crate::ksf_profile::KsfProfile;
 use crate::prim::ed25519::{Ed25519Key, ed25519_from_seed};
 use crate::prim::{ct::ct_eq, hkdf::hkdf_sha256};
 use crate::rng::SecureRng;
 use crate::secret::{
-    AuthSeed, ExportKey, KDel, KHead, KMeta, Kek, PrfOutput, RecoveryKey, VaultKey,
+    AuthSeed, ExportKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput, RecoveryKey, VaultKey,
 };
+use crate::text::Pin;
 use crate::tlv::{Tlv, tag};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -44,12 +45,6 @@ const INFO_KEK_PRF: &[u8] = b"ferret/v1/kek/prf";
 /// Label and `info` of the mobile PIN KEK. Spec: Fase 1 § 7.4.
 const LABEL_KEK_PIN: &str = "ferret/v1/kek/pin";
 const INFO_KEK_PIN: &[u8] = b"ferret/v1/kek/pin";
-
-/// Shortest PIN in digits. Spec: Fase 1 § 7.2 ("minst 6 siffer").
-pub const PIN_MIN_DIGITS: usize = 6;
-/// Longest PIN in digits. Not in the design: a bound so that the input of
-/// the stretching function stays small.
-pub const PIN_MAX_DIGITS: usize = 64;
 
 /// What identifies a vault epoch: the account, the vault and `vk_epoch`.
 /// Public, not secret.
@@ -105,7 +100,10 @@ fn derive_all(ctx: &VaultContext, vk: &VaultKey) -> Result<DerivedKeys, Error> {
 /// An unlocked vault: the vault key and everything derived from it for one
 /// `vk_epoch`. There is no `Clone` and no `Debug`; all keys are wiped when
 /// the value is dropped.
+#[derive(ZeroizeOnDrop)]
 pub struct UnlockedVault {
+    /// Public ids and the epoch; nothing to wipe.
+    #[zeroize(skip)]
     ctx: VaultContext,
     vk: VaultKey,
     k_head: KHead,
@@ -115,11 +113,6 @@ pub struct UnlockedVault {
     /// exists.
     sk_a: Ed25519Key,
 }
-
-// Every field wipes itself on drop (secret types, and `ed25519-dalek` with
-// its `zeroize` feature); the test `unlocked_vault_zeroizes_all_keys` reads
-// the memory to prove it.
-impl ZeroizeOnDrop for UnlockedVault {}
 
 impl UnlockedVault {
     /// Derives `K_head`, `K_del`, `K_meta` and `(sk_a, pk_a)` from `vk` for
@@ -219,30 +212,11 @@ pub fn recovery_public_key(rk: &RecoveryKey, account_id: &AccountId) -> Result<[
     Ok(ed25519_from_seed(&*recovery_seed(rk, account_id)?).public_key())
 }
 
-/// Checks the PIN rules: ASCII digits only, [`PIN_MIN_DIGITS`] to
-/// [`PIN_MAX_DIGITS`] of them, no normalization.
-///
-/// Spec: Fase 1 § 7.2 (at least 6 digits) and plan U9 (a PIN is only digits
-/// and is not normalized).
-fn check_pin(pin: &[u8]) -> Result<(), Error> {
-    if !pin.iter().all(u8::is_ascii_digit) {
-        return Err(Error::InvalidInput(InputError::ForbiddenCharacter));
-    }
-    if pin.len() < PIN_MIN_DIGITS {
-        return Err(Error::InvalidInput(InputError::TooShort));
-    }
-    if pin.len() > PIN_MAX_DIGITS {
-        return Err(Error::InvalidInput(InputError::TooLong));
-    }
-    Ok(())
-}
-
 /// `Argon2id(PIN, device_salt, profile 1, 32)`.
-fn pin_stretch(pin: &[u8], device_salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, Error> {
-    check_pin(pin)?;
+fn pin_stretch(pin: &Pin, device_salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, Error> {
     let mut out = Zeroizing::new([0u8; 32]);
     crate::prim::argon2::argon2id(
-        pin,
+        pin.as_bytes(),
         device_salt,
         KsfProfile::P1.params(),
         out.as_mut_slice(),
@@ -305,7 +279,7 @@ impl Kek {
     ///
     /// Spec: Fase 1 § 7.2: `KEK_pin = Argon2id(PIN, device_salt, m = 64 MiB,
     /// t = 3, p = 1, L = 32)`.
-    pub fn from_pin_extension(pin: &[u8], device_salt: &[u8; 16]) -> Result<Kek, Error> {
+    pub fn from_pin_extension(pin: &Pin, device_salt: &[u8; 16]) -> Result<Kek, Error> {
         let mut kek = pin_stretch(pin, device_salt)?;
         Ok(Kek::from_array_wiping(&mut kek))
     }
@@ -319,14 +293,14 @@ impl Kek {
     /// ikm = KEK_dev_pin ‖ Argon2id(PIN, device_salt, m=64 MiB, t=3, p=1, 32),
     /// info = "ferret/v1/kek/pin")`.
     pub fn from_pin_mobile(
-        pin: &[u8],
+        pin: &Pin,
         device_salt: &[u8; 16],
-        kek_dev_pin: &[u8; 32],
+        kek_dev_pin: &KekDevPin,
     ) -> Result<Kek, Error> {
         let stretched = pin_stretch(pin, device_salt)?;
         let mut ikm = Zeroizing::new([0u8; 64]);
         let (head, tail) = ikm.split_at_mut(32);
-        head.copy_from_slice(kek_dev_pin);
+        head.copy_from_slice(kek_dev_pin.expose());
         tail.copy_from_slice(stretched.as_slice());
         let salt = Tlv::new()
             .label(LABEL_KEK_PIN)

@@ -41,6 +41,9 @@ pub enum MalformedKind {
     /// Recovery or secret key code: wrong prefix or a letter outside the
     /// alphabet.
     Code,
+    /// The pinned record: a value out of range or a record that would grow
+    /// without bound.
+    PinnedRecord,
 }
 
 /// Why a checkpoint did not verify.
@@ -75,6 +78,8 @@ pub enum PinnedField {
     ServerUrl,
     /// The account differs from the pinned one.
     AccountId,
+    /// The vault differs from the pinned one.
+    VaultId,
     /// A wrap has a lower `kek_generation` than the highest seen.
     KekGeneration,
     /// The vault context has a lower `vk_epoch` than the highest seen.
@@ -148,6 +153,7 @@ impl Error {
         Error::Malformed(MalformedKind::Tlv),
         Error::Malformed(MalformedKind::Entries),
         Error::Malformed(MalformedKind::Code),
+        Error::Malformed(MalformedKind::PinnedRecord),
         Error::TooLarge,
         Error::ReadOnlySchema,
         Error::TombstoneInvalid,
@@ -165,6 +171,7 @@ impl Error {
         Error::Unsupported,
         Error::Pinned(PinnedField::ServerUrl),
         Error::Pinned(PinnedField::AccountId),
+        Error::Pinned(PinnedField::VaultId),
         Error::Pinned(PinnedField::KekGeneration),
         Error::Pinned(PinnedField::VkEpoch),
         Error::Pinned(PinnedField::SkBit),
@@ -194,6 +201,7 @@ impl Error {
                 MalformedKind::Tlv => "malformed_tlv",
                 MalformedKind::Entries => "malformed_entries",
                 MalformedKind::Code => "malformed_code",
+                MalformedKind::PinnedRecord => "malformed_pinned_record",
             },
             Error::TooLarge => "too_large",
             Error::ReadOnlySchema => "read_only_schema",
@@ -215,6 +223,7 @@ impl Error {
             Error::Pinned(field) => match field {
                 PinnedField::ServerUrl => "pinned_server_url",
                 PinnedField::AccountId => "pinned_account_id",
+                PinnedField::VaultId => "pinned_vault_id",
                 PinnedField::KekGeneration => "pinned_kek_generation",
                 PinnedField::VkEpoch => "pinned_vk_epoch",
                 PinnedField::SkBit => "pinned_sk_bit",

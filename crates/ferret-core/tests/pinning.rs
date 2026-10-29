@@ -1,24 +1,25 @@
-//! The pinned record and its checks (Fase 1 § 4.2 and § 4.3, plan U19).
+//! The pinned record and its two unlock entry points (Fase 1 § 4.2 and
+//! § 4.3, plan U19).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod common;
 
 use common::*;
+use ferret_core::pinning::{MAX_CREDENTIAL_ID_LEN, MAX_FLOORS, MAX_GENERATION, MAX_URL_LEN};
 use ferret_core::testing::TestRng;
+use ferret_core::testing::keys::unlocked_vault_keys;
 use ferret_core::{
-    Error, Kek, KsfProfile, Method, Pinned, PinnedField, ServerView, UnlockedVault, VaultContext,
-    WrapRecord, unwrap_vk, wrap_vk,
+    Error, Kek, KsfProfile, MalformedKind, Method, MethodFloor, MethodKey, MethodManifestView,
+    Pinned, PinnedField, ServerView, UnlockedVault, VaultContext, WrapRecord, wrap_vk,
 };
 
 const URL: &str = "https://ferret.example";
 const SERVER_KEY: [u8; 32] = [0x99; 32];
+const KEK: [u8; 32] = [9; 32];
 
-struct Fixture {
-    ctx: VaultContext,
-    rec: WrapRecord,
-    vault: UnlockedVault,
-    pinned: Pinned,
+fn kek() -> Kek {
+    Kek::from_test_bytes(KEK)
 }
 
 fn seal(
@@ -27,47 +28,51 @@ fn seal(
     generation: u64,
     method: Method,
     vk_byte: u8,
-) -> (WrapRecord, UnlockedVault) {
-    let k = Kek::from_test_bytes([9; 32]);
+) -> WrapRecord {
     let mut rng = TestRng::new(b"pinning");
-    let rec = wrap_vk(
+    wrap_vk(
         &mut rng,
         c,
         &vk(vk_byte),
-        &k,
+        &kek(),
         method_id(method_id_byte),
         generation,
         method,
     )
-    .unwrap();
-    let vault = unwrap_vk(c, &k, &rec).unwrap();
-    (rec, vault)
+    .unwrap()
+}
+
+struct Fixture {
+    ctx: VaultContext,
+    rec: WrapRecord,
+    pinned: Pinned,
 }
 
 fn fixture() -> Fixture {
     let c = ctx();
-    let (rec, vault) = seal(&c, 0x70, 1, password_method(), 0x5a);
-    let pinned = Pinned::first_unlock(
+    let rec = seal(&c, 0x70, 1, password_method(), 0x5a);
+    let (pinned, vault) = Pinned::first_unlock(
         URL,
         KsfProfile::P1,
         true,
         Some(SERVER_KEY),
         &c,
         &rec,
-        &vault,
+        &kek(),
     )
     .unwrap();
+    assert_eq!(unlocked_vault_keys(&vault)[0], [0x5a; 32]);
     Fixture {
         ctx: c,
         rec,
-        vault,
         pinned,
     }
 }
 
-fn seen() -> ServerView<'static> {
+fn view(c: VaultContext) -> ServerView<'static> {
     ServerView {
         server_url: URL,
+        context: c,
         sk_bit: true,
         server_public_key: Some(SERVER_KEY),
     }
@@ -77,29 +82,66 @@ fn pinned_error(field: PinnedField) -> Error {
     Error::Pinned(field)
 }
 
+fn unlock(f: &mut Fixture, rec: &WrapRecord) -> Result<UnlockedVault, Error> {
+    f.pinned.unlock_server(&view(f.ctx), rec, &kek())
+}
+
+fn floor(p: &Pinned, key: &MethodKey) -> Option<u64> {
+    p.kek_generation_max
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, g)| *g)
+}
+
 #[test]
 fn first_unlock_pins_what_the_unlock_showed() {
     let f = fixture();
     assert_eq!(f.pinned.server_url, URL);
     assert_eq!(f.pinned.account_id, f.ctx.account_id);
+    assert_eq!(f.pinned.vault_id, f.ctx.vault_id);
     assert_eq!(f.pinned.ksf_profile, 1);
-    assert_eq!(f.pinned.kek_generation_max, vec![(method_id(0x70), 1)]);
+    assert_eq!(f.pinned.kek_generation_max, vec![(MethodKey::Password, 1)]);
     assert_eq!(f.pinned.vk_epoch_max, 1);
     assert!(f.pinned.sk_bit);
-    assert_eq!(f.pinned.pk_a, f.vault.auth_public_key());
     assert_eq!(f.pinned.server_public_key, Some(SERVER_KEY));
-    f.pinned.check_unlock(&f.ctx, &f.rec, &seen()).unwrap();
-    f.pinned.check_unlocked(&f.vault).unwrap();
+    let mut f = f;
+    let rec = f.rec.clone();
+    let vault = unlock(&mut f, &rec).unwrap();
+    assert_eq!(f.pinned.pk_a, vault.auth_public_key());
+}
+
+#[test]
+fn first_unlock_needs_a_server_wrap_and_a_good_kek() {
+    let c = ctx();
+    for method in [pin_method(), Method::Device] {
+        let rec = seal(&c, 0x78, 1, method, 0x5a);
+        assert_eq!(
+            Pinned::first_unlock(URL, KsfProfile::P1, true, None, &c, &rec, &kek()).err(),
+            Some(Error::Unsupported)
+        );
+    }
+    let rec = seal(&c, 0x70, 1, password_method(), 0x5a);
+    let wrong = Kek::from_test_bytes([10; 32]);
+    assert_eq!(
+        Pinned::first_unlock(URL, KsfProfile::P1, true, None, &c, &rec, &wrong).err(),
+        Some(Error::Decrypt)
+    );
+    let long_url = "u".repeat(MAX_URL_LEN + 1);
+    assert_eq!(
+        Pinned::first_unlock(&long_url, KsfProfile::P1, true, None, &c, &rec, &kek()).err(),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
 }
 
 #[test]
 fn pinned_rejects_lower_generation_epoch_profile() {
-    // Lower kek_generation than seen for that wrap.
+    // Lower kek_generation than seen for the password wrap.
     let mut f = fixture();
-    f.pinned.kek_generation_max = vec![(method_id(0x70), 3)];
+    f.pinned.kek_generation_max = vec![(MethodKey::Password, 3)];
+    let rec = f.rec.clone();
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &seen()),
-        Err(pinned_error(PinnedField::KekGeneration))
+        unlock(&mut f, &rec).err(),
+        Some(pinned_error(PinnedField::KekGeneration))
     );
     assert_eq!(
         Error::Pinned(PinnedField::KekGeneration).code(),
@@ -109,69 +151,96 @@ fn pinned_rejects_lower_generation_epoch_profile() {
     // Lower vk_epoch than seen.
     let mut f = fixture();
     f.pinned.vk_epoch_max = 2;
+    let rec = f.rec.clone();
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &seen()),
-        Err(pinned_error(PinnedField::VkEpoch))
-    );
-    assert_eq!(
-        f.pinned.check_unlocked(&f.vault),
-        Err(pinned_error(PinnedField::VkEpoch))
+        unlock(&mut f, &rec).err(),
+        Some(pinned_error(PinnedField::VkEpoch))
     );
 
     // KSF profile below the pinned one: a downgrade.
     let mut f = fixture();
     f.pinned.ksf_profile = 2;
+    let rec = f.rec.clone();
+    assert_eq!(unlock(&mut f, &rec).err(), Some(Error::KdfProfileDowngrade));
+}
+
+#[test]
+fn the_password_floor_survives_a_new_method_id() {
+    // Review: a password change that mints a fresh method_id must not reset
+    // the floor. The floor is keyed by method type.
+    let mut f = fixture();
+    let gen3 = seal(&f.ctx, 0x70, 3, password_method(), 0x5a);
+    unlock(&mut f, &gen3).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(3));
+
+    // A password wrap with another id and a lower generation is a rollback.
+    let other_id = seal(&f.ctx, 0x7f, 2, password_method(), 0x5a);
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &seen()),
-        Err(Error::KdfProfileDowngrade)
+        unlock(&mut f, &other_id).err(),
+        Some(pinned_error(PinnedField::KekGeneration))
     );
+    // With another id and a higher generation it is accepted and the single
+    // password floor moves up (there is no second entry).
+    let other_id4 = seal(&f.ctx, 0x7f, 4, password_method(), 0x5a);
+    unlock(&mut f, &other_id4).unwrap();
+    assert_eq!(f.pinned.kek_generation_max, vec![(MethodKey::Password, 4)]);
 }
 
 #[test]
 fn pinned_allows_the_upgrade_paths_only() {
-    let f = fixture();
+    let mut f = fixture();
 
-    // A higher kek_generation (a changed password) and a higher epoch (a
-    // rekey) are allowed.
+    // A higher kek_generation and a higher epoch (a rekey, with a new vault
+    // key and so a new pk_a) are allowed and advance the record.
     let c2 = VaultContext {
         vk_epoch: 2,
         ..f.ctx
     };
-    let (rec2, vault2) = seal(&c2, 0x70, 4, password_method(), 0x5b);
-    f.pinned.check_unlock(&c2, &rec2, &seen()).unwrap();
-    // pk_a is new in a new epoch, by design.
-    assert_ne!(vault2.auth_public_key(), f.pinned.pk_a);
-    f.pinned.check_unlocked(&vault2).unwrap();
+    let rec2 = seal(&c2, 0x70, 4, password_method(), 0x5b);
+    let vault2 = f.pinned.unlock_server(&view(c2), &rec2, &kek()).unwrap();
+    assert_eq!(f.pinned.vk_epoch_max, 2);
+    assert_eq!(f.pinned.pk_a, vault2.auth_public_key());
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(4));
 
-    // The same wrap with an equal generation and epoch is fine, too.
-    f.pinned.check_unlock(&f.ctx, &f.rec, &seen()).unwrap();
-
-    // But within the pinned epoch another vault key (so another pk_a) is not.
-    let (_, other) = seal(&f.ctx, 0x70, 1, password_method(), 0x5c);
+    // Within the pinned epoch another vault key (so another pk_a) is not
+    // allowed, and the record stays as it was.
+    let before = f.pinned.clone();
+    let other = seal(&c2, 0x70, 4, password_method(), 0x5c);
     assert_eq!(
-        f.pinned.check_unlocked(&other),
-        Err(pinned_error(PinnedField::AuthKey))
+        f.pinned.unlock_server(&view(c2), &other, &kek()).err(),
+        Some(pinned_error(PinnedField::AuthKey))
+    );
+    assert_eq!(f.pinned, before);
+
+    // The old epoch is a rollback now, also for a wrap whose generation is
+    // not lower.
+    let old_epoch = seal(&f.ctx, 0x70, 4, password_method(), 0x5a);
+    assert_eq!(
+        f.pinned
+            .unlock_server(&view(f.ctx), &old_epoch, &kek())
+            .err(),
+        Some(pinned_error(PinnedField::VkEpoch))
     );
 }
 
 #[test]
 fn pinned_sk_bit_mismatch_is_hard_error() {
-    let f = fixture();
+    let mut f = fixture();
+    let rec = f.rec.clone();
     // Pinned "SK: yes", the server says "no SK".
-    let view = ServerView {
+    let v = ServerView {
         sk_bit: false,
-        ..seen()
+        ..view(f.ctx)
     };
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::SkBit))
+        f.pinned.unlock_server(&v, &rec, &kek()).err(),
+        Some(pinned_error(PinnedField::SkBit))
     );
     // And the other way round.
-    let mut p = f.pinned.clone();
-    p.sk_bit = false;
+    f.pinned.sk_bit = false;
     assert_eq!(
-        p.check_unlock(&f.ctx, &f.rec, &seen()),
-        Err(pinned_error(PinnedField::SkBit))
+        unlock(&mut f, &rec).err(),
+        Some(pinned_error(PinnedField::SkBit))
     );
     // A hard error is not a decryption error ("wrong password").
     assert_ne!(pinned_error(PinnedField::SkBit), Error::Decrypt);
@@ -179,174 +248,353 @@ fn pinned_sk_bit_mismatch_is_hard_error() {
 }
 
 #[test]
-fn pinned_rejects_another_account_server_or_server_key() {
-    let f = fixture();
+fn pinned_rejects_another_account_vault_server_or_server_key() {
+    let mut f = fixture();
+    let rec = f.rec.clone();
 
-    let mut c2 = f.ctx;
-    c2.account_id = account(0x12);
-    assert_eq!(
-        f.pinned.check_unlock(&c2, &f.rec, &seen()),
-        Err(pinned_error(PinnedField::AccountId))
-    );
-
-    let view = ServerView {
-        server_url: "https://ferret.example.evil",
-        ..seen()
+    let c2 = VaultContext {
+        account_id: account(0x12),
+        ..f.ctx
     };
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::ServerUrl))
+        f.pinned.unlock_server(&view(c2), &rec, &kek()).err(),
+        Some(pinned_error(PinnedField::AccountId))
     );
-    // Exact comparison: not even the case of the host may differ.
-    let view = ServerView {
-        server_url: "https://Ferret.example",
-        ..seen()
+    let c2 = VaultContext {
+        vault_id: vault(0x23),
+        ..f.ctx
     };
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::ServerUrl))
+        f.pinned.unlock_server(&view(c2), &rec, &kek()).err(),
+        Some(pinned_error(PinnedField::VaultId))
     );
+
+    for url in ["https://ferret.example.evil", "https://Ferret.example"] {
+        let v = ServerView {
+            server_url: url,
+            ..view(f.ctx)
+        };
+        assert_eq!(
+            f.pinned.unlock_server(&v, &rec, &kek()).err(),
+            Some(pinned_error(PinnedField::ServerUrl)),
+            "{url}"
+        );
+    }
 
     // Another OPAQUE server public key, and none at all while one is pinned.
-    let view = ServerView {
-        server_public_key: Some([0x98; 32]),
-        ..seen()
-    };
-    assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::ServerKey))
-    );
-    let view = ServerView {
-        server_public_key: None,
-        ..seen()
-    };
-    assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::ServerKey))
-    );
+    for key in [Some([0x98; 32]), None] {
+        let v = ServerView {
+            server_public_key: key,
+            ..view(f.ctx)
+        };
+        assert_eq!(
+            f.pinned.unlock_server(&v, &rec, &kek()).err(),
+            Some(pinned_error(PinnedField::ServerKey))
+        );
+    }
 }
 
 #[test]
 fn an_unpinned_server_key_is_filled_in_once_and_then_fixed() {
     let mut f = fixture();
     f.pinned.server_public_key = None;
-    f.pinned.check_unlock(&f.ctx, &f.rec, &seen()).unwrap();
-    f.pinned
-        .accept_unlock(&f.ctx, &f.rec, &seen(), &f.vault)
-        .unwrap();
+    let rec = f.rec.clone();
+    unlock(&mut f, &rec).unwrap();
     assert_eq!(f.pinned.server_public_key, Some(SERVER_KEY));
-    let view = ServerView {
+    let v = ServerView {
         server_public_key: Some([0x98; 32]),
-        ..seen()
+        ..view(f.ctx)
     };
     assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &view),
-        Err(pinned_error(PinnedField::ServerKey))
+        f.pinned.unlock_server(&v, &rec, &kek()).err(),
+        Some(pinned_error(PinnedField::ServerKey))
     );
 }
 
 #[test]
-fn generations_are_tracked_per_wrap() {
-    // A password change raises the password wrap's generation. The recovery
-    // wrap keeps its own, lower counter and must still be accepted.
+fn a_failed_unlock_changes_nothing() {
     let mut f = fixture();
-    let (pw3, _) = seal(&f.ctx, 0x70, 3, password_method(), 0x5a);
-    f.pinned
-        .accept_unlock(&f.ctx, &pw3, &seen(), &f.vault)
-        .unwrap();
-    assert_eq!(f.pinned.kek_generation_max, vec![(method_id(0x70), 3)]);
-
-    let (recovery1, _) = seal(&f.ctx, 0x71, 1, Method::Recovery, 0x5a);
-    f.pinned.check_unlock(&f.ctx, &recovery1, &seen()).unwrap();
-
-    // The old password wrap is now a rollback.
-    assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &f.rec, &seen()),
-        Err(pinned_error(PinnedField::KekGeneration))
-    );
-    // A lower recovery generation is rejected once the recovery wrap has
-    // been seen at a higher one.
-    let (recovery2, _) = seal(&f.ctx, 0x71, 2, Method::Recovery, 0x5a);
-    f.pinned
-        .accept_unlock(&f.ctx, &recovery2, &seen(), &f.vault)
-        .unwrap();
-    assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &recovery1, &seen()),
-        Err(pinned_error(PinnedField::KekGeneration))
-    );
-}
-
-#[test]
-fn accept_unlock_records_maxima_and_a_failed_check_changes_nothing() {
-    let mut f = fixture();
-
-    // A rekey: epoch 2, a new vault key, a higher generation.
-    let c2 = VaultContext {
-        vk_epoch: 2,
-        ..f.ctx
-    };
-    let (rec2, vault2) = seal(&c2, 0x70, 2, password_method(), 0x5b);
-    f.pinned
-        .accept_unlock(&c2, &rec2, &seen(), &vault2)
-        .unwrap();
-    assert_eq!(f.pinned.vk_epoch_max, 2);
-    assert_eq!(f.pinned.pk_a, vault2.auth_public_key());
-    assert_eq!(f.pinned.kek_generation_max, vec![(method_id(0x70), 2)]);
-
-    // The old epoch is now a rollback, even for a wrap whose generation is
-    // not lower.
-    let (old_epoch_rec, _) = seal(&f.ctx, 0x70, 2, password_method(), 0x5a);
-    assert_eq!(
-        f.pinned.check_unlock(&f.ctx, &old_epoch_rec, &seen()),
-        Err(pinned_error(PinnedField::VkEpoch))
-    );
-
-    // A failing accept leaves the record exactly as it was.
+    let old = f.rec.clone();
+    let rec3 = seal(&f.ctx, 0x70, 3, password_method(), 0x5a);
+    unlock(&mut f, &rec3).unwrap();
     let before = f.pinned.clone();
-    let view = ServerView {
-        sk_bit: false,
-        ..seen()
-    };
-    assert!(f.pinned.accept_unlock(&c2, &rec2, &view, &vault2).is_err());
-    assert_eq!(f.pinned, before);
-    assert!(
-        f.pinned
-            .accept_unlock(&f.ctx, &f.rec, &seen(), &f.vault)
-            .is_err()
-    );
-    assert_eq!(f.pinned, before);
 
-    // A vault whose context is not the one presented is refused.
-    assert!(
+    // A wrong KEK: the pins pass, the wrap does not open.
+    let rec4 = seal(&f.ctx, 0x70, 4, password_method(), 0x5a);
+    assert_eq!(
         f.pinned
-            .accept_unlock(&c2, &rec2, &seen(), &f.vault)
-            .is_err()
+            .unlock_server(&view(f.ctx), &rec4, &Kek::from_test_bytes([10; 32]))
+            .err(),
+        Some(Error::Decrypt)
     );
-    assert_eq!(f.pinned, before);
+    assert_eq!(f.pinned, before, "wrong KEK");
+
+    // A tampered wrap.
+    let mut bad = rec4.clone();
+    bad.wrap[40] ^= 1;
+    assert_eq!(unlock(&mut f, &bad).err(), Some(Error::Decrypt));
+    assert_eq!(f.pinned, before, "tampered wrap");
+
+    // A rollback.
+    assert!(unlock(&mut f, &old).is_err());
+    assert_eq!(f.pinned, before, "rollback");
+
+    // Another vault key in the same epoch.
+    let other = seal(&f.ctx, 0x70, 4, password_method(), 0x5c);
+    assert_eq!(
+        unlock(&mut f, &other).err(),
+        Some(pinned_error(PinnedField::AuthKey))
+    );
+    assert_eq!(f.pinned, before, "pk_a mismatch");
+
+    // And the good one still works afterwards.
+    unlock(&mut f, &rec4).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(4));
 }
 
 #[test]
-fn local_wraps_start_their_own_generation_entry() {
-    // A PIN or device wrap has an id the record has never seen: accepted
-    // (its generation starts a new entry), and it never lowers a profile.
+fn recovery_and_passkey_floors_are_separate_and_keyed_by_type_and_credential() {
     let mut f = fixture();
-    let (pin_rec, pin_vault) = seal(&f.ctx, 0x78, 1, pin_method(), 0x5a);
-    f.pinned.check_unlock(&f.ctx, &pin_rec, &seen()).unwrap();
-    f.pinned
-        .accept_unlock(&f.ctx, &pin_rec, &seen(), &pin_vault)
-        .unwrap();
-    assert_eq!(f.pinned.ksf_profile, 1);
-    assert_eq!(f.pinned.kek_generation_max.len(), 2);
+    let rec = seal(&f.ctx, 0x71, 1, Method::Recovery, 0x5a);
+    unlock(&mut f, &rec).unwrap();
+    let prf = seal(&f.ctx, 0x75, 2, prf_method(), 0x5a);
+    unlock(&mut f, &prf).unwrap();
+    let Method::Prf { credential_id, .. } = prf_method() else {
+        unreachable!()
+    };
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(1));
+    assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(1));
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(credential_id)), Some(2));
+
+    // A password change leaves the recovery floor alone.
+    let pw3 = seal(&f.ctx, 0x70, 3, password_method(), 0x5a);
+    unlock(&mut f, &pw3).unwrap();
+    unlock(&mut f, &rec).unwrap();
+
+    // Another passkey starts its own floor.
+    let other = Method::Prf {
+        credential_id: vec![7; 16],
+        prf_salt: [1; 32],
+    };
+    let o1 = seal(&f.ctx, 0x76, 1, other.clone(), 0x5a);
+    unlock(&mut f, &o1).unwrap();
+    let o0 = seal(&f.ctx, 0x76, 0, other, 0x5a);
+    assert_eq!(
+        unlock(&mut f, &o0).err(),
+        Some(pinned_error(PinnedField::KekGeneration))
+    );
 }
 
 #[test]
-fn first_unlock_refuses_a_vault_of_another_context() {
-    let f = fixture();
-    let other = VaultContext {
-        vk_epoch: 5,
-        ..f.ctx
+fn local_wraps_are_never_recorded() {
+    let mut f = fixture();
+    let before = f.pinned.clone();
+    for method in [pin_method(), Method::Device] {
+        let rec = seal(&f.ctx, 0x78, u64::MAX, method, 0x5a);
+        // Not a server wrap: refused, and nothing recorded.
+        assert_eq!(unlock(&mut f, &rec).err(), Some(Error::Unsupported));
+        assert_eq!(f.pinned, before);
+        // A local unlock records nothing either, whatever the generation.
+        f.pinned.unlock_local(&rec, &kek()).unwrap();
+        assert_eq!(f.pinned, before);
+    }
+}
+
+#[test]
+fn generations_above_u32_max_are_malformed() {
+    let mut f = fixture();
+    let huge = seal(&f.ctx, 0x70, MAX_GENERATION + 1, password_method(), 0x5a);
+    assert_eq!(
+        unlock(&mut f, &huge).err(),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    assert_eq!(
+        Error::Malformed(MalformedKind::PinnedRecord).code(),
+        "malformed_pinned_record"
+    );
+    let max = seal(&f.ctx, 0x70, MAX_GENERATION, password_method(), 0x5a);
+    unlock(&mut f, &max).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(MAX_GENERATION));
+}
+
+#[test]
+fn the_record_has_a_size_cap() {
+    let mut f = fixture();
+    // Floors from the manifest: fill up to the cap.
+    let methods: Vec<MethodFloor> = (0..u8::try_from(MAX_FLOORS - 1).unwrap())
+        .map(|i| MethodFloor {
+            key: MethodKey::Prf(vec![i; 16]),
+            kek_generation: 1,
+        })
+        .collect();
+    f.pinned
+        .seed_from_manifest(&MethodManifestView { methods })
+        .unwrap();
+    assert_eq!(f.pinned.kek_generation_max.len(), MAX_FLOORS);
+
+    // One more key does not fit, and nothing is changed.
+    let before = f.pinned.clone();
+    let one_more = MethodManifestView {
+        methods: vec![MethodFloor {
+            key: MethodKey::Prf(vec![0xff; 16]),
+            kek_generation: 1,
+        }],
     };
-    assert!(
-        Pinned::first_unlock(URL, KsfProfile::P1, true, None, &other, &f.rec, &f.vault).is_err()
+    assert_eq!(
+        f.pinned.seed_from_manifest(&one_more),
+        Err(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    assert_eq!(f.pinned, before);
+
+    // An unlock with a passkey wrap that would need a new entry is refused
+    // before the wrap is opened.
+    let prf = seal(&f.ctx, 0x75, 1, prf_method(), 0x5a);
+    assert_eq!(
+        unlock(&mut f, &prf).err(),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    assert_eq!(f.pinned, before);
+
+    // An existing key can still be raised at the cap.
+    f.pinned
+        .seed_from_manifest(&MethodManifestView {
+            methods: vec![MethodFloor {
+                key: MethodKey::Prf(vec![0; 16]),
+                kek_generation: 5,
+            }],
+        })
+        .unwrap();
+
+    // A credential id over the limit is malformed.
+    let long = MethodManifestView {
+        methods: vec![MethodFloor {
+            key: MethodKey::Prf(vec![0; MAX_CREDENTIAL_ID_LEN + 1]),
+            kek_generation: 1,
+        }],
+    };
+    let mut g = fixture();
+    assert_eq!(
+        g.pinned.seed_from_manifest(&long),
+        Err(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+}
+
+#[test]
+fn seed_from_manifest_sets_floors_for_wraps_never_unlocked_with() {
+    let mut f = fixture();
+    let view_of = |recovery: u64| MethodManifestView {
+        methods: vec![
+            MethodFloor {
+                key: MethodKey::Password,
+                kek_generation: 2,
+            },
+            MethodFloor {
+                key: MethodKey::Recovery,
+                kek_generation: recovery,
+            },
+        ],
+    };
+    f.pinned.seed_from_manifest(&view_of(3)).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(2));
+
+    // The recovery wrap of an older generation (a leaked old RK) is refused,
+    // although this device never unlocked with a recovery wrap.
+    let old_rec = seal(&f.ctx, 0x71, 2, Method::Recovery, 0x5a);
+    assert_eq!(
+        unlock(&mut f, &old_rec).err(),
+        Some(pinned_error(PinnedField::KekGeneration))
+    );
+    let cur_rec = seal(&f.ctx, 0x71, 3, Method::Recovery, 0x5a);
+    unlock(&mut f, &cur_rec).unwrap();
+
+    // Floors only go up: an older manifest does not lower them.
+    f.pinned.seed_from_manifest(&view_of(1)).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Recovery), Some(3));
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(2));
+
+    // A bad entry anywhere changes nothing.
+    let before = f.pinned.clone();
+    let bad = MethodManifestView {
+        methods: vec![
+            MethodFloor {
+                key: MethodKey::Recovery,
+                kek_generation: 9,
+            },
+            MethodFloor {
+                key: MethodKey::Password,
+                kek_generation: MAX_GENERATION + 1,
+            },
+        ],
+    };
+    assert!(f.pinned.seed_from_manifest(&bad).is_err());
+    assert_eq!(f.pinned, before);
+}
+
+#[test]
+fn unlock_local_checks_account_epoch_and_pk_a_only() {
+    let mut f = fixture();
+    let rec = f.rec.clone();
+    unlock(&mut f, &rec).unwrap();
+
+    // PIN and device wraps open offline, without any server view.
+    for method in [pin_method(), Method::Device] {
+        let local = seal(&f.ctx, 0x78, 1, method, 0x5a);
+        let vault = f.pinned.unlock_local(&local, &kek()).unwrap();
+        assert_eq!(unlocked_vault_keys(&vault)[0], [0x5a; 32]);
+    }
+
+    // A server wrap goes through unlock_server only.
+    assert_eq!(
+        f.pinned.unlock_local(&f.rec, &kek()).err(),
+        Some(Error::Unsupported)
+    );
+
+    // A wrap of another epoch (for example from before a rekey) does not
+    // open: the epoch is in the AAD.
+    let old = seal(
+        &VaultContext {
+            vk_epoch: 0,
+            ..f.ctx
+        },
+        0x78,
+        1,
+        pin_method(),
+        0x5a,
+    );
+    assert_eq!(
+        f.pinned.unlock_local(&old, &kek()).err(),
+        Some(Error::Decrypt)
+    );
+    // Another account or vault: the same.
+    for c in [
+        VaultContext {
+            account_id: account(0x12),
+            ..f.ctx
+        },
+        VaultContext {
+            vault_id: vault(0x23),
+            ..f.ctx
+        },
+    ] {
+        let other = seal(&c, 0x78, 1, pin_method(), 0x5a);
+        assert_eq!(
+            f.pinned.unlock_local(&other, &kek()).err(),
+            Some(Error::Decrypt)
+        );
+    }
+    // A wrap of the right epoch around another vault key: pk_a differs.
+    let other_vk = seal(&f.ctx, 0x78, 1, pin_method(), 0x5c);
+    assert_eq!(
+        f.pinned.unlock_local(&other_vk, &kek()).err(),
+        Some(pinned_error(PinnedField::AuthKey))
+    );
+    // A wrong KEK is the single decrypt error.
+    let local = seal(&f.ctx, 0x78, 1, pin_method(), 0x5a);
+    assert_eq!(
+        f.pinned
+            .unlock_local(&local, &Kek::from_test_bytes([10; 32]))
+            .err(),
+        Some(Error::Decrypt)
     );
 }

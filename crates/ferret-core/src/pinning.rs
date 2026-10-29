@@ -1,53 +1,147 @@
 //! The pinned record: what a device remembers about an account after the
-//! first successful unlock, and the checks against it.
+//! first successful unlock, and the only two ways to unlock with it.
 //!
 //! Spec: Fase 1 § 4.2 ("Pinning og SK-bit"), § 4.3 ("Klienten husker høyeste
 //! `kek_generation` og `vk_epoch` per konto og avviser lavere") and plan
 //! U19 (the OPAQUE server public key is pinned too).
 //!
-//! The record is not secret, so its fields are public and it can be stored
-//! as it is. The server cannot change any of it. A mismatch is a hard,
-//! loud error ([`Error::Pinned`] or [`Error::KdfProfileDowngrade`]), never
-//! "wrong password". The core only checks and updates the record; storing it
-//! is the client's job.
+//! # Entry points
 //!
-//! What may change, and only through [`Pinned::accept_unlock`]:
+//! * [`Pinned::unlock_server`] for the wraps the server stores (password,
+//!   recovery, passkey). It checks the pins, opens the wrap, checks the vault
+//!   and advances the record, as one step. The record changes only when the
+//!   whole unlock succeeded; a failure of any kind leaves it as it was.
+//! * [`Pinned::unlock_local`] for the PIN and device wraps. It works offline
+//!   and has no server to compare with, so it checks only that the wrap
+//!   belongs to the pinned account, vault and epoch (through the AAD) and
+//!   that the vault's `pk_a` is the pinned one.
 //!
-//! * `ksf_profile` and the `kek_generation` of a method may go **up** (the
-//!   client-driven KSF upgrade of § 4.2 and a changed password, § 4.3);
-//! * `vk_epoch` may go up (a full rekey, § 4.7); `pk_a` follows the epoch;
-//! * a missing `server_public_key` is filled in once.
+//! The checks themselves are private: there is no way to open a wrap with a
+//! pinned record and forget to check, or to check one wrap and open another.
+//! ([`crate::unwrap_vk`] stays public for flows that have no pinned record
+//! yet, such as the first unlock of a new device and account creation.)
 //!
-//! Everything else (the account, the server address, the SK bit and a set
-//! server public key) never changes. Moving to another server means a new
-//! pinned record made from the emergency sheet, not an edit of this one.
+//! # What is recorded
+//!
+//! Only server-side methods have a `kek_generation` floor, and only floors
+//! that cannot be reset by the server: the password and recovery wraps are
+//! singletons (Fase 1 § 4.3: at least one of each), so they are keyed by
+//! method **type**, and a fresh `method_id` after a password change does not
+//! start from zero. A passkey wrap is keyed by its `credential_id`. PIN and
+//! device wraps are never recorded: their AAD does not bind a generation, and
+//! a local wrap that someone can edit must not be able to raise a floor.
+//!
+//! A device that unlocks with the password never sees the recovery or
+//! passkey wraps. Their floors are seeded from the decrypted method manifest
+//! with [`Pinned::seed_from_manifest`] (see [`MethodManifestView`]).
+//!
+//! The record has a fixed upper size ([`MAX_FLOORS`], [`MAX_URL_LEN`],
+//! [`MAX_CREDENTIAL_ID_LEN`]) and rejects generations above
+//! [`MAX_GENERATION`] as malformed, so a hostile value cannot brick later
+//! unlocks or make the record grow without bound.
+//!
+//! # What may change
+//!
+//! `ksf_profile`, the generation floors and `vk_epoch` (with its `pk_a`) only
+//! go up, and only through a successful unlock. The account, the vault, the
+//! server address, the SK bit and a set server public key never change.
+//! Moving to another server means a new pinned record from the emergency
+//! sheet, not an edit of this one.
+//!
+//! # Trust on first use of the server key
+//!
+//! `server_public_key` is optional so that a record can exist before the
+//! first login has shown the key. While it is `None`, the next successful
+//! server unlock pins whatever key the server shows, once (TOFU, by design,
+//! plan U19). From then on a different or missing key is a hard error.
 
-use crate::error::{Error, PinnedField};
-use crate::ids::{AccountId, MethodId};
+use crate::error::{Error, MalformedKind, PinnedField};
+use crate::ids::{AccountId, VaultId};
 use crate::keys::{UnlockedVault, VaultContext};
 use crate::ksf_profile::KsfProfile;
-use crate::wrap::{Method, WrapRecord};
+use crate::secret::Kek;
+use crate::wrap::{Method, WrapRecord, unwrap_vk};
+
+/// The most generation floors a record holds (password, recovery and passkey
+/// wraps).
+pub const MAX_FLOORS: usize = 64;
+/// The longest server address a record holds, in bytes (plan U17).
+pub const MAX_URL_LEN: usize = 512;
+/// The longest passkey credential id a record holds, in bytes (WebAuthn
+/// allows 1023).
+pub const MAX_CREDENTIAL_ID_LEN: usize = 1024;
+/// The highest `kek_generation` a record accepts. A generation counts
+/// password changes; a larger one is not a real value.
+pub const MAX_GENERATION: u64 = u32::MAX as u64;
+
+/// Which server-side wrap a generation floor belongs to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum MethodKey {
+    /// The password wrap, whatever its `method_id`.
+    Password,
+    /// The recovery wrap, whatever its `method_id`.
+    Recovery,
+    /// A passkey wrap, by credential id.
+    Prf(Vec<u8>),
+}
+
+impl MethodKey {
+    /// The key of a method, or `None` for the local methods (PIN, device),
+    /// which have no floor.
+    pub fn of(method: &Method) -> Option<MethodKey> {
+        match method {
+            Method::Password { .. } => Some(MethodKey::Password),
+            Method::Recovery => Some(MethodKey::Recovery),
+            Method::Prf { credential_id, .. } => Some(MethodKey::Prf(credential_id.clone())),
+            Method::Pin { .. } | Method::Device => None,
+        }
+    }
+}
+
+/// One entry of [`MethodManifestView`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MethodFloor {
+    /// The wrap.
+    pub key: MethodKey,
+    /// Its `kek_generation` according to the manifest.
+    pub kek_generation: u64,
+}
+
+/// What the pinned record needs from the decrypted method manifest (Fase 1
+/// § 4.3, F-07): the `kek_generation` of every server-stored method.
+///
+/// Task 6 builds the real manifest (`Manifest` with `(method_type,
+/// method_id, kek_generation)` per method) and fills this view from it,
+/// mapping a passkey's `method_id` to its `credential_id` with the server's
+/// `unlock_methods` row. Until then it is a plain list that tests fill by
+/// hand.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct MethodManifestView {
+    /// The methods, at most one entry per key.
+    pub methods: Vec<MethodFloor>,
+}
 
 /// What the device has pinned for one account.
 ///
 /// Spec: Fase 1 § 4.2: `(server_url, account_id, ksf_profile,
-/// kek_generation_max, vk_epoch_max, sk_bit, pk_a)`, plus the OPAQUE server
-/// public key (plan U19).
+/// kek_generation_max, vk_epoch_max, sk_bit, pk_a)`, plus the vault and the
+/// OPAQUE server public key (plan U19).
 ///
-/// `kek_generation_max` is kept per method id: the generations of the
-/// password, recovery and passkey wraps are independent counters (each wrap
-/// is replaced on its own), so one number per account would reject a valid
-/// recovery wrap after a password change.
+/// Build it with [`Pinned::first_unlock`] and store it. The fields are public
+/// so that a client can save and load the record; changing them by hand
+/// bypasses the checks.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Pinned {
     /// The server address, exactly as the client states it.
     pub server_url: String,
     /// The account.
     pub account_id: AccountId,
+    /// The vault.
+    pub vault_id: VaultId,
     /// The highest KSF profile used for the password wrap.
     pub ksf_profile: u8,
-    /// The highest `kek_generation` seen per method id.
-    pub kek_generation_max: Vec<(MethodId, u64)>,
+    /// The highest `kek_generation` seen per server-side wrap.
+    pub kek_generation_max: Vec<(MethodKey, u64)>,
     /// The highest `vk_epoch` seen.
     pub vk_epoch_max: u64,
     /// Whether the account has a secret key (SK). Never taken from the
@@ -55,7 +149,7 @@ pub struct Pinned {
     pub sk_bit: bool,
     /// `pk_a` of the vault at `vk_epoch_max`.
     pub pk_a: [u8; 32],
-    /// The OPAQUE server public key, if pinned yet.
+    /// The OPAQUE server public key, if pinned yet (see the module docs).
     pub server_public_key: Option<[u8; 32]>,
 }
 
@@ -64,6 +158,8 @@ pub struct Pinned {
 pub struct ServerView<'a> {
     /// The address the client is talking to.
     pub server_url: &'a str,
+    /// The account, vault and epoch the server presents the wrap for.
+    pub context: VaultContext,
     /// Whether the account has a secret key, as the server hints or the user
     /// answers. On a pinned device it must equal the pinned bit.
     pub sk_bit: bool,
@@ -71,10 +167,28 @@ pub struct ServerView<'a> {
     pub server_public_key: Option<[u8; 32]>,
 }
 
+fn malformed() -> Error {
+    Error::Malformed(MalformedKind::PinnedRecord)
+}
+
+/// Checks the size limits of one floor.
+fn check_floor(key: &MethodKey, generation: u64) -> Result<(), Error> {
+    if generation > MAX_GENERATION {
+        return Err(malformed());
+    }
+    if let MethodKey::Prf(credential_id) = key
+        && credential_id.len() > MAX_CREDENTIAL_ID_LEN
+    {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
 impl Pinned {
-    /// The record to store after the first successful unlock of an account
-    /// on this device. The caller has already checked `ksf` against the
-    /// client's own table and the floor, and the SK bit comes from the user.
+    /// The first unlock of an account on this device: opens `rec` with `kek`
+    /// and pins what it showed. The caller has already checked `ksf`
+    /// against the client's own table and the floor, and `sk_bit` comes from
+    /// the user. `rec` must be a server-side wrap.
     pub fn first_unlock(
         server_url: &str,
         ksf: KsfProfile,
@@ -82,41 +196,100 @@ impl Pinned {
         server_public_key: Option<[u8; 32]>,
         ctx: &VaultContext,
         rec: &WrapRecord,
-        vault: &UnlockedVault,
-    ) -> Result<Pinned, Error> {
-        if vault.context() != ctx {
-            return Err(Error::Decrypt);
+        kek: &Kek,
+    ) -> Result<(Pinned, UnlockedVault), Error> {
+        let key = MethodKey::of(&rec.method).ok_or(Error::Unsupported)?;
+        check_floor(&key, rec.kek_generation)?;
+        if server_url.len() > MAX_URL_LEN {
+            return Err(malformed());
         }
-        Ok(Pinned {
+        let vault = unwrap_vk(ctx, kek, rec)?;
+        let pinned = Pinned {
             server_url: server_url.to_owned(),
             account_id: ctx.account_id,
+            vault_id: ctx.vault_id,
             ksf_profile: ksf.number(),
-            kek_generation_max: vec![(rec.method_id, rec.kek_generation)],
+            kek_generation_max: vec![(key, rec.kek_generation)],
             vk_epoch_max: ctx.vk_epoch,
             sk_bit,
             pk_a: vault.auth_public_key(),
             server_public_key,
-        })
+        };
+        Ok((pinned, vault))
     }
 
-    /// Checks what the server presents before a wrap is opened.
+    /// The floor recorded for `key`.
+    fn floor(&self, key: &MethodKey) -> Option<u64> {
+        self.kek_generation_max
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, g)| *g)
+    }
+
+    /// Raises (or creates) the floor of `key`. The caller has checked the
+    /// limits.
+    fn raise_floor(&mut self, key: MethodKey, generation: u64) {
+        match self.kek_generation_max.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, g)) => *g = (*g).max(generation),
+            None => self.kek_generation_max.push((key, generation)),
+        }
+    }
+
+    /// Seeds the floors of methods this device never unlocks with from the
+    /// decrypted method manifest. A floor only goes up. Everything is
+    /// checked first; on an error the record is unchanged.
     ///
-    /// Rejects, in this order: another account, another server address, a
-    /// different SK bit, a different or missing server public key (when one
-    /// is pinned), a password wrap with a lower KSF profile
-    /// ([`Error::KdfProfileDowngrade`]), a wrap with a lower
-    /// `kek_generation` than seen for that method, and a lower `vk_epoch`.
-    /// Higher values are the allowed upgrade paths.
+    /// Fails with `malformed_pinned_record` for a generation above
+    /// [`MAX_GENERATION`], an over-long credential id, or more than
+    /// [`MAX_FLOORS`] floors in total.
+    pub fn seed_from_manifest(&mut self, view: &MethodManifestView) -> Result<(), Error> {
+        let mut new_keys: Vec<&MethodKey> = Vec::new();
+        for entry in &view.methods {
+            check_floor(&entry.key, entry.kek_generation)?;
+            if self.floor(&entry.key).is_none() && !new_keys.contains(&&entry.key) {
+                new_keys.push(&entry.key);
+            }
+        }
+        if self.kek_generation_max.len().saturating_add(new_keys.len()) > MAX_FLOORS {
+            return Err(malformed());
+        }
+        for entry in &view.methods {
+            self.raise_floor(entry.key.clone(), entry.kek_generation);
+        }
+        Ok(())
+    }
+
+    /// Unlocks with a wrap the server stores (password, recovery, passkey).
     ///
-    /// Spec: Fase 1 § 4.2 and § 4.3.
-    pub fn check_unlock(
-        &self,
-        ctx: &VaultContext,
-        rec: &WrapRecord,
+    /// In this order, and only the last step changes anything:
+    ///
+    /// 1. the pins: account, vault, server address, SK bit, server public
+    ///    key (when pinned), KSF profile ([`Error::KdfProfileDowngrade`] if
+    ///    lower), the wrap's `kek_generation` against its floor, and the
+    ///    epoch against `vk_epoch_max`;
+    /// 2. the wrap is opened ([`Error::Decrypt`] for any failure);
+    /// 3. within the pinned epoch the vault's `pk_a` must be the pinned one
+    ///    (in a higher epoch it is new, by design);
+    /// 4. the record advances: KSF profile, the wrap's floor, epoch and
+    ///    `pk_a`, and a server key that was not pinned yet.
+    ///
+    /// A PIN or device wrap is refused with [`Error::Unsupported`]; use
+    /// [`Pinned::unlock_local`].
+    pub fn unlock_server(
+        &mut self,
         seen: &ServerView<'_>,
-    ) -> Result<(), Error> {
+        rec: &WrapRecord,
+        kek: &Kek,
+    ) -> Result<UnlockedVault, Error> {
+        let ctx = seen.context;
+        let key = MethodKey::of(&rec.method).ok_or(Error::Unsupported)?;
+
+        // 1. The pins.
         if ctx.account_id != self.account_id {
             return Err(Error::Pinned(PinnedField::AccountId));
+        }
+        if ctx.vault_id != self.vault_id {
+            return Err(Error::Pinned(PinnedField::VaultId));
         }
         if seen.server_url != self.server_url {
             return Err(Error::Pinned(PinnedField::ServerUrl));
@@ -134,72 +307,59 @@ impl Pinned {
         {
             return Err(Error::KdfProfileDowngrade);
         }
-        if let Some((_, max)) = self
-            .kek_generation_max
-            .iter()
-            .find(|(id, _)| *id == rec.method_id)
-            && rec.kek_generation < *max
-        {
-            return Err(Error::Pinned(PinnedField::KekGeneration));
+        check_floor(&key, rec.kek_generation)?;
+        match self.floor(&key) {
+            Some(floor) if rec.kek_generation < floor => {
+                return Err(Error::Pinned(PinnedField::KekGeneration));
+            }
+            None if self.kek_generation_max.len() >= MAX_FLOORS => return Err(malformed()),
+            _ => {}
         }
         if ctx.vk_epoch < self.vk_epoch_max {
             return Err(Error::Pinned(PinnedField::VkEpoch));
         }
-        Ok(())
-    }
 
-    /// Checks the opened vault: the same account and context as presented,
-    /// and, within the pinned epoch, the pinned `pk_a`. In a higher epoch
-    /// (a rekey) `pk_a` is new by design.
-    pub fn check_unlocked(&self, vault: &UnlockedVault) -> Result<(), Error> {
-        let ctx = vault.context();
-        if ctx.account_id != self.account_id {
-            return Err(Error::Pinned(PinnedField::AccountId));
-        }
-        if ctx.vk_epoch < self.vk_epoch_max {
-            return Err(Error::Pinned(PinnedField::VkEpoch));
-        }
+        // 2. Open the wrap.
+        let vault = unwrap_vk(&ctx, kek, rec)?;
+
+        // 3. The vault.
         if ctx.vk_epoch == self.vk_epoch_max && vault.auth_public_key() != self.pk_a {
             return Err(Error::Pinned(PinnedField::AuthKey));
         }
-        Ok(())
-    }
 
-    /// Runs both checks and, only if both pass, records the new maxima: the
-    /// KSF profile of a password wrap, the wrap's `kek_generation`, the
-    /// epoch (with its `pk_a`) and a server public key that was not pinned
-    /// yet. Nothing changes when a check fails.
-    pub fn accept_unlock(
-        &mut self,
-        ctx: &VaultContext,
-        rec: &WrapRecord,
-        seen: &ServerView<'_>,
-        vault: &UnlockedVault,
-    ) -> Result<(), Error> {
-        self.check_unlock(ctx, rec, seen)?;
-        if vault.context() != ctx {
-            return Err(Error::Decrypt);
-        }
-        self.check_unlocked(vault)?;
-
+        // 4. Advance.
         if let Method::Password { ksf } = &rec.method {
             self.ksf_profile = self.ksf_profile.max(ksf.number());
         }
-        match self
-            .kek_generation_max
-            .iter_mut()
-            .find(|(id, _)| *id == rec.method_id)
-        {
-            Some((_, max)) => *max = (*max).max(rec.kek_generation),
-            None => self
-                .kek_generation_max
-                .push((rec.method_id, rec.kek_generation)),
-        }
+        self.raise_floor(key, rec.kek_generation);
         self.vk_epoch_max = ctx.vk_epoch;
         self.pk_a = vault.auth_public_key();
         if self.server_public_key.is_none() {
             self.server_public_key = seen.server_public_key;
         }
-        Ok(())
+        Ok(vault)
+    }
+
+    /// Unlocks with a PIN or device wrap. Works offline and changes nothing.
+    ///
+    /// The wrap is opened for the pinned account, vault and epoch, so a wrap
+    /// made for another account, vault or epoch (for example before a
+    /// rekey) fails with [`Error::Decrypt`]. The vault's `pk_a` must be the
+    /// pinned one. A server-side wrap is refused with [`Error::Unsupported`];
+    /// use [`Pinned::unlock_server`].
+    pub fn unlock_local(&self, rec: &WrapRecord, kek: &Kek) -> Result<UnlockedVault, Error> {
+        if MethodKey::of(&rec.method).is_some() {
+            return Err(Error::Unsupported);
+        }
+        let ctx = VaultContext {
+            account_id: self.account_id,
+            vault_id: self.vault_id,
+            vk_epoch: self.vk_epoch_max,
+        };
+        let vault = unwrap_vk(&ctx, kek, rec)?;
+        if vault.auth_public_key() != self.pk_a {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
+        Ok(vault)
     }
 }

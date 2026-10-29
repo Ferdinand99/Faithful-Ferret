@@ -148,7 +148,7 @@ proptest! {
         let mut ctx = i.ctx();
         let mut rec2 = rec.clone();
         // Which AAD fields the method binds. The PIN wrap's AAD (Fase 1
-        // § 7.2) has only account, epoch and device_salt.
+        // § 7.2) has no kek_generation.
         let is_pin = matches!(i.method, Method::Pin { .. });
         let flip16 = |b: &[u8; 16]| {
             let mut out = *b;
@@ -158,8 +158,8 @@ proptest! {
         match (field, &i.method) {
             (0, _) => ctx.account_id = AccountId::from_bytes(flip16(&i.account)),
             (1, _) => ctx.vk_epoch ^= u64::from(mask),
-            (2, _) if !is_pin => ctx.vault_id = VaultId::from_bytes(flip16(&i.vault)),
-            (3, _) if !is_pin => rec2.method_id = MethodId::from_bytes(flip16(&i.method_id)),
+            (2, _) => ctx.vault_id = VaultId::from_bytes(flip16(&i.vault)),
+            (3, _) => rec2.method_id = MethodId::from_bytes(flip16(&i.method_id)),
             (4, _) if !is_pin => rec2.kek_generation ^= u64::from(mask),
             (5, Method::Prf { credential_id, prf_salt }) => {
                 let mut cred = credential_id.clone();

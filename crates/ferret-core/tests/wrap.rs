@@ -12,8 +12,8 @@ use ferret_core::testing::prim::{aead_open_count, aead_seal, hkdf_sha256};
 use ferret_core::testing::vector::{self, Case, Outcome};
 use ferret_core::testing::{ReplayRng, TestRng, hex_encode};
 use ferret_core::{
-    AccountId, Error, ExportKey, Kek, KsfProfile, Method, MethodId, PrfOutput, RecoveryKey,
-    UnlockedVault, VaultContext, VaultId, VaultKey, WrapRecord, unwrap_vk, wrap_vk,
+    AccountId, Error, ExportKey, Kek, KekDevPin, KsfProfile, Method, MethodId, Pin, PrfOutput,
+    RecoveryKey, UnlockedVault, VaultContext, VaultId, VaultKey, WrapRecord, unwrap_vk, wrap_vk,
 };
 use serde_json::{Value, json};
 
@@ -165,8 +165,9 @@ fn wrap_aad_exact_bytes() {
     let rec = seal(Method::Device, &c, &k);
     assert_eq!(wrap_aad(&c, &rec).unwrap(), generic_aad(5, &[]), "device");
 
-    // The PIN AAD of § 7.2 verbatim: TLV[label="ferret/v1/pin", suite,
-    // account_id, method_type=4, vk_epoch, device_salt].
+    // The PIN AAD of § 7.2 in the order of aad_wrap: TLV[label="ferret/v1/pin",
+    // suite, account_id, vault_id, method_type=4, method_id, vk_epoch,
+    // device_salt]. No kek_generation.
     let rec = seal(pin_method(), &c, &k);
     assert_eq!(
         wrap_aad(&c, &rec).unwrap(),
@@ -174,7 +175,9 @@ fn wrap_aad_exact_bytes() {
             label("ferret/v1/pin"),
             t(0x03, &[1]),
             t(0x10, &[0x11; 16]),
+            t(0x11, &[0x22; 16]),
             t(0x14, &[4]),
+            t(0x13, &[0x33; 16]),
             t(0x20, &1u64.to_be_bytes()),
             t(0x37, &[0xc0; 16]),
         ]
@@ -207,7 +210,10 @@ fn aad_wrap_has_no_version_field() {
         [generic.as_slice(), &[0x31, 0x32]].concat()
     );
     assert_eq!(tags(Method::Device), generic);
-    assert_eq!(tags(pin_method()), [0x01, 0x03, 0x10, 0x14, 0x20, 0x37]);
+    assert_eq!(
+        tags(pin_method()),
+        [0x01, 0x03, 0x10, 0x11, 0x14, 0x13, 0x20, 0x37]
+    );
     for method in all_methods() {
         assert!(
             !tags(method.clone()).contains(&0x02),
@@ -512,8 +518,8 @@ fn unwrap_fails_on_each_aad_field() {
     };
     assert_decrypt(&c, &k, &r2, "prf_salt");
 
-    // The PIN wrap binds account, epoch and device_salt (and its method
-    // type, by being the PIN layout).
+    // The PIN wrap binds account, vault, method id, epoch and device_salt
+    // (and its method type, by being the PIN layout), but not the generation.
     let rec = seal(pin_method(), &c, &k);
     unwrap_vk(&c, &k, &rec).unwrap();
     let mut c2 = c;
@@ -522,6 +528,12 @@ fn unwrap_fails_on_each_aad_field() {
     let mut c2 = c;
     c2.vk_epoch = 2;
     assert_decrypt(&c2, &k, &rec, "pin: vk_epoch");
+    let mut c2 = c;
+    c2.vault_id = VaultId::from_bytes([0x23; 16]);
+    assert_decrypt(&c2, &k, &rec, "pin: vault_id");
+    let mut r2 = rec.clone();
+    r2.method_id = MethodId::from_bytes([0x34; 16]);
+    assert_decrypt(&c, &k, &r2, "pin: method_id");
     let r2 = WrapRecord {
         method: Method::Pin {
             device_salt: [0xc1; 16],
@@ -541,18 +553,14 @@ fn unwrap_fails_on_each_aad_field() {
 }
 
 #[test]
-fn pin_wrap_aad_follows_section_7_2_and_binds_no_vault_method_or_generation() {
-    // Spec: Fase 1 § 7.2 gives the PIN AAD verbatim; it has no vault_id,
-    // method_id or kek_generation. The wrap exists only on this device, and
-    // the test pins that choice down so a change is deliberate.
+fn pin_wrap_has_no_generation_in_its_aad() {
+    // The PIN wrap binds the vault and the method id (see the sabotage test
+    // above) but has no `kek_generation`: the wrap is local, replaced and
+    // never rolled forward, and its generation is not recorded anywhere.
     let c = ctx();
     let k = kek(9);
     let rec = seal(pin_method(), &c, &k);
-    let mut other_vault = c;
-    other_vault.vault_id = VaultId::from_bytes([0x23; 16]);
-    assert!(unwrap_vk(&other_vault, &k, &rec).is_ok());
     let mut r2 = rec.clone();
-    r2.method_id = MethodId::from_bytes([0x34; 16]);
     r2.kek_generation = 9;
     assert!(unwrap_vk(&c, &k, &r2).is_ok());
 }
@@ -644,18 +652,20 @@ fn run_seal(case: &Case, rng: &mut ReplayRng) -> Result<Outcome, Error> {
         }
         "wrap.seal.pin" => {
             let salt = hexn(&i["device_salt"]);
+            let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
             (
-                Kek::from_pin_extension(i["pin"].as_str().unwrap().as_bytes(), &salt)?,
+                Kek::from_pin_extension(&pin, &salt)?,
                 Method::Pin { device_salt: salt },
             )
         }
         "wrap.seal.pin_mobile" => {
             let salt = hexn(&i["device_salt"]);
+            let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
             (
                 Kek::from_pin_mobile(
-                    i["pin"].as_str().unwrap().as_bytes(),
+                    &pin,
                     &salt,
-                    &hexn(&i["kek_dev_pin"]),
+                    &KekDevPin::from_test_bytes(hexn(&i["kek_dev_pin"])),
                 )?,
                 Method::Pin { device_salt: salt },
             )

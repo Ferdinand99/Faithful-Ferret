@@ -52,15 +52,17 @@ pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;
-pub use pinning::{Pinned, ServerView};
+pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
 pub use rng::{OsRng, SecureRng};
 pub use secret::{
-    AuthSeed, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, PrfOutput, PrfSeed,
-    RecoveryKey, SecretKey, VaultKey,
+    AuthSeed, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput,
+    PrfSeed, RecoveryKey, SecretKey, VaultKey,
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};
-pub use text::{ExportPassword, MasterPassword, MpPolicy, OpaqueInput};
+pub use text::{
+    ExportPassword, MasterPassword, MpPolicy, OpaqueInput, PIN_MAX_DIGITS, PIN_MIN_DIGITS, Pin,
+};
 pub use tlv::Tlv;
 pub use wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};

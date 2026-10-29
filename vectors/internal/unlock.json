@@ -247,7 +247,7 @@
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fe7355fbf94e03099a65d628029c6e8f0521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect": {
         "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
@@ -274,7 +274,7 @@
         "method_id": "797a7b7c7d7e7f808182838485868788",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "2",
-        "wrap": "b0b59ad48ff87c8e9005b226f0554b9edb633ef4fc138261e1762659ee5b02855393312a3a39ce0b6fbd2d7ea42d7154f8f08048cb6e1d05bf871e9983ff243a5b669bebd2617ac3d682a459fc80df63c48f695ff1a59964d495fd4a7c6d54fd4c72ab2de142b16c"
+        "wrap": "b0b59ad48ff87c8e9005b226f0554b9edb633ef4fc138261e1762659ee5b02855393312a3a39ce0b6fbd2d7ea42d7154f8f08048cb6e1d054057074394a034b3aee6ecfad17bb602d682a459fc80df63c48f695ff1a59964d495fd4a7c6d54fd4c72ab2de142b16c"
       },
       "expect": {
         "pk_a": "0a938f7143a37246284d43a8f10adc77d7b29012df19049c93413ad3cbdacaf2",
@@ -301,7 +301,7 @@
         "method_id": "7a7b7c7d7e7f80818283848586878889",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "6ff6bfc7c82825f0a604ed6cb0ca31de6f8acd093e9ed2a2140c2e495892e882e4a5a03c9a0e1351be86a6152905cff0bb415d2754c41c67195c8fbe7485c62a673435dac9172af0a18a678b25f7ec5dda75283bd0a1fc4dbd755b644b5e9ec3382d5ec0d304d326"
+        "wrap": "6ff6bfc7c82825f0a604ed6cb0ca31de6f8acd093e9ed2a2140c2e495892e882e4a5a03c9a0e1351be86a6152905cff0bb415d2754c41c6709fcb4d79c4b4d8823352e604abe23eba18a678b25f7ec5dda75283bd0a1fc4dbd755b644b5e9ec3382d5ec0d304d326"
       },
       "expect": {
         "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
@@ -518,7 +518,7 @@
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fe7355fbf94e03099a65d628029c6e8f0521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect_error": "decrypt"
     },
@@ -541,7 +541,7 @@
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "2",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fe7355fbf94e03099a65d628029c6e8f0521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect_error": "decrypt"
     },
@@ -636,29 +636,6 @@
       "expect_error": "decrypt"
     },
     {
-      "id": "unlock/aad_generation_password/001",
-      "title": "password: another kek_generation",
-      "op": "wrap.open",
-      "status": "invalid",
-      "tags": [],
-      "synthetic": true,
-      "rng": [],
-      "input": {
-        "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "fef570943fc454e98a99c5d577c884417006f612c2e0bf5f2fdfb88d869099c6",
-        "kek_generation": "2",
-        "method": {
-          "ksf_profile": 1,
-          "type": "password"
-        },
-        "method_id": "707172737475767778797a7b7c7d7e7f",
-        "vault_id": "303132333435363738393a3b3c3d3e3f",
-        "vk_epoch": "1",
-        "wrap": "24018b6a706f21f026354225e588eb92f9f76ca7b2a5ecc3797e8f2f11e8323c91f446ccf79745e62f8466237c42f50baf22a0a2b1ef2f71b195775970866b1ac3ae27af71af400a8624993ce813881ae9362350eca7ca507f7c807b97c43e1a435664aa22b1607c"
-      },
-      "expect_error": "decrypt"
-    },
-    {
       "id": "unlock/aad_vault_recovery/001",
       "title": "recovery: another vault",
       "op": "wrap.open",
@@ -696,28 +673,6 @@
           "type": "recovery"
         },
         "method_id": "727475767778797a7b7c7d7e7f808182",
-        "vault_id": "303132333435363738393a3b3c3d3e3f",
-        "vk_epoch": "1",
-        "wrap": "2679ca81853fd09174673f51ead2e8ec05b58918d07c5fb154dff1ef6b982271ecf4916070e958f70ac992b05b38d49f12e43e86f7ac0d3e9f75ac92158d9d4747e5b54a2b61366e"
-      },
-      "expect_error": "decrypt"
-    },
-    {
-      "id": "unlock/aad_generation_recovery/001",
-      "title": "recovery: another kek_generation",
-      "op": "wrap.open",
-      "status": "invalid",
-      "tags": [],
-      "synthetic": true,
-      "rng": [],
-      "input": {
-        "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "a3933aee5ab13e14212a36112b6515673ae6980a714381173e4020567482a6e8",
-        "kek_generation": "2",
-        "method": {
-          "type": "recovery"
-        },
-        "method_id": "737475767778797a7b7c7d7e7f808182",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
         "wrap": "2679ca81853fd09174673f51ead2e8ec05b58918d07c5fb154dff1ef6b982271ecf4916070e958f70ac992b05b38d49f12e43e86f7ac0d3e9f75ac92158d9d4747e5b54a2b61366e"
@@ -773,8 +728,8 @@
       "expect_error": "decrypt"
     },
     {
-      "id": "unlock/aad_generation_prf/001",
-      "title": "prf: another kek_generation",
+      "id": "unlock/aad_vault_pin/001",
+      "title": "pin: another vault",
       "op": "wrap.open",
       "status": "invalid",
       "tags": [],
@@ -782,17 +737,39 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "569a9f5b97fd23383c039007f2bdafdb362ed9d182d7b0094371af6a94a2d9ad",
-        "kek_generation": "2",
+        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek_generation": "1",
         "method": {
-          "credential_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
-          "prf_salt": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-          "type": "prf"
+          "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "type": "pin"
         },
-        "method_id": "75767778797a7b7c7d7e7f8081828384",
+        "method_id": "78797a7b7c7d7e7f8081828384858687",
+        "vault_id": "313132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_method_id_pin/001",
+      "title": "pin: another method id",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek_generation": "1",
+        "method": {
+          "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "type": "pin"
+        },
+        "method_id": "79797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "fab883799183f5cf6dee2ecdd22eb78b9ea3e6d257f9c0d41caae1765b7f6155606880104d447479e0ec0c93d13f75f73db5634b51a2b0899071a1e269b4240c756b4ffff3a6776c"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect_error": "decrypt"
     },
@@ -837,6 +814,75 @@
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
         "wrap": "5620ea26b9762db46d6b638aec11e750985743c749bf6329a4c4e9d73516370b6846efc5247a36f39160cb6d9d6bd257f0d54fa0c1ce8c054c06477741e6ed19a89d153f07e988f2"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_generation_password/001",
+      "title": "password: another kek_generation",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "fef570943fc454e98a99c5d577c884417006f612c2e0bf5f2fdfb88d869099c6",
+        "kek_generation": "2",
+        "method": {
+          "ksf_profile": 1,
+          "type": "password"
+        },
+        "method_id": "707172737475767778797a7b7c7d7e7f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "24018b6a706f21f026354225e588eb92f9f76ca7b2a5ecc3797e8f2f11e8323c91f446ccf79745e62f8466237c42f50baf22a0a2b1ef2f71b195775970866b1ac3ae27af71af400a8624993ce813881ae9362350eca7ca507f7c807b97c43e1a435664aa22b1607c"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_generation_recovery/001",
+      "title": "recovery: another kek_generation",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "a3933aee5ab13e14212a36112b6515673ae6980a714381173e4020567482a6e8",
+        "kek_generation": "2",
+        "method": {
+          "type": "recovery"
+        },
+        "method_id": "737475767778797a7b7c7d7e7f808182",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "2679ca81853fd09174673f51ead2e8ec05b58918d07c5fb154dff1ef6b982271ecf4916070e958f70ac992b05b38d49f12e43e86f7ac0d3e9f75ac92158d9d4747e5b54a2b61366e"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_generation_prf/001",
+      "title": "prf: another kek_generation",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "569a9f5b97fd23383c039007f2bdafdb362ed9d182d7b0094371af6a94a2d9ad",
+        "kek_generation": "2",
+        "method": {
+          "credential_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf_salt": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "type": "prf"
+        },
+        "method_id": "75767778797a7b7c7d7e7f8081828384",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "fab883799183f5cf6dee2ecdd22eb78b9ea3e6d257f9c0d41caae1765b7f6155606880104d447479e0ec0c93d13f75f73db5634b51a2b0899071a1e269b4240c756b4ffff3a6776c"
       },
       "expect_error": "decrypt"
     },
@@ -1018,7 +1064,7 @@
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fe7355fbf94e03099a65d628029c6e8f0521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect_error": "decrypt"
     },
@@ -1380,7 +1426,7 @@
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fe7355fbf94e03099a65d628029c6e8f0531c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db531c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
       },
       "expect_error": "decrypt"
     },
