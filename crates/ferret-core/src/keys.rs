@@ -163,7 +163,6 @@ impl UnlockedVault {
     }
 
     /// `K_del`.
-    #[allow(dead_code)] // first used by Task 6 (tombstones)
     pub(crate) fn k_del(&self) -> &KDel {
         &self.k_del
     }
@@ -174,7 +173,6 @@ impl UnlockedVault {
     }
 
     /// `sk_a`.
-    #[allow(dead_code)] // first used by Task 6 (mutation proofs)
     pub(crate) fn auth_key(&self) -> &Ed25519Key {
         &self.sk_a
     }
@@ -185,7 +183,6 @@ impl UnlockedVault {
 /// Spec: Fase 1 § 4.5:
 /// `seed_r = HKDF-SHA256(salt = TLV[label="ferret/v1/recovery-sign",
 /// account_id], ikm = RK, info = "ferret/v1/recovery-sign", L = 32)`.
-#[allow(dead_code)] // first used by Task 6 (recovery proofs)
 pub(crate) fn recovery_signing_key(
     rk: &RecoveryKey,
     account_id: &AccountId,

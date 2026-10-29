@@ -13,12 +13,10 @@ pub(crate) const PUBLIC_KEY_LEN: usize = 32;
 /// `Clone`, `Debug` or comparison. `ZeroizeOnDrop` is derived, so the
 /// compiler checks that the inner key wipes itself.
 #[derive(ZeroizeOnDrop)]
-#[allow(dead_code)] // first used by Task 6 (mutation and recovery proofs)
 pub(crate) struct Ed25519Key(SigningKey);
 
 impl Ed25519Key {
     /// The public key.
-    #[allow(dead_code)] // first used by Task 6
     pub(crate) fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
         self.0.verifying_key().to_bytes()
     }
@@ -27,7 +25,6 @@ impl Ed25519Key {
 /// The signing key for `seed`; the seed is the RFC 8032 "secret key".
 ///
 /// Spec: Fase 1 § 3 and § 4.5 (Ed25519, RFC 8032 section 5.1.5).
-#[allow(dead_code)] // first used by Task 6
 pub(crate) fn ed25519_from_seed(seed: &[u8; 32]) -> Ed25519Key {
     Ed25519Key(SigningKey::from_bytes(seed))
 }
@@ -35,7 +32,6 @@ pub(crate) fn ed25519_from_seed(seed: &[u8; 32]) -> Ed25519Key {
 /// A pure Ed25519 signature of `msg` (RFC 8032 section 5.1.6).
 ///
 /// Spec: Fase 1 § 3 (Ed25519, RFC 8032).
-#[allow(dead_code)] // first used by Task 6
 pub(crate) fn ed25519_sign(key: &Ed25519Key, msg: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     // Signing with Ed25519 cannot fail; the error is mapped, not unwrapped.
     let signature = key.0.try_sign(msg).map_err(|_| Error::Unsupported)?;
@@ -50,7 +46,6 @@ pub(crate) fn ed25519_sign(key: &Ed25519Key, msg: &[u8]) -> Result<[u8; SIGNATUR
 /// Every failure, including a malformed public key, is [`Error::Decrypt`].
 ///
 /// Spec: Fase 1 § 3 and § 4.6 (Ed25519 verification, RFC 8032 section 5.1.7).
-#[allow(dead_code)] // first used by Task 6
 pub(crate) fn ed25519_verify(
     public: &[u8; PUBLIC_KEY_LEN],
     msg: &[u8],

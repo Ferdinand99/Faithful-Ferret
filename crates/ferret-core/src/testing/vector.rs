@@ -296,7 +296,12 @@ where
     match (case.status, result) {
         (Status::Valid, Ok(outcome)) => {
             if case.expect.as_ref() != Some(&outcome.output) {
-                return Err("output differs from expect".into());
+                // The path of the first difference, never the values.
+                let at = case
+                    .expect
+                    .as_ref()
+                    .map_or_else(String::new, |want| first_difference(want, &outcome.output));
+                return Err(format!("output differs from expect at {at}"));
             }
             if let (Some(want), Some(got)) = (&case.intermediate, &outcome.intermediate)
                 && want != got
@@ -320,4 +325,39 @@ where
     }
     rng.finish()
         .map_err(|e| format!("recorded draws not all consumed: {e:?}"))
+}
+
+/// The JSON pointers of the places where two values differ (at most eight),
+/// never the values.
+fn first_difference(want: &Value, got: &Value) -> String {
+    let mut found = Vec::new();
+    differences(want, got, String::new(), &mut found);
+    found.truncate(8);
+    found.join(", ")
+}
+
+fn differences(want: &Value, got: &Value, path: String, found: &mut Vec<String>) {
+    match (want, got) {
+        (Value::Object(a), Value::Object(b)) => {
+            for (k, v) in a {
+                match b.get(k) {
+                    Some(w) => differences(v, w, format!("{path}/{k}"), found),
+                    None => found.push(format!("{path}/{k} (missing)")),
+                }
+            }
+            for k in b.keys().filter(|k| !a.contains_key(*k)) {
+                found.push(format!("{path}/{k} (unexpected)"));
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            for (i, (v, w)) in a.iter().zip(b).enumerate() {
+                differences(v, w, format!("{path}/{i}"), found);
+            }
+            if a.len() != b.len() {
+                found.push(format!("{path} (length {} against {})", a.len(), b.len()));
+            }
+        }
+        _ if want != got => found.push(path),
+        _ => {}
+    }
 }

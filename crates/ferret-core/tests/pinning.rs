@@ -10,8 +10,9 @@ use ferret_core::pinning::{MAX_CREDENTIAL_ID_LEN, MAX_FLOORS, MAX_GENERATION, MA
 use ferret_core::testing::TestRng;
 use ferret_core::testing::keys::unlocked_vault_keys;
 use ferret_core::{
-    Error, Kek, KsfProfile, MalformedKind, Method, MethodFloor, MethodKey, MethodManifestView,
-    Pinned, PinnedField, ServerView, UnlockedVault, VaultContext, WrapRecord, wrap_vk,
+    Error, Kek, KsfProfile, MalformedKind, Manifest, ManifestEntry, Method, MethodFloor, MethodKey,
+    MethodManifestView, Pinned, PinnedField, ServerView, UnlockedVault, VaultContext, WrapRecord,
+    wrap_vk,
 };
 
 const URL: &str = "https://ferret.example";
@@ -347,9 +348,81 @@ fn a_failed_unlock_changes_nothing() {
     );
     assert_eq!(f.pinned, before, "pk_a mismatch");
 
+    // A passkey wrap would create a new floor key; with the wrong KEK it
+    // fails after every pin check has passed, and no floor is created.
+    let prf = seal(&f.ctx, 0x75, 2, prf_method(), 0x5a);
+    let Method::Prf { credential_id, .. } = prf_method() else {
+        unreachable!()
+    };
+    assert_eq!(
+        f.pinned
+            .unlock_server(&view(f.ctx), &prf, &Kek::from_test_bytes([10; 32]))
+            .err(),
+        Some(Error::Decrypt)
+    );
+    assert_eq!(f.pinned, before, "failed passkey unlock");
+    assert_eq!(
+        floor(&f.pinned, &MethodKey::Prf(credential_id.clone())),
+        None
+    );
+    // The same wrap made for another vault key fails on pk_a, still without a
+    // new floor.
+    let prf_other = seal(&f.ctx, 0x75, 2, prf_method(), 0x5c);
+    assert_eq!(
+        unlock(&mut f, &prf_other).err(),
+        Some(pinned_error(PinnedField::AuthKey))
+    );
+    assert_eq!(f.pinned, before, "passkey wrap of another vault key");
+
     // And the good one still works afterwards.
     unlock(&mut f, &rec4).unwrap();
     assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(4));
+    unlock(&mut f, &prf).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(credential_id)), Some(2));
+}
+
+#[test]
+fn a_failed_unlock_does_not_pin_the_server_key() {
+    let mut f = fixture();
+    f.pinned.server_public_key = None;
+    let before = f.pinned.clone();
+    let rec = f.rec.clone();
+
+    // A wrong KEK: the server key is shown, but nothing is pinned.
+    assert_eq!(
+        f.pinned
+            .unlock_server(&view(f.ctx), &rec, &Kek::from_test_bytes([10; 32]))
+            .err(),
+        Some(Error::Decrypt)
+    );
+    assert_eq!(f.pinned, before, "wrong KEK");
+    assert_eq!(f.pinned.server_public_key, None);
+
+    // Another vault key in the pinned epoch: the pk_a check fails last, after
+    // the wrap opened, and still nothing is pinned.
+    let other = seal(&f.ctx, 0x70, 1, password_method(), 0x5c);
+    assert_eq!(
+        unlock(&mut f, &other).err(),
+        Some(pinned_error(PinnedField::AuthKey))
+    );
+    assert_eq!(f.pinned, before, "pk_a mismatch");
+    assert_eq!(f.pinned.server_public_key, None);
+
+    // A rollback of the generation is refused before the wrap is opened.
+    let mut ahead = fixture();
+    ahead.pinned.server_public_key = None;
+    ahead.pinned.kek_generation_max = vec![(MethodKey::Password, 5)];
+    let before = ahead.pinned.clone();
+    assert_eq!(
+        unlock(&mut ahead, &rec).err(),
+        Some(pinned_error(PinnedField::KekGeneration))
+    );
+    assert_eq!(ahead.pinned, before);
+    assert_eq!(ahead.pinned.server_public_key, None);
+
+    // The successful unlock pins the key, once.
+    unlock(&mut f, &rec).unwrap();
+    assert_eq!(f.pinned.server_public_key, Some(SERVER_KEY));
 }
 
 #[test]
@@ -456,6 +529,7 @@ fn the_record_has_a_size_cap() {
     assert_eq!(f.pinned, before);
 
     // An existing key can still be raised at the cap.
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![0; 16])), Some(1));
     f.pinned
         .seed_from_manifest(&MethodManifestView {
             methods: vec![MethodFloor {
@@ -464,6 +538,11 @@ fn the_record_has_a_size_cap() {
             }],
         })
         .unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![0; 16])), Some(5));
+    assert_eq!(f.pinned.kek_generation_max.len(), MAX_FLOORS);
+    // The others are untouched, and the password floor too.
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![1; 16])), Some(1));
+    assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(1));
 
     // A credential id over the limit is malformed.
     let long = MethodManifestView {
@@ -596,5 +675,255 @@ fn unlock_local_checks_account_epoch_and_pk_a_only() {
             .unlock_local(&local, &Kek::from_test_bytes([10; 32]))
             .err(),
         Some(Error::Decrypt)
+    );
+}
+
+// ---------------------------------------------------- the method manifest
+
+fn manifest_with(methods: Vec<ManifestEntry>) -> Manifest {
+    Manifest::new(1, methods)
+}
+
+fn entry(t: u8, id: u8, g: u64) -> ManifestEntry {
+    ManifestEntry::new(t, method_id(id), g)
+}
+
+#[test]
+fn seed_from_manifest_refuses_a_repeated_key() {
+    let mut f = fixture();
+    let before = f.pinned.clone();
+    for key in [
+        MethodKey::Password,
+        MethodKey::Recovery,
+        MethodKey::Prf(vec![1; 16]),
+    ] {
+        let floor_of = |g| MethodFloor {
+            key: key.clone(),
+            kek_generation: g,
+        };
+        // The same key twice is refused, whatever the generations, and the
+        // record is left as it was.
+        for (a, b) in [(2, 2), (2, 9), (9, 2)] {
+            let view = MethodManifestView {
+                methods: vec![floor_of(a), floor_of(b)],
+            };
+            assert_eq!(
+                f.pinned.seed_from_manifest(&view),
+                Err(Error::Malformed(MalformedKind::PinnedRecord))
+            );
+            assert_eq!(f.pinned, before);
+        }
+    }
+    // A repeat that is not adjacent is found too.
+    let view = MethodManifestView {
+        methods: vec![
+            MethodFloor {
+                key: MethodKey::Recovery,
+                kek_generation: 1,
+            },
+            MethodFloor {
+                key: MethodKey::Prf(vec![2; 16]),
+                kek_generation: 1,
+            },
+            MethodFloor {
+                key: MethodKey::Recovery,
+                kek_generation: 1,
+            },
+        ],
+    };
+    assert!(f.pinned.seed_from_manifest(&view).is_err());
+    assert_eq!(f.pinned, before);
+}
+
+#[test]
+fn seed_from_manifest_stops_before_scanning_a_long_view() {
+    let mut f = fixture();
+    let before = f.pinned.clone();
+    // More entries than the record can hold: refused by length, whether the
+    // keys are distinct or not, so the work stays bounded.
+    let distinct: Vec<MethodFloor> = (0..=MAX_FLOORS)
+        .map(|i| MethodFloor {
+            key: MethodKey::Prf(i.to_be_bytes().to_vec()),
+            kek_generation: 1,
+        })
+        .collect();
+    assert_eq!(distinct.len(), MAX_FLOORS + 1);
+    let huge: Vec<MethodFloor> = (0..200_000)
+        .map(|_| MethodFloor {
+            key: MethodKey::Recovery,
+            kek_generation: 1,
+        })
+        .collect();
+    for methods in [distinct, huge] {
+        assert_eq!(
+            f.pinned.seed_from_manifest(&MethodManifestView { methods }),
+            Err(Error::Malformed(MalformedKind::PinnedRecord))
+        );
+        assert_eq!(f.pinned, before);
+    }
+    // MAX_FLOORS - 1 new keys fit next to the password floor.
+    let fits: Vec<MethodFloor> = (0..MAX_FLOORS - 1)
+        .map(|i| MethodFloor {
+            key: MethodKey::Prf(i.to_be_bytes().to_vec()),
+            kek_generation: 1,
+        })
+        .collect();
+    f.pinned
+        .seed_from_manifest(&MethodManifestView { methods: fits })
+        .unwrap();
+    assert_eq!(f.pinned.kek_generation_max.len(), MAX_FLOORS);
+}
+
+#[test]
+fn a_passkey_floor_is_keyed_by_the_credential_id_in_the_manifest() {
+    let mut f = fixture();
+    let credential = vec![0xa5; 20];
+    let manifest = manifest_with(vec![
+        entry(1, 0x70, 2),
+        entry(2, 0x71, 3),
+        ManifestEntry::passkey(method_id(0x75), 6, credential.clone()),
+    ]);
+    let view = MethodManifestView::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        view.methods,
+        vec![
+            MethodFloor {
+                key: MethodKey::Password,
+                kek_generation: 2
+            },
+            MethodFloor {
+                key: MethodKey::Recovery,
+                kek_generation: 3
+            },
+            MethodFloor {
+                key: MethodKey::Prf(credential.clone()),
+                kek_generation: 6
+            },
+        ]
+    );
+    f.pinned.seed_from_manifest(&view).unwrap();
+    assert_eq!(
+        floor(&f.pinned, &MethodKey::Prf(credential.clone())),
+        Some(6)
+    );
+
+    // A passkey wrap for that credential below the floor is refused, whatever
+    // `method_id` the server shows with it.
+    let wrap_for = |cred: &[u8], method_byte: u8, generation: u64| {
+        seal(
+            &f.ctx,
+            method_byte,
+            generation,
+            Method::Prf {
+                credential_id: cred.to_vec(),
+                prf_salt: [3; 32],
+            },
+            0x5a,
+        )
+    };
+    let wraps: Vec<(u8, WrapRecord)> = [0x75u8, 0x76, 0x99]
+        .into_iter()
+        .map(|b| (b, wrap_for(&credential, b, 5)))
+        .collect();
+    let current = wrap_for(&credential, 0x75, 6);
+    let other = wrap_for(&[0x5a; 20], 0x75, 1);
+    for (method_byte, old) in &wraps {
+        assert_eq!(
+            unlock(&mut f, old).err(),
+            Some(pinned_error(PinnedField::KekGeneration)),
+            "method id {method_byte:#x}"
+        );
+    }
+    unlock(&mut f, &current).unwrap();
+
+    // A different credential is a different floor: the manifest, not a
+    // mapping from the server, says which credential belongs to which entry.
+    unlock(&mut f, &other).unwrap();
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(vec![0x5a; 20])), Some(1));
+    assert_eq!(floor(&f.pinned, &MethodKey::Prf(credential)), Some(6));
+}
+
+#[test]
+fn from_manifest_takes_only_server_methods_with_what_it_needs() {
+    // PIN, device and unknown method types have no floor.
+    let m = manifest_with(vec![
+        entry(1, 0x70, 2),
+        entry(4, 0x78, 9),
+        entry(5, 0x79, 9),
+        entry(9, 0x7a, 9),
+    ]);
+    let view = MethodManifestView::from_manifest(&m).unwrap();
+    assert_eq!(
+        view.methods,
+        vec![MethodFloor {
+            key: MethodKey::Password,
+            kek_generation: 2
+        }]
+    );
+    assert!(
+        MethodManifestView::from_manifest(&manifest_with(vec![]))
+            .unwrap()
+            .methods
+            .is_empty()
+    );
+
+    // A passkey entry without a credential id cannot make a floor.
+    let missing = manifest_with(vec![entry(3, 0x75, 1)]);
+    assert_eq!(
+        MethodManifestView::from_manifest(&missing),
+        Err(Error::Malformed(MalformedKind::ItemBody))
+    );
+    // Two entries for one key are not guessed at.
+    for pair in [
+        vec![entry(1, 0x70, 1), entry(1, 0x72, 2)],
+        vec![entry(2, 0x71, 1), entry(2, 0x73, 2)],
+        vec![
+            ManifestEntry::passkey(method_id(0x75), 1, vec![1]),
+            ManifestEntry::passkey(method_id(0x76), 2, vec![1]),
+        ],
+    ] {
+        assert_eq!(
+            MethodManifestView::from_manifest(&manifest_with(pair)),
+            Err(Error::Malformed(MalformedKind::ItemBody))
+        );
+    }
+    // Two passkeys with different credentials are two floors.
+    let two = manifest_with(vec![
+        ManifestEntry::passkey(method_id(0x75), 1, vec![1]),
+        ManifestEntry::passkey(method_id(0x76), 2, vec![2]),
+    ]);
+    assert_eq!(
+        MethodManifestView::from_manifest(&two)
+            .unwrap()
+            .methods
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn the_manifest_entry_carries_the_credential_id() {
+    let mut m = manifest_with(vec![
+        entry(1, 0x70, 2),
+        ManifestEntry::passkey(method_id(0x75), 6, vec![0xa5; 20]),
+    ]);
+    m.methods[0].extra = vec![("label".into(), ferret_core::cbor::Value::text("main"))];
+    let bytes = m.to_cbor().unwrap();
+    let again = Manifest::from_cbor(&bytes).unwrap();
+    assert_eq!(again, m);
+    assert_eq!(again.to_cbor().unwrap(), bytes);
+    assert_eq!(again.methods[1].credential_id, Some(vec![0xa5; 20]));
+    assert_eq!(again.methods[0].credential_id, None);
+    // Without a credential id nothing extra is written: an entry that has
+    // none is the same bytes as in version 1 of the format.
+    let plain = manifest_with(vec![entry(1, 0x70, 2)]).to_cbor().unwrap();
+    assert!(!plain.windows(2).any(|w| w == [0x61, b'c']));
+    // A `c` that is not bytes is malformed.
+    let mut bad = manifest_with(vec![entry(3, 0x75, 1)]);
+    bad.methods[0].extra = vec![("c".into(), ferret_core::cbor::Value::text("x"))];
+    let bytes = bad.to_cbor().unwrap();
+    assert_eq!(
+        Manifest::from_cbor(&bytes),
+        Err(Error::Malformed(MalformedKind::ItemBody))
     );
 }

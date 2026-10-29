@@ -37,3 +37,10 @@ path = "fuzz_targets/fuzz_envelope.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_checkpoint"
+path = "fuzz_targets/fuzz_checkpoint.rs"
+test = false
+doc = false
+bench = false

@@ -33,7 +33,8 @@
 //!
 //! A device that unlocks with the password never sees the recovery or
 //! passkey wraps. Their floors are seeded from the decrypted method manifest
-//! with [`Pinned::seed_from_manifest`] (see [`MethodManifestView`]).
+//! with [`Pinned::seed_from_manifest`] (see [`MethodManifestView`]); a passkey
+//! floor is keyed by the credential id that the manifest itself carries.
 //!
 //! The record has a fixed upper size ([`MAX_FLOORS`], [`MAX_URL_LEN`],
 //! [`MAX_CREDENTIAL_ID_LEN`]) and rejects generations above
@@ -57,6 +58,7 @@
 
 use crate::error::{Error, MalformedKind, PinnedField};
 use crate::ids::{AccountId, VaultId};
+use crate::item::Manifest;
 use crate::keys::{UnlockedVault, VaultContext};
 use crate::ksf_profile::KsfProfile;
 use crate::secret::Kek;
@@ -110,15 +112,54 @@ pub struct MethodFloor {
 /// What the pinned record needs from the decrypted method manifest (Fase 1
 /// § 4.3, F-07): the `kek_generation` of every server-stored method.
 ///
-/// Task 6 builds the real manifest (`Manifest` with `(method_type,
-/// method_id, kek_generation)` per method) and fills this view from it,
-/// mapping a passkey's `method_id` to its `credential_id` with the server's
-/// `unlock_methods` row. Until then it is a plain list that tests fill by
-/// hand.
+/// Build it with [`MethodManifestView::from_manifest`]: the credential id of
+/// a passkey floor comes from the authenticated manifest entry, never from a
+/// mapping the server supplies. The view holds at most one entry per key and
+/// at most [`MAX_FLOORS`] entries; [`Pinned::seed_from_manifest`] refuses
+/// anything else.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct MethodManifestView {
     /// The methods, at most one entry per key.
     pub methods: Vec<MethodFloor>,
+}
+
+impl MethodManifestView {
+    /// The floors of the server-stored methods in a decrypted manifest.
+    ///
+    /// * password (`t` = 1) and recovery (`t` = 2) are keyed by type;
+    /// * a passkey (`t` = 3) is keyed by the `credential_id` in its manifest
+    ///   entry; an entry without one is `Malformed(ItemBody)`;
+    /// * PIN and device (`t` = 4, 5) are local and have no floor, and a
+    ///   method type this version does not know has none either;
+    /// * two entries for the same key are `Malformed(ItemBody)`: an
+    ///   authentic manifest never has them, and picking one would be a
+    ///   guess.
+    ///
+    /// Spec: Fase 1 § 4.3 (method manifest, F-07).
+    pub fn from_manifest(manifest: &Manifest) -> Result<Self, Error> {
+        let mut methods: Vec<MethodFloor> = Vec::new();
+        for entry in &manifest.methods {
+            let key = match entry.method_type {
+                1 => MethodKey::Password,
+                2 => MethodKey::Recovery,
+                3 => MethodKey::Prf(
+                    entry
+                        .credential_id
+                        .clone()
+                        .ok_or(Error::Malformed(MalformedKind::ItemBody))?,
+                ),
+                _ => continue,
+            };
+            if methods.iter().any(|m| m.key == key) {
+                return Err(Error::Malformed(MalformedKind::ItemBody));
+            }
+            methods.push(MethodFloor {
+                key,
+                kek_generation: entry.kek_generation,
+            });
+        }
+        Ok(Self { methods })
+    }
 }
 
 /// What the device has pinned for one account.
@@ -239,18 +280,32 @@ impl Pinned {
     /// decrypted method manifest. A floor only goes up. Everything is
     /// checked first; on an error the record is unchanged.
     ///
-    /// Fails with `malformed_pinned_record` for a generation above
+    /// The view must have at most one entry per key and at most
+    /// [`MAX_FLOORS`] entries (a longer view is refused before it is
+    /// scanned, so the work is bounded). It fails with
+    /// `malformed_pinned_record` for a repeated key, a generation above
     /// [`MAX_GENERATION`], an over-long credential id, or more than
     /// [`MAX_FLOORS`] floors in total.
     pub fn seed_from_manifest(&mut self, view: &MethodManifestView) -> Result<(), Error> {
-        let mut new_keys: Vec<&MethodKey> = Vec::new();
-        for entry in &view.methods {
+        if view.methods.len() > MAX_FLOORS {
+            return Err(malformed());
+        }
+        let mut new_keys: usize = 0;
+        for (i, entry) in view.methods.iter().enumerate() {
             check_floor(&entry.key, entry.kek_generation)?;
-            if self.floor(&entry.key).is_none() && !new_keys.contains(&&entry.key) {
-                new_keys.push(&entry.key);
+            if view
+                .methods
+                .iter()
+                .take(i)
+                .any(|earlier| earlier.key == entry.key)
+            {
+                return Err(malformed());
+            }
+            if self.floor(&entry.key).is_none() {
+                new_keys = new_keys.saturating_add(1);
             }
         }
-        if self.kek_generation_max.len().saturating_add(new_keys.len()) > MAX_FLOORS {
+        if self.kek_generation_max.len().saturating_add(new_keys) > MAX_FLOORS {
             return Err(malformed());
         }
         for entry in &view.methods {
