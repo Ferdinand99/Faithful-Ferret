@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "kdf",
   "suite": 1,
-  "spec": "Fase 1 § 4.1",
+  "spec": "Fase 1 § 4.1, § 4.3, § 4.5 and § 7",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",
@@ -257,6 +257,432 @@
         "password": "66657272657420746573742070617373776f7264",
         "salt": "00010203040506",
         "t": 3
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "kdf/kek_password/valid/001",
+      "title": "export key and account 1",
+      "op": "kdf.kek.password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "export_key": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "expect": {
+        "kek": "fef570943fc454e98a99c5d577c884417006f612c2e0bf5f2fdfb88d869099c6"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_password/valid/002",
+      "title": "other account, same export key",
+      "op": "kdf.kek.password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "export_key": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "expect": {
+        "kek": "648b1bb960711f7772711b72b8fedd6062855a10e9dcb3734f434de54f6fe194"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_password/valid/003",
+      "title": "same account, other export key",
+      "op": "kdf.kek.password",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "export_key": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60"
+      },
+      "expect": {
+        "kek": "0aaf16190d645eaf5c7637a879a92beea230dda9350aa26391e3b0844cf3ede9"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_recovery/valid/001",
+      "title": "recovery key and account 1",
+      "op": "kdf.kek.recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "rk": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "expect": {
+        "kek": "a3933aee5ab13e14212a36112b6515673ae6980a714381173e4020567482a6e8",
+        "pk_r": "6b9b25292716f5479fa970529fa8bf7e1915302e538218900e4583f67de93e12",
+        "seed_r": "84c56b5b48aab363218e21035855ed89c98bebcfbc811109e1024e5adc9ee316"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_recovery/valid/002",
+      "title": "other account, same recovery key",
+      "op": "kdf.kek.recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "rk": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "expect": {
+        "kek": "8371295f709f900da25412f98b1069ed723c521d097f27ba8a5db0feabdf1012",
+        "pk_r": "c36df336306472a93b4a3e73a5a3d4eb44ab995c18629f301d0cd18bf6aba8e5",
+        "seed_r": "9e5ca9f3972ed070f1ffe48c8130a2675aa390d9dd86d3fd65abef42de5268f2"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_recovery/valid/003",
+      "title": "same account, other recovery key",
+      "op": "kdf.kek.recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "rk": "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60"
+      },
+      "expect": {
+        "kek": "c9aa0b5fa672df70bd61240dd23655f2a46ef2abbd3ca167d59ab5fa04401c4e",
+        "pk_r": "b418473a0c96dfe2309104f2ca22390755738a13bc2c4587a84f40476970e28a",
+        "seed_r": "f5a7212f92023236562f67cd7f95054dec95fa346ca850fcabdb2fd904c7c616"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/vk_derive/valid/001",
+      "title": "epoch 1",
+      "op": "kdf.vk_derive",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "k_del": "6aaffc4e03e7f5f7d6caf16ec5bede959d33fa133dd905a15917003f1d4895c2",
+        "k_head": "a5af6646975466600999880633c26df436e23554342077f63e32ca1136259ee6",
+        "k_meta": "db206192cd1462ebc21b2519661a4285b46ed79d78b9d0dcc66ebbb8978ccf4e",
+        "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
+        "seed_a": "ddb54302f7b130d99e7da38c3fadeac941345fc217eb54404ed7ef7669440286"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/vk_derive/valid/002",
+      "title": "epoch 2: all four keys change",
+      "op": "kdf.vk_derive",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "2"
+      },
+      "expect": {
+        "k_del": "26e264b814332ff874204fc19ab382ff28ac2531a5e36ab6843381b5c16597f0",
+        "k_head": "cdb37bfee49d6104c8c976342d85a40664f9c13a0eb057cff3c74f227a5cf53b",
+        "k_meta": "e46b9a91bc899ed946a479bd54a225df471b9d05b142f25f27ee20a338901cce",
+        "pk_a": "45eb48dc314cbc29ceeb3b9b2881fe556d831aa33ea93369caab6cae2fdf34e4",
+        "seed_a": "e81315a7145bb91fe9b8ba851980e32d63c6f818ec74b24f213acd2b95349bbf"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/vk_derive/valid/003",
+      "title": "other account",
+      "op": "kdf.vk_derive",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "1112131415161718191a1b1c1d1e1f20",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "k_del": "962bd5752c379bb67080614d172756fbef1ac5b0c43c6154cd53fee5a608336a",
+        "k_head": "476c7fcbd466c554cc35563283cc22ff477647f44f9206b88fec17fa15288bfe",
+        "k_meta": "4994c681fa8ac60ab956e8be1ee0bb3f294b295770d5038b935593f962b706f6",
+        "pk_a": "9e5550d6c4094aaf03f06383a8e17f81c9d6977ecab678ab41c868bbd1bc04bb",
+        "seed_a": "47ef394f3080166c8e5f4e96f8418f52885f1986aad12aad6524cbb850c685d4"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/vk_derive/valid/004",
+      "title": "other vault",
+      "op": "kdf.vk_derive",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "vault_id": "3132333435363738393a3b3c3d3e3f40",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "k_del": "79105d5c4661663299ee3c4590c1257ed6d9b484c705f75e3b279e75a5f4ce85",
+        "k_head": "de04f256d1b9dbc97b15eff1e9ecb6e1b7f1636411139885538d3bf8913943d4",
+        "k_meta": "925b1bc9ac8edf76134b07df0815b7d98a6201a68df152b55a59a88217b03cfe",
+        "pk_a": "1129cb39bbf6d06c6c514daa6517ad6f94811258c72eab8326781ec1d6608ee8",
+        "seed_a": "1fdf9a0a4792eade1687368368ca8f7a32070f766b4aca960096da6212971b99"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/vk_derive/valid/005",
+      "title": "epoch above 2^32",
+      "op": "kdf.vk_derive",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "4294967297"
+      },
+      "expect": {
+        "k_del": "14458a7c3cffe4929d228a7515746672fa62a4f87e8b961da3097c542630d050",
+        "k_head": "36c715849190b215261a47eb518cfb5e5d22ced33bfe0788bf92590655b801ae",
+        "k_meta": "d1eed78ce77e4ebc2dc24c8a3c9506c20d40caa449c0eeb55500e7ba07f79835",
+        "pk_a": "7307d1140757704e11f2441157e4d4a1bb80a932ed6fbc91f7474ad464c6b2e5",
+        "seed_a": "5d785b7cc31aa34ae02c95c319ae210972604e27dfe5ae762694b2486ffbe158"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_prf/valid/001",
+      "title": "16-byte credential id",
+      "op": "kdf.kek.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "credential_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "prf_output": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+      },
+      "expect": {
+        "kek": "569a9f5b97fd23383c039007f2bdafdb362ed9d182d7b0094371af6a94a2d9ad"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_prf/valid/002",
+      "title": "other credential id, same PRF output",
+      "op": "kdf.kek.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "credential_id": "a1a2a3a4a5a6a7a8a9aaabacadaeafb0",
+        "prf_output": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+      },
+      "expect": {
+        "kek": "14737202a4bf4f0168820a2a97d92708df865182caf4766779620dd3052f9b19"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_prf/valid/003",
+      "title": "32-byte credential id",
+      "op": "kdf.kek.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "credential_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "prf_output": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+      },
+      "expect": {
+        "kek": "8fc61b9c205474291703472627a98ce404feabd03bb9171342c8a2880fc86a97"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_prf/valid/004",
+      "title": "empty credential id",
+      "op": "kdf.kek.prf",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "credential_id": "",
+        "prf_output": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+      },
+      "expect": {
+        "kek": "f4df7d0493a8b0e36f5d1bb28705c367526f724d549268a4a51ccf47415a4536"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_extension/valid/001",
+      "title": "six digits",
+      "op": "kdf.kek.pin_extension",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "123456"
+      },
+      "expect": {
+        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_extension/valid/002",
+      "title": "eight digits",
+      "op": "kdf.kek.pin_extension",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "98765432"
+      },
+      "expect": {
+        "kek": "1848922560f245b3156f53632ec00006c9c667b3806b15140a82921677c08efa"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_extension/invalid/001",
+      "title": "five digits are too few",
+      "op": "kdf.kek.pin_extension",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "12345"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "kdf/kek_pin_extension/invalid/002",
+      "title": "a letter is not a digit",
+      "op": "kdf.kek.pin_extension",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "12a456"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "kdf/kek_pin_extension/invalid/003",
+      "title": "fullwidth digits are not ASCII digits",
+      "op": "kdf.kek.pin_extension",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "１２３４５６"
+      },
+      "expect_error": "input_forbidden_character"
+    },
+    {
+      "id": "kdf/kek_pin_mobile/valid/001",
+      "title": "six digits",
+      "op": "kdf.kek.pin_mobile",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+        "pin": "123456"
+      },
+      "expect": {
+        "kek": "3367b28ed1370297efa86c761f462f893f3667305942fbb2bc2f3895f67049db"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_mobile/valid/002",
+      "title": "other hardware secret",
+      "op": "kdf.kek.pin_mobile",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "kek_dev_pin": "d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0",
+        "pin": "123456"
+      },
+      "expect": {
+        "kek": "2ddca037af3ef2f334716b3a0cea223f8bd162478d667ae32a611bc42f639d2f"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_mobile/invalid/001",
+      "title": "five digits are too few",
+      "op": "kdf.kek.pin_mobile",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+        "pin": "12345"
       },
       "expect_error": "input_too_short"
     }

@@ -65,6 +65,30 @@ pub enum CheckpointFailure {
     TopDigestMismatch,
 }
 
+/// Which pinned value a server or record contradicted. Spec: Fase 1 § 4.2
+/// ("Pinning og SK-bit") and § 4.3 (the client remembers the highest
+/// `kek_generation` and `vk_epoch` and rejects lower ones).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedField {
+    /// The server address differs from the pinned one.
+    ServerUrl,
+    /// The account differs from the pinned one.
+    AccountId,
+    /// A wrap has a lower `kek_generation` than the highest seen.
+    KekGeneration,
+    /// The vault context has a lower `vk_epoch` than the highest seen.
+    VkEpoch,
+    /// The secret key (SK) bit differs from the pinned one.
+    SkBit,
+    /// The OPAQUE server public key differs from the pinned one, or is
+    /// missing.
+    ServerKey,
+    /// The vault's authentication public key `pk_a` differs from the pinned
+    /// one within the same `vk_epoch`.
+    AuthKey,
+}
+
 /// The error type of the whole crate.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +123,9 @@ pub enum Error {
     NotAllowed,
     /// Not supported by this build or version.
     Unsupported,
+    /// A value pinned on this device was contradicted. A hard error with a
+    /// loud warning, never reported as a wrong password (Fase 1 § 4.2).
+    Pinned(PinnedField),
 }
 
 impl Error {
@@ -136,6 +163,13 @@ impl Error {
         Error::NonCanonical,
         Error::NotAllowed,
         Error::Unsupported,
+        Error::Pinned(PinnedField::ServerUrl),
+        Error::Pinned(PinnedField::AccountId),
+        Error::Pinned(PinnedField::KekGeneration),
+        Error::Pinned(PinnedField::VkEpoch),
+        Error::Pinned(PinnedField::SkBit),
+        Error::Pinned(PinnedField::ServerKey),
+        Error::Pinned(PinnedField::AuthKey),
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -178,6 +212,15 @@ impl Error {
             Error::NonCanonical => "non_canonical",
             Error::NotAllowed => "not_allowed",
             Error::Unsupported => "unsupported",
+            Error::Pinned(field) => match field {
+                PinnedField::ServerUrl => "pinned_server_url",
+                PinnedField::AccountId => "pinned_account_id",
+                PinnedField::KekGeneration => "pinned_kek_generation",
+                PinnedField::VkEpoch => "pinned_vk_epoch",
+                PinnedField::SkBit => "pinned_sk_bit",
+                PinnedField::ServerKey => "pinned_server_key",
+                PinnedField::AuthKey => "pinned_auth_key",
+            },
         }
     }
 }

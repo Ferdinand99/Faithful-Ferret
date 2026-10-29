@@ -32,6 +32,12 @@ pub fn argon2_run_count() -> usize {
     prim::argon2::RUNS.get()
 }
 
+/// How many AEAD opens have started on the calling thread. An unwrap with a
+/// wrong key commitment must leave this unchanged.
+pub fn aead_open_count() -> usize {
+    prim::aead::OPENS.get()
+}
+
 /// `nonce ‖ ct ‖ tag` under XChaCha20-Poly1305 with a nonce from `rng`.
 pub fn aead_seal<R: SecureRng>(
     rng: &mut R,

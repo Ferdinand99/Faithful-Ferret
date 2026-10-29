@@ -161,7 +161,7 @@ fn tlv_case(id: &str, title: &str, fields: Vec<Field>) -> Case {
 }
 
 /// Bytes `start, start+1, ...` (wrapping), a recognisable pattern.
-fn pattern(start: u8, len: usize) -> Vec<u8> {
+pub(crate) fn pattern(start: u8, len: usize) -> Vec<u8> {
     (0..len)
         .map(|i| start.wrapping_add(u8::try_from(i % 256).unwrap_or(0)))
         .collect()
@@ -511,11 +511,13 @@ pub(crate) fn kdf() -> Result<Vec<u8>, Error> {
         "input_too_short",
     ));
 
+    crate::key_groups::kdf_cases(&mut cases)?;
+
     let file = VectorFile {
         format: ferret_core::testing::vector::FORMAT.into(),
         group: "kdf".into(),
         suite: 1,
-        spec: "Fase 1 § 4.1".into(),
+        spec: "Fase 1 § 4.1, § 4.3, § 4.5 and § 7".into(),
         generator: generator(),
         cases,
     };

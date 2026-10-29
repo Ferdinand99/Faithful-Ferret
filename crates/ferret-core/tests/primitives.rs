@@ -99,7 +99,10 @@ fn argon2id_05(pwd: &[u8], salt: &[u8], p: KdfParams, out_len: usize) -> Vec<u8>
 
 #[test]
 fn argon2id_profile1_known_answer() {
-    let file = vector::load(&vectors_dir().join("internal/kdf.json")).unwrap();
+    // kdf.json also holds the key derivation cases (tests/keys.rs); this test
+    // takes the Argon2id ones.
+    let mut file = vector::load(&vectors_dir().join("internal/kdf.json")).unwrap();
+    file.cases.retain(|c| c.op == "kdf.argon2id");
     let report = vector::run_all(&file, |case: &Case, _rng: &mut ReplayRng| {
         assert_eq!(case.op, "kdf.argon2id");
         let input = &case.input;

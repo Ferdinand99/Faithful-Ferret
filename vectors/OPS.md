@@ -20,5 +20,18 @@ holds the op name in backticks.
 | `code.rk.decode` | `decode_recovery_key` | `recovery_key_decode` | `{ "code": string }`; separators are dropped before reading: `-`, ASCII whitespace, U+00A0, U+2013, U+2014. `expect` is `{ "key": hex }`. |
 | `code.sk.encode` | `encode_secret_key` | `secret_key_encode` | `{ "key": hex }` (16 bytes). `expect` is `{ "code": "FFS1-..." }`. |
 | `code.sk.decode` | `decode_secret_key` | `secret_key_decode` | `{ "code": string }`. `expect` is `{ "key": hex }`. |
+| `kdf.kek.password` | `Kek::from_export_key` | `kek_from_export_key` | `{ "account_id": hex16, "export_key": hex64 }`. `expect` is `{ "kek": hex32 }`. |
+| `kdf.kek.recovery` | `Kek::from_recovery_key`, `recovery_public_key` | `kek_from_recovery_key` | `{ "account_id": hex16, "rk": hex32 }`. `expect` is `{ "kek", "seed_r", "pk_r" }` (hex32 each). |
+| `kdf.vk_derive` | `UnlockedVault::from_vault_key` | `vault_derive_keys` | `{ "account_id": hex16, "vault_id": hex16, "vk_epoch": decimal string, "vk": hex32 }`. `expect` is `{ "k_head", "k_del", "k_meta", "seed_a", "pk_a" }` (hex32 each). |
+| `kdf.kek.prf` | `Kek::from_prf` | `kek_from_prf` | `{ "credential_id": hex (may be empty), "prf_output": hex32 }`. `expect` is `{ "kek": hex32 }`. The salt has no `account_id`. |
+| `kdf.kek.pin_extension` | `Kek::from_pin_extension` | `kek_from_pin_extension` | `{ "pin": string of digits, "device_salt": hex16 }`; profile 1. `expect` is `{ "kek": hex32 }`. |
+| `kdf.kek.pin_mobile` | `Kek::from_pin_mobile` | `kek_from_pin_mobile` | As `kdf.kek.pin_extension` plus `"kek_dev_pin": hex32`. `expect` is `{ "kek": hex32 }`. |
+| `wrap.seal.password` | `Kek::from_export_key`, then `wrap_vk` with `Method::Password` | `wrap_password` | `{ "account_id", "vault_id", "method_id": hex16, "vk_epoch", "kek_generation": decimal strings, "ksf_profile": 1, "export_key": hex64, "vk": hex32 }`. `rng` is the 24-byte nonce. `expect` is `{ "wrap": hex }` (104 bytes); `intermediate` is `{ "kek", "aad", "commit" }`. |
+| `wrap.seal.recovery` | `Kek::from_recovery_key`, then `wrap_vk` with `Method::Recovery` | `wrap_recovery` | The common fields above with `"rk": hex32` instead of the password fields. `expect` is a 72-byte wrap; `intermediate` is `{ "kek", "aad" }`. |
+| `wrap.seal.prf` | `Kek::from_prf`, then `wrap_vk` with `Method::Prf` | `wrap_prf` | The common fields with `"credential_id": hex`, `"prf_salt": hex32`, `"prf_output": hex32`. 72-byte wrap. |
+| `wrap.seal.pin` | `Kek::from_pin_extension`, then `wrap_vk` with `Method::Pin` | `wrap_pin` | The common fields with `"pin"` and `"device_salt": hex16`. 104-byte wrap; the AAD is the shorter one of Fase 1 § 7.2. |
+| `wrap.seal.pin_mobile` | `Kek::from_pin_mobile`, then `wrap_vk` with `Method::Pin` | `wrap_pin_mobile` | As `wrap.seal.pin` plus `"kek_dev_pin": hex32`. |
+| `wrap.seal.device` | `Kek::generate`, then `wrap_vk` with `Method::Device` | `wrap_device` | The common fields. `rng` is two draws: the 32-byte KEK, then the 24-byte nonce. 72-byte wrap; no commitment. |
+| `wrap.open` | `unwrap_vk` | `wrap_open` | The common fields plus `"kek": hex32`, `"wrap": hex` and `"method"`: `{ "type": "password", "ksf_profile": 1 }`, `{ "type": "recovery" }`, `{ "type": "prf", "credential_id", "prf_salt" }`, `{ "type": "pin", "device_salt" }` or `{ "type": "device" }`. `expect` is `{ "vk": hex32, "pk_a": hex32 }`; every failure is `decrypt`. |
 
 Text input is either `{ "utf8": hex }` (bytes, used for input that is not UTF-8) or `{ "segments": [ { "escapes": "U+0061 U+030A", "repeat": 12 } ] }`: the text is the concatenation of the segments, each segment being its code points repeated `repeat` times. A short text may also carry `"text"` for reading; it must equal the segments.

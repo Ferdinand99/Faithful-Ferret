@@ -41,3 +41,10 @@ share the single code `decrypt`, with no cause.
 | `non_canonical` | Recovery or secret key is valid but not in canonical form. |
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |
 | `unsupported` | Not supported by this build or version. |
+| `pinned_server_url` | The server address differs from the one pinned on this device. |
+| `pinned_account_id` | The account differs from the one pinned on this device. |
+| `pinned_kek_generation` | A wrap has a lower `kek_generation` than the highest seen on this device. |
+| `pinned_vk_epoch` | The vault has a lower `vk_epoch` than the highest seen on this device. |
+| `pinned_sk_bit` | The secret key (SK) bit differs from the one pinned on this device. |
+| `pinned_server_key` | The OPAQUE server public key differs from the pinned one, or is missing. |
+| `pinned_auth_key` | The vault's `pk_a` differs from the pinned one within the same `vk_epoch`. |

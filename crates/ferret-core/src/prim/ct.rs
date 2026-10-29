@@ -8,7 +8,6 @@ use subtle::ConstantTimeEq;
 ///
 /// Spec: Fase 1 § 14 (constant-time comparison of `commit`, MACs, tags and
 /// keys through `subtle`).
-#[allow(dead_code)] // first used by Task 4 (commit check)
 pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     bool::from(a.ct_eq(b))
 }

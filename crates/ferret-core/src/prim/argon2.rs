@@ -75,7 +75,7 @@ std::thread_local! {
 ///
 /// Spec: Fase 1 § 3 and § 4.1 (Argon2id v1.3, RFC 9106) with the bounds of
 /// § 4.1 point 5.
-#[allow(dead_code)] // first used by Task 4 (PIN wrap) and Task 7 (export)
+#[allow(dead_code)] // also used by Task 7 (export)
 pub(crate) fn argon2id(pwd: &[u8], salt: &[u8], p: KdfParams, out: &mut [u8]) -> Result<(), Error> {
     let p = check_kdf_params(p)?;
     derive(pwd, salt, None, &[], p, out)
