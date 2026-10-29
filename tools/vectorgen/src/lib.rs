@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod groups;
+mod key_groups;
 mod text_groups;
 
 use ferret_core::testing::{hex_encode, vector::VectorFile};
@@ -47,6 +48,8 @@ const GROUPS: &[Group] = &[
     ("internal/tlv.json", groups::tlv),
     ("internal/unicode.json", text_groups::unicode),
     ("internal/codes.json", text_groups::codes),
+    ("internal/wrap.json", key_groups::wrap),
+    ("internal/unlock.json", key_groups::unlock),
 ];
 
 /// Serializes a vector file the way every generated file is written:

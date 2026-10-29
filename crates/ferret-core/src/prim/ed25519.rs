@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use zeroize::ZeroizeOnDrop;
 
 /// Length of a signature in bytes.
 pub(crate) const SIGNATURE_LEN: usize = 64;
@@ -9,7 +10,9 @@ pub(crate) const SIGNATURE_LEN: usize = 64;
 pub(crate) const PUBLIC_KEY_LEN: usize = 32;
 
 /// An Ed25519 signing key made from a 32-byte seed. Zeroized on drop; no
-/// `Clone`, `Debug` or comparison.
+/// `Clone`, `Debug` or comparison. `ZeroizeOnDrop` is derived, so the
+/// compiler checks that the inner key wipes itself.
+#[derive(ZeroizeOnDrop)]
 #[allow(dead_code)] // first used by Task 6 (mutation and recovery proofs)
 pub(crate) struct Ed25519Key(SigningKey);
 

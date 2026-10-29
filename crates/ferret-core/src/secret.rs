@@ -83,6 +83,12 @@ secret_type!(
     32
 );
 secret_type!(
+    /// The hardware-bound secret `KEK_dev_pin` of the mobile PIN method
+    /// (Fase 1 § 7.4), as released by the platform keystore.
+    KekDevPin,
+    32
+);
+secret_type!(
     /// Recovery key (RK).
     RecoveryKey,
     32

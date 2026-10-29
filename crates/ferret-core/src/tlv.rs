@@ -13,6 +13,11 @@ use crate::error::{Error, MalformedKind};
 /// Every label of suite 1 starts with this prefix. Spec: Fase 1 § 3.1.
 pub const LABEL_PREFIX: &str = "ferret/v1/";
 
+/// The `suite` byte of every structure written by this version. Suite 1 is
+/// OPAQUE with the Argon2id profiles of Fase 1 § 4.2, HKDF-SHA256,
+/// XChaCha20-Poly1305 and Ed25519. Spec: Fase 1 § 3.
+pub const SUITE: u8 = 1;
+
 /// Largest value a single TLV field can carry.
 pub const MAX_VALUE_LEN: usize = u16::MAX as usize;
 
