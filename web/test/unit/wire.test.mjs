@@ -214,6 +214,7 @@ const SHAPES = {
   login_start_res: [["login_id", id], ["ke2", bytes(320)], ["ksf_profile", int(255)], ["sk_hint", bool]],
   login_finish_req: [
     ["login_id", id], ["ke3", bytes(64, "malformed_ke3")], ["device_id", id], ["device_name", deviceName, true],
+    ["purpose", oneOf("login", "reauth"), true],
   ],
   login_finish_res: [["account_id", id], ["vault_id", id], ["vk_epoch", int()]],
   handoff_req: [["purpose", oneOf("login", "reauth")], ["next", next], ["challenge", b32]],
