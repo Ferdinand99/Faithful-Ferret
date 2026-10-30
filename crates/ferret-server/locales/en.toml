@@ -1,0 +1,31 @@
+# Faithful Ferret's own interface strings (English, the source). Core strings
+# (sign-in, setup, users, Security, General, the layout) come from vole-kit; a
+# key may live in only one of the two.
+
+[login]
+subtitle = "Welcome back. Log in to manage your Faithful Ferret server."
+
+[setup]
+site_name_placeholder = "Home vault…"
+tz_after = ". You can change this in Settings."
+
+[users]
+roles_help = "Viewers can look but not change anything. Editors can change settings. Admins can do everything, including managing users."
+
+[tokens]
+sub = "API tokens are not used by Faithful Ferret yet."
+scope_read_sub = "Nothing yet"
+
+[auth]
+all_set = "You’re all set. Your vault is on its own address, separate from this admin page."
+setup_token_required = "This instance needs a setup token. Open /setup?token=… with the value of FERRET_SETUP_TOKEN from the server’s configuration."
+
+[error]
+back = "Back to settings"
+
+[general]
+sub = "How this instance names itself, where it is reached and how it tells time."
+base_url_help = "Where people reach the admin pages: used in links in messages. The web vault has its own address (FERRET_VAULT_URL)."
+
+[api]
+docs_subtitle = "Faithful Ferret has no public API reference yet."

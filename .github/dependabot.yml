@@ -61,6 +61,23 @@ updates:
       # with a new suite.
       - dependency-name: unicode-normalization
 
+  # The server: a workspace of its own (crates/ferret-server), built on vole-kit.
+  # Its requirements are caret versions equal to vole-kit's, so an update is a
+  # pull request that moves the lock; check-lock.sh and its cargo-deny policy
+  # run on it.
+  - package-ecosystem: cargo
+    directory: "/crates/ferret-server"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, rust]
+    ignore:
+      # Locked to Unicode 16.0 with the core (design § 3); updated by hand.
+      - dependency-name: unicode-normalization
+
   # The independent JavaScript reference for the test vectors.
   - package-ecosystem: npm
     directory: "/tools/xcheck"

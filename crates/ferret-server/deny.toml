@@ -1,0 +1,68 @@
+# cargo-deny policy of the server (crates/ferret-server), a workspace of its own:
+# run as
+#
+#     cargo deny --manifest-path crates/ferret-server/Cargo.toml --all-features \
+#         --config crates/ferret-server/deny.toml check
+#
+# The root policy (deny.toml) is stricter than this one can be: it forbids git
+# sources and duplicate versions, and the server builds on vole-kit, a git
+# dependency with hundreds of crates and duplicate versions of its own. What
+# stays the same: advisories and yanked crates are errors, licenses are a list,
+# there is no OpenSSL, and the crypto crates of ferret-core are held to the
+# root lock by crates/ferret-server/check-lock.sh.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[advisories]
+yanked = "deny"
+ignore = [
+  # crypto-bigint 0.5.5 timing issue. It is reached only through elliptic-curve 0.13,
+  # which opaque-ke 4.0 and voprf 0.5 pull in. Our OPAQUE suite is ristretto255
+  # (curve25519-dalek); from elliptic-curve it uses only the hash-based ExpandMsgXmd,
+  # which does not touch crypto-bigint, so no secret data reaches the affected code.
+  # Same entry as the root policy. Remove it when opaque-ke uses elliptic-curve 0.14.
+  { id = "RUSTSEC-2026-0387", reason = "not reachable with secret data from the ristretto255 OPAQUE suite; remove when opaque-ke uses elliptic-curve 0.14" },
+]
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "BSD-2-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Zlib",
+  "MPL-2.0",
+  "AGPL-3.0-only",
+  "AGPL-3.0-or-later",
+  # minicbor (CBOR for item bodies): permissive (Blue Oak Model License).
+  "BlueOak-1.0.0",
+  # aws-lc-sys (rustls' crypto): ISC AND Apache-2.0 AND OpenSSL (the permissive
+  # OpenSSL license; the OpenSSL library itself is not used).
+  "OpenSSL",
+]
+
+[bans]
+# vole-kit's tree has several crates in two versions (rand, getrandom, the
+# RustCrypto generation of opaque-ke next to ours). They are listed by the
+# warnings; the ones that matter, those under ferret-core, are held to the root
+# lock by check-lock.sh.
+multiple-versions = "warn"
+deny = [
+  { crate = "openssl", reason = "no OpenSSL: rustls with aws-lc-rs" },
+  { crate = "openssl-sys", reason = "no OpenSSL: rustls with aws-lc-rs" },
+  { crate = "native-tls", reason = "no OpenSSL: rustls with aws-lc-rs" },
+  # `argon2` and `opaque-ke` are the core's; the server has no line of its own
+  # for them (tests/workspace.rs checks it). They are not banned here, because
+  # the core brings them.
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# vole-kit, at a tag, from the repository of the same owner.
+allow-git = ["https://github.com/Ferdinand99/Vigilant-Vole"]
