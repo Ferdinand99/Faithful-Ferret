@@ -188,7 +188,7 @@ fn wrap_aad_exact_bytes() {
 
 #[test]
 fn aad_wrap_has_no_version_field() {
-    // Review focus 1: `version` is in the item and item-key AADs but NOT in
+    // `version` is in the item and item-key AADs but NOT in
     // `aad_wrap`. The tags of each AAD, in order.
     let c = ctx();
     let k = kek(9);

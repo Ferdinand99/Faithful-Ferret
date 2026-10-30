@@ -98,7 +98,7 @@ export function checkBody(value) {
   return { readOnly: false };
 }
 
-// Written back as OPS.md says (export.plain.json): the known keys in schema order (appendix B), then the
+// Written back as OPS.md says (export.plain.json): the known keys in schema order (item body schema), then the
 // unknown keys in the order they were read. Done at the top level and in fields[], urls[], totp and passkey.
 const SCHEMA_ORDER = {
   body: ['schema', 'type', 'name', 'fields', 'urls', 'totp', 'passkey', 'notes', 'created', 'modified', 'favorite', 'device'],
