@@ -1341,7 +1341,7 @@ async fn the_feed_refuses_a_cursor_below_the_floor_with_410() {
         )
     })
     .await;
-    for since in [0u64, 1, 2] {
+    for since in [1u64, 2] {
         let res = get(&app, &u.jar, &format!("/api/sync/changes?since={since}")).await;
         assert_eq!(res.status, StatusCode::GONE, "since {since}");
         assert_eq!(
@@ -1351,6 +1351,13 @@ async fn the_feed_refuses_a_cursor_below_the_floor_with_410() {
         );
         assert_eq!(res.header("cache-control"), "no-store");
     }
+    // A device with no state (since 0) is listed in full: it has no deletion to
+    // miss, and the floor does not apply to it.
+    let from_start = get(&app, &u.jar, "/api/sync/changes?since=0").await;
+    assert_eq!(from_start.status, StatusCode::OK, "{}", from_start.text());
+    assert_eq!(from_start.json()["changes"].as_array().unwrap().len(), 5);
+    let bare = get(&app, &u.jar, "/api/sync/changes").await;
+    assert_eq!(bare.status, StatusCode::OK, "no since reads as 0");
     // At the floor and above it, the feed answers as before.
     for since in [3u64, 4, 5] {
         let res = get(&app, &u.jar, &format!("/api/sync/changes?since={since}")).await;

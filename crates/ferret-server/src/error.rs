@@ -15,7 +15,7 @@ use std::fmt;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use ferret_server_auth::{AuthError, ErrorClass};
+use ferret_server_auth::AuthError;
 
 /// Why the server could not start.
 pub type StartError = Box<dyn std::error::Error + Send + Sync>;
@@ -189,7 +189,7 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("malformed_recovery_key", StatusCode::BAD_REQUEST),
     ("registration_closed", StatusCode::CONFLICT),
     ("throttled", StatusCode::TOO_MANY_REQUESTS),
-    ("profile_rejected", StatusCode::BAD_REQUEST),
+    ("profile_rejected", StatusCode::UNPROCESSABLE_ENTITY),
     ("unsupported_envelope", StatusCode::UNPROCESSABLE_ENTITY),
     ("tombstone_invalid", StatusCode::UNPROCESSABLE_ENTITY),
     ("too_large", StatusCode::PAYLOAD_TOO_LARGE),
@@ -256,16 +256,10 @@ impl From<NotImplemented> for ApiError {
 }
 
 impl From<AuthError> for ApiError {
-    /// The answer of `ferret-server-auth` for an error: status from the class,
-    /// code from the library, and the wait of a throttle.
+    /// The answer of `ferret-server-auth` for an error: code from the library,
+    /// status from the code ([`status_of`]), and the wait of a throttle.
     fn from(e: AuthError) -> Self {
-        let status = match e.http_class() {
-            ErrorClass::BadRequest => StatusCode::BAD_REQUEST,
-            ErrorClass::Denied => StatusCode::UNAUTHORIZED,
-            ErrorClass::Forbidden => StatusCode::FORBIDDEN,
-            ErrorClass::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+        let status = status_of(e.public_code());
         let retry_after = match e {
             AuthError::Throttled { retry_after_secs } => Some(retry_after_secs),
             _ => None,

@@ -6,7 +6,8 @@
 //! says that rows are left, and the client asks again from the last `seq` it
 //! got. A `since` below the feed floor (`min_valid_since`, raised when old
 //! tombstones are purged) is `410 Gone`: the client may have missed deletions
-//! and must list the vault again.
+//! and must list the vault again. `since=0` is never refused: a client with no
+//! state has nothing to miss.
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{FromRef, Query, State};
@@ -73,9 +74,11 @@ async fn get_changes(
     let page = db
         .with_conn(move |conn| store::changes_since(conn, &vault, since, limit, PAGE_BYTES))
         .await?;
-    if since < page.min_valid_since {
-        // Tombstones at or below the floor may be gone: the cursor cannot be
-        // trusted, and the client must list the vault again (spec 8.4).
+    // Tombstones at or below the floor may be gone: a cursor below it cannot be
+    // trusted, and the client must list the vault again (spec 8.4). `since = 0`
+    // is the exception: a device with no state has no deletion to miss, and a
+    // listing from 0 holds every live row.
+    if since != 0 && since < page.min_valid_since {
         return Ok(gone(page.min_valid_since));
     }
     Ok(Json(changes_res(page)).into_response())
