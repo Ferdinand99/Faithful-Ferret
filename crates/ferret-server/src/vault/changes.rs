@@ -4,16 +4,19 @@
 //! `since` is exclusive: the answer holds the rows with `seq > since`. A page
 //! holds at most [`MAX_LIMIT`] rows and stays below 4 MiB of JSON; `has_more`
 //! says that rows are left, and the client asks again from the last `seq` it
-//! got.
+//! got. A `since` below the feed floor (`min_valid_since`, raised when old
+//! tombstones are purged) is `410 Gone`: the client may have missed deletions
+//! and must list the vault again.
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{FromRef, Query, State};
+use axum::response::{IntoResponse as _, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
 use super::store::{self, Change, Changes};
-use crate::error::ApiError;
+use crate::error::{ApiError, status_of};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::state::VaultDb;
 use crate::wire::{ChangeJson, ChangesRes, MAX_JSON_INT};
@@ -59,18 +62,33 @@ async fn get_changes(
     session: VaultSession,
     query: Result<Query<ChangesQuery>, QueryRejection>,
     State(db): State<VaultDb>,
-) -> Result<Json<ChangesRes>, ApiError> {
-    let Query(query) = query.map_err(|_| ApiError::bad_request("bad_request"))?;
+) -> Result<Response, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::coded("bad_request"))?;
     let since = query.since.unwrap_or(0);
     if since > MAX_JSON_INT {
-        return Err(ApiError::bad_request("bad_request"));
+        return Err(ApiError::coded("bad_request"));
     }
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let vault = session.vault;
     let page = db
         .with_conn(move |conn| store::changes_since(conn, &vault, since, limit, PAGE_BYTES))
         .await?;
-    Ok(Json(changes_res(page)))
+    if since < page.min_valid_since {
+        // Tombstones at or below the floor may be gone: the cursor cannot be
+        // trusted, and the client must list the vault again (spec 8.4).
+        return Ok(gone(page.min_valid_since));
+    }
+    Ok(Json(changes_res(page)).into_response())
+}
+
+/// `410 Gone {"error":"gone","min_valid_since":n}`: the cursor is below the floor
+/// of the feed.
+fn gone(min_valid_since: u64) -> Response {
+    (
+        status_of("gone"),
+        Json(serde_json::json!({ "error": "gone", "min_valid_since": min_valid_since })),
+    )
+        .into_response()
 }
 
 /// The wire shape of a page. The checkpoint head is left out: this version

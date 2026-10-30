@@ -641,7 +641,7 @@ async fn both_blob_and_tomb_is_400() {
 }
 
 #[tokio::test]
-async fn manifest_row_cannot_be_written_in_m1() {
+async fn manifest_row_cannot_be_written() {
     let app = TestApp::new().await;
     let u = user(&app, 1).await;
     let sealed = seal(&u, item(1), 1, "x");
@@ -1095,6 +1095,50 @@ fn log_sink() -> Sink {
     .clone()
 }
 
+/// Every form in which a log line could carry `bytes`: base64url and hex of the
+/// whole value, the inside of its `Debug` text (`1, 2, 3` without the brackets,
+/// which is how a `Vec<u8>` prints), and, for a long value, the same three for a
+/// slice. The slice starts and ends on multiples of 3 bytes, so its base64url
+/// is a real substring of the base64url of the whole.
+fn canaries_for(bytes: &[u8]) -> Vec<String> {
+    fn inner_debug(bytes: &[u8]) -> String {
+        format!("{bytes:?}")
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string()
+    }
+    let mut forms = vec![
+        b64url::encode(bytes),
+        ferret_core::testing::hex_encode(bytes),
+        inner_debug(bytes),
+    ];
+    if let Some(slice) = bytes.get(42..81) {
+        forms.push(b64url::encode(slice));
+        forms.push(ferret_core::testing::hex_encode(slice));
+        forms.push(inner_debug(slice));
+    }
+    forms
+}
+
+#[test]
+fn every_canary_form_is_a_substring_of_the_printed_value() {
+    // The forms only guard anything if a print of the value contains them.
+    let bytes: Vec<u8> = (0..200u32).map(|n| (n * 7 + 3) as u8).collect();
+    let printed = [
+        b64url::encode(&bytes),
+        ferret_core::testing::hex_encode(&bytes),
+        format!("{bytes:?}"),
+    ];
+    let forms = canaries_for(&bytes);
+    assert_eq!(forms.len(), 6);
+    for (n, form) in forms.iter().enumerate() {
+        assert!(
+            printed[n % 3].contains(form.as_str()),
+            "form {n} is not a substring of the print it stands for"
+        );
+    }
+}
+
 #[tokio::test]
 async fn blob_bytes_never_reach_the_log() {
     let sink = log_sink();
@@ -1105,21 +1149,37 @@ async fn blob_bytes_never_reach_the_log() {
     let id = item(77);
     let sealed = seal(&u, id, 1, "canary");
     let second = seal(&u, id, 2, "canary two");
-    let mut canaries = vec![
-        b64url::encode(&sealed.envelope),
-        b64url::encode(&sealed.tag),
-        b64url::encode(&second.envelope),
-        hex16::encode(&idem(1)),
-    ];
-    // A distinctive slice of the envelope in every form a log could print it.
-    let slice = &sealed.envelope[40..80];
-    canaries.push(b64url::encode(slice));
-    canaries.push(format!("{slice:?}"));
-    canaries.push(ferret_core::testing::hex_encode(slice));
+    let t = make_tombstone(&mut OsRng, &u.vault, id, 2).expect("a tombstone");
+    let mut canaries = Vec::new();
+    for value in [
+        sealed.envelope.as_slice(),
+        sealed.tag.as_slice(),
+        second.envelope.as_slice(),
+        second.tag.as_slice(),
+        t.tomb.as_slice(),
+    ] {
+        canaries.extend(canaries_for(value));
+    }
+    canaries.push(hex16::encode(&idem(1)));
+
+    // The control: a value that is logged on purpose in each form must trip
+    // every canary form built for it. If a form could not match, this fails.
+    let control = seal(&u, item(78), 1, "control value");
+    tracing::info!(blob = ?control.envelope, "canary self-test, Debug");
+    tracing::info!(blob = %b64url::encode(&control.envelope), "canary self-test, base64url");
+    tracing::info!(
+        blob = %ferret_core::testing::hex_encode(&control.envelope),
+        "canary self-test, hex"
+    );
+    let text = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+    for form in canaries_for(&control.envelope) {
+        assert!(
+            text.contains(&form),
+            "the canary form {form:.40} does not fire on a print of its value"
+        );
+    }
 
     // A write, a replay, a conflict, a refused one, a tombstone and the reads.
-    let t = make_tombstone(&mut OsRng, &u.vault, id, 2).expect("a tombstone");
-    canaries.push(b64url::encode(&t.tomb));
     let calls = [
         put(&app, &u.jar, id, &live(0, &sealed, idem(1))).await,
         put(&app, &u.jar, id, &live(0, &sealed, idem(1))).await,
@@ -1141,9 +1201,12 @@ async fn blob_bytes_never_reach_the_log() {
     );
     assert!(text.contains("409") || text.contains("conflict"), "{text}");
     for canary in canaries {
-        assert!(!text.contains(&canary), "{canary} is in the log");
+        assert!(!text.contains(&canary), "{canary:.60} is in the log");
     }
-    assert!(!text.contains("canary"), "plaintext words are in the log");
+    assert!(
+        !text.contains("canary two"),
+        "plaintext words are in the log"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1232,4 +1295,91 @@ async fn real_client_roundtrip() {
     assert!(verify_tombstone(&u.vault, id, 3, &forged).is_err());
     assert!(verify_tombstone(&u.vault, id, 2, &served).is_err());
     assert!(verify_tombstone(&u.vault, item(2), 3, &served).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Limits, floors and the shape of refusals.
+
+#[tokio::test]
+async fn a_full_vault_refuses_a_new_item_with_413_quota_exceeded() {
+    let app = TestApp::new().await;
+    let u = user(&app, 1).await;
+    // The vault holds as many rows as it may: the counter says so, as it would
+    // after that many writes.
+    let vault = u.account.vault_id;
+    let max_items = i64::from(Limits::DEFAULT.max_items);
+    db(&app, move |c| {
+        c.execute(
+            "UPDATE ferret_vaults SET item_count = ?2 WHERE vault_id = ?1",
+            rusqlite::params![vault.as_bytes().as_slice(), max_items],
+        )
+    })
+    .await;
+    let sealed = seal(&u, item(1), 1, "one too many");
+    let res = put(&app, &u.jar, item(1), &live(0, &sealed, idem(1))).await;
+    assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", res.text());
+    assert_eq!(res.json(), json!({ "error": "quota_exceeded" }));
+    assert_eq!(vault_seq(&app, &u).await, 1, "nothing was written");
+    // A refusal for the size of one envelope is the other 413.
+    assert_ne!(error(&res), "too_large");
+}
+
+#[tokio::test]
+async fn the_feed_refuses_a_cursor_below_the_floor_with_410() {
+    let app = TestApp::new().await;
+    let u = user(&app, 1).await;
+    for n in 1..=4u8 {
+        let sealed = seal(&u, item(n), 1, &format!("item {n}"));
+        put(&app, &u.jar, item(n), &live(0, &sealed, idem(n))).await;
+    }
+    // A purge of old tombstones raised the floor to 3.
+    let vault = u.account.vault_id;
+    db(&app, move |c| {
+        c.execute(
+            "UPDATE ferret_vaults SET min_valid_since = 3 WHERE vault_id = ?1",
+            [vault.as_bytes().as_slice()],
+        )
+    })
+    .await;
+    for since in [0u64, 1, 2] {
+        let res = get(&app, &u.jar, &format!("/api/sync/changes?since={since}")).await;
+        assert_eq!(res.status, StatusCode::GONE, "since {since}");
+        assert_eq!(
+            res.json(),
+            json!({ "error": "gone", "min_valid_since": 3 }),
+            "since {since}"
+        );
+        assert_eq!(res.header("cache-control"), "no-store");
+    }
+    // At the floor and above it, the feed answers as before.
+    for since in [3u64, 4, 5] {
+        let res = get(&app, &u.jar, &format!("/api/sync/changes?since={since}")).await;
+        assert_eq!(res.status, StatusCode::OK, "since {since}");
+    }
+}
+
+#[tokio::test]
+async fn a_bad_path_parameter_is_the_json_400() {
+    let app = TestApp::new().await;
+    let u = user(&app, 1).await;
+    let sealed = seal(&u, item(1), 1, "x");
+    let body = live(0, &sealed, idem(1)).to_string().into_bytes();
+    // A segment that is not UTF-8 once decoded, one that is not an id, an
+    // empty one.
+    for id in ["%FF", "%ff%fe", "not-an-id", "%00"] {
+        let res = app
+            .call_raw(Which::Vault, put_raw(id, &u.jar, body.clone()))
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{id}");
+        assert_eq!(res.json(), json!({ "error": "bad_request" }), "{id}");
+        assert!(
+            res.header("content-type").starts_with("application/json"),
+            "{id}"
+        );
+    }
+    // The same through a router that has no layers of the server.
+    let router = tripwire(&app);
+    let res = send(&router, put_raw("%FF", &u.jar, body)).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(res.json(), json!({ "error": "bad_request" }));
 }

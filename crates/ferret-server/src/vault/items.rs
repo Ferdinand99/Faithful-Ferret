@@ -23,7 +23,7 @@
 //! the store.
 
 use axum::body::Bytes;
-use axum::extract::rejection::BytesRejection;
+use axum::extract::rejection::{BytesRejection, PathRejection};
 use axum::extract::{DefaultBodyLimit, FromRef, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
@@ -35,7 +35,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::quota::Limits;
 use super::store::{self, PutBody, PutOutcome, PutRequest};
-use crate::error::{ApiError, StoreError};
+use crate::error::{ApiError, StoreError, status_of};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::ids::MANIFEST_ITEM_ID;
 use crate::state::VaultDb;
@@ -44,9 +44,6 @@ use crate::wire::{ConflictRes, PutItemForm, PutItemReq, PutItemRes, hex16, refus
 /// The most bytes of a request body. An envelope of 64 KiB is about 87 400
 /// characters of base64url, so a full envelope fits with room for the rest.
 pub const BODY_LIMIT: usize = 128 * 1024;
-
-/// The length of a tombstone in bytes: nonce, tag and an empty plaintext.
-const TOMB_LEN: usize = 40;
 
 /// The item routes.
 pub fn routes<S>() -> Router<S>
@@ -73,39 +70,21 @@ struct Prepared {
 /// Steps 3 to 5 of the module order, on the raw body. No database, no clock,
 /// no session: a request this refuses can never have touched storage.
 fn prepare(id: &str, raw: &[u8]) -> Result<Prepared, ApiError> {
-    let request: PutItemReq = serde_json::from_slice(raw).map_err(|e| {
-        let code = refusal_code(&e.to_string());
-        // A tombstone that is not 40 bytes is the one fixed-size refusal that
-        // is a well-formed request about content the server cannot take.
-        if code == "tombstone_invalid" {
-            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, code)
-        } else {
-            ApiError::bad_request(code)
-        }
-    })?;
+    let request: PutItemReq =
+        serde_json::from_slice(raw).map_err(|e| ApiError::coded(refusal_code(&e.to_string())))?;
     let form = request
         .validate()
-        .map_err(|_| ApiError::bad_request("bad_request"))?;
+        .map_err(|_| ApiError::coded("bad_request"))?;
 
     let item_id =
-        ItemId::from_bytes(hex16::decode(id).map_err(|_| ApiError::bad_request("bad_request"))?);
+        ItemId::from_bytes(hex16::decode(id).map_err(|_| ApiError::coded("bad_request"))?);
     if item_id == MANIFEST_ITEM_ID {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "manifest_not_writable",
-        ));
+        return Err(ApiError::coded("manifest_not_writable"));
     }
 
-    match form {
-        PutItemForm::Live { blob, .. } => check_envelope(blob)?,
-        PutItemForm::Deleted { tomb } => {
-            if tomb.len() != TOMB_LEN {
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "tombstone_invalid",
-                ));
-            }
-        }
+    // A tombstone is 40 bytes by the time it has parsed (`tombstone_invalid`).
+    if let PutItemForm::Live { blob, .. } = form {
+        check_envelope(blob)?;
     }
 
     let mut hasher = Sha256::new();
@@ -126,13 +105,10 @@ fn prepare(id: &str, raw: &[u8]) -> Result<Prepared, ApiError> {
 fn check_envelope(blob: &[u8]) -> Result<(), ApiError> {
     match parse_envelope(blob) {
         Ok(view) if view.kind == KIND_ITEM && view.ik_wrap.is_some() => Ok(()),
-        Err(CoreError::TooLarge) => Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large")),
+        Err(CoreError::TooLarge) => Err(ApiError::coded("too_large")),
         // A version, suite or kind that is not an item, or a structure that is
         // no envelope: one answer, so the server tells nothing about which.
-        _ => Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "unsupported_envelope",
-        )),
+        _ => Err(ApiError::coded("unsupported_envelope")),
     }
 }
 
@@ -140,16 +116,17 @@ fn check_envelope(blob: &[u8]) -> Result<(), ApiError> {
 async fn put_item(
     session: VaultSession,
     State(db): State<VaultDb>,
-    Path(id): Path<String>,
+    id: Result<Path<String>, PathRejection>,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Response, ApiError> {
     let raw = body.map_err(|rejection| {
         if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large")
+            ApiError::coded("too_large")
         } else {
-            ApiError::bad_request("bad_request")
+            ApiError::coded("bad_request")
         }
     })?;
+    let Path(id) = id.map_err(|_| ApiError::coded("bad_request"))?;
     let prepared = prepare(&id, &raw).inspect_err(|e| {
         tracing::info!(
             status = e.status.as_u16(),
@@ -185,14 +162,24 @@ async fn put_item(
             store::put_item(conn, &vault, &device, &put, &Limits::DEFAULT, now)
         })
         .await
-        .inspect_err(|_| tracing::info!(item_id = %item_hex, status = 500, "item write failed"))?;
+        .map_err(ApiError::from)
+        .inspect_err(|e| {
+            tracing::info!(
+                item_id = %item_hex,
+                status = e.status.as_u16(),
+                code = e.code,
+                "item write failed"
+            );
+        })?;
 
     let (status, code) = match &outcome {
         PutOutcome::Stored { .. } => (StatusCode::OK, "stored"),
-        PutOutcome::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
-        PutOutcome::IdemMismatch => (StatusCode::UNPROCESSABLE_ENTITY, "idem_reuse"),
-        PutOutcome::QuotaExceeded => (StatusCode::PAYLOAD_TOO_LARGE, "quota_exceeded"),
-        PutOutcome::ManifestNotWritable => (StatusCode::FORBIDDEN, "manifest_not_writable"),
+        PutOutcome::Conflict(_) => (status_of("conflict"), "conflict"),
+        PutOutcome::IdemMismatch => (status_of("idem_reuse"), "idem_reuse"),
+        PutOutcome::QuotaExceeded => (status_of("quota_exceeded"), "quota_exceeded"),
+        PutOutcome::ManifestNotWritable => {
+            (status_of("manifest_not_writable"), "manifest_not_writable")
+        }
     };
     tracing::info!(item_id = %item_hex, status = status.as_u16(), code, "item write");
 
@@ -201,7 +188,7 @@ async fn put_item(
             Ok(Json(PutItemRes { rev, seq, replayed }).into_response())
         }
         PutOutcome::Conflict(conflict) => Ok((
-            StatusCode::CONFLICT,
+            status,
             Json(ConflictRes {
                 current_rev: conflict.current_rev,
                 blob: conflict.blob,
@@ -211,7 +198,7 @@ async fn put_item(
         )
             .into_response()),
         PutOutcome::IdemMismatch | PutOutcome::QuotaExceeded | PutOutcome::ManifestNotWritable => {
-            Err(ApiError::new(status, code))
+            Err(ApiError::coded(code))
         }
     }
 }
