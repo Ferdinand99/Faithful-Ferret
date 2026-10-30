@@ -1,0 +1,84 @@
+# Opens and updates the release pull request from the conventional commit
+# messages on main, and, when that pull request is merged, creates the tag and
+# the GitHub release and calls the release workflow to build, sign and attach
+# the packages. One component, configured in release-please-config.json.
+#
+# Nothing is released until someone merges the release pull request.
+#
+# A pull request opened with the default GITHUB_TOKEN does not start the
+# pull_request workflows (GitHub does this on purpose). So the Public Suffix
+# List age check, which is required for a release, runs here and is posted as a
+# commit status on the release pull request. If the repository has a secret
+# RELEASE_PLEASE_TOKEN (a fine-grained token or a GitHub App token that may
+# write contents and pull requests), it is used instead, and the pull request
+# then starts all of the normal workflows. See docs/RELEASING.md.
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Release pull request
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      pr_number: ${{ steps.release.outputs.pr && fromJSON(steps.release.outputs.pr).number }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # The release pull request cannot start the psl-age workflow when it is made
+  # with GITHUB_TOKEN, so the check runs here and reports under the same name.
+  psl-age:
+    name: Public Suffix List snapshot age (release pull request)
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true' && needs.release-please.outputs.pr_number != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ needs.release-please.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check the age and report it on the pull request
+        run: |
+          sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          if scripts/check-psl-age.sh; then state=success; text="Snapshot is within the limit"; else state=failure; text="Snapshot is too old: run scripts/update-psl.sh"; fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" \
+            -f state="$state" -f context="Public Suffix List snapshot age" -f description="$text" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          [ "$state" = success ]
+
+  release:
+    name: Build, sign and attach the packages
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
