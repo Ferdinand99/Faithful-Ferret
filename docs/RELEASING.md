@@ -14,9 +14,7 @@ happens when the maintainer merges the release pull request.
    `Cargo.toml`, in `Cargo.lock` and in `fuzz/Cargo.lock`, writes `CHANGELOG.md` and
    `version.txt`, and updates `.release-please-manifest.json`. The configuration, with one component,
    is `release-please-config.json`. Before 1.0 a breaking change raises the minor
-   version, not the major one. The first release is pinned to 0.1.0 with
-   `"release-as": "0.1.0"` in `release-please-config.json`; remove that line in
-   the pull request after the first release is published.
+   version, not the major one.
 3. Before merging, check that the Public Suffix List snapshot is fresh (below), that
    all checks on the pull request are green, and read the changelog.
 4. Merging the pull request makes release-please create the tag `vX.Y.Z` and the GitHub
