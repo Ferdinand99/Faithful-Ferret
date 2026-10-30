@@ -14,6 +14,7 @@ import {
 } from "./syncHelpers.mjs";
 
 const hex = (n) => n.toString(16).padStart(32, "0");
+const ID_NONE = "ee".repeat(16);
 
 /** A queued live write for item `n` as the engine would build it. */
 function entryFor(n, { baseRev = 0, idem = 5000 + n, fill = n } = {}) {
@@ -279,4 +280,126 @@ test("a_network_failure_on_the_feed_looks_offline_and_the_poll_goes_on", async (
 
 test("itemPath_is_under_the_sync_items_route", () => {
   assert.equal(itemPath("ab".repeat(16)), `/api/sync/items/${"ab".repeat(16)}`);
+});
+
+/** An engine over its own storage (or the one given) and fake clock. */
+async function engineOn(model, client, { db = null, seed = 1 } = {}) {
+  const store = await createFakeStore({ db });
+  const api = createFakeApi(model);
+  const timers = new FakeTimers();
+  const events = { error: [], state: [] };
+  const engine = createSyncEngine({
+    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), win: null,
+  });
+  engine.on("error", (e) => events.error.push(e));
+  engine.on("state", (s) => events.state.push(s));
+  return { store, api, timers, engine, events };
+}
+
+const stored = (t) => outbox.all(t.store.database.store, scope());
+
+test("an_edit_after_a_409_is_refused_and_the_block_survives_a_restart_and_discard_unblocks", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const adb = await freshStore();
+  const a = await engineOn(model, client, { db: adb, seed: 1 });
+  const b = await engineOn(model, client, { seed: 2 });
+  await a.engine.start();
+  await b.engine.start();
+  const id = await a.engine.create({ item_type: "login", name: "Original" });
+  await until(() => model.items.get(id)?.rev === 1);
+  b.timers.advance(5_000);
+  await until(() => b.engine.list().length === 1);
+  await b.engine.update(id, { name: "From B" });
+  await until(() => model.items.get(id).rev === 2);
+
+  await a.engine.update(id, { name: "From A" });
+  await until(() => a.events.error.some((e) => e.code === "conflict"), "the conflict");
+  // The server's version is what is on screen, with the block shown; the draft stays in the outbox.
+  await until(() => a.engine.list()[0].name === "From B" && a.engine.list()[0].rev === 2, "the server's version is shown");
+  const [item] = a.engine.list();
+  assert.deepEqual([item.blocked, item.blockedReason], [true, "conflict"]);
+  assert.equal((await stored(a)).length, 1);
+
+  // A new edit is refused with a clear error, not queued behind the refused write.
+  await assert.rejects(a.engine.update(id, { name: "Again" }), (e) => e.code === "blocked" && e.reason === "conflict");
+  await assert.rejects(a.engine.remove(id), (e) => e.code === "blocked");
+  assert.equal((await stored(a)).length, 1);
+  a.engine.stop();
+
+  // After a restart the block is still there and the server's version is still on screen; nothing is sent.
+  await adb.reopen();
+  const again = await engineOn(model, client, { db: adb, seed: 5 });
+  await again.engine.start();
+  again.timers.advance(120_000);
+  await settle(20);
+  const [back] = again.engine.list();
+  assert.deepEqual([back.blocked, back.blockedReason, back.name, back.rev], [true, "conflict", "From B", 2]);
+  assert.equal(again.api.puts.length, 0, "a refused write is not sent again");
+  await assert.rejects(again.engine.update(id, { name: "Again" }), (e) => e.code === "blocked");
+  await assert.rejects(again.engine.discard(ID_NONE), (e) => e.code === "not_found");
+
+  // discard drops the draft and the block; the item can be edited again, from the server's version.
+  await again.engine.discard(id);
+  assert.equal((await stored(again)).length, 0);
+  const [free] = again.engine.list();
+  assert.deepEqual([free.blocked, free.blockedReason, free.pending, free.name], [false, null, false, "From B"]);
+  await again.engine.update(id, { name: "After discard" });
+  await until(() => model.items.get(id).rev === 3, "the new edit is sent");
+  assert.equal(JSON.parse(model.writes.at(-1).body).base_rev, 2);
+  again.engine.stop();
+  b.engine.stop();
+});
+
+test("a_delete_refused_with_413_leaves_the_item_visible_live_and_marked", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const db = await freshStore();
+  const t = await engineOn(model, client, { db });
+  await t.engine.start();
+  const id = await t.engine.create({ item_type: "login", name: "Cannot delete me" });
+  await until(async () => model.items.has(id) && (await stored(t)).length === 0);
+  await until(() => t.engine.list()[0]?.pending === false);
+  t.api.faults.push({ kind: "status", status: 413, code: "quota_exceeded" });
+  await t.engine.remove(id);
+  await until(() => t.events.error.some((e) => e.code === "quota_exceeded" && e.id === id), "the refusal");
+  await until(() => t.engine.list().length === 1 && t.engine.list()[0].blocked, "the item is back, marked");
+  const [item] = t.engine.list();
+  assert.deepEqual([item.name, item.blockedReason, item.rev], ["Cannot delete me", "quota_exceeded", 1]);
+  assert.equal(model.items.get(id).deleted, false);
+  assert.equal((await t.engine.open(id)).view.name, "Cannot delete me");
+  t.engine.stop();
+
+  await db.reopen();
+  const back = await engineOn(model, client, { db, seed: 7 });
+  await back.engine.start();
+  assert.deepEqual(back.engine.list().map((i) => [i.name, i.blockedReason]), [["Cannot delete me", "quota_exceeded"]], "still visible after a restart");
+  await back.engine.discard(id);
+  await back.engine.remove(id);
+  await until(() => model.items.get(id).deleted === true, "after discard the delete goes through");
+  back.engine.stop();
+});
+
+test("a_create_refused_for_good_keeps_its_draft_on_screen_until_it_is_discarded", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const db = await freshStore();
+  const t = await engineOn(model, client, { db });
+  await t.engine.start();
+  t.api.faults.push({ kind: "status", status: 413, code: "too_large" });
+  const id = await t.engine.create({ item_type: "login", name: "Never accepted" });
+  await until(() => t.engine.list()[0]?.blocked === true, "blocked");
+  assert.equal(t.engine.list()[0].name, "Never accepted");
+  assert.equal(model.items.has(id), false);
+  t.engine.stop();
+
+  await db.reopen();
+  const back = await engineOn(model, client, { db, seed: 9 });
+  await back.engine.start();
+  assert.deepEqual(back.engine.list().map((i) => [i.name, i.blocked]), [["Never accepted", true]]);
+  assert.equal(back.api.puts.length, 0);
+  await back.engine.discard(id);
+  assert.deepEqual(back.engine.list(), []);
+  assert.equal((await stored(back)).length, 0);
+  back.engine.stop();
 });

@@ -10,6 +10,10 @@ export default {
   create: ({ api, store, client }) => {
     /** @type {ReturnType<typeof createSyncEngine> | null} */
     let engine = null;
+    const running = () => {
+      if (!engine) throw new Error("the sync engine is not running");
+      return engine;
+    };
     return {
       /**
        * Starts an engine for the unlocked vault and returns it. An engine that
@@ -31,6 +35,10 @@ export default {
       },
       /** The running engine, or null (locked, or not started yet). */
       current: () => engine,
+      /** Drops the refused write of a blocked item (see the engine's `discard`). @param {string} id */
+      discard: (id) => running().discard(id),
+      /** Gives up an item that a full listing did not show, after the user has confirmed it. @param {string} id */
+      discardMissing: (id) => running().discardMissing(id),
       /** Stops the engine and forgets it. Safe to call when none runs. */
       stop() {
         engine?.stop();

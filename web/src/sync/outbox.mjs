@@ -154,7 +154,7 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
       }
     } finally {
       lane.running = false;
-      if (!stopped && lane.entries.length === 0 && lane.timer === null) lanes.delete(itemId);
+      if (!stopped && lanes.get(itemId) === lane && lane.entries.length === 0 && lane.timer === null) lanes.delete(itemId);
     }
   }
 
@@ -193,6 +193,26 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
           void pump(itemId);
         }
       }
+    },
+
+    /** Keeps the queue of an item from being sent (its first write was refused before a restart). @param {string} itemId */
+    block(itemId) {
+      laneOf(itemId).blocked = "other";
+    },
+
+    /**
+     * Removes every queued write of an item (from the store too) and lets the item be written again.
+     * @param {string} itemId
+     */
+    async discard(itemId) {
+      const lane = lanes.get(itemId);
+      if (!lane) return;
+      cancelWait(lane);
+      const entries = [...lane.entries];
+      lane.entries.length = 0;
+      lanes.delete(itemId);
+      const db = await store.open();
+      for (const entry of entries) await store.outbox.remove(db, scope, entry.idem);
     },
 
     /** The queued entries of an item, oldest first (not yet confirmed by the server). @param {string} itemId */

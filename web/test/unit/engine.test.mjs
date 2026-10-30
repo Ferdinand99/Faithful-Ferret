@@ -451,29 +451,144 @@ test("the_feed_is_read_from_the_last_row_not_from_latest_seq", async () => {
   d.engine.stop();
 });
 
-test("a_410_is_answered_with_one_full_listing_from_zero", async () => {
+test("a_410_is_answered_with_one_full_listing_from_zero_and_nothing_is_deleted", async () => {
   const model = new Model();
   const client = createFakeClient();
+  const ID_C = "33".repeat(16);
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Stays" }) });
-  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Purged elsewhere" }) });
+  model.set(ID_B, { rev: 3, ...client.wireRow(ID_B, 3, { item_type: "login", name: "Hidden, rev 3" }) });
+  model.set(ID_C, { rev: 1, ...client.wireRow(ID_C, 1, { item_type: "login", name: "Hidden, rev 1" }) });
   const d = await device({ model, client });
   await d.engine.start();
-  assert.equal(d.engine.list().length, 2);
+  assert.equal(d.engine.list().length, 3);
 
-  // B is deleted and the tombstone purged on the server; the floor moves up.
+  // The floor moves up, and the listing no longer shows B and C.
   model.items.delete(ID_B);
+  model.items.delete(ID_C);
   model.seq += 5;
   model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Stays 2" }) });
   model.minValidSince = model.seq;
   d.api.gets.length = 0;
+  d.api.faults.push({ kind: "network", only: ID_B }, { kind: "network", only: ID_C }); // the uploads wait for a retry
   await d.engine.syncNow();
-  assert.match(d.api.gets[0], /since=2&/);
+  assert.match(d.api.gets[0], /since=3&/);
   assert.match(d.api.gets[1], /since=0&/, "restarts from 0");
-  assert.equal(d.api.gets.length, 2, "once");
-  assert.deepEqual(d.engine.list().map((i) => i.name), ["Stays 2"], "what the listing no longer shows is gone");
-  assert.deepEqual((await rowsOf(d)).map((r) => r.itemId), [ID_A]);
-  assert.ok(warnings(d).some((w) => w.code === "relisted"));
+  assert.equal(d.api.gets.filter((p) => p.includes("since=0")).length, 1, "once");
+  const byId = Object.fromEntries(d.engine.list().map((i) => [i.id, i]));
+  assert.equal(byId[ID_A].name, "Stays 2");
+  assert.equal(byId[ID_A].missingOnServer, false);
+  assert.deepEqual([byId[ID_B].missingOnServer, byId[ID_B].name, byId[ID_B].rev], [true, "Hidden, rev 3", 3], "kept and marked");
+  assert.deepEqual([byId[ID_C].missingOnServer, byId[ID_C].name], [true, "Hidden, rev 1"]);
+  assert.deepEqual((await rowsOf(d)).map((r) => r.itemId).sort(), [ID_A, ID_B, ID_C], "the cache keeps every row");
+  assert.ok(warnings(d).some((w) => w.code === "missing_on_server" && w.count === 2));
   assert.equal(d.events.error.length, 0);
+
+  // They are uploaded again (a new write against nothing); the copy that comes back is recognised as ours.
+  await until(() => d.timers.pending >= 2, "both uploads wait for a retry");
+  d.timers.advance(1_000);
+  await until(() => model.items.has(ID_B) && model.items.has(ID_C), "both are uploaded again");
+  assert.deepEqual(model.writes.filter((w) => w.id === ID_B).map((w) => JSON.parse(w.body).base_rev), [0]);
+  await until(() => d.engine.list().every((i) => !i.missingOnServer), "the marks clear when the copies come back");
+  const after = Object.fromEntries(d.engine.list().map((i) => [i.id, i]));
+  assert.deepEqual([after[ID_B].rev, after[ID_B].name], [1, "Hidden, rev 3"], "the uploaded copy has the local content at revision 1");
+  assert.equal(after[ID_C].rev, 1);
+  d.engine.stop();
+});
+
+test("an_older_row_after_a_listing_still_triggers_rev_lower_than_local", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 5, ...client.wireRow(ID_A, 5, { item_type: "login", name: "Five" }) });
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Other" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  // The upload of A is refused, so it stays marked; the listing hides it.
+  d.api.faults.push({ kind: "status", status: 413, code: "quota_exceeded", only: ID_A });
+  model.items.delete(ID_A);
+  model.seq += 3;
+  model.minValidSince = model.seq;
+  model.set(ID_B, { rev: 2, ...client.wireRow(ID_B, 2, { item_type: "login", name: "Other 2" }) });
+  await d.engine.syncNow();
+  await until(() => d.engine.list().find((i) => i.id === ID_A)?.blocked === true, "the upload is refused");
+  assert.equal(d.engine.list().find((i) => i.id === ID_A).missingOnServer, true);
+
+  // Later the server shows an old, valid row of A. The floor from before the listing is still there.
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Old two" }) });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.id === ID_A && w.rev === 2 && w.localRev === 5));
+  const a = d.engine.list().find((i) => i.id === ID_A);
+  assert.deepEqual([a.name, a.rev], ["Five", 5]);
+  d.engine.stop();
+});
+
+test("discardMissing_removes_the_item_with_its_row_and_its_upload", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 4, ...client.wireRow(ID_A, 4, { item_type: "login", name: "Gone from the server" }) });
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Normal" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  d.api.faults.push({ kind: "status", status: 413, code: "quota_exceeded", only: ID_A });
+  model.items.delete(ID_A);
+  model.seq += 3;
+  model.minValidSince = model.seq;
+  await d.engine.syncNow();
+  await until(() => d.engine.list().find((i) => i.id === ID_A)?.blocked === true);
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "blocked");
+  await assert.rejects(d.engine.discardMissing(ID_B), (e) => e.code === "not_found");
+
+  await d.engine.discardMissing(ID_A);
+  assert.deepEqual(d.engine.list().map((i) => i.id), [ID_B]);
+  assert.deepEqual((await rowsOf(d)).map((r) => r.itemId), [ID_B]);
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
+  d.engine.stop();
+});
+
+test("a_malformed_row_marks_the_item_damaged_and_the_pass_goes_on", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, blob: null, tag: null, deleted: false }); // a live row with nothing in it
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Fine" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.deepEqual(d.engine.list().map((i) => [i.id, i.damaged]), [[ID_A, true], [ID_B, false]]);
+  assert.equal(d.events.error.length, 0);
+  assert.ok(d.events.state.some((s) => s.kind === "idle"));
+  d.engine.stop();
+});
+
+test("a_2xx_answer_that_is_not_a_changes_page_is_a_failure_not_offline", async () => {
+  const d = await device({ model: new Model() });
+  d.api.failFeed = new ApiError(200, "bad_response");
+  d.api.failFeedTimes = 1;
+  await d.engine.start();
+  assert.ok(d.events.state.some((s) => s.kind === "failed" && s.code === "bad_response"));
+  assert.ok(!d.events.state.some((s) => s.kind === "offline"));
+  d.engine.stop();
+});
+
+test("a_changed_restore_epoch_and_an_unexpected_revision_are_warnings", async () => {
+  const model = new Model();
+  const d = await device({ model });
+  await d.engine.start();
+  model.restoreEpoch = 1;
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "server_restored" && w.from === 0 && w.to === 1));
+
+  const real = d.api.put;
+  d.api.put = async (path, body) => ({ ...(await real(path, body)), rev: 9 });
+  const id = await d.engine.create(DRAFT);
+  await until(() => warnings(d).some((w) => w.code === "unexpected_rev" && w.id === id && w.rev === 9 && w.expected === 1));
+  d.engine.stop();
+});
+
+test("idle_is_reported_on_every_pass_with_the_time", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  d.timers.advance(5_000);
+  await until(() => d.events.state.filter((s) => s.kind === "idle").length === 2);
+  const [first, second] = d.events.state.filter((s) => s.kind === "idle");
+  assert.ok(second.at >= first.at + 5_000);
   d.engine.stop();
 });
 

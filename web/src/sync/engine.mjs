@@ -19,7 +19,12 @@
 //   from `latest_seq`: a server that lies about `latest_seq` must not be able
 //   to make the client skip rows. A 410 (the cursor is below the floor of the
 //   feed) is answered once per cycle with a full listing from 0; if that is
-//   answered with 410 as well, the cycle ends with the error `gone`.
+//   answered with 410 as well, the cycle ends with the error `gone`. A listing
+//   never deletes anything here: items it does not show are kept, marked
+//   `missing_on_server` and uploaded again; only the user can discard them.
+// * A write that the server refuses for good (409 or a final code) blocks its
+//   item: the draft stays in the outbox, the screen shows the server's version,
+//   edits are refused until `discard(id)` drops the draft.
 // * Writes go through the outbox (see outbox.mjs): stored before the request,
 //   resent byte for byte under the same key.
 import { b64u, hex16 } from "../b64.mjs";
@@ -39,6 +44,9 @@ import { createOutboxRunner } from "./outbox.mjs";
  * @property {boolean} pending a write of this item is waiting for the server
  * @property {boolean} damaged the server's newest row could not be opened (the last good version is shown)
  * @property {boolean} quarantined the server says deleted but the tombstone did not verify (the local copy is kept)
+ * @property {boolean} missingOnServer a full listing did not show this item: it is kept, and being uploaded again until the user discards it
+ * @property {boolean} blocked a write of this item was refused for good (conflict or a final answer): the server's version is shown; `discard` drops the draft
+ * @property {string | null} blockedReason the code of the answer that blocked it (`conflict`, `quota_exceeded`, ...)
  * @property {boolean} readOnly
  *
  * @typedef {import("../store/cache.mjs").Scope} Scope
@@ -57,12 +65,14 @@ const FATAL_CODES = new Set(["locked", "vault_locked", "worker_failed", "interna
 
 /** An error of the engine. `code` is a word for the caller to switch on. */
 export class SyncError extends Error {
-  /** @param {string} code @param {string} [message] */
-  constructor(code, message = code) {
+  /** @param {string} code @param {string} [message] @param {string | null} [reason] why (for `blocked`: the code that blocked the item) */
+  constructor(code, message = code, reason = null) {
     super(message);
     this.name = "SyncError";
     /** @type {string} */
     this.code = code;
+    /** @type {string | null} */
+    this.reason = reason;
   }
 }
 
@@ -145,10 +155,18 @@ export function createSyncEngine({
    * @type {Map<string, { rev: number, deleted: boolean, envelope: Uint8Array | null, tag: Uint8Array | null }>}
    */
   const overlay = new Map();
-  /** The decrypted item index, in memory only. @type {Map<string, Omit<ItemSummary, "id" | "pending" | "damaged" | "quarantined">>} */
+  /** The decrypted item index, in memory only. @type {Map<string, Omit<ItemSummary, "id" | "pending" | "damaged" | "quarantined" | "missingOnServer" | "blocked" | "blockedReason">>} */
   const index = new Map();
-  /** Items the server's newest row of which is not usable. @type {Map<string, { kind: "damaged" | "quarantined", rev: number }>} */
+  /**
+   * Marks on items (saved, ids and numbers only). `damaged` and `quarantined`:
+   * the server's newest row is not usable. `missing_on_server`: a full listing
+   * did not show the item; `rev` is the revision of the local copy (its floor)
+   * and `sent` the digest of the copy that was uploaded again.
+   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server", rev: number, sent?: string }>}
+   */
   const flags = new Map();
+  /** Items with a write that was refused for good; the code that blocked them (saved). @type {Map<string, string>} */
+  const blocked = new Map();
   let flagsDirty = false;
   /** Handles the engine has opened for a screen. @type {Set<number>} */
   const handles = new Set();
@@ -173,7 +191,7 @@ export function createSyncEngine({
 
   /** @param {string} kind @param {Record<string, any>} [extra] */
   function setStatus(kind, extra = {}) {
-    if (kind === lastStatus && kind !== "warning") return;
+    if (kind === lastStatus && kind !== "warning" && kind !== "idle") return;
     lastStatus = kind;
     emit("state", { kind, ...extra });
   }
@@ -231,7 +249,10 @@ export function createSyncEngine({
     scope,
     timers,
     hooks: {
-      onDone: (entry) => {
+      onDone: (entry, answer) => {
+        if (answer.rev !== entry.baseRev + 1) {
+          warn("unexpected_rev", { id: entry.itemId, rev: answer.rev, expected: entry.baseRev + 1 });
+        }
         changed([entry.itemId]); // `pending` may have turned false
         void syncNow(); // bring our own row back with its `seq`
       },
@@ -249,6 +270,12 @@ export function createSyncEngine({
           if (Number.isSafeInteger(current)) detail.currentRev = current;
           detail.deleted = error.body?.deleted === true;
         }
+        // The item is blocked: the draft stays in the outbox, the screen goes
+        // back to the server's version, and nothing more is queued behind it.
+        blocked.set(entry.itemId, detail.code);
+        flagsDirty = true;
+        overlay.delete(entry.itemId);
+        void showServerVersion(entry.itemId).then(persistFlags);
         emit("error", detail);
         // A 409 on a deleted item carries no tombstone, and a live one carries a
         // row without a `seq`: both come through the feed, where they are checked.
@@ -307,11 +334,11 @@ export function createSyncEngine({
     if (page.has_more && page.changes.length === 0) throw new SyncError("bad_feed");
     // The server shows fewer changes than this device has seen: a restore, or a
     // rollback. Say so; nothing is lowered.
-    if (page.latest_seq < cursor && (restoreEpoch === null || restoreEpoch === page.restore_epoch)) {
-      if (behind !== `${page.latest_seq}/${cursor}`) {
-        behind = `${page.latest_seq}/${cursor}`;
-        warn("server_behind", { latestSeq: page.latest_seq, cursor });
-      }
+    if (restoreEpoch !== null && restoreEpoch !== page.restore_epoch) {
+      warn("server_restored", { from: restoreEpoch, to: page.restore_epoch });
+    } else if (page.latest_seq < cursor && behind !== `${page.latest_seq}/${cursor}`) {
+      behind = `${page.latest_seq}/${cursor}`;
+      warn("server_behind", { latestSeq: page.latest_seq, cursor });
     }
     restoreEpoch = page.restore_epoch;
   }
@@ -326,8 +353,23 @@ export function createSyncEngine({
       if (stopped) return;
       const id = /** @type {string} */ (change.id);
       listing?.add(id);
-      const row = rowOfChange(change);
-      const local = rows.get(id);
+      /** @type {CachedRow} */
+      let row;
+      try {
+        row = rowOfChange(change);
+      } catch (error) {
+        // A row that is not even a well-formed live row or tombstone: the item is damaged, the pass goes on.
+        if (!hex16.is(id) || !Number.isSafeInteger(change.rev)) throw error;
+        markDamaged(id, change.rev, "malformed");
+        touched.add(id);
+        continue;
+      }
+      let local = rows.get(id);
+      const mark = flags.get(id);
+      if (local && row.rev <= local.rev && mark?.kind === "missing_on_server" && mark.sent && !row.deleted
+        && (await digestOf(/** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag))) === mark.sent) {
+        local = undefined; // the copy this device uploaded again, byte for byte: it replaces the old floor
+      }
       if (local) {
         if (row.rev < local.rev) {
           warn("rev_lower_than_local", { id, rev: row.rev, localRev: local.rev });
@@ -379,10 +421,7 @@ export function createSyncEngine({
         }
       } catch (error) {
         if (stopped || isFatal(error)) throw error;
-        flags.set(id, { kind: "damaged", rev: row.rev });
-        flagsDirty = true;
-        if (!index.has(id)) index.set(id, summaryOf({}, row.rev)); // nothing good to show
-        warn("row_damaged", { id, rev: row.rev, reason: codeOf(error) });
+        markDamaged(id, row.rev, codeOf(error));
       }
       touched.add(id);
     }
@@ -391,27 +430,100 @@ export function createSyncEngine({
     changed(touched);
   }
 
-  /** After a full listing: what the server no longer shows is gone from here too. @param {any} db */
+  /** @param {string} id @param {number} rev @param {string} reason */
+  function markDamaged(id, rev, reason) {
+    flags.set(id, { kind: "damaged", rev });
+    flagsDirty = true;
+    if (!index.has(id)) index.set(id, summaryOf({}, rev)); // nothing good to show
+    warn("row_damaged", { id, rev, reason });
+  }
+
+  /**
+   * After a full listing from 0: nothing is deleted. Items the listing did not
+   * show stay (rows, cache and revision floors), are marked, and are queued for
+   * upload again; only `discardMissing` removes one, on the user's word. A
+   * server can hide items to make the user throw away the only copy.
+   * @param {any} db
+   */
   async function finishListing(db) {
     const seen = /** @type {Set<string>} */ (listing);
     listing = null;
     /** @type {string[]} */
-    const removed = [];
-    for (const id of [...rows.keys()]) {
-      if (seen.has(id) || id === MANIFEST_ID || flags.has(id)) continue;
-      rows.delete(id);
-      const mine = overlay.get(id);
-      if (!mine || runner.entriesOf(id).length === 0) {
-        overlay.delete(id);
+    const missing = [];
+    for (const [id, row] of rows) {
+      if (seen.has(id) || id === MANIFEST_ID || row.deleted || flags.has(id)) continue;
+      flags.set(id, { kind: "missing_on_server", rev: row.rev });
+      flagsDirty = true;
+      missing.push(id);
+    }
+    if (missing.length === 0) return;
+    await saveFlags(db);
+    warn("missing_on_server", { count: missing.length });
+    changed(missing);
+    for (const id of missing) await uploadAgain(id);
+  }
+
+  /**
+   * Queues the local copy of a missing item as a new write (revision 1 against
+   * nothing), unless one is already queued. The digest of what is sent is saved
+   * with the mark, so the row that comes back is recognised as ours.
+   * @param {string} id
+   */
+  async function uploadAgain(id) {
+    const row = rows.get(id);
+    const mark = flags.get(id);
+    if (!row || row.deleted || mark?.kind !== "missing_on_server" || runner.entriesOf(id).length > 0 || blocked.has(id)) return;
+    try {
+      const handle = await client.vault.open_item(hex16.decode(id), row.rev, row.envelope, row.tag);
+      /** @type {{ envelope: Uint8Array, tag: Uint8Array }} */
+      let sealed;
+      try {
+        sealed = await client.vault.encrypt_item(hex16.decode(id), 1, {}, handle, now());
+      } finally {
+        await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+      }
+      alive();
+      flags.set(id, { kind: "missing_on_server", rev: row.rev, sent: await digestOf(sealed.envelope, sealed.tag) });
+      flagsDirty = true;
+      await persistFlags();
+      await queue(id, 0, { blob: sealed.envelope, tag: sealed.tag }, null, null);
+    } catch (error) {
+      if (stopped || isFatal(error)) return;
+      emit("error", { code: "upload_again_failed", id });
+    }
+  }
+
+  /** @param {Uint8Array} envelope @param {Uint8Array} tag */
+  async function digestOf(envelope, tag) {
+    const all = new Uint8Array(envelope.length + tag.length);
+    all.set(envelope);
+    all.set(tag, envelope.length);
+    return b64u.encode(new Uint8Array(await crypto.subtle.digest("SHA-256", all)));
+  }
+
+  /** What the screen shows for an item whose write was refused: the server's version. @param {string} id */
+  async function showServerVersion(id) {
+    const row = rows.get(id);
+    try {
+      if (row && !row.deleted) {
+        const summary = await summarize(id, row.rev, /** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag));
+        alive();
+        if (rows.get(id) === row) index.set(id, summary); // the feed may have moved on meanwhile
+      } else if (row?.deleted) {
         index.delete(id);
       }
-      removed.push(id);
+      // No server row at all: a draft the server never took. Its summary stays, marked blocked.
+    } catch {
+      // The marks still say what is wrong; the list keeps what it has.
     }
-    if (removed.length > 0) {
-      await store.cache.clear(db, scope);
-      await store.cache.putRows(db, scope, [...rows.values()]);
-      warn("relisted", { removed: removed.length });
-      changed(removed);
+    changed([id]);
+  }
+
+  async function persistFlags() {
+    try {
+      await saveFlags(await store.open());
+    } catch (error) {
+      if (!stopped) emit("error", { code: "storage" });
     }
   }
 
@@ -419,11 +531,11 @@ export function createSyncEngine({
   async function saveFlags(db) {
     if (!flagsDirty) return;
     flagsDirty = false;
-    if (flags.size === 0) {
+    if (flags.size === 0 && blocked.size === 0) {
       await store.deleteSetting(db, flagsKey);
       return;
     }
-    await store.setSetting(db, flagsKey, Object.fromEntries(flags));
+    await store.setSetting(db, flagsKey, { v: 1, marks: Object.fromEntries(flags), blocked: Object.fromEntries(blocked) });
   }
 
   /** One pass: the feed. Failures become events; they never reject. */
@@ -445,7 +557,7 @@ export function createSyncEngine({
       if (status === 401) {
         paused = true;
         setStatus("unauthorized");
-      } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed")) {
+      } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {
         setStatus("failed", { code });
         emit("error", { code });
       } else if (typeof status === "number") {
@@ -531,6 +643,9 @@ export function createSyncEngine({
    */
   function editable(id) {
     if (typeof id !== "string" || !hex16.is(id) || id === MANIFEST_ID) throw new SyncError("not_found");
+    const why = blocked.get(id);
+    // A refused write is still in the outbox: a new one would only queue behind it.
+    if (why !== undefined) throw new SyncError("blocked", "blocked", why);
     const flag = flags.get(id);
     if (flag) throw new SyncError(flag.kind);
     const version = newest(id);
@@ -546,7 +661,7 @@ export function createSyncEngine({
    * Queues a write whose entry is ready: the outbox first, then the screen.
    * @param {string} id @param {number} baseRev
    * @param {{ blob: Uint8Array, tag: Uint8Array } | { tomb: Uint8Array }} body
-   * @param {{ rev: number, deleted: boolean, envelope: Uint8Array | null, tag: Uint8Array | null }} next what the item is after the write
+   * @param {{ rev: number, deleted: boolean, envelope: Uint8Array | null, tag: Uint8Array | null } | null} next what the item is after the write; null leaves the screen as it is (an upload of a missing item)
    * @param {ReturnType<typeof summaryOf> | null} summary null for a deletion
    */
   async function queue(id, baseRev, body, next, summary) {
@@ -558,17 +673,21 @@ export function createSyncEngine({
     const bytes = encodeWireBytes("put_item_req", request);
     alive();
     const before = { overlay: overlay.get(id), index: index.get(id) };
-    overlay.set(id, next);
-    if (summary) index.set(id, summary);
-    else index.delete(id);
+    if (next) {
+      overlay.set(id, next);
+      if (summary) index.set(id, summary);
+      else index.delete(id);
+    }
     try {
       await runner.enqueue({ idem, itemId: id, baseRev, body, bytes });
     } catch (error) {
       // Not stored, so not sent: the screen goes back to what it showed.
-      if (before.overlay) overlay.set(id, before.overlay);
-      else overlay.delete(id);
-      if (before.index) index.set(id, before.index);
-      else index.delete(id);
+      if (next) {
+        if (before.overlay) overlay.set(id, before.overlay);
+        else overlay.delete(id);
+        if (before.index) index.set(id, before.index);
+        else index.delete(id);
+      }
       throw error;
     }
     changed([id]);
@@ -595,10 +714,16 @@ export function createSyncEngine({
         rows.set(row.itemId, row);
         cursor = Math.max(cursor, row.seq);
       }
-      for (const [id, flag] of Object.entries(saved && typeof saved === "object" ? saved : {})) {
-        if (hex16.is(id) && (flag?.kind === "damaged" || flag?.kind === "quarantined") && Number.isSafeInteger(flag.rev)) {
-          flags.set(id, { kind: flag.kind, rev: flag.rev });
+      const savedMarks = saved?.v === 1 && saved.marks && typeof saved.marks === "object" ? saved.marks : {};
+      for (const [id, flag] of Object.entries(savedMarks)) {
+        const kinds = ["damaged", "quarantined", "missing_on_server"];
+        if (hex16.is(id) && kinds.includes(flag?.kind) && Number.isSafeInteger(flag.rev)) {
+          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(typeof flag.sent === "string" ? { sent: flag.sent } : {}) });
         }
+      }
+      const savedBlocked = saved?.v === 1 && saved.blocked && typeof saved.blocked === "object" ? saved.blocked : {};
+      for (const [id, code] of Object.entries(savedBlocked)) {
+        if (hex16.is(id) && typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code)) blocked.set(id, code);
       }
       for (const row of cached) {
         if (row.deleted || row.itemId === MANIFEST_ID) continue;
@@ -624,9 +749,28 @@ export function createSyncEngine({
       // Writes that were queued before the restart show as pending, newest last.
       const queued = await runner.load();
       alive();
+      for (const id of [...blocked.keys()]) {
+        // A block needs its draft: when the outbox no longer has one, the block is over.
+        if (queued.some((entry) => entry.itemId === id)) runner.block(id);
+        else {
+          blocked.delete(id);
+          flagsDirty = true;
+        }
+      }
       for (const entry of queued) {
         const rev = entry.baseRev + 1;
         if (rev <= (rows.get(entry.itemId)?.rev ?? 0)) continue; // the feed already has this item beyond the draft
+        if (blocked.has(entry.itemId)) {
+          // Refused for good before the restart: the server's version stays on screen; a draft of an item the server never took is shown.
+          if (!rows.has(entry.itemId) && !("tomb" in entry.body)) {
+            try {
+              index.set(entry.itemId, await summarize(entry.itemId, rev, entry.body.blob, entry.body.tag));
+            } catch (error) {
+              if (stopped || isFatal(error)) throw error;
+            }
+          }
+          continue;
+        }
         try {
           if ("tomb" in entry.body) {
             overlay.set(entry.itemId, { rev, deleted: true, envelope: null, tag: null });
@@ -644,10 +788,13 @@ export function createSyncEngine({
         }
       }
       if (stopped) return;
+      await saveFlags(db);
       changed(index.keys());
       runner.start();
       await syncNow();
       if (stopped) return;
+      // Items a listing did not show and that have no upload queued (a restart in between): queue it.
+      for (const [id, flag] of [...flags]) if (flag.kind === "missing_on_server") await uploadAgain(id);
       for (const name of FOCUS_EVENTS) win?.addEventListener?.(name, onFocus);
       schedule();
     },
@@ -671,6 +818,7 @@ export function createSyncEngine({
       overlay.clear();
       rows.clear();
       flags.clear();
+      blocked.clear();
       itemQueues.clear();
       listing = null;
       for (const set of Object.values(listeners)) set.clear();
@@ -696,6 +844,9 @@ export function createSyncEngine({
           pending: runner.entriesOf(id).length > 0,
           damaged: flag?.kind === "damaged",
           quarantined: flag?.kind === "quarantined",
+          missingOnServer: flag?.kind === "missing_on_server",
+          blocked: blocked.has(id),
+          blockedReason: blocked.get(id) ?? null,
           readOnly: s.readOnly,
         });
       }
@@ -779,6 +930,49 @@ export function createSyncEngine({
         const made = await client.vault.make_tombstone(hex16.decode(id), rev);
         await queue(id, version.rev, { tomb: made.tomb }, { rev, deleted: true, envelope: null, tag: null }, null);
       });
+    },
+
+    /**
+     * Drops the refused write of a blocked item and everything queued behind it,
+     * and lets the item be edited again. The screen already shows the server's
+     * version (or, for a draft the server never took, nothing is left).
+     * @param {string} id
+     */
+    async discard(id) {
+      if (stopped) throw new SyncError("stopped");
+      if (typeof id !== "string" || !blocked.has(id)) throw new SyncError("not_found");
+      await runner.discard(id);
+      alive();
+      blocked.delete(id);
+      flagsDirty = true;
+      overlay.delete(id);
+      if (!rows.has(id)) index.delete(id);
+      await showServerVersion(id);
+      await persistFlags();
+    },
+
+    /**
+     * Gives up an item that a full listing did not show, on the user's word:
+     * the local copy, its row and its revision floor are removed, and so is
+     * the upload that was queued for it.
+     * @param {string} id
+     */
+    async discardMissing(id) {
+      if (stopped) throw new SyncError("stopped");
+      if (typeof id !== "string" || flags.get(id)?.kind !== "missing_on_server") throw new SyncError("not_found");
+      await runner.discard(id);
+      alive();
+      const db = await store.open();
+      await store.cache.removeRows(db, scope, [id]);
+      alive();
+      rows.delete(id);
+      index.delete(id);
+      overlay.delete(id);
+      flags.delete(id);
+      blocked.delete(id);
+      flagsDirty = true;
+      await persistFlags();
+      changed([id]);
     },
 
     /**
