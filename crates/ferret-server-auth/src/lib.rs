@@ -134,7 +134,7 @@ pub use prelogin::{
     PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, resolve_credential,
 };
 pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
-pub use registration::{register_finish, register_start};
+pub use registration::{RegisterStartRequest, register_finish, register_start};
 pub use replace::{
     AccountAuthState, Challenge, ChallengeKey, ChallengeStore, ConsumeOutcome,
     InMemoryChallengeStore, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest,

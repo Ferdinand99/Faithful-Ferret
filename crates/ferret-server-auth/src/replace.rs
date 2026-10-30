@@ -50,10 +50,28 @@
 //!    recovery, the new `pk_r`.
 //! 7. The record is checked ([`ValidatedRecord::parse`]), a recovery must
 //!    carry a new `pk_r` that differs from the stored one and a password change
-//!    must not carry one ([`Malformed::RecoveryKey`]), and the profile is checked against the one
-//!    **stored for the account** (never against anything in the request): a
-//!    profile that is unknown or lower than the stored one is
-//!    [`AuthError::ProfileRejected`].
+//!    must not carry one ([`Malformed::RecoveryKey`]), and the profile is
+//!    checked by the server's [`ProfileRules`](crate::ProfileRules) (never
+//!    against anything in the request). A password change or an upgrade is
+//!    compared with the profile
+//!    **stored for the account**: one that is unknown or lower than the
+//!    stored one is [`AuthError::ProfileRejected`]. A recovery is not
+//!    compared with the stored profile: it needs the holder of the recovery
+//!    key, and it may set any profile the rules accept, a lower one than the
+//!    stored profile included. That is how a wrongly claimed higher profile
+//!    is undone: a client that claimed a profile it did not use locks its own
+//!    account out, and only a recovery can write a lower one.
+//!
+//! # A missing proof and a wrong proof
+//!
+//! A proof or a nonce that is missing, empty or of the wrong length is
+//! [`Malformed::Proof`] or [`Malformed::Nonce`] (400, step 3). The lengths
+//! are checked before the nonce is consumed, so such a request burns nothing
+//! and a client can send it again. A proof of exactly 64 bytes that does not
+//! verify (zero bytes or a flipped bit included) is
+//! [`DenyReason::ProofInvalid`] (401 `denied`) and the nonce is already used
+//! up. Both mean "no valid proof"; the difference is whether the nonce
+//! survived.
 //!
 //! A refusal at step 3 or later is reported to the throttle as a failure, and
 //! the result is reported as a success only when a permit is given.
@@ -887,10 +905,13 @@ impl fmt::Debug for ReplacePermit {
 /// body that does not parse as it sees fit; it must not return fields that
 /// are not in the bytes.
 ///
-/// The profile is compared with `account.current`, the profile stored for the
-/// account, with [`RegistrationKind::Existing`]. A profile that is unknown or
-/// lower than the stored one is [`AuthError::ProfileRejected`], whoever
-/// signed the proof.
+/// For a password change or an upgrade the profile is compared with
+/// `account.current`, the profile stored for the account, with
+/// [`RegistrationKind::Existing`]: a profile that is unknown or lower than
+/// the stored one is [`AuthError::ProfileRejected`], whoever signed the proof.
+/// A recovery is checked by
+/// [`ProfileRules::accept_recovery`](crate::ProfileRules::accept_recovery) and
+/// may set a lower profile than the stored one.
 ///
 /// Errors: [`AuthError::Denied`] with `ScopeForbids`, `NonceUnknown`,
 /// `NonceExpired` or `ProofInvalid`; [`AuthError::Malformed`] for a nonce or a
@@ -971,10 +992,17 @@ where
         }
     };
     step("profile");
-    let ksf_profile = cx.profiles().accept(
-        fields.ksf_profile,
-        RegistrationKind::Existing(account.current.ksf_profile),
-    )?;
+    let ksf_profile = match req.kind {
+        // A recovery needs the holder of the recovery key and may set any
+        // profile the rules accept, a lower one than the stored profile
+        // included: that is how a wrongly claimed higher profile is undone.
+        ReplaceKind::Recover => cx.profiles().accept_recovery(fields.ksf_profile)?,
+        // A password change or an upgrade may not lower the profile.
+        ReplaceKind::PasswordPut => cx.profiles().accept(
+            fields.ksf_profile,
+            RegistrationKind::Existing(account.current.ksf_profile),
+        )?,
+    };
 
     Ok(ReplacePermit {
         account_id: account.account.account_id,

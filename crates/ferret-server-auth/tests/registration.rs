@@ -18,9 +18,12 @@ use ferret_core::{
     KdfParams, KsfProfile, MasterPassword, OpaqueInput, ReplayRng, SecureRng, TestRng,
     opaque_register_finish, opaque_register_start,
 };
+use ferret_server_auth::testing::register_start_open;
 use ferret_server_auth::{
-    AuthError, CredentialId, Malformed, ProfileRules, RegistrationKind, ServerKeys, StoredRecord,
-    ValidatedRecord, register_finish, register_start,
+    AuthError, Caller, Capability, CredentialId, DenyReason, Malformed, Outcome, ProfileRules,
+    RecordingThrottle, RegisterStartRequest, RegistrationKind, RetryAfter, ServerKeys,
+    SessionScope, Stage, StoredRecord, ThrottleCall, ThrottleKey, ValidatedRecord, register_finish,
+    register_start,
 };
 
 /// A few KiB: far below the floor, so that the tests run in milliseconds.
@@ -85,7 +88,7 @@ fn register_with_draws(
     let input = password(text);
     let mut client = ReplayRng::new(vec![blind.to_vec(), nonce.to_vec()]);
     let (request, state) = opaque_register_start(&mut client, &input).unwrap();
-    let response = register_start(keys, id, &request).unwrap();
+    let response = register_start_open(keys, id, &request).unwrap();
     let done =
         register_finish_with(&mut client, state, &input, &response, &TestKsf::new(SMALL)).unwrap();
     client.finish().unwrap();
@@ -129,19 +132,25 @@ fn invalid_points() -> Vec<[u8; 32]> {
 fn register_start_is_deterministic_per_id() {
     let keys = keys();
     let request = request_for("correct horse", "client");
-    let first = register_start(&keys, &id(1), &request).unwrap();
+    let first = register_start_open(&keys, &id(1), &request).unwrap();
     assert_eq!(first.len(), REGISTRATION_RESPONSE_LEN);
-    assert_eq!(register_start(&keys, &id(1), &request).unwrap(), first);
-    assert_ne!(register_start(&keys, &id(2), &request).unwrap(), first);
+    assert_eq!(register_start_open(&keys, &id(1), &request).unwrap(), first);
+    assert_ne!(register_start_open(&keys, &id(2), &request).unwrap(), first);
     // Another request gives another answer for the same id.
     let other = request_for("correct horse", "another blind");
-    assert_ne!(register_start(&keys, &id(1), &other).unwrap(), first);
+    assert_ne!(register_start_open(&keys, &id(1), &other).unwrap(), first);
     // The same keys restored from their file answer alike.
     let restored = ServerKeys::from_payload(&keys.payload()).unwrap();
-    assert_eq!(register_start(&restored, &id(1), &request).unwrap(), first);
+    assert_eq!(
+        register_start_open(&restored, &id(1), &request).unwrap(),
+        first
+    );
     // Other keys answer differently.
     let stranger = ServerKeys::generate(&mut rng("another server")).unwrap();
-    assert_ne!(register_start(&stranger, &id(1), &request).unwrap(), first);
+    assert_ne!(
+        register_start_open(&stranger, &id(1), &request).unwrap(),
+        first
+    );
 }
 
 #[test]
@@ -151,7 +160,7 @@ fn register_start_matches_the_pinned_vector() {
     // are the evaluated element and then the public key of the server.
     let keys = keys();
     let request = request_for("pinned", "pinned client");
-    let response = register_start(&keys, &id(7), &request).unwrap();
+    let response = register_start_open(&keys, &id(7), &request).unwrap();
     assert_eq!(hex(&request), PINNED_REQUEST);
     assert_eq!(hex(&response), PINNED_RESPONSE);
     assert_eq!(&response[32..], keys.public_key());
@@ -174,7 +183,7 @@ fn register_response_ends_with_server_public_key() {
     let keys = keys();
     for n in 0..8u8 {
         let request = request_for("pw", &format!("client {n}"));
-        let response = register_start(&keys, &id(n), &request).unwrap();
+        let response = register_start_open(&keys, &id(n), &request).unwrap();
         assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN);
         assert_eq!(&response[32..], keys.public_key().as_slice());
         // The first half is the evaluated element, not the request.
@@ -194,7 +203,7 @@ fn register_start_rejects_every_length_except_32() {
     for len in lengths {
         let mut input = request.clone();
         input.resize(len, 0);
-        let result = register_start(&keys, &id(1), &input);
+        let result = register_start_open(&keys, &id(1), &input);
         if len == REGISTRATION_REQUEST_LEN {
             assert!(result.is_ok(), "length {len}");
         } else {
@@ -204,7 +213,7 @@ fn register_start_rejects_every_length_except_32() {
     // The same with a request that is all zeros before the tail: still the
     // length, not the content.
     assert_eq!(
-        register_start(&keys, &id(1), &[0u8; 33]).unwrap_err(),
+        register_start_open(&keys, &id(1), &[0u8; 33]).unwrap_err(),
         BAD_REQUEST
     );
 }
@@ -214,7 +223,7 @@ fn register_start_rejects_non_canonical_point() {
     let keys = keys();
     for point in invalid_points() {
         assert_eq!(
-            register_start(&keys, &id(1), &point).unwrap_err(),
+            register_start_open(&keys, &id(1), &point).unwrap_err(),
             BAD_REQUEST,
             "{}",
             hex(&point)
@@ -226,7 +235,7 @@ fn register_start_rejects_non_canonical_point() {
     for bit in 0..256 {
         let mut flipped = request.clone();
         flipped[bit / 8] ^= 1 << (bit % 8);
-        match register_start(&keys, &id(1), &flipped) {
+        match register_start_open(&keys, &id(1), &flipped) {
             Ok(response) => assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN),
             Err(error) => assert_eq!(error, BAD_REQUEST),
         }
@@ -241,7 +250,7 @@ fn register_start_errors_depend_on_the_bytes_only() {
     for point in invalid_points() {
         for (keys, n) in [(&a, 1u8), (&b, 2u8)] {
             assert_eq!(
-                register_start(keys, &id(n), &point).unwrap_err(),
+                register_start_open(keys, &id(n), &point).unwrap_err(),
                 BAD_REQUEST
             );
         }
@@ -271,7 +280,7 @@ fn register_finish_accepts_a_record_made_with_profile_one() {
     let input = password("production path");
     let mut client = rng("client");
     let (request, state) = opaque_register_start(&mut client, &input).unwrap();
-    let response = register_start(&keys, &id(4), &request).unwrap();
+    let response = register_start_open(&keys, &id(4), &request).unwrap();
     let done =
         opaque_register_finish(&mut client, state, &input, &response, KsfProfile::P1).unwrap();
     assert_eq!(done.server_public_key, keys.public_key());
@@ -528,4 +537,238 @@ fn debug_output_shows_no_record_bytes() {
         assert!(text.len() < 60, "{text}");
     }
     assert!(format!("{:?}", stored.record).contains("redacted"));
+}
+
+// ------------------------------------------- throttle, scope and account
+
+const NOW: u64 = 1_700_000_000;
+const FORBIDDEN: AuthError = AuthError::Denied(DenyReason::ScopeForbids);
+
+fn caller() -> Caller {
+    Caller {
+        ip: Some("192.0.2.7".parse().unwrap()),
+    }
+}
+
+fn start_request<'a>(
+    scope: SessionScope,
+    session_account: Option<CredentialId>,
+    credential: CredentialId,
+    request: &'a [u8],
+) -> RegisterStartRequest<'a> {
+    RegisterStartRequest {
+        caller: caller(),
+        scope,
+        session_account,
+        credential,
+        request,
+    }
+}
+
+#[test]
+fn register_start_asks_the_throttle_before_any_work() {
+    let keys = keys();
+    let good = request_for("correct horse", "client");
+    let wait = RetryAfter::new(42);
+
+    // A refusing throttle stops the request before the request is looked at:
+    // a request that is not even well formed is answered with the wait, and
+    // the throttle sees one admit and nothing else.
+    for request in [good.as_slice(), &[1u8; 5][..], &[][..]] {
+        let throttle = RecordingThrottle::refusing(wait);
+        let req = start_request(SessionScope::Full, None, id(1), request);
+        let error = register_start(&keys, &throttle, NOW, &req).unwrap_err();
+        assert_eq!(
+            error,
+            AuthError::Throttled {
+                retry_after_secs: 42
+            }
+        );
+        let calls = throttle.calls();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        match &calls[0] {
+            ThrottleCall::Admit { stage, keys, now } => {
+                assert_eq!(*stage, Stage::RegisterStart);
+                assert_eq!(*now, NOW);
+                // The keys of the stage: the address and the account.
+                assert_eq!(
+                    keys,
+                    &[
+                        ThrottleKey::Ip("192.0.2.7".parse().unwrap()),
+                        ThrottleKey::Account(id(1)),
+                    ]
+                );
+            }
+            other @ ThrottleCall::Record { .. } => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn register_start_reports_its_outcome_once() {
+    let keys = keys();
+    let good = request_for("correct horse", "client");
+
+    let throttle = RecordingThrottle::new();
+    let req = start_request(SessionScope::Full, None, id(1), &good);
+    register_start(&keys, &throttle, NOW, &req).unwrap();
+    let outcomes = recorded(&throttle);
+    assert_eq!(outcomes, [None, Some(Outcome::Success)]);
+
+    // A request that is admitted and then found malformed is a failure.
+    let throttle = RecordingThrottle::new();
+    let req = start_request(SessionScope::Full, None, id(1), &good[..31]);
+    assert_eq!(
+        register_start(&keys, &throttle, NOW, &req).unwrap_err(),
+        BAD_REQUEST
+    );
+    assert_eq!(recorded(&throttle), [None, Some(Outcome::Failure)]);
+}
+
+/// The calls in order: `None` for an admit, the outcome for a record.
+fn recorded(throttle: &RecordingThrottle) -> Vec<Option<Outcome>> {
+    throttle
+        .calls()
+        .iter()
+        .map(|call| match call {
+            ThrottleCall::Admit { stage, .. } => {
+                assert_eq!(*stage, Stage::RegisterStart);
+                None
+            }
+            ThrottleCall::Record { stage, outcome, .. } => {
+                assert_eq!(*stage, Stage::RegisterStart);
+                Some(*outcome)
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn register_start_needs_a_scope_that_allows_it() {
+    let keys = keys();
+    let request = request_for("correct horse", "client");
+    for scope in [
+        SessionScope::Full,
+        SessionScope::Pending2fa,
+        SessionScope::AccountReset,
+        SessionScope::Unverified,
+    ] {
+        let throttle = RecordingThrottle::new();
+        // The session's own account, so only the scope can refuse.
+        let req = start_request(scope, Some(id(1)), id(1), &request);
+        let result = register_start(&keys, &throttle, NOW, &req);
+        if scope.allows(Capability::OpaqueRegisterStart) {
+            assert_eq!(
+                result.unwrap().len(),
+                REGISTRATION_RESPONSE_LEN,
+                "{scope:?}"
+            );
+        } else {
+            // Refused before the throttle is asked: no budget is used.
+            assert_eq!(result.unwrap_err(), FORBIDDEN, "{scope:?}");
+            assert!(throttle.calls().is_empty(), "{scope:?}");
+        }
+    }
+}
+
+#[test]
+fn a_reset_session_may_register_for_its_own_account_only() {
+    let keys = keys();
+    let request = request_for("correct horse", "client");
+    let own = id(1);
+    let other = id(2);
+
+    let throttle = RecordingThrottle::new();
+    let req = start_request(SessionScope::AccountReset, Some(own), own, &request);
+    let response = register_start(&keys, &throttle, NOW, &req).unwrap();
+    assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN);
+
+    // Another account, or no account for the session: refused, and the
+    // throttle is not asked.
+    let throttle = RecordingThrottle::new();
+    for session_account in [Some(own), None, Some(other)] {
+        let credential = if session_account == Some(other) {
+            own
+        } else {
+            other
+        };
+        let req = start_request(
+            SessionScope::AccountReset,
+            session_account,
+            credential,
+            &request,
+        );
+        assert_eq!(
+            register_start(&keys, &throttle, NOW, &req).unwrap_err(),
+            FORBIDDEN,
+            "{session_account:?}"
+        );
+    }
+    assert!(throttle.calls().is_empty());
+
+    // Every other id differing in one byte is refused, too.
+    for byte in 0..16 {
+        let mut near = *own.as_bytes();
+        near[byte] ^= 1;
+        let req = start_request(
+            SessionScope::AccountReset,
+            Some(own),
+            CredentialId::from_bytes(near),
+            &request,
+        );
+        assert_eq!(
+            register_start(&keys, &throttle, NOW, &req).unwrap_err(),
+            FORBIDDEN
+        );
+    }
+}
+
+#[test]
+fn a_full_session_is_not_tied_to_one_account_by_the_library() {
+    // The endpoint decides which account a full session may change; the
+    // answer for another id is an ordinary one (it is made from the keys, the
+    // id and the request, and finishing it needs a signed request).
+    let keys = keys();
+    let request = request_for("correct horse", "client");
+    let req = start_request(SessionScope::Full, Some(id(1)), id(2), &request);
+    let throttle = RecordingThrottle::new();
+    let response = register_start(&keys, &throttle, NOW, &req).unwrap();
+    assert_eq!(
+        response,
+        register_start_open(&keys, &id(2), &request).unwrap()
+    );
+}
+
+#[test]
+fn a_recovery_may_set_a_lower_profile_than_the_stored_one() {
+    // The rules of the tests: profiles 1 and 2, with 1 as the lowest.
+    let rules = ProfileRules::for_tests(&[1, 2], 1);
+    // A password change or an upgrade from profile 2 may not claim 1.
+    assert_eq!(
+        rules.accept(1, RegistrationKind::Existing(2)).unwrap_err(),
+        AuthError::ProfileRejected
+    );
+    // A recovery may: it does not read the stored profile.
+    assert_eq!(rules.accept_recovery(1), Ok(1));
+    assert_eq!(rules.accept_recovery(2), Ok(2));
+    // The table and the minimum still apply.
+    for claimed in [0, 3, 255, 256, u32::MAX] {
+        assert_eq!(
+            rules.accept_recovery(claimed).unwrap_err(),
+            AuthError::ProfileRejected,
+            "{claimed}"
+        );
+    }
+    let floor = ProfileRules::for_tests(&[1, 2, 3], 2);
+    assert_eq!(
+        floor.accept_recovery(1).unwrap_err(),
+        AuthError::ProfileRejected
+    );
+    assert_eq!(floor.accept_recovery(2), Ok(2));
+    // The real client knows profile 1 only.
+    assert_eq!(ProfileRules::ferret_v1().accept_recovery(1), Ok(1));
+    assert_eq!(
+        ProfileRules::ferret_v1().accept_recovery(2).unwrap_err(),
+        AuthError::ProfileRejected
+    );
 }

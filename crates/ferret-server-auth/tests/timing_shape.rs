@@ -148,6 +148,7 @@ fn login_start_has_the_same_outside_effects_for_every_lookup() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         let response = login_start(&f.cx(), &store, &mut rng, &request).unwrap();
@@ -185,6 +186,7 @@ fn a_bad_ke1_has_the_same_outside_effects_for_every_lookup() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &[1u8; 96],
         };
         let error = login_start(&f.cx(), &store, &mut rng, &request).unwrap_err();
@@ -219,6 +221,7 @@ fn login_finish_has_the_same_outside_effects_for_every_lookup() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         let response = login_start(&f.cx(), &store, &mut rng, &request).unwrap();
@@ -270,6 +273,7 @@ fn the_documented_draws_and_lifetime() {
         credential: f.credential,
         lookup: f.active(),
         purpose: LoginPurpose::Login,
+        session_scope: None,
         ke1: &ke1,
     };
     login_start(&f.cx(), &store, &mut rng, &request).unwrap();

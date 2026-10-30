@@ -22,9 +22,9 @@ use ferret_core::{
 use ferret_server_auth::testing::WriteRefused;
 use ferret_server_auth::{
     AuthError, Capability, CredentialId, DenyReason, ErrorClass, InternalKind, LoginPurpose,
-    Outcome, ProfileRules, RegistrationKind, RetryAfter, ScopeEffect, SessionBinding, SessionScope,
-    SignedRequest, Stage, authorize, authorize_signed, fake_prelogin, normalize_login_name,
-    register_finish,
+    Malformed, Outcome, ProfileRules, RegistrationKind, RetryAfter, ScopeEffect, SessionBinding,
+    SessionScope, SignedRequest, Stage, authorize, authorize_signed, fake_prelogin,
+    normalize_login_name, register_finish,
 };
 use support::{
     Ksf, LoginFailure, PASSWORD, PASSWORD_2, PROFILE_2_PARAMS, Server, Target, URL, caller,
@@ -58,6 +58,15 @@ fn registration_login_roundtrip() {
     assert_eq!(
         row.record.record.as_bytes(),
         a.new.registration_record.as_slice()
+    );
+    // The registration went through the throttle: admitted first, reported
+    // once, under its own stage.
+    assert_eq!(
+        s.stages(),
+        [
+            (Stage::RegisterStart, None),
+            (Stage::RegisterStart, Some(Outcome::Success)),
+        ]
     );
 
     s.throttle.clear();
@@ -278,23 +287,49 @@ fn change_password_without_or_with_a_bad_proof_changes_nothing() {
             denied(DenyReason::ProofInvalid)
         );
     }
-    // A proof that is missing is not even well formed.
-    let mut absent = s.put_req(&a, &change, 1, session(0xA1));
+    // A proof that is missing, empty or not 64 bytes long is not even well
+    // formed: `Malformed(Proof)` (400), not a denial. The length is checked
+    // before the nonce is consumed, so the request burns nothing.
+    let absent = s.put_req(&a, &change, 1, session(0xA4));
+    for wrong_length in [&absent.proof[..0], &absent.proof[..1], &absent.proof[..63]] {
+        let mut request = absent.as_request();
+        request.proof = wrong_length;
+        assert_eq!(
+            s.replace_raw(&a, &request).unwrap_err(),
+            AuthError::Malformed(Malformed::Proof)
+        );
+    }
+    let mut long = absent.proof.to_vec();
+    long.push(0);
     let mut request = absent.as_request();
-    request.proof = &[];
+    request.proof = &long;
     assert_eq!(
         s.replace_raw(&a, &request).unwrap_err(),
-        AuthError::Malformed(ferret_server_auth::Malformed::Proof)
+        AuthError::Malformed(Malformed::Proof)
     );
-    absent.proof = [0; 64];
-
-    // Every refusal was reported as a failure and none as a success.
+    // Every refusal so far was reported as a failure and none as a success.
     assert!(
         s.stages()
             .iter()
             .filter(|(stage, _)| *stage == Stage::Replace)
             .all(|(_, outcome)| *outcome != Some(Outcome::Success))
     );
+    // The nonce is still good: the same request, with its real proof, works.
+    assert!(s.replace(&a, &absent).is_ok());
+    // A wrong proof of 64 bytes is `Denied(ProofInvalid)` (401) and does burn
+    // the nonce: the right proof for the same nonce finds nothing.
+    let burned = s.put_req(&a, &change, 1, session(0xA5));
+    let mut wrong = burned.clone();
+    wrong.proof = [0; 64];
+    assert_eq!(
+        s.replace(&a, &wrong).unwrap_err(),
+        denied(DenyReason::ProofInvalid)
+    );
+    assert_eq!(
+        s.replace(&a, &burned).unwrap_err(),
+        denied(DenyReason::NonceUnknown)
+    );
+
     // The stored record is untouched, and the old password still works.
     assert_eq!(stored(&a).record.as_bytes(), before.record.as_bytes());
     assert_eq!(a.row.read().account.row_version, 1);
@@ -422,6 +457,8 @@ fn expired_state_is_denied() {
     assert!(s.finish(&login_id, &answer.unwrap().ke3, None).is_ok());
 
     // A minute later the state is gone, and the correct KE3 does not help.
+    // It reads as a missing state, not as an expired one: the store drops a
+    // state at its expiry time before the library opens it.
     let started = s
         .begin(&Target::Active(&a), PASSWORD, LoginPurpose::Login)
         .unwrap();
@@ -595,7 +632,7 @@ fn claimed_profile_that_does_not_match_the_record_locks_the_account_out() {
     // The server cannot see the real stretching profile of a record: it
     // trusts the claim. A record made with profile 1 but stored as profile 2
     // never opens, and the way out is a recovery that makes the record
-    // again with the parameters of profile 2.
+    // again and states the profile it really used.
     let s = Server::with_two_profiles();
     let mut a = alice(&s);
     let wrong = register_finish(
@@ -631,22 +668,21 @@ fn claimed_profile_that_does_not_match_the_record_locks_the_account_out() {
         Err(LoginFailure::Client(Error::Decrypt))
     ));
 
-    // A recovery that claims profile 1 is a downgrade of what is stored.
+    // A recovery may set a lower profile than the stored one: it makes the
+    // record with the function of profile 1 and says so, and undoes the wrong
+    // claim.
     let rec = s.recovered(&a, PASSWORD, Ksf::Small, "back to one");
     let req = s.recover_req(&a, &rec, 1, session(0xB2));
-    assert_eq!(s.replace(&a, &req).unwrap_err(), AuthError::ProfileRejected);
-
-    // A recovery that makes the record with the parameters of profile 2 and
-    // says so gets the owner back in.
-    let rec = s.recovered(&a, PASSWORD, Ksf::Params(PROFILE_2_PARAMS), "way out");
-    let req = s.recover_req(&a, &rec, 2, session(0xB3));
     let permit = s.replace(&a, &req).unwrap();
+    assert_eq!(permit.stored_ksf_profile, 2);
+    assert_eq!(permit.new.ksf_profile, 1);
     a.row.apply_replacement(&permit).unwrap();
+    assert_eq!(stored(&a).ksf_profile, 1);
     assert!(
         s.login(
             &Target::Active(&a),
             PASSWORD,
-            Ksf::Params(PROFILE_2_PARAMS),
+            Ksf::Small,
             LoginPurpose::Login,
             None
         )
@@ -875,6 +911,16 @@ fn a_refusing_throttle_stops_every_entry_point_before_any_work() {
             .unwrap_err(),
         throttled
     );
+    assert_eq!(
+        s.register_response(
+            SessionScope::Full,
+            Some(a.credential),
+            &a.credential,
+            &[0; 32]
+        )
+        .unwrap_err(),
+        throttled
+    );
     assert_eq!(s.replace(&a, &req).unwrap_err(), throttled);
     assert_eq!(throttled.http_class(), ErrorClass::TooManyRequests);
     assert_eq!(throttled.public_code(), "throttled");
@@ -910,4 +956,186 @@ fn a_nonce_is_good_for_five_minutes_in_its_own_session_only() {
         s.replace(&a, &late).unwrap_err(),
         denied(DenyReason::NonceExpired)
     );
+}
+
+// ------------------------------------------- profiles, scopes, throttle
+
+#[test]
+fn recovery_may_lower_the_profile_but_a_password_change_may_not() {
+    // The test rules know profiles 1 and 2, with 1 as the floor.
+    let s = Server::with_two_profiles();
+    let a = alice(&s);
+
+    // Upgrade to profile 2 first.
+    let change = s.password_change(&a, PASSWORD, "upgrade");
+    let permit = s
+        .replace(&a, &s.put_req(&a, &change, 2, session(0xA1)))
+        .unwrap();
+    a.row.apply_replacement(&permit).unwrap();
+    assert_eq!(stored(&a).ksf_profile, 2);
+
+    // A password change or an upgrade cannot go back to 1.
+    let back = s.password_change(&a, PASSWORD_2, "downgrade");
+    assert_eq!(
+        s.replace(&a, &s.put_req(&a, &back, 1, session(0xA2)))
+            .unwrap_err(),
+        AuthError::ProfileRejected
+    );
+
+    // What the rules refuse stays refused for a recovery: a profile the
+    // table does not know, and one below the floor.
+    for claimed in [0, 3, 256, u32::MAX] {
+        let rec = s.recovered(&a, PASSWORD, Ksf::Small, "unknown");
+        assert_eq!(
+            s.replace(&a, &s.recover_req(&a, &rec, claimed, session(0xB2)))
+                .unwrap_err(),
+            AuthError::ProfileRejected,
+            "{claimed}"
+        );
+    }
+
+    // A recovery can, because it needs the holder of the recovery key.
+    let rec = s.recovered(&a, PASSWORD_2, Ksf::Small, "lower");
+    let permit = s
+        .replace(&a, &s.recover_req(&a, &rec, 1, session(0xB1)))
+        .unwrap();
+    assert_eq!(permit.stored_ksf_profile, 2);
+    assert_eq!(permit.new.ksf_profile, 1);
+    a.row.apply_replacement(&permit).unwrap();
+    assert_eq!(stored(&a).ksf_profile, 1);
+}
+
+#[test]
+fn registration_is_throttled_and_tied_to_the_session() {
+    let s = Server::new();
+    let a = alice(&s);
+    let input = new_input(PASSWORD_2);
+    let request = ferret_core::opaque_register_start(&mut TestRng::new(b"req"), &input)
+        .unwrap()
+        .0;
+    s.throttle.clear();
+
+    // A full session registers, through the throttle.
+    let full = SessionScope::Full;
+    assert!(
+        s.register_response(full, Some(a.credential), &a.credential, &request)
+            .is_ok()
+    );
+    assert_eq!(
+        s.stages(),
+        [
+            (Stage::RegisterStart, None),
+            (Stage::RegisterStart, Some(Outcome::Success)),
+        ]
+    );
+
+    // A reset session registers for its own account and no other.
+    s.throttle.clear();
+    let reset = SessionScope::AccountReset;
+    assert!(
+        s.register_response(reset, Some(a.credential), &a.credential, &request)
+            .is_ok()
+    );
+    let other = s.create_account(0x31, "mallory@example.com", PASSWORD_2, Ksf::Small);
+    s.throttle.clear();
+    assert_eq!(
+        s.register_response(reset, Some(a.credential), &other.credential, &request)
+            .unwrap_err(),
+        denied(DenyReason::ScopeForbids)
+    );
+    assert_eq!(
+        s.register_response(reset, None, &a.credential, &request)
+            .unwrap_err(),
+        denied(DenyReason::ScopeForbids)
+    );
+    // Scopes that may not register are refused before the throttle.
+    for scope in [SessionScope::Pending2fa, SessionScope::Unverified] {
+        assert_eq!(
+            s.register_response(scope, Some(a.credential), &a.credential, &request)
+                .unwrap_err(),
+            denied(DenyReason::ScopeForbids),
+            "{scope:?}"
+        );
+    }
+    assert_eq!(
+        s.stages().len(),
+        0,
+        "a refused scope reaches no throttle: {:?}",
+        s.stages()
+    );
+
+    // A refusing throttle stops it before the request is read.
+    s.throttle.refuse_with(Some(RetryAfter::new(30)));
+    assert_eq!(
+        s.register_response(full, Some(a.credential), &a.credential, &[1, 2, 3])
+            .unwrap_err(),
+        AuthError::Throttled {
+            retry_after_secs: 30
+        }
+    );
+}
+
+#[test]
+fn reauth_needs_a_session_that_may_reauthenticate() {
+    let s = Server::new();
+    let a = alice(&s);
+    let mine = session(0xA1);
+    let purpose = LoginPurpose::Reauth {
+        session: mine,
+        account: a.credential,
+    };
+    let forbidden = denied(DenyReason::ScopeForbids);
+    s.throttle.clear();
+
+    // A session that has not passed the second factor, a reset session, one
+    // without a known scope and a request without a session are refused
+    // before the throttle is asked and before a state is made.
+    for scope in [
+        Some(SessionScope::Pending2fa),
+        Some(SessionScope::AccountReset),
+        Some(SessionScope::Unverified),
+        None,
+    ] {
+        let result = s.begin_in(
+            &Target::Active(&a),
+            PASSWORD,
+            purpose,
+            scope,
+            (&mut s.rng("client"), &mut s.rng("server")),
+        );
+        assert_eq!(result.err(), Some(forbidden), "{scope:?}");
+    }
+    assert!(s.stages().is_empty());
+    assert!(s.logins.is_empty());
+
+    // A full session may, and an ordinary login needs no scope at all.
+    let result = s.begin_in(
+        &Target::Active(&a),
+        PASSWORD,
+        purpose,
+        Some(SessionScope::Full),
+        (&mut s.rng("client"), &mut s.rng("server")),
+    );
+    assert!(result.is_ok());
+    assert!(
+        s.begin_in(
+            &Target::Active(&a),
+            PASSWORD,
+            LoginPurpose::Login,
+            None,
+            (&mut s.rng("client"), &mut s.rng("server")),
+        )
+        .is_ok()
+    );
+
+    // The refusal is the same for a name that does not exist.
+    let ghost = Target::Unknown("ghost@example.com");
+    let result = s.begin_in(
+        &ghost,
+        PASSWORD,
+        purpose,
+        Some(SessionScope::Pending2fa),
+        (&mut s.rng("client"), &mut s.rng("server")),
+    );
+    assert_eq!(result.err(), Some(forbidden));
 }

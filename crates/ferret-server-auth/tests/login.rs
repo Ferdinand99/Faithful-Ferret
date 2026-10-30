@@ -16,12 +16,13 @@ use ferret_core::opaque::server_suite::{KE1_LEN, KE3_LEN};
 use ferret_core::testing::opaque::KE2_BYTES;
 use ferret_core::{Error as ClientError, KsfProfile, OPAQUE_CONTEXT, ReplayRng, TestRng};
 use ferret_server_auth::testing::{
-    FIXTURE_IP, FIXTURE_PASSWORD, LoginFixture, login_start_with_context, put_state, take_state,
+    FIXTURE_IP, FIXTURE_PASSWORD, LoginFixture, login_start_with_context, put_state,
+    register_start_open, take_state,
 };
 use ferret_server_auth::{
     AccountLookup, AuthError, DenyReason, ErrorClass, LoginFinishRequest, LoginId, LoginPurpose,
-    LoginStartRequest, Malformed, Outcome, PreloginPolicy, RetryAfter, SessionBinding, Stage,
-    ThrottleCall, ThrottleKey, fake_credential_id, login_start, register_start,
+    LoginStartRequest, Malformed, Outcome, PreloginPolicy, RetryAfter, SessionBinding,
+    SessionScope, Stage, ThrottleCall, ThrottleKey, fake_credential_id, login_start,
 };
 
 const NOW: u64 = LoginFixture::START;
@@ -168,6 +169,7 @@ fn disabled_account_looks_unknown() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         // A fresh store and the same random source: nothing may differ.
@@ -188,6 +190,7 @@ fn disabled_account_looks_unknown() {
             credential,
             lookup: AccountLookup::Unknown,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         let store = ferret_server_auth::InMemoryLoginStateStore::new();
@@ -212,6 +215,7 @@ fn repeated_probes_for_an_unknown_account_are_consistent() {
             credential: f.credential,
             lookup: AccountLookup::Unknown,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         login_start(
@@ -248,12 +252,12 @@ fn oprf_element_is_the_same_in_register_and_login() {
     )
     .unwrap();
     assert_eq!(request.as_slice(), &ke1[..32]);
-    let registered = register_start(&f.keys, &f.credential, &request).unwrap();
+    let registered = register_start_open(&f.keys, &f.credential, &request).unwrap();
     let response = f.start(f.active(), &ke1, LoginPurpose::Login).unwrap();
     assert_eq!(&registered[..32], &response.ke2[..32]);
     // The same holds for a made-up account under its made-up id.
     let fake = fake_credential_id(&f.prelogin, &f.name);
-    let registered = register_start(&f.keys, &fake, &request).unwrap();
+    let registered = register_start_open(&f.keys, &fake, &request).unwrap();
     let response = f
         .start(AccountLookup::Unknown, &ke1, LoginPurpose::Login)
         .unwrap();
@@ -281,6 +285,7 @@ fn login_start_draws_only_the_documented_values() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         let store = ferret_server_auth::InMemoryLoginStateStore::new();
@@ -312,6 +317,7 @@ fn login_start_rejects_every_ke1_length_except_96() {
                 credential: f.credential,
                 lookup,
                 purpose: LoginPurpose::Login,
+                session_scope: None,
                 ke1: &input,
             };
             // An empty replay panics on the first draw: nothing is drawn.
@@ -342,6 +348,7 @@ fn login_start_rejects_bad_point_as_malformed() {
                     credential: f.credential,
                     lookup,
                     purpose: LoginPurpose::Login,
+                    session_scope: None,
                     ke1: &input,
                 };
                 let result = login_start(&f.cx(), &f.store, &mut ReplayRng::new(vec![]), &request);
@@ -398,6 +405,7 @@ fn throttled_start_does_no_work() {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &ke1,
         };
         // No draw (an empty replay panics on one), no state, no parsing: a
@@ -411,6 +419,7 @@ fn throttled_start_does_no_work() {
             }
         );
         let garbage = LoginStartRequest {
+            session_scope: None,
             ke1: &[1, 2, 3],
             ..request
         };
@@ -859,6 +868,7 @@ fn server_with_another_context_cannot_authenticate() {
         credential: f.credential,
         lookup: f.active(),
         purpose: LoginPurpose::Login,
+        session_scope: None,
         ke1: &ke1,
     };
     let response = login_start_with_context(
@@ -878,6 +888,7 @@ fn server_with_another_context_cannot_authenticate() {
     // Other identities do the same.
     let (ke1, state) = f.client_start(FIXTURE_PASSWORD, "client");
     let request = LoginStartRequest {
+        session_scope: None,
         ke1: &ke1,
         ..request
     };
@@ -957,6 +968,7 @@ fn a_reauthentication_for_another_account_is_denied_in_the_session_of_a() {
                     session: stolen,
                     account: account_a,
                 },
+                session_scope: Some(SessionScope::Full),
                 ke1: &ke1,
             };
             let response = login_start(
@@ -994,6 +1006,7 @@ fn a_reauthentication_for_another_account_is_denied_in_the_session_of_a() {
             session: stolen,
             account: account_a,
         },
+        session_scope: Some(SessionScope::Full),
         ke1: &ke1,
     };
     let response = login_start(&f.cx(), &f.store, &mut TestRng::new(b"unknown"), &request).unwrap();
@@ -1049,6 +1062,7 @@ fn an_expired_state_is_refused_even_when_the_store_hands_it_back() {
         credential: f.credential,
         lookup: f.active(),
         purpose: LoginPurpose::Login,
+        session_scope: None,
         ke1: &ke1,
     };
     let response = login_start(&f.cx(), &store, &mut TestRng::new(b"forgetful"), &request).unwrap();

@@ -22,7 +22,9 @@ use ferret_core::{
     change_password, create_account, encode_recovery_key, opaque_login_start,
     opaque_register_start, recover, recovery_sign,
 };
-use ferret_server_auth::testing::{LoginFixture, SMALL, TestAccountStore, WriteRefused};
+use ferret_server_auth::testing::{
+    LoginFixture, SMALL, TestAccountStore, WriteRefused, register_start_open,
+};
 use ferret_server_auth::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, ChallengeKey, ChallengeStore,
     ConsumeOutcome, CredentialId, DenyReason, InMemoryChallengeStore, InternalKind,
@@ -30,7 +32,7 @@ use ferret_server_auth::{
     RegistrationKind, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, RetryAfter,
     ScopeEffect, SessionBinding, SessionScope, SignedAccount, SignedPermit, SignedRequest, Stage,
     StoreError, StoredRecord, ThrottleCall, ThrottleKey, WriteBasis, authorize_replacement,
-    authorize_signed, issue_challenge, login_finish, login_start, register_finish, register_start,
+    authorize_signed, issue_challenge, login_finish, login_start, register_finish,
 };
 use sha2::{Digest, Sha256};
 
@@ -383,6 +385,7 @@ impl World {
                     sk_hint: false,
                 },
                 purpose: LoginPurpose::Login,
+                session_scope: None,
                 ke1: &ke1,
             },
         )
@@ -424,7 +427,7 @@ fn password_input(text: &str) -> OpaqueInput {
 fn register_with(f: &LoginFixture, input: &OpaqueInput, seed: &str) -> RegistrationFinished {
     let mut client = TestRng::new(format!("client {seed}").as_bytes());
     let (request, state) = opaque_register_start(&mut client, input).unwrap();
-    let response = register_start(&f.keys, &credential(), &request).unwrap();
+    let response = register_start_open(&f.keys, &credential(), &request).unwrap();
     register_finish_with(&mut client, state, input, &response, &TestKsf::new(SMALL)).unwrap()
 }
 
@@ -909,9 +912,15 @@ fn downgrade_is_rejected_even_with_a_valid_proof() {
     // From profile 1 a higher one is an upgrade.
     let up = w.put_req(&change, s1(), body_of(2, &change.registration_record));
     assert_eq!(w.run(&up).unwrap().new.ksf_profile, 2);
-    // A recovery may not go down either: the stored profile is what counts.
+    // A recovery may go down: it needs the holder of the recovery key, and it
+    // is the way out of a profile that was claimed wrongly. The rules still
+    // apply, so a profile they do not know is refused.
     let rec = w.recovered(PASSWORD_2);
     let req = w.recover_req(&rec, s1(), rbody(&rec, 1));
+    let permit = w.run_as(&on_two, &req).unwrap();
+    assert_eq!(permit.stored_ksf_profile, 2);
+    assert_eq!(permit.new.ksf_profile, 1);
+    let req = w.recover_req(&rec, s1(), rbody(&rec, 3));
     assert_eq!(
         w.run_as(&on_two, &req).unwrap_err(),
         AuthError::ProfileRejected

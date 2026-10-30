@@ -33,13 +33,14 @@ use ferret_core::{
 };
 use ferret_server_auth::testing::{SMALL, TestAccountStore};
 use ferret_server_auth::{
-    AccountAuthState, AccountLookup, AuthContext, AuthError, Caller, CredentialId,
+    AccountAuthState, AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId,
     InMemoryChallengeStore, InMemoryLoginStateStore, LoginFinishRequest, LoginId, LoginPurpose,
     LoginStartRequest, LoginStartResponse, LoginVerified, ManualClock, Outcome, PreloginPolicy,
-    PreloginSecret, ProfileRules, RecordingThrottle, RegistrationKind, ReplaceFields, ReplaceKind,
-    ReplacePermit, ReplaceRequest, ServerKeys, SessionBinding, SessionScope, SignedAccount, Stage,
-    StateSealKey, StoredRecord, ThrottleCall, authorize_replacement, issue_challenge, login_finish,
-    login_start, normalize_login_name, register_finish, register_start, resolve_credential,
+    PreloginSecret, ProfileRules, RecordingThrottle, RegisterStartRequest, RegistrationKind,
+    ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, ServerKeys, SessionBinding,
+    SessionScope, SignedAccount, Stage, StateSealKey, StoredRecord, ThrottleCall,
+    authorize_replacement, issue_challenge, login_finish, login_start, normalize_login_name,
+    register_finish, register_start, resolve_credential,
 };
 
 pub const URL: &str = "https://ferret.example";
@@ -206,9 +207,33 @@ impl Server {
 
     // ------------------------------------------------------ registration
 
-    /// The client registers `input` under `credential` against this server:
-    /// `opaque_register_start`, the library's `register_start`, then the
-    /// client's finish with the key stretching function `ksf`.
+    /// `register_start` as an endpoint calls it: with the throttle, the clock,
+    /// the scope of the session and the account that owns it.
+    pub fn register_response(
+        &self,
+        scope: SessionScope,
+        session_account: Option<CredentialId>,
+        credential: &CredentialId,
+        request: &[u8],
+    ) -> Result<Vec<u8>, AuthError> {
+        register_start(
+            &self.keys,
+            &self.throttle,
+            self.clock.now_unix(),
+            &RegisterStartRequest {
+                caller: caller(),
+                scope,
+                session_account,
+                credential: *credential,
+                request,
+            },
+        )
+    }
+
+    /// The client registers `input` under `credential` against this server in
+    /// a full session of that account: `opaque_register_start`, the
+    /// library's `register_start`, then the client's finish with the key
+    /// stretching function `ksf`.
     pub fn client_register(
         &self,
         credential: &CredentialId,
@@ -216,9 +241,30 @@ impl Server {
         ksf: Ksf,
         seed: &str,
     ) -> RegistrationFinished {
+        self.client_register_in(
+            (SessionScope::Full, Some(*credential)),
+            credential,
+            input,
+            ksf,
+            seed,
+        )
+    }
+
+    /// [`Server::client_register`] in a session with the given scope and
+    /// owner.
+    pub fn client_register_in(
+        &self,
+        (scope, session_account): (SessionScope, Option<CredentialId>),
+        credential: &CredentialId,
+        input: &OpaqueInput,
+        ksf: Ksf,
+        seed: &str,
+    ) -> RegistrationFinished {
         let mut rng = TestRng::new(format!("client register {seed}").as_bytes());
         let (request, state) = opaque_register_start(&mut rng, input).unwrap();
-        let response = register_start(&self.keys, credential, &request).unwrap();
+        let response = self
+            .register_response(scope, session_account, credential, &request)
+            .unwrap();
         match ksf.test() {
             Some(test) => register_finish_with(&mut rng, state, input, &response, &test).unwrap(),
             None => {
@@ -306,6 +352,21 @@ impl Server {
         target: &Target<'_>,
         password: &str,
         purpose: LoginPurpose,
+        rngs: (&mut C, &mut S),
+    ) -> Result<Started, AuthError> {
+        // A re-authentication is asked for from a full session.
+        let scope = matches!(purpose, LoginPurpose::Reauth { .. }).then_some(SessionScope::Full);
+        self.begin_in(target, password, purpose, scope, rngs)
+    }
+
+    /// [`Server::begin_with`] with the scope of the session the request is
+    /// made in given too.
+    pub fn begin_in<C: SecureRng, S: SecureRng>(
+        &self,
+        target: &Target<'_>,
+        password: &str,
+        purpose: LoginPurpose,
+        session_scope: Option<SessionScope>,
         (client_rng, server_rng): (&mut C, &mut S),
     ) -> Result<Started, AuthError> {
         let name = normalize_login_name(target.login_name()).unwrap();
@@ -331,6 +392,7 @@ impl Server {
                 credential,
                 lookup,
                 purpose,
+                session_scope,
                 ke1: &ke1,
             },
         )?;
@@ -433,7 +495,13 @@ impl Server {
     /// `ksf` is the function that makes the new record.
     pub fn recovered(&self, account: &Account, text: &str, ksf: Ksf, seed: &str) -> Recovered {
         let input = new_input(text);
-        let registration = self.client_register(&account.credential, &input, ksf, seed);
+        let registration = self.client_register_in(
+            (SessionScope::AccountReset, Some(account.credential)),
+            &account.credential,
+            &input,
+            ksf,
+            seed,
+        );
         self.recovered_with(account, &input, registration, PinState::FirstUse)
     }
 

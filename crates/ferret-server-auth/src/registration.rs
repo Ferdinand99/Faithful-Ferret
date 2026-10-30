@@ -2,7 +2,9 @@
 //! the packing of its upload.
 //!
 //! Who may register or change a password (an invitation, a valid session, an
-//! account reset) is for the endpoint to decide before it calls here.
+//! account reset) is for the endpoint to decide, except for what the session
+//! scope says: [`register_start`] checks the scope and, in a reset session,
+//! the account, and asks the throttle itself.
 //!
 //! # The credential identifier
 //!
@@ -12,24 +14,104 @@
 //! when the password changes: registering again under the same id gives the
 //! same OPRF key. The key is not rotated per registration.
 
+use core::fmt;
+
 use ferret_core::opaque::server_suite::opaque_ke::{RegistrationRequest, ServerRegistration};
 use ferret_core::opaque::server_suite::{FerretSuite, REGISTRATION_REQUEST_LEN};
 
-use crate::error::{AuthError, InternalKind, Malformed};
+use crate::ct::ct_eq;
+use crate::error::{AuthError, DenyReason, InternalKind, Malformed};
 use crate::ids::CredentialId;
 use crate::keys::ServerKeys;
 use crate::record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
+use crate::scope::{Capability, SessionScope, authorize};
+use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
+
+/// The first message of a registration, with what the library needs to decide
+/// whether to answer it.
+#[derive(Clone, Copy)]
+pub struct RegisterStartRequest<'a> {
+    /// Who is calling.
+    pub caller: Caller,
+    /// The scope of the session the request was made in, as the endpoint
+    /// stored it. It must allow [`Capability::OpaqueRegisterStart`].
+    pub scope: SessionScope,
+    /// The account that owns the session, taken from the session the
+    /// endpoint has found and never from the request body. A session in the
+    /// scope [`SessionScope::AccountReset`] may register for this account
+    /// only, and `None` is refused for that scope. Other scopes do not read
+    /// it.
+    pub session_account: Option<CredentialId>,
+    /// The credential id to register under (the account id, Fase 1 § 4.2).
+    pub credential: CredentialId,
+    /// The `registration_request`, exactly 32 bytes.
+    pub request: &'a [u8],
+}
+
+impl fmt::Debug for RegisterStartRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RegisterStartRequest([redacted])")
+    }
+}
 
 /// Answers the client's `registration_request`: the `registration_response`
 /// (64 bytes, the evaluated element and the server's public key).
 ///
-/// Draws nothing: the answer is a function of the server's keys, the id and
-/// the request. The request must be exactly 32 bytes and a valid ristretto255
-/// element; anything else, trailing bytes included, is
-/// [`Malformed::RegistrationRequest`], which depends on the bytes alone.
+/// # Order of the steps
+///
+/// 1. The scope of the session must allow [`Capability::OpaqueRegisterStart`],
+///    and a session in the scope [`SessionScope::AccountReset`] may use its
+///    own credential id only. Both refusals are `Denied(ScopeForbids)` (403),
+///    so a reset session that asks for another account gets the answer of a
+///    session that may not do this. Nothing has been done yet and the
+///    throttle has not been asked, so such a refusal costs no budget.
+/// 2. The throttle is asked (`Stage::RegisterStart`) before any other work,
+///    and the outcome is reported once. Only `admit` and `finish` of the
+///    crate's throttle module are used; the library never calls
+///    `Throttle::record` itself and an endpoint has no way to.
+/// 3. The request is checked: exactly 32 bytes and a valid ristretto255
+///    element. Anything else, trailing bytes included, is
+///    [`Malformed::RegistrationRequest`], which depends on the bytes alone.
+/// 4. The answer is made from the server's keys, the id and the request.
+///
+/// Draws nothing. `now` is the time from the server's clock and goes to the
+/// throttle only.
 ///
 /// Spec: Fase 1 § 4.2 ("Registrering", step 1).
 pub fn register_start(
+    keys: &ServerKeys,
+    throttle: &dyn Throttle,
+    now: u64,
+    req: &RegisterStartRequest<'_>,
+) -> Result<Vec<u8>, AuthError> {
+    authorize(req.scope, Capability::OpaqueRegisterStart)?;
+    if req.scope == SessionScope::AccountReset {
+        // The session's own account only. A missing account is refused too:
+        // the check fails closed.
+        match req.session_account {
+            Some(own) if ct_eq(own.as_bytes(), req.credential.as_bytes()) => {}
+            _ => return Err(AuthError::Denied(DenyReason::ScopeForbids)),
+        }
+    }
+    let ticket = admit(
+        throttle,
+        Stage::RegisterStart,
+        &req.caller,
+        Some(&req.credential),
+        now,
+    )?;
+    let answer = start_admitted(keys, &req.credential, req.request);
+    let outcome = if answer.is_ok() {
+        Outcome::Success
+    } else {
+        Outcome::Failure
+    };
+    ticket.finish(outcome, now);
+    answer
+}
+
+/// The part of `register_start` that runs after the limiter let it through.
+fn start_admitted(
     keys: &ServerKeys,
     id: &CredentialId,
     request: &[u8],
