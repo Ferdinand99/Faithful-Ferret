@@ -1,0 +1,102 @@
+# The Faithful Ferret server: a vole-kit app (like Keen Kestrel and Wise Wren)
+# with the OPAQUE login, the vault API and the web vault.
+#
+# A workspace of its own, outside the root workspace (the root Cargo.toml
+# excludes this directory): vole-kit is a git dependency with hundreds of
+# crates and duplicate versions, which the cargo-deny and cargo-vet policy of
+# the release graph forbids. Three safeguards keep the two graphs honest:
+#
+#  * [profile.release] below has the same `overflow-checks` and `panic` as the
+#    root one (tests/workspace.rs compares them);
+#  * check-lock.sh checks that the tree of ferret-core and ferret-server-auth
+#    resolves to the same versions here as in the root lock;
+#  * release-please bumps the version of this file and the three entries of
+#    this lock that name a crate of the repository (release-please-config.json).
+[workspace]
+
+[package]
+name = "ferret-server"
+description = "Faithful Ferret server: OPAQUE login, vault API and web vault on vole-kit"
+# release-please bumps this together with the root version.
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "ferret_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ferret"
+path = "src/main.rs"
+
+[dependencies]
+# The shared product kit (auth, i18n, db, HTTP, admin pages). Same tag as
+# Keen Kestrel and Wise Wren.
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.0" }
+# The crypto core (only the server suite of OPAQUE; no argon2 or opaque-ke on a
+# line of our own) and the OPAQUE server library. Paths, never `version = "=..."`:
+# release-please bumps the lock entries (release-please-config.json).
+ferret-core = { path = "../ferret-core", features = ["server-suite"] }
+ferret-server-auth = { path = "../ferret-server-auth" }
+# The versions below match vole-kit's, so both use one copy of each crate.
+axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+deadpool-sqlite = "0.14.0"
+futures-util = "0.3.34"
+# Trusted proxy addresses and networks (FERRET_TRUSTED_PROXIES).
+ipnet = "2.11.0"
+rand = "0.10.3"
+# The kit's Core holds an HTTP client; the server makes no requests of its own.
+reqwest = { version = "0.13.5", default-features = false }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+rust-embed = "8.12.0"
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.1"
+time = { version = "0.3.55", default-features = false }
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
+
+[target.'cfg(unix)'.dependencies]
+# RLIMIT_CORE = 0 at start-up: a safe setrlimit.
+rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
+
+[dev-dependencies]
+# `/setup` without a setup token in the in-process tests, and the software
+# passkey authenticator.
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.0", features = ["test-support"] }
+# The manual clock and the replay generators.
+ferret-core = { path = "../ferret-core", features = ["server-suite", "test-support"] }
+ferret-server-auth = { path = "../ferret-server-auth", features = ["test-support"] }
+tower = "0.5.3"
+# The architecture test reads the source files of the vault modules.
+syn = { version = "2", features = ["full", "visit"] }
+
+# The release profile of the root workspace, apart from the size setting:
+# arithmetic overflow must never wrap silently, and a panic ends the process
+# (both listeners) instead of unwinding. Integers that come from clients use
+# checked arithmetic (`clippy::arithmetic_side_effects` is `deny` in auth/ and
+# vault/). The root `opt-level = "s"` is for the WebAssembly package.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+
+[profile.release.package."argon2@0.6.0"]
+opt-level = 3
+
+# Dependencies are compiled with optimizations in test builds too: the OPAQUE
+# tests stretch a password with Argon2id.
+[profile.dev.package."*"]
+opt-level = 3

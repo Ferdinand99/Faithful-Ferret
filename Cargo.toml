@@ -3,8 +3,13 @@ resolver = "3"
 members = ["crates/ferret-core", "crates/ferret-server-auth", "tools/vectorgen", "bindings/wasm"]
 # The timing tests have a lock, a deny policy and a release profile of their own
 # (ct/dudect/Cargo.toml): their tree (clap 2, Windows crates) does not belong in
-# the lock, `cargo deny` and `cargo vet` of the release graph.
-exclude = ["ct/dudect"]
+# the lock, `cargo deny` and `cargo vet` of the release graph. The server
+# (crates/ferret-server) is a workspace of its own for the same reason: it
+# builds on vole-kit, a git dependency with hundreds of crates and duplicate
+# versions that the release graph must not carry. Its lock, its deny policy and
+# its release profile are checked against this one by
+# crates/ferret-server/check-lock.sh.
+exclude = ["ct/dudect", "crates/ferret-server"]
 
 [workspace.package]
 version = "0.1.0"

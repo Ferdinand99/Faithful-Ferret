@@ -1,0 +1,31 @@
+# Faithful Ferrets egne grensesnittstekster (norsk bokmål). Kjernetekstene
+# (innlogging, oppsett, brukere, sikkerhet, generelt, oppsettet) kommer fra
+# vole-kit; en nøkkel kan bare finnes ett av stedene.
+
+[login]
+subtitle = "Velkommen tilbake. Logg inn for å administrere Faithful Ferret-tjeneren din."
+
+[setup]
+site_name_placeholder = "Hjemmehvelv…"
+tz_after = ". Du kan endre dette i Innstillinger."
+
+[users]
+roles_help = "Lesere kan se, men ikke endre noe. Redaktører kan endre innstillinger. Administratorer kan alt, også administrere brukere."
+
+[tokens]
+sub = "API-nøkler brukes ikke av Faithful Ferret ennå."
+scope_read_sub = "Ingenting ennå"
+
+[auth]
+all_set = "Alt er klart. Hvelvet ditt ligger på sin egen adresse, atskilt fra denne administrasjonssiden."
+setup_token_required = "Denne instansen trenger en oppsettsnøkkel. Åpne /setup?token=… med verdien av FERRET_SETUP_TOKEN fra tjenerens oppsett."
+
+[error]
+back = "Tilbake til innstillinger"
+
+[general]
+sub = "Hvordan denne instansen navngir seg selv, hvor den nås og hvordan den holder styr på tid."
+base_url_help = "Der folk når administrasjonssidene: brukes i lenker i meldinger. Netthvelvet har sin egen adresse (FERRET_VAULT_URL)."
+
+[api]
+docs_subtitle = "Faithful Ferret har ingen offentlig API-referanse ennå."

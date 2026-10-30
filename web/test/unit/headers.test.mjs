@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { STUB_HEADERS_JSON, headersFile, loadHeaders, validateHeaders } from "../serve.mjs";
+import { SERVER_HEADERS_JSON, headersFile, loadHeaders, validateHeaders } from "../serve.mjs";
 
-const good = () => structuredClone(loadHeaders(STUB_HEADERS_JSON));
+const good = () => structuredClone(loadHeaders(SERVER_HEADERS_JSON));
 const csp = (text) => ({ ...good(), "Content-Security-Policy": text });
 
-test("header_loader_accepts_the_stub_and_returns_the_flat_object", () => {
+test("header_loader_accepts_the_server_fixture_and_returns_the_flat_object", () => {
   const headers = good();
   assert.equal(Object.keys(headers).length, 5);
   assert.deepEqual(validateHeaders(headers), headers);
@@ -62,24 +62,19 @@ test("header_loader_rejects_a_weak_csp", () => {
   assert.doesNotThrow(() => validateHeaders(csp(full)));
 });
 
-test("header_file_is_the_server_fixture_and_the_stub_needs_an_explicit_opt_in", () => {
+test("header_file_is_the_server_fixture_and_a_missing_one_stops", () => {
   const repoDir = mkdtempSync(join(tmpdir(), "ferret-headers-"));
   const real = join(repoDir, "crates", "ferret-server", "tests", "fixtures", "wire", "headers.json");
 
-  // No server crate and no opt-in: refuse.
-  assert.throws(() => headersFile({ env: {}, repoDir }), /FERRET_HEADERS_STUB=1/);
-  assert.throws(() => headersFile({ env: { FERRET_HEADERS_STUB: "yes" }, repoDir }), /FERRET_HEADERS_STUB=1/);
-  assert.match(headersFile({ env: { FERRET_HEADERS_STUB: "1" }, repoDir }), /headers\.stub\.json$/);
-
-  // The server crate is there but its fixture is not: refuse, even with the opt-in.
+  // No fixture: refuse, whether or not the server crate is there.
+  assert.throws(() => headersFile({ repoDir }), /fixtures\/wire\/headers\.json is missing/);
   mkdirSync(join(repoDir, "crates", "ferret-server"), { recursive: true });
-  assert.throws(() => headersFile({ env: { FERRET_HEADERS_STUB: "1" }, repoDir }), /fixtures\/wire\/headers\.json is missing/);
+  assert.throws(() => headersFile({ repoDir }), /fixtures\/wire\/headers\.json is missing/);
 
   // With the fixture, the fixture is used.
   mkdirSync(join(real, ".."), { recursive: true });
   writeFileSync(real, "{}");
-  assert.equal(headersFile({ env: {}, repoDir }), real);
-  assert.equal(headersFile({ env: { FERRET_HEADERS_STUB: "1" }, repoDir }), real);
+  assert.equal(headersFile({ repoDir }), real);
   // And a bad fixture is not served.
   assert.throws(() => loadHeaders(real), /headers:/);
 });

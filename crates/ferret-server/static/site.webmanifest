@@ -1,0 +1,14 @@
+{
+  "name": "Faithful Ferret",
+  "short_name": "Ferret",
+  "description": "A self-hosted, zero-knowledge password manager.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "icons": [
+    { "src": "/static/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/static/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

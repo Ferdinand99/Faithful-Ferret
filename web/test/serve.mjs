@@ -6,10 +6,7 @@
 // the file the server's own tests compare its header constant with. The
 // loader fails closed: the file must be the flat object with exactly the five
 // section 12 headers and a CSP that has the key directives, else it throws.
-// While the server crate is not in the checkout, test/fixtures/headers.stub.json
-// (the same values from the design document) can stand in, but only when
-// FERRET_HEADERS_STUB=1 is set; if crates/ferret-server/ exists and its
-// fixture is missing, nothing is served.
+// If the fixture is missing, nothing is served.
 //
 //   node test/serve.mjs     port 4578 (FERRET_WEB_PORT overrides it)
 import { existsSync, readFileSync } from "node:fs";
@@ -22,7 +19,6 @@ const web = resolve(here, "..");
 const repo = resolve(web, "..");
 
 export const SERVER_HEADERS_JSON = join(repo, "crates", "ferret-server", "tests", "fixtures", "wire", "headers.json");
-export const STUB_HEADERS_JSON = join(here, "fixtures", "headers.stub.json");
 
 export const HEADER_NAMES = Object.freeze([
   "Content-Security-Policy",
@@ -77,18 +73,14 @@ export function validateHeaders(data) {
 
 /**
  * The file to read the headers from.
- * @param {{ env?: Record<string, string | undefined>, repoDir?: string }} [options]
+ * @param {{ repoDir?: string }} [options]
  */
-export function headersFile({ env = process.env, repoDir = repo } = {}) {
+export function headersFile({ repoDir = repo } = {}) {
   const real = join(repoDir, "crates", "ferret-server", "tests", "fixtures", "wire", "headers.json");
-  if (existsSync(real)) return real;
-  if (existsSync(join(repoDir, "crates", "ferret-server"))) {
-    throw new Error("headers: crates/ferret-server exists but tests/fixtures/wire/headers.json is missing");
+  if (!existsSync(real)) {
+    throw new Error("headers: crates/ferret-server/tests/fixtures/wire/headers.json is missing");
   }
-  if (env.FERRET_HEADERS_STUB !== "1") {
-    throw new Error("headers: the server fixture is missing; set FERRET_HEADERS_STUB=1 to use the stub");
-  }
-  return join(repoDir, "web", "test", "fixtures", "headers.stub.json");
+  return real;
 }
 
 /**

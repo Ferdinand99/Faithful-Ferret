@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadHeaders, SERVER_HEADERS_JSON, STUB_HEADERS_JSON } from "../serve.mjs";
+import { loadHeaders, SERVER_HEADERS_JSON } from "../serve.mjs";
 import { web } from "./helpers.mjs";
 
 const dist = join(web, "dist");
@@ -97,21 +97,16 @@ test("types_check", () => {
 });
 
 test("header_list_is_section_12_verbatim", () => {
-  const stub = loadHeaders(STUB_HEADERS_JSON);
-  assert.deepEqual(Object.keys(stub), [
+  const headers = loadHeaders(SERVER_HEADERS_JSON);
+  assert.deepEqual(Object.keys(headers), [
     "Content-Security-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy", "Referrer-Policy", "Strict-Transport-Security",
   ]);
   assert.equal(
-    stub["Content-Security-Policy"],
+    headers["Content-Security-Policy"],
     "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; require-trusted-types-for 'script'; trusted-types ferret",
   );
-  assert.equal(stub["Cross-Origin-Opener-Policy"], "same-origin");
-  assert.equal(stub["Cross-Origin-Resource-Policy"], "same-origin");
-  assert.equal(stub["Referrer-Policy"], "no-referrer");
-  assert.equal(stub["Strict-Transport-Security"], "max-age=63072000; includeSubDomains; preload");
-  // When the server's fixture exists, the stub must say the same.
-  if (existsSync(SERVER_HEADERS_JSON)) {
-    const real = loadHeaders(SERVER_HEADERS_JSON);
-    for (const [name, value] of Object.entries(stub)) assert.equal(real[name], value, name);
-  }
+  assert.equal(headers["Cross-Origin-Opener-Policy"], "same-origin");
+  assert.equal(headers["Cross-Origin-Resource-Policy"], "same-origin");
+  assert.equal(headers["Referrer-Policy"], "no-referrer");
+  assert.equal(headers["Strict-Transport-Security"], "max-age=63072000; includeSubDomains; preload");
 });
