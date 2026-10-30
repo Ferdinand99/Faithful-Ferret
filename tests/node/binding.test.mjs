@@ -995,6 +995,134 @@ test("older_state_is_accepted_only_by_its_own_call_and_prune_is_explicit", () =>
   assert.equal(code(() => wasm.sync_memory_prune(fill(3, 1), [id])), "malformed_sync_memory");
 });
 
+// ------------------------------------------------------------- tombstones
+
+test("verify_tombstone_accepts_a_tombstone_from_make_tombstone", () => {
+  const { vault } = newAccount("tomb-ok");
+  const id = fill(16, 0x81);
+  const t = vault.make_tombstone(id, 3);
+  assert.equal(t.rev, 3);
+  assert.equal(t.tomb.length, 40);
+  assert.equal(vault.verify_tombstone(id, 3, t.tomb), undefined);
+  // A second revision of the same item has its own tombstone.
+  const t4 = vault.make_tombstone(id, 4);
+  assert.equal(vault.verify_tombstone(id, 4, t4.tomb), undefined);
+  // The check does not change the vault: the tombstone still verifies.
+  assert.equal(vault.verify_tombstone(id, 3, t.tomb), undefined);
+});
+
+test("verify_tombstone_rejects_wrong_rev_other_item_id_flipped_byte_and_wrong_length", () => {
+  const { vault } = newAccount("tomb-bad");
+  const id = fill(16, 0x82);
+  const t = vault.make_tombstone(id, 5);
+  assert.equal(code(() => vault.verify_tombstone(id, 4, t.tomb)), "tombstone_invalid", "wrong rev");
+  assert.equal(code(() => vault.verify_tombstone(id, 6, t.tomb)), "tombstone_invalid", "wrong rev");
+  assert.equal(code(() => vault.verify_tombstone(fill(16, 0x83), 5, t.tomb)), "tombstone_invalid", "other item id");
+  for (const at of [0, 11, 12, 23, 24, 39]) {
+    const flipped = t.tomb.slice();
+    flipped[at] ^= 1;
+    assert.equal(code(() => vault.verify_tombstone(id, 5, flipped)), "tombstone_invalid", `byte ${at}`);
+  }
+  for (const length of [0, 1, 39, 41, 56]) {
+    assert.equal(code(() => vault.verify_tombstone(id, 5, fill(length, 7))), "tombstone_invalid", `length ${length}`);
+  }
+  assert.equal(code(() => vault.verify_tombstone(id, 5, t.tomb.slice(0, 39))), "tombstone_invalid", "truncated");
+  assert.equal(code(() => vault.verify_tombstone(id, 5, new Uint8Array([...t.tomb, 0]))), "tombstone_invalid", "extended");
+  // A tombstone of another vault does not verify here.
+  const other = newAccount("tomb-other").vault.make_tombstone(id, 5);
+  assert.equal(code(() => vault.verify_tombstone(id, 5, other.tomb)), "tombstone_invalid", "another vault");
+  // A mistake in the call is not the verdict on the tombstone.
+  assert.equal(code(() => vault.verify_tombstone(fill(15, 0x82), 5, t.tomb)), "invalid_input", "short item id");
+  assert.equal(code(() => vault.verify_tombstone(fill(17, 0x82), 5, t.tomb)), "invalid_input", "long item id");
+  assert.equal(code(() => vault.verify_tombstone(id, 1.5, t.tomb)), "invalid_input", "rev is a whole number");
+  assert.equal(code(() => vault.verify_tombstone(id, -1, t.tomb)), "invalid_input");
+  assert.equal(code(() => vault.verify_tombstone(id, 2 ** 53 + 2, t.tomb)), "invalid_input");
+  // The right tombstone still verifies after all of that.
+  assert.equal(vault.verify_tombstone(id, 5, t.tomb), undefined);
+});
+
+test("verify_tombstone_on_a_locked_vault_is_vault_locked", () => {
+  const { vault } = newAccount("tomb-locked");
+  const id = fill(16, 0x84);
+  const t = vault.make_tombstone(id, 2);
+  vault.lock();
+  assert.equal(code(() => vault.verify_tombstone(id, 2, t.tomb)), "vault_locked");
+});
+
+// ------------------------------------------------------------ accept_rows
+
+const liveRow = (id, sealed) => ({ item_id: id, rev: sealed.rev, state: "live", envelope: sealed.envelope, tag: sealed.tag });
+
+test("accept_rows_raises_floors_and_refuses_lower_revs_through_the_binding", () => {
+  const { vault } = newAccount("accept-rows");
+  const id = fill(16, 0x91);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const gone = fill(16, 0x92);
+  const tomb = vault.make_tombstone(gone, 4);
+  const empty = wasm.sync_memory_new();
+
+  const m1 = vault.accept_rows([liveRow(id, v1)], 5, empty);
+  assert.ok(m1 instanceof Uint8Array && m1.length > empty.length);
+  const m2 = vault.accept_rows([liveRow(id, v2), { item_id: gone, rev: 4, state: "deleted", tomb: tomb.tomb }], 7, m1);
+  assert.ok(m2.length > m1.length, "a new item is tracked");
+  // The floor is the highest rev seen: the older revision is refused.
+  assert.equal(code(() => vault.accept_rows([liveRow(id, v1)], 7, m2)), "checkpoint_rev_below_remembered");
+  // The top seq never goes down either.
+  assert.equal(code(() => vault.accept_rows([], 6, m2)), "checkpoint_top_seq_below_remembered");
+  // The same state again changes nothing, and an empty page at the same seq is fine.
+  assert.deepEqual(vault.accept_rows([liveRow(id, v2)], 7, m2), m2);
+  assert.deepEqual(vault.accept_rows([], 7, m2), m2);
+  // The floors the rows raised are the ones a checkpoint is held to.
+  const checkpoint = vault.make_checkpoint(8, [{ item_id: id, rev: 1, hash: sha256(v1.envelope) }]);
+  assert.equal(
+    code(() => vault.verify_checkpoint(checkpoint, [liveRow(id, v1)], 8, m2)),
+    "checkpoint_rev_below_remembered",
+  );
+  // A tombstone raises the floor of its item too.
+  const older = vault.encrypt_item(gone, 3, LOGIN_DRAFT, undefined, NOW);
+  assert.equal(code(() => vault.accept_rows([liveRow(gone, older)], 7, m2)), "checkpoint_rev_below_remembered");
+  // Two steps give the same bytes as one.
+  assert.deepEqual(
+    vault.accept_rows([liveRow(id, v2)], 7, vault.accept_rows([liveRow(id, v1)], 5, empty)),
+    vault.accept_rows([liveRow(id, v2)], 7, empty),
+  );
+});
+
+test("accept_rows_returns_new_memory_bytes_and_leaves_the_old_valid_on_error", () => {
+  const { vault } = newAccount("accept-rows-old");
+  const id = fill(16, 0x93);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const empty = wasm.sync_memory_new();
+  const emptyCopy = empty.slice();
+  const m1 = vault.accept_rows([liveRow(id, v1)], 5, empty);
+  assert.deepEqual(empty, emptyCopy, "the bytes passed in are not changed");
+  assert.notDeepEqual(m1, empty);
+  const m1Copy = m1.slice();
+
+  // Every refusal leaves the old bytes valid and unchanged.
+  const bad = vault.make_tombstone(id, 9).tomb;
+  bad[3] ^= 1;
+  const m6 = vault.accept_rows([liveRow(id, v2)], 6, m1);
+  const failures = [
+    ["tombstone_invalid", () => vault.accept_rows([{ item_id: id, rev: 9, state: "deleted", tomb: bad }], 9, m1)],
+    ["decrypt", () => vault.accept_rows([{ ...liveRow(id, v2), tag: fill(32, 0) }], 9, m1)],
+    ["checkpoint_top_seq_below_remembered", () => vault.accept_rows([], 4, m1)],
+    ["checkpoint_rev_below_remembered", () => vault.accept_rows([liveRow(id, v1)], 9, m6)],
+    ["invalid_input", () => vault.accept_rows([{ item_id: id, rev: 2, state: "unknown" }], 9, m1)],
+    ["invalid_input", () => vault.accept_rows([], 1.5, m1)],
+    ["malformed_sync_memory", () => vault.accept_rows([], 9, m1.slice(0, 10))],
+  ];
+  for (const [expected, fn] of failures) {
+    assert.equal(code(fn), expected);
+    assert.deepEqual(m1, m1Copy, `${expected} left the old bytes alone`);
+  }
+  // And the old bytes still take the next page.
+  assert.deepEqual(vault.accept_rows([liveRow(id, v2)], 6, m1), m6);
+  assert.notDeepEqual(m6, m1);
+});
+
 test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
   const { vault, created } = newAccount("methods");
   const typeOf = { password: 1, recovery: 2, prf: 3 };

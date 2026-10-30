@@ -508,6 +508,12 @@ test("the_rollback_memory_is_a_required_argument", async () => {
   assert.equal((await rejection(client.vault.verify_checkpoint(checkpoint, [], 1))).code, "invalid_input", "no default memory");
   assert.equal((await rejection(client.vault.sync_memory_prune(undefined, []))).code, "invalid_input");
   assert.equal((await rejection(client.vault.accept_older_state(checkpoint, [], null))).code, "invalid_input", "top seq is checked");
+  for (const memory of [undefined, null, "bytes", [1, 2, 3], new ArrayBuffer(21)]) {
+    assert.equal((await rejection(client.vault.accept_rows([], 1, memory))).code, "invalid_input", String(memory));
+  }
+  for (const seq of [undefined, null, "1", -1, 1.5, NaN]) {
+    assert.equal((await rejection(client.vault.accept_rows([], seq, new Uint8Array(21)))).code, "invalid_input", String(seq));
+  }
   assert.equal(made.length, 0, "nothing was sent");
   // The memory is public: it is sent as it is and not wiped.
   const memory = (await import("./helpers.mjs")).wasm.sync_memory_new();
@@ -563,11 +569,49 @@ test("the_rollback_memory_comes_back_as_newSyncMemory", async () => {
   assert.equal((await rejection(client.vault.verify_checkpoint(lower, rows, 5, verified.newSyncMemory))).code, "checkpoint_seq_below_remembered");
   const older = await client.vault.accept_older_state(lower, rows, 5);
   assert.deepEqual(Object.keys(older), ["newSyncMemory"]);
+  // The rows of an incremental /changes answer give the memory back the same way.
+  const accepted = await client.vault.accept_rows(rows, 6, verified.newSyncMemory);
+  assert.deepEqual(Object.keys(accepted), ["newSyncMemory"]);
+  assert.ok(accepted.newSyncMemory instanceof Uint8Array);
+  assert.equal((await rejection(client.vault.accept_rows(rows, 5, accepted.newSyncMemory))).code, "checkpoint_top_seq_below_remembered");
   const pruned = await client.vault.sync_memory_prune(verified.newSyncMemory, [new Uint8Array(16)]);
   assert.deepEqual(Object.keys(pruned).sort(), ["dropped", "newSyncMemory"]);
   assert.equal(pruned.dropped, 1);
   // sync_memory_new is the starting point and stays plain bytes.
   assert.ok(empty instanceof Uint8Array);
+});
+
+test("client_validates_verify_tombstone_argument_types", async () => {
+  const { client, made } = echoClient();
+  const id = fill(16, 1);
+  const tomb = fill(40, 2);
+  // The item id and the tombstone must be Uint8Arrays.
+  const notBytes = ["a".repeat(16), Array.from(fill(16, 1)), new Uint16Array(8), fill(16, 1).buffer, { length: 16 }, undefined, null, 7];
+  for (const v of notBytes) {
+    assert.equal((await rejection(client.vault.verify_tombstone(v, 1, tomb))).code, "invalid_input", `id ${String(v)}`);
+    assert.equal((await rejection(client.vault.verify_tombstone(id, 1, v))).code, "invalid_input", `tomb ${String(v)}`);
+  }
+  // The revision is a whole number from 0 to 2^53.
+  for (const v of [null, undefined, "5", "", false, true, NaN, Infinity, -1, {}, [], 1.5, 2 ** 53 + 2]) {
+    assert.equal((await rejection(client.vault.verify_tombstone(id, v, tomb))).code, "invalid_input", String(v));
+  }
+  assert.equal(made.length, 0, "nothing was sent, no worker started");
+  // Nothing about the arguments is a secret: they are sent as they are, not wiped.
+  const idCopy = id.slice();
+  const tombCopy = tomb.slice();
+  assert.equal(await client.vault.verify_tombstone(id, 2 ** 53, tomb), null);
+  assert.deepEqual(id, idCopy);
+  assert.deepEqual(tomb, tombCopy);
+  assert.equal(made[0].received.length, 1);
+
+  // A real client: valid types reach the vault check, and the dispatcher says the same.
+  const real = setup().client;
+  assert.equal((await rejection(real.vault.verify_tombstone(id, 2 ** 53, tomb))).code, "vault_locked");
+  const dispatch = createDispatcher(wasm);
+  const send = (args) => dispatch({ id: 1, target: "vault", method: "verify_tombstone", args }).reply;
+  assert.equal(send(["x".repeat(16), 1, tomb]).code, "invalid_input");
+  assert.equal(send([id, "1", tomb]).code, "invalid_input");
+  assert.equal(send([id, 1, tomb]).code, "vault_locked");
 });
 
 test("lock_also_ends_the_job_workers", async () => {

@@ -172,11 +172,12 @@ function vaultKey(vault) {
 // the relying party has too). `export_finish` is the encrypted file.
 // `reauth_grant` is the one-time token of a plaintext export: a permission
 // that a fresh sign-in makes, not a key. `prf_salt_new` is the public salt of a
-// passkey registration; `sync_memory_*` and `rekey:sync_memory` are the rollback
+// passkey registration; `sync_memory_*`, `accept_rows` and `rekey:sync_memory` are the rollback
 // memory (item ids and revision numbers); `manifest_*:body`, `pk_a` and
 // `sealed.*` are the signed request body, the public key and the new manifest
 // row (ciphertext and tag).
 const EXPECTED_BYTE_PATHS = [
+  "accept_rows:",
   "auth_public_key:",
   "auth_sign:",
   "change_password:manifest.envelope",
@@ -366,7 +367,8 @@ test("no_reply_holds_key_material", () => {
   call("item_view", () => vault.item_view(h));
   call("totp_code", () => vault.totp_code(h, 59));
   const edited = call("encrypt_item (edit)", () => vault.encrypt_item(id, 2, { name: "Renamed" }, h, NOW + 1));
-  call("make_tombstone", () => vault.make_tombstone(fill(16, 0x42), 3));
+  const tombstone = call("make_tombstone", () => vault.make_tombstone(fill(16, 0x42), 3));
+  call("verify_tombstone", () => vault.verify_tombstone(fill(16, 0x42), 3, tombstone.tomb));
   call("auth_sign", () => vault.auth_sign("unlock-method.add", fill(32, 1), enc.encode("body")));
   const cp = call("make_checkpoint", () => vault.make_checkpoint(1, [{ item_id: id, rev: 2, hash: fill(32, 7) }]));
   assert.equal(cp.seq, 1);
@@ -394,6 +396,7 @@ test("no_reply_holds_key_material", () => {
   call("prf_salt_new", () => wasm.prf_salt_new());
   call("sync_memory_new", () => wasm.sync_memory_new());
   call("sync_memory_prune", () => wasm.sync_memory_prune(wasm.sync_memory_new(), [fill(16, 1)]));
+  call("accept_rows", () => vault.accept_rows([{ item_id: id, rev: edited.rev, state: "live", envelope: edited.envelope, tag: edited.tag }], 3, wasm.sync_memory_new()));
   const addChange = call("manifest_add_method", () => vault.manifest_add_method(created.manifest, prfWrap));
   call("manifest_remove_method", () => vault.manifest_remove_method(addChange.sealed, prfWrap.method_id));
   call("unlock_recovery", () => new wasm.UnlockJob().unlock_recovery(URL_, CTX, rkCode, created.wraps[1], firstUse(true), wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key)));
