@@ -80,6 +80,9 @@ pub struct PutRequest<'a> {
     /// The idempotency key of the write.
     pub idem: [u8; 16],
     /// A hash of the request, so the same `idem` with another request is seen.
+    /// The store cannot tell what it covers: the caller makes it
+    /// `SHA-256(item_id || raw body)`, so a replay can never return the `rev`
+    /// and `seq` of another item.
     pub request_hash: [u8; 32],
 }
 
@@ -148,6 +151,9 @@ pub enum PutOutcome {
     IdemMismatch,
     /// The write would break a limit of the vault, or the envelope is too big.
     QuotaExceeded,
+    /// The item is the manifest, which this function never writes (neither a
+    /// live body nor a tombstone). Nothing was written.
+    ManifestNotWritable,
 }
 
 /// The row of an item as the store reads it before a write.
@@ -179,8 +185,15 @@ impl Current {
 /// vault. A tombstone is never written over: a put on a deleted item is a
 /// conflict with `deleted: true`. `now` is stored as `changed_at` of the row.
 ///
-/// The caller refuses [`MANIFEST_ITEM_ID`] where the manifest may not be
-/// written (the sync API); the store treats the manifest as an ordinary row.
+/// The manifest row is not written here, in either body form: changes to it
+/// need a signature of the account (spec § 4.6) and have a function of their
+/// own. The answer is [`PutOutcome::ManifestNotWritable`] before anything is
+/// read or written.
+///
+/// Counters: `item_count` counts live rows (the manifest included), so a
+/// deletion frees a slot; tombstones are bounded by `limits.max_tombstones`;
+/// `bytes_used` is the sum of the stored sizes of all rows. An unknown vault is
+/// [`StoreError::NotFound`].
 pub fn put_item(
     conn: &mut Connection,
     vault: &VaultId,
@@ -189,7 +202,13 @@ pub fn put_item(
     limits: &Limits,
     now: i64,
 ) -> Result<PutOutcome, StoreError> {
+    if req.item_id == MANIFEST_ITEM_ID {
+        return Ok(PutOutcome::ManifestNotWritable);
+    }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !vault_exists(&tx, vault)? {
+        return Err(StoreError::NotFound);
+    }
 
     match idem::lookup(&tx, vault, device, &req.idem, &req.request_hash)? {
         Lookup::Replay { rev, seq } => {
@@ -236,7 +255,25 @@ pub fn put_item(
     // a vault that is not there).
     let new_size = sql_int(u64::try_from(new_len).unwrap_or(u64::MAX));
     let old_size_sql = sql_int(old_size);
-    let item_delta: i64 = i64::from(is_new);
+    let makes_tombstone = matches!(req.body, PutBody::Deleted { .. });
+    // Live rows count against `max_items`: a new live row is one more, a
+    // deletion of a live row is one less, a tombstone that replaces nothing
+    // changes nothing.
+    let item_delta: i64 = match (is_new, makes_tombstone) {
+        (true, false) => 1,
+        (false, true) => -1,
+        _ => 0,
+    };
+    if makes_tombstone {
+        let tombstones: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1",
+            [vault.as_bytes()],
+            |row| row.get(0),
+        )?;
+        if tombstones >= i64::from(limits.max_tombstones) {
+            return Ok(PutOutcome::QuotaExceeded);
+        }
+    }
     let seq: Option<i64> = tx
         .query_row(
             "UPDATE ferret_vaults \
@@ -244,7 +281,7 @@ pub fn put_item(
                  item_count = item_count + ?2, \
                  bytes_used = bytes_used - ?3 + ?4 \
              WHERE vault_id = ?1 \
-               AND (?2 = 0 OR item_count + ?2 <= ?5) \
+               AND (?2 <= 0 OR item_count + ?2 <= ?5) \
                AND (?4 <= ?3 OR bytes_used - ?3 + ?4 <= ?6) \
              RETURNING seq",
             params![
@@ -258,21 +295,13 @@ pub fn put_item(
             |row| row.get(0),
         )
         .optional()?;
+    // The vault exists (checked above), so no changed row is a limit.
     let Some(seq) = seq else {
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM ferret_vaults WHERE vault_id = ?1)",
-            [vault.as_bytes()],
-            |row| row.get(0),
-        )?;
-        return if exists {
-            Ok(PutOutcome::QuotaExceeded)
-        } else {
-            Err(StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
-        };
+        return Ok(PutOutcome::QuotaExceeded);
     };
 
     let new_rev_sql = i64::try_from(new_rev).map_err(|_| int_error(new_rev))?;
-    let deleted = i64::from(matches!(req.body, PutBody::Deleted { .. }));
+    let deleted = i64::from(makes_tombstone);
     let (blob, tag): (Option<&[u8]>, Option<&[u8]>) = match &req.body {
         PutBody::Live { blob, tag } => (Some(blob), Some(tag.as_slice())),
         PutBody::Deleted { .. } => (None, None),
@@ -345,6 +374,78 @@ pub fn put_item(
         rev: new_rev,
         seq: u64::try_from(seq).map_err(|_| int_error_signed(seq))?,
         replayed: false,
+    })
+}
+
+fn vault_exists(conn: &Connection, vault: &VaultId) -> Result<bool, StoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM ferret_vaults WHERE vault_id = ?1)",
+        [vault.as_bytes()],
+        |row| row.get(0),
+    )?)
+}
+
+/// A query for a row that must be there: no row is [`StoreError::NotFound`].
+fn missing(error: rusqlite::Error) -> StoreError {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound,
+        other => StoreError::Sql(other),
+    }
+}
+
+/// What a purge of tombstones did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Purged {
+    /// How many tombstones were removed.
+    pub removed: u64,
+    /// The horizon of the vault after the purge: a client that has seen less
+    /// than this must reconcile in full.
+    pub min_valid_since: u64,
+}
+
+/// Removes the tombstones of a vault that were last written before
+/// `older_than` (Unix seconds, compared with `changed_at`).
+///
+/// The purge and the counters move in one transaction: `bytes_used` loses the
+/// sizes of the removed rows, and `min_valid_since` rises to the highest `seq`
+/// among them (it never falls). `item_count` is not touched, because it counts
+/// live rows. `seq` is not touched either: a purge is not a change that clients
+/// see in the feed.
+///
+/// Spec: Fase 1 § 8.4 (retention of 400 days). Meant for the retention job of
+/// the sync milestone, which calls it per vault with `now` minus the retention
+/// as `older_than`; nothing calls it before that.
+pub fn purge_tombstones(
+    conn: &mut Connection,
+    vault: &VaultId,
+    older_than: i64,
+) -> Result<Purged, StoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let (removed, bytes, top_seq): (i64, i64, i64) = tx.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(MAX(seq), 0) FROM ferret_items          WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
+        params![vault.as_bytes(), older_than],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    tx.execute(
+        "DELETE FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
+        params![vault.as_bytes(), older_than],
+    )?;
+    let changed = tx.execute(
+        "UPDATE ferret_vaults          SET bytes_used = bytes_used - ?2, min_valid_since = MAX(min_valid_since, ?3)          WHERE vault_id = ?1",
+        params![vault.as_bytes(), bytes, top_seq],
+    )?;
+    if changed != 1 {
+        return Err(StoreError::NotFound);
+    }
+    let horizon: i64 = tx.query_row(
+        "SELECT min_valid_since FROM ferret_vaults WHERE vault_id = ?1",
+        [vault.as_bytes()],
+        |row| row.get(0),
+    )?;
+    tx.commit()?;
+    Ok(Purged {
+        removed: u64::try_from(removed).map_err(|_| int_error_signed(removed))?,
+        min_valid_since: u64::try_from(horizon).map_err(|_| int_error_signed(horizon))?,
     })
 }
 
@@ -433,7 +534,8 @@ impl std::fmt::Debug for Changes {
 /// At most `limit` rows, and the page stops before the stored sizes would pass
 /// `max_bytes` (but always holds one row if there is one). `has_more` says
 /// whether rows are left. The page is read in one transaction, so the counters
-/// and the rows agree. An unknown vault is an error.
+/// and the rows agree. A `limit` of 0 is read as 1, so a client that pages on
+/// `has_more` always advances. An unknown vault is [`StoreError::NotFound`].
 pub fn changes_since(
     conn: &Connection,
     vault: &VaultId,
@@ -442,19 +544,21 @@ pub fn changes_since(
     max_bytes: usize,
 ) -> Result<Changes, StoreError> {
     let tx = conn.unchecked_transaction()?;
-    let (latest_seq, restore_epoch, vk_epoch) = tx.query_row(
-        "SELECT v.seq, v.restore_epoch, a.vk_epoch \
+    let (latest_seq, restore_epoch, vk_epoch) = tx
+        .query_row(
+            "SELECT v.seq, v.restore_epoch, a.vk_epoch \
          FROM ferret_vaults v JOIN ferret_accounts a ON a.account_id = v.account_id \
          WHERE v.vault_id = ?1",
-        [vault.as_bytes()],
-        |row| {
-            Ok((
-                column_u64(row, 0)?,
-                column_u64(row, 1)?,
-                column_u64(row, 2)?,
-            ))
-        },
-    )?;
+            [vault.as_bytes()],
+            |row| {
+                Ok((
+                    column_u64(row, 0)?,
+                    column_u64(row, 1)?,
+                    column_u64(row, 2)?,
+                ))
+            },
+        )
+        .map_err(missing)?;
 
     let since_sql = i64::try_from(since).unwrap_or(i64::MAX);
     let mut stmt = tx.prepare(
@@ -462,7 +566,7 @@ pub fn changes_since(
          WHERE vault_id = ?1 AND seq > ?2 ORDER BY seq",
     )?;
     let mut rows = stmt.query(params![vault.as_bytes(), since_sql])?;
-    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let limit = usize::try_from(limit.max(1)).unwrap_or(usize::MAX);
     let mut changes: Vec<Change> = Vec::new();
     let mut bytes: usize = 0;
     let mut has_more = false;
@@ -604,10 +708,24 @@ impl std::fmt::Debug for NewAccountRows {
 
 /// Writes a new account: the account row, its unlock methods, the vault row
 /// (counter at 1), the manifest as the row with `seq` 1, and the checkpoint.
+/// The manifest must be at `rev` 1 and the checkpoint at `seq` 1
+/// ([`StoreError::Invalid`] otherwise).
 ///
 /// All or nothing: the rows go in under a savepoint, so a failure at any step
 /// leaves none of them, whatever the caller does with the transaction after.
 pub fn create_account(tx: &Transaction<'_>, rows: &NewAccountRows) -> Result<(), StoreError> {
+    // The vault starts at `seq` 1 and the manifest is its first row, at
+    // revision 1; a checkpoint cannot cover more than the vault holds.
+    if rows.manifest.rev != 1 {
+        return Err(StoreError::Invalid(
+            "the manifest of a new account is at rev 1",
+        ));
+    }
+    if rows.checkpoint.seq != 1 {
+        return Err(StoreError::Invalid(
+            "the checkpoint of a new account is at seq 1",
+        ));
+    }
     tx.execute_batch("SAVEPOINT ferret_create_account")?;
     match insert_account_rows(tx, rows) {
         Ok(()) => {
@@ -722,20 +840,23 @@ impl std::fmt::Debug for MethodsView {
 }
 
 /// The unlock methods, the key `pk_a`, the key epoch and the manifest row of an
-/// account. Read in one transaction. An unknown account is an error.
+/// account. Read in one transaction. An unknown account is
+/// [`StoreError::NotFound`].
 pub fn methods_view(conn: &Connection, account: &AccountId) -> Result<MethodsView, StoreError> {
     let tx = conn.unchecked_transaction()?;
-    let (vault_id, pk_a, vk_epoch) = tx.query_row(
-        "SELECT vault_id, pk_a, vk_epoch FROM ferret_accounts WHERE account_id = ?1",
-        [account.as_bytes()],
-        |row| {
-            Ok((
-                column_array16(row, 0)?,
-                column_array32(row, 1)?,
-                column_u64(row, 2)?,
-            ))
-        },
-    )?;
+    let (vault_id, pk_a, vk_epoch) = tx
+        .query_row(
+            "SELECT vault_id, pk_a, vk_epoch FROM ferret_accounts WHERE account_id = ?1",
+            [account.as_bytes()],
+            |row| {
+                Ok((
+                    column_array16(row, 0)?,
+                    column_array32(row, 1)?,
+                    column_u64(row, 2)?,
+                ))
+            },
+        )
+        .map_err(missing)?;
     let mut stmt = tx.prepare(
         "SELECT method_id, method_type, wrap, kek_generation, credential_id, prf_salt, aaguid \
          FROM ferret_unlock_methods WHERE account_id = ?1 ORDER BY created_at, method_id",

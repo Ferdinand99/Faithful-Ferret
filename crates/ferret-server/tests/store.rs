@@ -7,12 +7,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
+use ferret_server::error::StoreError;
 use ferret_server::ids::{AccountId, DeviceId, ItemId, MANIFEST_ITEM_ID, VaultId};
 use ferret_server::product;
 use ferret_server::vault::quota::Limits;
 use ferret_server::vault::store::{
-    Conflict, PutBody, PutOutcome, PutRequest, account_by_user, changes_since, create_account,
-    methods_view, put_item,
+    Conflict, Purged, PutBody, PutOutcome, PutRequest, account_by_user, changes_since,
+    create_account, methods_view, purge_tombstones, put_item,
 };
 use rusqlite::{Connection, params};
 use support::accounts::{self, TestAccount, add_account, id16};
@@ -277,9 +278,18 @@ fn idem_is_scoped_to_vault_and_device() {
         }
     ));
 
-    // The same idem and request from another vault: a write of its own (not a
-    // replay and not a mismatch).
-    let other_vault = put(&mut conn, &b, &req);
+    // The same idem and request from another vault, by the same device: a
+    // write of its own (not a replay and not a mismatch). A lookup that ignored
+    // the vault would find the record of the first write here.
+    let other_vault = put_item(
+        &mut conn,
+        &b.vault_id,
+        &a.device,
+        &req,
+        &Limits::DEFAULT,
+        NOW,
+    )
+    .expect("put_item");
     assert!(matches!(
         other_vault,
         PutOutcome::Stored {
@@ -527,10 +537,11 @@ fn changes_stop_before_max_bytes_but_return_at_least_one_row() {
 
 #[test]
 fn quota_stops_at_max_items_and_max_bytes() {
-    // Rows: the manifest (40 bytes) counts as one of three.
+    // Live rows: the manifest (40 bytes) counts as one of three.
     let limits = Limits {
         max_envelope: 100,
         max_items: 3,
+        max_tombstones: 100,
         max_bytes: 1000,
     };
     let (mut conn, a) = with_account();
@@ -539,7 +550,7 @@ fn quota_stops_at_max_items_and_max_bytes() {
     assert_eq!((stored(&ok1).0, stored(&ok2).0), (1, 1));
     let before = counters(&conn, &a);
     assert_eq!(before.1, 3);
-    // A fourth row is refused; an update of an existing one is not.
+    // A fourth live row is refused; an update of an existing one is not.
     let idems = idem_rows(&conn);
     assert_eq!(
         put_at(&mut conn, &a, &live(item(3), 0, b"c", 3), &limits, NOW),
@@ -549,10 +560,18 @@ fn quota_stops_at_max_items_and_max_bytes() {
     assert_eq!(idem_rows(&conn), idems, "a refusal records nothing");
     let update = put_at(&mut conn, &a, &live(item(1), 1, b"a2", 4), &limits, NOW);
     assert_eq!(stored(&update).0, 2);
-    // A deletion is a row too: it does not free a slot for a new item.
+    // A deletion frees the slot of a live row: the refused write fits now.
     put_at(&mut conn, &a, &tomb(item(2), 1, b"t", 5), &limits, NOW);
+    assert_eq!(counters(&conn, &a).1, 2);
+    stored(&put_at(
+        &mut conn,
+        &a,
+        &live(item(3), 0, b"c", 3),
+        &limits,
+        NOW,
+    ));
     assert_eq!(
-        put_at(&mut conn, &a, &live(item(3), 0, b"c", 3), &limits, NOW),
+        put_at(&mut conn, &a, &live(item(4), 0, b"d", 6), &limits, NOW),
         PutOutcome::QuotaExceeded
     );
 
@@ -560,6 +579,7 @@ fn quota_stops_at_max_items_and_max_bytes() {
     let limits = Limits {
         max_envelope: 100,
         max_items: 100,
+        max_tombstones: 100,
         max_bytes: 100,
     };
     let (mut conn, a) = with_account();
@@ -714,9 +734,40 @@ fn manifest_row_is_an_ordinary_row_with_zero_id() {
     assert_eq!(manifest.tag, Some([0x7a; 32]));
     assert!(manifest.tomb.is_none());
 
-    // It is written like any row.
-    let update = put(&mut conn, &a, &live(MANIFEST_ITEM_ID, 1, b"manifest 2", 1));
-    assert_eq!(stored(&update), (2, 2));
+    // The item write path never touches it: not with a live body, not with a
+    // tombstone, whatever the basis. Nothing is written and nothing recorded.
+    let before = counters(&conn, &a);
+    for (n, req) in [
+        live(MANIFEST_ITEM_ID, 1, b"manifest 2", 1),
+        live(MANIFEST_ITEM_ID, 0, b"manifest 2", 2),
+        tomb(MANIFEST_ITEM_ID, 1, b"gone", 3),
+        tomb(MANIFEST_ITEM_ID, 0, b"gone", 4),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            put(&mut conn, &a, req),
+            PutOutcome::ManifestNotWritable,
+            "request {n}"
+        );
+    }
+    assert_eq!(counters(&conn, &a), before);
+    assert_eq!(idem_rows(&conn), 0);
+    let page = changes_since(&conn, &a.vault_id, 0, 100, usize::MAX).expect("changes");
+    assert_eq!(page.changes, vec![manifest.clone()]);
+}
+
+#[test]
+fn a_replay_cannot_reach_the_manifest_either() {
+    // The refusal comes before the idempotency lookup, so an idem that was
+    // recorded for another item cannot turn into an answer for the manifest.
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, b"v1", 1));
+    assert_eq!(
+        put(&mut conn, &a, &live(MANIFEST_ITEM_ID, 0, b"v1", 1)),
+        PutOutcome::ManifestNotWritable
+    );
 }
 
 #[test]
@@ -819,16 +870,32 @@ fn methods_view_and_account_by_user_read_what_create_account_wrote() {
             .expect("lookup")
             .is_none()
     );
-    assert!(methods_view(&conn, &AccountId::from_bytes([9; 16])).is_err());
 }
 
 #[test]
 fn unknown_vaults_are_errors_not_empty_answers() {
     let (mut conn, a) = with_account();
     let ghost = VaultId::from_bytes([7; 16]);
-    assert!(changes_since(&conn, &ghost, 0, 10, usize::MAX).is_err());
-    let req = live(item(1), 0, b"x", 1);
-    assert!(put_item(&mut conn, &ghost, &a.device, &req, &Limits::DEFAULT, NOW).is_err());
+    assert!(matches!(
+        changes_since(&conn, &ghost, 0, 10, usize::MAX),
+        Err(StoreError::NotFound)
+    ));
+    // Whatever the basis: a basis other than 0 is not read as a conflict.
+    for base_rev in [0, 3] {
+        let req = live(item(1), base_rev, b"x", 1);
+        assert!(matches!(
+            put_item(&mut conn, &ghost, &a.device, &req, &Limits::DEFAULT, NOW),
+            Err(StoreError::NotFound)
+        ));
+    }
+    assert!(matches!(
+        methods_view(&conn, &AccountId::from_bytes([9; 16])),
+        Err(StoreError::NotFound)
+    ));
+    assert!(matches!(
+        purge_tombstones(&mut conn, &ghost, i64::MAX),
+        Err(StoreError::NotFound)
+    ));
     // Nothing was left behind.
     assert_eq!(idem_rows(&conn), 0);
 }
@@ -848,7 +915,271 @@ fn debug_output_shows_no_envelope_bytes() {
     let view = methods_view(&conn, &a.account_id).expect("view");
     assert!(!format!("{view:?}").contains("SENTINEL"));
     let account = account_by_user(&conn, a.user_id).expect("l").expect("a");
-    assert!(format!("{account:?}").contains("AccountRow"));
+    let shown = format!("{account:?}");
+    assert!(shown.contains("AccountRow"));
+    // Nothing of the OPAQUE record shows, as bytes or as hex.
+    let record = account.record.record.as_bytes();
+    let hex: String = record[..16].iter().map(|b| format!("{b:02x}")).collect();
+    assert!(!shown.contains(&hex) && !shown.contains(&format!("{:?}", &record[..16])));
+}
+
+/// The counters of a vault equal what its rows add up to.
+fn assert_counters_match_rows(conn: &Connection, a: &TestAccount) {
+    let (live, bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(deleted = 0), 0), COALESCE(SUM(size), 0) FROM ferret_items \
+             WHERE vault_id = ?1",
+            [a.vault_id.as_bytes()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("sums");
+    let (_, item_count, bytes_used) = counters(conn, a);
+    assert_eq!((item_count, bytes_used), (live, bytes));
+}
+
+#[test]
+fn tombstones_have_a_cap_of_their_own() {
+    let limits = Limits {
+        max_tombstones: 2,
+        ..Limits::DEFAULT
+    };
+    let (mut conn, a) = with_account();
+    for n in 1..=3u8 {
+        stored(&put_at(
+            &mut conn,
+            &a,
+            &live(item(n), 0, b"row", n),
+            &limits,
+            NOW,
+        ));
+    }
+    stored(&put_at(
+        &mut conn,
+        &a,
+        &tomb(item(1), 1, b"t", 11),
+        &limits,
+        NOW,
+    ));
+    stored(&put_at(
+        &mut conn,
+        &a,
+        &tomb(item(2), 1, b"t", 12),
+        &limits,
+        NOW,
+    ));
+    let before = counters(&conn, &a);
+    let idems = idem_rows(&conn);
+    // A third tombstone is refused: from a live row and from no row at all.
+    assert_eq!(
+        put_at(&mut conn, &a, &tomb(item(3), 1, b"t", 13), &limits, NOW),
+        PutOutcome::QuotaExceeded
+    );
+    assert_eq!(
+        put_at(&mut conn, &a, &tomb(item(9), 0, b"t", 14), &limits, NOW),
+        PutOutcome::QuotaExceeded
+    );
+    assert_eq!(counters(&conn, &a), before);
+    assert_eq!(idem_rows(&conn), idems);
+    // Live writes are not affected, and a purge makes room again.
+    stored(&put_at(
+        &mut conn,
+        &a,
+        &live(item(3), 1, b"row2", 15),
+        &limits,
+        NOW,
+    ));
+    purge_tombstones(&mut conn, &a.vault_id, NOW + 1).expect("purge");
+    stored(&put_at(
+        &mut conn,
+        &a,
+        &tomb(item(3), 2, b"t", 13),
+        &limits,
+        NOW,
+    ));
+    assert_counters_match_rows(&conn, &a);
+}
+
+#[test]
+fn deleting_and_recreating_items_does_not_exhaust_max_items() {
+    // The churn the quota must allow: import, delete everything, import again.
+    let limits = Limits {
+        max_items: 4,
+        ..Limits::DEFAULT
+    };
+    let (mut conn, a) = with_account();
+    for n in 1..=3u8 {
+        stored(&put_at(
+            &mut conn,
+            &a,
+            &live(item(n), 0, b"row", n),
+            &limits,
+            NOW,
+        ));
+    }
+    assert_eq!(
+        put_at(&mut conn, &a, &live(item(4), 0, b"row", 4), &limits, NOW),
+        PutOutcome::QuotaExceeded
+    );
+    for n in 1..=3u8 {
+        stored(&put_at(
+            &mut conn,
+            &a,
+            &tomb(item(n), 1, b"t", 20 + n),
+            &limits,
+            NOW,
+        ));
+    }
+    assert_eq!(counters(&conn, &a).1, 1, "only the manifest is live");
+    for n in 4..=6u8 {
+        stored(&put_at(
+            &mut conn,
+            &a,
+            &live(item(n), 0, b"row", n),
+            &limits,
+            NOW,
+        ));
+    }
+    assert_counters_match_rows(&conn, &a);
+}
+
+#[test]
+fn counters_equal_the_rows_after_a_mixed_sequence() {
+    let (mut conn, a) = with_account();
+    let limits = Limits::DEFAULT;
+    assert_counters_match_rows(&conn, &a);
+    put_at(&mut conn, &a, &live(item(1), 0, &[1; 30], 1), &limits, 100);
+    put_at(&mut conn, &a, &live(item(2), 0, &[2; 12], 2), &limits, 200);
+    put_at(&mut conn, &a, &live(item(1), 1, &[3; 50], 3), &limits, 300);
+    put_at(&mut conn, &a, &tomb(item(1), 2, &[4; 9], 4), &limits, 400);
+    put_at(&mut conn, &a, &tomb(item(7), 0, &[5; 9], 5), &limits, 500);
+    put_at(&mut conn, &a, &live(item(3), 0, &[6; 20], 6), &limits, 600);
+    assert_counters_match_rows(&conn, &a);
+    purge_tombstones(&mut conn, &a.vault_id, 450).expect("purge");
+    assert_counters_match_rows(&conn, &a);
+    purge_tombstones(&mut conn, &a.vault_id, 1000).expect("purge");
+    assert_counters_match_rows(&conn, &a);
+    assert_eq!(counters(&conn, &a).1, 3, "the manifest and two live items");
+}
+
+#[test]
+fn purging_tombstones_moves_the_counters_in_one_transaction() {
+    let (mut conn, a) = with_account();
+    let limits = Limits::DEFAULT;
+    put_at(&mut conn, &a, &live(item(1), 0, &[1; 30], 1), &limits, 100); // seq 2
+    put_at(&mut conn, &a, &live(item(2), 0, &[2; 30], 2), &limits, 100); // seq 3
+    put_at(&mut conn, &a, &live(item(3), 0, &[3; 30], 3), &limits, 100); // seq 4
+    put_at(&mut conn, &a, &tomb(item(1), 1, &[4; 8], 4), &limits, 200); // seq 5
+    put_at(&mut conn, &a, &tomb(item(2), 1, &[5; 6], 5), &limits, 300); // seq 6
+    assert_eq!(counters(&conn, &a), (6, 2, 40 + 30 + 8 + 6));
+
+    // Only the tombstone older than 250 goes.
+    let purged = purge_tombstones(&mut conn, &a.vault_id, 250).expect("purge");
+    assert_eq!(
+        purged,
+        Purged {
+            removed: 1,
+            min_valid_since: 5
+        }
+    );
+    // `seq` and the live count stay, the bytes of the removed row go.
+    assert_eq!(counters(&conn, &a), (6, 2, 40 + 30 + 6));
+    assert_counters_match_rows(&conn, &a);
+
+    // Nothing to purge: nothing moves, and the horizon never falls.
+    let none = purge_tombstones(&mut conn, &a.vault_id, 250).expect("purge");
+    assert_eq!((none.removed, none.min_valid_since), (0, 5));
+
+    let rest = purge_tombstones(&mut conn, &a.vault_id, 1000).expect("purge");
+    assert_eq!((rest.removed, rest.min_valid_since), (1, 6));
+    assert_eq!(counters(&conn, &a), (6, 2, 40 + 30));
+    // Live rows were not touched (the manifest and item 3 remain).
+    let page = changes_since(&conn, &a.vault_id, 0, 100, usize::MAX).expect("changes");
+    assert_eq!(page.changes.len(), 2);
+    let horizon: i64 = conn
+        .query_row(
+            "SELECT min_valid_since FROM ferret_vaults WHERE vault_id = ?1",
+            [a.vault_id.as_bytes()],
+            |r| r.get(0),
+        )
+        .expect("horizon");
+    assert_eq!(horizon, 6);
+}
+
+#[test]
+fn a_purge_leaves_other_vaults_alone() {
+    let mut conn = migrated();
+    let a = add_account(&mut conn, 1, NOW);
+    let b = add_account(&mut conn, 2, NOW);
+    for who in [&a, &b] {
+        put(&mut conn, who, &live(item(1), 0, b"v1", 1));
+        put(&mut conn, who, &tomb(item(1), 1, b"t", 2));
+    }
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, i64::MAX)
+            .expect("purge")
+            .removed,
+        1
+    );
+    assert_counters_match_rows(&conn, &a);
+    assert_counters_match_rows(&conn, &b);
+    let b_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1",
+            [b.vault_id.as_bytes()],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(b_rows, 1);
+}
+
+#[test]
+fn a_limit_of_zero_is_read_as_one_so_paging_advances() {
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, b"v1", 1));
+    let page = changes_since(&conn, &a.vault_id, 0, 0, usize::MAX).expect("changes");
+    assert_eq!(page.changes.len(), 1);
+    assert!(page.has_more);
+}
+
+#[test]
+fn create_account_needs_the_first_manifest_and_checkpoint_numbers() {
+    let mut conn = migrated();
+    let user_id = accounts::insert_user(&conn, "first@example.com");
+    for (manifest_rev, checkpoint_seq) in [(0, 1), (2, 1), (1, 0), (1, 2)] {
+        let mut rows = accounts::rows(user_id, 1, NOW);
+        rows.manifest.rev = manifest_rev;
+        rows.checkpoint.seq = checkpoint_seq;
+        let tx = conn.transaction().expect("transaction");
+        assert!(
+            matches!(create_account(&tx, &rows), Err(StoreError::Invalid(_))),
+            "rev {manifest_rev}, seq {checkpoint_seq}"
+        );
+        tx.commit().expect("commit");
+    }
+    let left: i64 = conn
+        .query_row("SELECT COUNT(*) FROM ferret_accounts", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(left, 0);
+}
+
+#[test]
+fn deleting_an_item_the_server_does_not_have_stores_a_tombstone_at_rev_1() {
+    // A client outbox may merge a create and a delete that the server never
+    // saw apart: the tombstone is the answer, and later puts conflict with it.
+    let (mut conn, a) = with_account();
+    let outcome = put(&mut conn, &a, &tomb(item(5), 0, b"t", 1));
+    assert_eq!(stored(&outcome).0, 1);
+    assert_eq!(counters(&conn, &a).1, 1, "a tombstone is not a live row");
+    assert_eq!(
+        put(&mut conn, &a, &live(item(5), 1, b"back", 2)),
+        PutOutcome::Conflict(Conflict {
+            current_rev: 1,
+            blob: None,
+            tag: None,
+            deleted: true,
+        })
+    );
+    assert_counters_match_rows(&conn, &a);
 }
 
 static DIRS: AtomicUsize = AtomicUsize::new(0);

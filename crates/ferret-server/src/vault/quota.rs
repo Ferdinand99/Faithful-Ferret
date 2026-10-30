@@ -7,25 +7,30 @@
 
 /// What one vault may hold.
 ///
-/// `max_items` counts rows of `ferret_items`: live items, tombstones and the
-/// manifest row. A tombstone stays a row until it is purged, so deleting an
-/// item and writing another one never grows a vault past the limit.
-/// `max_bytes` counts the sizes of the envelopes and tombstones in those rows.
+/// `max_items` counts live rows (the manifest row included), so deleting an item
+/// frees its slot. A tombstone stays a row until it is purged, so tombstones have
+/// a limit of their own, `max_tombstones`: creating and deleting items cannot
+/// grow a vault without bound. `max_bytes` counts the stored sizes of all rows,
+/// envelopes and tombstones alike (spec § 8.2, quotas per account).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// The largest envelope or tombstone, in bytes.
     pub max_envelope: usize,
-    /// The most rows a vault may hold.
+    /// The most live rows a vault may hold.
     pub max_items: u32,
+    /// The most tombstones a vault may hold until they are purged.
+    pub max_tombstones: u32,
     /// The most bytes of envelopes and tombstones a vault may hold.
     pub max_bytes: u64,
 }
 
 impl Limits {
-    /// The limits of a vault: 64 KiB per envelope, 10 000 rows, 256 MiB.
+    /// The limits of a vault: 64 KiB per envelope, 10 000 live rows, 10 000
+    /// tombstones, 256 MiB.
     pub const DEFAULT: Limits = Limits {
         max_envelope: 65_536,
         max_items: 10_000,
+        max_tombstones: 10_000,
         max_bytes: 256 * 1024 * 1024,
     };
 }
@@ -56,6 +61,7 @@ mod tests {
         let limits = Limits::default();
         assert_eq!(limits.max_envelope, 65_536);
         assert_eq!(limits.max_items, 10_000);
+        assert_eq!(limits.max_tombstones, 10_000);
         assert_eq!(limits.max_bytes, 268_435_456);
     }
 

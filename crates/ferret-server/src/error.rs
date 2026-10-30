@@ -51,6 +51,11 @@ pub enum StoreError {
     Sql(rusqlite::Error),
     /// No connection could be had, or the task that held it failed.
     Pool(String),
+    /// The vault or account asked for is not there.
+    NotFound,
+    /// The caller passed values the store refuses (a bug in the caller, not
+    /// something a client can cause).
+    Invalid(&'static str),
     /// A stub was called.
     NotImplemented(NotImplemented),
 }
@@ -60,6 +65,8 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::Sql(e) => write!(f, "database error: {e}"),
             StoreError::Pool(e) => write!(f, "database pool error: {e}"),
+            StoreError::NotFound => f.write_str("not found"),
+            StoreError::Invalid(why) => write!(f, "invalid input: {why}"),
             StoreError::NotImplemented(e) => e.fmt(f),
         }
     }
@@ -175,7 +182,12 @@ impl IntoResponse for ApiError {
 }
 
 impl From<StoreError> for ApiError {
+    /// A vault or account that is not there is 404 `not_found`; every other
+    /// failure is 500 `internal`, and the cause goes to the log only.
     fn from(e: StoreError) -> Self {
+        if matches!(e, StoreError::NotFound) {
+            return Self::not_found();
+        }
         tracing::error!(error = %e, "store call failed");
         Self::internal()
     }
@@ -220,6 +232,23 @@ mod tests {
         let response = ApiError::unauthorized().into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[test]
+    fn a_missing_vault_is_404_not_found_and_other_store_errors_are_500() {
+        let missing = ApiError::from(StoreError::NotFound);
+        assert_eq!(missing, ApiError::not_found());
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        assert_eq!(missing.code, "not_found");
+        for other in [
+            StoreError::Invalid("x"),
+            StoreError::Pool("p".into()),
+            StoreError::Sql(rusqlite::Error::QueryReturnedNoRows),
+        ] {
+            let api = ApiError::from(other);
+            assert_eq!(api.status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(api.code, "internal");
+        }
     }
 
     #[test]
