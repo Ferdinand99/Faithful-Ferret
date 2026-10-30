@@ -326,11 +326,13 @@ dudect_wasm() {
   cpu="$(pick_cpu)"
   pin=()
   if [ -n "$cpu" ]; then pin=(taskset -c "$cpu"); fi
+  # `node` exits 1 for a threshold failure, 3 for a run that is not valid and
+  # 4 for a gross failure; its status is read after the pipe, with set -e off.
+  set +e
   FERRET_CT_N="$n" CT_GROSS="$gross" CT_CPU="${cpu:-none}" CT_HOST="$(uname -n)" "${pin[@]}" \
     node ct/dudect-wasm/run.mjs "$wasm" | tee "$results/dudect-wasm.txt"
-  # `node` exits 1 for a threshold failure, 3 for a run that is not valid and
-  # 4 for a gross failure.
   local rc="${PIPESTATUS[0]}"
+  set -e
   case "$rc" in
     0) ;;
     1) finish 1 0 0 ;;
