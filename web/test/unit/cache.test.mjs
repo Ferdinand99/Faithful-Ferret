@@ -129,3 +129,13 @@ test("a_scope_must_name_the_account_vault_and_epoch", async () => {
     await assert.rejects(cache.getRows(db.store, bad), TypeError);
   }
 });
+
+test("cache_removes_only_the_named_rows_of_the_scope", async () => {
+  const db = await freshStore();
+  await cache.putRows(db.store, scope(1), [live(1, 1), live(2, 2), gone(3, 3)]);
+  await cache.putRows(db.store, scope(2), [live(1, 1)]);
+  await cache.removeRows(db.store, scope(1), [id(2), id(9)]);
+  assert.deepEqual((await cache.getRows(db.store, scope(1))).map((r) => r.itemId), [id(1), id(3)]);
+  assert.equal((await cache.getRows(db.store, scope(2))).length, 1, "another epoch is untouched");
+  await assert.rejects(cache.removeRows(db.store, scope(1), ["nothex"]), TypeError);
+});

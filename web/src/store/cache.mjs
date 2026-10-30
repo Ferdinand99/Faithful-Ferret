@@ -135,6 +135,21 @@ export const cache = Object.freeze({
   },
 
   /**
+   * Removes the rows of some items (in one transaction). The rest of the scope stays.
+   * @param {import("./idb.mjs").Store} store
+   * @param {Scope} scope
+   * @param {readonly string[]} itemIds 32 hex characters each
+   * @returns {Promise<void>}
+   */
+  async removeRows(store, scope, itemIds) {
+    checkScope(scope);
+    if (!itemIds.every((id) => hex16.is(id))) throw new TypeError("an item id is 32 lower-case hex characters");
+    await run(store, ["rows"], "readwrite", async ([table]) => {
+      for (const id of itemIds) await req(table.delete([...prefix(scope), id]));
+    });
+  },
+
+  /**
    * Removes the rows of the scope. The pinned record, the outbox, the settings
    * and the device secrets stay.
    * @param {import("./idb.mjs").Store} store
