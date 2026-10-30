@@ -15,7 +15,7 @@ use std::fmt;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use ferret_server_auth::{AuthError, ErrorClass};
+use ferret_server_auth::AuthError;
 
 /// Why the server could not start.
 pub type StartError = Box<dyn std::error::Error + Send + Sync>;
@@ -156,6 +156,61 @@ impl ApiError {
             retry_after: Some(retry_after_secs),
         }
     }
+
+    /// The error for one of [`crate::wire::ERROR_CODES`], with the status that
+    /// code always has ([`status_of`]).
+    pub fn coded(code: &'static str) -> Self {
+        Self::new(status_of(code), code)
+    }
+}
+
+/// The status of every code in [`crate::wire::ERROR_CODES`]: the status is a
+/// function of the code, so a code never travels with two statuses.
+///
+/// 400 is a request that is wrong in itself; 401, 403 and 429 are the answers
+/// of the sign-in and the guards; 409 is a state that does not allow the call;
+/// 410 is a feed cursor that is too old; 413 is a size or a quota; 422 is
+/// content the server will not store.
+pub const CODE_STATUS: &[(&str, StatusCode)] = &[
+    ("unauthorized", StatusCode::UNAUTHORIZED),
+    ("denied", StatusCode::UNAUTHORIZED),
+    ("forbidden", StatusCode::FORBIDDEN),
+    ("insecure_transport", StatusCode::BAD_REQUEST),
+    ("handoff_invalid", StatusCode::BAD_REQUEST),
+    ("manifest_not_writable", StatusCode::FORBIDDEN),
+    ("malformed_registration_request", StatusCode::BAD_REQUEST),
+    ("malformed_registration_record", StatusCode::BAD_REQUEST),
+    ("malformed_ke1", StatusCode::BAD_REQUEST),
+    ("malformed_ke3", StatusCode::BAD_REQUEST),
+    ("malformed_login_id", StatusCode::BAD_REQUEST),
+    ("malformed_nonce", StatusCode::BAD_REQUEST),
+    ("malformed_proof", StatusCode::BAD_REQUEST),
+    ("malformed_login_name", StatusCode::BAD_REQUEST),
+    ("malformed_recovery_key", StatusCode::BAD_REQUEST),
+    ("registration_closed", StatusCode::CONFLICT),
+    ("throttled", StatusCode::TOO_MANY_REQUESTS),
+    ("profile_rejected", StatusCode::UNPROCESSABLE_ENTITY),
+    ("unsupported_envelope", StatusCode::UNPROCESSABLE_ENTITY),
+    ("tombstone_invalid", StatusCode::UNPROCESSABLE_ENTITY),
+    ("too_large", StatusCode::PAYLOAD_TOO_LARGE),
+    ("quota_exceeded", StatusCode::PAYLOAD_TOO_LARGE),
+    ("idem_reuse", StatusCode::UNPROCESSABLE_ENTITY),
+    ("conflict", StatusCode::CONFLICT),
+    ("protocol_header_missing", StatusCode::BAD_REQUEST),
+    ("forbidden_origin", StatusCode::FORBIDDEN),
+    ("not_found", StatusCode::NOT_FOUND),
+    ("bad_request", StatusCode::BAD_REQUEST),
+    ("internal", StatusCode::INTERNAL_SERVER_ERROR),
+    ("gone", StatusCode::GONE),
+];
+
+/// The status of `code`. A code that is not in the table is a bug of the
+/// caller and reads as 500.
+pub fn status_of(code: &str) -> StatusCode {
+    CODE_STATUS
+        .iter()
+        .find(|(listed, _)| *listed == code)
+        .map_or(StatusCode::INTERNAL_SERVER_ERROR, |(_, status)| *status)
 }
 
 impl fmt::Display for ApiError {
@@ -201,16 +256,10 @@ impl From<NotImplemented> for ApiError {
 }
 
 impl From<AuthError> for ApiError {
-    /// The answer of `ferret-server-auth` for an error: status from the class,
-    /// code from the library, and the wait of a throttle.
+    /// The answer of `ferret-server-auth` for an error: code from the library,
+    /// status from the code ([`status_of`]), and the wait of a throttle.
     fn from(e: AuthError) -> Self {
-        let status = match e.http_class() {
-            ErrorClass::BadRequest => StatusCode::BAD_REQUEST,
-            ErrorClass::Denied => StatusCode::UNAUTHORIZED,
-            ErrorClass::Forbidden => StatusCode::FORBIDDEN,
-            ErrorClass::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+        let status = status_of(e.public_code());
         let retry_after = match e {
             AuthError::Throttled { retry_after_secs } => Some(retry_after_secs),
             _ => None,
@@ -249,6 +298,37 @@ mod tests {
             assert_eq!(api.status, StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(api.code, "internal");
         }
+    }
+
+    #[test]
+    fn every_code_has_exactly_one_status() {
+        use crate::wire::ERROR_CODES;
+        let mut listed: Vec<&str> = CODE_STATUS.iter().map(|(code, _)| *code).collect();
+        let rows = listed.len();
+        listed.sort_unstable();
+        listed.dedup();
+        assert_eq!(listed.len(), rows, "a code is in the table twice");
+        let mut expected: Vec<&str> = ERROR_CODES.to_vec();
+        expected.sort_unstable();
+        assert_eq!(
+            listed, expected,
+            "the table and ERROR_CODES list the same codes"
+        );
+        for code in ERROR_CODES {
+            let status = status_of(code);
+            assert!(
+                status.is_client_error() || *code == "internal",
+                "{code} has status {status}"
+            );
+            assert_eq!(ApiError::coded(code).status, status, "{code}");
+        }
+        assert_eq!(
+            status_of("tombstone_invalid"),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(status_of("gone"), StatusCode::GONE);
+        // A code that is not listed is a bug of the caller, and reads as 500.
+        assert_eq!(status_of("nope"), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]

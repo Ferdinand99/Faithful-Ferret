@@ -1083,4 +1083,5 @@ pub const ERROR_CODES: &[&str] = &[
     "not_found",
     "bad_request",
     "internal",
+    "gone",
 ];

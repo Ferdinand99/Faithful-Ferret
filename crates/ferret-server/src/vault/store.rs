@@ -509,6 +509,8 @@ pub struct Changes {
     pub changes: Vec<Change>,
     /// The vault's counter now.
     pub latest_seq: u64,
+    /// The feed floor: a cursor below it may have missed purged tombstones.
+    pub min_valid_since: u64,
     /// The epoch of the vault key.
     pub vk_epoch: u64,
     /// How many times the vault was restored.
@@ -522,6 +524,7 @@ impl std::fmt::Debug for Changes {
         f.debug_struct("Changes")
             .field("rows", &self.changes.len())
             .field("latest_seq", &self.latest_seq)
+            .field("min_valid_since", &self.min_valid_since)
             .field("vk_epoch", &self.vk_epoch)
             .field("restore_epoch", &self.restore_epoch)
             .field("has_more", &self.has_more)
@@ -544,9 +547,9 @@ pub fn changes_since(
     max_bytes: usize,
 ) -> Result<Changes, StoreError> {
     let tx = conn.unchecked_transaction()?;
-    let (latest_seq, restore_epoch, vk_epoch) = tx
+    let (latest_seq, min_valid_since, restore_epoch, vk_epoch) = tx
         .query_row(
-            "SELECT v.seq, v.restore_epoch, a.vk_epoch \
+            "SELECT v.seq, v.min_valid_since, v.restore_epoch, a.vk_epoch \
          FROM ferret_vaults v JOIN ferret_accounts a ON a.account_id = v.account_id \
          WHERE v.vault_id = ?1",
             [vault.as_bytes()],
@@ -555,6 +558,7 @@ pub fn changes_since(
                     column_u64(row, 0)?,
                     column_u64(row, 1)?,
                     column_u64(row, 2)?,
+                    column_u64(row, 3)?,
                 ))
             },
         )
@@ -594,6 +598,7 @@ pub fn changes_since(
     Ok(Changes {
         changes,
         latest_seq,
+        min_valid_since,
         vk_epoch,
         restore_epoch,
         has_more,

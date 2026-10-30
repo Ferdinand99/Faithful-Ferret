@@ -141,47 +141,11 @@ where
 
 // ------------------------------------------------------------- the answers
 
-/// 400 `insecure_transport`.
-fn insecure_transport() -> ApiError {
-    ApiError::bad_request("insecure_transport")
-}
-
-/// 409 `registration_closed`.
-fn registration_closed() -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "registration_closed")
-}
-
-/// 422 `profile_rejected`.
-fn profile_rejected() -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "profile_rejected")
-}
-
-/// 422 `unsupported_envelope`.
-fn unsupported_envelope() -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_envelope")
-}
-
-/// 413 `too_large`.
-fn too_large() -> ApiError {
-    ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large")
-}
-
-/// 403 `forbidden`.
-fn forbidden() -> ApiError {
-    ApiError::new(StatusCode::FORBIDDEN, "forbidden")
-}
-
-/// 400 `bad_request`.
-fn bad_request() -> ApiError {
-    ApiError::bad_request("bad_request")
-}
-
-/// The answer for an error of the OPAQUE library. A profile the rules refuse is
-/// `422` here, the rest as the library classifies it. The cause of an internal
+/// The answer for an error of the OPAQUE library. The status is the one of the code
+/// (`error::status_of`). The cause of an internal
 /// error goes to the log and never to the client.
 fn auth_error(error: AuthError) -> ApiError {
     match error {
-        AuthError::ProfileRejected => profile_rejected(),
         AuthError::Internal(kind) => {
             tracing::error!(?kind, "registration failed inside the server");
             ApiError::internal()
@@ -212,18 +176,18 @@ where
             .and_then(|v| v.split(';').next())
             .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("application/json"));
         if !is_json {
-            return Err(bad_request());
+            return Err(ApiError::coded("bad_request"));
         }
         let bytes = Bytes::from_request(req, state).await.map_err(|rejection| {
             if rejection.into_response().status() == StatusCode::PAYLOAD_TOO_LARGE {
-                too_large()
+                ApiError::coded("too_large")
             } else {
-                bad_request()
+                ApiError::coded("bad_request")
             }
         })?;
         serde_json::from_slice(&bytes)
             .map(ApiJson)
-            .map_err(|e| ApiError::bad_request(refusal_code(&e.to_string())))
+            .map_err(|e| ApiError::coded(refusal_code(&e.to_string())))
     }
 }
 
@@ -248,7 +212,7 @@ fn require_transport(
 ) -> Result<(), ApiError> {
     if state.origins.vault_is_https() && !request_is_https(headers, peer.ip(), &state.proxies, true)
     {
-        return Err(insecure_transport());
+        return Err(ApiError::coded("insecure_transport"));
     }
     Ok(())
 }
@@ -257,7 +221,7 @@ fn require_transport(
 /// only the characters a kit user name allows. Every refusal is
 /// `malformed_login_name`.
 fn login_name(raw: &str) -> Result<String, ApiError> {
-    let refused = || ApiError::bad_request("malformed_login_name");
+    let refused = || ApiError::coded("malformed_login_name");
     if raw.len() > NAME_RAW_MAX_BYTES {
         return Err(refused());
     }
@@ -278,11 +242,11 @@ fn check_token(
     given: Option<&str>,
 ) -> Result<(), ApiError> {
     if given.is_some_and(|token| token.len() > SETUP_TOKEN_MAX_BYTES) {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
     match check_setup_token(&state.core, headers, Some(peer), given) {
         Ok(()) => Ok(()),
-        Err(SetupTokenError::Missing | SetupTokenError::Wrong) => Err(forbidden()),
+        Err(SetupTokenError::Missing | SetupTokenError::Wrong) => Err(ApiError::coded("forbidden")),
         Err(SetupTokenError::Throttled(wait)) => Err(ApiError::throttled(
             u32::try_from(wait.as_secs().saturating_add(1)).unwrap_or(u32::MAX),
         )),
@@ -403,7 +367,7 @@ async fn register_start(
         })
         .await?;
     if matches!(stored, Stored::Closed) {
-        return Err(registration_closed());
+        return Err(ApiError::coded("registration_closed"));
     }
     Ok(Json(RegisterStartRes {
         registration_id,
@@ -481,7 +445,7 @@ fn method_row(wrap: &WrapJson, wrap_len: usize, pending: &Pending) -> Result<Met
     let generation = u32::try_from(wrap.kek_generation)
         .ok()
         .filter(|g| *g != 0)
-        .ok_or_else(bad_request)?;
+        .ok_or_else(|| ApiError::coded("bad_request"))?;
     if u64::from(generation) != FIRST_GENERATION
         || wrap.wrap.len() != wrap_len
         || wrap.method_id == [0u8; 16]
@@ -490,7 +454,7 @@ fn method_row(wrap: &WrapJson, wrap_len: usize, pending: &Pending) -> Result<Met
         || wrap.credential_id.is_some()
         || wrap.prf_salt.is_some()
     {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
     Ok(MethodRow {
         method_id: MethodId::from_bytes(wrap.method_id),
@@ -524,54 +488,54 @@ pub(crate) fn validate_new_account(
 ) -> Result<ValidatedNewAccount, ApiError> {
     // The wraps: one of each kind, in either order.
     let [first, second] = req.wraps.as_slice() else {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     };
     let (password, recovery) = match (first.method_type, second.method_type) {
         (TYPE_PASSWORD, TYPE_RECOVERY) => (first, second),
         (TYPE_RECOVERY, TYPE_PASSWORD) => (second, first),
-        _ => return Err(bad_request()),
+        _ => return Err(ApiError::coded("bad_request")),
     };
     let password = method_row(password, WRAP_WITH_COMMIT_LEN, pending)?;
     let recovery = method_row(recovery, WRAP_LEN, pending)?;
     if password.method_id == recovery.method_id {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
 
     // The manifest.
     if req.manifest.rev != FIRST_MANIFEST_REV {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
     let envelope = &req.manifest.envelope;
     if envelope.len() > MAX_ENVELOPE_LEN {
-        return Err(too_large());
+        return Err(ApiError::coded("too_large"));
     }
     match parse_envelope(envelope) {
         Ok(view) if view.kind == KIND_MANIFEST => {}
-        _ => return Err(unsupported_envelope()),
+        _ => return Err(ApiError::coded("unsupported_envelope")),
     }
 
     // The checkpoint: one entry, the manifest.
     let checkpoint = &req.checkpoint;
     if checkpoint.seq != FIRST_SEQ {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
     let digest: [u8; 32] = Sha256::digest(&checkpoint.entries).into();
     if digest != checkpoint.digest {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
-    let entries = parse_entries(&checkpoint.entries).map_err(|_| bad_request())?;
+    let entries = parse_entries(&checkpoint.entries).map_err(|_| ApiError::coded("bad_request"))?;
     let manifest_hash: [u8; 32] = Sha256::digest(envelope).into();
     match entries.as_slice() {
         [entry]
             if entry.item_id == MANIFEST_ITEM_ID
                 && entry.rev == req.manifest.rev
                 && entry.live_hash == Some(manifest_hash) => {}
-        _ => return Err(bad_request()),
+        _ => return Err(ApiError::coded("bad_request")),
     }
 
     // The keys.
     if !is_public_key(&req.pk_a) || !is_public_key(&req.pk_r) {
-        return Err(bad_request());
+        return Err(ApiError::coded("bad_request"));
     }
 
     // The OPAQUE record and its profile. A new account is compared with
@@ -703,7 +667,7 @@ async fn register_finish_step(
         .with_conn(move |conn| write_account(conn, &pending, account, signed_now))
         .await?;
     let Created::Done { secret, claims } = created else {
-        return Err(registration_closed());
+        return Err(ApiError::coded("registration_closed"));
     };
 
     let secure = state.origins.vault_is_https();

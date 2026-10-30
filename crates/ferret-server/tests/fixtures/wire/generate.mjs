@@ -279,6 +279,7 @@ export const ERROR_CODES = [
   "not_found",
   "bad_request",
   "internal",
+  "gone",
 ];
 
 /**
