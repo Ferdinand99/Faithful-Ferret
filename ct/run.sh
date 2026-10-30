@@ -5,20 +5,34 @@
 #
 #   ct/run.sh analyze         ct_analyzer on every ct/harness/*.rs: x86_64 and
 #                             arm64, O0 O2 O3 Os, with --warnings
-#   ct/run.sh triage          every finding must be in ct/TRIAGE.md
-#   ct/run.sh wasm-scan       div/rem/sqrt/br_table/indexed loads in the WASM
-#                             build, against ct/wasm-allow.toml
+#   ct/run.sh triage          every finding must be in ct/TRIAGE.md, with the
+#                             pinned counts
+#   ct/run.sh select-asm      ct_select_bytes reads both slices (assembly check)
+#   ct/run.sh wasm-scan       div/rem/sqrt/br_table/table loads in the WASM
+#                             build at the shipped optimisation level
+#                             (wasm-bindgen + wasm-opt -Oz, names kept), against
+#                             ct/wasm-allow.toml
+#   ct/run.sh wasm-selftest   the scan must flag the fixtures in ct/wasm-fixtures
+#   ct/run.sh wasm-shipped    the named build is the shipped package (same bytes
+#                             once the names are stripped)
 #   ct/run.sh dudect-native   dudect on the native build (|t| < 4.5)
-#   ct/run.sh dudect-wasm     dudect on the WASM build, timed in Node
+#   ct/run.sh dudect-wasm     dudect on the WASM build (wasm-opt -Oz), in Node
+#   ct/run.sh lock            the lock and profile of ct/dudect agree with the root
 #   ct/run.sh all             all of the above
+#
+# A dudect bench with |t| >= 4.5 is measured once more with ten times the
+# measurements; it fails if that is still >= 4.5.
 #
 # Environment:
 #   CT_ANALYZER   path of analyzer.py (default /opt/ct-analyzer/ct_analyzer/analyzer.py)
 #   FERRET_CT_N   measurements per dudect bench (default 1000000)
 #   CT_RESULTS    where results go (default ct/results)
-#   CT_SMOKE      1 for the short run on a hosted runner: a threshold failure is a warning
+#   CT_SMOKE      1 for the short run on a hosted runner: a bench over 4.5 is a
+#                 warning, a bench over CT_GROSS (30) in the rerun too is a failure
 #   CT_PIN_CPU    CPU number for the dudect runs (taskset), "auto" for the least busy,
 #                 empty for no pinning
+#   CT_ONLY       only the dudect benches whose name contains this
+#   CT_REPEAT     measure each selected bench this many times (spread of t)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,11 +40,18 @@ mode="${1:-all}"
 results="${CT_RESULTS:-ct/results}"
 analyzer="${CT_ANALYZER:-/opt/ct-analyzer/ct_analyzer/analyzer.py}"
 n="${FERRET_CT_N:-1000000}"
+gross="${CT_GROSS:-30}"
 mkdir -p "$results"
 
 harness_files=(base32 crockford ct_eq ct_select unpad)
+needs_subtle=(ct_eq ct_select)
 archs=(x86_64 arm64)
 opts=(O0 O2 O3 Os)
+# The timing tests are a workspace of their own (ct/dudect/Cargo.toml).
+dudect=(--manifest-path ct/dudect/Cargo.toml --locked --target-dir target)
+# Flags of wasm-opt as in scripts/build-wasm.sh.
+wasm_opt_flags=(-Oz --enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int
+  --enable-reference-types --enable-multivalue --enable-mutable-globals)
 
 triple() {
   case "$1" in
@@ -38,6 +59,23 @@ triple() {
     arm64) echo aarch64-unknown-linux-gnu ;;
     *) echo "unknown arch $1" >&2; exit 2 ;;
   esac
+}
+
+in_list() { local x="$1"; shift; for y in "$@"; do [ "$x" = "$y" ] && return 0; done; return 1; }
+
+declare -A subtle_rlib=()
+# ct_eq.rs and ct_select.rs need `subtle`: build the rlib for each target with
+# the release settings (no debug assertions, as shipped) but unwinding panics
+# and no LTO, which is what the analyzer's rustc expects of a dependency.
+ensure_subtle() {
+  local arch t
+  for arch in "${archs[@]}"; do
+    [ -n "${subtle_rlib[$arch]:-}" ] && continue
+    t="$(triple "$arch")"
+    CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off \
+      cargo build --quiet --release -p subtle --target "$t" >&2
+    subtle_rlib[$arch]="$(ls target/"$t"/release/deps/libsubtle-*.rlib | head -n1)"
+  done
 }
 
 # ---------------------------------------------------------------- analyze
@@ -51,24 +89,15 @@ analyze() {
     echo "rustc: $(rustc --version)"
     sha256sum "$(dirname "$analyzer")"/*.py
   } > "$out/VERSIONS.txt"
+  ensure_subtle
 
-  # ct_eq.rs needs `subtle`: build the rlib for each target with the release
-  # settings (no debug assertions, as shipped) but unwinding panics and no
-  # LTO, which is what the analyzer's rustc expects of a dependency.
-  declare -A subtle_rlib
-  for arch in "${archs[@]}"; do
-    local t
-    t="$(triple "$arch")"
-    CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off       cargo build --quiet --release -p subtle --target "$t" >&2
-    subtle_rlib[$arch]="$(ls target/"$t"/release/deps/libsubtle-*.rlib | head -n1)"
-  done
-
-  local failed=0
+  local failed=0 file arch opt
   for file in "${harness_files[@]}"; do
     for arch in "${archs[@]}"; do
       for opt in "${opts[@]}"; do
-        local extra=(--extra-flags=--edition=2024)
-        if [ "$file" = ct_eq ]; then
+        # Overflow checks on, as in the release profile that is shipped.
+        local extra=(--extra-flags=--edition=2024 --extra-flags=-Coverflow-checks=on)
+        if in_list "$file" "${needs_subtle[@]}"; then
           local t
           t="$(triple "$arch")"
           extra+=("--extra-flags=--extern=subtle=${subtle_rlib[$arch]}" "--extra-flags=-Ldependency=target/$t/release/deps")
@@ -93,18 +122,89 @@ triage() {
   node ct/check-triage.mjs "$results/analyzer" ct/TRIAGE.md
 }
 
+# The assembly of ct_select_bytes. A mask that the optimizer can see through
+# turns the masked copy into "choose a source pointer, then copy", which reads
+# only one slice. The barrier of `subtle` is what prevents that; this checks it
+# on the compiler at hand: no instruction that tests bit 0 of the flag, and no
+# more conditional moves than the two `min`s of the slice lengths.
+select_asm() {
+  ensure_subtle
+  local arch opt t failed=0 asm body cmovs bit0
+  for arch in "${archs[@]}"; do
+    t="$(triple "$arch")"
+    for opt in 2 3 s; do
+      asm="$results/select-$arch-O$opt.s"
+      rustc --edition=2024 --crate-type=lib --emit=asm -C "opt-level=$opt" --target "$t" \
+        --extern "subtle=${subtle_rlib[$arch]}" -L "dependency=target/$t/release/deps" \
+        -o "$asm" ct/harness/ct_select.rs
+      body="$(awk '/ct_select_bytes:$/{on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
+      cmovs="$(printf '%s\n' "$body" | grep -cE '^\s+(cmov|csel)' || true)"
+      bit0="$(printf '%s\n' "$body" | grep -cE '^\s+(test[bwlq]?\s+\$1,|tst\s+\w+, #0x1$|tbn?z\s+\w+, #0,)' || true)"
+      echo "select-asm $arch O$opt: conditional moves $cmovs, tests of bit 0 of the flag $bit0"
+      if [ "$bit0" != 0 ] || [ "$cmovs" -gt 2 ]; then
+        echo "FAIL: ct_select_bytes at $arch O$opt may choose a source pointer; read $asm" >&2
+        failed=1
+      fi
+    done
+  done
+  [ "$failed" = 0 ]
+}
+
 # -------------------------------------------------------------- wasm-scan
 
-wasm_scan() {
-  # The release build of the binding with its function names kept. The code
-  # is the same as in the shipped module (names do not change code
-  # generation); wasm-opt is not run, as it strips the names.
+# Builds the binding as it is shipped (cargo release build, wasm-bindgen,
+# wasm-opt -Oz with the flags of scripts/build-wasm.sh) but with the name
+# section kept: wasm-bindgen keeps it unless asked to remove it, and wasm-opt
+# keeps it with -g. $1 = output directory.
+build_named_wasm() {
+  local out="$1"
+  mkdir -p "$out"
   cargo build --release -p ferret-core-wasm --target wasm32-unknown-unknown >&2
-  local wasm=target/wasm32-unknown-unknown/release/ferret_core_wasm.wasm
-  mkdir -p "$results/wasm"
-  cp "$wasm" "$results/wasm/ferret_core_wasm_ct.wasm"
-  wasm-tools print "$wasm" -o "$results/wasm/ferret_core_wasm_ct.wat"
-  node ct/wasm-scan.mjs "$results/wasm/ferret_core_wasm_ct.wat" ct/wasm-allow.toml | tee "$results/wasm/scan.txt"
+  wasm-bindgen --target web --out-dir "$out/bindgen" \
+    target/wasm32-unknown-unknown/release/ferret_core_wasm.wasm >&2
+  cp "$out/bindgen/ferret_core_wasm_bg.wasm" "$out/ferret_core_wasm_pre.wasm"
+  wasm-opt "${wasm_opt_flags[@]}" -g "$out/ferret_core_wasm_pre.wasm" -o "$out/ferret_core_wasm_ct.wasm"
+  wasm-tools print "$out/ferret_core_wasm_pre.wasm" -o "$out/ferret_core_wasm_pre.wat"
+  wasm-tools print "$out/ferret_core_wasm_ct.wasm" -o "$out/ferret_core_wasm_ct.wat"
+}
+
+wasm_scan() {
+  local out="$results/wasm"
+  build_named_wasm "$out"
+  echo "module before wasm-opt: $(wc -c < "$out/ferret_core_wasm_pre.wasm") bytes; shipped level (wasm-opt -Oz -g): $(wc -c < "$out/ferret_core_wasm_ct.wasm") bytes" | tee "$out/scan.txt"
+  # Before wasm-opt: totals only, to name what the optimizer changed.
+  node ct/wasm-scan.mjs "$out/ferret_core_wasm_pre.wat" ct/wasm-allow.toml --no-gate --json "$out/pre.json" > "$out/scan-pre.txt"
+  # At the shipped level: this is the gate.
+  node ct/wasm-scan.mjs "$out/ferret_core_wasm_ct.wat" ct/wasm-allow.toml --json "$out/post.json" --compare "$out/pre.json" | tee -a "$out/scan.txt"
+  [ "${PIPESTATUS[0]}" = 0 ]
+}
+
+wasm_selftest() {
+  local f
+  for f in ct/wasm-fixtures/*.wat; do wasm-tools parse "$f" -o /dev/null; done
+  node ct/wasm-selftest.mjs
+}
+
+# The named build is the shipped package: the same bytes once every custom
+# section (the names) is removed from both.
+wasm_shipped() {
+  local out="$results/wasm"
+  build_named_wasm "$out"
+  scripts/build-wasm.sh >&2
+  local shipped=bindings/wasm/pkg-web/ferret_core_wasm_bg.wasm
+  wasm-tools strip --all "$shipped" -o "$out/shipped.stripped.wasm"
+  wasm-tools strip --all "$out/ferret_core_wasm_ct.wasm" -o "$out/named.stripped.wasm"
+  local a b
+  a="$(sha256sum < "$out/shipped.stripped.wasm" | cut -d' ' -f1)"
+  b="$(sha256sum < "$out/named.stripped.wasm" | cut -d' ' -f1)"
+  echo "shipped pkg-web, names stripped: $a ($(wc -c < "$out/shipped.stripped.wasm") bytes)"
+  echo "scanned build,  names stripped: $b ($(wc -c < "$out/named.stripped.wasm") bytes)"
+  if [ "$a" = "$b" ]; then
+    echo "the scanned module is the shipped module"
+  else
+    echo "FAIL: the scanned module is not the shipped module" >&2
+    return 1
+  fi
 }
 
 # ----------------------------------------------------------------- dudect
@@ -118,41 +218,46 @@ pick_cpu() {
       awk '/^cpu[0-9]/ { print $1, $2+$3+$4+$7+$8, $5+$6 }' /proc/stat > /tmp/stat1
       sleep 1
       awk '/^cpu[0-9]/ { print $1, $2+$3+$4+$7+$8, $5+$6 }' /proc/stat > /tmp/stat2
-      paste -d' ' /tmp/stat1 /tmp/stat2         | awk '{ busy = $5 - $2; idle = $6 - $3; print busy / (busy + idle + 1), $1 }'         | sort -n | head -n1 | sed 's/^[^ ]* cpu//'
+      paste -d' ' /tmp/stat1 /tmp/stat2 \
+        | awk '{ busy = $5 - $2; idle = $6 - $3; print busy / (busy + idle + 1), $1 }' \
+        | sort -n | head -n1 | sed 's/^[^ ]* cpu//'
       ;;
     *) echo "$CT_PIN_CPU" ;;
   esac
 }
 
-# One native bench; echoes its line. The statistic is dudect-bencher's `max t`.
+# One native bench with $3 measurements; echoes its line. The statistic is
+# dudect-bencher's `max t`.
 bench_line() {
-  FERRET_CT_N="$n" "${pin[@]}" "$1" --filter "$2" | grep -E '^bench ' | grep -v seeded || true
+  FERRET_CT_N="$3" "${pin[@]}" "$1" --filter "$2" | grep -E '^bench ' | grep -v seeded || true
 }
 
 t_of() {
   printf '%s' "$1" | sed -n 's/.*max t = \([-+0-9.eE]*\),.*/\1/p'
 }
 
-over() {
-  awk -v t="$1" 'BEGIN { exit !((t < 0 ? -t : t) >= 4.5) }'
+over() { # $1 t, $2 limit
+  awk -v t="$1" -v l="${2:-4.5}" 'BEGIN { exit !((t < 0 ? -t : t) >= l) }'
 }
 
-# CT_SMOKE=1 (the short run on a GitHub-hosted runner, which is too noisy for
-# the threshold): a bench over the threshold is a warning, not a failure. A
-# run that is not valid (no result, a control that does not behave) always
-# fails.
-finish() {
-  local failed="$1" invalid="$2"
+# CT_SMOKE=1 (the short run on a hosted runner, which is too noisy for the
+# threshold of 4.5): a bench over 4.5 whose rerun is over 4.5 too is a warning
+# unless the rerun is over CT_GROSS (30): then it is a failure, as a leak of the
+# size of the leaky control (|t| of 10^4) is not noise. A run that is not valid
+# (no result, a control that does not behave) always fails.
+finish() { # $1 failed, $2 invalid, $3 gross
+  local failed="$1" invalid="$2" grossfail="${3:-0}"
   [ "$invalid" = 0 ] || return 1
+  [ "$grossfail" = 0 ] || return 1
   if [ "$failed" != 0 ] && [ "${CT_SMOKE:-}" = 1 ]; then
-    echo "::warning::dudect smoke run: a bench is over |t| = 4.5; hosted runners are noisy, the real run is scripts/lanbox-ct.sh"
+    echo "::warning::dudect smoke run: a bench is over |t| = 4.5; hosted runners are noisy, the decisive run is scripts/lanbox-ct.sh"
     return 0
   fi
   [ "$failed" = 0 ]
 }
 
 dudect_native() {
-  cargo build --release -p ferret-ct --features bench --bin dudect >&2
+  cargo build --release "${dudect[@]}" --features bench --bin dudect >&2
   local bin=target/release/dudect
   local out="$results/dudect-native.txt"
   : > "$out"
@@ -161,65 +266,75 @@ dudect_native() {
   pin=()
   if [ -n "$cpu" ]; then pin=(taskset -c "$cpu"); fi
   {
-    echo "dudect native: n=$n per bench, cpu=${cpu:-none}, $(date -u +%FT%TZ)"
-    echo "cpu: $(grep -m1 'model name' /proc/cpuinfo || true)"
+    echo "dudect native: n=$n per bench (rerun with $((n * 10)) when |t| >= 4.5), cpu=${cpu:-none}, $(date -u +%FT%TZ)"
+    echo "host: $(uname -n), $(grep -m1 'model name' /proc/cpuinfo || true)"
     echo "rustc: $(rustc --version)"
     echo "load: $(cat /proc/loadavg)"
   } | tee -a "$out"
-  local names="control_null control_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content"
-  local failed=0 invalid=0 name
+  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair"
+  local failed=0 invalid=0 grossfail=0 name rep
   for name in $names; do
-    local attempt=0 bad=0 line t
-    while [ "$attempt" -lt 2 ]; do
-      attempt=$((attempt + 1))
-      line="$(bench_line "$bin" "$name")"
-      echo "[run $attempt] $line" | tee -a "$out"
+    if [ -n "${CT_ONLY:-}" ] && [[ "$name" != *"$CT_ONLY"* ]]; then continue; fi
+    for rep in $(seq 1 "${CT_REPEAT:-1}"); do
+      local line t line2 t2="" first_over=0 second_over=0
+      line="$(bench_line "$bin" "$name" "$n")"
+      echo "[run n=$n] $line" | tee -a "$out"
       t="$(t_of "$line")"
-      if [ -z "$t" ]; then echo "no t-value for $name" | tee -a "$out"; invalid=1; break; fi
-      if over "$t"; then bad=$((bad + 1)); else break; fi
-      # control_leaky is meant to be over the threshold: one run is enough.
-      if [ "$name" = control_leaky ]; then break; fi
+      if [ -z "$t" ]; then echo "no t-value for $name" | tee -a "$out"; invalid=1; continue; fi
+      if over "$t"; then first_over=1; fi
+      case "$name" in
+        control_*leaky*)
+          if [ "$first_over" = 1 ]; then
+            echo "[ok] $name: the setup sees an early-exit comparison" | tee -a "$out"
+          else
+            echo "[FAIL] $name: the setup does not see an early-exit comparison, the run is not valid" | tee -a "$out"
+            invalid=1
+          fi
+          continue
+          ;;
+        info_*) echo "[info] $name is reported, not gated" | tee -a "$out"; continue ;;
+      esac
+      if [ "$first_over" = 1 ]; then
+        line2="$(bench_line "$bin" "$name" "$((n * 10))")"
+        echo "[rerun n=$((n * 10))] $line2" | tee -a "$out"
+        t2="$(t_of "$line2")"
+        if [ -z "$t2" ]; then echo "no t-value for the rerun of $name" | tee -a "$out"; invalid=1; continue; fi
+        if over "$t2"; then second_over=1; fi
+        if over "$t2" "$gross"; then grossfail=1; fi
+      fi
+      if [ "$second_over" = 1 ]; then
+        echo "[FAIL] $name: |t| >= 4.5 at n=$n and again at n=$((n * 10))" | tee -a "$out"
+        failed=1
+      elif [ "$first_over" = 1 ]; then
+        echo "[ok, rerun] $name: |t| >= 4.5 at n=$n, below at n=$((n * 10))" | tee -a "$out"
+      else
+        echo "[ok] $name" | tee -a "$out"
+      fi
     done
-    case "$name" in
-      control_leaky)
-        if [ "$bad" -ge 1 ]; then
-          echo "[ok] $name: the setup sees an early-exit comparison" | tee -a "$out"
-        else
-          echo "[FAIL] $name: the setup does not see an early-exit comparison, the run is not valid" | tee -a "$out"
-          invalid=1
-        fi
-        ;;
-      info_*) echo "[info] $name is reported, not gated" | tee -a "$out" ;;
-      *)
-        if [ "$bad" -ge 2 ]; then
-          echo "[FAIL] $name: |t| >= 4.5 in two runs" | tee -a "$out"
-          failed=1
-        elif [ "$bad" -eq 1 ]; then
-          echo "[ok, rerun] $name: |t| >= 4.5 once, below in the rerun" | tee -a "$out"
-        else
-          echo "[ok] $name" | tee -a "$out"
-        fi
-        ;;
-    esac
   done
-  finish "$failed" "$invalid"
+  finish "$failed" "$invalid" "$grossfail"
 }
 
 dudect_wasm() {
-  cargo build --release -p ferret-ct --lib --target wasm32-unknown-unknown >&2
-  local wasm=target/wasm32-unknown-unknown/release/ferret_ct.wasm
+  cargo build --release "${dudect[@]}" --lib --target wasm32-unknown-unknown >&2
+  local raw=target/wasm32-unknown-unknown/release/ferret_ct.wasm
   mkdir -p "$results/wasm"
-  cp "$wasm" "$results/wasm/ferret_ct.wasm"
+  # The shipped level: the same wasm-opt as the package of the binding.
+  local wasm="$results/wasm/ferret_ct_opt.wasm"
+  wasm-opt "${wasm_opt_flags[@]}" -g "$raw" -o "$wasm"
   local cpu
   cpu="$(pick_cpu)"
   pin=()
   if [ -n "$cpu" ]; then pin=(taskset -c "$cpu"); fi
-  FERRET_CT_N="$n" CT_CPU="${cpu:-none}" "${pin[@]}" node ct/dudect-wasm/run.mjs "$wasm" | tee "$results/dudect-wasm.txt"
-  # `node` exits 1 for a threshold failure and 3 for a run that is not valid.
+  FERRET_CT_N="$n" CT_GROSS="$gross" CT_CPU="${cpu:-none}" CT_HOST="$(uname -n)" "${pin[@]}" \
+    node ct/dudect-wasm/run.mjs "$wasm" | tee "$results/dudect-wasm.txt"
+  # `node` exits 1 for a threshold failure, 3 for a run that is not valid and
+  # 4 for a gross failure.
   local rc="${PIPESTATUS[0]}"
   case "$rc" in
     0) ;;
-    1) finish 1 0 ;;
+    1) finish 1 0 0 ;;
+    4) finish 1 0 1 ;;
     *) return "$rc" ;;
   esac
 }
@@ -227,18 +342,26 @@ dudect_wasm() {
 case "$mode" in
   analyze) analyze ;;
   triage) triage ;;
+  select-asm) select_asm ;;
   wasm-scan) wasm_scan ;;
+  wasm-selftest) wasm_selftest ;;
+  wasm-shipped) wasm_shipped ;;
   dudect-native) dudect_native ;;
   dudect-wasm) dudect_wasm ;;
+  lock) ct/check-lock.sh ;;
   all)
+    ct/check-lock.sh
     analyze
     triage
+    select_asm
+    wasm_selftest
     wasm_scan
+    wasm_shipped
     dudect_native
     dudect_wasm
     ;;
   *)
-    echo "usage: ct/run.sh analyze|triage|wasm-scan|dudect-native|dudect-wasm|all" >&2
+    echo "usage: ct/run.sh analyze|triage|select-asm|wasm-scan|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|all" >&2
     exit 2
     ;;
 esac

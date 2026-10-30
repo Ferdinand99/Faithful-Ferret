@@ -123,7 +123,7 @@ pack() {
 }
 
 if [ -n "$export_paths" ]; then
-  pack | "${run[@]}" | tar -x -f -
+  pack | "${run[@]}" | tar -x --warning=no-timestamp -f -
 else
   pack | "${run[@]}"
 fi

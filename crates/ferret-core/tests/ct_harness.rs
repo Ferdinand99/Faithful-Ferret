@@ -1,8 +1,8 @@
 //! The single-file constant-time code in `ct/harness/` that is new in Task 14:
-//! `base32.rs` and `ct_select.rs` compile on their own with `core` only, and
-//! the core includes the same files that the analyzer reads. (`crockford.rs`
-//! and `unpad.rs` are checked in `codes.rs` and `pad.rs`; `ct_eq.rs` needs
-//! `subtle`, and the analyzer is given it with `--extern`.)
+//! `base32.rs` compiles on its own with `core` only, `ct_select.rs` and
+//! `ct_eq.rs` need `subtle` (the analyzer is given it with `--extern`), and the
+//! core includes the same files that the analyzer reads. (`crockford.rs` and
+//! `unpad.rs` are checked in `codes.rs` and `pad.rs`.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -45,34 +45,16 @@ fn compile(source: &Path, name: &str) {
     );
 }
 
-fn check_file(file: &str, name: &str, included_by: &str) {
+/// The file is included by `included_by`, and every `pub fn` in it is
+/// `#[inline(never)]` (or rustc may leave it out of the compiled file and the
+/// analyzer has nothing to look at).
+fn check_included(file: &str, included_by: &str) {
     let source = harness(file);
-    compile(&source, name);
-
-    // With `#![no_std]` around it: nothing from `std` or `alloc`.
-    let dir = std::env::temp_dir().join(format!("ferret-ct-nostd-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let wrapper = dir.join("no_std_wrapper.rs");
-    std::fs::write(
-        &wrapper,
-        format!(
-            "#![no_std]\ninclude!(r\"{}\");\n",
-            source.canonicalize().unwrap().display()
-        ),
-    )
-    .unwrap();
-    compile(&wrapper, &format!("{name}_no_std"));
-    let _ = std::fs::remove_dir_all(&dir);
-
-    // It is the file the core runs.
     let user = std::fs::read_to_string(manifest().join(included_by)).unwrap();
     assert!(
         user.contains(&format!("ct/harness/{file}\")")),
         "{included_by} does not include ct/harness/{file}"
     );
-
-    // Every public function is `#[inline(never)]`, or rustc may leave it out
-    // of the compiled file and the analyzer has nothing to look at.
     let text = std::fs::read_to_string(&source).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     for (i, line) in lines.iter().enumerate() {
@@ -85,6 +67,28 @@ fn check_file(file: &str, name: &str, included_by: &str) {
             assert!(before, "{file}: `{line}` is not #[inline(never)]");
         }
     }
+}
+
+/// A file with `core` only: it also compiles on its own, and under `no_std`.
+fn check_file(file: &str, name: &str, included_by: &str) {
+    let source = harness(file);
+    compile(&source, name);
+    let dir = std::env::temp_dir().join(format!("ferret-ct-nostd-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wrapper = dir.join("no_std_wrapper.rs");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#![no_std]
+include!(r\"{}\");
+",
+            source.canonicalize().unwrap().display()
+        ),
+    )
+    .unwrap();
+    compile(&wrapper, &format!("{name}_no_std"));
+    let _ = std::fs::remove_dir_all(&dir);
+    check_included(file, included_by);
 }
 
 #[test]
@@ -102,11 +106,22 @@ fn base32_harness_is_one_file_with_core_only() {
 }
 
 #[test]
-fn select_harness_is_one_file_with_core_only() {
-    check_file("ct_select.rs", "select_single_file", "src/prim/ct.rs");
-    // The mask is hidden from the optimizer (F-1 in ct/TRIAGE.md).
+fn select_harness_selects_through_subtle() {
+    check_included("ct_select.rs", "src/prim/ct.rs");
+    // The mask comes from `subtle::Choice`, whose barrier is a volatile read
+    // behind `#[inline(never)]`; `black_box` is best effort only (F-1 in
+    // ct/TRIAGE.md).
     let text = std::fs::read_to_string(harness("ct_select.rs")).unwrap();
-    assert_eq!(text.matches("black_box(0").count(), 4);
+    let code: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    assert!(code.contains("ConditionallySelectable") && code.contains("Choice::from"));
+    assert!(!code.contains("black_box"));
 }
 
 #[test]

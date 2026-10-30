@@ -11,11 +11,19 @@
 //     id @ file @ function (regular expression) @ mnemonic (regular expression) @ severity
 //
 // and every id has a `### id` heading with the reasoning. A finding is
-// triaged when a row matches its file, function, mnemonic and severity. The
-// script fails on a finding without a row, on a row without a heading, and
-// on a report that has fewer functions than the file has public functions
-// (the second fenced block, `coverage`): that would be a vacuous pass, such
-// as a function that rustc left out of the compiled file.
+// triaged when a row matches its file, function, mnemonic and severity.
+//
+// A second fenced block, `counts`, pins what each report holds:
+//
+//     file @ arch @ opt @ functions=N T1=a T2=b ...
+//
+// the number of functions the analyzer looked at and the number of findings
+// that each row covers. The check fails when any of them changes, up or down:
+// a new branch in a function that is already triaged is a new finding even if
+// the row covers it, and a report with fewer functions than the file has
+// public functions is a clean report of nothing (a function that rustc left out
+// of the compiled file). `--write-counts` prints the block for the current
+// reports, to be pasted after the change has been looked at.
 //
 // This is the test `ct_analyzer_clean_or_triaged`.
 
@@ -23,7 +31,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { pathOf } from "./rustname.mjs";
 
-const [dir, triagePath] = process.argv.slice(2);
+const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const writeCounts = process.argv.includes("--write-counts");
+const [dir, triagePath] = args;
 if (!dir || !triagePath) {
   console.error("usage: check-triage.mjs <reports dir> <TRIAGE.md>");
   process.exit(2);
@@ -48,7 +58,10 @@ const rows = block(text, "triage").map(([id, file, fn, mnemonic, severity]) => (
   severity: new RegExp("^(?:" + severity + ")$"),
   used: 0,
 }));
-const coverage = Object.fromEntries(block(text, "coverage").map(([file, min]) => [file, Number(min)]));
+const pinned = new Map(
+  block(text, "counts").filter((c) => c.length === 4).map(([file, arch, opt, rest]) => [`${file} ${arch} ${opt}`, rest.split(/\s+/).sort().join(" ")]),
+);
+const current = new Map();
 
 let failed = false;
 const fail = (msg) => {
@@ -72,10 +85,7 @@ for (const name of reports) {
     fail(`${name}: no report (${report.error ?? "unreadable"})`);
     continue;
   }
-  if (!(file in coverage)) fail(`${name}: file ${file} is not in the coverage block`);
-  else if (report.total_functions < coverage[file]) {
-    fail(`${name}: only ${report.total_functions} functions analyzed, expected at least ${coverage[file]}`);
-  }
+  const perRow = {};
   for (const v of report.violations) {
     findings++;
     const fn = pathOf(v.function);
@@ -85,15 +95,35 @@ for (const name of reports) {
     if (row) {
       row.used++;
       triaged++;
+      perRow[row.id] = (perRow[row.id] ?? 0) + 1;
     } else {
       const key = `${file} | ${fn} | ${v.mnemonic} | ${v.severity}`;
       untriaged.set(key, [...(untriaged.get(key) ?? []), `${arch}:${opt}`]);
     }
   }
+  current.set(
+    `${file} ${arch} ${opt}`,
+    [`functions=${report.total_functions}`, ...Object.entries(perRow).map(([id, n]) => `${id}=${n}`)].sort().join(" "),
+  );
   console.log(
     `${name.padEnd(28)} functions ${String(report.total_functions).padStart(3)}  errors ${report.error_count}  warnings ${report.warning_count}`,
   );
 }
+if (writeCounts) {
+  let out = "";
+  for (const [key, value] of current) {
+    const [file, arch, opt] = key.split(" ");
+    out += `${file} @ ${arch} @ ${opt} @ ${value}
+`;
+  }
+  process.stdout.write(out, () => process.exit(0));
+  await new Promise(() => {});
+}
+for (const [key, value] of current) {
+  if (!pinned.has(key)) fail(`${key}: no pinned counts (now: ${value})`);
+  else if (pinned.get(key) !== value) fail(`${key}: pinned ${pinned.get(key)}, now ${value}`);
+}
+for (const key of pinned.keys()) if (!current.has(key)) fail(`${key}: pinned but there is no report`);
 for (const [key, configs] of untriaged) fail(`untriaged: ${key}  (${configs.join(", ")})`);
 for (const row of rows) if (row.used === 0) console.log(`note: row ${row.id} matched nothing`);
 console.log(`${reports.length} reports, ${findings} findings, ${triaged} triaged, ${findings - triaged} untriaged`);

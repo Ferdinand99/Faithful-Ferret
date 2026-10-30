@@ -83,6 +83,24 @@ fn info_unpad_position_zeros(r: &mut CtRunner, rng: &mut BenchRng) {
 fn info_unpad_content(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "info_unpad_content");
 }
+fn control_unpad_leaky(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "control_unpad_leaky");
+}
+fn info_base32_a_vs_z(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_base32_a_vs_z");
+}
+fn info_base32_upper_vs_lower(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_base32_upper_vs_lower");
+}
+fn info_base32_random_pair(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_base32_random_pair");
+}
+fn info_unpad_random_pair(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_unpad_random_pair");
+}
+fn info_unpad_same(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_unpad_same");
+}
 fn control_null(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "control_null");
 }
@@ -101,6 +119,12 @@ ctbench_main!(
     info_unwrap_valid_vs_bad_commit,
     info_unpad_position_zeros,
     info_unpad_content,
+    info_unpad_random_pair,
+    info_unpad_same,
+    info_base32_a_vs_z,
+    info_base32_upper_vs_lower,
+    info_base32_random_pair,
     control_null,
-    control_leaky
+    control_leaky,
+    control_unpad_leaky
 );

@@ -15,8 +15,8 @@ pub(crate) mod eq {
     include!("../../../../ct/harness/ct_eq.rs");
 }
 
-/// Branch-free selection. Not used by the core yet; it is analyzed and
-/// timed with the rest, so it is ready for the first caller.
+/// Branch-free selection, through `subtle`. Not used by the core yet; it is
+/// analyzed with the rest, so it is ready for the first caller.
 #[allow(dead_code)]
 pub(crate) mod select {
     include!("../../../../ct/harness/ct_select.rs");
@@ -41,8 +41,8 @@ mod tests {
                 if pick_a { 0xdead_beef } else { 0x0123_4567 }
             );
             assert_eq!(
-                select::ct_select_usize(usize::from(flag), usize::MAX, 7),
-                if pick_a { usize::MAX } else { 7 }
+                select::ct_select_u64(u64::from(flag), u64::MAX, 7),
+                if pick_a { u64::MAX } else { 7 }
             );
         }
     }

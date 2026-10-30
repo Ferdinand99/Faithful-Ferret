@@ -1,22 +1,31 @@
 # Constant-time checks (plan section 10), on GitHub-hosted runners:
 #
 #   analyzer     ct_analyzer on ct/harness/*.rs (x86_64 and arm64, O0 O2 O3 Os,
-#                with --warnings) and the triage in ct/TRIAGE.md.
-#   wasm-scan    division, remainder, br_table and indexed loads in the WASM
-#                build, against ct/wasm-allow.toml.
+#                with --warnings), the triage in ct/TRIAGE.md with its pinned
+#                counts, the assembly check of ct_select_bytes, and the check
+#                that ct/dudect agrees with the root lock and profile.
+#   wasm-scan    division, remainder, br_table and table lookups in the WASM
+#                build at the optimisation level that is shipped (wasm-bindgen,
+#                wasm-opt -Oz, names kept), against ct/wasm-allow.toml; the scan
+#                is tested on fixtures that it must flag; and the scanned module
+#                is shown to be the shipped package.
 #   dudect-smoke dudect, native and WebAssembly in Node, 100 000 measurements.
+#   dudect-deny  cargo deny for the timing tests, which have a workspace and a
+#                policy of their own (ct/dudect/deny.toml).
 #
 # The timing tests are split in two on purpose. A hosted runner is a shared
 # virtual machine: its clock is jittery and its neighbours change from one
 # minute to the next, and the threshold of dudect (|t| < 4.5) is a statement
 # about differences of a fraction of a nanosecond after a million
-# measurements. So here the smoke job checks that the harness builds and runs,
-# that the controls behave (`control_leaky` must be seen, or the run is not
-# valid) and prints the t-values, and a bench over the threshold is a warning.
-# The run that decides is `scripts/lanbox-ct.sh` (modes `dudect-native` and
-# `dudect-wasm`, or all of them):
-# 1 000 000 measurements per bench on a pinned core of the LANBox, where the
-# result is written to the report of the task.
+# measurements. So here the smoke job checks that the harness builds and runs
+# and that the controls behave (a leaky control that is not seen makes the run
+# invalid). A gated bench over 4.5 is a warning, because a hosted runner is
+# noisy; but a bench that is still over 30 when it is measured again with ten
+# times as many measurements fails the job, as that is the size of a real leak
+# (the leaky controls sit at 10^4, the benches at 1 to 3). The run that decides
+# is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
+# LANBox; a bench over 4.5 is measured again with 10^7), whose result is
+# committed in ct/results/dudect-lanbox.md.
 #
 # Third-party actions are pinned by commit SHA, tools by version and checksum,
 # the analyzer by commit and SHA-256 (ct/analyzer.pin). The workflow has read
@@ -30,6 +39,7 @@ on:
       - "crates/ferret-core/**"
       - "bindings/wasm/**"
       - "scripts/lanbox-ct.sh"
+      - "scripts/build-wasm.sh"
       - "docker/builder.Dockerfile"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -49,7 +59,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  WASM_PACK_VERSION: 0.15.0
+  WASM_BINDGEN_CLI_VERSION: 0.2.129
   WASM_TOOLS_VERSION: 1.262.0
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
   NODE_VERSION: 22.23.4
   NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
 
@@ -84,10 +98,14 @@ jobs:
           echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
       - name: Fetch the analyzer (pinned commit, checked SHA-256)
         run: echo "CT_ANALYZER=$(ct/fetch-analyzer.sh "$RUNNER_TEMP/ct-analyzer")" >> "$GITHUB_ENV"
+      - name: The timing tests use the lock and the profile of the root
+        run: ct/run.sh lock
       - name: ct_analyzer on every harness file, two architectures, four levels
         run: ct/run.sh analyze
-      - name: Every finding is triaged (ct_analyzer_clean_or_triaged)
+      - name: Every finding is triaged, with the pinned counts (ct_analyzer_clean_or_triaged)
         run: ct/run.sh triage
+      - name: ct_select_bytes reads both slices
+        run: ct/run.sh select-asm
       - name: Keep the reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -108,8 +126,15 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      - name: Install wasm-tools
-        run: cargo install --locked "wasm-tools@${WASM_TOOLS_VERSION}"
+      - name: Install wasm-pack, wasm-bindgen-cli and wasm-tools
+        run: cargo install --locked "wasm-pack@${WASM_PACK_VERSION}" "wasm-bindgen-cli@${WASM_BINDGEN_CLI_VERSION}" "wasm-tools@${WASM_TOOLS_VERSION}"
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
       - name: Install Node
         run: |
           curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
@@ -117,8 +142,12 @@ jobs:
           mkdir "$RUNNER_TEMP/node"
           tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
           echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: The scan flags what it is meant to flag (fixtures)
+        run: ct/run.sh wasm-selftest
       - name: Only allow-listed instructions in our functions (wasm_scan_only_allowlisted)
         run: ct/run.sh wasm-scan
+      - name: The scanned module is the shipped module
+        run: ct/run.sh wasm-shipped
       - name: Keep the scan report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -139,6 +168,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            . -> target
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
       - name: Install Node
         run: |
           curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
@@ -146,7 +185,11 @@ jobs:
           mkdir "$RUNNER_TEMP/node"
           tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
           echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
-      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning here)
+      - name: Format and lints of the timing tests (they are not in the root workspace)
+        run: |
+          cargo fmt --check --manifest-path ct/dudect/Cargo.toml
+          cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
+      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 30 a failure)
         env:
           CT_SMOKE: "1"
           FERRET_CT_N: "100000"
@@ -166,3 +209,16 @@ jobs:
             ct/results/dudect-wasm.txt
           if-no-files-found: ignore
           retention-days: 14
+
+  dudect-deny:
+    name: cargo-deny (timing tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: ct/dudect/Cargo.toml
+          command: check
+          arguments: --all-features --config ct/dudect/deny.toml

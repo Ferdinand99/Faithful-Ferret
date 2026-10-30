@@ -43,7 +43,7 @@
 use crate::error::{CheckpointFailure, Error, MalformedKind};
 use crate::ids::ItemId;
 use crate::keys::UnlockedVault;
-use crate::prim::{ct::ct_eq, mac::hmac_sha256};
+use crate::prim::{ct::mac_eq, mac::hmac_sha256};
 use crate::tlv::{Tlv, tag};
 use sha2::{Digest, Sha256};
 
@@ -327,11 +327,11 @@ pub fn verify_checkpoint(
 ) -> Result<(), Error> {
     // 2. The MAC over (seq, digest), then the digest over the entries.
     let expected_mac = checkpoint_mac(vault, cp.seq, &cp.digest)?;
-    if !ct_eq(&expected_mac, &cp.mac) {
+    if !mac_eq(&expected_mac, &cp.mac) {
         return Err(fail(CheckpointFailure::BadMac));
     }
     let digest: [u8; 32] = Sha256::digest(&cp.entries).into();
-    if !ct_eq(&digest, &cp.digest) {
+    if !mac_eq(&digest, &cp.digest) {
         return Err(fail(CheckpointFailure::BadDigest));
     }
     let entries = parse_entries(&cp.entries)?;

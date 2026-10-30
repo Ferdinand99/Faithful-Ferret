@@ -68,6 +68,11 @@ ARG CT_ANALYZER_COMMIT=123037ec8aed26f0d86327cc39137ee5043e5deb
 ARG CT_ANALYZER_INIT_SHA256=b74759da227e85d90cc6929cde54817a0960c716b7f2ae9319ec0c759dc698da
 ARG CT_ANALYZER_MAIN_SHA256=68a17ca12f17c05dc0e9e2ff49bf7ddae061eabcec12058f276d89fc23a1ab0c
 ARG CT_ANALYZER_SCRIPTS_SHA256=d64df7dd7010c0355ec652df6e72fc1892f17173cb57fedba669d5ecf470613c
-RUN apt-get update  && apt-get install -y --no-install-recommends python3  && rm -rf /var/lib/apt/lists/*  && rustup target add --toolchain 1.99 aarch64-unknown-linux-gnu  && mkdir -p /opt/ct-analyzer/ct_analyzer  && base="https://raw.githubusercontent.com/trailofbits/skills/${CT_ANALYZER_COMMIT}/plugins/constant-time-analysis/ct_analyzer"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/__init__.py "$base/__init__.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/analyzer.py "$base/analyzer.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/script_analyzers.py "$base/script_analyzers.py"  && echo "${CT_ANALYZER_INIT_SHA256}  /opt/ct-analyzer/ct_analyzer/__init__.py" | sha256sum -c -  && echo "${CT_ANALYZER_MAIN_SHA256}  /opt/ct-analyzer/ct_analyzer/analyzer.py" | sha256sum -c -  && echo "${CT_ANALYZER_SCRIPTS_SHA256}  /opt/ct-analyzer/ct_analyzer/script_analyzers.py" | sha256sum -c -
+# The constant-time results are results of one compiler: the build stops if
+# the toolchain "1.99" is no longer rustc 1.99.1 (the results in ct/ name it),
+# and the Python of Debian bookworm is pinned to its version.
+ARG RUSTC_EXPECTED="rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+RUN test "$(rustc --version)" = "${RUSTC_EXPECTED}"
+RUN apt-get update  && apt-get install -y --no-install-recommends python3=3.11.2-1+b1  && rm -rf /var/lib/apt/lists/*  && rustup target add --toolchain 1.99 aarch64-unknown-linux-gnu  && mkdir -p /opt/ct-analyzer/ct_analyzer  && base="https://raw.githubusercontent.com/trailofbits/skills/${CT_ANALYZER_COMMIT}/plugins/constant-time-analysis/ct_analyzer"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/__init__.py "$base/__init__.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/analyzer.py "$base/analyzer.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/script_analyzers.py "$base/script_analyzers.py"  && echo "${CT_ANALYZER_INIT_SHA256}  /opt/ct-analyzer/ct_analyzer/__init__.py" | sha256sum -c -  && echo "${CT_ANALYZER_MAIN_SHA256}  /opt/ct-analyzer/ct_analyzer/analyzer.py" | sha256sum -c -  && echo "${CT_ANALYZER_SCRIPTS_SHA256}  /opt/ct-analyzer/ct_analyzer/script_analyzers.py" | sha256sum -c -
 
 WORKDIR /src

@@ -13,3 +13,8 @@ node_modules/
 
 # Output of scripts/lanbox-coverage.sh
 /target-cov/
+
+# Output of the constant-time runs (ct/run.sh); only the decisive dudect result
+# written by scripts/lanbox-ct.sh is committed
+/ct/results/*
+!/ct/results/dudect-lanbox.md

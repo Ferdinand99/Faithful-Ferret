@@ -33,6 +33,7 @@
 //! | `info_unwrap_valid_vs_bad_commit` | `unwrap_vk` | intact (AEAD runs) | commit wrong (AEAD skipped) |
 //! | `control_null` | `commit_eq`, same inputs in both classes | equal | equal |
 //! | `control_leaky` | a comparison that stops at the first difference | equal | first byte wrong |
+//! | `control_unpad_leaky` | a scan of the padding that stops at the marker | marker last | marker first |
 //!
 //! The two controls check the measuring system. `control_null` must stay
 //! below the threshold (the classes are the same, so a high t would be noise
@@ -382,13 +383,18 @@ fn crockford_decode(mix: &mut Mix) -> Crockford {
 }
 
 struct Base32 {
+    name: &'static str,
+    info: bool,
     pools: Pools<[u8; 32]>,
     cell: [u8; 32],
 }
 
 impl Target for Base32 {
     fn name(&self) -> &'static str {
-        "base32_decode"
+        self.name
+    }
+    fn informational(&self) -> bool {
+        self.info
     }
     fn reps(&self) -> u32 {
         1
@@ -409,20 +415,41 @@ impl Target for Base32 {
     }
 }
 
-fn base32_decode(mix: &mut Mix) -> Base32 {
+/// A random base32 string of 32 letters; `case` 0 mixed, 1 upper, 2 lower.
+fn random_base32(m: &mut Mix, case: u8) -> [u8; 32] {
+    let mut s = [0u8; 32];
+    for slot in s.iter_mut() {
+        let letter = BASE32[m.below(32)];
+        let lower = match case {
+            0 => m.below(2) == 0,
+            1 => false,
+            _ => true,
+        };
+        *slot = if letter.is_ascii_uppercase() && lower {
+            letter.to_ascii_lowercase()
+        } else {
+            letter
+        };
+    }
+    s
+}
+
+/// `base32_decode`: all `A` against random letters (the gate). The `info_`
+/// variants say where a difference comes from: `a_vs_z` is two fixed strings,
+/// `upper_vs_lower` two random pools that differ only in case, and
+/// `random_pair` two random pools of the same kind (the null of a target whose
+/// left class is not fixed).
+fn base32_target(mix: &mut Mix, name: &'static str) -> Base32 {
+    let pools = match name {
+        "info_base32_a_vs_z" => Pools::new(mix, |_| ([b'A'; 32], [b'z'; 32])),
+        "info_base32_upper_vs_lower" => Pools::new(mix, |m| (random_base32(m, 1), random_base32(m, 2))),
+        "info_base32_random_pair" => Pools::new(mix, |m| (random_base32(m, 0), random_base32(m, 0))),
+        _ => Pools::new(mix, |m| ([b'A'; 32], random_base32(m, 0))),
+    };
     Base32 {
-        pools: Pools::new(mix, |m| {
-            let mut s = [0u8; 32];
-            for slot in s.iter_mut() {
-                let letter = BASE32[m.below(32)];
-                *slot = if letter.is_ascii_uppercase() && m.below(2) == 0 {
-                    letter.to_ascii_lowercase()
-                } else {
-                    letter
-                };
-            }
-            ([b'A'; 32], s)
-        }),
+        name,
+        info: name != "base32_decode",
+        pools,
         cell: [b'A'; 32],
     }
 }
@@ -431,9 +458,26 @@ fn base32_decode(mix: &mut Mix) -> Base32 {
 
 const PADDED: usize = 1024;
 
+/// The scan of `unpad_scan` with an early exit at the marker: the control that
+/// shows the setup can see a leak in a 1024-byte scan (marker last against
+/// marker first is 1023 bytes of difference).
+#[inline(never)]
+fn unpad_scan_leaky(padded: &[u8]) -> (u32, usize) {
+    for (i, &byte) in padded.iter().enumerate().rev() {
+        if black_box(byte) == 0x80 {
+            return (1, i);
+        }
+        if black_box(byte) != 0 {
+            return (0, 0);
+        }
+    }
+    (0, 0)
+}
+
 struct Unpad {
     name: &'static str,
     info: bool,
+    leaky: bool,
     pools: Pools<Vec<u8>>,
     cell: Vec<u8>,
 }
@@ -454,7 +498,11 @@ impl Target for Unpad {
     fn run(&self, reps: u32) -> u64 {
         let mut acc = 0u64;
         for _ in 0..reps {
-            let (ok, len) = harness::unpad::unpad_scan(black_box(&self.cell));
+            let (ok, len) = if self.leaky {
+                unpad_scan_leaky(black_box(&self.cell))
+            } else {
+                harness::unpad::unpad_scan(black_box(&self.cell))
+            };
             acc = acc.wrapping_add(u64::from(ok)).wrapping_add(len as u64);
         }
         black_box(acc)
@@ -463,7 +511,12 @@ impl Target for Unpad {
 
 /// A padded buffer: `plain` bytes, the marker, zeros.
 fn padded(plain: &[u8], total: usize) -> Vec<u8> {
-    let mut v = vec![0u8; total];
+    // Not `vec![0; total]`: that is `calloc`, and the pages of an all-zero
+    // input would be the shared zero page, which is not what the other class
+    // reads from. Written first with ones, so that every page is a page of its own.
+    let mut v = vec![1u8; total];
+    black_box(&mut v);
+    v.fill(0);
     v[..plain.len()].copy_from_slice(plain);
     v[plain.len()] = 0x80;
     v
@@ -476,17 +529,28 @@ fn unpad_target(mix: &mut Mix, name: &'static str, info: bool, kind: UnpadKind) 
     Unpad {
         name,
         info,
+        leaky: matches!(kind, UnpadKind::Leaky),
         pools: Pools::new(mix, |m| {
             let random = m.array::<1023>();
             match kind {
                 // Marker last (a full plaintext of 1023 random bytes) against
                 // marker first (a plaintext of length 0).
-                UnpadKind::Position => (padded(&random, PADDED), padded(&[], PADDED)),
+                UnpadKind::Position | UnpadKind::Leaky => {
+                    (padded(&random, PADDED), padded(&[], PADDED))
+                }
                 // The same positions, but the plaintext is zeros: only the
                 // position of the marker differs.
                 UnpadKind::PositionZeros => (padded(&[0u8; 1023], PADDED), padded(&[], PADDED)),
                 // Marker last in both; random plaintext against zeros.
                 UnpadKind::Content => (padded(&random, PADDED), padded(&[0u8; 1023], PADDED)),
+                // Marker last in both; two random plaintexts from the same
+                // distribution (the null of a target with random inputs), and
+                // the same plaintext in both classes (the null of the setup).
+                UnpadKind::RandomPair => {
+                    let other = m.array::<1023>();
+                    (padded(&random, PADDED), padded(&other, PADDED))
+                }
+                UnpadKind::Same => (padded(&random, PADDED), padded(&random, PADDED)),
             }
         }),
         cell: vec![0u8; PADDED],
@@ -495,7 +559,10 @@ fn unpad_target(mix: &mut Mix, name: &'static str, info: bool, kind: UnpadKind) 
 
 #[derive(Clone, Copy)]
 enum UnpadKind {
+    RandomPair,
+    Same,
     Position,
+    Leaky,
     PositionZeros,
     Content,
 }
@@ -621,7 +688,17 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
             true,
             UnpadKind::Content,
         )),
-        Box::new(base32_decode(&mut mix)),
+        Box::new(unpad_target(
+            &mut mix,
+            "info_unpad_random_pair",
+            true,
+            UnpadKind::RandomPair,
+        )),
+        Box::new(unpad_target(&mut mix, "info_unpad_same", true, UnpadKind::Same)),
+        Box::new(base32_target(&mut mix, "base32_decode")),
+        Box::new(base32_target(&mut mix, "info_base32_a_vs_z")),
+        Box::new(base32_target(&mut mix, "info_base32_upper_vs_lower")),
+        Box::new(base32_target(&mut mix, "info_base32_random_pair")),
         Box::new(unwrap_target(
             &mut mix,
             "kek_pw_commit_path",
@@ -635,6 +712,12 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
             true,
             None,
             Some(COMMIT_AT),
+        )),
+        Box::new(unpad_target(
+            &mut mix,
+            "control_unpad_leaky",
+            true,
+            UnpadKind::Leaky,
         )),
         Box::new(control_null(&mut mix)),
         Box::new(control_leaky(&mut mix)),

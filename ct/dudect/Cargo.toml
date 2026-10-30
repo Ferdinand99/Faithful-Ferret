@@ -1,11 +1,19 @@
+# The timing tests are a workspace of their own: `dudect-bencher` brings clap 2,
+# atty and the Windows and macOS crates, which have no place in the lock file,
+# `cargo deny` and `cargo vet` of the release graph (the root Cargo.toml
+# excludes this directory). Its lock file was seeded from the root one and
+# ct/check-lock.sh checks that the crates the two share have the same versions;
+# its deny policy is ct/dudect/deny.toml. Never released, never vetted.
+[workspace]
+
 [package]
 name = "ferret-ct"
 description = "Timing tests (dudect) of the constant-time code of the Ferret core, native and as WebAssembly"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-only"
+publish = false
 
 [lib]
 name = "ferret_ct"
@@ -27,8 +35,21 @@ bench = ["dep:dudect-bencher"]
 
 [dependencies]
 ferret-core = { path = "../../crates/ferret-core", features = ["test-support"] }
-# The harness file ct/harness/ct_eq.rs is included here and needs `subtle`.
+# The harness files ct_eq.rs and ct_select.rs are included here and need `subtle`.
 subtle = "=2.6.1"
 # Statistics (Welch's t-test with percentile cropping) as in the dudect paper.
 # Dev tooling only: nothing here is part of the core or of a release.
 dudect-bencher = { version = "=0.7.0", optional = true }
+
+# A profile only counts in the root of a workspace, and the timing has to be of
+# the code that is shipped: this is a copy of [profile.release] of the root
+# Cargo.toml (ct/check-lock.sh checks that it is still a copy).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+
+[profile.release.package."argon2@0.6.0"]
+opt-level = 3

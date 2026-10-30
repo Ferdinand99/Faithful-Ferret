@@ -36,3 +36,22 @@ export function pathOf(mangled) {
   const at = parts.findIndex((part) => /^[a-z_][a-z0-9_]{2,}$/.test(part));
   return at < 0 ? parts.join("::") : parts.slice(at).join("::");
 }
+
+/**
+ * The path of a function from the name section of a module that went through
+ * wasm-bindgen, which demangles the names: `"<ferret_core[8bc9]::wrap::Method
+ * as core::clone::Clone>::clone"`. The crate disambiguators `[8bc9]`, the
+ * leading `<` and the generic arguments after `::<` are removed, so that the
+ * same function has the same path in every build; a name without a path (an
+ * export such as `vault_encrypt_item`) stays as it is. Names of the mangled
+ * kinds go through `pathOf`.
+ */
+export function cleanPath(raw) {
+  let s = raw.replace(/^\$/, "");
+  if (s.startsWith('"')) s = s.replace(/^"/, "").replace(/"$/, "");
+  if (/^_ZN|^_R/.test(s)) return pathOf(raw);
+  s = s.replace(/\[[0-9a-f]{4,}\]/g, "").replace(/^[<(&*]+/, "");
+  const generic = s.indexOf("::<");
+  if (generic >= 0) s = s.slice(0, generic);
+  return s.slice(0, 160);
+}
