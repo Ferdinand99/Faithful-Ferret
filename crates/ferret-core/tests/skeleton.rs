@@ -10,8 +10,9 @@
 use ferret_core::testing::vector::{self, Outcome};
 use ferret_core::testing::{ReplayError, hex_decode, hex_encode};
 use ferret_core::{
-    AuthSeed, Error, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, KekDevPin,
-    OsRng, PrfOutput, PrfSeed, RecoveryKey, ReplayRng, SecretKey, SecureRng, TestRng, VaultKey,
+    AuthSeed, Error, ExportContentKey, ExportKey, ExportWrapKey, ItemKey, KDel, KHead, KMeta, Kek,
+    KekDevPin, OsRng, PrfOutput, PrfSeed, RecoveryKey, ReplayRng, SecretKey, SecureRng, TestRng,
+    VaultKey,
 };
 use serde_json::json;
 use static_assertions::assert_not_impl_any;
@@ -53,6 +54,7 @@ fn secret_types_are_not_clone_or_debug() {
         KMeta,
         AuthSeed,
         ExportContentKey,
+        ExportWrapKey,
     );
 }
 
