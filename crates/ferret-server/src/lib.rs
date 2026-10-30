@@ -22,7 +22,7 @@
 //!   routers and `run`.
 //! * [`vault`]: the vault modules. They see only a [`state::VaultDb`] (and
 //!   other narrow handles) through `FromRef`, never the kit's cookie key or its
-//!   core state. A test that checks this by name is still to come.
+//!   core state. `tests/arch.rs` checks this by name.
 //! * [`auth`]: registration, sign-in, sessions, the hand-over to the admin
 //!   origin. [`http`]: the layers (proxy trust, `Origin` check, headers),
 //!   static files and extractors. [`admin`]: the admin listener's own routes.

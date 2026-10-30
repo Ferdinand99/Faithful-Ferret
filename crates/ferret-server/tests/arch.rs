@@ -10,11 +10,26 @@
 //!   `Debug`, so a stray `{:?}` cannot print them.
 //!
 //! Doc comments are prose and are not scanned.
+//!
+//! The vault modules also may not reach code that this scan cannot see:
+//! `#[path]`, `include!`, `include_str!`, `include_bytes!`, `extern crate`, glob
+//! imports from `vole_kit`, `crate`, `crate::auth` and `crate::http`, and
+//! relative paths that climb (`super::super::state`) are all refused.
+//! `SessionAuth` is the handle that holds the cookie key. Its name may appear
+//! in one place only: the bound `SessionAuth: FromRef<S>` that a route needs to
+//! take a `VaultSession` (and in the `use` that names it). Taking it as state
+//! or calling anything on it is refused, as is every item of
+//! `crate::http::extract` other than `VaultSession`.
+//!
+//! What a syntactic deny-list cannot see, and this one does not claim to:
+//! strings built at compile time (`concat!`), macros defined outside `vault/`,
+//! type aliases defined outside `vault/`, and a type that wraps bytes in a
+//! foreign type or a `String`.
 
 use std::path::{Path, PathBuf};
 
 use syn::visit::{self, Visit};
-use syn::{GenericArgument, PathArguments, ReturnType, Type, UseTree};
+use syn::{GenericArgument, PathArguments, ReturnType, Type, UseTree, WherePredicate};
 
 /// Identifiers the vault modules must not use.
 const FORBIDDEN_IDENTS: &[&str] = &[
@@ -28,7 +43,11 @@ const FORBIDDEN_IDENTS: &[&str] = &[
     "Secrets",
     "ServerKeys",
     "StateSealKey",
+    "SessionAuth",
 ];
+
+/// Macros that pull in a file the scan does not read.
+const INCLUDE_MACROS: &[&str] = &["include", "include_str", "include_bytes"];
 
 /// Text the vault modules must not have in a string.
 const FORBIDDEN_LITERALS: &[&str] = &["session.key", "session_key"];
@@ -83,10 +102,23 @@ impl Names {
         self.found.push(format!("{}: {what}", self.file));
     }
 
-    /// A path as segments: `crate::state::VaultDb` is `["crate", "state", "VaultDb"]`.
+    /// A path of an expression, a type or a pattern, as segments:
+    /// `crate::state::VaultDb` is `["crate", "state", "VaultDb"]`. A path that
+    /// starts with `super` is checked as if it started at the crate root, since
+    /// it may climb out of `vault/`.
     fn check_path(&mut self, segments: &[String]) {
+        let supers = segments.iter().take_while(|s| *s == "super").count();
+        if supers > 0 {
+            let mut rooted = vec!["crate".to_string()];
+            rooted.extend_from_slice(&segments[supers..]);
+            self.check_rooted(&rooted, &segments.join("::"));
+        } else {
+            self.check_rooted(segments, &segments.join("::"));
+        }
+    }
+
+    fn check_rooted(&mut self, segments: &[String], joined: &str) {
         let at = |i: usize| segments.get(i).map(String::as_str);
-        let joined = segments.join("::");
         match (at(0), at(1)) {
             (Some("vole_kit"), Some("crypto" | "state")) => {
                 self.hit(format!("names `{joined}`"));
@@ -99,9 +131,48 @@ impl Names {
             (Some("crate"), Some("auth")) if at(2) == Some("secrets") => {
                 self.hit(format!("names `{joined}`"));
             }
-            (Some("super"), Some("state")) => self.hit(format!("names `{joined}`")),
+            (Some("crate"), Some("http"))
+                if at(2) == Some("extract") && at(3) != Some("VaultSession") =>
+            {
+                self.hit(format!(
+                    "names `{joined}` (only `crate::http::extract::VaultSession` is allowed)"
+                ));
+            }
             _ => {}
         }
+    }
+
+    /// A path of a `use`. `alias` is the name after `as`.
+    fn check_use_path(&mut self, segments: &[String], alias: Option<&str>) {
+        let joined = segments.join("::");
+        let last = segments.last().map(String::as_str);
+        let is_glob = last == Some("*");
+        let root = segments.first().map(String::as_str);
+        let second = segments.get(1).map(String::as_str);
+        let is_root_alone = matches!(root, Some("crate" | "vole_kit")) && segments.len() == 1;
+        if let Some(alias) = alias {
+            if FORBIDDEN_IDENTS.contains(&alias) {
+                self.hit(format!("names `{alias}` (as an alias)"));
+            }
+            if is_root_alone {
+                self.hit(format!(
+                    "`use {joined} as {alias}` gives the root a name of its own"
+                ));
+            }
+            if last == Some("SessionAuth") {
+                self.hit("renames `SessionAuth`".to_string());
+            }
+        } else if is_root_alone {
+            self.hit(format!("`use {joined}` gives the root a name of its own"));
+        }
+        if is_glob
+            && (root == Some("vole_kit")
+                || (root == Some("crate")
+                    && (segments.len() == 2 || matches!(second, Some("auth" | "http")))))
+        {
+            self.hit(format!("glob import `{joined}`"));
+        }
+        self.check_path(segments);
     }
 
     /// Looks through text that is not parsed (macro arguments, attribute lists).
@@ -117,16 +188,26 @@ impl Names {
             "vole_kit::state",
             "crate::auth::secrets",
             "super::state",
+            "super::auth::secrets",
+            "super::http::extract",
         ] {
             if compact.contains(path) {
                 self.hit(format!("names `{path}` (in a macro or attribute)"));
             }
         }
-        let mut rest = compact.as_str();
-        while let Some(at) = rest.find("crate::state") {
-            rest = &rest[at + "crate::state".len()..];
-            if !rest.starts_with("::VaultDb") {
-                self.hit("names `crate::state` other than `VaultDb` (in a macro)".to_string());
+        for (path, allowed) in [
+            ("crate::state", "::VaultDb"),
+            ("crate::http::extract", "::VaultSession"),
+        ] {
+            let mut rest = compact.as_str();
+            while let Some(at) = rest.find(path) {
+                rest = &rest[at + path.len()..];
+                if !rest.starts_with(allowed) {
+                    self.hit(format!(
+                        "names `{path}` other than `{}` (in a macro)",
+                        allowed.trim_start_matches(':')
+                    ));
+                }
             }
         }
         for literal in FORBIDDEN_LITERALS {
@@ -139,7 +220,13 @@ impl Names {
     }
 }
 
-fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+/// A `use` path with the name after `as`, if there is one.
+struct UsePath {
+    segments: Vec<String>,
+    alias: Option<String>,
+}
+
+fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UsePath>) {
     match tree {
         UseTree::Path(p) => {
             prefix.push(p.ident.to_string());
@@ -147,27 +234,32 @@ fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>)
             prefix.pop();
         }
         UseTree::Name(n) => {
-            if n.ident == "self" {
-                out.push(prefix.clone());
-            } else {
-                prefix.push(n.ident.to_string());
-                out.push(prefix.clone());
-                prefix.pop();
+            let mut segments = prefix.clone();
+            if n.ident != "self" {
+                segments.push(n.ident.to_string());
             }
+            out.push(UsePath {
+                segments,
+                alias: None,
+            });
         }
         UseTree::Rename(r) => {
-            if r.ident == "self" {
-                out.push(prefix.clone());
-            } else {
-                prefix.push(r.ident.to_string());
-                out.push(prefix.clone());
-                prefix.pop();
+            let mut segments = prefix.clone();
+            if r.ident != "self" {
+                segments.push(r.ident.to_string());
             }
+            out.push(UsePath {
+                segments,
+                alias: Some(r.rename.to_string()),
+            });
         }
         UseTree::Glob(_) => {
-            prefix.push("*".to_string());
-            out.push(prefix.clone());
-            prefix.pop();
+            let mut segments = prefix.clone();
+            segments.push("*".to_string());
+            out.push(UsePath {
+                segments,
+                alias: None,
+            });
         }
         UseTree::Group(g) => {
             for item in &g.items {
@@ -175,6 +267,37 @@ fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>)
             }
         }
     }
+}
+
+/// The one `use` of the cookie-key handle that is allowed: it names the type
+/// that the `FromRef` bound of a route needs.
+fn is_session_auth_import(path: &UsePath) -> bool {
+    path.alias.is_none() && path.segments == ["crate", "http", "extract", "SessionAuth"]
+}
+
+/// `SessionAuth: FromRef<..>` (and nothing else about `SessionAuth`).
+fn is_session_auth_from_ref(predicate: &WherePredicate) -> bool {
+    let WherePredicate::Type(predicate) = predicate else {
+        return false;
+    };
+    let Type::Path(bounded) = &predicate.bounded_ty else {
+        return false;
+    };
+    let names: Vec<String> = bounded
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    let session_auth =
+        names == ["SessionAuth"] || names == ["crate", "http", "extract", "SessionAuth"];
+    session_auth
+        && bounded.qself.is_none()
+        && !predicate.bounds.is_empty()
+        && predicate.bounds.iter().all(|bound| {
+            matches!(bound, syn::TypeParamBound::Trait(t)
+                if t.path.segments.last().is_some_and(|s| s.ident == "FromRef"))
+        })
 }
 
 impl<'ast> Visit<'ast> for Names {
@@ -191,21 +314,39 @@ impl<'ast> Visit<'ast> for Names {
         visit::visit_path(self, path);
     }
 
+    fn visit_where_predicate(&mut self, predicate: &'ast WherePredicate) {
+        if is_session_auth_from_ref(predicate)
+            && let WherePredicate::Type(predicate) = predicate
+        {
+            // The bound is how a route says it can take a `VaultSession`; only
+            // the trait it asks for is looked at.
+            for bound in &predicate.bounds {
+                self.visit_type_param_bound(bound);
+            }
+            return;
+        }
+        visit::visit_where_predicate(self, predicate);
+    }
+
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
         let mut paths = Vec::new();
         flatten(&item.tree, &mut Vec::new(), &mut paths);
-        for path in paths {
-            match path.as_slice() {
-                [root] if root == "crate" || root == "vole_kit" => {
-                    self.hit(format!("`use {root}` gives the root a name of its own"));
-                }
-                [root, star] if root == "crate" && star == "*" => {
-                    self.hit("glob import of the crate root".to_string());
-                }
-                _ => self.check_path(&path),
+        for path in &paths {
+            if is_session_auth_import(path) {
+                continue;
             }
+            for segment in &path.segments {
+                if FORBIDDEN_IDENTS.contains(&segment.as_str()) {
+                    self.hit(format!("names `{segment}`"));
+                }
+            }
+            self.check_use_path(&path.segments, path.alias.as_deref());
         }
-        visit::visit_item_use(self, item);
+        // The idents of the tree were looked at above.
+    }
+
+    fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+        self.hit(format!("`extern crate {}` is not allowed", item.ident));
     }
 
     fn visit_lit_str(&mut self, lit: &'ast syn::LitStr) {
@@ -218,17 +359,44 @@ impl<'ast> Visit<'ast> for Names {
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if let Some(last) = mac.path.segments.last()
+            && INCLUDE_MACROS.contains(&last.ident.to_string().as_str())
+        {
+            self.hit(format!(
+                "`{}!` pulls in a file the scan does not read",
+                last.ident
+            ));
+        }
         self.check_text(&mac.tokens.to_string());
         visit::visit_macro(self, mac);
     }
 
     fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
-        // Doc comments are prose.
-        if attr.path().is_ident("doc") {
+        if attr.path().is_ident("path") {
+            self.hit("`#[path]` pulls in a file the scan does not read".to_string());
+        }
+        // Doc comments are prose; a doc attribute that is not a string (an
+        // `include_str!`) is looked at like any other expression.
+        let is_prose = attr.path().is_ident("doc")
+            && matches!(
+                &attr.meta,
+                syn::Meta::NameValue(nv) if matches!(nv.value, syn::Expr::Lit(_))
+            );
+        if is_prose {
             return;
         }
         if let syn::Meta::List(list) = &attr.meta {
-            self.check_text(&list.tokens.to_string());
+            let text = list.tokens.to_string();
+            let has_path = text
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| word == "path");
+            if attr.path().is_ident("cfg_attr") && has_path {
+                self.hit(
+                    "`#[cfg_attr(.., path = ..)]` pulls in a file the scan does not read"
+                        .to_string(),
+                );
+            }
+            self.check_text(&text);
         }
         visit::visit_attribute(self, attr);
     }
@@ -420,6 +588,17 @@ fn derives_debug(attrs: &[syn::Attribute]) -> bool {
                 }
                 Ok(())
             });
+        } else if attr.path().is_ident("cfg_attr")
+            && let syn::Meta::List(list) = &attr.meta
+        {
+            // `#[cfg_attr(feature, derive(.., Debug))]`
+            let text = list.tokens.to_string();
+            let words: Vec<&str> = text
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .collect();
+            if words.contains(&"derive") && words.contains(&"Debug") {
+                debug = true;
+            }
         }
     }
     debug
@@ -604,6 +783,39 @@ fn arch_test_detects_a_planted_violation() {
         "fn f(_: ServerKeys, _: StateSealKey) {}",
         "#[some(Core)] fn f() {}",
         "this does not parse",
+        // The cookie-key handle.
+        "fn f(_: axum::extract::State<SessionAuth>) {}",
+        "fn f(_: axum::extract::State<crate::http::extract::SessionAuth>) {}",
+        "fn f<S>(s: &S) { let _ = crate::http::extract::SessionAuth::from_ref(s); }",
+        "use crate::http::extract::SessionAuth as Handle;",
+        "use crate::http::extract::{SessionAuth as Handle};",
+        "fn f<S>() where crate::http::extract::SessionAuth: Clone {}",
+        "fn f<S>() where SessionAuth: FromRef<S> + Clone {}",
+        "use crate::http::extract::AdminSession;",
+        "use crate::http::extract::*;",
+        "use crate::http::extract::{self};",
+        "use crate::http::*;",
+        "fn f() { let _ = crate::http::extract::AdminSession; }",
+        "fn f() { format!(\"{}\", crate::http::extract::SessionAuth); }",
+        // Ways to reach code the scan does not read.
+        "#[path = \"../x.rs\"] mod x;",
+        "#[cfg_attr(test, path = \"../x.rs\")] mod x;",
+        "include!(\"../x.rs\");",
+        "fn f() { let _ = include_str!(\"../a.txt\"); }",
+        "fn f() { let _ = include_bytes!(\"../a.bin\"); }",
+        "#[doc = include_str!(\"../README.md\")] fn f() {}",
+        "extern crate vole_kit as vk;",
+        "extern crate vole_kit;",
+        "use vole_kit::*;",
+        "use vole_kit::{auth::*, other};",
+        "use crate::auth::*;",
+        "use crate::auth::session::*;",
+        "use super::super::state::Other;",
+        "use super::state::Other;",
+        "fn f() { let _ = super::super::state::Other; }",
+        "fn f() { let _ = super::super::super::auth::secrets::Other; }",
+        "fn f() { let _ = super::super::http::extract::AdminSession; }",
+        "use crate::state::VaultDb as Core;",
     ];
     for source in violations {
         assert!(
@@ -621,6 +833,16 @@ fn arch_test_detects_a_planted_violation() {
         "/// Core, Key and session.key in the docs are prose.\nfn f() {}",
         "//! The module docs: crate::state::FerretState.\nfn f() {}",
         "fn f() { let _ = \"hello\"; println!(\"{}\", crate::state::VaultDb::new); }",
+        // The one place `SessionAuth` may appear: the bound a route needs to
+        // take a `VaultSession`.
+        "use crate::http::extract::{SessionAuth, VaultSession};\npub fn routes<S>() -> Router<S> where S: Clone + Send + Sync + 'static, SessionAuth: FromRef<S> { Router::new() }",
+        "pub fn routes<S>() -> Router<S> where S: Clone, crate::http::extract::SessionAuth: FromRef<S> { Router::new() }",
+        "use crate::http::extract::VaultSession;",
+        "use super::*;",
+        "use super::{Store, quota::Limits};",
+        "#[cfg(test)] mod tests { use super::*; }",
+        "#[derive(Clone)] struct S;\n#[allow(clippy::too_many_arguments)] fn f() {}",
+        "fn f() { let _ = super::helper(); }",
     ];
     for source in clean {
         let found = scan_names("clean.rs", source);

@@ -13,19 +13,28 @@
 //! | `LoginStart`    | account and address | 5 per minute  |
 //! | `RegisterStart` | address             | 5 per minute  |
 //!
-//! Every other stage is not limited yet; the full set comes with the accounts
-//! milestone.
+//! Every other stage is not limited yet; the full set comes in a later release.
 //!
 //! An attempt counts when it is admitted, not when it ends, so requests that
 //! arrive together cannot all slip under the limit. A refused attempt is not
 //! counted: hammering a blocked address does not extend the block. The window
 //! is a sliding minute.
+//!
+//! # Memory
+//!
+//! A stage keeps at most [`KitThrottle::DEFAULT_MAX_KEYS`] keys. A full table
+//! never refuses a caller (that would let anyone lock everybody out of signing
+//! in, which Fase 1 § 11 rules out): the key that was added first is dropped to
+//! make room, and its counter starts again from zero if it comes back. Keys
+//! whose attempts have all left the window are swept out a few at a time on
+//! each call ([`KitThrottle::SWEEP_BUDGET`]), so no call walks the whole table
+//! under the lock.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue};
 use ferret_server_auth::{Caller, Clock, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
 
 /// Length of the sliding window in seconds.
@@ -36,12 +45,6 @@ const LOGIN_PER_ADDRESS: usize = 10;
 const LOGIN_PER_ACCOUNT_ADDRESS: usize = 5;
 /// `RegisterStart` attempts per address per window.
 const REGISTER_PER_ADDRESS: usize = 5;
-/// Above this many counters in a stage, the expired ones are swept out before a
-/// new one is added.
-const SWEEP_ABOVE: usize = 1024;
-/// The most counters kept per stage. Beyond it a new key is refused: a limiter
-/// that forgot keys under pressure would switch itself off.
-const MAX_KEYS: usize = 200_000;
 
 /// The limit a stage puts on a key, or `None` for a key that is not counted.
 const fn limit(stage: Stage, key: &ThrottleKey) -> Option<usize> {
@@ -60,23 +63,6 @@ const fn limit(stage: Stage, key: &ThrottleKey) -> Option<usize> {
 /// The attempts of one key inside the window, oldest first.
 type Attempts = VecDeque<u64>;
 
-/// The counters of the two limited stages.
-#[derive(Default)]
-struct Counters {
-    login: HashMap<ThrottleKey, Attempts>,
-    register: HashMap<ThrottleKey, Attempts>,
-}
-
-impl Counters {
-    fn stage_mut(&mut self, stage: Stage) -> Option<&mut HashMap<ThrottleKey, Attempts>> {
-        match stage {
-            Stage::LoginStart => Some(&mut self.login),
-            Stage::RegisterStart => Some(&mut self.register),
-            Stage::LoginFinish | Stage::Challenge | Stage::Replace => None,
-        }
-    }
-}
-
 /// Drops the attempts that left the window at `now`.
 fn expire(attempts: &mut Attempts, now: u64) {
     while attempts
@@ -87,21 +73,114 @@ fn expire(attempts: &mut Attempts, now: u64) {
     }
 }
 
+/// The counters of one stage: the attempts of each key, and the keys in the
+/// order they were added. Every key in the map has exactly one entry in the
+/// queue and the other way round.
+#[derive(Default)]
+struct Table {
+    attempts: HashMap<ThrottleKey, Attempts>,
+    queue: VecDeque<(ThrottleKey, u64)>,
+}
+
+impl Table {
+    fn len(&self) -> usize {
+        self.attempts.len()
+    }
+
+    /// Counts an attempt for `key`, adding the key if it is new.
+    fn count(&mut self, key: ThrottleKey, now: u64) {
+        match self.attempts.get_mut(&key) {
+            Some(attempts) => attempts.push_back(now),
+            None => {
+                self.attempts.insert(key, Attempts::from([now]));
+                self.queue.push_back((key, now));
+            }
+        }
+    }
+
+    /// Looks at the oldest keys: one that has nothing left in the window is
+    /// removed, one that is still in use goes to the back of the queue. At most
+    /// `budget` keys are looked at, and only those added a window ago or more.
+    fn sweep(&mut self, now: u64, budget: usize) {
+        for _ in 0..budget {
+            let Some(&(key, added)) = self.queue.front() else {
+                return;
+            };
+            if added.saturating_add(WINDOW_SECS) > now {
+                return;
+            }
+            self.queue.pop_front();
+            if let Some(attempts) = self.attempts.get_mut(&key) {
+                expire(attempts, now);
+                if attempts.is_empty() {
+                    self.attempts.remove(&key);
+                } else {
+                    self.queue.push_back((key, now));
+                }
+            }
+        }
+    }
+
+    /// Drops the key that was added first. `false` if the table is empty.
+    fn evict_oldest(&mut self) -> bool {
+        let Some((key, _)) = self.queue.pop_front() else {
+            return false;
+        };
+        self.attempts.remove(&key);
+        true
+    }
+}
+
+/// The two limited stages.
+#[derive(Default)]
+struct Counters {
+    login: Table,
+    register: Table,
+}
+
+impl Counters {
+    fn stage_mut(&mut self, stage: Stage) -> Option<&mut Table> {
+        match stage {
+            Stage::LoginStart => Some(&mut self.login),
+            Stage::RegisterStart => Some(&mut self.register),
+            Stage::LoginFinish | Stage::Challenge | Stage::Replace => None,
+        }
+    }
+}
+
 /// The limiter the server hands to `ferret-server-auth`.
 pub struct KitThrottle {
     _clock: Arc<dyn Clock>,
+    max_keys: usize,
     counters: Mutex<Counters>,
 }
 
 impl KitThrottle {
+    /// The most keys a stage keeps.
+    pub const DEFAULT_MAX_KEYS: usize = 100_000;
+    /// How many old keys one call looks at.
+    pub const SWEEP_BUDGET: usize = 32;
+
     /// A limiter. The library passes the time with every call, read from the
     /// same clock; `clock` is kept so the limiter and the server stay on one
     /// source of time.
     pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self::with_max_keys(clock, Self::DEFAULT_MAX_KEYS)
+    }
+
+    /// A limiter that keeps at most `max_keys` keys per stage.
+    pub fn with_max_keys(clock: Arc<dyn Clock>, max_keys: usize) -> Self {
         Self {
             _clock: clock,
+            max_keys,
             counters: Mutex::new(Counters::default()),
         }
+    }
+
+    /// How many keys the two stages hold in all.
+    pub fn tracked_keys(&self) -> usize {
+        let counters = self.lock();
+        counters.login.len().saturating_add(counters.register.len())
     }
 
     fn lock(&self) -> MutexGuard<'_, Counters> {
@@ -114,9 +193,10 @@ impl KitThrottle {
 impl Throttle for KitThrottle {
     fn admit(&self, stage: Stage, keys: &[ThrottleKey], now: u64) -> Result<(), RetryAfter> {
         let mut counters = self.lock();
-        let Some(map) = counters.stage_mut(stage) else {
+        let Some(table) = counters.stage_mut(stage) else {
             return Ok(());
         };
+        table.sweep(now, Self::SWEEP_BUDGET);
 
         // Every limited key is checked first; nothing is counted unless all of
         // them admit.
@@ -125,7 +205,7 @@ impl Throttle for KitThrottle {
             let Some(max) = limit(stage, key) else {
                 continue;
             };
-            let Some(attempts) = map.get_mut(key) else {
+            let Some(attempts) = table.attempts.get_mut(key) else {
                 continue;
             };
             expire(attempts, now);
@@ -142,26 +222,16 @@ impl Throttle for KitThrottle {
             return Err(RetryAfter::new(u32::try_from(secs).unwrap_or(u32::MAX)));
         }
 
-        // New keys need room.
+        // New keys need room; a full table drops its oldest keys.
         let new_keys = keys
             .iter()
-            .filter(|key| limit(stage, key).is_some() && !map.contains_key(*key))
+            .filter(|key| limit(stage, key).is_some() && !table.attempts.contains_key(*key))
             .count();
-        if map.len().saturating_add(new_keys) > SWEEP_ABOVE {
-            map.retain(|_, attempts| {
-                expire(attempts, now);
-                !attempts.is_empty()
-            });
-        }
-        if map.len().saturating_add(new_keys) > MAX_KEYS {
-            return Err(RetryAfter::new(
-                u32::try_from(WINDOW_SECS).unwrap_or(u32::MAX),
-            ));
-        }
+        while table.len().saturating_add(new_keys) > self.max_keys && table.evict_oldest() {}
 
         for key in keys {
             if limit(stage, key).is_some() {
-                map.entry(*key).or_default().push_back(now);
+                table.count(*key, now);
             }
         }
         Ok(())
@@ -176,7 +246,21 @@ impl Throttle for KitThrottle {
 /// headers of every peer that is not a trusted proxy; the kit then reads the
 /// right-most `X-Forwarded-For` entry (the address the last proxy saw) or
 /// `X-Real-IP`.
+///
+/// If the header comes in several lines (a proxy that adds a line of its own
+/// instead of appending), only the last line counts: the first may be the
+/// client's.
 pub fn caller_from(headers: &HeaderMap, peer: Option<SocketAddr>) -> Caller {
+    let lines = headers.get_all("x-forwarded-for");
+    if lines.iter().nth(1).is_some() {
+        let mut only_last = headers.clone();
+        if let Some(last) = lines.iter().next_back() {
+            only_last.insert("x-forwarded-for", HeaderValue::clone(last));
+        }
+        return Caller {
+            ip: vole_kit::auth::session::client_ip(&only_last, peer, true),
+        };
+    }
     Caller {
         ip: vole_kit::auth::session::client_ip(headers, peer, true),
     }

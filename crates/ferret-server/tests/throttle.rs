@@ -288,3 +288,127 @@ fn caller_from_reads_the_forwarded_address_or_the_peer() {
     );
     assert_eq!(caller_from(&junk, Some(peer)).ip, Some(peer.ip()));
 }
+
+fn address(n: u32) -> ThrottleKey {
+    ThrottleKey::Ip(IpAddr::V4(Ipv4Addr::from(0xc000_0200 + n)))
+}
+
+#[test]
+fn a_full_table_drops_its_oldest_keys_instead_of_refusing_anyone() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::with_max_keys(clock as Arc<dyn Clock>, 50);
+
+    // The first address spends its whole registration allowance.
+    for _ in 0..5 {
+        throttle
+            .admit(Stage::RegisterStart, &[address(0)], START)
+            .expect("within the limit");
+    }
+    throttle
+        .admit(Stage::RegisterStart, &[address(0)], START)
+        .expect_err("the sixth");
+
+    // Fill the table, and go on: nobody is refused, the table stays at its cap.
+    for n in 1..200 {
+        throttle
+            .admit(Stage::RegisterStart, &[address(n)], START)
+            .unwrap_or_else(|_| panic!("a new address ({n}) is refused by a full table"));
+        assert!(throttle.tracked_keys() <= 50, "{}", throttle.tracked_keys());
+    }
+    assert_eq!(throttle.tracked_keys(), 50);
+
+    // The oldest key was dropped to make room, so its counter starts again;
+    // a recent key still has its own.
+    throttle
+        .admit(Stage::RegisterStart, &[address(0)], START)
+        .expect("the dropped key starts again");
+    for _ in 1..5 {
+        throttle
+            .admit(Stage::RegisterStart, &[address(199)], START)
+            .expect("a recent key is kept and counts");
+    }
+    throttle
+        .admit(Stage::RegisterStart, &[address(199)], START)
+        .expect_err("the recent key's counter was kept");
+}
+
+#[test]
+fn flooding_the_login_table_does_not_lock_out_a_new_caller() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::with_max_keys(clock as Arc<dyn Clock>, 100);
+    for n in 0..1_000 {
+        let _ = throttle.admit(Stage::LoginStart, &[address(n)], START);
+    }
+    assert!(throttle.tracked_keys() <= 100);
+    throttle
+        .admit(Stage::LoginStart, &[address(5_000)], START)
+        .expect("a caller that was never seen before");
+}
+
+#[test]
+fn expired_keys_are_swept_a_few_per_call() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::new(clock as Arc<dyn Clock>);
+    for n in 0..100 {
+        throttle
+            .admit(Stage::RegisterStart, &[address(n)], START)
+            .expect("within the limit");
+    }
+    assert_eq!(throttle.tracked_keys(), 100);
+
+    // A minute later every key has expired. One call looks at a bounded number
+    // of them, not at the whole table.
+    let later = START + 61;
+    let budget = KitThrottle::SWEEP_BUDGET;
+    throttle
+        .admit(Stage::RegisterStart, &[address(1_000)], later)
+        .expect("a new key");
+    assert_eq!(throttle.tracked_keys(), 100 - budget + 1);
+
+    // The next calls go on where the last one stopped, until none is left but
+    // the new ones.
+    for n in 1..=4 {
+        throttle
+            .admit(Stage::RegisterStart, &[address(1_000 + n)], later)
+            .expect("a new key");
+    }
+    assert_eq!(throttle.tracked_keys(), 5);
+}
+
+#[test]
+fn a_key_in_use_is_kept_by_the_sweep() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::new(clock as Arc<dyn Clock>);
+    let busy = address(1);
+    // Added at START, used again at START + 50: the sweep at START + 70 finds
+    // it old in the queue but still in use.
+    throttle
+        .admit(Stage::RegisterStart, &[busy], START)
+        .expect("first");
+    for _ in 0..4 {
+        throttle
+            .admit(Stage::RegisterStart, &[busy], START + 50)
+            .expect("within the limit");
+    }
+    throttle
+        .admit(Stage::RegisterStart, &[address(2)], START + 70)
+        .expect("a new key");
+    assert_eq!(throttle.tracked_keys(), 2);
+    // Its four recent attempts still count: one more fits, the next does not.
+    throttle
+        .admit(Stage::RegisterStart, &[busy], START + 70)
+        .expect("five attempts in the window");
+    throttle
+        .admit(Stage::RegisterStart, &[busy], START + 70)
+        .expect_err("six");
+}
+
+#[test]
+fn only_the_last_forwarded_for_line_counts() {
+    let peer: SocketAddr = "10.0.3.26:4000".parse().unwrap();
+    let mut headers = HeaderMap::new();
+    // A proxy that adds a line of its own instead of appending to the client's.
+    headers.append("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+    headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.4"));
+    assert_eq!(caller_from(&headers, Some(peer)).ip, ip("198.51.100.4"));
+}

@@ -5,8 +5,8 @@
 //! kit's core state, its cookie key or its crypto: the routes are generic over
 //! the state and take the database handle (and other narrow handles) through
 //! `FromRef`. The session comes from the `VaultSession` extractor of
-//! `http::extract`, which is the only code that knows the cookie key. A test
-//! that checks the names is still to come.
+//! `http::extract`, which is the only code that knows the cookie key.
+//! `tests/arch.rs` checks the names.
 //!
 //! Integers that come from a client use checked arithmetic; the lint below is
 //! `deny`.

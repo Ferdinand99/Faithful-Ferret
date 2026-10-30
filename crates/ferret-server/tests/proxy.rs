@@ -116,11 +116,42 @@ fn docker_bridge_gateway_in_the_trusted_list_is_rejected_at_startup() {
         "172.16.0.0/12",
         "172.0.0.0/8",
         "172.17.0.1/32",
+        // The /20 networks Docker takes from 192.168.0.0/16 once 172.x is used.
+        "192.168.0.1",
+        "192.168.16.1",
+        "192.168.240.1",
+        "192.168.32.0/24",
+        "192.168.0.0/20",
+        "192.168.0.0/16",
+        // The gateway of an IPv6 bridge: a "::1" host inside a /64.
+        "fd00:1::1",
+        "fd00:1::/112",
     ] {
         let message = refused(&[entry]);
         assert!(message.contains("FERRET_TRUSTED_PROXIES"), "{message}");
         assert!(message.contains("Docker bridge"), "{entry}: {message}");
     }
+    // Networks that are too wide to be a proxy.
+    for entry in [
+        "10.0.0.0/8",
+        "10.0.0.0/16",
+        "10.0.0.0/23",
+        "0.0.0.0/1",
+        "::/1",
+        "fd00::/8",
+        "2001:db8::/32",
+        "2001:db8:aa::/48",
+        "2001:db8:aa:1::/63",
+    ] {
+        let message = refused(&[entry]);
+        assert!(message.contains("FERRET_TRUSTED_PROXIES"), "{message}");
+        assert!(
+            message.contains("wider network than /24"),
+            "{entry}: {message}"
+        );
+    }
+    // An IPv4 network written as IPv6 would never match.
+    assert!(refused(&["::ffff:10.0.3.0/120"]).contains("written as IPv6"));
     // A list that trusts everyone is refused too, and one bad item spoils a
     // list of good ones.
     assert!(refused(&["0.0.0.0/0"]).contains("every address"));
@@ -137,7 +168,15 @@ fn docker_bridge_gateway_in_the_trusted_list_is_rejected_at_startup() {
         "172.15.255.1",
         "10.0.3.26",
         "10.0.3.0/24",
+        "10.0.3.0/25",
         "192.168.1.1",
+        "192.168.17.1",
+        "192.168.16.2",
+        "127.0.0.1",
+        "::1",
+        "fd00:1::5",
+        "2001:db8:1:2::/64",
+        "::ffff:10.0.3.26",
     ] {
         list(&[entry]);
     }
@@ -172,8 +211,8 @@ fn cidr_and_single_ip_entries_parse() {
         "10.0.3.26",
         " 192.168.7.0/24 ",
         "",
-        "fd00::1",
-        "2001:db8::/32",
+        "fd00::5",
+        "2001:db8:1:2::/64",
     ]);
     let ip = |s: &str| -> IpAddr { s.parse().expect("an address") };
     assert!(proxies.contains(ip("10.0.3.26")));
@@ -181,8 +220,8 @@ fn cidr_and_single_ip_entries_parse() {
     assert!(proxies.contains(ip("192.168.7.0")));
     assert!(proxies.contains(ip("192.168.7.255")));
     assert!(!proxies.contains(ip("192.168.8.1")));
-    assert!(proxies.contains(ip("fd00::1")));
-    assert!(!proxies.contains(ip("fd00::2")));
+    assert!(proxies.contains(ip("fd00::5")));
+    assert!(!proxies.contains(ip("fd00::6")));
     // Host bits in a network are ignored.
     assert!(list(&["10.1.2.3/24"]).contains(ip("10.1.2.99")));
     assert!(list(&[]).is_empty());
@@ -201,11 +240,11 @@ fn cidr_and_single_ip_entries_parse() {
 
 #[test]
 fn ipv6_peer_in_a_listed_cidr() {
-    let proxies = list(&["2001:db8:aa::/48", "10.0.3.0/24"]);
+    let proxies = list(&["2001:db8:aa:1::/64", "10.0.3.0/24"]);
     let ip = |s: &str| -> IpAddr { s.parse().expect("an address") };
-    assert!(proxies.contains(ip("2001:db8:aa::1")));
-    assert!(proxies.contains(ip("2001:db8:aa:ffff::9")));
-    assert!(!proxies.contains(ip("2001:db8:ab::1")));
+    assert!(proxies.contains(ip("2001:db8:aa:1::1")));
+    assert!(proxies.contains(ip("2001:db8:aa:1:ffff::9")));
+    assert!(!proxies.contains(ip("2001:db8:aa:2::1")));
     // A dual-stack listener reports an IPv4 peer as an IPv4-mapped address.
     assert!(proxies.contains(ip("::ffff:10.0.3.9")));
     assert!(!proxies.contains(ip("::ffff:10.0.4.9")));
@@ -213,13 +252,13 @@ fn ipv6_peer_in_a_listed_cidr() {
 
 #[tokio::test]
 async fn an_ipv6_peer_in_a_listed_cidr_keeps_its_headers() {
-    let router = echo(list(&["2001:db8:aa::/48"]));
+    let router = echo(list(&["2001:db8:aa:1::/64"]));
     assert!(
-        send(&router, "[2001:db8:aa::7]:4000")
+        send(&router, "[2001:db8:aa:1::7]:4000")
             .await
             .contains("x-forwarded-for")
     );
-    assert_eq!(send(&router, "[2001:db8:ab::7]:4000").await, "x-keep=yes");
+    assert_eq!(send(&router, "[2001:db8:aa:2::7]:4000").await, "x-keep=yes");
 }
 
 #[test]
