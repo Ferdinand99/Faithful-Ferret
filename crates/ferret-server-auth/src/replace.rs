@@ -808,9 +808,12 @@ impl fmt::Debug for AccountAuthState<'_> {
 
 /// The record, the profile and, for a recovery, the new `pk_r` that a body
 /// carries.
-pub struct ReplaceFields<'b> {
-    /// The 192 bytes of the new OPAQUE record.
-    pub record: &'b [u8],
+pub struct ReplaceFields {
+    /// The 192 bytes of the new OPAQUE record, owned: a JSON body carries them
+    /// as hex, so the parser decodes them into a buffer of its own. They are
+    /// the bytes of the proven body, decoded; the record is public (it is
+    /// stored as it comes), so the buffer needs no wiping.
+    pub record: Vec<u8>,
     /// The profile number the client claims for it.
     pub ksf_profile: u32,
     /// The new `pk_r` of a recovery: present for [`ReplaceKind::Recover`] and
@@ -827,7 +830,7 @@ pub struct ReplaceFields<'b> {
     pub pk_r_new: Option<RecoveryPublicKey>,
 }
 
-impl fmt::Debug for ReplaceFields<'_> {
+impl fmt::Debug for ReplaceFields {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ReplaceFields([redacted])")
     }
@@ -903,7 +906,16 @@ impl fmt::Debug for ReplacePermit {
 /// from. It is called after the proof has verified and not before. The
 /// endpoint's parser decides what the body looks like (JSON) and reports a
 /// body that does not parse as it sees fit; it must not return fields that
-/// are not in the bytes.
+/// are not in the bytes. The record in the fields is owned, so a parser that
+/// reads hex from JSON can hand it over.
+///
+/// **Where the endpoint gets the bytes.** `req.body` is the request body
+/// exactly as it arrived, read as bytes before any JSON parsing and never
+/// serialized again. The client signs the SHA-256 of the compact JSON it
+/// sends, so a body that is parsed and written out again may differ in a byte
+/// (key order, spacing, escapes) and would fail the proof. The endpoint
+/// passes the same slice to this function and keeps it for its own parsing of
+/// the other fields (wraps, manifest), after the permit is given.
 ///
 /// For a password change or an upgrade the profile is compared with
 /// `account.current`, the profile stored for the account, with
@@ -930,7 +942,7 @@ pub fn authorize_replacement<S, P>(
 ) -> Result<ReplacePermit, AuthError>
 where
     S: ChallengeStore,
-    P: for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError>,
+    P: FnOnce(&[u8]) -> Result<ReplaceFields, AuthError>,
 {
     let (now, ticket) = begin(
         cx,
@@ -960,7 +972,7 @@ fn authorize_admitted<S, P>(
 ) -> Result<ReplacePermit, AuthError>
 where
     S: ChallengeStore,
-    P: for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError>,
+    P: FnOnce(&[u8]) -> Result<ReplaceFields, AuthError>,
 {
     consume_and_verify(
         store,
@@ -975,7 +987,7 @@ where
     step("parse-body");
     let fields = parse(req.body)?;
     step("validate-record");
-    let record = ValidatedRecord::parse(fields.record)?;
+    let record = ValidatedRecord::parse(&fields.record)?;
     // A recovery brings a new `pk_r` and a password change does not. A
     // recovery must also change the key: one that keeps the stored key leaves
     // the old recovery key able to sign. The proof has been verified over the

@@ -512,6 +512,7 @@ name = "ferret-vectorgen"
 version = "0.1.0"
 dependencies = [
  "ferret-core",
+ "ferret-server-auth",
  "hmac 0.13.0",
  "p256",
  "serde_json",

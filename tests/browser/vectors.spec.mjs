@@ -7,7 +7,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { EXTERNAL_FILES, INTERNAL_FILES } from "../../bindings/wasm/js/vector-runner.mjs";
+import { EXTERNAL_FILES, INTERNAL_FILES, NATIVE_ONLY_FILES } from "../../bindings/wasm/js/vector-runner.mjs";
 import { keep, openHarness, repo } from "./support.mjs";
 
 const internalDir = join(repo, "vectors", "internal");
@@ -48,7 +48,7 @@ const failures = (files) => files.flatMap((f) => f.failures.map((x) => ({ file: 
 
 test("every vector file has a runner entry", () => {
   const onDisk = readdirSync(internalDir).filter((n) => n.endsWith(".json")).sort();
-  expect([...INTERNAL_FILES].sort()).toEqual(onDisk);
+  expect([...INTERNAL_FILES, ...NATIVE_ONLY_FILES].sort()).toEqual(onDisk);
 });
 
 test("vectors pass", async ({ page, browserName }) => {

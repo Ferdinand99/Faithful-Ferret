@@ -12,6 +12,10 @@
 //!   to run the client of `ferret-core` against it. [`login_start_with_context`]
 //!   runs the first step with another OPAQUE context or other identities than
 //!   Ferret's, to show that such a server cannot authenticate.
+//! * [`vectors`] runs the `server.*` operations of the test vectors
+//!   (`vectors/internal/server-opaque.json` and `server-secrets.json`), and
+//!   has the few helpers the test against the published vectors of RFC 9807
+//!   needs.
 //!
 //! This is test tooling, not production code, so the strict production lints
 //! are relaxed here.
@@ -30,6 +34,8 @@ use std::sync::{Barrier, Mutex};
 
 use ferret_core::secret::WipePhase;
 use zeroize::Zeroizing;
+
+pub mod vectors;
 
 use crate::state::{LoginPurpose, SERVER_LOGIN_LEN, StatePlain};
 use crate::{CredentialId, LoginId, LoginStateStore, STATE_TTL_SECS, SealedState, StateKey};
@@ -627,6 +633,7 @@ pub fn login_start_with_context<R: ferret_core::SecureRng, S: LoginStateStore>(
         context,
         client_identity: identities.map(|(client, _)| client),
         server_identity: identities.map(|(_, server)| server),
+        credential_identifier: None,
     };
     crate::login::start_with(cx, store, rng, req, &params)
 }

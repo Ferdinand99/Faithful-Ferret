@@ -150,6 +150,17 @@ fn start_admitted(
     id: &CredentialId,
     request: &[u8],
 ) -> Result<Vec<u8>, AuthError> {
+    start_for_identifier(keys, id.as_bytes(), request)
+}
+
+/// [`register_start`] for any credential identifier. The server always passes
+/// the 16 bytes of a credential id; the published vectors of RFC 9807 use an
+/// identifier of 4 bytes, and reach this through `testing`.
+pub(crate) fn start_for_identifier(
+    keys: &ServerKeys,
+    identifier: &[u8],
+    request: &[u8],
+) -> Result<Vec<u8>, AuthError> {
     let malformed = AuthError::Malformed(Malformed::RegistrationRequest);
     // The parser of `opaque-ke` ignores trailing bytes: check the length here.
     if request.len() != REGISTRATION_REQUEST_LEN {
@@ -160,7 +171,7 @@ fn start_admitted(
     // A request that decoded cannot make the library fail: what is left is
     // the derivation of the OPRF key from the seed and the id. A failure
     // there is a fault of the server, not of the client.
-    let started = ServerRegistration::<FerretSuite>::start(keys.setup(), request, id.as_bytes())
+    let started = ServerRegistration::<FerretSuite>::start(keys.setup(), request, identifier)
         .or(Err(AuthError::Internal(InternalKind::Crypto)))?;
     Ok(started.message.serialize().to_vec())
 }

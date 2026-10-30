@@ -78,7 +78,7 @@ fn rbody(rec: &Recovered, profile: u32) -> Vec<u8> {
     recover_body_of(profile, &rec.pk_r, &rec.registration_record)
 }
 
-type Parser = fn(&[u8]) -> Result<ReplaceFields<'_>, AuthError>;
+type Parser = fn(&[u8]) -> Result<ReplaceFields, AuthError>;
 
 fn too_short() -> AuthError {
     AuthError::Malformed(Malformed::RegistrationRecord)
@@ -86,21 +86,21 @@ fn too_short() -> AuthError {
 
 /// The parser of the test's endpoint for a password change. A body too short
 /// for a profile is not well formed.
-fn parse_put(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+fn parse_put(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let (profile, record) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
     Ok(ReplaceFields {
-        record,
+        record: record.to_vec(),
         ksf_profile: u32::from_be_bytes(*profile),
         pk_r_new: None,
     })
 }
 
 /// The parser of the test's endpoint for a recovery.
-fn parse_recover(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+fn parse_recover(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let (profile, rest) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
     let (key, record) = rest.split_first_chunk::<32>().ok_or_else(too_short)?;
     Ok(ReplaceFields {
-        record,
+        record: record.to_vec(),
         ksf_profile: u32::from_be_bytes(*profile),
         pk_r_new: Some(RecoveryPublicKey::new(*key)),
     })
@@ -117,7 +117,7 @@ fn parse_for(kind: ReplaceKind) -> Parser {
 fn spy(
     seen: &Mutex<Vec<Vec<u8>>>,
     kind: ReplaceKind,
-) -> impl for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError> + '_ {
+) -> impl FnOnce(&[u8]) -> Result<ReplaceFields, AuthError> + '_ {
     move |body| {
         seen.lock().unwrap().push(body.to_vec());
         parse_for(kind)(body)

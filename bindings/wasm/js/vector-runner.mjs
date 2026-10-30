@@ -363,3 +363,11 @@ export const INTERNAL_FILES = [
   "tomb-tag", "checkpoint", "proofs", "rekey", "export", "opaque", "account", "totp",
   "passkey", "origin", "sheet", "methods", "sync",
 ].map((n) => `${n}.json`);
+
+/**
+ * The files of `vectors/internal/` that no WASM runner reads: the server half
+ * of the login has no WebAssembly binding, and every case in them is
+ * `native-only`. They are listed so that a new file cannot be forgotten, not
+ * run; the Rust tests of `ferret-server-auth` and `tools/xcheck` read them.
+ */
+export const NATIVE_ONLY_FILES = ["server-opaque", "server-secrets"].map((n) => `${n}.json`);

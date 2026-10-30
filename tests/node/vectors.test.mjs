@@ -2,12 +2,13 @@
 // The same runner is `node tests/node/run-vectors.mjs`.
 // Run: node --test tests/node/
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
   EXTERNAL_FILES,
   INTERNAL_FILES,
+  NATIVE_ONLY_FILES,
   parseOps,
   runExternal,
   runVectorFile,
@@ -22,6 +23,17 @@ test("OPS.md lists every op of every vector file", () => {
   for (const name of INTERNAL_FILES) {
     const file = JSON.parse(readFileSync(join(vectors, "internal", name), "utf8"));
     for (const c of file.cases) assert.ok(ops.has(c.op), `${c.id}: ${c.op}`);
+  }
+});
+
+test("every vector file on disk has a runner entry; the server files are native-only", () => {
+  const onDisk = readdirSync(join(vectors, "internal")).filter((n) => n.endsWith(".json")).sort();
+  assert.deepEqual([...INTERNAL_FILES, ...NATIVE_ONLY_FILES].sort(), onDisk);
+  for (const name of NATIVE_ONLY_FILES) {
+    const file = JSON.parse(readFileSync(join(vectors, "internal", name), "utf8"));
+    for (const c of file.cases) {
+      assert.ok(c.tags.includes("native-only"), `${c.id} is run by a WASM runner`);
+    }
   }
 });
 

@@ -17,6 +17,9 @@ path = "src/main.rs"
 
 [dependencies]
 ferret-core = { path = "../../crates/ferret-core", features = ["test-support"] }
+# The server vectors are checked against the server library while they are
+# made (`server_groups.rs`).
+ferret-server-auth = { path = "../../crates/ferret-server-auth", features = ["test-support"] }
 # hmac and sha1 only to compute the expected TOTP codes with a reference
 # written apart from the core.
 hmac = "=0.13.0"
