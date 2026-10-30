@@ -237,7 +237,7 @@ impl World {
 
     /// Only the set-up, for the operations that need no pre-login secret.
     fn setup_with(&self, extra: Value) -> Value {
-        let mut input = json!({ "setup_hex": h(&self.setup) });
+        let mut input = json!({ "setup_hex": h(&self.setup), "now": NOW.to_string() });
         for (k, v) in extra.as_object().into_iter().flatten() {
             input[k] = v.clone();
         }
@@ -390,6 +390,55 @@ fn registration_cases(
         ),
         &[],
     )?);
+    // On the authority of a session: its own account only, and a scope that
+    // may register.
+    let session = |scope: &str, account: &[u8; 16]| {
+        w.setup_with(json!({
+            "credential_id": h(&alice.credential),
+            "request": h(&alice.request),
+            "authority": { "type": "session", "scope": scope, "account": h(account) },
+        }))
+    };
+    for scope in ["full", "account_reset"] {
+        cases.push(recorded(
+            &format!("server-opaque/register_response/session_{scope}_own_account"),
+            "a session registers for its own account",
+            op,
+            session(scope, &alice.credential),
+            &[],
+        )?);
+    }
+    cases.push(refused(
+        "server-opaque/register_response/session_other_account",
+        "a session never gets an answer under the key of another account",
+        op,
+        session("full", &bob.credential),
+        &[],
+        "forbidden",
+    ));
+    for scope in ["pending_2fa", "unverified"] {
+        cases.push(refused(
+            &format!("server-opaque/register_response/session_{scope}"),
+            "a session that may not register is told so",
+            op,
+            session(scope, &alice.credential),
+            &[],
+            "forbidden",
+        ));
+    }
+    let mut throttled = w.setup_with(json!({
+        "credential_id": h(&alice.credential),
+        "request": h(&alice.request),
+    }));
+    throttled["throttle_wait_secs"] = json!(30);
+    cases.push(refused(
+        "server-opaque/register_response/throttled",
+        "a caller the limiter refuses is told to wait",
+        op,
+        throttled,
+        &[],
+        "throttled",
+    ));
     let bad = |name: &str, title: &str, request: Vec<u8>| {
         refused(
             &format!("server-opaque/register_response/{name}"),
@@ -427,7 +476,9 @@ fn known_start(
     purpose: Value,
     sk_hint: bool,
 ) -> Value {
+    let scope = (purpose["type"] == "reauth").then_some("full");
     w.with(json!({
+        "session_scope": scope,
         "name": name,
         "lookup": "known",
         "record": h(&account.record),
@@ -532,6 +583,22 @@ fn login_cases(
         },
         &start_draws("server vectors/start/known"),
     )?);
+    for (name, scope) in [
+        ("reauth_without_a_scope", Value::Null),
+        ("reauth_pending_2fa", json!("pending_2fa")),
+        ("reauth_unverified", json!("unverified")),
+    ] {
+        let mut input = known_start(w, alice, alice_name, &ke1, reauth.clone(), false);
+        input["session_scope"] = scope;
+        cases.push(refused(
+            &format!("server-opaque/login_start/{name}"),
+            "a re-authentication needs a session that may re-authenticate",
+            start,
+            input,
+            &[],
+            "forbidden",
+        ));
+    }
     let mut throttled = known_start(w, alice, alice_name, &ke1, login_purpose(), false);
     throttled["throttle_wait_secs"] = json!(30);
     cases.push(refused(
@@ -829,12 +896,18 @@ fn proof_message(
     .concat()
 }
 
-/// A body: the record, the profile number (4 bytes) and the new `pk_r`.
+/// A body as the client sends it: compact JSON with the record in hex, the
+/// profile number and, for a recovery, the new `pk_r`. The proof covers these
+/// bytes exactly.
 fn body_of(record: &[u8], profile: u32, pk_r_new: Option<&[u8]>) -> Vec<u8> {
-    let mut body = record.to_vec();
-    body.extend_from_slice(&profile.to_be_bytes());
-    body.extend_from_slice(pk_r_new.unwrap_or_default());
-    body
+    let key = pk_r_new.map_or(String::new(), |k| {
+        format!(r#","pk_r_new":"{}""#, hex_encode(k))
+    });
+    format!(
+        r#"{{"registration_record":"{}","ksf_profile":{profile}{key}}}"#,
+        hex_encode(record)
+    )
+    .into_bytes()
 }
 
 fn replace_cases(cases: &mut Vec<Case>, alice: &Account) -> Result<(), Error> {
@@ -1141,6 +1214,93 @@ fn replace_cases(cases: &mut Vec<Case>, alice: &Account) -> Result<(), Error> {
             1,
         ),
         "malformed_registration_record",
+    ));
+    // A recovery may lower the profile (it undoes a wrongly claimed one); a
+    // password change may not.
+    cases.push(recorded(
+        "server-opaque/replace_authorize/recover_lowers_the_profile",
+        "a recovery may set a profile below the stored one",
+        op,
+        input(
+            "recover",
+            &recover_body,
+            &recover_proof,
+            &nonce,
+            true,
+            epoch,
+            2,
+        ),
+        &[],
+    )?);
+    let unknown_recover = body_of(&alice.record, 7, Some(&new_pk_r));
+    cases.push(bad(
+        "recover_profile_unknown",
+        "a recovery with a profile that clients do not know",
+        input(
+            "recover",
+            &unknown_recover,
+            &sign_r(&unknown_recover)?,
+            &nonce,
+            true,
+            epoch,
+            1,
+        ),
+        "profile_rejected",
+    ));
+    // The parser reads three fields and ignores the rest of the JSON.
+    let extra = format!(
+        r#"{{"wrap":"00","registration_record":"{}","kek_generation":2,"ksf_profile":1,"manifest":{{"rev":2}}}}"#,
+        hex_encode(&alice.record)
+    )
+    .into_bytes();
+    cases.push(recorded(
+        "server-opaque/replace_authorize/body_with_other_fields",
+        "the fields the endpoint reads for itself are not the library's business",
+        op,
+        input(
+            "password_put",
+            &extra,
+            &sign_a(&extra)?,
+            &nonce,
+            true,
+            epoch,
+            1,
+        ),
+        &[],
+    )?);
+    let not_json = b"not json".to_vec();
+    cases.push(bad(
+        "body_not_json",
+        "a body that is signed but is no JSON",
+        input(
+            "password_put",
+            &not_json,
+            &sign_a(&not_json)?,
+            &nonce,
+            true,
+            epoch,
+            1,
+        ),
+        "malformed_registration_record",
+    ));
+    let short_key = format!(
+        r#"{{"registration_record":"{}","ksf_profile":1,"pk_r_new":"00"}}"#,
+        hex_encode(&alice.record)
+    )
+    .into_bytes();
+    cases.push(bad(
+        "recovery_key_of_one_byte",
+        "a new recovery key that is not 32 bytes",
+        input(
+            "recover",
+            &short_key,
+            &sign_r(&short_key)?,
+            &nonce,
+            true,
+            epoch,
+            1,
+        ),
+        "malformed_recovery_key",
     ));
     let same_key = body_of(&alice.record, 1, Some(&pk_r));
     cases.push(bad(
@@ -1467,7 +1627,7 @@ fn made_up_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), 
     let id_of = |secret: &[u8], name: &str| {
         hmac256(secret, &[b"prelogin-id", name.as_bytes()])[..16].to_vec()
     };
-    let names: [(&str, &str, &str); 6] = [
+    let names: [(&str, &str, &str); 7] = [
         ("plain", "alice@example.com", "alice@example.com"),
         ("upper_case", "Alice@Example.COM", "alice@example.com"),
         (
@@ -1481,6 +1641,12 @@ fn made_up_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), 
             "plus_tag",
             "carol+work@example.org",
             "carol+work@example.org",
+        ),
+        // U+0085 is white space to the library, so it is trimmed.
+        (
+            "next_line_trimmed",
+            "dave@example.org\u{85}",
+            "dave@example.org",
         ),
     ];
     for (key, raw, normal) in names {
@@ -1526,6 +1692,11 @@ fn made_up_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), 
         "control_character",
         "a control character in the name",
         "a\u{7}b@example.com".into(),
+    ));
+    cases.push(bad_name(
+        "byte_order_mark_not_trimmed",
+        "U+FEFF is no white space, so it stays and is refused",
+        "\u{feff}dave@example.org".into(),
     ));
     cases.push(bad_name(
         "zero_width_space",
