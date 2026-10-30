@@ -1,0 +1,34 @@
+[package]
+name = "ferret-ct"
+description = "Timing tests (dudect) of the constant-time code of the Ferret core, native and as WebAssembly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ferret_ct"
+path = "src/lib.rs"
+# `cdylib` is the WebAssembly module that `ct/dudect-wasm/run.mjs` times in
+# Node; `rlib` is what the native bench links.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "dudect"
+path = "src/bin/dudect.rs"
+required-features = ["bench"]
+
+[features]
+default = []
+# The native bench: `dudect-bencher` and its command line. Off for the
+# WebAssembly build, which has no use for either.
+bench = ["dep:dudect-bencher"]
+
+[dependencies]
+ferret-core = { path = "../../crates/ferret-core", features = ["test-support"] }
+# The harness file ct/harness/ct_eq.rs is included here and needs `subtle`.
+subtle = "=2.6.1"
+# Statistics (Welch's t-test with percentile cropping) as in the dudect paper.
+# Dev tooling only: nothing here is part of the core or of a release.
+dudect-bencher = { version = "=0.7.0", optional = true }

@@ -1,0 +1,11 @@
+# The constant-time analyzer of Trail of Bits (plugin constant-time-analysis,
+# skill ct-check), fetched at a fixed commit and checked against its SHA-256.
+# The repository is CC-BY-SA-4.0, so the files are not copied into this
+# repository. The same values are in docker/builder.Dockerfile; ct.yml checks
+# that the two agree.
+repository=trailofbits/skills
+commit=123037ec8aed26f0d86327cc39137ee5043e5deb
+path=plugins/constant-time-analysis/ct_analyzer
+sha256 __init__.py=b74759da227e85d90cc6929cde54817a0960c716b7f2ae9319ec0c759dc698da
+sha256 analyzer.py=68a17ca12f17c05dc0e9e2ff49bf7ddae061eabcec12058f276d89fc23a1ab0c
+sha256 script_analyzers.py=d64df7dd7010c0355ec652df6e72fc1892f17173cb57fedba669d5ecf470613c

@@ -1,0 +1,195 @@
+// dudect on the WebAssembly build of the timing targets, timed in Node.
+//
+//   node ct/dudect-wasm/run.mjs target/wasm32-unknown-unknown/release/ferret_ct.wasm
+//
+// The module (ct/dudect, built for wasm32) exports the same targets as the
+// native bench: for every measurement the class and the input are chosen at
+// random, the input is copied into the target's working cell (`ct_prepare`,
+// not timed), and `ct_run` is timed with `process.hrtime.bigint()`. The
+// statistic is the one of dudect: Welch's t-test on all measurements and on
+// the measurements below 100 cropped percentiles, and the largest |t| counts.
+// Plan section 10 point 5: |t| < 4.5 after 10^6 measurements. Browser timing
+// is not used (`performance.now` is too coarse there).
+//
+// Controls, as in the native run: `control_null` (the same inputs in both
+// classes) must stay below the threshold and `control_leaky` (an early-exit
+// comparison) must be far above it, or the run is not valid. Targets whose
+// name starts with `info_` are reported and not gated. A gated target that
+// is over the threshold is measured a second time, and fails only if it is
+// over both times.
+//
+// Environment: FERRET_CT_N (measurements, default 1000000), CT_CPU (the CPU
+// the process was pinned to, for the log only).
+
+import { readFileSync } from "node:fs";
+
+const THRESHOLD = 4.5;
+const N = Number(process.env.FERRET_CT_N ?? 1_000_000);
+const WARMUP = 200_000;
+const PERCENTILES = 100;
+
+const wasmPath = process.argv[2];
+if (!wasmPath) {
+  console.error("usage: run.mjs <ferret_ct.wasm>");
+  process.exit(2);
+}
+
+// ------------------------------------------------------------ the module
+
+const module = new WebAssembly.Module(readFileSync(wasmPath));
+const imports = {};
+const importList = WebAssembly.Module.imports(module);
+for (const imp of importList) {
+  imports[imp.module] ??= {};
+  imports[imp.module][imp.name] = () => {
+    throw new Error(`unexpected call of import ${imp.module}.${imp.name}`);
+  };
+}
+const instance = new WebAssembly.Instance(module, imports);
+const ex = instance.exports;
+const memory = ex.memory;
+
+const targetCount = ex.ct_setup(0x1234_5678, 0x9abc_def0);
+const targets = [];
+for (let t = 0; t < targetCount; t++) {
+  const name = new TextDecoder().decode(new Uint8Array(memory.buffer, ex.ct_name_ptr(t), ex.ct_name_len(t)));
+  targets.push({ t, name, info: ex.ct_info(t) === 1, reps: ex.ct_reps(t) });
+}
+
+// ------------------------------------------------------------- statistics
+
+/** Welch's t of two sets given as running sums. */
+function welch(a, b) {
+  if (a.n < 2 || b.n < 2) return 0;
+  const va = (a.sq - (a.sum * a.sum) / a.n) / (a.n - 1);
+  const vb = (b.sq - (b.sum * b.sum) / b.n) / (b.n - 1);
+  const se = Math.sqrt(va / a.n + vb / b.n);
+  return se === 0 ? 0 : (a.sum / a.n - b.sum / b.n) / se;
+}
+
+function summarize(times, classes, limit) {
+  const a = { n: 0, sum: 0, sq: 0 };
+  const b = { n: 0, sum: 0, sq: 0 };
+  for (let i = 0; i < times.length; i++) {
+    const x = times[i];
+    if (x > limit) continue;
+    const s = classes[i] === 0 ? a : b;
+    s.n++;
+    s.sum += x;
+    s.sq += x * x;
+  }
+  return { a, b };
+}
+
+/** The largest |t| over the raw data and the 100 cropped sets, with its n. */
+function maxT(times, classes) {
+  const sorted = Float64Array.from(times).sort();
+  let best = { t: 0, n: 0 };
+  const consider = (limit) => {
+    const { a, b } = summarize(times, classes, limit);
+    const t = welch(a, b);
+    if (Math.abs(t) > Math.abs(best.t)) best = { t, n: a.n + b.n };
+  };
+  consider(Infinity);
+  for (let k = 0; k < PERCENTILES; k++) {
+    const p = 1 - Math.pow(0.5, (10 * (k + 1)) / PERCENTILES);
+    consider(sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]);
+  }
+  return best;
+}
+
+// -------------------------------------------------------------- measuring
+
+/** A small xorshift generator: the class and input of each measurement. */
+function plan(seed) {
+  let x = seed >>> 0 || 1;
+  const next = () => {
+    x ^= x << 13;
+    x >>>= 0;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    x >>>= 0;
+    return x;
+  };
+  const classes = new Uint8Array(N);
+  const inputs = new Uint32Array(N);
+  for (let i = 0; i < N; i++) {
+    classes[i] = next() & 1;
+    inputs[i] = next();
+  }
+  return { classes, inputs };
+}
+
+function measure(target, seed) {
+  const { t, reps } = target;
+  const { classes, inputs } = plan(seed);
+  // Warm up, so that the engine has compiled the module's hot code with its
+  // optimizing compiler before the first measurement.
+  for (let i = 0; i < WARMUP; i++) {
+    ex.ct_prepare(t, classes[i % N], inputs[i % N]);
+    ex.ct_run(t, reps);
+  }
+  const times = new Float64Array(N);
+  let sink = 0;
+  for (let i = 0; i < N; i++) {
+    ex.ct_prepare(t, classes[i], inputs[i]);
+    const t0 = process.hrtime.bigint();
+    sink ^= ex.ct_run(t, reps);
+    const t1 = process.hrtime.bigint();
+    times[i] = Number(t1 - t0);
+  }
+  if (sink === 0.5) console.log(sink); // keeps `sink` alive
+  return maxT(times, classes);
+}
+
+const over = (t) => Math.abs(t) >= THRESHOLD;
+const fmt = (name, r, run) =>
+  `[run ${run}] bench ${name.padEnd(32)} ... : n == ${(r.n / 1e6).toFixed(3)}M, max t = ${r.t >= 0 ? "+" : ""}${r.t.toFixed(5)}`;
+
+const info = {
+  node: process.version,
+  v8: process.versions.v8,
+  measurements: N,
+  cpu: process.env.CT_CPU ?? "unknown",
+  imports: importList.map((i) => `${i.module}.${i.name}`),
+};
+console.log(`dudect wasm in Node: ${JSON.stringify(info)}, ${new Date().toISOString()}`);
+console.log(`module: ${wasmPath}, ${readFileSync(wasmPath).length} bytes, targets: ${targets.map((x) => x.name).join(" ")}`);
+
+let failed = false;
+let invalid = false;
+const order = [
+  ...targets.filter((x) => x.name === "control_null"),
+  ...targets.filter((x) => x.name === "control_leaky"),
+  ...targets.filter((x) => !x.name.startsWith("control_")),
+];
+let seed = 0x2545f491;
+for (const target of order) {
+  let bad = 0;
+  for (let run = 1; run <= 2; run++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const r = measure(target, seed);
+    console.log(fmt(target.name, r, run));
+    if (over(r.t)) bad++;
+    else break;
+    if (target.name === "control_leaky") break;
+  }
+  if (target.name === "control_leaky") {
+    if (bad >= 1) console.log(`[ok] ${target.name}: the setup sees an early-exit comparison`);
+    else {
+      console.log(`[FAIL] ${target.name}: the setup does not see an early-exit comparison, the run is not valid`);
+      invalid = true;
+    }
+  } else if (target.info && target.name !== "control_null") {
+    console.log(`[info] ${target.name} is reported, not gated`);
+  } else if (bad >= 2) {
+    console.log(`[FAIL] ${target.name}: |t| >= ${THRESHOLD} in two runs`);
+    failed = true;
+  } else if (bad === 1) {
+    console.log(`[ok, rerun] ${target.name}: |t| >= ${THRESHOLD} once, below in the rerun`);
+  } else {
+    console.log(`[ok] ${target.name}`);
+  }
+}
+// 0 all fine, 1 a bench over the threshold, 3 the run is not valid.
+process.exitCode = invalid ? 3 : failed ? 1 : 0;

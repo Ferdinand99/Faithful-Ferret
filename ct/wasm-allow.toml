@@ -1,0 +1,89 @@
+# What ct/wasm-scan.mjs accepts in the WebAssembly build (plan section 10 point 4).
+#
+# The scan lists, for every function of ferret_core and ferret_core_wasm,
+# integer division and remainder, floating point division and square root,
+# `br_table`, and loads whose address is the sum of two computed values. Each
+# hit has to be here, with the reason that its operands are public (or, where
+# they are not, why it is accepted). The test is `wasm_scan_only_allowlisted`.
+#
+# Fields: `function` is a regular expression on the path of the function (a
+# rough demangling, see ct/rustname.mjs), `instruction` a regular expression on
+# the hit (`i32.div_u`, `br_table`, `i32.load(indexed)`, ...), `reason` the
+# justification, and the optional `max` the most hits the entry may cover (so
+# that a second hit in a function that is allowed one fails).
+#
+# Reading the code that holds secrets is what the harness files are for
+# (ct/harness, analyzed by ct_analyzer, ct/TRIAGE.md): none of the functions in
+# them (crockford, base32, ct_eq, ct_select) has a hit here, and unpad_scan has
+# only the one indexed byte load of its loop.
+
+# ------------------------------------------------------ the harness code
+
+[[allow]]
+function = "^ferret_core::item::pad::scan::unpad_scan$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "The load of the byte at `base + index` in the scan of the padding; the index is the loop counter, which runs over the whole buffer whatever it holds. The byte it reads is never used as an address."
+
+# --------------------------------------------- accepted: the operand is not public
+
+[[allow]]
+function = "^ferret_core::text::unicode::normalize_password$"
+instruction = "br_table|i32\\.load\\(indexed\\)"
+max = 3
+reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md, R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. It runs once per unlock, in the user's own worker. The characters are the secret; the length is not. There is no table-free NFKD to use instead, and the result has to be byte-identical to other implementations."
+
+[[allow]]
+function = "^ferret_core::totp::totp_code$"
+instruction = "i32\\.div_u|i64\\.div_u"
+max = 2
+reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md, R2). The one-time code is the dynamic truncation of the HMAC output taken modulo 10^digits. The dividend is the HMAC output of this one code, not the TOTP secret; the code is shown to the user and sent to a server a moment later. The divisor is a public digit count. RFC 4226 section 5.3 has this division in every implementation."
+
+[[allow]]
+function = "^ferret_core::totp::totp_code$"
+instruction = "br_table|i32\\.load\\(indexed\\)"
+reason = "A match on the algorithm (SHA-1, SHA-256 or SHA-512, public) and the byte at the HMAC-derived offset of the dynamic truncation: the offset is the low nibble of the last HMAC byte, an index into this code's own HMAC output (RFC 4226 section 5.3), not into the key."
+
+[[allow]]
+function = "^ferret_core::totp::(?:\\w+::)*(parse_otpauth|small_number|from_name|decode_base32)$"
+instruction = "br_table|i32\\.load\\(indexed\\)"
+reason = "Reading the text of an otpauth URI, which holds the TOTP secret. The branches are on the URI's structure (the `?`, `&`, `=` and `%` that split it, the names of parameters and the number of letters); the letters of the secret itself go through ct/harness/base32.rs without a branch or a table. The percent-decoding and the splitting read the secret as text and are not constant time: ACCEPTED RESIDUAL RISK (TRIAGE.md, R3), the same text is a JavaScript string that cannot be wiped or made constant time in any case."
+
+[[allow]]
+function = "^ferret_core_wasm::item::normalize_otpauth$"
+instruction = "br_table|i32\\.load\\(indexed\\)"
+reason = "The glue trims and rewrites an otpauth URI that a user pasted, with ordinary string functions, before the core parses it. ACCEPTED RESIDUAL RISK (TRIAGE.md, R3): the URI holds the secret and sits in a JavaScript string."
+
+[[allow]]
+function = "^ferret_core::totp::totp_seconds_left$"
+instruction = "i64\\.rem_u"
+reason = "The seconds left in the period: the remainder of the clock time by the period. Both are public."
+
+[[allow]]
+function = "^ferret_core::(cbor::|item::|export::plain::)"
+instruction = "br_table|i32\\.load\\(indexed\\)|i64\\.load\\(indexed\\)|i32\\.div_u"
+reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md, R4). Reading and writing the decrypted item body (CBOR), the views of it and the plaintext export. It runs after the AEAD has accepted the data, in the user's own worker. The branches are on the CBOR structure (major type, length, the type of a field), the loads copy bytes at `base + index` of slices, the divisions are pointer differences divided by an element size and a row count. The bytes of a password or a note are copied, not used as an index; text is checked for UTF-8 by `core::str`, which is not constant time."
+
+# --------------------------------------------- operands are public
+
+[[allow]]
+function = "^ferret_core::(wrap::|pinning::|secret::|error::|integrity::|ids::|tlv::)"
+instruction = "br_table|i32\\.load\\(indexed\\)|i32\\.div_u"
+reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation), the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public (a checkpoint, a list of rows). The key commitment, the tags and the MACs are compared by ct_eq, which has no hit here."
+
+[[allow]]
+function = "^ferret_core::(codes::|sheet::|passkey::)"
+instruction = "br_table|i32\\.load\\(indexed\\)|i64\\.load\\(indexed\\)|i32\\.div_u"
+reason = "Public text: the recovery and secret key codes are read through ct/harness/crockford.rs (no hit in it); what is here is the prefix and length checks, the separators, which for a valid code are the same on every letter, server addresses and QR text, origins, relying party ids, the public suffix list, the client data JSON and its base64url (a length divided by 3). A letter of the alphabet is never a separator, so the branch on it goes the same way for every valid code."
+
+[[allow]]
+function = "^ferret_core::text::password::"
+instruction = "br_table"
+reason = "A match on whether a policy was checked and on whether a secret key is present (public flags)."
+
+# ------------------------------------------------------- the binding
+
+[[allow]]
+function = "^ferret_core_wasm::"
+instruction = "br_table"
+reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode. These are the structure of a call, not the key material behind it."
