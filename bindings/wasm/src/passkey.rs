@@ -9,12 +9,12 @@
 //! outputs of the extension for the inputs the site chose.
 
 use crate::convert::{
-    ANY, SealedDto, Shape, Shaped, arr, b16, b32, bytes, from_js, from_js_list, js_time, js_u64,
-    opt_bytes, to_js,
+    ANY, ByteBuf, SealedDto, Shape, Shaped, arr, b16, b32, bytes, from_js, from_js_list, js_time,
+    js_u64, opt_bytes, to_js,
 };
 use crate::error::{Fail, Res, run};
 use crate::item::Bytes;
-use crate::vault::{OpenItem, Vault};
+use crate::vault::{MAX_OPEN, OpenItem, PendingPasskey, Vault};
 use ferret_core::passkey::{PrfCreate, PrfEval, PrfRequest, PrfResults};
 use ferret_core::{
     CallerContext, CreateRequest, ExistingCredential, GetRequest, ItemBody, ItemId, ItemType,
@@ -94,9 +94,6 @@ struct PrfDto {
     #[serde(default)]
     eval_by_credential: Vec<EvalByCredentialDto>,
 }
-
-#[derive(Deserialize)]
-struct ByteBuf(#[serde(with = "bytes")] Vec<u8>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,12 +192,40 @@ struct GetResponseDto {
     prf: Option<PrfResultsDto>,
 }
 
+/// What `passkey_create` returns: the sealed item to store, and the handle of
+/// the answer that is held back until `passkey_create_confirm`.
 #[derive(Serialize)]
 struct CreatedDto {
-    response: CreateResponseDto,
     item: SealedDto,
     #[serde(with = "b16")]
     item_id: [u8; 16],
+    pending: u32,
+}
+
+/// What `passkey_create_confirm` returns: the answer for the page and the
+/// handle of the item that now holds the passkey.
+#[derive(Serialize)]
+struct ConfirmedDto {
+    response: CreateResponseDto,
+    handle: u32,
+}
+
+/// The value of `existing` that says there are no stored passkeys. An empty
+/// array is refused instead, so that "I have none" is a decision and not what
+/// a forgotten argument looks like.
+const NO_EXISTING: &str = "no_existing";
+
+/// The passkeys the caller lists as stored (`{ rp_id, id }`), or none when it
+/// says so with [`NO_EXISTING`].
+fn existing_list(v: JsValue) -> Res<Vec<ExistingDto>> {
+    if v.as_string().as_deref() == Some(NO_EXISTING) {
+        return Ok(Vec::new());
+    }
+    let list: Vec<ExistingDto> = from_js_list(v)?;
+    if list.is_empty() {
+        return Err(Fail::Input);
+    }
+    Ok(list)
 }
 
 fn id_list(list: Vec<ByteBuf>) -> Vec<Vec<u8>> {
@@ -209,9 +234,21 @@ fn id_list(list: Vec<ByteBuf>) -> Vec<Vec<u8>> {
 
 #[wasm_bindgen]
 impl Vault {
-    /// Makes a passkey for a `navigator.credentials.create` request and
-    /// stores it in an item, in one step: the passkey is not given to the
-    /// page unless it was sealed first.
+    /// Makes a passkey for a `navigator.credentials.create` request and seals
+    /// it into an item. **Nothing is stored and nothing is released when it
+    /// returns**: the answer for the page is held back, and the item is not
+    /// open yet.
+    ///
+    /// 1. Upload the returned `item` (`{ rev, envelope, tag }`) to the
+    ///    server.
+    /// 2. Only when the server has accepted it, call
+    ///    `passkey_create_confirm(pending)`. It returns the answer for the
+    ///    page and the handle of the item, and the binding keeps nothing of
+    ///    it.
+    /// 3. If the upload fails or conflicts, call
+    ///    `passkey_create_abort(pending)` (or just make the next passkey,
+    ///    which replaces it). The page has not been answered, so no site has
+    ///    a public key whose private key is nowhere.
     ///
     /// * `request` is `{ challenge, rp_id, rp_name, user_id, user_name,
     ///   user_display_name, algorithms, exclude, user_verification, prf }`.
@@ -219,13 +256,23 @@ impl Vault {
     ///   calling frame as the browser reports it, never a value from the
     ///   page. `uv` is `{ user_present, user_verified }`.
     /// * `existing` lists the passkeys that are already stored as
-    ///   `{ rp_id, id }`, for `excludeCredentials`.
+    ///   `{ rp_id, id }` (take `rp_id` and `cred_id` from `item_view`), for
+    ///   `excludeCredentials`. It must be given: a non-empty array, or the
+    ///   named marker `"no_existing"` (`NO_EXISTING` in the client) when
+    ///   there are none. An empty array is `invalid_input`. The passkeys of
+    ///   the open items are always checked as well.
     /// * Without `attach_to`, a new login item named `name` is made, with the
     ///   site of the passkey as its address. With the handle of an open item,
     ///   the passkey is put into that item and nothing else of it changes;
     ///   `item_id` must then be its id. `rev` is the revision of the write.
     ///
-    /// Returns `{ response, item: { rev, envelope, tag }, item_id }`.
+    /// The PRF results, when the site asked for them, depend on user
+    /// verification: the output for the same salt differs between a request
+    /// with `user_verified` true and one with it false (spec § 9.3, as with
+    /// the CTAP2 `hmac-secret` extension, which has two seeds). A site that
+    /// uses the output as a key therefore needs user verification every time.
+    ///
+    /// Returns `{ item: { rev, envelope, tag }, item_id, pending }`.
     #[allow(clippy::too_many_arguments)]
     pub fn passkey_create(
         &mut self,
@@ -246,8 +293,7 @@ impl Vault {
             let dto: CreateDto = from_js(request)?;
             let ctx = from_js::<CallerDto>(caller)?.core()?;
             let uv = from_js::<UvDto>(uv)?.core();
-            let existing: Vec<ExistingDto> = from_js_list(existing)?;
-            let existing: Vec<ExistingCredential> = existing
+            let mut existing: Vec<ExistingCredential> = existing_list(existing)?
                 .into_iter()
                 .map(|e| ExistingCredential {
                     rp_id: e.rp_id,
@@ -270,6 +316,13 @@ impl Vault {
             };
 
             let inner = self.inner_mut()?;
+            // The open items count as stored whatever the caller listed.
+            existing.extend(inner.items.values().filter_map(|i| {
+                i.body.passkey.as_ref().map(|p| ExistingCredential {
+                    rp_id: p.rp_id.clone(),
+                    cred_id: p.cred_id.clone(),
+                })
+            }));
             let created = passkey_create(&mut OsRng, &req, &ctx, uv, &existing, now)?;
 
             // The body the passkey goes into, and the envelope whose item key
@@ -307,9 +360,72 @@ impl Vault {
                 &body,
                 envelope.as_deref(),
             )?;
+            let out_item = SealedDto::of(&sealed);
 
-            let r = &created.response;
-            let out = to_js(&CreatedDto {
+            let handle = inner.new_handle()?;
+            // Which open item the passkey goes into, and the envelope that
+            // item has now: if it changes before the confirmation, the sealed
+            // item is out of date.
+            let attach = attach_to.zip(envelope);
+            inner.passkey = Some(PendingPasskey {
+                handle,
+                response: created.response,
+                item: OpenItem {
+                    item_id: id,
+                    envelope: sealed.envelope,
+                    body,
+                },
+                attach_to: attach,
+            });
+            to_js(&CreatedDto {
+                item: out_item,
+                item_id: *id.as_bytes(),
+                pending: handle,
+            })
+        })
+    }
+
+    /// Releases the answer of `passkey_create` after the caller has stored
+    /// the sealed item on the server. Opens the item (a new handle) or, for
+    /// `attach_to`, updates the open item, and returns `{ response, handle }`.
+    /// The binding keeps nothing of the passkey's answer afterwards.
+    ///
+    /// If the open item that the passkey was added to has been changed since
+    /// `passkey_create` (the sealed item is then out of date), this is
+    /// `invalid_state` and the answer stays held until `passkey_create_abort`.
+    pub fn passkey_create_confirm(&mut self, pending: u32) -> Result<JsValue, JsValue> {
+        run(|| {
+            let inner = self.inner_mut()?;
+            let waiting = inner
+                .passkey
+                .as_ref()
+                .filter(|p| p.handle == pending)
+                .ok_or(Fail::Handle)?;
+            match &waiting.attach_to {
+                Some((h, base)) => {
+                    let open = inner.items.get(h).ok_or(Fail::Handle)?;
+                    if open.envelope != *base {
+                        return Err(ferret_core::Error::InvalidState.into());
+                    }
+                }
+                None => {
+                    if inner.items.len() >= MAX_OPEN {
+                        return Err(ferret_core::Error::TooLarge.into());
+                    }
+                }
+            }
+            let done = inner.passkey.take().ok_or(Fail::Handle)?;
+            let handle = match done.attach_to {
+                Some((h, _)) => {
+                    if let Some(slot) = inner.items.get_mut(&h) {
+                        *slot = done.item;
+                    }
+                    h
+                }
+                None => inner.open(done.item)?,
+            };
+            let r = &done.response;
+            to_js(&ConfirmedDto {
                 response: CreateResponseDto {
                     id: Bytes(r.id.clone()),
                     attestation_object: Bytes(r.attestation_object.clone()),
@@ -322,32 +438,37 @@ impl Vault {
                         results: p.results.as_ref().map(PrfResultsDto::of),
                     }),
                 },
-                item: SealedDto::of(&sealed),
-                item_id: *id.as_bytes(),
-            })?;
+                handle,
+            })
+        })
+    }
 
-            match attach_to {
-                Some(h) => {
-                    if let Some(open) = inner.items.get_mut(&h) {
-                        open.envelope = sealed.envelope;
-                        open.body = body;
-                    }
-                }
-                None => {
-                    inner.open(OpenItem {
-                        item_id: id,
-                        envelope: sealed.envelope,
-                        body,
-                    })?;
-                }
+    /// Drops a passkey that `passkey_create` made and that was not
+    /// confirmed: the answer for the page is wiped and never released.
+    pub fn passkey_create_abort(&mut self, pending: u32) -> Result<(), JsValue> {
+        run(|| {
+            let inner = self.inner_mut()?;
+            if inner.passkey.as_ref().is_some_and(|p| p.handle == pending) {
+                inner.passkey = None;
+                Ok(())
+            } else {
+                Err(Fail::Handle)
             }
-            Ok(out)
         })
     }
 
     /// Signs in with the passkey in the open item `handle`, for a
     /// `navigator.credentials.get` request. The RP ID of the request must be
-    /// exactly the stored one. Returns `{ id, authenticator_data,
+    /// exactly the stored one. Match `allow` against the `cred_id` that
+    /// `item_view` shows before asking the user.
+    ///
+    /// The PRF results depend on user verification: the passkey has two seeds
+    /// (spec § 9.3, as the CTAP2 `hmac-secret` extension), and the one used
+    /// follows `uv.user_verified`. The same salt gives different outputs with
+    /// and without it, so a site that derives keys from the output needs user
+    /// verification on every request.
+    ///
+    /// Returns `{ id, authenticator_data,
     /// client_data_json, signature, user_handle, prf }`.
     pub fn passkey_get(
         &self,

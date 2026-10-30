@@ -32,16 +32,24 @@
 //! | passkey unlock | `unlock_prf` |
 //! | PIN unlock | `pin_unlock` |
 //! | full rekey | `login_start`, `login_finish`, `rekey`, `Vault.auth_sign("rekey")`, `Vault.rekey_commit` |
+//! | plaintext export | `login_start`, `login_finish`, `reauth_grant`, `Vault.reveal_plain_export` |
 //!
 //! The core's `ferret_core::change_password` is the KSF upgrade as well: the
 //! same password with a higher profile.
+//!
+//! There is no single call for "change the master password and rotate the
+//! keys". A client does it in two flows, in this order: first the password
+//! change above, then, once the server has accepted it, a fresh sign-in with
+//! the new password and the full rekey. The rekey wraps the new vault key
+//! under the key of that new sign-in, so the order cannot be reversed without
+//! the rekey being made under the old password.
 
 use crate::convert::{
     ANY, CheckpointDto, CtxDto, IdsDto, Pin, PinArg, PinnedDto, RowDto, SealedDto, Shape, Shaped,
     WrapDto, b16, b32, bytes, core, from_js, to_js,
 };
 use crate::error::{Fail, Res, run};
-use crate::vault::{PendingRekey, Setup, Vault};
+use crate::vault::{PendingRekey, ReauthGrant, Setup, Vault};
 use ferret_core::{
     Error, ExportKey, Kek, KekDevPin, KsfProfile, LoginState, MasterPassword, Method, MethodId,
     MpPolicy, NewAccountIds, NewPassword, OpaqueInput, OsRng, Pin as PinDigits, Pinned,
@@ -200,6 +208,8 @@ struct RekeyBundleDto {
     manifest: SealedDto,
     checkpoint: CheckpointDto,
     pinned: PinnedDto,
+    #[serde(with = "bytes")]
+    sync_memory: Vec<u8>,
 }
 
 /// The export key and server key of a login that has been finished, kept in
@@ -940,7 +950,14 @@ impl UnlockJob {
     /// recovery_method_id }`; `pinned` is the record of this device with its
     /// floors seeded. Returns the plan (`vk_epoch`, `base_seq`, `pk_a`,
     /// `pk_r`, `items`, `tombstones`, `wraps`, `manifest`, `checkpoint`,
-    /// `pinned`: the record to store once the server has applied it).
+    /// `pinned`: the record to store once the server has applied it, and
+    /// `sync_memory`: the updated rollback memory to store).
+    ///
+    /// `sync_memory` is the client's stored rollback memory (`SyncMemory`
+    /// bytes; `sync_memory_new()` for a device that has seen nothing of this
+    /// vault). It is required: a checkpoint, a top `seq` or a row below what
+    /// the device has seen is refused (`checkpoint_*_below_remembered`) before
+    /// anything is drawn, because a rekey makes the server's state current.
     ///
     /// The new vault is held by `vault` as pending. Sign the request with the
     /// old vault (`vault.auth_sign("rekey", nonce, body)`), and when the
@@ -951,6 +968,7 @@ impl UnlockJob {
         vault: &mut Vault,
         input: JsValue,
         pinned: JsValue,
+        sync_memory: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let dto: RekeyInputDto = from_js(input)?;
@@ -983,8 +1001,7 @@ impl UnlockJob {
                 .collect();
             let unlocked = vault.unlocked()?;
             let kek = Kek::from_export_key(&unlocked.context().account_id, &done.export_key)?;
-            // The rollback memory (`SyncMemory`) is not exposed through this
-            // binding yet, so the rekey runs without one.
+            let mut memory = ferret_core::SyncMemory::from_bytes(&sync_memory)?;
             let bundle = unlocked.rekey(
                 &mut OsRng,
                 &RekeyInput {
@@ -1006,7 +1023,7 @@ impl UnlockJob {
                     recovery_method_id: MethodId::from_bytes(dto.recovery_method_id),
                     pinned: &record,
                 },
-                ferret_core::RollbackMemory::NoMemory,
+                ferret_core::RollbackMemory::Remembered(&mut memory),
             )?;
             let new_record = bundle.pinned(&record)?;
             let out = to_js(&RekeyBundleDto {
@@ -1042,6 +1059,7 @@ impl UnlockJob {
                     entries: bundle.checkpoint.entries.clone(),
                 },
                 pinned: PinnedDto::of(&new_record),
+                sync_memory: memory.to_bytes(),
             })?;
             let secret_key = self.secret_key.as_ref().map(copy_secret_key).transpose()?;
             let ferret_core::RekeyBundle {
@@ -1060,6 +1078,50 @@ impl UnlockJob {
                 ),
             });
             // The sign-in is used up.
+            self.reset();
+            Ok(out)
+        })
+    }
+
+    /// Makes the one-time token that `Vault.reveal_plain_export` needs. Like
+    /// a rekey it needs a fresh sign-in of this job (`login_start`,
+    /// `login_finish`) in which the master password was typed again. `pw_wrap`
+    /// is the vault's password wrap record from the server: it is opened with
+    /// the key of this sign-in, and has to hold this vault's key, so a
+    /// sign-in to another account (or with a wrong password, which already
+    /// failed at `login_finish`) gives no token. The sign-in is used up.
+    ///
+    /// `now_ms` is the caller's clock in unix milliseconds. Returns 32 bytes.
+    /// The vault keeps a copy until the export uses it, a new token replaces
+    /// it, five minutes have passed (by the clock the export is given), or
+    /// the vault is locked or rekeyed.
+    pub fn reauth_grant(
+        &mut self,
+        vault: &mut Vault,
+        pw_wrap: JsValue,
+        now_ms: f64,
+    ) -> Result<Vec<u8>, JsValue> {
+        run(|| {
+            let now = crate::convert::js_time(now_ms)?;
+            let rec = from_js::<WrapDto>(pw_wrap)?.core()?;
+            if !matches!(rec.method, Method::Password { .. }) {
+                return Err(Fail::Input);
+            }
+            let done = self.login_done.as_ref().ok_or(Fail::Input)?;
+            let unlocked = vault.unlocked()?;
+            let ctx = unlocked.context();
+            let kek = Kek::from_export_key(&ctx.account_id, &done.export_key)?;
+            let opened = unwrap_vk(ctx, &kek, &rec)?;
+            if !opened.same_vault_key(unlocked) {
+                return Err(Error::Decrypt.into());
+            }
+            let mut token = Zeroizing::new([0u8; 32]);
+            ferret_core::SecureRng::fill(&mut OsRng, &mut *token);
+            let out = token.to_vec();
+            vault.inner_mut()?.grant = Some(ReauthGrant {
+                token,
+                granted_ms: now,
+            });
             self.reset();
             Ok(out)
         })

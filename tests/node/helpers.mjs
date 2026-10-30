@@ -82,3 +82,29 @@ export const LOGIN_DRAFT = {
   totp: { uri: "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example" },
   notes: "private note text",
 };
+
+/** The `existing` value of `passkey_create` that says no passkey is stored. */
+export const NO_EXISTING = "no_existing";
+
+/**
+ * Makes a passkey and confirms it, as a client does after the server has
+ * accepted the item. Returns `{ item, item_id, response, handle }`.
+ */
+export function passkeyCreate(vault, ...args) {
+  const made = vault.passkey_create(...args);
+  const done = vault.passkey_create_confirm(made.pending);
+  return { item: made.item, item_id: made.item_id, response: done.response, handle: done.handle };
+}
+
+/**
+ * A fresh sign-in with the master password for `account` (from `newAccount`)
+ * and the one-time token of `reauth_grant` that it makes.
+ */
+export function reauthToken(account, password = PASSWORD) {
+  const { server, vault, created, record } = account;
+  const job = new wasm.UnlockJob();
+  const ke1 = job.login_start(enc.encode(password), vault.reveal_secret_key_code());
+  const ke2 = server.login_start(record, IDS.account_id, ke1);
+  job.login_finish(ke2, 1, pinned(created.pinned));
+  return job.reauth_grant(vault, created.wraps[0], NOW);
+}

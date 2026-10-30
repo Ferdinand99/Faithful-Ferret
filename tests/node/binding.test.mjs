@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { test } from "node:test";
 import {
-  CTX, IDS, LOGIN_DRAFT, NOW, PASSWORD, PASSWORD_2, URL_, codeOf, enc, fill, firstUse,
-  newAccount, pinned, row, signIn, wasm,
+  CTX, IDS, LOGIN_DRAFT, NO_EXISTING, NOW, PASSWORD, PASSWORD_2, URL_, codeOf, enc, fill, firstUse,
+  newAccount, passkeyCreate, pinned, reauthToken, row, signIn, wasm,
 } from "./helpers.mjs";
 
 const ITEM = fill(16, 0x41);
@@ -178,15 +178,18 @@ function assertSignature(created, got) {
 test("item_view_of_a_passkey_hides_the_key_and_the_seeds", () => {
   const { vault } = newAccount("pk-view");
   const id = fill(16, 0x51);
-  const created = vault.passkey_create(id, 1, "Example", CREATE, CALLER, UV, [], NOW, undefined);
+  const created = passkeyCreate(vault, id, 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
   // The address of the site is set on a new item.
   const h = open(vault, id, created.item);
   const view = vault.item_view(h);
   assert.deepEqual(view.urls.map((u) => u.url), ["https://example.com"]);
   assert.equal(view.passkey.rp_id, "example.com");
   assert.equal(view.passkey.has_prf, true);
+  // The public ids are shown, so excludeCredentials and allowCredentials can be built.
+  assert.deepEqual(view.passkey.cred_id, created.response.id);
+  assert.deepEqual(view.passkey.user_handle, CREATE.user_id);
   const text = JSON.stringify(view);
-  for (const key of ["priv", "prf_seed", "private_key", "secret", "user_handle"]) {
+  for (const key of ["priv", "prf_seed", "private_key", "secret"]) {
     assert.ok(!text.includes(key), key);
   }
   assert.equal(created.response.alg, -7);
@@ -198,7 +201,7 @@ test("item_view_of_a_passkey_hides_the_key_and_the_seeds", () => {
 test("edit_keeps_unchanged_secrets_inside_wasm", () => {
   const { vault } = newAccount("pk-edit");
   const id = fill(16, 0x52);
-  const created = vault.passkey_create(id, 1, "Example", CREATE, CALLER, UV, [], NOW, undefined);
+  const created = passkeyCreate(vault, id, 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
   let h = open(vault, id, created.item);
   const before = vault.passkey_get(h, GET, CALLER, UV);
   assertSignature(created, before);
@@ -218,9 +221,9 @@ test("edit_keeps_unchanged_secrets_inside_wasm", () => {
   const ph = open(vault, fill(16, 0x53), plain);
   assert.equal(code(() => vault.encrypt_item(fill(16, 0x53), 2, { passkey: { user_name: "x" } }, ph, NOW)), "invalid_input");
   // A passkey attached to a login that exists changes nothing else in it.
-  const attached = vault.passkey_create(
+  const attached = passkeyCreate(vault,
     fill(16, 0x41), 2, "ignored",
-    { ...CREATE, user_name: "carol" }, CALLER, UV, [], NOW + 9,
+    { ...CREATE, user_name: "carol" }, CALLER, UV, NO_EXISTING, NOW + 9,
     (() => {
       const first = vault.encrypt_item(fill(16, 0x41), 1, LOGIN_DRAFT, undefined, NOW);
       return open(vault, fill(16, 0x41), first);
@@ -236,7 +239,7 @@ test("edit_keeps_unchanged_secrets_inside_wasm", () => {
   assertSignature(attached, vault.passkey_get(ah, GET, CALLER, UV));
   // A second passkey is not put over the first one: invalid_state.
   assert.equal(
-    code(() => vault.passkey_create(fill(16, 0x41), 3, "ignored", { ...CREATE, user_name: "dave" }, CALLER, UV, [], NOW + 20, ah)),
+    code(() => passkeyCreate(vault, fill(16, 0x41), 3, "ignored", { ...CREATE, user_name: "dave" }, CALLER, UV, NO_EXISTING, NOW + 20, ah)),
     "invalid_state",
   );
   assertSignature(attached, vault.passkey_get(ah, GET, CALLER, UV));
@@ -245,7 +248,7 @@ test("edit_keeps_unchanged_secrets_inside_wasm", () => {
 test("passkey_rules_hold_in_the_binding", () => {
   const { vault } = newAccount("pk-rules");
   const id = fill(16, 0x54);
-  const created = vault.passkey_create(id, 1, "E", CREATE, CALLER, UV, [], NOW, undefined);
+  const created = passkeyCreate(vault, id, 1, "E", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
   const h = open(vault, id, created.item);
   // Cross-origin and a wrong RP ID are the one value, not_allowed.
   assert.equal(code(() => vault.passkey_get(h, GET, { ...CALLER, top_origin_is_same: false }, UV)), "not_allowed");
@@ -255,10 +258,156 @@ test("passkey_rules_hold_in_the_binding", () => {
   // item is not made.
   const credId = created.response.id;
   assert.equal(
-    code(() => vault.passkey_create(fill(16, 0x55), 1, "E", { ...CREATE, exclude: [credId] }, CALLER, UV, [{ rp_id: "example.com", id: credId }], NOW, undefined)),
+    code(() => passkeyCreate(vault, fill(16, 0x55), 1, "E", { ...CREATE, exclude: [credId] }, CALLER, UV, [{ rp_id: "example.com", id: credId }], NOW, undefined)),
     "invalid_state",
   );
-  assert.equal(code(() => vault.passkey_create(fill(16, 0x55), 1, "E", { ...CREATE, extra: 1 }, CALLER, UV, [], NOW, undefined)), "invalid_input");
+  assert.equal(code(() => passkeyCreate(vault, fill(16, 0x55), 1, "E", { ...CREATE, extra: 1 }, CALLER, UV, NO_EXISTING, NOW, undefined)), "invalid_input");
+});
+
+test("a_passkey_is_released_only_after_the_item_is_confirmed_stored", () => {
+  const { vault } = newAccount("pk-pending");
+  const id = fill(16, 0x56);
+  const made = vault.passkey_create(id, 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  // The call returns the sealed item and a handle, and nothing for the page.
+  assert.deepEqual(Object.keys(made).sort(), ["item", "item_id", "pending"]);
+  assert.equal(typeof made.pending, "number");
+  assert.equal(made.response, undefined);
+  // The item is not open yet: the binding holds nothing the server has not accepted.
+  assert.equal(code(() => vault.item_view(made.pending)), "invalid_handle");
+  // The answer for the page comes with the confirmation, once.
+  const done = vault.passkey_create_confirm(made.pending);
+  assert.equal(done.response.alg, -7);
+  assert.equal(done.response.id.length > 0, true);
+  assert.equal(vault.item_view(done.handle).passkey.rp_id, "example.com");
+  assert.equal(code(() => vault.passkey_create_confirm(made.pending)), "invalid_handle", "nothing is kept after the confirmation");
+  assert.equal(code(() => vault.passkey_create_abort(made.pending)), "invalid_handle");
+  // The sealed item is the one the answer belongs to.
+  const h = open(vault, id, made.item);
+  assertSignature(done, vault.passkey_get(h, GET, CALLER, UV));
+});
+
+test("an_aborted_or_replaced_passkey_is_never_released", () => {
+  const { vault } = newAccount("pk-abort");
+  const id = fill(16, 0x57);
+  const first = vault.passkey_create(id, 1, "A", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  vault.passkey_create_abort(first.pending);
+  assert.equal(code(() => vault.passkey_create_confirm(first.pending)), "invalid_handle");
+  // The next passkey replaces one that is waiting.
+  const second = vault.passkey_create(id, 1, "B", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  const third = vault.passkey_create(id, 1, "C", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  assert.notEqual(second.pending, third.pending);
+  assert.equal(code(() => vault.passkey_create_confirm(second.pending)), "invalid_handle");
+  assert.equal(vault.passkey_create_confirm(third.pending).response.alg, -7);
+  // A failed call leaves nothing waiting.
+  assert.equal(code(() => vault.passkey_create(id, 1, "D", { ...CREATE, extra: 1 }, CALLER, UV, NO_EXISTING, NOW, undefined)), "invalid_input");
+  // Locking drops what waits.
+  const waiting = vault.passkey_create(fill(16, 0x58), 1, "E", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  vault.lock();
+  assert.equal(code(() => vault.passkey_create_confirm(waiting.pending)), "vault_locked");
+});
+
+test("a_passkey_added_to_an_open_item_is_confirmed_only_if_the_item_is_unchanged", () => {
+  const { vault } = newAccount("pk-attach");
+  const id = fill(16, 0x59);
+  const first = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, id, first);
+  const made = vault.passkey_create(id, 2, "x", CREATE, CALLER, UV, NO_EXISTING, NOW + 1, h);
+  // Until the confirmation the open item has no passkey.
+  assert.equal(vault.item_view(h).passkey, null);
+  // The item is edited in the meantime: the sealed item is out of date.
+  vault.encrypt_item(id, 2, { name: "Edited" }, h, NOW + 2);
+  assert.equal(code(() => vault.passkey_create_confirm(made.pending)), "invalid_state");
+  assert.equal(vault.item_view(h).passkey, null);
+  vault.passkey_create_abort(made.pending);
+  // Without an edit it is applied to the same handle.
+  const again = vault.passkey_create(id, 3, "x", CREATE, CALLER, UV, NO_EXISTING, NOW + 3, h);
+  const done = vault.passkey_create_confirm(again.pending);
+  assert.equal(done.handle, h);
+  assert.equal(vault.item_view(h).passkey.rp_id, "example.com");
+  assert.equal(vault.item_view(h).name, "Edited");
+  // The item was closed before the confirmation: invalid_handle.
+  const other = fill(16, 0x5a);
+  const oh = open(vault, other, vault.encrypt_item(other, 1, LOGIN_DRAFT, undefined, NOW));
+  const pending = vault.passkey_create(other, 2, "x", CREATE, CALLER, UV, NO_EXISTING, NOW + 4, oh);
+  vault.close_item(oh);
+  assert.equal(code(() => vault.passkey_create_confirm(pending.pending)), "invalid_handle");
+});
+
+test("existing_must_be_given_and_the_open_passkeys_are_always_checked", () => {
+  const { vault } = newAccount("pk-existing");
+  const id = fill(16, 0x5b);
+  // Nothing, an empty array, or something that is not a list is not "none".
+  for (const bad of [undefined, null, [], {}, "none", "", 5]) {
+    assert.equal(code(() => vault.passkey_create(id, 1, "E", CREATE, CALLER, UV, bad, NOW, undefined)), "invalid_input", String(bad));
+  }
+  // The passkeys of the open items count even when the caller says "none".
+  const made = passkeyCreate(vault, id, 1, "E", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  const again = { ...CREATE, exclude: [made.response.id] };
+  assert.equal(
+    code(() => vault.passkey_create(fill(16, 0x5c), 1, "E", again, CALLER, UV, NO_EXISTING, NOW, undefined)),
+    "invalid_state",
+  );
+  // Another site is not excluded by it.
+  const other = { ...CREATE, rp_id: "other.com", exclude: [made.response.id] };
+  const ok = vault.passkey_create(fill(16, 0x5d), 1, "E", other, { origin: "https://other.com", top_origin_is_same: true }, UV, NO_EXISTING, NOW, undefined);
+  vault.passkey_create_abort(ok.pending);
+  // A listed passkey that the vault does not have open is checked too.
+  const listed = [{ rp_id: "example.com", id: fill(24, 0x77) }];
+  assert.equal(
+    code(() => vault.passkey_create(fill(16, 0x5e), 1, "E", { ...CREATE, exclude: [fill(24, 0x77)] }, CALLER, UV, listed, NOW, undefined)),
+    "invalid_state",
+  );
+  assert.equal(
+    code(() => vault.passkey_create(fill(16, 0x5e), 1, "E", { ...CREATE, exclude: [fill(24, 0x77)] }, CALLER, UV, [{ rp_id: "example.com", id: 5 }], NOW, undefined)),
+    "invalid_input",
+  );
+});
+
+test("a_passkey_of_the_vault_cannot_become_an_unlock_method", () => {
+  const { vault } = newAccount("pk-circular");
+  const id = fill(16, 0x5f);
+  const made = passkeyCreate(vault, id, 1, "E", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  const credId = made.response.id;
+  const prf = () => fill(32, 0x33);
+  const wrap = (cred, aaguid, stored) => vault.wrap_prf(cred, fill(32, 0x55), prf(), fill(16, 0x76), 1, aaguid, stored);
+  const ferret = wasm.ferret_aaguid();
+  assert.equal(ferret.length, 16);
+  // Ferret's own authenticator.
+  assert.equal(code(() => wrap(fill(24, 0x44), ferret, "no_stored_passkeys")), "invalid_state");
+  // A credential id of an open passkey, whatever the AAGUID says.
+  assert.equal(code(() => wrap(credId, fill(16, 0xaa), "no_stored_passkeys")), "invalid_state");
+  // A credential id that only the list knows (an item that is not open).
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [fill(24, 0x44)])), "invalid_state");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [new Uint8Array([1]), fill(24, 0x44)])), "invalid_state");
+  // The list and the AAGUID are required, and typed.
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), undefined)), "invalid_input");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), "none")), "invalid_input");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [])), "invalid_input", "an empty list is not the marker for none");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(15, 0xaa), "no_stored_passkeys")), "invalid_input");
+  // Another authenticator, a credential the vault does not hold: fine. So is
+  // the all-zero AAGUID that platform authenticators report.
+  assert.equal(wrap(fill(24, 0x44), fill(16, 0xaa), [fill(24, 0x45)]).method.type, "prf");
+  assert.equal(wrap(fill(24, 0x46), new Uint8Array(16), "no_stored_passkeys").method.type, "prf");
+});
+
+test("item_handles_of_an_earlier_session_do_not_name_another_item", () => {
+  const account = newAccount("handles");
+  const { vault, server, created, record } = account;
+  const id = fill(16, 0x41);
+  const sealed = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const h1 = open(vault, id, sealed);
+  const sk = vault.reveal_secret_key_code();
+  const second = signIn(server, record, PASSWORD, sk, pinned(created.pinned), created.wraps[0]).vault;
+  // The stale handle is not open in the new session.
+  assert.equal(code(() => second.item_view(h1)), "invalid_handle");
+  assert.equal(code(() => second.reveal_item_notes(h1)), "invalid_handle");
+  assert.equal(code(() => second.close_item(h1)), "invalid_handle");
+  // The new session numbers from its own start, and counts up from there.
+  const a = open(second, id, sealed);
+  const b = open(second, id, sealed);
+  assert.equal(b, (a + 1) % 2 ** 32);
+  assert.notEqual(a, h1);
+  assert.equal(Number.isInteger(a) && a >= 0 && a < 2 ** 32, true);
 });
 
 // ----------------------------------------------------- sign-in and flows
@@ -509,7 +658,7 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
     { item_id: idA, rev: 1, hash: sha(item.envelope) },
     { item_id: fill(16, 0x62), rev: 4, hash: null },
   ]);
-  vault.verify_checkpoint(
+  const memory = vault.verify_checkpoint(
     checkpoint,
     [
       { item_id: new Uint8Array(16), rev: created.manifest.rev, state: "live", envelope: created.manifest.envelope, tag: created.manifest.tag },
@@ -517,6 +666,7 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
       { item_id: fill(16, 0x62), rev: 4, state: "deleted", tomb: tomb.tomb },
     ],
     7,
+    wasm.sync_memory_new(),
   );
 
   // A sign-in for KEK_pw.
@@ -536,8 +686,10 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
       recovery_method_id: fill(16, 0x74),
     },
     created.pinned,
+    memory,
   );
   assert.equal(plan.vk_epoch, 2);
+  assert.deepEqual(plan.sync_memory, memory, "the rekey was based on the state the memory already holds");
   assert.equal(plan.items[0].rev, 2);
   assert.equal(plan.pinned.vk_epoch_max, 2);
   assert.deepEqual(plan.pinned.pk_a, plan.pk_a);
@@ -571,7 +723,7 @@ test("pin_and_passkey_unlock_go_through_the_same_checks", () => {
   assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, fill(32, 1))), "decrypt", "the mobile variant is another key");
   // Passkey (PRF): the 32 bytes the authenticator gave.
   const prf = fill(32, 0x33);
-  const prfWrap = vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prf, fill(16, 0x76), 1);
+  const prfWrap = vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prf.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   assert.equal(prfWrap.wrap.length, 72);
   const withKey = pinned(created.pinned, { server_public_key: created.pinned.server_public_key });
   const viaPrf = new wasm.UnlockJob().unlock_prf(URL_, CTX, prf.slice(), prfWrap, withKey);
@@ -617,7 +769,7 @@ test("export_and_import_split_the_slow_step_into_the_job_worker", () => {
     row(ids[1], vault.encrypt_item(ids[1], 1, { item_type: "note", name: "Second", notes: "n" }, undefined, NOW)),
   ];
   const kdf = { m_kib: 65536, t: 3, p: 1 };
-  const started = vault.export_begin(rows, NOW, kdf);
+  const started = vault.test_export_begin(rows, NOW, kdf);
   assert.equal(started.salt.length, 16);
   assert.deepEqual(started.kdf, kdf);
   const exportPassword = "export password for tests";
@@ -659,12 +811,84 @@ test("export_and_import_split_the_slow_step_into_the_job_worker", () => {
   damaged[damaged.length - 1] ^= 1;
   assert.equal(code(() => vault.import_open(damaged, key.slice())), "decrypt");
   assert.equal(code(() => wasm.import_header(new Uint8Array(10))), "malformed_export_header");
-  // The plaintext exports are explicit.
-  const json = vault.reveal_plain_export(rows, "json", false);
+});
+
+test("export_begin_refuses_kdf_parameters_below_the_default", () => {
+  const { vault } = newAccount("export-floor");
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  for (const kdf of [
+    { m_kib: 65536, t: 3, p: 1 },
+    { m_kib: 262144, t: 2, p: 1 },
+    { m_kib: 131072, t: 9, p: 1 },
+    { m_kib: 262143, t: 3, p: 1 },
+  ]) {
+    assert.equal(code(() => vault.export_begin(rows, NOW, kdf)), "kdf_out_of_range", JSON.stringify(kdf));
+  }
+  // The default (256 MiB, 3 passes) and anything stronger is fine; only the
+  // draft is made here, no Argon2id runs.
+  assert.deepEqual(vault.export_begin(rows, NOW, undefined).kdf, { m_kib: 262144, t: 3, p: 1 });
+  assert.deepEqual(vault.export_begin(rows, NOW, { m_kib: 262144, t: 4, p: 1 }).kdf, { m_kib: 262144, t: 4, p: 1 });
+  // A key that is refused (here: too short) leaves the draft in place, so the
+  // export can be finished with the right key.
+  assert.equal(code(() => vault.export_finish(fill(31, 7))), "input_too_short");
+  assert.ok(vault.export_finish(fill(32, 7)).length > 100);
+});
+
+test("a_plaintext_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
+  const account = newAccount("plain-token");
+  const { vault } = account;
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  const token = reauthToken(account);
+  assert.equal(token.length, 32);
+  // No token, a short one, a zero one, a wrong one: reauth_required, and each
+  // attempt uses up the grant.
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, new Uint8Array(0), NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, token.slice(), NOW)), "reauth_required", "used up by the failed attempt");
+  const second = reauthToken(account);
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, fill(32, 7), NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, second.slice(), NOW)), "reauth_required");
+  // A format mistake is invalid_input and leaves the token valid.
+  const third = reauthToken(account);
+  assert.equal(code(() => vault.reveal_plain_export(rows, "xml", false, third.slice(), NOW)), "invalid_input");
+  const json = vault.reveal_plain_export(rows, "json", false, third.slice(), NOW);
   assert.ok(json.includes("hunter2-secret"));
-  const csv = vault.reveal_plain_export(rows, "csv", false);
+  // One use only.
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, third.slice(), NOW)), "reauth_required");
+  const csv = vault.reveal_plain_export(rows, "csv", false, reauthToken(account), NOW);
   assert.ok(csv.startsWith("id,type,name"));
-  assert.equal(code(() => vault.reveal_plain_export(rows, "xml", false)), "invalid_input");
+  // A new token replaces the one before it.
+  const old = reauthToken(account);
+  const newer = reauthToken(account);
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, old, NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, newer, NOW)), "reauth_required", "the failed attempt used it up");
+  // Locking drops the grant.
+  const kept = reauthToken(account);
+  vault.lock();
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, kept, NOW)), "vault_locked");
+});
+
+test("reauth_grant_needs_a_fresh_sign_in_for_this_vault", () => {
+  const account = newAccount("grant-checks");
+  const other = newAccount("grant-other", { password: PASSWORD_2 });
+  const { vault, server, created, record } = account;
+  // No sign-in at all.
+  assert.equal(code(() => new wasm.UnlockJob().reauth_grant(vault, created.wraps[0], NOW)), "invalid_input");
+  // A sign-in to another account does not open this vault's password wrap.
+  const job = new wasm.UnlockJob();
+  const ke1 = job.login_start(enc.encode(PASSWORD_2), other.vault.reveal_secret_key_code());
+  const ke2 = other.server.login_start(other.record, IDS.account_id, ke1);
+  job.login_finish(ke2, 1, pinned(other.created.pinned));
+  assert.equal(code(() => job.reauth_grant(vault, created.wraps[0], NOW)), "decrypt");
+  // The recovery wrap is not a password wrap.
+  const job2 = new wasm.UnlockJob();
+  const k1 = job2.login_start(enc.encode(PASSWORD), vault.reveal_secret_key_code());
+  job2.login_finish(server.login_start(record, IDS.account_id, k1), 1, pinned(created.pinned));
+  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[1], NOW)), "invalid_input");
+  // The sign-in is used up by a grant.
+  assert.equal(job2.reauth_grant(vault, created.wraps[0], NOW).length, 32);
+  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[0], NOW)), "invalid_input");
 });
 
 // ------------------------------------------------------------ the memory
@@ -687,4 +911,187 @@ test("argon2_oom_maps_to_code", () => {
   // The instance is still usable afterwards (the client ends its worker
   // anyway).
   assert.equal(wasm.test_argon2_unchecked(64), "ok");
+});
+
+// ------------------------------------------- rollback memory and the methods
+
+const sha256 = (b) => new Uint8Array(createHash("sha256").update(Buffer.from(b)).digest());
+
+/** A checkpoint and the rows it describes: the manifest and one item. */
+function snapshot(vault, created, id, sealed, seq) {
+  const checkpoint = vault.make_checkpoint(seq, [
+    { item_id: new Uint8Array(16), rev: created.manifest.rev, hash: sha256(created.manifest.envelope) },
+    { item_id: id, rev: sealed.rev, hash: sha256(sealed.envelope) },
+  ]);
+  const rows = [
+    { item_id: new Uint8Array(16), rev: created.manifest.rev, state: "live", envelope: created.manifest.envelope, tag: created.manifest.tag },
+    { item_id: id, rev: sealed.rev, state: "live", envelope: sealed.envelope, tag: sealed.tag },
+  ];
+  return { checkpoint, rows, seq };
+}
+
+test("the_rollback_memory_refuses_a_lower_rev_or_seq_and_round_trips", () => {
+  const { vault, created } = newAccount("rollback");
+  const id = fill(16, 0x71);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const s1 = snapshot(vault, created, id, v1, 5);
+  const s2 = snapshot(vault, created, id, v2, 6);
+  const verify = (s, memory) => vault.verify_checkpoint(s.checkpoint, s.rows, s.seq, memory);
+
+  const empty = wasm.sync_memory_new();
+  assert.ok(empty instanceof Uint8Array && empty.length === 21, "version, two seqs and a count");
+  const m1 = verify(s1, empty);
+  const m2 = verify(s2, m1);
+  assert.ok(m2.length > empty.length);
+  assert.notDeepEqual(m1, m2);
+  // The memory round-trips: the same state again gives the same bytes.
+  assert.deepEqual(verify(s2, m2), m2);
+  assert.deepEqual(verify(s1, empty), m1);
+
+  // A lower checkpoint seq is refused; the bytes the client holds stay valid.
+  assert.equal(code(() => verify(s1, m2)), "checkpoint_seq_below_remembered");
+  // A newer checkpoint that shows an older revision of an item is refused.
+  const lowRev = snapshot(vault, created, id, v1, 7);
+  assert.equal(code(() => verify(lowRev, m2)), "checkpoint_rev_below_remembered");
+  assert.deepEqual(verify(s2, m2), m2, "a refusal changes nothing");
+  // The memory is required and must be what the binding wrote.
+  for (const bad of [new Uint8Array(0), fill(21, 7), m2.slice(0, 30)]) {
+    assert.equal(code(() => verify(s2, bad)), "malformed_sync_memory", String(bad));
+  }
+  assert.equal(code(() => verify(s2, fill(5, 1))), "malformed_sync_memory");
+  // A checkpoint that does not verify on its own is refused before the memory counts.
+  assert.equal(code(() => vault.verify_checkpoint(s2.checkpoint, s2.rows.slice(1), s2.seq, m2)).startsWith("checkpoint_"), true);
+});
+
+test("older_state_is_accepted_only_by_its_own_call_and_prune_is_explicit", () => {
+  const { vault, created } = newAccount("older");
+  const id = fill(16, 0x72);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const s1 = snapshot(vault, created, id, v1, 5);
+  const s2 = snapshot(vault, created, id, v2, 6);
+  const verify = (s, memory) => vault.verify_checkpoint(s.checkpoint, s.rows, s.seq, memory);
+  const m2 = verify(s2, verify(s1, wasm.sync_memory_new()));
+  assert.equal(code(() => verify(s1, m2)), "checkpoint_seq_below_remembered");
+
+  // After the user has confirmed, the older state replaces the record.
+  const older = vault.accept_older_state(s1.checkpoint, s1.rows, s1.seq);
+  assert.deepEqual(older, verify(s1, wasm.sync_memory_new()), "the record is the state of that checkpoint");
+  assert.deepEqual(verify(s1, older), older);
+  assert.deepEqual(verify(s2, older), m2, "and the newer state is accepted again from there");
+  // It has to verify on its own: a checkpoint of the rows of another state does not.
+  assert.equal(code(() => vault.accept_older_state(s1.checkpoint, s2.rows, s1.seq)).startsWith("checkpoint_"), true);
+
+  // Pruning drops the floor of an item that no longer exists, and only that.
+  const pruned = wasm.sync_memory_prune(m2, [id, fill(16, 0x99)]);
+  assert.equal(pruned.dropped, 1);
+  assert.ok(pruned.sync_memory.length < m2.length);
+  const low = snapshot(vault, created, id, v1, 7);
+  assert.equal(code(() => verify(low, m2)), "checkpoint_rev_below_remembered");
+  assert.ok(verify(low, pruned.sync_memory).length > 0, "the dropped floor is gone");
+  assert.equal(wasm.sync_memory_prune(m2, [fill(16, 0x98)]).dropped, 0);
+  assert.equal(code(() => wasm.sync_memory_prune(m2, [fill(15, 1)])), "invalid_input");
+  assert.equal(code(() => wasm.sync_memory_prune(fill(3, 1), [id])), "malformed_sync_memory");
+});
+
+test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
+  const { vault, created } = newAccount("methods");
+  const typeOf = { password: 1, recovery: 2, prf: 3 };
+  const listOf = (wraps) =>
+    wraps.map((w) => ({ method_type: typeOf[w.method.type], method_id: w.method_id, kek_generation: w.kek_generation }));
+  const server = listOf(created.wraps);
+  assert.equal(server.length, 2);
+  vault.check_server_methods(created.manifest, server);
+  // Each kind of difference has its own code.
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [...server, { method_type: 3, method_id: fill(16, 9), kek_generation: 1 }])), "method_list_unknown");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [{ ...server[0], kek_generation: 9 }, server[1]])), "method_list_changed");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [server[0]])), "method_list_missing");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [{ ...server[0], extra: 1 }, server[1]])), "invalid_input");
+  assert.equal(code(() => vault.check_server_methods({ ...created.manifest, rev: 99 }, server)), "decrypt");
+
+  // The last password and the last recovery method cannot be removed.
+  for (const w of created.wraps) {
+    assert.equal(code(() => vault.manifest_remove_method(created.manifest, w.method_id)), "input_last_method");
+  }
+  assert.equal(code(() => vault.manifest_remove_method(created.manifest, fill(16, 0x55))).length > 0, true);
+
+  // Add a passkey method: a new manifest row and the body that is signed.
+  const salt = wasm.prf_salt_new();
+  const wrap = vault.wrap_prf(fill(24, 0x44), salt, fill(32, 0x33), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
+  const add = vault.manifest_add_method(created.manifest, wrap);
+  assert.equal(add.op, "unlock-method.add");
+  assert.equal(add.sealed.rev, created.manifest.rev + 1);
+  assert.deepEqual(add.pk_a, created.pk_a);
+  const body = Buffer.from(add.body).toString("utf8");
+  assert.match(body, /"method_type":3/);
+  assert.match(body, new RegExp(`"method_id":"${"76".repeat(16)}"`));
+  assert.equal(vault.auth_sign(add.op, fill(32, 1), add.body).length, 64);
+  // The same passkey is not added twice, and a wrap that is not a passkey wrap is refused.
+  assert.ok(code(() => vault.manifest_add_method(add.sealed, wrap)).length > 0);
+  assert.ok(code(() => vault.manifest_add_method(created.manifest, created.wraps[1])).length > 0);
+  // The server's list with the new method agrees with the new manifest.
+  vault.check_server_methods(add.sealed, [...server, ...listOf([wrap])]);
+  assert.equal(code(() => vault.check_server_methods(add.sealed, server)), "method_list_missing");
+
+  // Removing it again: the new row and the body, signed with the other name.
+  const remove = vault.manifest_remove_method(add.sealed, wrap.method_id);
+  assert.equal(remove.op, "unlock-method.remove");
+  assert.equal(remove.sealed.rev, add.sealed.rev + 1);
+  assert.match(Buffer.from(remove.body).toString("utf8"), new RegExp(`"method_id":"${"76".repeat(16)}"`));
+  assert.equal(vault.auth_sign(remove.op, fill(32, 2), remove.body).length, 64);
+  vault.check_server_methods(remove.sealed, server);
+  // The last-method rule still holds after the passkey is gone.
+  assert.equal(code(() => vault.manifest_remove_method(remove.sealed, created.wraps[0].method_id)), "input_last_method");
+});
+
+test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
+  const a = wasm.prf_salt_new();
+  const b = wasm.prf_salt_new();
+  assert.equal(a.length, 32);
+  assert.ok(a.some((x) => x !== 0));
+  assert.notDeepEqual(a, b);
+  const { vault, created } = newAccount("zero-keys");
+  const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
+  assert.equal(code(() => wrap(new Uint8Array(32), fill(32, 0x33))), "input_all_zero", "a salt of zeros");
+  assert.equal(code(() => wrap(a, new Uint8Array(32))), "input_all_zero", "a PRF output of zeros");
+  assert.equal(code(() => wrap(fill(31, 5), fill(32, 0x33))), "invalid_input", "a salt of another length");
+  assert.equal(wrap(a, fill(32, 0x33)).method.type, "prf");
+  assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, new Uint8Array(32), wrap(a, fill(32, 0x33)), pinned(created.pinned))), "input_all_zero");
+  assert.equal(code(() => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), new Uint8Array(32))), "input_all_zero");
+  const id = fill(16, 0x41);
+  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW);
+  assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");
+  assert.ok(vault.export_finish(fill(32, 7)).length > 100, "the draft was kept");
+});
+
+test("the_token_is_good_for_five_minutes_and_the_clock_cannot_go_back", () => {
+  const account = newAccount("plain-ttl");
+  const { vault } = account;
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  const reveal = (token, now) => vault.reveal_plain_export(rows, "json", false, token, now);
+  // Exactly five minutes after the grant is still inside.
+  assert.ok(reveal(reauthToken(account), NOW + 300_000).includes("hunter2-secret"));
+  // One millisecond more is not, and the attempt uses the token up.
+  const late = reauthToken(account);
+  assert.equal(code(() => reveal(late.slice(), NOW + 300_001)), "reauth_required");
+  assert.equal(code(() => reveal(late.slice(), NOW)), "reauth_required", "used up by the late attempt");
+  // A clock earlier than the time of the grant is refused, not wrapped around.
+  const early = reauthToken(account);
+  assert.equal(code(() => reveal(early.slice(), NOW - 1)), "reauth_required");
+  assert.equal(code(() => reveal(early.slice(), NOW)), "reauth_required");
+  // The grant time is the one given to reauth_grant, not the export's.
+  const sameTime = reauthToken(account);
+  assert.ok(reveal(sameTime, NOW).length > 0);
+  // The clock has to be a time; a mistake there keeps the token.
+  const kept = reauthToken(account);
+  assert.equal(code(() => reveal(kept.slice(), NaN)), "invalid_input");
+  assert.equal(code(() => reveal(kept.slice(), -5)), "invalid_input");
+  assert.ok(reveal(kept, NOW + 1).length > 0);
+  // No token at all is reauth_required (not a type error), and uses the grant up.
+  const unused = reauthToken(account);
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, undefined, NOW)), "reauth_required");
+  assert.equal(code(() => reveal(unused, NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, null, NOW)), "reauth_required");
 });

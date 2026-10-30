@@ -3,6 +3,11 @@
 # user (show a field, show the recovery key after setup). The test
 # `reveal_allowlist_matches_exports` compares this list with the exports of
 # the build in both directions. One name per line; `#` starts a comment.
+#
+# `reveal_plain_export` is the widest of them (every secret of the vault, and
+# with `include_passkeys` the passkey keys). It needs the one-time token of
+# `UnlockJob.reauth_grant`, which only a fresh sign-in with the master password
+# makes; the secrets-walk test checks that it refuses without one.
 reveal_emergency_sheet
 reveal_item_field
 reveal_item_notes
