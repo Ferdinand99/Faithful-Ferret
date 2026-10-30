@@ -10,7 +10,7 @@
 //! and `prf_seed_nouv` (CTAP `CredRandomWithUV` and `CredRandomWithoutUV`).
 //! The seed is chosen by whether user verification was actually performed in
 //! the request. `eval.first` and `eval.second` give up to two outputs;
-//! `evalByCredential` follows WebAuthn L3 § 10.1.4 (plan U20): it needs a
+//! `evalByCredential` follows WebAuthn L3 § 10.1.4: it needs a
 //! non-empty `allowCredentials` (otherwise `NotSupportedError`, here
 //! [`Error::Unsupported`]), every key must be in that list (otherwise
 //! `SyntaxError`), the entry of the credential in use is evaluated, and `eval`

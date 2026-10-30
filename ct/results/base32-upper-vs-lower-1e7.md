@@ -1,6 +1,6 @@
 # info_base32_upper_vs_lower, native, 10^7 measurements x 5
 
-The decisive run of fix round 2 had this information bench (random upper-case against random lower-case base32 strings, the data difference that the decoder claims not to depend on) at -5.81 at 10^6. Looked at on the LANBox (2026-10-30T07:32:37Z), i7-9700K, CPU chosen as the least busy:
+An earlier decisive run had this information bench (random upper-case against random lower-case base32 strings, the data difference that the decoder claims not to depend on) at -5.81 at 10^6. Looked at on the LANBox (2026-10-30T07:32:37Z), i7-9700K, CPU chosen as the least busy:
 
 `CT_ONLY=info_base32_upper CT_REPEAT=5 FERRET_CT_N=10000000 scripts/lanbox.sh --exec ct/run.sh dudect-native`
 

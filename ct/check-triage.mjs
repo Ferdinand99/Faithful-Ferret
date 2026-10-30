@@ -4,7 +4,7 @@
 //
 // The analyzer has no data flow analysis: it reports every dangerous
 // instruction. A person reads the code and decides whether an operand can
-// depend on a secret (plan section 10 point 3). The decisions are in
+// depend on a secret. The decisions are in
 // TRIAGE.md, in a fenced block named `triage` with one row per class of
 // finding:
 //

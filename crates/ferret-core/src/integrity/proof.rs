@@ -1,6 +1,6 @@
 //! Signed proofs for sensitive requests.
 //!
-//! Spec: Fase 1 § 4.6 and plan U8.
+//! Spec: Fase 1 § 4.6.
 //!
 //! ```text
 //! Ferret-Proof = Ed25519.Sign(sk_a,
@@ -30,7 +30,7 @@ const LABEL_MUTATION: &str = "ferret/v1/mutation";
 /// Label of a proof signed by `sk_r`. Spec: Fase 1 § 4.6.
 const LABEL_RECOVERY_REQ: &str = "ferret/v1/recovery-req";
 
-/// The operations a proof can be for. Spec: plan U8.
+/// The operations a proof can be for. The list is closed; a new operation needs a change of the design.
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MutationOp {

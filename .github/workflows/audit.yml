@@ -17,21 +17,38 @@ on:
 permissions:
   contents: read
 
+env:
+  # The same cargo-deny as the builder image (docker/builder.Dockerfile), from
+  # the release archive, checked against its SHA-256. The deny action is not
+  # used, because it ships its own, newer cargo-deny and the two would not
+  # agree on warnings.
+  CARGO_DENY_VERSION: "0.20.2"
+  CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+
 jobs:
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
-          command: check
+          persist-credentials: false
+      - name: Install cargo-deny
+        run: |
+          name="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/deny.tar.gz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${name}.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/deny.tar.gz" | sha256sum -c -
+          tar -xz -C "$RUNNER_TEMP" -f "$RUNNER_TEMP/deny.tar.gz"
+          echo "$RUNNER_TEMP/${name}" >> "$GITHUB_PATH"
+      - run: cargo deny --all-features check
 
   vet:
     name: cargo-vet
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo install --locked cargo-vet@0.10.3
@@ -42,5 +59,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
       - run: scripts/check-advisory-reach.sh

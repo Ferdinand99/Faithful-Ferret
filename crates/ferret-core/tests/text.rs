@@ -187,10 +187,7 @@ fn run_case(case: &Case) -> Result<Outcome, Error> {
 #[test]
 fn nfkd_vectors_from_file() {
     let file = vector::load(&vectors_dir().join("internal/unicode.json")).unwrap();
-    assert!(
-        file.cases.len() >= 45,
-        "the plan asks for at least 45 cases"
-    );
+    assert!(file.cases.len() >= 45, "at least 45 cases");
     let report = vector::run_all(&file, |case: &Case, _rng: &mut ReplayRng| run_case(case));
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.passed, file.cases.len());
@@ -300,7 +297,7 @@ fn mp_length_rules() {
     assert_eq!(MpPolicy::WithoutSecretKey.min_len(), 15);
     assert_eq!(mp("", MpPolicy::WithSecretKey).err(), Some(too_short()));
 
-    // The minimum is counted in NFC scalars (U9): eleven a-with-ring are
+    // The minimum is counted in NFC scalars: eleven a-with-ring are
     // eleven characters in NFC and in NFD, though NFD has 22 scalars.
     let nfd_a_ring = "a\u{030A}";
     assert_eq!(

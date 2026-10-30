@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "opaque",
   "suite": 1,
-  "spec": "Fase 1 § 4.1, § 4.2 and plan U1, U19; RFC 9807",
+  "spec": "Fase 1 § 4.1, § 4.2; RFC 9807",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",

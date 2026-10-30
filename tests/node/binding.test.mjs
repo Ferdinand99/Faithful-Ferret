@@ -1,5 +1,5 @@
 // The binding end to end, in Node, against the build with `test-support`:
-// accounts, sign-in, the flows of Task 9, items, passkeys, export and import.
+// accounts, sign-in, the account flows, items, passkeys, export and import.
 // Run: node --test tests/node/
 import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";

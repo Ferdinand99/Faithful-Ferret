@@ -6,6 +6,10 @@
 #   scripts/lanbox-fuzz.sh <target|all> <seconds>   fuzz each target for <seconds>
 #   scripts/lanbox-fuzz.sh replay <target|all>      replay the seed corpus and
 #                                                   fuzz/regression, no new inputs
+#   scripts/lanbox-fuzz.sh merge <target|all>       shrink the seed corpus in the
+#                                                   container to a smallest set with the
+#                                                   same coverage (a check of the merge
+#                                                   step that the nightly workflow runs)
 #   scripts/lanbox-fuzz.sh --list                   the targets
 #
 # The container is the one of scripts/lanbox.sh (4 CPUs by default, set
@@ -25,14 +29,14 @@ if [ "${1:-}" = --list ]; then
 fi
 
 mode=run
-if [ "${1:-}" = replay ]; then
-  mode=replay
+if [ "${1:-}" = replay ] || [ "${1:-}" = merge ]; then
+  mode="$1"
   shift
 fi
 target="${1:-}"
 seconds="${2:-60}"
 if [ -z "$target" ]; then
-  echo "usage: scripts/lanbox-fuzz.sh <target|all> <seconds> | replay <target|all> | --list" >&2
+  echo "usage: scripts/lanbox-fuzz.sh <target|all> <seconds> | replay <target|all> | merge <target|all> | --list" >&2
   exit 2
 fi
 if [ "$target" != all ] && ! grep -q "^name = \"$target\"$" fuzz/Cargo.toml; then

@@ -1,6 +1,6 @@
 //! Export and import files.
 //!
-//! The slow step of both, Argon2id with up to 512 MiB (plan U15), runs in a
+//! The slow step of both, Argon2id with up to 512 MiB, runs in a
 //! short-lived **job worker** so that the vault worker's heap does not grow
 //! to the size of the largest import until it is locked:
 //!

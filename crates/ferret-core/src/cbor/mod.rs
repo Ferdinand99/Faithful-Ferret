@@ -1,6 +1,6 @@
 //! Strict CBOR for item bodies, manifests and (later) export files.
 //!
-//! Spec: Fase 1 § 5.2 and plan U10. No existing CBOR crate enforces all the
+//! Spec: Fase 1 § 5.2. No existing CBOR crate enforces all the
 //! rules, so the decoder in [`decode`] is a small tree builder over the
 //! low-level `minicbor::Decoder`, and [`encode`] writes the same tree again.
 //!

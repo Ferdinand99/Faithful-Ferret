@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the property tests of the core on the LANBox with more cases than the
-# 512 of the pull request job (plan section 9.1): 20 000 by default, as in the
+# 512 of the pull request job: 20 000 by default, as in the
 # nightly workflow.
 #
 #   scripts/lanbox-props.sh [cases]

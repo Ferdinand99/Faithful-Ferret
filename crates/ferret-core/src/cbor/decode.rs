@@ -1,6 +1,6 @@
 //! The strict CBOR decoder.
 //!
-//! Spec: Fase 1 § 5.2 ("Dekoderen avviser ...") and plan U10.
+//! Spec: Fase 1 § 5.2 ("Dekoderen avviser ...").
 
 use super::Value;
 use crate::error::{Error, MalformedKind};
@@ -46,7 +46,7 @@ pub fn decode(input: &[u8]) -> Result<Value, Error> {
 /// 32 bytes in memory. Where the input can be large (an export file body),
 /// the caller bounds the total here.
 ///
-/// Spec: Fase 1 § 5.2; plan U15 (hostile export files).
+/// Spec: Fase 1 § 5.2 (hostile export files).
 pub fn decode_limited(input: &[u8], max_nodes: usize) -> Result<Value, Error> {
     let (value, used) = decode_prefix_limited(input, max_nodes)?;
     if used != input.len() {

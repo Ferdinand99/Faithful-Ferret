@@ -1,8 +1,7 @@
 //! The item body: the typed part of the schema, and the unknown part kept
 //! as it was.
 //!
-//! Spec: Fase 1 § 5.2 ("Kropp", "Ukjente felt bevares") and plan Appendix B
-//! (approved as U4).
+//! Spec: Fase 1 § 5.2 ("Kropp", "Ukjente felt bevares").
 //!
 //! ```text
 //! { "schema": 1,
@@ -21,7 +20,10 @@
 //! `extra` list, in the order they were read, and writes them again after
 //! the known keys. A body with `schema` above 1 is read leniently (anything
 //! that does not fit the schema of this version goes to `extra`) and is
-//! read-only: it can be shown and never written.
+//! read-only: it can be shown and never sealed. It keeps the value it was
+//! decoded from, and [`ItemBody::to_value`] and [`ItemBody::to_cbor`] give
+//! that value back unchanged. A newer body is never rebuilt from the typed
+//! fields, which would drop or duplicate keys this version cannot place.
 
 use super::DecodedItem;
 use crate::cbor::{self, Entries, Value, redacted_debug};
@@ -442,6 +444,9 @@ pub struct ItemBody {
     /// the caller changes `schema`, so a lossy copy of a future item can
     /// never be written back as schema 1.
     from_future_schema: bool,
+    /// For a body read from a schema above 1: the CBOR value it was decoded
+    /// from, exactly as it was. It is what `to_value` returns.
+    original: Option<Value>,
 }
 
 redacted_debug!(Field, UrlEntry, Totp, Passkey, ItemBody);
@@ -464,6 +469,7 @@ impl ItemBody {
             device: None,
             extra: Vec::new(),
             from_future_schema: false,
+            original: None,
         }
     }
 
@@ -487,6 +493,13 @@ impl ItemBody {
 
     /// Reads a body from a CBOR tree.
     pub fn from_value(value: Value) -> Result<DecodedItem, Error> {
+        // A body of a newer schema is kept as it was decoded: the typed
+        // fields below are only a view of it.
+        let original = value
+            .get("schema")
+            .and_then(Value::as_u64)
+            .filter(|s| *s > SCHEMA)
+            .map(|_| value.clone());
         let mut r = Reader::new(value, true)?;
         let schema = r.entries.take("schema").and_then(|v| v.as_u64());
         let schema = schema.filter(|s| *s >= SCHEMA).ok_or_else(bad)?;
@@ -510,6 +523,7 @@ impl ItemBody {
             device: r.get("device", text)?,
             extra: r.finish(),
             from_future_schema: schema > SCHEMA,
+            original,
         };
         let read_only = body.is_read_only();
         Ok(DecodedItem { body, read_only })
@@ -517,7 +531,16 @@ impl ItemBody {
 
     /// The body as a CBOR tree: the known keys in schema order, then the
     /// unknown ones in the order they were read.
+    ///
+    /// A read-only body (schema above 1) is returned as it was decoded,
+    /// whatever the typed fields say: it is never rebuilt, so no key is
+    /// dropped, reordered or written twice.
     pub fn to_value(&self) -> Value {
+        if self.from_future_schema
+            && let Some(original) = &self.original
+        {
+            return original.clone();
+        }
         let mut m = Vec::new();
         put(&mut m, "schema", Value::uint(self.schema));
         put(&mut m, "type", Value::text(self.item_type.as_str()));
@@ -554,7 +577,9 @@ impl ItemBody {
     /// The body as CBOR bytes, in a buffer that is wiped when dropped.
     ///
     /// Fails if the body breaks a limit of the decoder (more than 10 000
-    /// entries, text over 64 KiB, nesting over 16) or has a key twice.
+    /// entries, text over 64 KiB, nesting over 16) or has a key twice. A
+    /// read-only body gives back the bytes it was read from (in canonical
+    /// form) and cannot fail.
     pub fn to_cbor(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
         cbor::encode(&self.to_value()).map(Zeroizing::new)
     }

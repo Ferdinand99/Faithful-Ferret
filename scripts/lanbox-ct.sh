@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The constant-time checks of plan section 10 on the LANBox (never locally,
+# The constant-time checks of Fase 1 § 14 on the LANBox (never locally,
 # never Docker Desktop, never Tower). See ct/run.sh for what each mode does.
 #
 #   scripts/lanbox-ct.sh                 all checks, 1 000 000 measurements per bench
@@ -63,7 +63,7 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
   {
     echo "# Decisive dudect run on the LANBox"
     echo
-    echo "Written by \`scripts/lanbox-ct.sh $mode\` ($(date -u +%FT%TZ)). Plan section 10 point 5:"
+    echo "Written by \`scripts/lanbox-ct.sh $mode\` ($(date -u +%FT%TZ)). The limit is"
     echo "|t| < 4.5 after 10^6 measurements, a bench over 4.5 measured again with 10^7. Every"
     echo "line of the two outputs is below, runs and reruns included."
     echo

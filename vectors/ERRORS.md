@@ -36,7 +36,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_item_body` | An item body or manifest that does not have the shape of the schema. |
 | `malformed_export_header` | Export file header is malformed, or the file is too short for its header, wrapped key and body. |
 | `malformed_tlv` | TLV encoding is malformed. |
-| `malformed_entries` | Checkpoint entries are malformed. |
+| `malformed_entries` | Checkpoint entries are malformed, or a rekey does not start from the checkpoint it names (wrong `seq`). Also returned when two methods would get the same id: account creation with one id for both wraps, and a recovery that gives the new recovery method an id equal to the password wrap's id or to the id of any manifest entry other than the old recovery entry (the colliding recovery id). Also: two methods of one type in a manifest, a wrap whose id the manifest does not list, a rekey with other than two wraps, and a repeated row id. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
 | `malformed_opaque_message` | An OPAQUE message from the server with the wrong length, or one that holds something that is not a group element or key. A message that parses but does not authenticate is `decrypt`. |
 | `malformed_setup_qr` | The setup QR payload of the emergency sheet is not in the exact format, or a field that goes into it (server address, e-mail) is not allowed. |

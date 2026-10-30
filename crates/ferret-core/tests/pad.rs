@@ -232,7 +232,7 @@ fn compile(source: &std::path::Path, name: &str) {
 
 #[test]
 fn unpad_harness_is_one_file_with_core_only_and_no_tables() {
-    // The analyzer run (x86_64 and arm64, O0 to O3) is Task 14. Here: the file
+    // The analyzer run (x86_64 and arm64, O0 to O3) is a separate check. Here: the file
     // compiles on its own with rustc, with `core` only, and it is the file
     // the core includes.
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ct/harness/unpad.rs");

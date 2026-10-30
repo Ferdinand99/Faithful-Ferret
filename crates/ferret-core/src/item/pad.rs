@@ -1,6 +1,6 @@
 //! Padding of the plaintext body: ISO/IEC 7816-4.
 //!
-//! Spec: Fase 1 § 5.2 ("Utfylling") and plan U6.
+//! Spec: Fase 1 § 5.2 ("Utfylling").
 //!
 //! ```text
 //! padded = plaintext ‖ 0x80 ‖ 0x00 × n
@@ -32,7 +32,7 @@ const MARKER: u8 = 0x80;
 pub const MIN_PADDED: usize = 256;
 /// Padded lengths above the powers of two are multiples of this.
 pub const STEP: usize = 4_096;
-/// The largest padded body (U6): 15 × 4 096.
+/// The largest padded body: 15 × 4 096.
 pub const MAX_PADDED: usize = 61_440;
 /// The largest plaintext that can be padded.
 pub const MAX_PLAINTEXT: usize = MAX_PADDED - 1;
@@ -42,7 +42,7 @@ pub const MAX_PLAINTEXT: usize = MAX_PADDED - 1;
 /// `Err(TooLarge)` if the padded body would exceed [`MAX_PADDED`], which is
 /// the case from a plaintext of 61 440 bytes.
 ///
-/// Spec: Fase 1 § 5.2 and plan U6.
+/// Spec: Fase 1 § 5.2.
 pub fn padded_len(plain_len: usize) -> Result<usize, Error> {
     let need = plain_len.checked_add(1).ok_or(Error::TooLarge)?;
     let len = match need {

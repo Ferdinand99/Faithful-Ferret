@@ -1,6 +1,6 @@
 //! The PIN of the local unlock methods.
 //!
-//! Spec: Fase 1 § 7.2 ("minst 6 siffer") and plan U9: a PIN is only digits
+//! Spec: Fase 1 § 7.2 ("minst 6 siffer"): a PIN is only digits
 //! and is not normalized.
 
 use crate::error::{Error, InputError};

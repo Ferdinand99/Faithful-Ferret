@@ -1,6 +1,6 @@
 // ISO/IEC 7816-4 padding removal without data-dependent branches or early
 // exits. Spec: Fase 1 section 5.2 ("Fjernes ved å lete bakfra etter siste
-// 0x80 med bare nullbyte etter"), plan section 10 point 2.
+// 0x80 med bare nullbyte etter").
 //
 // This file is the single source of the scan: `crates/ferret-core/src/item/pad.rs`
 // includes it with `include!`, and the constant-time analyzer reads the same

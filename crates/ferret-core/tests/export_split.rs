@@ -1,5 +1,5 @@
 //! The export cut in two halves, so that the slow Argon2id step can run in a
-//! short-lived worker (plan U2 and U15): `export_begin`, `export_wrap_key`,
+//! short-lived worker: `export_begin`, `export_wrap_key`,
 //! `ExportDraft::finish` and `import_prepare`, `import_decrypt_with_key`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

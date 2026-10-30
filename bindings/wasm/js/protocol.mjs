@@ -155,7 +155,7 @@ export function isWellFormed(s) {
 /**
  * Encodes password text as UTF-8. A string with a lone surrogate is
  * `invalid_input`: `TextEncoder` would turn it into U+FFFD without a word, and
- * a password that is changed on the way in cannot be typed again (U9).
+ * a password that is changed on the way in cannot be typed again.
  */
 export function encodeSecretText(text) {
   if (typeof text !== "string" || !isWellFormed(text)) {

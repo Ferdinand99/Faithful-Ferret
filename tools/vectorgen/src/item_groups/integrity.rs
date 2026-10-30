@@ -1891,7 +1891,7 @@ fn proof_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
 pub(crate) fn proofs() -> Result<Vec<u8>, Error> {
     let mut cases = Vec::new();
     proof_cases(&mut cases)?;
-    file("proofs", "Fase 1 § 4.5 and § 4.6, plan U8", cases)
+    file("proofs", "Fase 1 § 4.5 and § 4.6", cases)
 }
 
 // ------------------------------------------------------------------ rekey

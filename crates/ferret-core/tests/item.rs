@@ -1390,7 +1390,7 @@ fn constants_match_the_spec() {
     assert_eq!(hex_encode(&[VERSION]), "01");
 }
 
-// ---------------------------------------------------------- fix round 1
+// ------------------------------------------------------ schema and header checks
 
 #[test]
 fn encrypt_item_requires_schema_1() {
@@ -1642,4 +1642,71 @@ fn padded_manifest_seal_opens_like_the_padding_of_the_core() {
         seal_manifest_padded_body(&mut rng("l"), &vault, 1, &[0x80; 255]).err(),
         Some(Error::Malformed(MalformedKind::Envelope))
     );
+}
+
+/// A schema 2 body whose known keys have the wrong type, with an unknown key
+/// in front. The lenient reader keeps those keys as unknown keys; writing the
+/// body back must not put them twice or move them.
+fn schema2_mistyped_bytes() -> Vec<u8> {
+    cbor::encode(&Value::Map(vec![
+        ("aaa-first".into(), Value::uint(7)),
+        ("schema".into(), Value::uint(2)),
+        ("type".into(), txt("login")),
+        ("name".into(), Value::uint(5)),
+        ("fields".into(), txt("not a list")),
+        (
+            "urls".into(),
+            Value::Array(vec![Value::Map(vec![
+                ("zz".into(), Value::uint(1)),
+                ("url".into(), Value::Bool(true)),
+            ])]),
+        ),
+        ("created".into(), Value::uint(1)),
+        ("modified".into(), Value::uint(2)),
+        ("favorite".into(), Value::Bool(false)),
+    ]))
+    .unwrap()
+}
+
+#[test]
+fn a_newer_schema_body_is_written_back_from_the_decoded_value() {
+    let bytes = schema2_mistyped_bytes();
+    let decoded = ItemBody::from_cbor(&bytes).unwrap();
+    assert!(decoded.read_only);
+    assert_eq!(decoded.body.to_cbor().unwrap().as_slice(), bytes.as_slice());
+    // Changing the typed fields, or the number, does not change what is
+    // written: the body is a view of what was read.
+    let mut edited = decoded.body.clone();
+    edited.name = "changed".into();
+    edited.schema = 1;
+    assert_eq!(edited.to_cbor().unwrap().as_slice(), bytes.as_slice());
+    // And it opens again to the same body, through a real envelope.
+    let vault = unlocked(0x5a);
+    let s = seal_plaintext(&mut rng("m"), &vault, item_id(1), 1, &bytes, None).unwrap();
+    let got = open(&vault, 1, &s).unwrap();
+    assert!(got.read_only);
+    assert_eq!(got.body.to_cbor().unwrap().as_slice(), bytes.as_slice());
+}
+
+#[test]
+fn a_schema_1_body_is_still_rebuilt_in_schema_order() {
+    // The original value is kept only for a newer schema.
+    let mut v = Value::Map(vec![
+        ("aaa-first".into(), Value::uint(7)),
+        ("schema".into(), Value::uint(1)),
+        ("type".into(), txt("note")),
+        ("name".into(), txt("n")),
+        ("fields".into(), Value::Array(vec![])),
+        ("urls".into(), Value::Array(vec![])),
+        ("created".into(), Value::uint(1)),
+        ("modified".into(), Value::uint(2)),
+        ("favorite".into(), Value::Bool(false)),
+    ]);
+    let decoded = ItemBody::from_value(v.clone()).unwrap();
+    assert!(!decoded.read_only);
+    if let Value::Map(e) = &mut v {
+        let first = e.remove(0);
+        e.push(first);
+    }
+    assert_eq!(decoded.body.to_value(), v);
 }

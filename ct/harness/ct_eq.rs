@@ -1,5 +1,5 @@
 // Constant-time equality of byte strings, a thin wrapper around `subtle`.
-// Spec: Fase 1 section 14, plan section 10 point 1.
+// Spec: Fase 1 section 14.
 //
 // This file is the single source of the wrapper: `crates/ferret-core/src/prim/ct.rs`
 // includes it with `include!`, and the constant-time analyzer reads the same

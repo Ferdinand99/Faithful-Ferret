@@ -1,4 +1,4 @@
-//! The passkey authenticator (Fase 1 § 9, F-12, F-13, F-29, plan U13 and U20)
+//! The passkey authenticator (Fase 1 § 9, F-12, F-13, F-29)
 //! and `vectors/internal/passkey.json`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

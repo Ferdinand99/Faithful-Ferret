@@ -1,5 +1,5 @@
 {
-  "_comment": "Plan section 9.3: at least 95 % of the lines and 90 % of the branches in integrity, wrap, envelope, codes, text and export; the lines of the whole core at least 90 %. Measured by scripts/lanbox-coverage.sh (cargo llvm-cov --branch). A module that falls short needs its own explanation in the task report.",
+  "_comment": "Thresholds: at least 95 % of the lines and 90 % of the branches in integrity, wrap, envelope, codes, text and export; the lines of the whole core at least 90 %. Measured by scripts/lanbox-coverage.sh (cargo llvm-cov --branch). A module that falls short needs its own explanation in the task report.",
   "roots": ["crates/ferret-core/src/", "ct/harness/"],
   "exclude": ["crates/ferret-core/src/testing/"],
   "total": { "lines": 90 },

@@ -37,18 +37,18 @@
 //! login can only fire for a record that was made under the other key, which
 //! is a case that does not occur on the wire. It stays as a second line.
 //!
-//! The place where a changed server key is detected, and the clear warning of
-//! plan U19 can be given, is registration: on every re-registration of a known
+//! The place where a changed server key is detected, and the clear warning can be
+//! given, is registration: on every re-registration of a known
 //! account (change of password, KSF upgrade, recovery) the caller must compare
 //! [`RegistrationFinished::server_public_key`] with the pinned key
-//! (Task 9, account flows). On a first registration it pins the key.
+//! (the account flows do this). On a first registration it pins the key.
 //!
 //! # First use
 //!
 //! [`PinState::FirstUse`] is trust on first use: no SK-bit check, no downgrade
 //! check, no key comparison, and the key the server shows is returned in
-//! [`LoginFinished::server_public_key`] for the first successful unlock to pin
-//! (plan U19; see [`crate::Pinned`]). It is a variant the caller has to
+//! [`LoginFinished::server_public_key`] for the first successful unlock to pin.
+//! It is a variant the caller has to
 //! choose, so a device that holds a record cannot skip the checks by leaving
 //! an argument out.
 //!
@@ -456,7 +456,7 @@ pub fn opaque_login_start<R: SecureRng>(
 
 /// What the device knows about the account when it logs in.
 ///
-/// Spec: Fase 1 § 4.2 ("Pinning og SK-bit"); plan U19.
+/// Spec: Fase 1 § 4.2 ("Pinning og SK-bit").
 #[derive(Clone, Copy)]
 pub enum PinState<'a> {
     /// A device that has never unlocked this account. **Trust on first
@@ -493,7 +493,7 @@ impl PinState<'_> {
 /// of the checks and for the errors.
 ///
 /// Spec: Fase 1 § 4.2 ("Innlogging", step 2, "Pinning og SK-bit"); RFC 9807
-/// section 6.3; plan U19.
+/// section 6.3.
 pub fn opaque_login_finish<R: SecureRng>(
     rng: &mut R,
     st: LoginState,
@@ -551,7 +551,7 @@ pub(crate) fn finish_login<R: SecureRng>(
 /// shown again exactly; without a pinned key anything is accepted (trust on
 /// first use). Defence in depth: see the module docs.
 ///
-/// Spec: plan U19; Fase 1 § 4.2 ("Pinning og SK-bit").
+/// Spec: Fase 1 § 4.2 ("Pinning og SK-bit").
 fn check_server_key(pin: PinState<'_>, shown: &[u8; 32]) -> Result<(), Error> {
     match pin.record().and_then(|p| p.server_public_key.as_ref()) {
         Some(pinned_key) if pinned_key != shown => Err(Error::Pinned(PinnedField::ServerKey)),

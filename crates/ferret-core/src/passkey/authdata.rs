@@ -1,6 +1,6 @@
 //! `authenticatorData` (WebAuthn L3 § 6.1).
 //!
-//! Spec: Fase 1 § 9.3 (F-29) and plan U13.
+//! Spec: Fase 1 § 9.3 (F-29).
 //!
 //! ```text
 //! rpIdHash(32) ‖ flags(1) ‖ signCount(4) ‖ [ aaguid(16) ‖ credIdLen(2) ‖ credId ‖ COSE_Key ] ‖ [ extensions ]

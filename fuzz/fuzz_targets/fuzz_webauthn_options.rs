@@ -1,7 +1,6 @@
 //! `CreateRequest::validate` and `GetRequest::validate` on arbitrary request
 //! structures, and the two ceremonies on the requests that pass: never a
-//! panic, and a request that validates stays inside the limits (plan section
-//! 9.2).
+//! panic, and a request that validates stays inside the limits.
 #![no_main]
 
 use arbitrary::Arbitrary;

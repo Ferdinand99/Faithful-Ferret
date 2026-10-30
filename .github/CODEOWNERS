@@ -1,0 +1,25 @@
+# Code owners. A pull request that touches one of these paths asks the owner
+# for a review. The last matching pattern wins.
+*                                   @Ferdinand99
+
+# The cryptographic core and everything that pins what it must do.
+/crates/ferret-core/                @Ferdinand99
+/bindings/wasm/                     @Ferdinand99
+/vectors/                           @Ferdinand99
+/tools/vectorgen/                   @Ferdinand99
+/tools/xcheck/                      @Ferdinand99
+/ct/                                @Ferdinand99
+
+# The supply chain and the release pipeline.
+/deny.toml                          @Ferdinand99
+/supply-chain/                      @Ferdinand99
+/Cargo.lock                         @Ferdinand99
+/.github/                           @Ferdinand99
+/docker/                            @Ferdinand99
+/scripts/                           @Ferdinand99
+/release-please-config.json         @Ferdinand99
+/.release-please-manifest.json      @Ferdinand99
+
+# Security policy and the review package.
+/SECURITY.md                        @Ferdinand99
+/docs/                              @Ferdinand99

@@ -248,10 +248,7 @@ fn build(case: &Case) -> Result<Vec<u8>, Error> {
 #[test]
 fn tlv_vectors_from_file() {
     let file = vector::load(&vectors_dir().join("internal/tlv.json")).unwrap();
-    assert!(
-        file.cases.len() >= 20,
-        "the plan asks for at least 20 cases"
-    );
+    assert!(file.cases.len() >= 20, "at least 20 cases");
     let report = vector::run_all(&file, |case: &Case, _rng: &mut ReplayRng| {
         assert_eq!(case.op, "tlv.build");
         let bytes = build(case)?;

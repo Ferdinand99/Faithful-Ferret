@@ -13,7 +13,7 @@
   "cases": [
     {
       "id": "tlv/spec/001",
-      "title": "label ferret/v1/wrap then suite 1 (the example of the plan)",
+      "title": "label ferret/v1/wrap then suite 1 (the example of the design)",
       "op": "tlv.build",
       "status": "valid",
       "tags": [],

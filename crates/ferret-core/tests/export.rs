@@ -1494,3 +1494,87 @@ fn export_vectors_as_a_binding_runs_them() {
     // Only the cases that the production functions accept.
     assert_all_passed(&run_vectors(true), 8);
 }
+
+/// A body of schema 2 whose known keys have the wrong type, so the lenient
+/// reader keeps them as unknown keys: `name` is a number, `fields` is text
+/// and the passkey is a list. One unknown key sits before the known ones.
+fn newer_schema_body() -> Value {
+    text_map(vec![
+        ("aaa-first", Value::uint(7)),
+        ("schema", Value::uint(2)),
+        ("type", Value::text("login")),
+        ("name", Value::uint(5)),
+        ("fields", Value::text("not a list")),
+        ("urls", Value::Array(vec![])),
+        (
+            "passkey",
+            Value::Array(vec![text_map(vec![("priv", Value::Bytes(vec![0xe3; 40]))])]),
+        ),
+        ("created", Value::uint(1)),
+        ("modified", Value::uint(2)),
+        ("favorite", Value::Bool(false)),
+    ])
+}
+
+fn newer_schema_item() -> ExportItem {
+    let decoded = ItemBody::from_value(newer_schema_body()).unwrap();
+    assert!(decoded.read_only);
+    ExportItem {
+        item_id: ItemId::from_bytes([3; 16]),
+        body: decoded.body,
+    }
+}
+
+#[test]
+fn plain_json_of_a_newer_schema_body_is_the_original_value() {
+    let item = newer_schema_item();
+    // The body is written back from what was decoded, in its own key order,
+    // and no key appears twice.
+    assert_eq!(item.body.to_value(), newer_schema_body());
+    assert_eq!(
+        item.body.to_cbor().unwrap().as_slice(),
+        cbor::encode(&newer_schema_body()).unwrap().as_slice()
+    );
+    let o = PlainExportOptions {
+        include_passkeys: true,
+    };
+    let text = export_plain_json(std::slice::from_ref(&item), &o).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let body = &v["items"][0]["body"];
+    assert_eq!(body["name"], json!(5));
+    assert_eq!(body["fields"], json!("not a list"));
+    assert_eq!(body["aaa-first"], json!(7));
+    for key in ["\"name\"", "\"fields\"", "\"type\"", "\"favorite\""] {
+        assert_eq!(text.matches(key).count(), 1, "{key} appears once");
+    }
+    // The unknown key stays first, as it was read.
+    assert!(text.contains("\"body\":{\"aaa-first\":7,\"schema\":2"));
+}
+
+#[test]
+fn plain_json_leaves_out_a_passkey_it_cannot_read() {
+    // The passkey of this body is a list, so its secrets cannot be told
+    // apart from the rest: without the option the whole key is left out.
+    let text = export_plain_json(&[newer_schema_item()], &PlainExportOptions::default()).unwrap();
+    assert!(!text.contains("passkey"));
+    assert!(!text.contains(&"e3".repeat(40)));
+}
+
+#[test]
+fn plain_csv_refuses_a_body_with_a_newer_schema() {
+    // The columns are those of schema 1; the rest of such a body would be
+    // dropped from the file without a word, so the item is refused.
+    let newer = [newer_schema_item()];
+    assert_eq!(
+        export_plain_csv(&newer, &PlainExportOptions::default()),
+        Err(Error::Unsupported)
+    );
+    // A list that also holds ordinary items is refused as a whole.
+    let mixed = [items().remove(0), newer_schema_item()];
+    assert_eq!(
+        export_plain_csv(&mixed, &PlainExportOptions::default()),
+        Err(Error::Unsupported)
+    );
+    // The JSON export holds the body whole.
+    assert!(export_plain_json(&newer, &PlainExportOptions::default()).is_ok());
+}

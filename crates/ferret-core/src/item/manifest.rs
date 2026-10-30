@@ -1,7 +1,7 @@
 //! The manifest: the list of unlock methods and their generations.
 //!
 //! Spec: Fase 1 § 4.3 (the client remembers the highest `kek_generation`),
-//! plan Appendix B and U5. The manifest is sealed like an item with
+//! The manifest is sealed like an item with
 //! `item_id` = 16 zero bytes, `kind` = 2 and the key `K_meta`.
 //!
 //! ```text

@@ -1,5 +1,4 @@
-//! The recovery key and secret key readers on arbitrary text (plan section
-//! 9.2): never a panic, only the stable error codes of the code format, and
+//! The recovery key and secret key readers on arbitrary text: never a panic, only the stable error codes of the code format, and
 //! whatever a reader accepts is read from the canonical spelling of the key
 //! it returns (separators dropped, case folded, `O` read as `0`, `I` and `L`
 //! as `1`). A recovery code is never read as a secret key and the other way

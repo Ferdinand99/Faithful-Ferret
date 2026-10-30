@@ -329,7 +329,7 @@ pub(crate) fn build_body(
 /// judge (a parameter that is not on its list, a repeated one, bad base32).
 ///
 /// The core's rules do not change; this is the glue's reading of what a
-/// user pastes (plan, Task 7 notes).
+/// user pastes.
 pub(crate) fn normalize_otpauth(uri: &str) -> Res<String> {
     let uri = uri.trim();
     let Some((head, query)) = uri.split_once('?') else {

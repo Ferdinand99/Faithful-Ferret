@@ -1,4 +1,4 @@
-//! The password and PIN readers on arbitrary bytes (plan section 9.2):
+//! The password and PIN readers on arbitrary bytes:
 //! `MasterPassword::new` and `for_unlock`, `ExportPassword::new` and
 //! `for_open`, and `Pin::new`. Never a panic and no error but the input
 //! errors; what is accepted is NFKD, valid UTF-8, inside the limits, made of

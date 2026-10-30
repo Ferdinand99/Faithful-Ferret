@@ -16,567 +16,709 @@ url = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.t
 [[exemptions.aead]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.argon2]]
 version = "0.5.3"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.argon2]]
 version = "0.6.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.autocfg]]
 version = "1.5.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.base16ct]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.base16ct]]
 version = "1.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.base64ct]]
 version = "1.8.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.bitflags]]
 version = "2.13.2"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.blake2]]
 version = "0.10.6"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.blake2]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.block-buffer]]
 version = "0.10.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.block-buffer]]
 version = "0.12.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cfg-if]]
 version = "1.0.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.chacha20]]
 version = "0.10.2"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.chacha20poly1305]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cipher]]
 version = "0.5.2"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cmov]]
 version = "0.5.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.const-oid]]
 version = "0.9.6"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.const-oid]]
 version = "0.10.2"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cpubits]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cpufeatures]]
 version = "0.2.17"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.cpufeatures]]
 version = "0.3.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.crypto-bigint]]
 version = "0.5.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.crypto-bigint]]
 version = "0.7.10"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.crypto-common]]
 version = "0.1.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.crypto-common]]
 version = "0.2.2"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ctutils]]
 version = "0.4.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.curve25519-dalek]]
 version = "4.1.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.curve25519-dalek]]
 version = "5.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.curve25519-dalek-derive]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.der]]
 version = "0.8.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.derive-where]]
 version = "1.7.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.digest]]
 version = "0.10.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.digest]]
 version = "0.11.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.displaydoc]]
 version = "0.2.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ecdsa]]
 version = "0.17.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ed25519]]
 version = "3.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ed25519-dalek]]
 version = "3.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.elliptic-curve]]
 version = "0.13.8"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.elliptic-curve]]
 version = "0.14.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ff]]
 version = "0.13.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.ff]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.fiat-crypto]]
 version = "0.2.9"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.fiat-crypto]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.futures-core]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.futures-task]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.futures-util]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.generic-array]]
 version = "0.14.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.getrandom]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.group]]
 version = "0.13.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.group]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.hkdf]]
 version = "0.12.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.hkdf]]
 version = "0.13.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.hmac]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.hmac]]
 version = "0.13.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.hybrid-array]]
 version = "0.4.15"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_collections]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_locale_core]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_normalizer]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_normalizer_data]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_properties]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_properties_data]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.icu_provider]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.idna]]
 version = "0.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.idna_adapter]]
 version = "1.2.2"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.inout]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.itoa]]
 version = "1.0.18"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.js-sys]]
 version = "0.3.106"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.libc]]
 version = "0.2.191"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.litemap]]
 version = "0.8.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.memchr]]
 version = "2.8.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.minicbor]]
 version = "2.3.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.once_cell]]
 version = "1.21.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.opaque-ke]]
 version = "4.0.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.p256]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.password-hash]]
 version = "0.5.0"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.password-hash]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.phc]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.pin-project-lite]]
 version = "0.2.17"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.pkcs8]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.poly1305]]
 version = "0.9.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.potential_utf]]
 version = "0.1.6"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.primefield]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.primeorder]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.proc-macro2]]
 version = "1.0.107"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.proptest]]
 version = "1.12.0"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.quote]]
 version = "1.0.47"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.r-efi]]
 version = "6.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rand]]
 version = "0.8.8"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rand]]
 version = "0.10.3"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rand_core]]
 version = "0.10.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rand_xorshift]]
 version = "0.5.0"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.regex-syntax]]
 version = "0.8.11"
 criteria = "safe-to-run"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rfc6979]]
 version = "0.6.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rustc_version]]
 version = "0.4.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.rustversion]]
 version = "1.0.23"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.sec1]]
 version = "0.7.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.sec1]]
 version = "0.8.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serde]]
 version = "1.0.229"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serde-wasm-bindgen]]
 version = "0.6.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serde_core]]
 version = "1.0.229"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serde_derive]]
 version = "1.0.229"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serde_json]]
 version = "1.0.154"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.serdect]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.sha1]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.sha2]]
 version = "0.10.9"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.sha2]]
 version = "0.11.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.signature]]
 version = "3.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.slab]]
 version = "0.4.12"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.smallvec]]
 version = "1.16.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.spki]]
 version = "0.8.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.subtle]]
 version = "2.6.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.syn]]
 version = "2.0.119"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.syn]]
 version = "3.0.9"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.synstructure]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.tinystr]]
 version = "0.8.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.tinyvec]]
 version = "1.13.3"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.typenum]]
 version = "1.20.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.unicode-general-category]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.unicode-ident]]
 version = "1.0.27"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.universal-hash]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.utf8_iter]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.utf_types]]
 version = "1.0.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.version_check]]
 version = "0.9.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.voprf]]
 version = "0.5.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.wasm-bindgen]]
 version = "0.2.129"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.wasm-bindgen-macro]]
 version = "0.2.129"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.wasm-bindgen-macro-support]]
 version = "0.2.129"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.wasm-bindgen-shared]]
 version = "0.2.129"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.wnaf]]
 version = "0.14.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.writeable]]
 version = "0.6.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.yoke]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.yoke-derive]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zerofrom]]
 version = "0.1.8"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zerofrom-derive]]
 version = "0.1.8"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zeroize]]
 version = "1.9.1"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zeroize_derive]]
 version = "1.5.0"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zerotrie]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zerovec]]
 version = "0.11.9"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zerovec-derive]]
 version = "0.11.7"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.zmij]]
 version = "1.0.23"
 criteria = "safe-to-deploy"
+notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."

@@ -648,10 +648,7 @@ fn run_vector(case: &Case) -> Result<Outcome, Error> {
 #[test]
 fn totp_vectors_from_file() {
     let file = vector::load(&vectors_dir().join("internal/totp.json")).unwrap();
-    assert!(
-        file.cases.len() >= 26,
-        "the plan asks for at least 26 cases"
-    );
+    assert!(file.cases.len() >= 26, "at least 26 cases");
     let report = vector::run_all(&file, |case: &Case, _rng: &mut ReplayRng| run_vector(case));
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.passed, file.cases.len());

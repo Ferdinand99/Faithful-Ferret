@@ -1,0 +1,93 @@
+# Dependency updates. Every crate in the Cargo manifests is pinned to an exact
+# version (a "=x.y.z" requirement), so an update is always a pull request that
+# changes a pin: it is read, its `cargo vet` and `cargo deny` runs are checked,
+# and nothing is merged automatically.
+#
+# Not covered, because Dependabot does not track them: the Rust toolchain
+# (rust-toolchain.toml), the nightly of fuzz/NIGHTLY and the tools that
+# docker/builder.Dockerfile installs from release archives. They are bumped by
+# hand; see docs/RELEASING.md.
+version: 2
+
+updates:
+  # The Rust workspace (crates/ferret-core, bindings/wasm, tools/vectorgen).
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels: [dependencies, rust]
+
+  # The fuzz targets: a workspace of their own, with their own lock file.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, rust]
+
+  # The dudect timing harness: a workspace of its own as well.
+  - package-ecosystem: cargo
+    directory: "/ct/dudect"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, rust]
+
+  # The independent JavaScript reference for the test vectors.
+  - package-ecosystem: npm
+    directory: "/tools/xcheck"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, javascript]
+
+  # The Playwright tests of the WASM binding.
+  - package-ecosystem: npm
+    directory: "/tests/browser"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, javascript]
+
+  # Pinned by commit SHA in every workflow; Dependabot moves the SHA and the
+  # version comment together.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels: [dependencies, github-actions]
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The base image of the builder, pinned by digest.
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    labels: [dependencies, docker]

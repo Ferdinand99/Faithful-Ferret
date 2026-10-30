@@ -2,7 +2,7 @@
 //! `.ferretexport`, opening it, its header, and the plaintext JSON and CSV.
 //!
 //! As in the other groups, every expected value is made here from the
-//! specification (Fase 1 § 6.4 and plan Appendix B) without calling the
+//! specification (Fase 1 § 6.4) without calling the
 //! core's export code: the header and the body are written as CBOR head by
 //! head, the TLV bytes by hand, Argon2id, HKDF and the AEAD go to the
 //! primitive wrappers (which have their own RFC and Wycheproof vectors),
@@ -1321,5 +1321,81 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
         json(&two, false),
     ));
 
-    file("export", "Fase 1 § 6.4 (F-27) and plan U15, U18", cases)
+    // A body of a newer schema is written as it was read, never rebuilt: the
+    // mistyped known keys (`name`, `fields`) stay where they were, once. A
+    // `passkey` that is not a map has no secret keys to remove, so without
+    // the option the whole key is left out.
+    let newer = |with_passkey: bool| {
+        let mut e: Vec<(&str, Vec<u8>)> = vec![
+            ("zzz-first", cb::uint(7)),
+            ("schema", cb::uint(2)),
+            ("type", cb::text("login")),
+            ("name", cb::uint(5)),
+            ("fields", cb::text("not a list")),
+            ("urls", cb::array(&[])),
+        ];
+        if with_passkey {
+            e.push((
+                "passkey",
+                cb::array(&[cb::map(&[("priv", cb::bytes(&[0xe3, 0xe3]))])]),
+            ));
+        }
+        e.extend([
+            ("created", cb::uint(1)),
+            ("modified", cb::uint(2)),
+            ("favorite", cb::boolean(false)),
+        ]);
+        cb::map(&e)
+    };
+    let newer_id = [0x72u8; 16];
+    let newer_case = |name: &str, title: &str, with_passkey: bool, include: bool, body: &str| {
+        valid_case(
+            &format!("export/plain/{name}"),
+            title,
+            "export.plain.json",
+            vec![],
+            json!({
+                "items": [ { "id": hex_encode(&newer_id), "body": hex_encode(&newer(with_passkey)) } ],
+                "include_passkeys": include,
+            }),
+            json!({ "text": format!("{{\"v\":1,\"items\":[{{\"id\":\"{}\",\"body\":{body}}}]}}", hex_encode(&newer_id)) }),
+        )
+    };
+    cases.push(newer_case(
+        "json-006",
+        "a body of schema 2 with mistyped known keys is written as it was read",
+        false,
+        false,
+        r#"{"zzz-first":7,"schema":2,"type":"login","name":5,"fields":"not a list","urls":[],"created":1,"modified":2,"favorite":false}"#,
+    ));
+    cases.push(newer_case(
+        "json-007",
+        "a passkey of a newer schema that is not a map is left out by default",
+        true,
+        false,
+        r#"{"zzz-first":7,"schema":2,"type":"login","name":5,"fields":"not a list","urls":[],"created":1,"modified":2,"favorite":false}"#,
+    ));
+    cases.push(newer_case(
+        "json-008",
+        "and kept when the passkey secrets are asked for",
+        true,
+        true,
+        r#"{"zzz-first":7,"schema":2,"type":"login","name":5,"fields":"not a list","urls":[],"passkey":[{"priv":"e3e3"}],"created":1,"modified":2,"favorite":false}"#,
+    ));
+
+    // The CSV columns are those of schema 1, so an item with a newer schema is
+    // refused: the rest of its body would be left out of the file silently.
+    cases.push(invalid_case(
+        "export/plain/csv-005",
+        "a body with a newer schema is refused by the CSV export",
+        "export.plain.csv",
+        vec![],
+        json!({
+            "items": [ { "id": hex_encode(&newer_id), "body": hex_encode(&newer(false)) } ],
+            "include_passkeys": false,
+        }),
+        "unsupported",
+    ));
+
+    file("export", "Fase 1 § 6.4 (F-27)", cases)
 }

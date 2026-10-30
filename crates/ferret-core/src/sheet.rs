@@ -1,7 +1,7 @@
 //! The content of the emergency sheet and the payload of its QR code.
 //!
 //! Spec: Fase 1 § 6.1 (F-21, "Nødark"), § 6.2 and § 4.2 ("Pinning og
-//! SK-bit"); plan U17 and U19. The core makes the text. The PDF, the layout
+//! SK-bit"). The core makes the text. The PDF, the layout
 //! and the printing are the client's.
 //!
 //! # The two pages
@@ -29,7 +29,7 @@
 //! * `a` is the account id, 32 lower-case hex digits;
 //! * `k` is the number of the KSF profile (decimal, no leading zero);
 //! * `s` is `1` when the account has a secret key and `0` when it has not;
-//! * `o` is the OPAQUE server public key, 64 lower-case hex digits (U19).
+//! * `o` is the OPAQUE server public key, 64 lower-case hex digits.
 //!
 //! The five parameters come once each, in this order. The writer and the
 //! reader agree on one spelling, so a payload that is read and written
@@ -51,7 +51,7 @@ use zeroize::Zeroizing;
 pub const SETUP_QR_PREFIX: &str = "ferret-setup:v1?";
 /// The scheme that all versions share.
 const SETUP_QR_SCHEME: &str = "ferret-setup:";
-/// The longest server address, in bytes (plan U17). The same limit as the
+/// The longest server address, in bytes. The same limit as the
 /// pinned record's.
 pub const MAX_SETUP_URL_LEN: usize = MAX_URL_LEN;
 /// The longest e-mail address the sheet shows, in bytes (RFC 5321).
@@ -75,7 +75,7 @@ pub struct SetupQr {
     pub ksf_profile: KsfProfile,
     /// Whether the account has a secret key.
     pub sk_bit: bool,
-    /// The OPAQUE server public key, to pin (U19).
+    /// The OPAQUE server public key, to pin.
     pub server_public_key: [u8; 32],
 }
 
@@ -142,7 +142,7 @@ fn looks_like_ipv4(host: &str) -> bool {
 ///
 /// Anything else is `malformed_setup_qr`.
 ///
-/// Spec: Fase 1 § 6.1 (F-21); plan U17.
+/// Spec: Fase 1 § 6.1 (F-21).
 pub fn parse_server_address(url: &str) -> Result<ServerAddress, Error> {
     if url.len() > MAX_SETUP_URL_LEN {
         return Err(Error::TooLarge);
@@ -309,7 +309,7 @@ fn hex_lower<const N: usize>(text: &str) -> Result<[u8; N], Error> {
 /// The server address is checked first (see the module documentation); the
 /// profile is typed, so a number this build does not know cannot be written.
 ///
-/// Spec: Fase 1 § 6.1 (F-21); plan U17 and U19.
+/// Spec: Fase 1 § 6.1 (F-21).
 pub fn setup_qr_payload(
     server_url: &str,
     account_id: &AccountId,
@@ -343,7 +343,7 @@ fn field<'a>(part: Option<&'a str>, name: &str) -> Result<&'a str, Error> {
 /// Reads the text of a QR code of the emergency sheet. See the module
 /// documentation for the exact format and the errors.
 ///
-/// Spec: Fase 1 § 6.1 (F-21); plan U17 and U19.
+/// Spec: Fase 1 § 6.1 (F-21).
 pub fn parse_setup_qr(s: &str) -> Result<SetupQr, Error> {
     if s.len() > MAX_PAYLOAD_LEN {
         return Err(Error::TooLarge);

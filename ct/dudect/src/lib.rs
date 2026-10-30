@@ -19,7 +19,7 @@
 //! `ct/harness/` are included here from the same paths as in the core, and
 //! the key commitment path is the public `unwrap_vk`.
 //!
-//! The targets and their classes (plan section 10 point 5):
+//! The targets and their classes:
 //!
 //! | target | operation | Left | Right |
 //! |---|---|---|---|

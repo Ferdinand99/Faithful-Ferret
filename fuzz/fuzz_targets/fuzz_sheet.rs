@@ -1,6 +1,6 @@
 //! `parse_setup_qr` on arbitrary text: never a panic, only the stable error
 //! codes of the format, and whatever it accepts is the canonical spelling of
-//! what it read (plan section 9.2, U17).
+//! what it read.
 #![no_main]
 
 use ferret_core::{parse_setup_qr, setup_qr_payload};

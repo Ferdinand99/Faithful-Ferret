@@ -1,5 +1,5 @@
 // Scans the WebAssembly build for instructions whose time can depend on their
-// operands (plan section 10 point 4, U3).
+// operands.
 //
 //   node ct/wasm-scan.mjs <module.wat> ct/wasm-allow.toml [--no-gate]
 //                         [--json totals.json] [--compare before.json]
@@ -38,8 +38,7 @@
 // that its operands are public, and `max`, the most hits the entry covers. A
 // hit without an entry, or more hits than `max`, fails the scan; so does an
 // entry without `max`. Hits in other crates are counted and listed but do not
-// fail the scan: the plan accepts them as a known residual risk (section 10
-// point 6: argon2 and the RustCrypto code are not re-verified by us).
+// fail the scan: they are accepted as a known residual risk (TRIAGE.md R6: argon2 and the RustCrypto code are not re-verified by us).
 //
 // ct/wasm-selftest.mjs feeds the scan fixtures that must be flagged.
 //
@@ -276,7 +275,7 @@ if (gate) {
 }
 if (ours.length === 0) console.log("  none");
 
-console.log("\nother crates (counted, not gated; section 10 point 6):");
+console.log("\nother crates (counted, not gated; TRIAGE.md R6):");
 const others = [...totals].filter(([cls]) => !OURS.has(cls)).sort(([a], [b]) => a.localeCompare(b));
 for (const [cls, t] of others) {
   console.log(`  ${cls.padEnd(22)} ${[...t].map(([i, c]) => `${i} x${c}`).join(", ")}`);

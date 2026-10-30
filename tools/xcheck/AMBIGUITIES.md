@@ -1,20 +1,18 @@
 # Ambiguities, gaps and the readings xcheck chose
 
 xcheck was written from three sources only: the design document (`design-fase1.md`, "Fase 1"), the
-vector files with `OPS.md`, `ERRORS.md` and `SOURCE.md`, and appendix B of the plan (the body, manifest
-and export schemas). Nothing under `crates/`, `bindings/` or `tools/vectorgen/` was read.
+vector files with `OPS.md`, `ERRORS.md` and `SOURCE.md`, and the schemas of the body, the manifest and the export file. Nothing under `crates/`, `bindings/` or `tools/vectorgen/` was read.
 
 Where the design is silent or two places disagree, this file records the reading xcheck used. Two kinds of rule
-did not come from the design text alone, and the review asked for both to be named:
+did not come from the design text alone:
 
 * **Taken from the vectors.** Three rules cannot be derived from the design at all, so xcheck took them from the
   vector files while reading them: the limit on pinned generations (G1), the AAGUID value (G2) and the 138-byte
   PKCS#8 layout of the stored passkey (G6). No run refused these first; they were written from the vectors.
-* **Added after a first run refused cases.** Three rules were added because a first run showed a refusal xcheck did
-  not make: the manifest epoch on seal (G7), the reserved item id in `tomb.verify` (G8) and the floor of 15 without a
+* **Added because a vector refused a case.** Three rules were added because of a refusal that xcheck did not make: the manifest epoch on seal (G7), the reserved item id in `tomb.verify` (G8) and the floor of 15 without a
   secret key in the account flows (item 8). The design is silent on the first two; the third follows from section 4.1.
 
-None of these changed an expected value of a vector. Everything else matched on its first run.
+None of these changed an expected value of a vector. Everything else matched without a rule of its own.
 
 ## Rules the design does not state (xcheck needed the vectors)
 
@@ -24,10 +22,10 @@ None of these changed an expected value of a vector. Everything else matched on 
 | G2 | Section 9.3 | The value of the fixed AAGUID. The design says one fixed UUIDv4 and that it is public. | The value is copied from the vectors (`dc704a44-b994-410c-a689-ed8d71a84ac3`) and xcheck checks only that it is a UUIDv4. The 16 bytes are therefore not independently checked. |
 | G3 | Section 9 | The byte layouts of the WebAuthn objects: authenticator data, attestation object (`fmt: none`), COSE key, `clientDataJSON`, the PKCS#8 of the stored key (138 bytes, with the public key, no curve parameters in `ECPrivateKey`) and the SPKI. | WebAuthn L3 and the usual encodings, with the field order of the browsers (`type`, `challenge`, `origin`, `crossOrigin`). All of it matched, but the design does not pin it. |
 | G4 | Section 9.3 | The signature nonce. The design says ES256; `OPS.md` says RFC 6979. | RFC 6979 with SHA-256 (own P-256 code, `src/p256.mjs`), no low-S step. The vector signatures are byte-identical and also verify under WebCrypto. |
-| G5 | `item.open`, `OPS.md` | `OPS.md` says "a bad header is `unsupported` or `malformed_envelope`". Section 5.3 (clarified 29.10) and all the vectors say a changed `version`, `suite` or `kind` byte is `decrypt`. | The vectors and section 5.3 win: the header bytes go into the AAD as read, and only the length can give `malformed_envelope`. `OPS.md` should be corrected. |
+| G5 | `item.open`, `OPS.md` | `OPS.md` says "a bad header is `unsupported` or `malformed_envelope`". Section 5.3 (clarified 29.10) and all the vectors say a changed `version`, `suite` or `kind` byte is `decrypt`. | The vectors and section 5.3 win: the header bytes go into the AAD as read, and only the length can give `malformed_envelope`. `OPS.md` now says so. |
 | G6 | Section 9.1 | The PKCS#8 DER of the stored passkey key: "P-256 (PKCS#8 DER)" does not say which of the valid encodings. | The 138-byte form with the public key inside `ECPrivateKey` and no curve parameters there (taken from the vectors; Node's own export is a different, shorter form). The scalar is read from a fixed offset of it, and the embedded public key is checked against the scalar. |
-| G7 | Section 4.3, appendix B | Whether the epoch written inside the manifest has to equal the epoch of the key. | Yes: `decrypt` on open, `malformed_item_body` on seal (item 13). Added after a first run. |
-| G8 | Section 8.4, appendix B | Whether the reserved all-zero `item_id` of the manifest can carry a tombstone. | No: `tombstone_invalid` in `tomb.verify`, `malformed_envelope` in `tomb.seal` (item 14). Added after a first run. |
+| G7 | Section 4.3, appendix B | Whether the epoch written inside the manifest has to equal the epoch of the key. | Yes: `decrypt` on open, `malformed_item_body` on seal (item 13). Added because a vector refused it. |
+| G8 | Section 8.4, appendix B | Whether the reserved all-zero `item_id` of the manifest can carry a tombstone. | No: `tombstone_invalid` in `tomb.verify`, `malformed_envelope` in `tomb.seal` (item 14). Added because a vector refused it. |
 
 ## Findings about the design text itself
 
@@ -74,18 +72,20 @@ None of these changed an expected value of a vector. Everything else matched on 
 10. **Body shape (appendix B).** Required for schema 1: `schema`, `type`, `name`, `fields` (each with `id`,
     `label`, `kind`, `value`), `urls` (each with `url`; `match` is optional), `created`, `modified`, `favorite`.
     Optional: `totp.uri`, the `passkey` map (the seeds optional), `notes`, `device`. A body with `schema` above 1 is
-    only checked to be a map with an integer `schema` and is written back unchanged. **Open:** a reference that follows the
-    typed structure would rewrite such a body in schema order with defaults for missing keys; xcheck does not, and
-    no vector tells the two apart (the only schema 2 vector is a complete, in-order body). Left as it is, to be decided.
+    only checked to be a map with an integer `schema` and is written back unchanged. A reference that follows the
+    typed structure would rewrite such a body in schema order with defaults for missing keys; xcheck does not. The core
+    does not either: both write the value that was read, with the same keys in the same order, and nothing added or
+    typed (vector `item/open/schema_2_mistyped`, which has mistyped known keys and an unknown key in front). The
+    plain JSON export does the same (`export/plain/json-006` to `json-008`); the CSV export and the encrypted export
+    refuse such a body (`unsupported` and `read_only_schema`).
 11. **Order of unknown keys.** Written back with the known keys in schema order (appendix B), then the unknown keys in
     the order they were read, at the top level and in `fields[]`, `urls[]`, `totp` and `passkey`. This is what
     `OPS.md` says for `export.plain.json` ("schema order, then unknown keys as read") and what "typed structure plus
-    `extra`" in section 5.2 means. The first version of xcheck kept the read order, which the vectors could not
-    tell apart; it was corrected in fix round 1. No vector tells the two readings apart yet; `src/selftest.mjs`
-    covers it.
+    `extra`" in section 5.2 means. The vectors `item/seal/key_order` and `item/open/key_order` pin it, with an unknown key in front of a known one at
+    the top level and in a field, a url, `totp` and `passkey`; `src/selftest.mjs` covers it as well.
     Manifests follow the same rule (known keys first in schema order, at the top level and in each method entry,
-    then unknown keys as read): the controller ruled this on 30.10 to close a gap in the documents; `OPS.md` is to
-    be amended. A vector with an unknown key before a known one is still missing.
+    then unknown keys as read), as `OPS.md` says ("Key order and newer schemas"); the vectors `item/manifest_seal/key_order`
+    and `item/manifest_open/key_order` pin it.
 12. **Floats** are kept at the width they were read (half, single, double) because `OPS.md` says "read and written
     back as it was". The JSON export prints finite floats with the shortest round-trip form and NaN or infinity as
     `null`; the design does not say, and no vector has a finite float in the plain export.

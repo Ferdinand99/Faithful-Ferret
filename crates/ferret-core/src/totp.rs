@@ -39,7 +39,7 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-/// The longest secret in bytes (after base32). Fase 1 § 5.2 (F-31), plan U14.
+/// The longest secret in bytes (after base32). Fase 1 § 5.2 (F-31).
 pub const MAX_SECRET_LEN: usize = 128;
 /// The longest `otpauth://` address in bytes.
 pub const MAX_URI_LEN: usize = 2048;
@@ -446,7 +446,7 @@ fn small_number(text: &str, lo: u32, hi: u32) -> Result<u32, Error> {
 
 /// Reads an `otpauth://totp/...` address with the allow-list.
 ///
-/// Spec: Fase 1 § 5.2 (F-31); plan U14. The secret is at most
+/// Spec: Fase 1 § 5.2 (F-31). The secret is at most
 /// [`MAX_SECRET_LEN`] bytes; an unknown or repeated parameter, a type other
 /// than `totp`, digits outside 6 to 8 and a period outside 1 to 120 are
 /// [`MalformedKind::Otpauth`]; a secret or address that is too long is

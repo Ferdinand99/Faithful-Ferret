@@ -1,5 +1,5 @@
-# Line and branch coverage of the core against the thresholds of plan section
-# 9.3 (scripts/coverage-thresholds.json): cargo llvm-cov --branch on the pinned
+# Line and branch coverage of the core against the thresholds in
+# scripts/coverage-thresholds.json: cargo llvm-cov --branch on the pinned
 # nightly of fuzz/NIGHTLY, checked by scripts/coverage-check.mjs. It runs on
 # pull requests that touch the core or the code it includes from ct/harness,
 # and once a week. The same measurement runs on the LANBox with
@@ -14,6 +14,8 @@ on:
       - "ct/harness/**"
       - "vectors/**"
       - "fuzz/NIGHTLY"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "scripts/coverage-check.mjs"
       - "scripts/coverage-thresholds.json"
       - ".github/workflows/coverage.yml"

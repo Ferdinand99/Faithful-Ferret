@@ -1,6 +1,6 @@
 //! A redacted view of an item for the user interface.
 //!
-//! Spec: Fase 1 § 5.2 and plan Task 12: what crosses into the interface
+//! Spec: Fase 1 § 5.2: what crosses into the interface
 //! holds no private key, no PRF seed, no TOTP address and no value of a
 //! hidden field. The secrets are fetched one at a time on request.
 

@@ -1,10 +1,12 @@
-# Fuzzing of the parsers and verifiers of the core (plan section 9.2):
+# Fuzzing of the parsers and verifiers of the core:
 # libFuzzer with AddressSanitizer through cargo-fuzz, on the pinned nightly
 # toolchain named in fuzz/NIGHTLY.
 #
 #   pull request  60 seconds per target
-#   every night   20 minutes per target; the grown corpus is cached from one
-#                 night to the next (per target) and kept as an artifact
+#   every night   20 minutes per target; the corpus is merged down to a
+#                 smallest set with the same coverage (libFuzzer -merge=1),
+#                 cached from one night to the next (per target) and kept as
+#                 an artifact
 #
 # Every run first replays the seed corpus (fuzz/corpus, made from the test
 # vectors by scripts/fuzz-seeds.mjs) and the regression inputs of earlier
@@ -20,8 +22,6 @@ on:
       - "fuzz/**"
       - "scripts/fuzz-run.sh"
       - "scripts/fuzz-seeds.mjs"
-      - "scripts/check-nightly-pin.sh"
-      - "docker/builder.Dockerfile"
       - "vectors/**"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -61,8 +61,6 @@ jobs:
           node-version: "22"
       # The seed corpus is what the vectors give.
       - run: node scripts/fuzz-seeds.mjs --check
-      # The nightly of fuzz/NIGHTLY is the one of the builder image.
-      - run: scripts/check-nightly-pin.sh
       # The matrix is the list of targets in fuzz/Cargo.toml.
       - id: list
         run: |
@@ -109,6 +107,12 @@ jobs:
         run: bash scripts/fuzz-run.sh replay "${{ matrix.target }}"
       - name: Fuzz
         run: bash scripts/fuzz-run.sh run "${{ matrix.target }}" "$SECONDS_PER_TARGET"
+      # Only on a clean run, so that a crash never leaves a half-merged set. The
+      # merged corpus is what is cached and uploaded, so neither grows without
+      # bound.
+      - name: Merge the corpus
+        if: github.event_name != 'pull_request'
+        run: bash scripts/fuzz-run.sh merge "${{ matrix.target }}"
       # Saved also after a crash: the corpus is worth keeping, and the crash is
       # in the artifact.
       - name: Save the corpus

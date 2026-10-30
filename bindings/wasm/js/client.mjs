@@ -14,7 +14,7 @@
 // * A secret `Uint8Array` argument is copied for the worker, handed over with
 //   `transfer`, and `fill(0)`-ed on this side; the worker wipes its copy after
 //   the call. A password given as a string is encoded after a well-formedness
-//   check: a lone surrogate is `invalid_input`, never a silent U+FFFD (U9).
+//   check: a lone surrogate is `invalid_input`, never a silent U+FFFD.
 // * A failure is a `FerretError` with a stable `code` (see `error.rs`), plus
 //   `worker_failed` when a worker dies and `internal` for anything else.
 // * An out-of-memory in Argon2id (`kdf_out_of_memory`) and an `internal` error

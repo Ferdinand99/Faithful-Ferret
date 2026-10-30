@@ -27,8 +27,8 @@ pub const KDF_FLOOR: KdfParams = KdfParams {
 
 /// The highest parameters ever accepted: 512 MiB, 16 passes, 4 lanes.
 ///
-/// The memory ceiling is 512 MiB, not the 1 GiB of the design text: the
-/// plan's clarification of 29 October (U15) lowers it, so that a hostile
+/// The memory ceiling is 512 MiB, not the 1 GiB of the design text: it was
+/// lowered, so that a hostile
 /// export file cannot make the WASM heap (limit 1 GiB) run out of memory.
 ///
 /// Spec: Fase 1 § 4.1 point 5 (ceiling: `t ≤ 16`, `p ≤ 4`) with the

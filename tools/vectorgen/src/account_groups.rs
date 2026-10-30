@@ -1222,7 +1222,7 @@ pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
         format: FORMAT.into(),
         group: "sheet".into(),
         suite: 1,
-        spec: "Fase 1 § 6.1 and plan U17, U19".into(),
+        spec: "Fase 1 § 6.1".into(),
         generator: generator(),
         cases: m.cases,
     })

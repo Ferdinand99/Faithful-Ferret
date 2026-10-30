@@ -128,10 +128,7 @@ fn run_vector(case: &Case) -> Result<Outcome, Error> {
 #[test]
 fn code_vectors_from_file() {
     let file = vector::load(&vectors_dir().join("internal/codes.json")).unwrap();
-    assert!(
-        file.cases.len() >= 30,
-        "the plan asks for at least 30 cases"
-    );
+    assert!(file.cases.len() >= 30, "at least 30 cases");
     let report = vector::run_all(&file, |case: &Case, _rng: &mut ReplayRng| run_vector(case));
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(report.passed, file.cases.len());
@@ -496,7 +493,7 @@ fn compile(source: &Path, name: &str) {
 
 #[test]
 fn crockford_branch_free() {
-    // The analyzer run (x86_64 and arm64, O0 to O3) is Task 14. Here: the file
+    // The analyzer run (x86_64 and arm64, O0 to O3) is a separate check. Here: the file
     // compiles on its own with rustc, and with `core` only.
     let source = harness_path();
     compile(&source, "crockford_single_file");

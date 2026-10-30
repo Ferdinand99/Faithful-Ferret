@@ -1,5 +1,4 @@
-//! The emergency sheet content and the setup QR payload (Fase 1 § 6.1, plan
-//! U17 and U19): `vectors/internal/sheet.json` and properties.
+//! The emergency sheet content and the setup QR payload (Fase 1 § 6.1): `vectors/internal/sheet.json` and properties.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

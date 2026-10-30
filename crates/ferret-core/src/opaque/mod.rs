@@ -20,7 +20,7 @@
 //! defence in depth: a changed key fails the envelope check first and shows as
 //! `Decrypt`. The detection of a changed key is the comparison of
 //! `RegistrationFinished::server_public_key` with the pinned key on every
-//! re-registration (Task 9); see `client.rs` for the whole argument.
+//! re-registration (the account flows); see `client.rs` for the whole argument.
 //!
 //! # `opaque-ke` and the duplicate crates
 //!

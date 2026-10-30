@@ -1,5 +1,4 @@
-//! Property tests for password text and the recovery/secret key codes (plan
-//! section 9.1).
+//! Property tests for password text and the recovery/secret key codes.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -19,10 +18,6 @@ fn config() -> ProptestConfig {
         .unwrap_or(512);
     ProptestConfig {
         cases,
-        // `allowed_char` rejects the unassigned and control characters one by
-        // one; with tens of thousands of cases the default budget of 65 536
-        // rejects runs out although no property was violated.
-        max_local_rejects: 1 << 24,
         ..ProptestConfig::default()
     }
 }
@@ -51,9 +46,17 @@ fn replace_at(code: &str, at: usize, letter: char) -> String {
         .collect()
 }
 
-/// Text made of allowed characters only.
+/// Text made of allowed characters only. A character that is not allowed
+/// (unassigned or a control character) is mapped to a letter that depends on
+/// it, so nothing is rejected and a long run never exhausts a reject budget.
 fn allowed_char() -> impl Strategy<Value = char> {
-    any::<char>().prop_filter("allowed", |c| is_allowed(*c))
+    any::<char>().prop_map(|c| {
+        if is_allowed(c) {
+            c
+        } else {
+            char::from(b'a' + u8::try_from(u32::from(c) % 26).unwrap_or(0))
+        }
+    })
 }
 
 fn with_min_prefix(rest: &str) -> String {

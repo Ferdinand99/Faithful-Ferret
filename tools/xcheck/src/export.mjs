@@ -16,7 +16,10 @@ const get = (m, key) => {
 };
 
 // items: [{ id: bytes(16), body: bytes (CBOR) }] -> [{ id, value }] after the body shape check
-export function readItems(items) {
+// A body of a newer schema is refused by the encrypted export (`read_only_schema`) and by the CSV export
+// (`unsupported`: the columns are those of schema 1 and the rest would be dropped silently); the plain JSON export
+// writes it as it was read.
+export function readItems(items, { allowReadOnly = false, refusal = 'read_only_schema' } = {}) {
   if (items.length > MAX_ITEMS) fail('too_large');
   const seen = new Set();
   return items.map((it) => {
@@ -25,7 +28,7 @@ export function readItems(items) {
     if (seen.has(k)) fail('malformed_entries');
     seen.add(k);
     const { value, readOnly } = parseBody(it.body);
-    if (readOnly) fail('read_only_schema');
+    if (readOnly && !allowReadOnly) fail(refusal);
     return { id: it.id, value };
   });
 }
@@ -192,10 +195,13 @@ function jsonValue(val) {
 }
 
 export function plainJson(items, includePasskeys) {
-  const list = readItems(items);
+  const list = readItems(items, { allowReadOnly: true });
   const body = (value) => {
-    // the passkey secrets are dropped from the `passkey` map of the item
-    const m = value.v.map(([k, x]) => [k, k === 'passkey' && !includePasskeys ? { k: 'map', v: x.v.filter(([kk]) => !PASSKEY_SECRETS.has(kk)) } : x]);
+    // the passkey secrets are dropped from the `passkey` map of the item; a `passkey` that is not a map (only a body
+    // of a newer schema can have one) cannot be sorted into secret and public keys, so it is left out
+    const m = value.v
+      .filter(([k, x]) => includePasskeys || k !== 'passkey' || x.k === 'map')
+      .map(([k, x]) => [k, k === 'passkey' && !includePasskeys ? { k: 'map', v: x.v.filter(([kk]) => !PASSKEY_SECRETS.has(kk)) } : x]);
     return jsonValue({ k: 'map', v: m });
   };
   return `{"v":1,"items":[${list.map((i) => `{"id":"${hex(i.id)}","body":${body(i.value)}}`).join(',')}]}`;
@@ -211,7 +217,7 @@ function csvCell(text) {
 }
 
 export function plainCsv(items) {
-  const list = readItems(items);
+  const list = readItems(items, { refusal: 'unsupported' });
   const str = (m, key) => {
     const x = m && get(m, key);
     return x && x.k === 'text' ? x.v : '';

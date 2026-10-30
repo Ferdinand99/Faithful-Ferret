@@ -1,4 +1,4 @@
-//! Property tests for the Argon2id parameter gate (plan section 9.1).
+//! Property tests for the Argon2id parameter gate.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

@@ -1,4 +1,4 @@
-//! Property tests for the OPAQUE client (plan section 9.1).
+//! Property tests for the OPAQUE client.
 //!
 //! The key stretching function runs with parameters far below the floor
 //! (through `testing::opaque`), so that the cases run in milliseconds.

@@ -1,4 +1,4 @@
-// The heap of the slow step of an export or an import file (plan U15). The
+// The heap of the slow step of an export or an import file. The
 // maximum of the linear memory is 1 GiB; the file is written with 256 MiB and
 // read with up to 512 MiB. In production this runs in the short-lived job
 // worker; here it runs in one instance, so the high-water mark printed after

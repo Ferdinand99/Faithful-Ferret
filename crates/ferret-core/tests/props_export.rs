@@ -1,4 +1,4 @@
-//! Property tests for the export file and the CSV export (plan section 9.1).
+//! Property tests for the export file and the CSV export.
 //!
 //! The Argon2id parameters are far below the floor (through the
 //! `test-support` functions) so that hundreds of cases run in seconds.

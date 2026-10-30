@@ -87,7 +87,7 @@ impl Method {
     }
 
     /// Whether wraps of this method end with a key commitment. Spec: Fase 1
-    /// § 4.3 and plan U12 (`password` and `pin` only).
+    /// § 4.3 (`password` and `pin` only).
     pub const fn has_commit(&self) -> bool {
         matches!(self, Method::Password { .. } | Method::Pin { .. })
     }

@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "sheet",
   "suite": 1,
-  "spec": "Fase 1 § 6.1 and plan U17, U19",
+  "spec": "Fase 1 § 6.1",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",

@@ -1,4 +1,4 @@
-//! The account flows (Fase 1 § 4.2, § 4.3, § 6.1, § 6.3; plan Task 9):
+//! The account flows (Fase 1 § 4.2, § 4.3, § 6.1, § 6.3):
 //! create, change password (and KSF upgrade), recover, and the confirmation
 //! of the recovery key and the secret key.
 //!
@@ -1556,7 +1556,7 @@ fn account_vectors_from_file() {
     assert!(report.passed >= 12, "{} cases", report.passed);
 }
 
-// ------------------------------------------------- fix round 1 (review)
+// ------------------------------------------------- manifests, pins and recovery
 
 /// A manifest sealed with the account's vault, at revision `rev`.
 fn sealed_manifest(

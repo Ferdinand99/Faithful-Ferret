@@ -1,7 +1,7 @@
 //! Origin canonicalisation and RP ID validation (including the Public Suffix
 //! List lookup) on arbitrary text: never a panic, canonical form is a fixed
 //! point, and an RP ID that is accepted is a dot-delimited suffix of the host
-//! and not a public suffix (plan section 9.2).
+//! and not a public suffix.
 #![no_main]
 
 use ferret_core::passkey::origin::{canonical_origin, validate_rp_id};
