@@ -289,7 +289,8 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
   const nonce = hexOf(c.input.nonce);
   const proof = hexOf(c.input.proof);
   if (!nonce || !proof) continue;
-  // Route 2 is unlock-method.password.put, 3 is recover (see MutationOp::ALL); 0 adds a key.
+  // The route is the index in MutationOp::ALL: 0 is unlock-method.add, 2 is
+  // unlock-method.password.put and 4 is recover.
   for (const route of [0, 2, 4]) {
     add('fuzz_server_wire_fields', withSelect(2 + 3 * route, Buffer.from([nonce.length]), nonce, proof));
   }

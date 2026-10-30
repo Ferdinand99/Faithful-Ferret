@@ -160,12 +160,10 @@ fn record(body: &[u8]) {
     assert!(ValidatedRecord::parse(&longer).is_err());
     assert!(ValidatedRecord::parse(&exact[..RECORD_LEN - 1]).is_err());
 
-    // The profile is claimed in the first four bytes of the body, so a
-    // mutation of the first bytes moves it together with the record.
-    let claimed = body
-        .get(..4)
-        .and_then(|b| <[u8; 4]>::try_from(b).ok())
-        .map_or(1, u32::from_be_bytes);
+    // The profile is claimed in the last four bytes of the body, away from
+    // the client public key at the start of the record, so a mutation can
+    // keep the record valid and move the claim.
+    let claimed = body.last_chunk::<4>().map_or(1, |b| u32::from_be_bytes(*b));
     let rules = ProfileRules::ferret_v1();
     for upload in [body, exact.as_slice()] {
         let shape = ValidatedRecord::parse(upload);
@@ -228,6 +226,18 @@ fn ke1(world: &World, body: &[u8]) {
             shapes.windows(2).all(|pair| pair[0] == pair[1]),
             "known, unknown and disabled are answered alike"
         );
+    }
+
+    // A KE1 with a byte more or less than the real one is refused, and no
+    // state is stored (the parser of opaque-ke ignores a tail, so the length
+    // check of the library is what refuses it).
+    let mut longer = world.ke1.clone();
+    longer.push(body.first().copied().unwrap_or(0));
+    for ke1 in [longer.as_slice(), &world.ke1[..KE1_LEN - 1]] {
+        let store = InMemoryLoginStateStore::new();
+        let answer = world.start(&store, world.f.active(), ke1, LoginPurpose::Login, None);
+        assert_eq!(answer.err(), Some(malformed));
+        assert!(store.is_empty());
     }
 
     // A re-authentication needs a scope that allows it, whatever the KE1.
@@ -309,6 +319,16 @@ fn ke3(world: &World, body: &[u8]) {
         Some(AuthError::Denied(DenyReason::Ke3))
     );
     assert!(store.is_empty());
+
+    // The real KE3 with a byte more or less is refused by structure, and the
+    // state stays for the right one.
+    let mut longer = world.ke3.clone();
+    longer.push(body.first().copied().unwrap_or(0));
+    for ke3 in [longer.as_slice(), &world.ke3[..KE3_LEN - 1]] {
+        let store = world.store_with_login();
+        assert_eq!(world.finish(&store, id, ke3, None).err(), Some(malformed));
+        assert_eq!(store.len(), 1);
+    }
 
     // The login id comes from the client too: any text but the right one
     // finds nothing, and the right KE3 does not help.

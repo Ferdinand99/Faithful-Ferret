@@ -68,7 +68,20 @@ fuzz_target!(|data: &[u8]| {
                 assert!(decode_secret_file(other, data).is_err());
                 payload_readers(kind, &payload);
             }
-            Err(_) => {}
+            // The refusals the decoder documents, in its order of checks.
+            Err(error) => assert!(
+                matches!(
+                    error,
+                    SecretFileError::BadMagic
+                        | SecretFileError::BadLength
+                        | SecretFileError::UnsupportedVersion(_)
+                        | SecretFileError::WrongKind
+                        | SecretFileError::UnsupportedSuite(_)
+                        | SecretFileError::TrailingBytes
+                        | SecretFileError::BadChecksum
+                ),
+                "unexpected refusal {error:?}"
+            ),
         }
         if data.len() != kind.file_len() {
             assert!(

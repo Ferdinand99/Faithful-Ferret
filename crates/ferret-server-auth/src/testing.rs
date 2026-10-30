@@ -1047,7 +1047,11 @@ pub const SEALED_STATE_LEN: usize = crate::state::BLOB_LEN;
 
 /// The content of a login state as plain data, for tests and fuzz targets
 /// that need to build a state, read one back or compare two.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// It holds the session key and the expected MAC in the clear, so it is test
+/// data: it wipes itself when dropped, `Debug` shows nothing, and it has no
+/// `Clone`.
+#[derive(PartialEq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StateFields {
     /// The account the login is for.
     pub credential: [u8; 16],

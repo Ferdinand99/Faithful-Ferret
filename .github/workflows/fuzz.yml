@@ -65,6 +65,7 @@ jobs:
       - run: node scripts/fuzz-seeds.mjs --check
       # Every function of the server library that reads bytes from a client or a
       # file has a target, or a stated reason why not.
+      - run: node scripts/check-fuzz-targets.mjs --self-test
       - run: node scripts/check-fuzz-targets.mjs
       # The matrix is the list of targets in fuzz/Cargo.toml.
       - id: list

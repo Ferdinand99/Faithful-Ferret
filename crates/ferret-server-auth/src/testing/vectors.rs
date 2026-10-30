@@ -510,7 +510,8 @@ fn login_finish_op(input: &Value) -> Outcome {
 
 // ---------------------------------------------------------- replacement
 
-/// The parser of the endpoint for a password change or a recovery: the body is
+/// The reference parser of the replacement body, for the vectors and the fuzz
+/// target; the endpoint has its own. It reads a password change or a recovery: the body is
 /// the JSON the client sent, and the fields are
 /// `{ "registration_record": hex, "ksf_profile": number, "pk_r_new": hex }`.
 /// Other fields (the wraps, the manifest) are the endpoint's business and are
