@@ -14,6 +14,14 @@
 //! with a salt of 16 zero bytes and an output of 64 bytes, its parameters
 //! from the [`crate::KsfProfile`] (see `suite.rs` and `ksf.rs`).
 //!
+//! # The server suite
+//!
+//! With the feature `server-suite` (off by default, never enabled by the
+//! WASM package) the module `server_suite` exports the cipher suite, the RNG
+//! adapter and the message lengths, so that a server built on this crate runs
+//! exactly the configuration of the client. Without the feature none of them is
+//! reachable.
+//!
 //! # Pinning
 //!
 //! `opaque_login_finish` takes a [`PinState`]. The server key pin at login is
@@ -33,6 +41,8 @@
 
 pub(crate) mod client;
 pub(crate) mod ksf;
+#[cfg(feature = "server-suite")]
+pub mod server_suite;
 pub(crate) mod suite;
 
 pub use client::{

@@ -95,11 +95,11 @@ use zeroize::Zeroizing;
 
 /// Length of a `RegistrationResponse`: the evaluated element and the
 /// server's public key, 32 + 32 bytes.
-pub(crate) const REGISTRATION_RESPONSE_LEN: usize = 64;
+pub const REGISTRATION_RESPONSE_LEN: usize = 64;
 /// Length of `KE2`: evaluated element 32, masking nonce 32, masked response
 /// 128 (server public key 32, envelope 96), server nonce 32, server ephemeral
 /// public key 32, MAC 64.
-pub(crate) const KE2_LEN: usize = 320;
+pub const KE2_LEN: usize = 320;
 /// The longest OPRF input `opaque-ke` accepts, in bytes (the shortest is 1).
 const PASSWORD_MAX: usize = u16::MAX as usize;
 
@@ -111,7 +111,7 @@ const PASSWORD_MAX: usize = u16::MAX as usize;
 /// draws the library makes can be recorded and replayed exactly (the vectors
 /// list them). The operating system's generator of `rand 0.8` is never
 /// used.
-pub(crate) struct Rng06<'a, R: SecureRng>(pub(crate) &'a mut R);
+pub struct Rng06<'a, R: SecureRng>(pub &'a mut R);
 
 impl<R: SecureRng> opaque_ke::rand::RngCore for Rng06<'_, R> {
     fn next_u32(&mut self) -> u32 {
