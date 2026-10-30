@@ -50,7 +50,10 @@ mod tests {
     use super::*;
 
     fn args(list: &[&str]) -> impl Iterator<Item = OsString> {
-        list.iter().map(OsString::from).collect::<Vec<_>>().into_iter()
+        list.iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     #[test]
