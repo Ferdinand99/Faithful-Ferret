@@ -516,7 +516,7 @@ test("the_rollback_memory_is_a_required_argument", async () => {
   assert.deepEqual(memory, copy);
 });
 
-// -------------------------------------------------------------- fix round
+// ------------------------------------------- re-authentication token and marker
 
 test("a_missing_token_is_reauth_required_and_an_old_one_expires", async () => {
   const { client } = setup();
