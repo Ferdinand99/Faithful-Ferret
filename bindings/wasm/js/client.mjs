@@ -9,14 +9,31 @@
 // * Two module workers: `vault` (long-lived; it holds the keys) and `job`
 //   (short-lived; Argon2id of an export or an import file only). The job
 //   worker is ended after every call, so its large heap is freed.
-// * `lock()` ends the vault worker and starts a new one on the next call: that
-//   is what frees the heap, which stays at its high-water mark until then.
+// * `lock()` ends the vault worker at once and starts a new one on the next
+//   call: that is what wipes and frees the heap, which stays at its
+//   high-water mark until then. It never waits for the worker, so it works
+//   while a long Argon2id or an import is running. Every call that is waiting
+//   is rejected with `locked`. Nothing is asked of the worker first: ending
+//   it releases all of its memory, and a wipe that has to wait behind a
+//   running call would be exactly the delay a lock must not have.
 // * A secret `Uint8Array` argument is copied for the worker, handed over with
 //   `transfer`, and `fill(0)`-ed on this side; the worker wipes its copy after
-//   the call. A password given as a string is encoded after a well-formedness
-//   check: a lone surrogate is `invalid_input`, never a silent U+FFFD.
+//   the call. **A secret array can therefore be used once.** The array that
+//   the caller keeps is all zero afterwards, and a second call with it is
+//   `invalid_input`, never a call with a key of zeros: arguments that are keys
+//   (PRF output, `K_exp`, the device PIN key, the export token) must be a
+//   `Uint8Array` that is not all zero. Get a new one for every call, or pass
+//   `.slice()`. A password given as a string is encoded after a
+//   well-formedness check: a lone surrogate is `invalid_input`, never a
+//   silent U+FFFD.
+// * Numbers are checked before they are sent: handles and indexes are whole
+//   numbers up to 2^32 - 1; revisions and sequence numbers whole numbers up to
+//   2^53; times are milliseconds (below 4e13) or, for `totp_code`, seconds
+//   (below 4e10). A wrong type or unit is `invalid_input`.
 // * A failure is a `FerretError` with a stable `code` (see `error.rs`), plus
 //   `worker_failed` when a worker dies and `internal` for anything else.
+//   `invalid_input` (a call with a wrong argument, also one that
+//   `wasm-bindgen` refuses with a `TypeError`) does not end the session.
 // * An out-of-memory in Argon2id (`kdf_out_of_memory`) and an `internal` error
 //   (a trap or abort in WASM, or anything that is not a code) end the worker
 //   that reported it: a heap that failed to grow, or an instance that
@@ -25,17 +42,42 @@
 // * `ferret.vault.lock()` is the same as `ferret.lock()`: the worker is ended.
 // * The result of `ferret.job.argon2_export_key` is `K_exp`. The caller passes
 //   it on to `export_finish` or `import_open`, which wipe it, or `fill(0)`s it.
+//
+// Passkeys (the vault methods `passkey_create`, `passkey_get`):
+//
+// * `passkey_create` returns `{ item, item_id, pending }` and does not answer
+//   the page. Upload `item`; when the server has accepted it, call
+//   `passkey_create_confirm(pending)`, which returns `{ response, handle }`.
+//   If the upload fails, call `passkey_create_abort(pending)`.
+// * Its `existing` argument is `NO_EXISTING` (exported here) or a non-empty
+//   array of `{ rp_id, id }` built from `item_view`'s `passkey.rp_id` and
+//   `passkey.cred_id`; an empty array is `invalid_input`.
+// * PRF results depend on user verification (two seeds, spec § 9.3): the same
+//   salt gives different outputs with and without it.
+//
+// Plaintext export: `reveal_plain_export(rows, format, include_passkeys,
+// token)` needs a one-time token from `ferret.vault.reauth_grant(wrap)` made
+// right after a fresh `login_start`/`login_finish` with the master password
+// (the same fresh sign-in a rekey needs). Without one it is `reauth_required`.
+//
+// Registering a passkey as an unlock method: `wrap_prf(credential_id, salt,
+// prf_output, method_id, generation, aaguid, stored_credential_ids)` takes the
+// AAGUID of the registration and the `cred_id` of every passkey item in the
+// vault, and refuses (`invalid_state`) Ferret's own authenticator
+// (`FERRET_AAGUID`) and any credential that Ferret stores: such a method could
+// never open the vault it lives in.
 
 import {
   FerretError,
   SECRET_ARGS,
   TEXT_ARGS,
   argsOf,
+  assertArgTypes,
   assertWellFormed,
   encodeSecretText,
 } from "./protocol.mjs";
 
-export { FerretError } from "./protocol.mjs";
+export { FERRET_AAGUID, FerretError, NO_EXISTING } from "./protocol.mjs";
 
 function defaultWorkers() {
   return {
@@ -57,12 +99,16 @@ function prepare(method, args) {
     }
     assertWellFormed(arg);
     if (arg instanceof Uint8Array) {
-      const copy = arg.slice();
+      // A real copy with its own buffer (`Buffer#slice` would only be a view).
+      const copy = new Uint8Array(arg);
       if (secretArgs.includes(i)) wipe.push(arg);
       return copy;
     }
     return arg;
   });
+  // Types and units of the numbers, `Uint8Array` for the secrets, and no key
+  // that is all zero (a secret array that was wiped by an earlier call).
+  assertArgTypes(method, out);
   const transfer = out.filter((a) => a instanceof Uint8Array).map((a) => a.buffer);
   return { out, transfer, wipe };
 }
@@ -154,15 +200,14 @@ export function createClient(options = {}) {
   const onFatal = (channel) => channel.fail("worker_failed");
   const vault = new WorkerChannel("vault", createVaultWorker, onFatal);
 
-  const lock = async () => {
-    if (vault.worker) {
-      try {
-        await vault.call("lock", []);
-      } catch {
-        // The worker is ended either way.
-      }
-    }
+  // Ends the worker first and does not wait for it: a call that is still
+  // running (a sign-in with Argon2id at 512 MiB, an import) is cut off, and so
+  // is a worker that is stuck or still loading. Terminating frees all of its
+  // memory, so there is nothing left to wipe by hand. The calls that were
+  // waiting are rejected with `locked`.
+  const lock = () => {
     vault.fail("locked");
+    return Promise.resolve();
   };
 
   const vaultProxy = new Proxy(

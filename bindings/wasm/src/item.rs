@@ -37,12 +37,19 @@ struct UrlViewDto<'a> {
     matching: &'a str,
 }
 
+/// The public side of a passkey. `cred_id` and `user_handle` are not secret
+/// (the relying party has both); they are what a caller needs to build
+/// `excludeCredentials` and to match `allowCredentials`.
 #[derive(Serialize)]
 struct PasskeyViewDto<'a> {
     rp_id: &'a str,
     user_name: &'a str,
     created: u64,
     has_prf: bool,
+    #[serde(with = "bytes")]
+    cred_id: &'a [u8],
+    #[serde(with = "bytes")]
+    user_handle: &'a [u8],
 }
 
 /// What JavaScript may see of an item: no private key, no PRF seed, no TOTP
@@ -64,7 +71,13 @@ pub(crate) struct ViewDto<'a> {
 }
 
 impl<'a> ViewDto<'a> {
-    pub(crate) fn of(v: &'a ItemView) -> Self {
+    /// The view of `v`, the redacted view of `body`. The public ids of the
+    /// passkey are read from the body, which is the only place that has them.
+    pub(crate) fn of(v: &'a ItemView, body: &'a ItemBody) -> Self {
+        const NONE: &[u8] = &[];
+        let (cred_id, user_handle) = body.passkey.as_ref().map_or((NONE, NONE), |p| {
+            (p.cred_id.as_slice(), p.user_handle.as_slice())
+        });
         Self {
             item_type: &v.item_type,
             name: &v.name,
@@ -92,6 +105,8 @@ impl<'a> ViewDto<'a> {
                 user_name: &p.user_name,
                 created: p.created,
                 has_prf: p.has_prf,
+                cred_id,
+                user_handle,
             }),
             has_notes: v.has_notes,
             created: v.created,

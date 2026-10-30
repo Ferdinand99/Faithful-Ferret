@@ -168,7 +168,10 @@ function vaultKey(vault) {
 // signatures (`auth_sign`, `recover_sign`, `signature`) and the WebAuthn
 // response fields the page is given by design (`attestation_object`,
 // `authenticator_data`, `client_data_json`, `public_key_spki`, `id`,
-// `user_handle`). `export_finish` is the encrypted file.
+// `user_handle`; the passkey item view shows `cred_id` and `user_handle`, which
+// the relying party has too). `export_finish` is the encrypted file.
+// `reauth_grant` is the one-time token of a plaintext export: a permission
+// that a fresh sign-in makes, not a key.
 const EXPECTED_BYTE_PATHS = [
   "auth_public_key:",
   "auth_sign:",
@@ -209,6 +212,8 @@ const EXPECTED_BYTE_PATHS = [
   "import_seal:envelope",
   "import_seal:tag",
   "import_view:item_id",
+  "item_view (passkey):passkey.cred_id",
+  "item_view (passkey):passkey.user_handle",
   "login_finish:ke3",
   "login_finish:server_public_key",
   "login_start:",
@@ -219,11 +224,11 @@ const EXPECTED_BYTE_PATHS = [
   "passkey_create:item.envelope",
   "passkey_create:item.tag",
   "passkey_create:item_id",
-  "passkey_create:response.attestation_object",
-  "passkey_create:response.authenticator_data",
-  "passkey_create:response.client_data_json",
-  "passkey_create:response.id",
-  "passkey_create:response.public_key_spki",
+  "passkey_create_confirm:response.attestation_object",
+  "passkey_create_confirm:response.authenticator_data",
+  "passkey_create_confirm:response.client_data_json",
+  "passkey_create_confirm:response.id",
+  "passkey_create_confirm:response.public_key_spki",
   "passkey_get:authenticator_data",
   "passkey_get:client_data_json",
   "passkey_get:id",
@@ -233,6 +238,7 @@ const EXPECTED_BYTE_PATHS = [
   "pin_unlock:pinned.pk_a",
   "pin_unlock:pinned.server_public_key",
   "pin_unlock:pinned.vault_id",
+  "reauth_grant:",
   "recover:manifest.envelope",
   "recover:manifest.tag",
   "recover:password_wrap.method_id",
@@ -365,7 +371,7 @@ test("no_reply_holds_key_material", () => {
 
   const prfOutput = fill(32, 0x33);
   addSecret("PRF output", prfOutput);
-  const prfWrap = call("wrap_prf", () => vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1));
+  const prfWrap = call("wrap_prf", () => vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), []));
   addSecret("KEK_prf", fromHex(op("kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek));
   call("unlock_prf", () => new wasm.UnlockJob().unlock_prf(URL_, CTX, prfOutput.slice(), prfWrap, pinned(created.pinned, { server_public_key: created.pinned.server_public_key })));
   call("unlock_recovery", () => new wasm.UnlockJob().unlock_recovery(URL_, CTX, rkCode, created.wraps[1], firstUse(true), wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key)));
@@ -427,7 +433,8 @@ test("no_reply_holds_key_material", () => {
     user_verification: "preferred", prf: {},
   };
   const pkId = fill(16, 0x51);
-  const made = call("passkey_create", () => vault.passkey_create(pkId, 1, "Example", create, caller, uv, [], NOW, undefined));
+  const made = call("passkey_create", () => vault.passkey_create(pkId, 1, "Example", create, caller, uv, "no_existing", NOW, undefined));
+  call("passkey_create_confirm", () => vault.passkey_create_confirm(made.pending));
   addSecret("IK (passkey item)", vault.test_item_key(pkId, 1, made.item.envelope, made.item.tag));
   const ph = vault.open_item(pkId, 1, made.item.envelope, made.item.tag);
   // (Not the PKCS#8 file: it holds the public key too, which replies have.
@@ -441,7 +448,7 @@ test("no_reply_holds_key_material", () => {
   // ---- export and import
   const rows = [row(id, newItem), row(pkId, made.item)];
   const kdf = { m_kib: 65536, t: 3, p: 1 };
-  const started = call("export_begin", () => vault.export_begin(rows, NOW, kdf));
+  const started = call("export_begin", () => vault.test_export_begin(rows, NOW, kdf));
   const wrapKey = wasm.argon2_export_key(enc.encode("export password for tests"), started.salt, started.kdf, "write", enc.encode(PASSWORD));
   const file = call("export_finish", () => vault.export_finish(wrapKey.slice()));
   const header = call("import_header", () => wasm.import_header(file));
@@ -451,6 +458,32 @@ test("no_reply_holds_key_material", () => {
   call("import_seal", () => vault.import_seal(0, fill(16, 0x91), 1));
   call("totp_parse", () => wasm.totp_parse(LOGIN_DRAFT.totp.uri));
   call("setup_qr_parse", () => wasm.setup_qr_parse(qr));
+
+  // ---- the plaintext export: the widest reveal, behind a fresh sign-in
+  // It returns every secret as text by design, so it is not one of the
+  // replies that are walked. What is checked is the gate.
+  const refuse = (token) => {
+    try {
+      vault.reveal_plain_export(rows, "json", true, token);
+    } catch (e) {
+      return e.code;
+    }
+    return "returned";
+  };
+  assert.equal(refuse(fill(32, 1)), "reauth_required", "no sign-in, no export");
+  const grantJob = new wasm.UnlockJob();
+  const g1 = grantJob.login_start(enc.encode(PASSWORD), skCode);
+  grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g1), 1, pinned(plan.pinned));
+  const token = call("reauth_grant", () => grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password")));
+  assert.equal(token.length, 32);
+  assert.equal(refuse(fill(32, 1)), "reauth_required", "a wrong token");
+  assert.equal(refuse(token.slice()), "reauth_required", "and the failed attempt used the grant up");
+  const g2 = grantJob.login_start(enc.encode(PASSWORD), skCode);
+  grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g2), 1, pinned(plan.pinned));
+  const token2 = grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"));
+  const plain = vault.reveal_plain_export(rows, "json", true, token2.slice());
+  assert.ok(plain.includes("hunter2-secret") && plain.includes("example.com"));
+  assert.equal(refuse(token2), "reauth_required", "one use");
 
   // ---- the walk, over every reply and every secret known at the end
   assert.ok(secrets.size >= 25, `${secrets.size} secrets`);

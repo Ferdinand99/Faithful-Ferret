@@ -1480,6 +1480,22 @@ impl Vault {
         let (ptr, len) = v.test_vk_buffer();
         Ok(vec![ptr as usize as u32, len as u32])
     }
+
+    /// `export_begin` without the floor on the Argon2id parameters, so that
+    /// the tests do not have to run the 256 MiB default every time. The
+    /// check itself is tested through `export_begin`.
+    pub fn test_export_begin(
+        &mut self,
+        rows: JsValue,
+        created_at: f64,
+        kdf: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let params = crate::convert::from_js::<crate::convert::KdfDto>(kdf)
+            .map_err(JsValue::from)?
+            .core();
+        self.begin_export(rows, created_at, params)
+            .map_err(JsValue::from)
+    }
 }
 
 /// An OPAQUE server for the end-to-end tests of the flows (the client side

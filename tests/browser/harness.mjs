@@ -210,6 +210,63 @@ async function lockRun() {
   };
 }
 
+// ------------------------------------------------------ lock under load
+
+/**
+ * `lock()` while the vault worker is inside a long Argon2id (the registration
+ * step runs the sign-in profile there): the worker must be ended at once, and
+ * the call that is running must be rejected with `locked`, not left to finish.
+ *
+ * The step takes well under a second on a fast machine and several seconds on
+ * a slow one, so a first run lets it finish to measure it, and the second run
+ * locks 40% of the way into the same step.
+ */
+async function lockUnderLoadRun() {
+  const wasm = await testWasm();
+
+  /** Starts the step on a new client; resolves once the worker has the call. */
+  async function start(seed) {
+    const { client, recorder } = await makeClient({ mount: "release" });
+    const server = new wasm.TestServer(enc.encode(seed));
+    // The first call also loads the module in the worker, so the step below
+    // starts on a worker that is ready.
+    const request = await client.vault.register_start(enc.encode(PASSWORD), { kind: "generate" });
+    const response = server.register_response(IDS.account_id, request);
+    const t0 = performance.now();
+    const running = client.vault.register_finish(response, 1).then(
+      () => ({ outcome: "finished", at: performance.now() }),
+      (e) => ({ outcome: e.code, at: performance.now() }),
+    );
+    return { client, recorder, running, t0 };
+  }
+
+  const baseline = await start("browser-lock-load-1");
+  const done = await baseline.running;
+  const stepMs = done.at - baseline.t0;
+  await baseline.client.lock();
+
+  const loaded = await start("browser-lock-load-2");
+  await sleep(stepMs * 0.4);
+  const t1 = performance.now();
+  await loaded.client.lock();
+  const lockMs = performance.now() - t1;
+  const settled = await loaded.running;
+  const workers = loaded.recorder.workers.filter((w) => w.label === "vault").map((w) => w.terminated);
+  const afterLock = await loaded.client.vault.context().then(
+    () => "answered",
+    (e) => e.code,
+  );
+  return {
+    baselineOutcome: done.outcome,
+    stepMs: Math.round(stepMs),
+    outcome: settled.outcome,
+    lockMs: Math.round(lockMs),
+    settleMs: Math.round(settled.at - t1),
+    workers,
+    afterLock,
+  };
+}
+
 // ------------------------------------------------- passkey and WebCrypto
 
 function derToP1363(der) {
@@ -255,7 +312,9 @@ async function passkeyRun() {
     user_verification: "preferred", prf: {},
   };
   const pkId = fill(16, 0x51);
-  const made = await client.vault.passkey_create(pkId, 1, "Example", create, caller, uv, [], NOW, undefined);
+  const pending = await client.vault.passkey_create(pkId, 1, "Example", create, caller, uv, "no_existing", NOW, undefined);
+  const confirmed = await client.vault.passkey_create_confirm(pending.pending);
+  const made = { item: pending.item, response: confirmed.response };
   const handle = await client.vault.open_item(pkId, 1, made.item.envelope, made.item.tag);
   const challenge = fill(32, 3);
   const got = await client.vault.passkey_get(handle, { challenge, rp_id: "example.com", allow: [], user_verification: "required" }, caller, uv);
@@ -452,7 +511,9 @@ async function leakRun() {
     user_verification: "preferred", prf: {},
   };
   const pkId = fill(16, 0x51);
-  const made = await client.vault.passkey_create(pkId, 1, "Example", create, caller, uv, [], NOW, undefined);
+  const pending = await client.vault.passkey_create(pkId, 1, "Example", create, caller, uv, "no_existing", NOW, undefined);
+  const confirmed = await client.vault.passkey_create_confirm(pending.pending);
+  const made = { item: pending.item, response: confirmed.response };
   add("IK (passkey item)", (await probe({ op: "call", method: "test_item_key", args: [pkId, 1, made.item.envelope, made.item.tag] })).value);
   const ph = await client.vault.open_item(pkId, 1, made.item.envelope, made.item.tag);
   for (const which of ["scalar", "seed_uv", "seed_nouv"]) {
@@ -468,7 +529,7 @@ async function leakRun() {
   anchorWrap("KEK_pin", pinWrap, kekPin, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
   add("PRF output", hex(prfOutput));
-  const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1);
+  const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), []);
   const kekPrf = op(wasm, "kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek;
   add("KEK_prf", kekPrf);
   anchorWrap("KEK_prf", prfWrap, kekPrf, vk1, 1);
@@ -561,7 +622,7 @@ async function leakRun() {
   const sealed2 = await client.vault.encrypt_item(second, 1, { item_type: "note", name: "Second", notes: "second note" }, undefined, NOW);
   const rows = [row(id, newItem), row(second, sealed2)];
   const kdf = { m_kib: 65536, t: 3, p: 1 };
-  const started = await client.vault.export_begin(rows, NOW, kdf);
+  const started = await client.vault.test_export_begin(rows, NOW, kdf);
   const wrapKey = await client.job.argon2_export_key(EXPORT_PASSWORD, started.salt, started.kdf, "write", PASSWORD);
   const file = await client.vault.export_finish(wrapKey);
   zeroChecks.exportKeyAfterFinish = wrapKey.every((b) => b === 0);
@@ -668,6 +729,7 @@ window.ferret = {
   exportRun,
   jobTerminatedRun,
   lockRun,
+  lockUnderLoadRun,
   passkeyRun,
   leakRun,
   plantedRun,

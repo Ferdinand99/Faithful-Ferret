@@ -32,16 +32,24 @@
 //! | passkey unlock | `unlock_prf` |
 //! | PIN unlock | `pin_unlock` |
 //! | full rekey | `login_start`, `login_finish`, `rekey`, `Vault.auth_sign("rekey")`, `Vault.rekey_commit` |
+//! | plaintext export | `login_start`, `login_finish`, `reauth_grant`, `Vault.reveal_plain_export` |
 //!
 //! The core's `ferret_core::change_password` is the KSF upgrade as well: the
 //! same password with a higher profile.
+//!
+//! There is no single call for "change the master password and rotate the
+//! keys". A client does it in two flows, in this order: first the password
+//! change above, then, once the server has accepted it, a fresh sign-in with
+//! the new password and the full rekey. The rekey wraps the new vault key
+//! under the key of that new sign-in, so the order cannot be reversed without
+//! the rekey being made under the old password.
 
 use crate::convert::{
     ANY, CheckpointDto, CtxDto, IdsDto, Pin, PinArg, PinnedDto, RowDto, SealedDto, Shape, Shaped,
     WrapDto, b16, b32, bytes, core, from_js, to_js,
 };
 use crate::error::{Fail, Res, run};
-use crate::vault::{PendingRekey, Setup, Vault};
+use crate::vault::{PendingRekey, ReauthGrant, Setup, Vault};
 use ferret_core::{
     Error, ExportKey, Kek, KekDevPin, KsfProfile, LoginState, MasterPassword, Method, MethodId,
     MpPolicy, NewAccountIds, NewPassword, OpaqueInput, OsRng, Pin as PinDigits, Pinned,
@@ -1060,6 +1068,43 @@ impl UnlockJob {
                 ),
             });
             // The sign-in is used up.
+            self.reset();
+            Ok(out)
+        })
+    }
+
+    /// Makes the one-time token that `Vault.reveal_plain_export` needs. Like
+    /// a rekey it needs a fresh sign-in of this job (`login_start`,
+    /// `login_finish`) in which the master password was typed again. `pw_wrap`
+    /// is the vault's password wrap record from the server: it is opened with
+    /// the key of this sign-in, and has to hold this vault's key, so a
+    /// sign-in to another account (or with a wrong password, which already
+    /// failed at `login_finish`) gives no token. The sign-in is used up.
+    ///
+    /// Returns 32 bytes. The vault keeps a copy until the export uses it, a
+    /// new token replaces it, or the vault is locked or rekeyed.
+    pub fn reauth_grant(
+        &mut self,
+        vault: &mut Vault,
+        pw_wrap: JsValue,
+    ) -> Result<Vec<u8>, JsValue> {
+        run(|| {
+            let rec = from_js::<WrapDto>(pw_wrap)?.core()?;
+            if !matches!(rec.method, Method::Password { .. }) {
+                return Err(Fail::Input);
+            }
+            let done = self.login_done.as_ref().ok_or(Fail::Input)?;
+            let unlocked = vault.unlocked()?;
+            let ctx = unlocked.context();
+            let kek = Kek::from_export_key(&ctx.account_id, &done.export_key)?;
+            let opened = unwrap_vk(ctx, &kek, &rec)?;
+            if !opened.same_vault_key(unlocked) {
+                return Err(Error::Decrypt.into());
+            }
+            let mut token = Zeroizing::new([0u8; 32]);
+            ferret_core::SecureRng::fill(&mut OsRng, &mut *token);
+            let out = token.to_vec();
+            vault.inner_mut()?.grant = Some(ReauthGrant(token));
             self.reset();
             Ok(out)
         })

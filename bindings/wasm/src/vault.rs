@@ -14,8 +14,8 @@
 //! 5. Sensitive fields are shown one at a time.
 
 use crate::convert::{
-    ANY, CheckpointDto, PinnedDto, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16, bytes,
-    core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
+    ANY, ByteBuf, CheckpointDto, PinnedDto, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16,
+    bytes, core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
 };
 use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
@@ -34,7 +34,7 @@ use zeroize::Zeroizing;
 
 /// The most items that can be open at once. An open item holds its decrypted
 /// body in WASM memory.
-const MAX_OPEN: usize = 4_096;
+pub(crate) const MAX_OPEN: usize = 4_096;
 
 /// An item that is open: its decrypted body and the envelope it came from
 /// (kept so that an edit can keep the item key).
@@ -89,24 +89,62 @@ pub(crate) struct PendingRekey {
     pub(crate) setup: Setup,
 }
 
+/// A passkey that has been made but not yet released: the answer for the
+/// page is held here until the caller has stored the sealed item
+/// (`passkey_create_confirm`), and the item it goes into is not open before
+/// that either.
+pub(crate) struct PendingPasskey {
+    pub(crate) handle: u32,
+    pub(crate) response: ferret_core::passkey::CreateResponse,
+    /// The item as sealed: its id, envelope (the item key is kept) and body.
+    pub(crate) item: OpenItem,
+    /// The open item the passkey was added to and the envelope it had then.
+    pub(crate) attach_to: Option<(u32, Vec<u8>)>,
+}
+
+/// A one-time permission for a plaintext export. Only a fresh sign-in with
+/// the master password makes one (`UnlockJob.reauth_grant`); the vault keeps
+/// it until the export consumes it, a new one replaces it, or the vault is
+/// locked or rekeyed.
+pub(crate) struct ReauthGrant(pub(crate) Zeroizing<[u8; 32]>);
+
 /// Everything an unlocked vault holds.
 pub(crate) struct Inner {
     pub(crate) vault: UnlockedVault,
     pub(crate) items: BTreeMap<u32, OpenItem>,
+    /// The next handle to hand out. It starts at a random value for each
+    /// vault, so a handle kept from an earlier session is almost surely not
+    /// open in this one (`invalid_handle`) instead of naming another item.
     next_handle: u32,
     pub(crate) pending: Option<PendingRekey>,
     pub(crate) setup: Option<Setup>,
     pub(crate) export: Option<ExportDraft>,
     pub(crate) import: Option<Vec<ExportItem>>,
+    pub(crate) passkey: Option<PendingPasskey>,
+    pub(crate) grant: Option<ReauthGrant>,
 }
 
 impl Inner {
+    /// A handle that is not in use. Item handles and the handle of a pending
+    /// passkey share one space, so none is handed out twice.
+    pub(crate) fn new_handle(&mut self) -> Res<u32> {
+        for _ in 0..=MAX_OPEN {
+            let handle = self.next_handle;
+            self.next_handle = handle.wrapping_add(1);
+            let in_use = self.items.contains_key(&handle)
+                || self.passkey.as_ref().is_some_and(|p| p.handle == handle);
+            if !in_use {
+                return Ok(handle);
+            }
+        }
+        Err(Error::TooLarge.into())
+    }
+
     pub(crate) fn open(&mut self, item: OpenItem) -> Res<u32> {
         if self.items.len() >= MAX_OPEN {
             return Err(Error::TooLarge.into());
         }
-        let handle = self.next_handle;
-        self.next_handle = handle.checked_add(1).ok_or(Fail::Input)?;
+        let handle = self.new_handle()?;
         self.items.insert(handle, item);
         Ok(handle)
     }
@@ -126,15 +164,19 @@ impl Vault {
     /// A vault around an unlocked one (a flow made it). `setup` holds the
     /// secrets that are shown once.
     pub(crate) fn from_unlocked(vault: UnlockedVault, setup: Option<Setup>) -> Vault {
+        let mut start = [0u8; 4];
+        ferret_core::SecureRng::fill(&mut OsRng, &mut start);
         Vault {
             inner: Some(Box::new(Inner {
                 vault,
                 items: BTreeMap::new(),
-                next_handle: 1,
+                next_handle: u32::from_le_bytes(start),
                 pending: None,
                 setup,
                 export: None,
                 import: None,
+                passkey: None,
+                grant: None,
             })),
         }
     }
@@ -325,11 +367,15 @@ impl Vault {
     }
 
     /// The item without its secrets: no private key, no PRF seed, no TOTP
-    /// address, no notes, no value of a hidden field.
+    /// address, no notes, no value of a hidden field. A passkey shows its
+    /// public ids (`cred_id`, `rp_id`, `user_handle`), which are what
+    /// `excludeCredentials`, `allowCredentials` and the check of
+    /// `wrap_prf` are built from.
     pub fn item_view(&self, handle: u32) -> Result<JsValue, JsValue> {
         run(|| {
-            let view = self.inner()?.item(handle)?.body.view();
-            to_js(&ViewDto::of(&view))
+            let body = &self.inner()?.item(handle)?.body;
+            let view = body.view();
+            to_js(&ViewDto::of(&view, body))
         })
     }
 
@@ -582,6 +628,21 @@ impl Vault {
 
     /// A passkey (PRF) wrap of the vault key: `prf_output` is the 32 bytes
     /// the authenticator returned for `prf_salt`. Returns the wrap record.
+    ///
+    /// A passkey that Ferret itself stores cannot unlock the vault that holds
+    /// it: its PRF seeds are inside the vault, so the method would lock the
+    /// user out of the very vault it was meant to open (spec § 9.4). It is
+    /// refused with `invalid_state` when
+    ///
+    /// * `aaguid` (16 bytes, from the attestation of the registration) is
+    ///   Ferret's own (`ferret_aaguid()`), or
+    /// * `credential_id` is the id of a passkey in an open item, or of one
+    ///   in `stored_credential_ids`.
+    ///
+    /// `stored_credential_ids` is required: pass the `cred_id` of every
+    /// passkey item of the vault (from `item_view`), as an array of
+    /// `Uint8Array`. The binding cannot see items that are not open.
+    #[allow(clippy::too_many_arguments)]
     pub fn wrap_prf(
         &self,
         credential_id: Vec<u8>,
@@ -589,10 +650,25 @@ impl Vault {
         prf_output: Vec<u8>,
         method_id: Vec<u8>,
         kek_generation: f64,
+        aaguid: Vec<u8>,
+        stored_credential_ids: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let prf_output = Zeroizing::new(prf_output);
             let vault = self.unlocked()?;
+            let aaguid: [u8; 16] = arr(&aaguid)?;
+            let stored: Vec<ByteBuf> = from_js_list(stored_credential_ids)?;
+            if aaguid == ferret_core::passkey::AAGUID
+                || stored.iter().any(|s| s.0 == credential_id)
+                || self.inner()?.items.values().any(|i| {
+                    i.body
+                        .passkey
+                        .as_ref()
+                        .is_some_and(|p| p.cred_id == credential_id)
+                })
+            {
+                return Err(Error::InvalidState.into());
+            }
             let kek = Kek::from_prf(&credential_id, &PrfOutput::from_slice(&prf_output)?)?;
             let rec = vault.wrap_for_method(
                 &mut OsRng,
@@ -720,6 +796,8 @@ impl Vault {
             inner.items.clear();
             inner.export = None;
             inner.import = None;
+            inner.passkey = None;
+            inner.grant = None;
             Ok(())
         })
     }

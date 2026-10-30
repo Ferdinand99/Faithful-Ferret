@@ -74,6 +74,17 @@ struct QrDto {
     server_public_key: [u8; 32],
 }
 
+/// The AAGUID that Ferret writes into every passkey it makes (16 bytes,
+/// `dc704a44-b994-410c-a689-ed8d71a84ac3`). It is public. A client that
+/// registers a passkey as an unlock method passes the AAGUID of that
+/// registration to `Vault.wrap_prf`, which refuses Ferret's own: such a
+/// passkey's PRF seeds are inside the vault it would have to open.
+/// `FERRET_AAGUID` in the client is the same value.
+#[wasm_bindgen]
+pub fn ferret_aaguid() -> Vec<u8> {
+    ferret_core::passkey::AAGUID.to_vec()
+}
+
 /// The payload of the QR code of the emergency sheet
 /// (`ferret-setup:v1?u=...&a=...&k=...&s=...&o=...`).
 #[wasm_bindgen]

@@ -77,6 +77,9 @@ const BYTES_ALLOWED = {
   "UnlockJob.login_start": "KE1, a message of the OPAQUE protocol, public",
   "UnlockJob.register_start": "the OPAQUE registration request, public",
   "UnlockJob.recover_sign": "a signature (64 bytes), public",
+  "UnlockJob.reauth_grant":
+    "the one-time token for a plaintext export: a bearer permission that a fresh sign-in makes, not a key; the vault keeps a copy and the export uses it up",
+  ferret_aaguid: "the AAGUID of Ferret, public (it is in every passkey response)",
   argon2_export_key:
     "K_exp: wraps the content key of one export file; it crosses between the job worker and the vault worker once and is wiped; it is not a vault key",
 };
@@ -99,7 +102,7 @@ test("every_secret_taking_export_copies_into_a_wiped_buffer", () => {
   const source = readFileSync(join(root, "bindings", "wasm", "js", "protocol.mjs"), "utf8");
   for (const method of [
     "login_start", "register_start", "pin_unlock", "unlock_prf", "wrap_pin", "wrap_prf",
-    "export_finish", "import_open", "argon2_export_key", "check_master_password",
+    "export_finish", "import_open", "argon2_export_key", "check_master_password", "reveal_plain_export",
   ]) {
     assert.ok(new RegExp(`\\b${method}:`).test(source), method);
   }
@@ -179,4 +182,79 @@ test("u32_args_table_matches_the_rust_signatures", async () => {
     }
   }
   assert.deepEqual(found, U32_ARGS);
+});
+
+test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async () => {
+  const { SECRET_ARGS, TEXT_ARGS, BYTES_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
+  // Each secret position must be type-checked as a Uint8Array at the worker,
+  // and each text position is a password: not all-zero checked, but typed.
+  for (const [method, positions] of Object.entries(SECRET_ARGS)) {
+    const checked = (BYTES_ARGS[method] ?? []).map(([i]) => i).sort();
+    assert.deepEqual(checked, [...positions].sort(), method);
+  }
+  for (const [method, positions] of Object.entries(TEXT_ARGS)) {
+    for (const i of positions) {
+      const entry = (BYTES_ARGS[method] ?? []).find(([index]) => index === i);
+      assert.ok(entry, `${method}[${i}] is text and is typed`);
+      assert.equal(entry[2], false, `${method}[${i}]: a password is not rejected for being zero bytes`);
+    }
+  }
+  // The keys that are refused when all zero: PRF output, K_exp, the device PIN
+  // key, the export token.
+  const zeroRefused = Object.entries(BYTES_ARGS)
+    .flatMap(([method, list]) => list.filter(([, , zero]) => zero).map(([i]) => `${method}:${i}`))
+    .sort();
+  assert.deepEqual(zeroRefused, [
+    "export_finish:0", "import_open:1", "pin_unlock:3", "reveal_plain_export:3", "unlock_prf:2",
+    "wrap_pin:2", "wrap_prf:2",
+  ]);
+});
+
+test("f64_args_table_matches_the_rust_signatures", async () => {
+  // wasm-bindgen types f64 as `number`, like u32: the table of the f64
+  // parameters is compared with the Rust signatures, so a new one cannot go
+  // unchecked in JavaScript.
+  const { F64_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
+  const { readdirSync } = await import("node:fs");
+  const dir = join(root, "bindings", "wasm", "src");
+  const found = {};
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".rs") && f !== "vector_ops.rs")) {
+    const text = readFileSync(join(dir, file), "utf8");
+    for (const m of text.matchAll(/^\s*pub fn (\w+)\(([^)]*)\)/gm)) {
+      const params = [];
+      let depth = 0;
+      let current = "";
+      for (const ch of m[2]) {
+        if (ch === "<") depth++;
+        if (ch === ">") depth--;
+        if (ch === "," && depth === 0) {
+          params.push(current.trim());
+          current = "";
+        } else current += ch;
+      }
+      if (current.trim()) params.push(current.trim());
+      params
+        .filter((p) => !/^&?(mut )?self\b/.test(p))
+        .forEach((p, index) => {
+          if (p.split(":").slice(1).join(":").trim() === "f64") (found[m[1]] ??= []).push(index);
+        });
+    }
+  }
+  const table = Object.fromEntries(
+    Object.entries(F64_ARGS).map(([method, list]) => [method, list.map(([i]) => i)]),
+  );
+  assert.deepEqual(found, table);
+  for (const list of Object.values(F64_ARGS)) {
+    for (const [, kind] of list) assert.ok(["u64", "seconds", "millis"].includes(kind));
+  }
+});
+
+test("the_plain_export_and_the_passkey_wrap_take_their_new_arguments", () => {
+  // The .d.ts of the release names the token and the AAGUID arguments.
+  assert.match(dts, /reveal_plain_export\(rows: any, format: string, include_passkeys: boolean, token: Uint8Array\): string/);
+  assert.match(dts, /wrap_prf\([^)]*aaguid: Uint8Array, stored_credential_ids: any\)/);
+  assert.match(dts, /passkey_create_confirm\(pending: number\)/);
+  assert.match(dts, /passkey_create_abort\(pending: number\)/);
+  assert.match(dts, /reauth_grant\(vault: Vault, pw_wrap: any\): Uint8Array/);
+  assert.match(dts, /export function ferret_aaguid\(\): Uint8Array/);
 });

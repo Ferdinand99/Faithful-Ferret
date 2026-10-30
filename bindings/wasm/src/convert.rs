@@ -140,6 +140,14 @@ impl<'de> Visitor<'de> for BytesVisitor {
     }
 }
 
+/// One `Uint8Array` in a list.
+#[derive(Deserialize)]
+pub(crate) struct ByteBuf(#[serde(with = "bytes")] pub(crate) Vec<u8>);
+
+impl Shaped for ByteBuf {
+    const SHAPE: Shape = Shape::Any;
+}
+
 /// `Vec<u8>` as a `Uint8Array`.
 pub(crate) mod bytes {
     use super::*;
