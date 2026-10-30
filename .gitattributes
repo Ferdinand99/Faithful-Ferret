@@ -13,3 +13,4 @@
 /fuzz/regression/** -text
 /fuzz/dict/*.dict text eol=lf
 /fuzz/NIGHTLY text eol=lf
+/web/** text eol=lf

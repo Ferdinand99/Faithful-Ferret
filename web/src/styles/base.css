@@ -1,0 +1,76 @@
+/* Base styles of the web vault. System fonts only; nothing is loaded from
+   another origin. Features add their own file in this folder. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f4;
+  --fg: #1c2320;
+  --muted: #4d5a54;
+  --card: #ffffff;
+  --line: #cfd6d1;
+  --accent: #1f6b4f;
+  --focus: #0b5cad;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181a;
+    --fg: #e8ece9;
+    --muted: #a7b2ab;
+    --card: #1d2326;
+    --line: #333d40;
+    --accent: #5fc59a;
+    --focus: #7db8f2;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#app {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
