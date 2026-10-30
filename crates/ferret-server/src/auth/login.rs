@@ -624,7 +624,7 @@ async fn read_json<T: DeserializeOwned>(body: Body) -> Result<T, ApiError> {
         .map_err(|error| ApiError::coded(refusal_code(&error.to_string())))
 }
 
-fn no_store(mut response: Response) -> Response {
+pub(crate) fn no_store(mut response: Response) -> Response {
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));

@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 pub mod accounts;
+pub mod handoff;
 pub mod session;
 
 use std::collections::BTreeMap;
@@ -273,6 +274,14 @@ impl TestApp {
     /// proxy.
     pub async fn new() -> TestApp {
         Self::builder().build().await
+    }
+
+    /// A server whose clock starts at the real time of the machine. For tests
+    /// that go through the kit's pages: the kit checks its own cookies against
+    /// the system clock, so a session made at [`START`] is not one to it.
+    pub async fn new_at_real_time() -> TestApp {
+        let now = u64::try_from(vole_kit::auth::session::now_unix()).expect("a time");
+        Self::builder().start(now).build().await
     }
 
     pub fn builder() -> Builder {

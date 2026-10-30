@@ -28,7 +28,7 @@ use ferret_server_auth::{Clock, SessionScope};
 use rusqlite::{OptionalExtension as _, params};
 use vole_kit::auth::session::SessionClaims;
 
-use crate::auth::session::{Origin, limits, lookup};
+use crate::auth::session::{Origin, lookup, within_limits};
 use crate::error::{ApiError, StoreError};
 use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, VaultId};
 use crate::product;
@@ -109,13 +109,10 @@ impl SessionAuth {
                 let Some(row) = lookup(conn, &sid)? else {
                     return Ok(None);
                 };
-                let (idle, absolute) = limits(row.origin);
-                let within_limits = now.saturating_sub(row.last_seen).max(0) <= idle
-                    && now.saturating_sub(row.issued_at).max(0) <= absolute;
                 if row.revoked_at.is_some()
                     || row.origin != origin
                     || row.scope != SessionScope::Full
-                    || !within_limits
+                    || !within_limits(&row, now)
                     || claims.user_id != row.user_id
                     || claims.issued_at != row.issued_at
                 {

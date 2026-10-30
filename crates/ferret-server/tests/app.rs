@@ -168,11 +168,21 @@ async fn admin_router_does_not_serve_sync_or_opaque_routes() {
 #[tokio::test]
 async fn admin_guard_is_wired_around_only_the_kit_router() {
     let app = TestApp::new().await;
+    support::session::seed(&app, 1).await;
 
-    // The kit's protected pages need a session: with none, the guard answers
-    // before the kit's own check does (which would redirect to a sign-in page).
+    // The kit's protected pages need an admin session: with none, the guard
+    // answers before the kit's own check does. A page that is read goes to the
+    // sign-in; a request that changes something gets the one 401.
     for path in ["/settings/general", "/settings/users", "/settings/security"] {
         let res = app.call(Which::Admin, Req::get(path).build()).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
+        assert!(res.header("location").starts_with("/login?next="), "{path}");
+        let res = app
+            .call(
+                Which::Admin,
+                Req::post(path).page_fetch(Which::Admin).build(),
+            )
+            .await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(
             res.json(),
@@ -188,7 +198,7 @@ async fn admin_guard_is_wired_around_only_the_kit_router() {
     let res = app
         .call(Which::Admin, Req::get("/settings/general").build())
         .await;
-    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
     app.clear_jar(Which::Admin);
 
     // The open routes work without a session: the health probe, the kit's
