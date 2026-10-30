@@ -49,8 +49,8 @@
 //!    nothing else, and returns the record, the profile claimed and, for a
 //!    recovery, the new `pk_r`.
 //! 7. The record is checked ([`ValidatedRecord::parse`]), a recovery must
-//!    carry a new `pk_r` and a password change must not
-//!    ([`Malformed::RecoveryKey`]), and the profile is checked against the one
+//!    carry a new `pk_r` that differs from the stored one and a password change
+//!    must not carry one ([`Malformed::RecoveryKey`]), and the profile is checked against the one
 //!    **stored for the account** (never against anything in the request): a
 //!    profile that is unknown or lower than the stored one is
 //!    [`AuthError::ProfileRejected`].
@@ -97,6 +97,22 @@
 //! `{method_id, manifest}`; the library does not see the URL, so the endpoint
 //! must check that the `method_id` in the proven body is the one in the URL
 //! before it removes anything.
+//!
+//! Two of these requests bring new keys in their bodies. `recovery.put` brings
+//! a new `pk_r`, and `rekey` brings a new `pk_a`, a new `vk_epoch` and a new
+//! `pk_r`. The endpoint must write those keys and the epoch in the same
+//! conditional transaction as the rest of the request, under the
+//! [`WriteBasis`] of the permit. A write that leaves the old key in place
+//! leaves the old key able to sign.
+//!
+//! # Calling the core verifiers
+//!
+//! The test in this crate that keeps proof verification in one module covers
+//! this crate only. A server crate built on this library should add a Clippy
+//! `disallowed-methods` rule to its `clippy.toml` for the core `verify_*`
+//! functions (`ferret_core::verify_auth_proof` and
+//! `ferret_core::verify_recovery_proof`), so that it cannot check a proof
+//! without the single-use nonce, the session binding and the throttle.
 //!
 //! Spec: Fase 1 § 4.6 and § 6.3.
 
@@ -781,8 +797,15 @@ pub struct ReplaceFields<'b> {
     pub ksf_profile: u32,
     /// The new `pk_r` of a recovery: present for [`ReplaceKind::Recover`] and
     /// absent for [`ReplaceKind::PasswordPut`]. Anything else is
-    /// [`Malformed::RecoveryKey`]. A recovery that did not bring a new key
-    /// would leave the old recovery key valid.
+    /// [`Malformed::RecoveryKey`], and so is a recovery whose key equals the
+    /// stored `pk_r`. A recovery that did not bring a new key would leave the
+    /// old recovery key valid.
+    ///
+    /// No curve check is made on the key here. A key that is not a valid
+    /// point only breaks the owner's next recovery: `verify_strict` rejects
+    /// such a key when it is used to check a proof, so nobody can forge a
+    /// proof against it, and the owner can still sign in with the password
+    /// and replace the recovery key.
     pub pk_r_new: Option<RecoveryPublicKey>,
 }
 
@@ -932,11 +955,15 @@ where
     let fields = parse(req.body)?;
     step("validate-record");
     let record = ValidatedRecord::parse(fields.record)?;
-    // A recovery brings a new `pk_r` and a password change does not. These
-    // depend on the client's bytes alone, so they come before the checks that
-    // depend on what is stored.
+    // A recovery brings a new `pk_r` and a password change does not. A
+    // recovery must also change the key: one that keeps the stored key leaves
+    // the old recovery key able to sign. The proof has been verified over the
+    // stored `pk_r`, so naming it here tells the caller nothing new.
     step("new-key");
     let new_pk_r = match (req.kind, fields.pk_r_new) {
+        (ReplaceKind::Recover, Some(key)) if key == account.account.pk_r => {
+            return Err(AuthError::Malformed(Malformed::RecoveryKey));
+        }
         (ReplaceKind::Recover, Some(key)) => Some(key),
         (ReplaceKind::PasswordPut, None) => None,
         (ReplaceKind::Recover, None) | (ReplaceKind::PasswordPut, Some(_)) => {

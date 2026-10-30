@@ -37,7 +37,8 @@ pub enum Malformed {
     /// The login name.
     LoginName,
     /// The new recovery public key of a recovery request: missing from a
-    /// recovery, or present in a request that is not one.
+    /// recovery, present in a request that is not one, or equal to the stored
+    /// one.
     RecoveryKey,
 }
 

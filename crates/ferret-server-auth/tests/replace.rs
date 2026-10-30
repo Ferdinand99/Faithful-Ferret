@@ -662,8 +662,10 @@ fn a_recovery_proof_made_with_the_old_recovery_key_is_denied_after_the_permit_is
 
     // The state is read back from the store that applied the permit; the test
     // builds nothing by hand.
+    // A further recovery has to bring yet another key, since `pk_r` now holds
+    // the one from `rec`.
     let attempt = |rk: &ferret_core::RecoveryKey| {
-        let body = rbody(&rec, 1);
+        let body = recover_body_of(1, &[0x55; 32], &rec.registration_record);
         let nonce = w.challenge(&s1());
         let proof = recovery_sign(rk, &account_id(), 1, &nonce, &body).unwrap();
         let req = Req {
@@ -1390,16 +1392,25 @@ fn issue_challenge_binds_to_the_session_hash() {
     let mut drawn = [0u8; 32];
     ferret_core::SecureRng::fill(&mut rng, &mut drawn);
     assert_eq!(challenge.nonce, drawn);
-    // The throttle was asked for a challenge, by address.
-    let calls = w.f.throttle.calls();
-    assert!(matches!(
-        calls.last(),
-        Some(ThrottleCall::Record {
-            stage: Stage::Challenge,
-            outcome: Outcome::Success,
-            ..
-        })
-    ));
+    // The throttle was asked for a challenge, by address and account.
+    let ip: IpAddr = "192.0.2.7".parse().unwrap();
+    let keys = vec![ThrottleKey::Ip(ip), ThrottleKey::Account(credential())];
+    assert_eq!(
+        w.f.throttle.calls(),
+        vec![
+            ThrottleCall::Admit {
+                stage: Stage::Challenge,
+                keys: keys.clone(),
+                now: LoginFixture::START
+            },
+            ThrottleCall::Record {
+                stage: Stage::Challenge,
+                keys,
+                outcome: Outcome::Success,
+                now: LoginFixture::START
+            },
+        ]
+    );
 }
 
 #[test]
@@ -1462,6 +1473,23 @@ fn a_recovery_must_bring_a_new_pk_r_and_a_password_change_must_not() {
     assert_eq!(permit.new_pk_r, Some(RecoveryPublicKey::new(rec.pk_r)));
     let req = w.put_req(&change, s1(), body_of(1, &change.registration_record));
     assert_eq!(w.run(&req).unwrap().new_pk_r, None);
+}
+
+#[test]
+fn a_recovery_that_keeps_the_stored_recovery_key_is_refused() {
+    let w = World::new();
+    let rec = w.recovered(PASSWORD_2);
+    let stored = *w.row.read().account.pk_r.as_bytes();
+    // The proof is valid; only the key in the body is the old one.
+    let body = recover_body_of(1, &stored, &rec.registration_record);
+    let req = w.recover_req(&rec, s1(), body);
+    assert_eq!(
+        w.run(&req).unwrap_err(),
+        AuthError::Malformed(Malformed::RecoveryKey)
+    );
+    // The same request with a new key is permitted.
+    let req = w.recover_req(&rec, s1(), rbody(&rec, 1));
+    assert!(w.run(&req).is_ok());
 }
 
 // ----------------------------------------------------------- the write basis
@@ -1819,6 +1847,36 @@ fn a_signed_request_that_would_replace_the_record_is_refused_without_a_trace() {
     }
     assert!(w.f.throttle.calls().is_empty());
     assert_eq!(w.nonces.len(), before);
+}
+
+#[test]
+fn a_refused_signed_request_is_reported_as_a_failure() {
+    let w = World::new();
+    let (op, body) = signed_ops()[0].clone();
+    let mut req = w.signed_req(op, s1(), body);
+    flip(&mut req.body, 3);
+    w.f.throttle.clear();
+    assert_eq!(
+        w.run_signed(&req).unwrap_err(),
+        denied(DenyReason::ProofInvalid)
+    );
+    let calls = w.f.throttle.calls();
+    assert_eq!(calls.len(), 2);
+    assert!(matches!(
+        calls.first(),
+        Some(ThrottleCall::Admit {
+            stage: Stage::Replace,
+            ..
+        })
+    ));
+    assert!(matches!(
+        calls.last(),
+        Some(ThrottleCall::Record {
+            stage: Stage::Replace,
+            outcome: Outcome::Failure,
+            ..
+        })
+    ));
 }
 
 #[test]
