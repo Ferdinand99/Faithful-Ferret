@@ -20,6 +20,12 @@ updates:
     cooldown:
       default-days: 7
     labels: [dependencies, rust]
+    ignore:
+      # The Unicode tables are part of the master-password normalization and are
+      # locked to Unicode 16.0 for suite 1 (design § 3). A newer table changes
+      # which inputs are accepted, so this crate is updated by hand together
+      # with a new suite.
+      - dependency-name: unicode-normalization
 
   # The fuzz targets: a workspace of their own, with their own lock file.
   - package-ecosystem: cargo
@@ -31,6 +37,12 @@ updates:
     cooldown:
       default-days: 7
     labels: [dependencies, rust]
+    ignore:
+      # The Unicode tables are part of the master-password normalization and are
+      # locked to Unicode 16.0 for suite 1 (design § 3). A newer table changes
+      # which inputs are accepted, so this crate is updated by hand together
+      # with a new suite.
+      - dependency-name: unicode-normalization
 
   # The dudect timing harness: a workspace of its own as well.
   - package-ecosystem: cargo
@@ -42,6 +54,12 @@ updates:
     cooldown:
       default-days: 7
     labels: [dependencies, rust]
+    ignore:
+      # The Unicode tables are part of the master-password normalization and are
+      # locked to Unicode 16.0 for suite 1 (design § 3). A newer table changes
+      # which inputs are accepted, so this crate is updated by hand together
+      # with a new suite.
+      - dependency-name: unicode-normalization
 
   # The independent JavaScript reference for the test vectors.
   - package-ecosystem: npm
@@ -64,6 +82,11 @@ updates:
     cooldown:
       default-days: 7
     labels: [dependencies, javascript]
+    ignore:
+      # @playwright/test must match the Playwright container image, which is
+      # pinned by digest in the browser workflow and script; both are moved
+      # together by hand.
+      - dependency-name: "@playwright/test"
 
   # Pinned by commit SHA in every workflow; Dependabot moves the SHA and the
   # version comment together.
