@@ -25,14 +25,43 @@ services:
     mem_limit: 512m
     labels:
       owner: ferret-test
-    # Host networking, on purpose. With published ports on a bridge network,
-    # Docker's port proxy makes every connection arrive from the network's
-    # gateway address, so the tunnel client of the proxy (Newt, on the default
-    # bridge) and every other client on the host look the same, and the server
-    # refuses to trust a gateway address. On the host network the server sees
-    # the real source address: the tunnel client's own address for the Pangolin
-    # traffic (FERRET_TRUSTED_PROXIES) and the client's for everything else.
-    # The server listens on 3040 (admin) and 3041 (vault) and on nothing else.
+    # The entrypoint starts as root only to give /data to uid 1000 (chown) and
+    # then drops to that user (su-exec): nothing else is kept.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    # TEST STACK ONLY: host networking. With published ports on a bridge
+    # network, Docker's port proxy makes every connection arrive from the
+    # bridge gateway, so the tunnel client of the proxy (Newt, on the default
+    # bridge) and every other client on the host would look the same, and the
+    # server refuses to trust a gateway address. On the host network the server
+    # sees the real source address: the tunnel client's own address for the
+    # Pangolin traffic (FERRET_TRUSTED_PROXIES) and the client's for
+    # everything else. The server listens on 3040 (admin) and 3041 (vault) and
+    # on nothing else.
+    #
+    # Residual risk, accepted for throwaway test data and not to be copied to a
+    # stack with real data:
+    #  * The trusted address is Newt's address on the default bridge, which
+    #    cannot be pinned. After a reboot or a recreate another container on
+    #    that bridge may get the same address and would then be believed.
+    #    scripts/lanbox-ferret-test.sh up refuses to start when the address
+    #    differs, but nothing checks it while the container runs.
+    #  * Any container on the default bridge that can send ARP can pose as
+    #    that address.
+    #  * Everything Newt forwards counts as the proxy, including a Pangolin raw
+    #    TCP resource or client access aimed at these ports, which skips the
+    #    sign-in of the proxy and can send any X-Forwarded-* header.
+    #  * The host network lets the process reach loopback-only services of the
+    #    LANBox.
     network_mode: host
     volumes:
       - ferret-test-data:/data
@@ -50,7 +79,6 @@ services:
       FERRET_SETUP_TOKEN: ${FERRET_SETUP_TOKEN:?set FERRET_SETUP_TOKEN in docker/.env}
       # One log line per new peer address (scripts/lanbox-ferret-test.sh peers).
       FERRET_LOG_PEERS: "1"
-      TZ: Europe/Oslo
 
 volumes:
   ferret-test-data:

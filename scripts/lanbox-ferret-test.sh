@@ -4,20 +4,23 @@
 # never Tower. Only resources named ferret-test* and labelled
 # owner=ferret-test are created, changed or removed.
 #
-#   scripts/lanbox-ferret-test.sh up       build, start, print addresses and setup token
+#   scripts/lanbox-ferret-test.sh up       build and start (alias: redeploy); refuses when the
+#                                          trusted proxy is not the tunnel client's address
 #   scripts/lanbox-ferret-test.sh down     stop and remove the container (the data stays)
 #   scripts/lanbox-ferret-test.sh reset    also remove the data volume (asks first)
 #   scripts/lanbox-ferret-test.sh logs     follow the server log
 #   scripts/lanbox-ferret-test.sh status   container, health, volume
 #   scripts/lanbox-ferret-test.sh smoke    check /healthz and the headers on both ports
 #   scripts/lanbox-ferret-test.sh peers    peer addresses the server has seen since start
-#   scripts/lanbox-ferret-test.sh token    print the setup token and the setup link
+#   scripts/lanbox-ferret-test.sh token    print the setup link with the setup token
+#                                          (`up` prints it on the first deploy only)
 #
-# docker/.env (not in git, mode 600) holds FERRET_SETUP_TOKEN and
-# FERRET_TRUSTED_PROXIES. It is made on the first `up`: the proxy address is the
-# one of the Newt container on the LANBox (read only, `docker inspect`), or
-# FERRET_TRUSTED_PROXIES from the environment. Edit the file and run `up` again to
-# change it; `peers` shows which addresses the server has seen.
+# docker/.env (not in git; on a Unix host it is made with mode 600) holds
+# FERRET_SETUP_TOKEN and FERRET_TRUSTED_PROXIES. It is made on the first `up`: the
+# proxy address is the one of the Newt container on the LANBox (read only,
+# `docker inspect`), or FERRET_TRUSTED_PROXIES from the environment. Like compose,
+# a variable in the environment of the shell wins over the file. Edit the file and
+# run `up` again to change it; `peers` shows which addresses the server has seen.
 #
 # Env overrides:
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
@@ -43,13 +46,35 @@ docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
 dk() { docker "${docker_args[@]}" "$@"; }
 dc() { dk compose -p "$project" -f "$composefile" --env-file "$envfile" "$@"; }
 
-# The address of the proxy's tunnel client (the Newt container) on the LANBox,
-# read only. The container name can be changed with FERRET_PROXY_CONTAINER.
+# The address of the proxy's tunnel client (the Newt container) on the network it
+# uses to reach the LANBox, read only. The container name can be changed with
+# FERRET_PROXY_CONTAINER. Empty when the address cannot be told.
 tunnel_container="${FERRET_PROXY_CONTAINER:-Newt}"
 tunnel_address() {
+  local mode
+  mode="$(dk inspect "$tunnel_container" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null || true)"
+  case "$mode" in
+    "" | host | none | container:*) return 0 ;;
+    default) mode=bridge ;;
+  esac
   dk inspect "$tunnel_container" \
-    --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' 2>/dev/null \
-    | awk '{print $1}'
+    --format "{{with index .NetworkSettings.Networks \"$mode\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true
+}
+
+# A value the way compose interpolates it: the environment of the shell first,
+# then docker/.env.
+effective_value() {
+  if [ -n "${!1+x}" ]; then
+    printf '%s' "${!1}"
+  else
+    env_value "$1"
+  fi
+}
+
+# Addresses without a host-only prefix (/32, /128), one per line, so that
+# 172.17.0.2 and 172.17.0.2/32 are the same address.
+normalized_addresses() {
+  printf '%s\n' "$1" | tr ',' '\n' | sed -e 's/[[:space:]]//g' -e 's#/32$##' -e 's#/128$##' | grep -v '^$' | sort -u
 }
 
 make_env() {
@@ -75,21 +100,48 @@ make_env() {
     echo "FERRET_TRUSTED_PROXIES=$proxies"
   } > "$envfile"
   echo "lanbox-ferret-test: wrote $envfile (trusted proxy: $proxies)" >&2
+  first_deploy=1
 }
 
-# Warns when the trusted proxy in docker/.env is no longer the address of the
-# tunnel client (a recreated container may get another address on the bridge).
-check_tunnel() {
+# Whether the trusted proxy that compose will use is exactly the address of the
+# tunnel client now. Prints the reason when it is not.
+tunnel_mismatch() {
   local now configured
-  now="$(tunnel_address || true)"
-  configured="$(env_value FERRET_TRUSTED_PROXIES)"
-  if [ -n "$now" ] && [ "$now" != "$configured" ]; then
-    echo "WARNING: $tunnel_container is now at $now but FERRET_TRUSTED_PROXIES is $configured." >&2
+  now="$(tunnel_address)"
+  configured="$(effective_value FERRET_TRUSTED_PROXIES)"
+  if [ -z "$now" ]; then
+    echo "cannot read the address of $tunnel_container on the network it uses to reach the LANBox"
+    return 0
+  fi
+  if [ "$(normalized_addresses "$now")" != "$(normalized_addresses "$configured")" ]; then
+    echo "$tunnel_container is at $now but FERRET_TRUSTED_PROXIES is $configured"
+    return 0
+  fi
+  return 1
+}
+
+# `up` refuses to start on a mismatch: a proxy address that is not the tunnel
+# client's would trust some other container, or nobody.
+require_tunnel() {
+  local why
+  if why="$(tunnel_mismatch)"; then
+    echo "lanbox-ferret-test: refusing to start: $why." >&2
+    echo "Set FERRET_TRUSTED_PROXIES in $envfile (and not in the shell) to the address of" >&2
+    echo "$tunnel_container and run up again." >&2
+    exit 1
+  fi
+}
+
+# `status` only warns.
+check_tunnel() {
+  local why
+  if why="$(tunnel_mismatch)"; then
+    echo "WARNING: $why." >&2
     echo "         Until they match, sign-in through Pangolin fails closed. Edit $envfile and run up." >&2
   fi
 }
 
-env_value() { sed -n "s/^$1=//p" "$envfile" | head -n 1; }
+env_value() { { sed -n "s/^$1=//p" "$envfile" 2>/dev/null || true; } | head -n 1; }
 
 # Refuses to start when something else on the LANBox already listens on one of
 # the two ports (the stack uses the host network, so `docker ps` cannot tell).
@@ -100,7 +152,7 @@ check_ports() {
     return # ours: the ports are ours
   fi
   local port listeners
-  listeners="$(dk run --rm --network host --label "$label" "$alpine_image" netstat -ltn)"
+  listeners="$(dk run --rm --name ferret-test-portcheck --network host --label "$label" "$alpine_image" netstat -ltn)"
   for port in "$admin_port" "$vault_port"; do
     if printf '%s\n' "$listeners" | grep -Eq "[:.]${port}[[:space:]]"; then
       echo "lanbox-ferret-test: port $port is already in use on the LANBox" >&2
@@ -113,7 +165,10 @@ print_addresses() {
   echo
   echo "Admin  (Pangolin) https://ferret-test.opland.net    direct http://$lanbox:$admin_port"
   echo "Vault  (Pangolin) https://vault-test.opland.net     direct http://$lanbox:$vault_port"
-  echo "First administrator: open https://ferret-test.opland.net/setup?token=$(env_value FERRET_SETUP_TOKEN)"
+}
+
+print_setup_link() {
+  echo "First administrator: open https://ferret-test.opland.net/setup?token=$(effective_value FERRET_SETUP_TOKEN)"
 }
 
 # Both listeners: 200 on /healthz, no Server header, the security headers of the
@@ -157,12 +212,18 @@ smoke() {
 
 cmd="${1:-}"
 case "$cmd" in
-  up)
+  up | redeploy)
+    first_deploy=0
     make_env
+    require_tunnel
     check_ports
     dc up -d --build
-    check_tunnel
     print_addresses
+    if [ "$first_deploy" = 1 ]; then
+      print_setup_link
+    else
+      echo "Setup link: run $0 token"
+    fi
     ;;
   down)
     [ -f "$envfile" ] || { echo "no $envfile: nothing to stop" >&2; exit 0; }
@@ -188,7 +249,8 @@ case "$cmd" in
     ;;
   status)
     dk ps -a --filter "label=$label" --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-    dk inspect "$container" --format 'health: {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}; restarts: {{.RestartCount}}; user: {{.Config.User}}' 2>/dev/null || true
+    dk inspect "$container" --format 'health: {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}; restarts: {{.RestartCount}}' 2>/dev/null || true
+    dk top "$container" -o user,pid,comm 2>/dev/null || true
     dk volume ls --filter "label=$label"
     check_tunnel
     ;;
@@ -199,7 +261,8 @@ case "$cmd" in
     dk logs "$container" 2>&1 | grep -i 'new peer address' || echo "no peer address seen yet"
     ;;
   token)
-    print_addresses
+    [ -f "$envfile" ] || { echo "no $envfile yet: run up first" >&2; exit 1; }
+    print_setup_link
     ;;
   *)
     sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2

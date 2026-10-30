@@ -31,6 +31,10 @@ RUN node scripts/build.mjs
 FROM ${RUST_IMAGE} AS build
 
 # build-base: C toolchain for the bundled SQLite and aws-lc-rs (rustls crypto).
+# The apk packages here and in the runtime stage are not pinned to a version:
+# Alpine drops old package versions from its repository, so a pinned build would
+# break within weeks. The base images are pinned by digest, and the packages come
+# from the signed repository index of that Alpine release.
 RUN apk add --no-cache build-base
 
 ARG FEATURES=""
@@ -47,9 +51,9 @@ COPY crates ./crates
 COPY ct/harness ./ct/harness
 COPY --from=web /src/web/dist ./web/dist
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/src/crates/ferret-server/target,sharing=locked \
+RUN --mount=type=cache,id=ferret-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ferret-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=ferret-server-target,target=/src/crates/ferret-server/target,sharing=locked \
     cargo build --release --locked \
         --manifest-path crates/ferret-server/Cargo.toml \
         --features "$FEATURES" \

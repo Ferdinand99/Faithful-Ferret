@@ -21,6 +21,10 @@ gid="${PGID:-1000}"
 case "$uid$gid" in
     *[!0-9]*) echo "PUID and PGID must be numeric (got PUID=$uid PGID=$gid)" >&2; exit 1 ;;
 esac
+if [ "$uid" -eq 0 ] || [ "$gid" -eq 0 ]; then
+    echo "PUID and PGID must not be 0: the server does not run as root" >&2
+    exit 1
+fi
 
 if [ "$uid" != "$(id -u ferret)" ] || [ "$gid" != "$(id -g ferret)" ]; then
     sed -i "s/^ferret:x:[0-9]*:[0-9]*:/ferret:x:$uid:$gid:/" /etc/passwd

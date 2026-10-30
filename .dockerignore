@@ -1,9 +1,10 @@
-# The build context holds only what docker/server.Dockerfile copies.
+# Keeps secrets, local build output and files the image does not need out of the
+# build context (docker/server.Dockerfile copies only parts of it).
 .git
 .github
 .superpowers
-.env
-.env.*
+**/.env
+**/.env.*
 **/target
 **/node_modules
 web/dist

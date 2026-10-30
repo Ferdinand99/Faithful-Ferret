@@ -5,6 +5,10 @@
 #    label owner=ferret-test;
 #  * the stack has one service, built without cargo features, with no test
 #    clock and no extra volume;
+#  * the container drops every capability but the three the entrypoint needs,
+#    cannot gain privileges and has a read-only root file system;
+#  * the Dockerfile pins every base image by digest, builds without cargo
+#    features by default, uses cache ids of its own and has no setcap or USER root;
 #  * it runs on the host network (so the server sees real peer addresses), sets
 #    the public https addresses, and takes the setup token and the trusted
 #    proxies from docker/.env, which git ignores.
@@ -25,6 +29,11 @@ if (s.container_name !== "ferret-test-app") fail("container_name");
 if (s.labels?.owner !== "ferret-test") fail("service label owner=ferret-test");
 if (s.build?.labels?.owner !== "ferret-test") fail("build label owner=ferret-test");
 if ((s.build?.args?.FEATURES ?? "") !== "") fail("the image must be built without cargo features");
+if (JSON.stringify(s.cap_drop) !== JSON.stringify(["ALL"])) fail("cap_drop must be [ALL]");
+if ([...(s.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("cap_add must be CHOWN, SETUID, SETGID only, got " + s.cap_add);
+if (!(s.security_opt || []).includes("no-new-privileges:true")) fail("security_opt needs no-new-privileges:true");
+if (s.read_only !== true) fail("read_only must be true");
+if (s.privileged) fail("privileged");
 if (s.network_mode !== "host") fail("network_mode must be host");
 if (s.ports && s.ports.length) fail("no published ports on the host network");
 const vols = Object.keys(c.volumes || {});
@@ -37,12 +46,24 @@ const env = s.environment || {};
 if (env.FERRET_VAULT_URL !== "https://vault-test.opland.net") fail("FERRET_VAULT_URL");
 if (env.FERRET_ADMIN_URL !== "https://ferret-test.opland.net") fail("FERRET_ADMIN_URL");
 for (const k of Object.keys(env)) if (/E2E/i.test(k)) fail("no test variable allowed: " + k);
+if ("TZ" in env) fail("TZ does nothing without tzdata in the image");
 if (env.FERRET_TRUST_PROXY !== "1") fail("FERRET_TRUST_PROXY");
 if (env.FERRET_TRUSTED_PROXIES !== "172.17.0.2") fail("FERRET_TRUSTED_PROXIES must come from docker/.env");
 if (env.FERRET_SETUP_TOKEN !== "check") fail("FERRET_SETUP_TOKEN must come from docker/.env");
 const mem = Number(s.mem_limit);
 if (!(mem > 0)) fail("a memory limit is required");
 '
+
+# The Dockerfile.
+dockerfile=docker/server.Dockerfile
+fail() { echo "check-ferret-test-stack: $1" >&2; exit 1; }
+if grep -E '^(FROM|ARG [A-Z_]*IMAGE=)' "$dockerfile" | grep -v '@sha256:[0-9a-f]\{64\}' | grep -vE '^FROM \$\{[A-Z_]+\} AS '; then
+  fail "a base image in $dockerfile is not pinned by digest"
+fi
+grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to empty"
+if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
+if grep -E 'type=cache' "$dockerfile" | grep -v 'id=ferret-'; then fail "every cache mount needs an id starting with ferret-"; fi
+grep -q '^\*\*/\.env$' .dockerignore || fail ".dockerignore must list **/.env"
 
 # The file with the setup token is never committed.
 git check-ignore -q docker/.env || { echo "check-ferret-test-stack: docker/.env is not ignored by git" >&2; exit 1; }
