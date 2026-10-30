@@ -79,7 +79,7 @@ ferret-core = { path = "../ferret-core", features = ["server-suite", "test-suppo
 ferret-server-auth = { path = "../ferret-server-auth", features = ["test-support"] }
 tower = "0.5.3"
 # The architecture test reads the source files of the vault modules.
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 
 # The release profile of the root workspace, apart from the size setting:
 # arithmetic overflow must never wrap silently, and a panic ends the process
