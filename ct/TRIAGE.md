@@ -241,6 +241,79 @@ every flag and every pair of values. It is in `subtle::...::conditional_select`
 at `O0` and inlined into `ct_select_u8` at `O2` and above; the `u32` and `u64`
 versions widen the byte first and have no such check.
 
+## Server library (`ferret-server-auth`)
+
+The OPAQUE server library compares and selects with the same code as the core
+and nothing else. `src/ct.rs` includes `ct/harness/ct_eq.rs` and
+`ct/harness/ct_select.rs` by path, the files the analyzer reads
+(`ct_include_is_the_analyzer_source` checks the include, in this crate and in
+the core), so the 40 reports above, T5 to T7, T11 and the assembly check of
+`ct_select_bytes` (`ct/run.sh select-asm`) are the analysis of the server's
+`ct_eq` and `ct_select_*` too. There is no harness file of its own: the
+selection of bytes was added to `ct_select.rs` with the core. What this part
+adds is the review of every place the library compares or chooses, a timing
+test of the library through its public functions, and tests that keep the
+list of places from growing unnoticed.
+
+- **WebAssembly.** The library is not in the binding. The scan
+  (`ct/wasm-allow.toml`) and the WebAssembly timing module have nothing of it
+  to read, and `the_server_library_is_not_in_the_webassembly_build` fails if
+  the binding starts to depend on it. The server benches of `ct/dudect` are
+  behind the feature `server` and are native only.
+- **Places that compare or choose.** `no_secret_comparison_uses_eq` lists every
+  `==` and `!=` in the shipped code with the reason it cannot leak (lengths,
+  times, closed sets, public data), `types_with_bytes_derive_partial_eq_only_when_listed`
+  does the same for derived `PartialEq` over bytes, and
+  `the_constant_time_call_sites_are_the_ones_that_were_checked` pins how many
+  times each file calls `ct_eq` and `ct_select_*`. A new place fails one of them
+  until it has been read and listed here.
+- **Where the library does not run division, search or index by a secret.** In
+  `login.rs`, `state.rs` and `replace.rs` the shipped code has no `/`, `%`,
+  `checked_div`, `checked_rem`, `min`, `max`, `position`, `find`, `contains`,
+  `binary_search` or `windows`. The one remainder in the crate is
+  `prelogin::permille` (HMAC output modulo 1000, in the made-up answer of a
+  name), see S-2.
+
+### Review points
+
+| # | Compare or choice | Secret? | How it is done | Checked by |
+|---|---|---|---|---|
+| 1 | KE3 against the expected MAC | yes | `opaque-ke` (`subtle::ConstantTimeEq`) inside `ServerLogin::finish` | a KE3 with one byte changed, at every position, is refused (`tests/rfc9807_server.rs`) |
+| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 2 calls, `prelogin.rs`, 1) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown`, `server_login_start_known_vs_disabled`, `server_prelogin_known_vs_unknown` |
+| 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 49 bytes of the binding (`LoginPurpose::same_as`), the purpose byte next to it with `&` | `server_state_binding` |
+| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | `server_finish_credential_vs_account`; `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
+| 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
+| 5 | SHA-256 checksum of a secret file | the content is secret | `ct_eq` (`secret_file.rs`) | `the_constant_time_call_sites_are_the_ones_that_were_checked` |
+| 6 | Fingerprint of the set-up at start-up | no (a hash, no remote caller) | `PartialEq` of `SetupFingerprint` is `ct_eq` anyway | `no_secret_comparison_uses_eq` |
+| 7 | Profile numbers, lengths, times | no | plain | `no_secret_comparison_uses_eq` |
+| 8 | AEAD tag of a sealed state | yes | inside `chacha20poly1305` (`subtle`) | not re-verified here (R6) |
+| 9 | Ed25519 proof | no (public data) | `ferret-core` | not re-verified here |
+| 10 | Hex reading of the login id | the value is a bearer | rejects on length and character class; the answer depends on the given bytes alone, and nothing is compared with a stored value | `LoginId::parse` tests; the lookup is by the SHA-256 key |
+
+### S-1. A plain `==` on the binding bytes of a login state
+
+Found by `no_secret_comparison_uses_eq`: the parser of a sealed state
+compared the binding with zeros (`binding == [0u8; BINDING_LEN]`) to accept a
+plain login. The bytes are those of a plaintext the AEAD has already
+accepted, so no caller can steer the compare, and the same bytes hold the
+session of a re-authentication in the other case. Fixed: it is `ct_eq` now.
+
+### S-2. `resolve_credential` branches on whether an account was given
+
+`resolve_credential(secret, name, Option<&AccountId>)` reads the account id
+through a reference that may be absent. A load through a reference that may be
+null cannot be made branch-free by the compiler (it may not read it
+speculatively), so the library branches on the lookup result there, and
+`login_start` matches on `AccountLookup` once. The branch is on what the caller
+has already decided from its own lookup, which differs by a database round trip,
+and the library cannot hide that. The compare/choice that follows is branch-free.
+`info_server_prelogin_resolve_credential` reports the size of the branch (a few
+nanoseconds, at the edge of what the timer can see with eight repetitions per
+measurement); `server_prelogin_known_vs_unknown` times the rest of the answer
+and is gated. `permille` takes the remainder of an HMAC output of the name; the
+operand is derived from the pre-login secret, not chosen by the client, and the
+result is the profile that the answer shows anyway.
+
 ## Residual risks that this analysis does not remove
 
 These are not findings of the analyzer on the harness. They are the things the

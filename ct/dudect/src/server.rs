@@ -176,18 +176,19 @@ impl Target for Start {
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
         self.right = class == Class::Right;
-        match (class, self.other) {
-            (Class::Right, Other::Unknown) => {
-                self.cell.name = self.unknown[i].clone();
-                self.cell.credential = CredentialId::from_bytes([0xee; 16]);
-            }
-            _ => {
-                let account = &self.accounts[i];
-                self.cell.name = account.name.clone();
-                self.cell.credential = account.credential;
-                self.cell.record = account.record.clone();
-            }
-        }
+        // The same copies for both classes (a clone allocates, and the state
+        // of the allocator and of the caches after the copy must not tell
+        // the classes apart): the name comes from the pool of the class, the
+        // credential and the record are those of account `i` either way, and
+        // the library does not read them for a name without an account.
+        let account = &self.accounts[i];
+        let name = match (class, self.other) {
+            (Class::Right, Other::Unknown) => &self.unknown[i],
+            _ => &account.name,
+        };
+        self.cell.name = name.clone();
+        self.cell.credential = account.credential;
+        self.cell.record = account.record.clone();
         self.tape.get_mut().rewind();
     }
     fn run(&self, reps: u32) -> u64 {
