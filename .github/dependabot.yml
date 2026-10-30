@@ -88,6 +88,22 @@ updates:
       # together by hand.
       - dependency-name: "@playwright/test"
 
+  # The web vault: build tools and tests only, no runtime dependencies.
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, javascript]
+    ignore:
+      # @playwright/test must match the Playwright container image, which is
+      # pinned by digest in the web workflow and scripts/lanbox-web.sh; both
+      # are moved together by hand, with tests/browser.
+      - dependency-name: "@playwright/test"
+
   # Pinned by commit SHA in every workflow; Dependabot moves the SHA and the
   # version comment together.
   - package-ecosystem: github-actions

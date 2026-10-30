@@ -1,0 +1,22 @@
+{
+  "name": "ferret-web-vault",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "The Faithful Ferret web vault: static files, no runtime dependencies",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "tsc": "tsc -p jsconfig.json --noEmit",
+    "test:unit": "node --test \"test/unit/*.test.mjs\"",
+    "test:e2e": "playwright test",
+    "check": "npm run build && npm run test:unit && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "fake-indexeddb": "6.2.7",
+    "typescript": "5.9.3"
+  }
+}

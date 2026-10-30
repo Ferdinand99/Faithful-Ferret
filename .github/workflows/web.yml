@@ -1,0 +1,82 @@
+# The web vault (web/): build against the published WASM package, type check,
+# unit tests, and the page under the strict CSP and Trusted Types in Chromium,
+# Firefox and WebKit. Third-party actions are pinned by commit SHA, the
+# Playwright image by digest. The workflow has read access only and never uses
+# `pull_request_target`.
+name: Web
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Build, types and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Playwright 1.60.0 on Ubuntu 24.04. Keep the tag and the digest in step
+      # with web/package.json and scripts/lanbox-web.sh.
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+    env:
+      HOME: /root
+      CI: "1"
+      # The stub of the server's header fixture, used only while the fixture is not in the
+      # repository (the test server refuses to start without it, or with the server crate
+      # and no fixture).
+      FERRET_HEADERS_STUB: "1"
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the locked packages
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build (fetches the published WASM package and checks its SHA-256)
+        run: node scripts/build.mjs
+      - name: Type check
+        run: npx tsc -p jsconfig.json --noEmit
+      - name: Unit tests
+        run: node --test "test/unit/*.test.mjs"
+
+  e2e:
+    name: Page under the CSP (${{ matrix.browser }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      options: --init --shm-size=2gb
+    env:
+      HOME: /root
+      CI: "1"
+      # The stub of the server's header fixture, used only while the fixture is not in the
+      # repository (the test server refuses to start without it, or with the server crate
+      # and no fixture).
+      FERRET_HEADERS_STUB: "1"
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the locked packages
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build
+        run: node scripts/build.mjs
+      - name: Run the tests in ${{ matrix.browser }}
+        run: npx playwright test --project=${{ matrix.browser }}
