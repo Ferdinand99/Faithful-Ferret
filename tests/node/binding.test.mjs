@@ -657,7 +657,7 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
     { item_id: idA, rev: 1, hash: sha(item.envelope) },
     { item_id: fill(16, 0x62), rev: 4, hash: null },
   ]);
-  vault.verify_checkpoint(
+  const memory = vault.verify_checkpoint(
     checkpoint,
     [
       { item_id: new Uint8Array(16), rev: created.manifest.rev, state: "live", envelope: created.manifest.envelope, tag: created.manifest.tag },
@@ -665,6 +665,7 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
       { item_id: fill(16, 0x62), rev: 4, state: "deleted", tomb: tomb.tomb },
     ],
     7,
+    wasm.sync_memory_new(),
   );
 
   // A sign-in for KEK_pw.
@@ -684,8 +685,10 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
       recovery_method_id: fill(16, 0x74),
     },
     created.pinned,
+    memory,
   );
   assert.equal(plan.vk_epoch, 2);
+  assert.deepEqual(plan.sync_memory, memory, "the rekey was based on the state the memory already holds");
   assert.equal(plan.items[0].rev, 2);
   assert.equal(plan.pinned.vk_epoch_max, 2);
   assert.deepEqual(plan.pinned.pk_a, plan.pk_a);
@@ -907,4 +910,156 @@ test("argon2_oom_maps_to_code", () => {
   // The instance is still usable afterwards (the client ends its worker
   // anyway).
   assert.equal(wasm.test_argon2_unchecked(64), "ok");
+});
+
+// ------------------------------------------- rollback memory and the methods
+
+const sha256 = (b) => new Uint8Array(createHash("sha256").update(Buffer.from(b)).digest());
+
+/** A checkpoint and the rows it describes: the manifest and one item. */
+function snapshot(vault, created, id, sealed, seq) {
+  const checkpoint = vault.make_checkpoint(seq, [
+    { item_id: new Uint8Array(16), rev: created.manifest.rev, hash: sha256(created.manifest.envelope) },
+    { item_id: id, rev: sealed.rev, hash: sha256(sealed.envelope) },
+  ]);
+  const rows = [
+    { item_id: new Uint8Array(16), rev: created.manifest.rev, state: "live", envelope: created.manifest.envelope, tag: created.manifest.tag },
+    { item_id: id, rev: sealed.rev, state: "live", envelope: sealed.envelope, tag: sealed.tag },
+  ];
+  return { checkpoint, rows, seq };
+}
+
+test("the_rollback_memory_refuses_a_lower_rev_or_seq_and_round_trips", () => {
+  const { vault, created } = newAccount("rollback");
+  const id = fill(16, 0x71);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const s1 = snapshot(vault, created, id, v1, 5);
+  const s2 = snapshot(vault, created, id, v2, 6);
+  const verify = (s, memory) => vault.verify_checkpoint(s.checkpoint, s.rows, s.seq, memory);
+
+  const empty = wasm.sync_memory_new();
+  assert.ok(empty instanceof Uint8Array && empty.length === 21, "version, two seqs and a count");
+  const m1 = verify(s1, empty);
+  const m2 = verify(s2, m1);
+  assert.ok(m2.length > empty.length);
+  assert.notDeepEqual(m1, m2);
+  // The memory round-trips: the same state again gives the same bytes.
+  assert.deepEqual(verify(s2, m2), m2);
+  assert.deepEqual(verify(s1, empty), m1);
+
+  // A lower checkpoint seq is refused; the bytes the client holds stay valid.
+  assert.equal(code(() => verify(s1, m2)), "checkpoint_seq_below_remembered");
+  // A newer checkpoint that shows an older revision of an item is refused.
+  const lowRev = snapshot(vault, created, id, v1, 7);
+  assert.equal(code(() => verify(lowRev, m2)), "checkpoint_rev_below_remembered");
+  assert.deepEqual(verify(s2, m2), m2, "a refusal changes nothing");
+  // The memory is required and must be what the binding wrote.
+  for (const bad of [new Uint8Array(0), fill(21, 7), m2.slice(0, 30)]) {
+    assert.equal(code(() => verify(s2, bad)), "malformed_sync_memory", String(bad));
+  }
+  assert.equal(code(() => verify(s2, fill(5, 1))), "malformed_sync_memory");
+  // A checkpoint that does not verify on its own is refused before the memory counts.
+  assert.equal(code(() => vault.verify_checkpoint(s2.checkpoint, s2.rows.slice(1), s2.seq, m2)).startsWith("checkpoint_"), true);
+});
+
+test("older_state_is_accepted_only_by_its_own_call_and_prune_is_explicit", () => {
+  const { vault, created } = newAccount("older");
+  const id = fill(16, 0x72);
+  const v1 = vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW);
+  const v2 = vault.encrypt_item(id, 2, { name: "Second" }, open(vault, id, v1), NOW + 1);
+  const s1 = snapshot(vault, created, id, v1, 5);
+  const s2 = snapshot(vault, created, id, v2, 6);
+  const verify = (s, memory) => vault.verify_checkpoint(s.checkpoint, s.rows, s.seq, memory);
+  const m2 = verify(s2, verify(s1, wasm.sync_memory_new()));
+  assert.equal(code(() => verify(s1, m2)), "checkpoint_seq_below_remembered");
+
+  // After the user has confirmed, the older state replaces the record.
+  const older = vault.accept_older_state(s1.checkpoint, s1.rows, s1.seq);
+  assert.deepEqual(older, verify(s1, wasm.sync_memory_new()), "the record is the state of that checkpoint");
+  assert.deepEqual(verify(s1, older), older);
+  assert.deepEqual(verify(s2, older), m2, "and the newer state is accepted again from there");
+  // It has to verify on its own: a checkpoint of the rows of another state does not.
+  assert.equal(code(() => vault.accept_older_state(s1.checkpoint, s2.rows, s1.seq)).startsWith("checkpoint_"), true);
+
+  // Pruning drops the floor of an item that no longer exists, and only that.
+  const pruned = wasm.sync_memory_prune(m2, [id, fill(16, 0x99)]);
+  assert.equal(pruned.dropped, 1);
+  assert.ok(pruned.sync_memory.length < m2.length);
+  const low = snapshot(vault, created, id, v1, 7);
+  assert.equal(code(() => verify(low, m2)), "checkpoint_rev_below_remembered");
+  assert.ok(verify(low, pruned.sync_memory).length > 0, "the dropped floor is gone");
+  assert.equal(wasm.sync_memory_prune(m2, [fill(16, 0x98)]).dropped, 0);
+  assert.equal(code(() => wasm.sync_memory_prune(m2, [fill(15, 1)])), "invalid_input");
+  assert.equal(code(() => wasm.sync_memory_prune(fill(3, 1), [id])), "malformed_sync_memory");
+});
+
+test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
+  const { vault, created } = newAccount("methods");
+  const typeOf = { password: 1, recovery: 2, prf: 3 };
+  const listOf = (wraps) =>
+    wraps.map((w) => ({ method_type: typeOf[w.method.type], method_id: w.method_id, kek_generation: w.kek_generation }));
+  const server = listOf(created.wraps);
+  assert.equal(server.length, 2);
+  vault.check_server_methods(created.manifest, server);
+  // Each kind of difference has its own code.
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [...server, { method_type: 3, method_id: fill(16, 9), kek_generation: 1 }])), "method_list_unknown");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [{ ...server[0], kek_generation: 9 }, server[1]])), "method_list_changed");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [server[0]])), "method_list_missing");
+  assert.equal(code(() => vault.check_server_methods(created.manifest, [{ ...server[0], extra: 1 }, server[1]])), "invalid_input");
+  assert.equal(code(() => vault.check_server_methods({ ...created.manifest, rev: 99 }, server)), "decrypt");
+
+  // The last password and the last recovery method cannot be removed.
+  for (const w of created.wraps) {
+    assert.equal(code(() => vault.manifest_remove_method(created.manifest, w.method_id)), "input_last_method");
+  }
+  assert.equal(code(() => vault.manifest_remove_method(created.manifest, fill(16, 0x55))).length > 0, true);
+
+  // Add a passkey method: a new manifest row and the body that is signed.
+  const salt = wasm.prf_salt_new();
+  const wrap = vault.wrap_prf(fill(24, 0x44), salt, fill(32, 0x33), fill(16, 0x76), 1, fill(16, 0xaa), []);
+  const add = vault.manifest_add_method(created.manifest, wrap);
+  assert.equal(add.op, "unlock-method.add");
+  assert.equal(add.sealed.rev, created.manifest.rev + 1);
+  assert.deepEqual(add.pk_a, created.pk_a);
+  const body = Buffer.from(add.body).toString("utf8");
+  assert.match(body, /"method_type":3/);
+  assert.match(body, new RegExp(`"method_id":"${"76".repeat(16)}"`));
+  assert.equal(vault.auth_sign(add.op, fill(32, 1), add.body).length, 64);
+  // The same passkey is not added twice, and a wrap that is not a passkey wrap is refused.
+  assert.ok(code(() => vault.manifest_add_method(add.sealed, wrap)).length > 0);
+  assert.ok(code(() => vault.manifest_add_method(created.manifest, created.wraps[1])).length > 0);
+  // The server's list with the new method agrees with the new manifest.
+  vault.check_server_methods(add.sealed, [...server, ...listOf([wrap])]);
+  assert.equal(code(() => vault.check_server_methods(add.sealed, server)), "method_list_missing");
+
+  // Removing it again: the new row and the body, signed with the other name.
+  const remove = vault.manifest_remove_method(add.sealed, wrap.method_id);
+  assert.equal(remove.op, "unlock-method.remove");
+  assert.equal(remove.sealed.rev, add.sealed.rev + 1);
+  assert.match(Buffer.from(remove.body).toString("utf8"), new RegExp(`"method_id":"${"76".repeat(16)}"`));
+  assert.equal(vault.auth_sign(remove.op, fill(32, 2), remove.body).length, 64);
+  vault.check_server_methods(remove.sealed, server);
+  // The last-method rule still holds after the passkey is gone.
+  assert.equal(code(() => vault.manifest_remove_method(remove.sealed, created.wraps[0].method_id)), "input_last_method");
+});
+
+test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
+  const a = wasm.prf_salt_new();
+  const b = wasm.prf_salt_new();
+  assert.equal(a.length, 32);
+  assert.ok(a.some((x) => x !== 0));
+  assert.notDeepEqual(a, b);
+  const { vault, created } = newAccount("zero-keys");
+  const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), []);
+  assert.equal(code(() => wrap(new Uint8Array(32), fill(32, 0x33))), "input_all_zero", "a salt of zeros");
+  assert.equal(code(() => wrap(a, new Uint8Array(32))), "input_all_zero", "a PRF output of zeros");
+  assert.equal(code(() => wrap(fill(31, 5), fill(32, 0x33))), "invalid_input", "a salt of another length");
+  assert.equal(wrap(a, fill(32, 0x33)).method.type, "prf");
+  assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, new Uint8Array(32), wrap(a, fill(32, 0x33)), pinned(created.pinned))), "input_all_zero");
+  assert.equal(code(() => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), new Uint8Array(32))), "input_all_zero");
+  const id = fill(16, 0x41);
+  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW);
+  assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");
+  assert.ok(vault.export_finish(fill(32, 7)).length > 100, "the draft was kept");
 });

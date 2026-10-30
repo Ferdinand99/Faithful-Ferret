@@ -20,7 +20,10 @@
 //   `transfer`, and `fill(0)`-ed on this side; the worker wipes its copy after
 //   the call. **A secret array can therefore be used once.** The array that
 //   the caller keeps is all zero afterwards, and a second call with it is
-//   `invalid_input`, never a call with a key of zeros: arguments that are keys
+//   `input_all_zero`, never a call with a key of zeros (the code is the one
+//   the core gives for the same input; a value that is not a `Uint8Array` is
+//   `invalid_input`, the JavaScript side's code for a wrong type). Arguments
+//   that are keys
 //   (PRF output, `K_exp`, the device PIN key, the export token) must be a
 //   `Uint8Array` that is not all zero. Get a new one for every call, or pass
 //   `.slice()`. A password given as a string is encoded after a
@@ -66,6 +69,38 @@
 // vault, and refuses (`invalid_state`) Ferret's own authenticator
 // (`FERRET_AAGUID`) and any credential that Ferret stores: such a method could
 // never open the vault it lives in.
+//
+// Error codes at the two layers: the core's codes are in `vectors/ERRORS.md`.
+// The client adds `invalid_input` for a call whose arguments have the wrong
+// type, shape or range, `worker_failed`, `locked` and `internal`. An all-zero
+// key has one code at both layers, `input_all_zero` (the client checks it
+// before it sends the call, the core checks it again). A salt of zeros is
+// `input_all_zero` too.
+//
+// Passkey PRF salts: `prf_salt_new()` returns the 32 random bytes of a new
+// registration. `wrap_prf` and `unlock_prf` refuse a salt of zeros.
+//
+// Rollback memory (`SyncMemory`): the client keeps it as bytes, in its own
+// storage. `sync_memory_new()` makes an empty record for a device that has
+// seen nothing of this vault. `vault.verify_checkpoint(checkpoint, rows,
+// top_seq, memory)` and `job.rekey(input, pinned, memory)` take the stored
+// bytes as a required argument and return the updated ones (`rekey` in the
+// field `sync_memory` of its plan); store them in place of the old ones. A
+// checkpoint, a top seq or a row below what the device has seen is
+// `checkpoint_seq_below_remembered`, `checkpoint_top_seq_below_remembered` or
+// `checkpoint_rev_below_remembered`, and the memory is left as it was. Only
+// `vault.accept_older_state(checkpoint, rows, top_seq)`, called after the user
+// has confirmed that the server was restored to an older state, lowers the
+// floors; it returns a new record. `sync_memory_prune(memory, ids)` drops the
+// entries of items that no longer exist, so a full record can take new items.
+//
+// Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
+// compares the server's list with the manifest (`method_list_unknown`,
+// `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(
+// currentRow, wrap)` and `vault.manifest_remove_method(currentRow, methodId)`
+// return `{ op, sealed, body, pk_a }`: upload `sealed` and `body` and sign the
+// request with `vault.auth_sign(op, nonce, body)`. Removing the last password
+// or recovery method is `input_last_method`.
 
 import {
   FerretError,

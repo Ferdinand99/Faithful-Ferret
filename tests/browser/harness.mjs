@@ -592,6 +592,7 @@ async function leakRun() {
       recovery_method_id: fill(16, 0x74),
     },
     created.pinned,
+    wasm.sync_memory_new(),
   );
   await client.vault.rekey_commit();
   const vk2 = (await probe({ op: "vk" })).vk;

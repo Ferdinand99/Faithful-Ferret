@@ -80,6 +80,10 @@ const BYTES_ALLOWED = {
   "UnlockJob.reauth_grant":
     "the one-time token for a plaintext export: a bearer permission that a fresh sign-in makes, not a key; the vault keeps a copy and the export uses it up",
   ferret_aaguid: "the AAGUID of Ferret, public (it is in every passkey response)",
+  prf_salt_new: "the PRF salt of a new passkey registration: 32 random bytes, public (stored with the wrap)",
+  sync_memory_new: "an empty rollback memory: item ids and revision numbers, public",
+  "Vault.verify_checkpoint": "the updated rollback memory: item ids and revision numbers, public",
+  "Vault.accept_older_state": "the new rollback memory: item ids and revision numbers, public",
   argon2_export_key:
     "K_exp: wraps the content key of one export file; it crosses between the job worker and the vault worker once and is wiped; it is not a vault key",
 };

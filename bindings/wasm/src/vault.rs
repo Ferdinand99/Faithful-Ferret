@@ -21,11 +21,11 @@ use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PrfOutput, RecoveryKey, SecretKey,
-    ServerRow, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest, emergency_sheet,
-    encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint, make_tombstone,
-    parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint, verify_recovery_setup,
-    verify_secret_key_entry,
+    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PrfOutput, RecoveryKey, RollbackMemory,
+    SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest,
+    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
+    make_tombstone, parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint,
+    verify_recovery_setup, verify_secret_key_entry,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -276,6 +276,38 @@ struct AccessPageDto {
 struct SheetDto {
     access: AccessPageDto,
     recovery_key_code: String,
+}
+
+/// The core's checkpoint from the one the client sends.
+fn checkpoint_of(cp: CheckpointDto) -> Checkpoint {
+    Checkpoint {
+        seq: cp.seq,
+        digest: cp.digest,
+        mac: cp.mac,
+        entries: cp.entries,
+    }
+}
+
+/// The rows the server shows, each with its tag or tombstone checked.
+fn server_rows_of(vault: &UnlockedVault, list: Vec<ServerRowDto>) -> Res<Vec<ServerRow>> {
+    let mut server_rows = Vec::with_capacity(list.len());
+    for r in &list {
+        let id = ItemId::from_bytes(r.item_id);
+        server_rows.push(match r.state.as_str() {
+            "live" => ServerRow::live(
+                vault,
+                id,
+                r.rev,
+                r.envelope.as_deref().ok_or(Fail::Input)?,
+                &r.tag.ok_or(Fail::Input)?,
+            )?,
+            "deleted" => {
+                ServerRow::deleted(vault, id, r.rev, r.tomb.as_deref().ok_or(Fail::Input)?)?
+            }
+            _ => return Err(Fail::Input),
+        });
+    }
+    Ok(server_rows)
 }
 
 fn auth_op(name: &str) -> Res<AuthOp> {
@@ -531,48 +563,60 @@ impl Vault {
     /// `{ item_id, rev, state: "deleted", tomb }`; its tag or tombstone is
     /// checked here, before the rows are compared. A failure is a
     /// `checkpoint_*` code.
+    ///
+    /// `sync_memory` is required: the client's stored rollback memory
+    /// (`SyncMemory` bytes; `sync_memory_new()` for a device that has seen
+    /// nothing of this vault yet). A checkpoint below the highest verified
+    /// one, a top `seq` below the highest seen, or a row with a lower `rev`
+    /// than the highest seen for its item is refused
+    /// (`checkpoint_seq_below_remembered`,
+    /// `checkpoint_top_seq_below_remembered`,
+    /// `checkpoint_rev_below_remembered`). Returns the updated memory bytes,
+    /// which the client stores in place of the old ones; on any error nothing
+    /// is returned and the old bytes stay valid.
     pub fn verify_checkpoint(
         &self,
         checkpoint: JsValue,
         rows: JsValue,
         top_seq: f64,
-    ) -> Result<(), JsValue> {
+        sync_memory: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
         run(|| {
             let vault = self.unlocked()?;
-            let cp: CheckpointDto = from_js(checkpoint)?;
-            let list: Vec<ServerRowDto> = from_js_list(rows)?;
-            let mut server_rows = Vec::with_capacity(list.len());
-            for r in &list {
-                let id = ItemId::from_bytes(r.item_id);
-                server_rows.push(match r.state.as_str() {
-                    "live" => ServerRow::live(
-                        vault,
-                        id,
-                        r.rev,
-                        r.envelope.as_deref().ok_or(Fail::Input)?,
-                        &r.tag.ok_or(Fail::Input)?,
-                    )?,
-                    "deleted" => {
-                        ServerRow::deleted(vault, id, r.rev, r.tomb.as_deref().ok_or(Fail::Input)?)?
-                    }
-                    _ => return Err(Fail::Input),
-                });
-            }
-            let checkpoint = Checkpoint {
-                seq: cp.seq,
-                digest: cp.digest,
-                mac: cp.mac,
-                entries: cp.entries,
-            };
-            // The rollback memory (`SyncMemory`) is not exposed through this
-            // binding yet: this call checks the checkpoint on its own.
+            let checkpoint = checkpoint_of(from_js(checkpoint)?);
+            let server_rows = server_rows_of(vault, from_js_list(rows)?)?;
+            let mut memory = SyncMemory::from_bytes(&sync_memory)?;
             core(verify_checkpoint(
                 vault,
                 &checkpoint,
                 &server_rows,
                 js_u64(top_seq)?,
-                ferret_core::RollbackMemory::NoMemory,
-            ))
+                RollbackMemory::Remembered(&mut memory),
+            ))?;
+            Ok(memory.to_bytes())
+        })
+    }
+
+    /// Accepts an older state **after the user has confirmed** it (for
+    /// example a server restored from a backup): the memory is replaced by
+    /// the state of `checkpoint` and `rows`, which must verify on their own.
+    /// This is the only call that lowers the floors of the rollback memory;
+    /// it is never made by another call. `rows` and `top_seq` are as in
+    /// `verify_checkpoint`. The old memory is not needed: the result is a new
+    /// record. Returns the new memory bytes.
+    pub fn accept_older_state(
+        &self,
+        checkpoint: JsValue,
+        rows: JsValue,
+        top_seq: f64,
+    ) -> Result<Vec<u8>, JsValue> {
+        run(|| {
+            let vault = self.unlocked()?;
+            let checkpoint = checkpoint_of(from_js(checkpoint)?);
+            let server_rows = server_rows_of(vault, from_js_list(rows)?)?;
+            let mut memory = SyncMemory::new();
+            core(memory.accept_older_state(vault, &checkpoint, &server_rows, js_u64(top_seq)?))?;
+            Ok(memory.to_bytes())
         })
     }
 

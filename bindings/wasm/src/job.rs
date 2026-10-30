@@ -208,6 +208,8 @@ struct RekeyBundleDto {
     manifest: SealedDto,
     checkpoint: CheckpointDto,
     pinned: PinnedDto,
+    #[serde(with = "bytes")]
+    sync_memory: Vec<u8>,
 }
 
 /// The export key and server key of a login that has been finished, kept in
@@ -948,7 +950,14 @@ impl UnlockJob {
     /// recovery_method_id }`; `pinned` is the record of this device with its
     /// floors seeded. Returns the plan (`vk_epoch`, `base_seq`, `pk_a`,
     /// `pk_r`, `items`, `tombstones`, `wraps`, `manifest`, `checkpoint`,
-    /// `pinned`: the record to store once the server has applied it).
+    /// `pinned`: the record to store once the server has applied it, and
+    /// `sync_memory`: the updated rollback memory to store).
+    ///
+    /// `sync_memory` is the client's stored rollback memory (`SyncMemory`
+    /// bytes; `sync_memory_new()` for a device that has seen nothing of this
+    /// vault). It is required: a checkpoint, a top `seq` or a row below what
+    /// the device has seen is refused (`checkpoint_*_below_remembered`) before
+    /// anything is drawn, because a rekey makes the server's state current.
     ///
     /// The new vault is held by `vault` as pending. Sign the request with the
     /// old vault (`vault.auth_sign("rekey", nonce, body)`), and when the
@@ -959,6 +968,7 @@ impl UnlockJob {
         vault: &mut Vault,
         input: JsValue,
         pinned: JsValue,
+        sync_memory: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let dto: RekeyInputDto = from_js(input)?;
@@ -991,8 +1001,7 @@ impl UnlockJob {
                 .collect();
             let unlocked = vault.unlocked()?;
             let kek = Kek::from_export_key(&unlocked.context().account_id, &done.export_key)?;
-            // The rollback memory (`SyncMemory`) is not exposed through this
-            // binding yet, so the rekey runs without one.
+            let mut memory = ferret_core::SyncMemory::from_bytes(&sync_memory)?;
             let bundle = unlocked.rekey(
                 &mut OsRng,
                 &RekeyInput {
@@ -1014,7 +1023,7 @@ impl UnlockJob {
                     recovery_method_id: MethodId::from_bytes(dto.recovery_method_id),
                     pinned: &record,
                 },
-                ferret_core::RollbackMemory::NoMemory,
+                ferret_core::RollbackMemory::Remembered(&mut memory),
             )?;
             let new_record = bundle.pinned(&record)?;
             let out = to_js(&RekeyBundleDto {
@@ -1050,6 +1059,7 @@ impl UnlockJob {
                     entries: bundle.checkpoint.entries.clone(),
                 },
                 pinned: PinnedDto::of(&new_record),
+                sync_memory: memory.to_bytes(),
             })?;
             let secret_key = self.secret_key.as_ref().map(copy_secret_key).transpose()?;
             let ferret_core::RekeyBundle {

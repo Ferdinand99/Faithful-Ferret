@@ -306,9 +306,10 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
   await client.vault.export_finish(key);
   assert.ok(key.every((b) => b === 0), "the caller's array was wiped");
   assert.equal(made[0].received.length, 1);
-  // The retry with the same variable: invalid_input, and nothing is sent.
+  // The retry with the same variable: input_all_zero (the code of the core for
+  // the same input), and nothing is sent.
   const e = await rejection(client.vault.export_finish(key));
-  assert.equal(e.code, "invalid_input");
+  assert.equal(e.code, "input_all_zero");
   assert.equal(made[0].received.length, 1, "the zero key never reached the worker");
   // The same for every position that takes a key.
   const zero = () => new Uint8Array(32);
@@ -321,7 +322,7 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
     ["import_open", [fill(100, 1), zero()]],
     ["reveal_plain_export", [[], "json", false, zero()]],
   ]) {
-    assert.equal((await rejection(client.vault[name](...args))).code, "invalid_input", name);
+    assert.equal((await rejection(client.vault[name](...args))).code, "input_all_zero", name);
   }
   assert.equal(made[0].received.length, 1);
   // An optional key may be left out.
@@ -368,10 +369,10 @@ test("the_dispatcher_checks_the_arguments_as_well", () => {
   // A page that does not use the client still meets the same checks.
   const dispatch = createDispatcher(wasm);
   const send = (method, args) => dispatch({ id: 1, target: "vault", method, args }).reply;
-  assert.equal(send("export_finish", [new Uint8Array(32)]).code, "invalid_input");
+  assert.equal(send("export_finish", [new Uint8Array(32)]).code, "input_all_zero");
   assert.equal(send("export_finish", ["x".repeat(32)]).code, "invalid_input");
   assert.equal(send("totp_code", [1, null]).code, "invalid_input");
-  assert.equal(send("wrap_prf", [fill(24, 1), fill(32, 5), new Uint8Array(32), fill(16, 2), 1, fill(16, 3), []]).code, "invalid_input");
+  assert.equal(send("wrap_prf", [fill(24, 1), fill(32, 5), new Uint8Array(32), fill(16, 2), 1, fill(16, 3), []]).code, "input_all_zero");
   // A valid shape gets to the vault check.
   assert.equal(send("export_finish", [fill(32, 3)]).code, "vault_locked");
   const job = createJobDispatcher(wasm);
@@ -491,7 +492,25 @@ test("a_plaintext_export_through_the_client_needs_a_fresh_sign_in", async () => 
   assert.ok(json.includes("plain note text"));
   assert.ok(token.every((b) => b === 0), "the token is wiped on the page once it is sent");
   // One use: the same token again (a retry with the wiped array, or a copy).
-  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, token))).code, "invalid_input");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, token))).code, "input_all_zero");
   assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, copy))).code, "reauth_required");
   await client.lock();
+});
+
+test("the_rollback_memory_is_a_required_argument", async () => {
+  const { client, made } = echoClient();
+  const checkpoint = { seq: 1, digest: fill(32, 1), mac: fill(32, 2), entries: new Uint8Array(0) };
+  for (const memory of [undefined, null, "bytes", [1, 2, 3], new ArrayBuffer(21)]) {
+    assert.equal((await rejection(client.vault.verify_checkpoint(checkpoint, [], 1, memory))).code, "invalid_input", String(memory));
+    assert.equal((await rejection(client.vault.rekey({}, {}, memory))).code, "invalid_input", String(memory));
+  }
+  assert.equal((await rejection(client.vault.verify_checkpoint(checkpoint, [], 1))).code, "invalid_input", "no default memory");
+  assert.equal((await rejection(client.vault.sync_memory_prune(undefined, []))).code, "invalid_input");
+  assert.equal((await rejection(client.vault.accept_older_state(checkpoint, [], null))).code, "invalid_input", "top seq is checked");
+  assert.equal(made.length, 0, "nothing was sent");
+  // The memory is public: it is sent as it is and not wiped.
+  const memory = (await import("./helpers.mjs")).wasm.sync_memory_new();
+  const copy = memory.slice();
+  await client.vault.verify_checkpoint(checkpoint, [], 1, memory);
+  assert.deepEqual(memory, copy);
 });

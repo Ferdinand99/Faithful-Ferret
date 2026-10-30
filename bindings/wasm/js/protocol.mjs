@@ -53,6 +53,9 @@ export const STATELESS = new Set([
   "totp_parse",
   "import_header",
   "ferret_aaguid",
+  "prf_salt_new",
+  "sync_memory_new",
+  "sync_memory_prune",
 ]);
 
 /**
@@ -103,8 +106,10 @@ export const SECRET_ARGS = {
  * secret array looks like after it has been wiped: the client wipes the
  * arrays it is given, so a call that is repeated with the same variable would
  * otherwise go through with a key of zeros (a PRF wrap the server could open,
- * an export under a known key). That call fails with `invalid_input`.
- * The core refuses a zero key as well; this is the early, readable check.
+ * an export under a known key). That call fails with `input_all_zero`, the
+ * code that the core gives for the same input, so the two layers agree. A
+ * value that is not a `Uint8Array` at all is `invalid_input`, the JavaScript
+ * side's code for a wrong type.
  */
 export const BYTES_ARGS = {
   login_start: [[0, false, false]],
@@ -118,6 +123,11 @@ export const BYTES_ARGS = {
   argon2_export_key: [[0, false, false], [4, true, false]],
   check_master_password: [[0, false, false]],
   reveal_plain_export: [[3, false, true]],
+  // The rollback memory is public data (item ids and revision numbers), so it
+  // is typed but neither wiped nor refused when it looks empty.
+  verify_checkpoint: [[3, false, false]],
+  rekey: [[2, false, false]],
+  sync_memory_prune: [[0, false, false]],
 };
 
 /** Arguments that are master or export password text: a string is encoded. */
@@ -194,6 +204,7 @@ export const F64_ARGS = {
   make_tombstone: [[1, "u64"]],
   make_checkpoint: [[0, "u64"]],
   verify_checkpoint: [[2, "u64"]],
+  accept_older_state: [[2, "u64"]],
   totp_code: [[1, "seconds"]],
   wrap_prf: [[4, "u64"]],
   passkey_create: [[1, "u64"], [7, "millis"]],
@@ -218,14 +229,17 @@ export function assertF64Args(method, args) {
 
 /**
  * Throws `invalid_input` unless the byte arguments of a call (`BYTES_ARGS`) are
- * `Uint8Array`s and the keys among them are not all zero.
+ * `Uint8Array`s and the keys among them are not all zero (`input_all_zero`,
+ * the code that the core gives for the same input).
  */
 export function assertBytesArgs(method, args) {
   for (const [index, optional, rejectZero] of argsOf(BYTES_ARGS, method)) {
     const v = args[index];
     if (optional && (v === undefined || v === null)) continue;
     if (!(v instanceof Uint8Array)) throw new FerretError("invalid_input");
-    if (rejectZero && v.every((b) => b === 0)) throw new FerretError("invalid_input");
+    // An empty array is left to the core (`input_too_short`); an array of
+    // zeros has the same code as the core gives for it.
+    if (rejectZero && v.length > 0 && v.every((b) => b === 0)) throw new FerretError("input_all_zero");
   }
 }
 
