@@ -1,0 +1,21 @@
+# The build context holds only what docker/server.Dockerfile copies.
+.git
+.github
+.superpowers
+.env
+.env.*
+**/target
+**/node_modules
+web/dist
+site
+assets
+docs
+fuzz
+supply-chain
+tests
+vectors
+bindings
+tools
+ct/dudect
+ct/results
+**/*.log
