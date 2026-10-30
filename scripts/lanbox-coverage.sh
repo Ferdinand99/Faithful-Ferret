@@ -22,7 +22,7 @@ FERRET_EXPORT="target-cov" scripts/lanbox.sh --exec sh -c '
   set -e
   export RUSTUP_TOOLCHAIN="$(tr -d "[:space:]" < fuzz/NIGHTLY)"
   mkdir -p target-cov
-  cargo llvm-cov --branch -p ferret-core --features test-support \
+  cargo llvm-cov --branch -p ferret-core -p ferret-server-auth --features test-support \
     --json --summary-only --output-path target-cov/cov.json
   node scripts/coverage-check.mjs target-cov/cov.json || echo 1 > target-cov/miss
 ' || rc=$?

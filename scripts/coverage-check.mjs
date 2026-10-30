@@ -36,7 +36,7 @@ const report = JSON.parse(readFileSync(resolve(input), 'utf8'));
 const rel = (f) =>
   posix
     .normalize(f.replace(/\\/g, '/'))
-    .replace(/^.*?(crates\/ferret-core\/|ct\/harness\/)/, '$1');
+    .replace(/^.*?(crates\/ferret-core\/|crates\/ferret-server-auth\/|ct\/harness\/)/, '$1');
 
 const files = new Map();
 for (const datum of report.data) {

@@ -1,7 +1,7 @@
 {
-  "_comment": "Thresholds: at least 95 % of the lines and 90 % of the branches in integrity, wrap, envelope, codes, text and export; the lines of the whole core at least 90 %. Measured by scripts/lanbox-coverage.sh (cargo llvm-cov --branch). A module that falls short needs its own explanation in the task report.",
-  "roots": ["crates/ferret-core/src/", "ct/harness/"],
-  "exclude": ["crates/ferret-core/src/testing/"],
+  "_comment": "Thresholds: at least 95 % of the lines and 90 % of the branches in integrity, wrap, envelope, codes, text and export; the lines of the whole core and server library at least 90 %; the server library as one module at least 95 % and 90 %. Measured by scripts/lanbox-coverage.sh (cargo llvm-cov --branch). A module that falls short needs its own explanation in the task report.",
+  "roots": ["crates/ferret-core/src/", "crates/ferret-server-auth/src/", "ct/harness/"],
+  "exclude": ["crates/ferret-core/src/testing/", "crates/ferret-server-auth/src/testing"],
   "total": { "lines": 90 },
   "modules": {
     "integrity": { "paths": ["crates/ferret-core/src/integrity/"], "lines": 95, "branches": 90 },
@@ -9,6 +9,7 @@
     "envelope": { "paths": ["crates/ferret-core/src/envelope.rs"], "lines": 95, "branches": 90 },
     "codes": { "paths": ["crates/ferret-core/src/codes.rs", "ct/harness/crockford.rs"], "lines": 95, "branches": 90 },
     "text": { "paths": ["crates/ferret-core/src/text/"], "lines": 95, "branches": 90 },
-    "export": { "paths": ["crates/ferret-core/src/export.rs", "crates/ferret-core/src/export/"], "lines": 95, "branches": 90 }
+    "export": { "paths": ["crates/ferret-core/src/export.rs", "crates/ferret-core/src/export/"], "lines": 95, "branches": 90 },
+    "server-auth": { "paths": ["crates/ferret-server-auth/src/"], "lines": 95, "branches": 90 }
   }
 }
