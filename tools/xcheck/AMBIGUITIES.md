@@ -4,12 +4,17 @@ xcheck was written from three sources only: the design document (`design-fase1.m
 vector files with `OPS.md`, `ERRORS.md` and `SOURCE.md`, and appendix B of the plan (the body, manifest
 and export schemas). Nothing under `crates/`, `bindings/` or `tools/vectorgen/` was read.
 
-Where the design is silent or two places disagree, this file records the reading xcheck used. Almost every group
-matched on its first run. Three rules were added after a first run showed a refusal that xcheck did not make
-(manifest epoch on seal, item 13; the reserved item id in `tomb.verify`, item 14; the floor of 15 without a secret
-key in the account flows, item 8). Each is a reading of the design, not a change to a vector. The rules in the table
-below are different: the design does not state them at all, so a second implementation can only get them from the
-vectors. They are listed first.
+Where the design is silent or two places disagree, this file records the reading xcheck used. Two kinds of rule
+did not come from the design text alone, and the review asked for both to be named:
+
+* **Taken from the vectors.** Three rules cannot be derived from the design at all, so xcheck took them from the
+  vector files while reading them: the limit on pinned generations (G1), the AAGUID value (G2) and the 138-byte
+  PKCS#8 layout of the stored passkey (G6). No run refused these first; they were written from the vectors.
+* **Added after a first run refused cases.** Three rules were added because a first run showed a refusal xcheck did
+  not make: the manifest epoch on seal (G7), the reserved item id in `tomb.verify` (G8) and the floor of 15 without a
+  secret key in the account flows (item 8). The design is silent on the first two; the third follows from section 4.1.
+
+None of these changed an expected value of a vector. Everything else matched on its first run.
 
 ## Rules the design does not state (xcheck needed the vectors)
 
@@ -20,6 +25,9 @@ vectors. They are listed first.
 | G3 | Section 9 | The byte layouts of the WebAuthn objects: authenticator data, attestation object (`fmt: none`), COSE key, `clientDataJSON`, the PKCS#8 of the stored key (138 bytes, with the public key, no curve parameters in `ECPrivateKey`) and the SPKI. | WebAuthn L3 and the usual encodings, with the field order of the browsers (`type`, `challenge`, `origin`, `crossOrigin`). All of it matched, but the design does not pin it. |
 | G4 | Section 9.3 | The signature nonce. The design says ES256; `OPS.md` says RFC 6979. | RFC 6979 with SHA-256 (own P-256 code, `src/p256.mjs`), no low-S step. The vector signatures are byte-identical and also verify under WebCrypto. |
 | G5 | `item.open`, `OPS.md` | `OPS.md` says "a bad header is `unsupported` or `malformed_envelope`". Section 5.3 (clarified 29.10) and all the vectors say a changed `version`, `suite` or `kind` byte is `decrypt`. | The vectors and section 5.3 win: the header bytes go into the AAD as read, and only the length can give `malformed_envelope`. `OPS.md` should be corrected. |
+| G6 | Section 9.1 | The PKCS#8 DER of the stored passkey key: "P-256 (PKCS#8 DER)" does not say which of the valid encodings. | The 138-byte form with the public key inside `ECPrivateKey` and no curve parameters there (taken from the vectors; Node's own export is a different, shorter form). The scalar is read from a fixed offset of it, and the embedded public key is checked against the scalar. |
+| G7 | Section 4.3, appendix B | Whether the epoch written inside the manifest has to equal the epoch of the key. | Yes: `decrypt` on open, `malformed_item_body` on seal (item 13). Added after a first run. |
+| G8 | Section 8.4, appendix B | Whether the reserved all-zero `item_id` of the manifest can carry a tombstone. | No: `tombstone_invalid` in `tomb.verify`, `malformed_envelope` in `tomb.seal` (item 14). Added after a first run. |
 
 ## Findings about the design text itself
 
@@ -67,9 +75,12 @@ vectors. They are listed first.
     `label`, `kind`, `value`), `urls` (each with `url`; `match` is optional), `created`, `modified`, `favorite`.
     Optional: `totp.uri`, the `passkey` map (the seeds optional), `notes`, `device`. A body with `schema` above 1 is
     only checked to be a map with an integer `schema` and is written back unchanged.
-11. **Order of unknown keys.** Written back in the order they were read, after nothing is moved. The design says
-    "typed structure plus `extra` map"; that would put the known keys first. The vectors cannot tell the two apart
-    (all known keys come first in every input), so this reading is untested.
+11. **Order of unknown keys.** Written back with the known keys in schema order (appendix B), then the unknown keys in
+    the order they were read, at the top level and in `fields[]`, `urls[]`, `totp` and `passkey`. This is what
+    `OPS.md` says for `export.plain.json` ("schema order, then unknown keys as read") and what "typed structure plus
+    `extra`" in section 5.2 means. The first version of xcheck kept the read order, which the vectors could not
+    tell apart; it was corrected in fix round 1. No vector tells the two readings apart yet; `src/selftest.mjs`
+    covers it. Manifests are still written in the order read (no document says otherwise).
 12. **Floats** are kept at the width they were read (half, single, double) because `OPS.md` says "read and written
     back as it was". The JSON export prints finite floats with the shortest round-trip form and NaN or infinity as
     `null`; the design does not say, and no vector has a finite float in the plain export.
@@ -116,3 +127,14 @@ vectors. They are listed first.
 * `opaque.register`, `opaque.login` (22 cases): the design names RFC 9807 with ristretto255 but gives no byte-level
   construction, and the RFC is not one of xcheck's sources. The account flows take a finished registration as
   input, so they are covered.
+  The residual risk is that the Ferret OPAQUE configuration (context `ferret/v1/opaque`, the Argon2id KSF with a
+  16-zero-byte salt and 64 bytes out, the input `mp || 0x00 || SK`, `credential_identifier = account_id`, default
+  identities, `export_key` feeding `KEK_pw`) is checked by no independent implementation. The RFC 9807 vectors in
+  the Rust suite use the identity KSF and the context `OPAQUE-POC`, so they do not exercise these choices.
+
+## Guards
+
+* xcheck refuses to start on a Node whose Unicode version is not 16.0 or 17.0, and on a Node without
+  `crypto.argon2Sync` (Node 24.7 or newer; `engines` and `.npmrc` `engine-strict` say the same).
+* An op in the vectors that has no handler and is not in `NOT_COVERED` (only the two OPAQUE ops) fails the run.
+

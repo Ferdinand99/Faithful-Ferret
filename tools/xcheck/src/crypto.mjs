@@ -3,6 +3,10 @@ import sodium from 'libsodium-wrappers';
 import nodeCrypto from 'node:crypto';
 import { fail, concat, equal } from './util.mjs';
 
+if (typeof nodeCrypto.argon2Sync !== 'function') {
+  throw new Error(`xcheck needs crypto.argon2Sync (Node 24.7 or newer); this is Node ${process.versions.node}.`);
+}
+
 await sodium.ready;
 
 export const sha256 = (...parts) => new Uint8Array(nodeCrypto.createHash('sha256').update(concat(...parts)).digest());

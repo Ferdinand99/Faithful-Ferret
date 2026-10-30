@@ -130,13 +130,14 @@ export function decryptExport({ password, file, unchecked }) {
     const k = hex(id.v);
     if (seen.has(k)) shape();
     seen.add(k);
+    let parsed;
     try {
-      parseBodyValue(bodyValue);
+      parsed = parseBodyValue(bodyValue);
     } catch (e) {
       if (e.code === 'malformed_item_body') shape();
       throw e;
     }
-    return { id: id.v, value: bodyValue };
+    return { id: id.v, value: parsed.value };
   });
   return { createdAt: h.createdAt, kdf: { m_kib: m, t, p }, items };
 }

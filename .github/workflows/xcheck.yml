@@ -48,3 +48,5 @@ jobs:
         run: node src/run.mjs
       - name: Self-test (every damaged expectation must be detected)
         run: node src/run.mjs --mutate --quiet
+      - name: Negative self-tests (WebCrypto check, key order, handler-less ops)
+        run: node src/selftest.mjs

@@ -5,9 +5,9 @@
   "description": "Independent JavaScript reference for the Faithful Ferret internal test vectors. Written from the design document and the vector files only.",
   "type": "module",
   "license": "AGPL-3.0-only",
-  "engines": { "node": ">=24.7" },
+  "engines": { "node": ">=24.7.0" },
   "scripts": {
-    "test": "node src/run.mjs",
+    "test": "node src/run.mjs && node src/run.mjs --mutate --quiet && node src/selftest.mjs",
     "test:fast": "node src/run.mjs --skip-slow"
   },
   "dependencies": {

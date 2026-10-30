@@ -4,13 +4,19 @@ import { fail, utf8, ascii, concat } from './util.mjs';
 import { sha256 } from './crypto.mjs';
 import { ASSIGNED_IN_17 } from './unicode17.mjs';
 
+// The subtraction table below is exact for the Unicode versions of Node 24 (16.0 or 17.0). On any other
+// platform version the forbidden-character check would silently be wrong, so refuse to run.
+if (!(['16.0', '17.0'].includes(process.versions.unicode))) {
+  throw new Error(`xcheck: this Node has Unicode ${process.versions.unicode}; only 16.0 and 17.0 are handled (src/unicode17.mjs). Use Node 24.x or extend the table.`);
+}
+
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 // "Not assigned in the locked table": the table is Unicode 16.0 (section 3.1).
 const reAssigned = /^\p{Assigned}$/u;
 function assignedIn16(cp) {
   if (!reAssigned.test(String.fromCodePoint(cp))) return false;
-  if (process.versions.unicode >= '17') {
+  if (process.versions.unicode === '17.0') {
     // code points first assigned in 17.0 are outside the locked table
     for (const [a, b] of ASSIGNED_IN_17) if (cp >= a && cp <= b) return false;
   }

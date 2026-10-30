@@ -98,10 +98,38 @@ export function checkBody(value) {
   return { readOnly: false };
 }
 
+// Written back as OPS.md says (export.plain.json): the known keys in schema order (appendix B), then the
+// unknown keys in the order they were read. Done at the top level and in fields[], urls[], totp and passkey.
+const SCHEMA_ORDER = {
+  body: ['schema', 'type', 'name', 'fields', 'urls', 'totp', 'passkey', 'notes', 'created', 'modified', 'favorite', 'device'],
+  field: ['id', 'label', 'kind', 'value'],
+  url: ['url', 'match'],
+  totp: ['uri'],
+  passkey: ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv'],
+};
+
+function inSchemaOrder(map, order, nested = {}) {
+  const known = order.map((k) => map.v.find(([key]) => key === k)).filter(Boolean);
+  const unknown = map.v.filter(([k]) => !order.includes(k));
+  const fix = ([k, v]) => (nested[k] ? [k, nested[k](v)] : [k, v]);
+  return { k: 'map', v: [...known, ...unknown].map(fix) };
+}
+
+export function normalizeBody(value) {
+  const listOf = (order) => (arr) => ({ k: 'array', v: arr.v.map((m) => inSchemaOrder(m, order)) });
+  return inSchemaOrder(value, SCHEMA_ORDER.body, {
+    fields: listOf(SCHEMA_ORDER.field),
+    urls: listOf(SCHEMA_ORDER.url),
+    totp: (m) => inSchemaOrder(m, SCHEMA_ORDER.totp),
+    passkey: (m) => inSchemaOrder(m, SCHEMA_ORDER.passkey),
+  });
+}
+
 export function parseBody(bytes) {
-  const value = decode(bytes);
-  const { readOnly } = checkBody(value);
-  return { value, readOnly };
+  const raw = decode(bytes);
+  const { readOnly } = checkBody(raw);
+  // a body of a newer schema is not understood and is written back as it was
+  return { value: readOnly ? raw : normalizeBody(raw), readOnly };
 }
 
 // Manifest: { v: 1, vk_epoch: u64, methods: [ { t: u8, id: bytes(16), g: u64, c?: bytes } ] }

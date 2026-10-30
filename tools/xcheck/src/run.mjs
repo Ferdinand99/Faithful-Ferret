@@ -7,7 +7,7 @@ import { Rng } from './ops/context.mjs';
 import { registry, NOT_COVERED } from './ops/index.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const vectorsDir = path.resolve(here, '../../../vectors/internal');
+const vectorsDir = process.env.XCHECK_VECTORS_DIR ?? path.resolve(here, '../../../vectors/internal');
 
 const args = process.argv.slice(2);
 const only = args.filter((a) => !a.startsWith('--'));
@@ -76,7 +76,7 @@ for (const f of files) {
   const group = f.replace(/\.json$/, '');
   if (only.length && !only.includes(group)) continue;
   const file = JSON.parse(fs.readFileSync(path.join(vectorsDir, f), 'utf8'));
-  const row = { group, total: file.cases.length, matched: 0, mismatched: [], notCovered: [], reasons: new Set(), codeDiffers: 0 };
+  const row = { group, total: file.cases.length, matched: 0, mismatched: [], notCovered: [], unexpected: [], reasons: new Set(), codeDiffers: 0 };
   const t0 = Date.now();
   for (const c of file.cases) {
     if (mutate) {
@@ -91,7 +91,8 @@ for (const f of files) {
     const fn = registry[c.op];
     if (!fn) {
       row.notCovered.push(c.id);
-      row.reasons.add(`${c.op}: no handler`);
+      row.reasons.add(`${c.op}: NO HANDLER (not in the NOT_COVERED list)`);
+      row.unexpected.push(c.id);
       continue;
     }
     if (skipSlow && c.tags.includes('slow')) {
@@ -135,12 +136,14 @@ for (const f of files) {
 if (json) {
   console.log(JSON.stringify(summary.map((r) => ({ ...r, reasons: [...r.reasons] })), null, 2));
 } else {
+  const unexpected = summary.reduce((n, r) => n + r.unexpected.length, 0);
+  if (unexpected) console.log(`\nFAIL: ${unexpected} case(s) have no handler and are not in the NOT_COVERED list`);
   const sum = (k) => summary.reduce((n, r) => n + (typeof r[k] === 'number' ? r[k] : r[k].length), 0);
-  console.log(`\nTOTAL ${sum('total')} cases: matched ${sum('matched')}, mismatched ${sum('mismatched')}, not covered ${sum('notCovered')}`);
+  console.log(`\nTOTAL ${sum('total')} cases: matched ${sum('matched')}, mismatched ${sum('mismatched')}, not covered ${sum('notCovered')} (${sum('notCovered') - unexpected} listed in NOT_COVERED, ${unexpected} without a handler)`);
 }
 if (mutate) {
   const survived = summary.reduce((n, r) => n + r.matched, 0);
   console.log(survived === 0 ? 'self-test passed: every damaged expectation was detected' : `self-test FAILED: ${survived} damaged cases still matched`);
-  process.exit(survived === 0 ? 0 : 1);
+  process.exit(survived === 0 && !summary.some((r) => r.unexpected.length) ? 0 : 1);
 }
-process.exit(summary.some((r) => r.mismatched.length) ? 1 : 0);
+process.exit(summary.some((r) => r.mismatched.length || r.unexpected.length) ? 1 : 0);

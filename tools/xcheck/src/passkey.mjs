@@ -1,5 +1,5 @@
 // Passkey authenticator pieces (Fase 1 section 9). Byte formats are those of WebAuthn L3.
-import { webcrypto } from 'node:crypto';
+import nodeCrypto, { webcrypto } from 'node:crypto';
 import { sha256, hmac256 } from './crypto.mjs';
 import { concat, fail, ascii, utf8, hex, unhex, equal } from './util.mjs';
 import { C, encode } from './cbor.mjs';
@@ -124,6 +124,14 @@ export function create(input, rng) {
   };
 }
 
+// ECDSA P-256 / SHA-256 verification by WebCrypto; the DER signature is converted to r || s (P1363) first.
+export async function webcryptoVerify(spkiBytes, data, derSignature) {
+  const raw = p256.derToP1363(derSignature);
+  if (raw === null) return false;
+  const key = await webcrypto.subtle.importKey('spki', spkiBytes, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  return webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw, data);
+}
+
 export async function get(input, expected) {
   const req = input.request;
   const rec = input.record;
@@ -146,15 +154,23 @@ export async function get(input, expected) {
   const cdj = clientDataJson('webauthn.get', challenge, origin);
   const signed = concat(authData, sha256(utf8(cdj)));
 
-  const scalar = scalarFromPkcs8(unhex(rec.priv_pkcs8));
+  const pkcs = unhex(rec.priv_pkcs8);
+  const scalar = scalarFromPkcs8(pkcs);
+  const pub = p256.publicKey(scalar);
+  const point = concat(Uint8Array.of(4), pub.x, pub.y);
+  // 1. my own P-256 code and Node's ECDH must agree on the public key of the stored private scalar
+  const ecdh = nodeCrypto.createECDH('prime256v1');
+  ecdh.setPrivateKey(scalar);
+  if (!equal(new Uint8Array(ecdh.getPublicKey()), point)) throw new Error('p256.mjs and Node ECDH disagree on the public key');
+  // 2. the public key written inside the stored PKCS#8 must be the one that belongs to its scalar
+  if (!equal(pkcs.subarray(pkcs.length - 65), point)) throw new Error('the public key in priv_pkcs8 does not belong to its private key');
   const mine = p256.sign(scalar, signed);
-  // The vector's signature must verify under WebCrypto with the public key of the stored private key.
+  // 3. WebCrypto, with the public key taken from the record, must accept my signature and the vector's
+  const recordSpki = concat(unhex('3059301306072a8648ce3d020106082a8648ce3d030107034200'), pkcs.subarray(pkcs.length - 65));
+  if (!(await webcryptoVerify(recordSpki, signed, mine.der))) throw new Error('WebCrypto rejects the signature made by p256.mjs');
   let signature = hex(mine.der);
-  if (expected && expected.signature) {
-    const key = await webcrypto.subtle.importKey('spki', spki(p256.publicKey(scalar)), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-    const raw = p256.derToP1363(unhex(expected.signature));
-    const ok = raw !== null && (await webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw, signed));
-    if (!ok) signature = 'WEBCRYPTO_REJECTS_THE_VECTOR_SIGNATURE';
+  if (expected && expected.signature && !(await webcryptoVerify(recordSpki, signed, unhex(expected.signature)))) {
+    throw new Error('WebCrypto rejects the signature of the vector');
   }
 
   let prf = null;
