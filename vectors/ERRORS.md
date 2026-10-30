@@ -78,3 +78,32 @@ share the single code `decrypt`, with no cause.
 | `pinned_sk_bit` | The secret key (SK) bit differs from the one pinned on this device. |
 | `pinned_server_key` | The OPAQUE server public key differs from the pinned one, or is missing. |
 | `pinned_auth_key` | The vault's `pk_a` differs from the pinned one within the same `vk_epoch`. |
+
+## Server codes
+
+The server library (`ferret-server-auth`) answers with the codes below, and the server vector files (`server-opaque.json`, `server-secrets.json`) use them in `expect_error`. They are listed as bullets, not in the table above, because they are not codes of `Error::code()` of the core. `AuthError::public_code()` gives the first group, and a test checks that this list and the library agree and that every code has an invalid case. `denied` is the one code of every failed authentication, whatever the cause: a client cannot tell a missing login state from a wrong password.
+
+* `malformed_registration_request` — The first registration message is not exactly 32 bytes, or is not a ristretto255 element.
+* `malformed_registration_record` — The uploaded record is not exactly 192 bytes, or its client public key is not a valid element.
+* `malformed_ke1` — `KE1` is not exactly 96 bytes, or holds something that is not a group element.
+* `malformed_ke3` — `KE3` is not exactly 64 bytes.
+* `malformed_login_id` — The login id is not 32 characters from `0-9a-f`.
+* `malformed_nonce` — The nonce of a signed request is not exactly 32 bytes.
+* `malformed_proof` — The proof of a signed request is not exactly 64 bytes.
+* `malformed_login_name` — The login name is empty, has a control or invisible character, or is longer than 254 bytes after normalization.
+* `malformed_recovery_key` — A recovery has no new recovery key or keeps the stored one, or a change of the password brings one.
+* `denied` — Any failed authentication or authorization, without a cause: no login state, an expired or changed one, one made for another purpose, session or account, a `KE3` that does not verify, a nonce that was never issued, is used or has expired, a proof that does not verify.
+* `forbidden` — The scope of a session that is already signed in does not allow the call.
+* `profile_rejected` — A signed call names a key stretching profile that is unknown or lower than the stored one.
+* `throttled` — The caller made too many attempts.
+* `internal` — The server failed (a setting out of range, a clock that cannot be read). Never carries a cause.
+
+The codes of a secret file that does not decode (`server.secret_file.*`) belong to the vectors only; the library reports them as an internal failure.
+
+* `bad_magic` — The file does not start with `FSEC`.
+* `unsupported_version` — A format version other than 1.
+* `wrong_kind` — The file is of another kind than the one asked for, or of an unknown kind.
+* `unsupported_suite` — A suite other than 1.
+* `bad_length` — The file is shorter than its header, its length field is not the one of the kind, or the file is cut short; also a payload of the wrong length to encode.
+* `trailing_bytes` — Bytes after the checksum.
+* `bad_checksum` — The checksum does not match.

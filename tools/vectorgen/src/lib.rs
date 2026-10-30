@@ -18,6 +18,7 @@ mod key_groups;
 mod opaque_groups;
 mod origin_groups;
 mod passkey_groups;
+mod server_groups;
 mod text_groups;
 mod totp_groups;
 
@@ -75,6 +76,11 @@ const GROUPS: &[Group] = &[
     ("internal/passkey.json", passkey_groups::passkey),
     ("internal/account.json", account_groups::account),
     ("internal/sheet.json", account_groups::sheet),
+    ("internal/server-opaque.json", server_groups::server_opaque),
+    (
+        "internal/server-secrets.json",
+        server_groups::server_secrets,
+    ),
 ];
 
 /// Serializes a vector file the way every generated file is written:

@@ -417,6 +417,19 @@ fn vector_loader_accepts_native_only_with_reason() {
     vector::load_str(&text).unwrap();
 }
 
+/// The codes of the server library: the bullets (``* `code` ``) of the section
+/// "Server codes" of `ERRORS.md`. The table of the core's codes does not hold
+/// them, so `error_codes_are_unique_and_documented` does not see them.
+fn server_codes() -> BTreeSet<String> {
+    let text = std::fs::read_to_string(vectors_dir().join("ERRORS.md")).unwrap();
+    let section = text.split("## Server codes").nth(1).unwrap_or("");
+    section
+        .lines()
+        .filter_map(|line| line.strip_prefix("* `"))
+        .filter_map(|rest| rest.split_once('`').map(|(code, _)| code.to_string()))
+        .collect()
+}
+
 /// Names in the first column of the table in `OPS.md` (``| `op.name` ``).
 fn known_ops() -> BTreeSet<String> {
     codes_in_table(&vectors_dir().join("OPS.md"))
@@ -479,6 +492,7 @@ fn vector_files_match_schema() {
     // Every generated file that exists must load, use registered ops and
     // documented error codes, and be named after its group.
     let codes: BTreeSet<String> = Error::ALL.iter().map(|e| e.code().to_string()).collect();
+    let server_codes = server_codes();
     let ops = known_ops();
     let dir = vectors_dir().join("internal");
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -504,8 +518,15 @@ fn vector_files_match_schema() {
                 case.op
             );
             if let Some(code) = &case.expect_error {
+                // The server files use the codes of the server library, which
+                // `ERRORS.md` lists in its own section.
+                let known = if file.group.starts_with("server-") {
+                    &server_codes
+                } else {
+                    &codes
+                };
                 assert!(
-                    codes.contains(code),
+                    known.contains(code),
                     "{}: unknown error code {code}",
                     case.id
                 );

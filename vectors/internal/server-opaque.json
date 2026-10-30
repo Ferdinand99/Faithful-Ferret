@@ -1,0 +1,1818 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "server-opaque",
+  "suite": 1,
+  "spec": "Fase 1 § 4.2 and § 4.6; RFC 9807",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "server-opaque/register_response/alice",
+      "title": "registration response for alice",
+      "op": "server.register_response",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "f42a95a25d672be461b1a665d2ab9e20816c8f0bba87fef40a25d3db0b55a446",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "response": "a41352b856e2c71fc3b30b4599d0771dff04589529431919105c6c940cbc886114bdcac2258e73901a987d5d53d55ec369218d982826447b16b1b7d7bce8567e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/register_response/bob",
+      "title": "registration response for bob",
+      "op": "server.register_response",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "43434343434343434343434343434343",
+        "request": "4886bce3f1a2524bb8c4cb7d6049fe0f879b71b53640b949146eb255632aef6e",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "response": "58643ab7695657f25bc858d1f7a0d3e2ab470868c0cbe61cd5e1c178eb4cb62e14bdcac2258e73901a987d5d53d55ec369218d982826447b16b1b7d7bce8567e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/register_response/alice_request_under_bobs_id",
+      "title": "the same request under another credential id gives another response",
+      "op": "server.register_response",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "43434343434343434343434343434343",
+        "request": "f42a95a25d672be461b1a665d2ab9e20816c8f0bba87fef40a25d3db0b55a446",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "response": "cc56594ebf12eaa094140e8d5598e012182c84b1a324d0550d192f2afa0f310514bdcac2258e73901a987d5d53d55ec369218d982826447b16b1b7d7bce8567e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/register_response/alice_request_on_another_server",
+      "title": "the same request on another server gives another response",
+      "op": "server.register_response",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "f42a95a25d672be461b1a665d2ab9e20816c8f0bba87fef40a25d3db0b55a446",
+        "setup_hex": "13783251106083bd18ada3a1a356dfaf5d776a2a8028ba95b1ddb4290e320bf63331db3d838bce19474996c39696fc025ea68dc8e6b8d5d3ece496c348a95c7887bb630665a8eb2321f60430d79dc71fafbf0b79f3a2a8980c49fe82331cca07f4ded44af9d769b0f46d3b1bff8b1d60eef008790bd4b863f117a856b943d934"
+      },
+      "expect": {
+        "response": "b01948e1be943a0572185b40c165ec66761532d010b8f275ede642e4a7c506110c706ce8499885194db1b9ec44b3cc4d397e625646c49aec9e6bd0479660494e"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/register_response/request_31_bytes",
+      "title": "31 bytes",
+      "op": "server.register_response",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "f42a95a25d672be461b1a665d2ab9e20816c8f0bba87fef40a25d3db0b55a4",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect_error": "malformed_registration_request"
+    },
+    {
+      "id": "server-opaque/register_response/request_33_bytes",
+      "title": "a byte after the element",
+      "op": "server.register_response",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "f42a95a25d672be461b1a665d2ab9e20816c8f0bba87fef40a25d3db0b55a44600",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect_error": "malformed_registration_request"
+    },
+    {
+      "id": "server-opaque/register_response/request_empty",
+      "title": "empty",
+      "op": "server.register_response",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect_error": "malformed_registration_request"
+    },
+    {
+      "id": "server-opaque/register_response/request_not_an_element",
+      "title": "32 bytes that are no element",
+      "op": "server.register_response",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect_error": "malformed_registration_request"
+    },
+    {
+      "id": "server-opaque/register_response/request_identity",
+      "title": "the identity element",
+      "op": "server.register_response",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "request": "0000000000000000000000000000000000000000000000000000000000000000",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect_error": "malformed_registration_request"
+    },
+    {
+      "id": "server-opaque/login_start/known_login",
+      "title": "an account that may log in, for a login",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "1afb92a7f2500070a3a7270bf135bd34dd87736afd92ee9802aaa32f6bfb34483a7d40248e1f526cc0d8f8df92dd4783c3d84a50c1bad16ead7a48a3f56ce53b",
+        "09c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff427636",
+        "636d5d81f885e1af9a7c8497be1da6a55ef23897ab72f184af0d0059d68ee2d7",
+        "dd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402",
+        "ecd3546a9954eae06162f631f6ead5d4",
+        "0959986b26dff4c8282da4f7008758e004edcf1810f38a22"
+      ],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect": {
+        "ke2": "a2d0b040f32a8329629eca6f164908d152c189ae13122d831cfad19a4b87f72309c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff42763622332b86e4599280af2fd22531996e50c81fa50880d448a18f28f225a63447ca26c66fdac409e4bfc045f135b7eff9e4d8dc12861909c9c2f3bcb8ab73f1eb39f2da2f61965684beba52d49912eecb75c3d515148fcd990acd9814b071ed7ab51d876d29b19b1cb67beb898bb0f0d997e550b88c803abce831424942d71bfbccdd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402aa34f0a6e82be78a8767e1e7e4e47366dfe8996162dd3c79ef44500e799950745f83a04385ffb651dcfc0f36d68137a4844d041979519dea30178a86d2c2d599e460aafed40d1dbcd4d48eb11622864167f21620fc7ba8feecf2c1bc3372b639",
+        "ksf_profile": 1,
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "sk_hint": false,
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/known_with_second_factor_hint",
+      "title": "the hint of the account is carried to the answer",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "1afb92a7f2500070a3a7270bf135bd34dd87736afd92ee9802aaa32f6bfb34483a7d40248e1f526cc0d8f8df92dd4783c3d84a50c1bad16ead7a48a3f56ce53b",
+        "09c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff427636",
+        "636d5d81f885e1af9a7c8497be1da6a55ef23897ab72f184af0d0059d68ee2d7",
+        "dd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402",
+        "ecd3546a9954eae06162f631f6ead5d4",
+        "0959986b26dff4c8282da4f7008758e004edcf1810f38a22"
+      ],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": true,
+        "stored_ksf_profile": 1
+      },
+      "expect": {
+        "ke2": "a2d0b040f32a8329629eca6f164908d152c189ae13122d831cfad19a4b87f72309c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff42763622332b86e4599280af2fd22531996e50c81fa50880d448a18f28f225a63447ca26c66fdac409e4bfc045f135b7eff9e4d8dc12861909c9c2f3bcb8ab73f1eb39f2da2f61965684beba52d49912eecb75c3d515148fcd990acd9814b071ed7ab51d876d29b19b1cb67beb898bb0f0d997e550b88c803abce831424942d71bfbccdd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402aa34f0a6e82be78a8767e1e7e4e47366dfe8996162dd3c79ef44500e799950745f83a04385ffb651dcfc0f36d68137a4844d041979519dea30178a86d2c2d599e460aafed40d1dbcd4d48eb11622864167f21620fc7ba8feecf2c1bc3372b639",
+        "ksf_profile": 1,
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "sk_hint": true,
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/known_reauth",
+      "title": "an account that may log in, for a re-authentication of a session",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "19500656cee23b7da6e4c08d813721505f0aedaf83b35c125c5b18b7a728c42b42f49df557e7753793fb1c1fe1c6acae97b79035cd99dcf25a1cae407e298396",
+        "8b5c5cc86a61086b63be4958936eb401f059dbf08534ff41a0a7ea2d10143786",
+        "c3af6019b8a25f6a5484bafa770fe32691021977cb2879b4171d1ceb43944998",
+        "4624a4caedffd97028a8a5e15ca54e6b147dbb8e895ce6fd3256c3a97c088a07",
+        "574a23e2b8f76cd18173329bdc0a87a5",
+        "638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e"
+      ],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "account": "42424242424242424242424242424242",
+          "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+          "type": "reauth"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect": {
+        "ke2": "a2d0b040f32a8329629eca6f164908d152c189ae13122d831cfad19a4b87f7238b5c5cc86a61086b63be4958936eb401f059dbf08534ff41a0a7ea2d101437866974521fe8685598484f485b0185bb7e7d8a4682599a50b1c42e05e5604c96ebbcbb09fc61b10373ef291d3f328b8af892b1092795fb9e89345e6ef93e61f8077ada35b2235a9980846a3924f3d4a9de6c8a68ea5d2fd2fcdfbf30723c366d8856cb7067285df5e8d7657befd18da47d3ba427e6927770548d3536795bef95314624a4caedffd97028a8a5e15ca54e6b147dbb8e895ce6fd3256c3a97c088a076aed5c5e4363897d09ce6905bcc0fce7673ae3cc48bc8a32c49c50fb3628ec040851ad58b84ee574d9324dbf2f3cd76c56ad03037fe455c623ebbba2faade6c81a2051d105c33724ed67ba6b7a9ebc0c8ba328fdb9e10b49dedf6a3cbdab6394",
+        "ksf_profile": 1,
+        "login_id": "574a23e2b8f76cd18173329bdc0a87a5",
+        "sk_hint": false,
+        "state_blob": "01638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e2cc952984a3f99c29a71be7ab44be47993c34584475daa6407f7232b8e066e2140cd89c35a6dda3c22c41e2fef0c48b62ec29aab38bd24c71b9f960f8393ea7d02bce350a8c39e55265c53634b929d1c85530f49ca3f9cff37bd21bcdf06ca90acfb89c41b59062b98b305b61a962ea376b051b631a599193be903e1dd597a98edfa82c1d0bedf22833b014dbf274fdfbb69dfec5fc907e936e1c4a1189440211e4f450081e28e408cefb59126af537f541f756b03074e9812e6ab821ce19e5e157299fe1c132894ae0aca61a5f1cff0d6feaab8c99b39dbdf3377"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/unknown_name",
+      "title": "a name without an account is answered from the made-up record",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "597a206fc6417791a5624832a6c6e2d123de93b2ff3876f4e5f6f89d0a2d0572cd84827a215d1e886aaa75a3b274b0791a525590692046a7dae110e438415c1e",
+        "d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc1",
+        "43a97a20f574f68974bdeddcb11053c3996182f2387a14c3e9c113fceb8f0c07",
+        "b5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c",
+        "20a98ba17f89f49e602028519fb764d0",
+        "a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d8"
+      ],
+      "input": {
+        "credential_id": "99999999999999999999999999999999",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "unknown",
+        "name": "nobody@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "ke2": "34ba8aaac55c85d5e5ccf4c72201dacaadcc7f0c731d25bee3b868db4c168239d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc135f6d5f71e9a80c8ed5e48497dfdd9dab7616b8d6b24e529b472f47effa0c3b822863139565ff93b01f194eaeaa74e54ca51a2e2f3e9a193785013b2d73203b5e72aa4ee341d81194b60813dd7858131bd1c216ca24f81e27d5b1e778b47a9ee713c28f6266a673f401d6cb8b646c73314067dd7b837911415ddb3c14b879bebb5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c8e5a85f8b2e1eecb9f9b96a088e5ca6a0d4c7bd185f0a4c34a7d98fd39680e2e65460a6a0df8fc256426df3c72fe230f04604f5e037b83875a2433bfbc03fb2c261ca134acf41d27d35a5f6e19581761ff3dc34d18c3a8e6137757981547084e",
+        "ksf_profile": 1,
+        "login_id": "20a98ba17f89f49e602028519fb764d0",
+        "sk_hint": true,
+        "state_blob": "01a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d874a63f3c3367749e211315cdf8c177f9c5fd504b1c8c768db25c273e96b000381b923fe450fb57e7dfb26fe032c3c5369e00c8a95e44eb1ba5baf547371af4ce35dffd4b24a48aaec3581d08018872a739a4710eeed9ff33fda5ac4a6e5403bc77cecd378305eb601a7f98896244b8cc37c938841f23089bbcd6599f3c7b66a4f57688992db89b2e51f6adf9bed1a427b62dae179642da272bc3476fb1bb0043afe6b01a0918f39c24454b6e4f07c2c67b42c80bc3b59773d258d0225f3bbe348d3cac7babda49e525ffca0babff1f4c3e153e6b1b0bb71891d4e7"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/unknown_name_spread",
+      "title": "the made-up profile and hint follow the shares of the policy",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "597a206fc6417791a5624832a6c6e2d123de93b2ff3876f4e5f6f89d0a2d0572cd84827a215d1e886aaa75a3b274b0791a525590692046a7dae110e438415c1e",
+        "d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc1",
+        "43a97a20f574f68974bdeddcb11053c3996182f2387a14c3e9c113fceb8f0c07",
+        "b5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c",
+        "20a98ba17f89f49e602028519fb764d0",
+        "a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d8"
+      ],
+      "input": {
+        "credential_id": "99999999999999999999999999999999",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "unknown",
+        "name": "nobody@example.com",
+        "now": "1700000000",
+        "policy": {
+          "profiles": [
+            [
+              1,
+              500
+            ],
+            [
+              2,
+              500
+            ]
+          ],
+          "sk_true_permille": 500
+        },
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "ke2": "34ba8aaac55c85d5e5ccf4c72201dacaadcc7f0c731d25bee3b868db4c168239d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc135f6d5f71e9a80c8ed5e48497dfdd9dab7616b8d6b24e529b472f47effa0c3b822863139565ff93b01f194eaeaa74e54ca51a2e2f3e9a193785013b2d73203b5e72aa4ee341d81194b60813dd7858131bd1c216ca24f81e27d5b1e778b47a9ee713c28f6266a673f401d6cb8b646c73314067dd7b837911415ddb3c14b879bebb5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c8e5a85f8b2e1eecb9f9b96a088e5ca6a0d4c7bd185f0a4c34a7d98fd39680e2e65460a6a0df8fc256426df3c72fe230f04604f5e037b83875a2433bfbc03fb2c261ca134acf41d27d35a5f6e19581761ff3dc34d18c3a8e6137757981547084e",
+        "ksf_profile": 2,
+        "login_id": "20a98ba17f89f49e602028519fb764d0",
+        "sk_hint": false,
+        "state_blob": "01a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d874a63f3c3367749e211315cdf8c177f9c5fd504b1c8c768db25c273e96b000381b923fe450fb57e7dfb26fe032c3c5369e00c8a95e44eb1ba5baf547371af4ce35dffd4b24a48aaec3581e08018872a739a4710eeed9ff33fda5ac4a6e5403bc77cecd378305eb601a7f98896244b8cc37c938841f23089bbcd6599f3c7b66a4f57688992db89b2e51f6adf9bed1a427b62dae179642da272bc3476fb1bb0043afe6b01a0918f39c24454b6e4f07c2c67b42c80bc3b59773d258d0225f3bbe348d3cac7babda49e525ffca346051843d576bd4abb269cd95d55e18"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/disabled_account",
+      "title": "a disabled account is answered from the made-up record of its name",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "597a206fc6417791a5624832a6c6e2d123de93b2ff3876f4e5f6f89d0a2d0572cd84827a215d1e886aaa75a3b274b0791a525590692046a7dae110e438415c1e",
+        "d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc1",
+        "43a97a20f574f68974bdeddcb11053c3996182f2387a14c3e9c113fceb8f0c07",
+        "b5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c",
+        "20a98ba17f89f49e602028519fb764d0",
+        "a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d8"
+      ],
+      "input": {
+        "credential_id": "99999999999999999999999999999999",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "disabled",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d"
+      },
+      "expect": {
+        "ke2": "124a621da8bf2f08306481f4e142f284038c6dc9e7a887c9b62fb33543642d38d1a4bd1d69eb0b80e64a3b065f6244f95262dc17e814b98f2d4fe851c000ccc168dfa04a1b42083774238fcd5397e8674f4cb41a0cc11b1ba80d7115254cf39d1938d328ce35497e72f03c6d49145d504a66cdfdb4207e365d84310fc6f2955c8146a707312bdd03ac38598ffb5c9ce6620fde90ad51e4c8fa443fae46a5877788882a22348e3eae40e961e7ed65b7807d5821ac558683f235211589e138c088b5d4ceb2c856d95eca957a6129c4f76d543a47c022cc4a94973ce9232a02393c8e5a85f8b2e1eecb9f9b96a088e5ca6a0d4c7bd185f0a4c34a7d98fd39680e2ec9517c0e1e05dbf326fec762d96bad66f94cd76b022e0db845df2199259ea5f14e7d24437d7a8bb39f59ed40f34619245a82d520c71d0dc7fffa4dad3446cba3",
+        "ksf_profile": 1,
+        "login_id": "20a98ba17f89f49e602028519fb764d0",
+        "sk_hint": true,
+        "state_blob": "01a50989a4e31a57e5e1e367f1e9f880fab852e75faa10a4d874a63f3c3367749e211315cdf8c177f9c5fd504b1c8c768db25c273e96b000381b923fe450fb57e7dfb26fe032c3c5369e00c8a95e44eb1ba5baba3819b053fb093264ff0e013353cc9a1d7c50fa397037c4cf0aebb048e8f88b8dc3800610c8c64b90df243408c3a55bd48039762b2fcfd52510adc2907788e4d905ffc74bd0f1517629328062366279ffc64aa09f1ca711da0056f69abe07d00fe3ca099119aa1714ea56a1c4e6873fa0a68e0d358f8c52d651dec0409042b471b62b99308b9e5ee5d16a96ed9a2fe402cf213638bf49750e84423ff3d307b3b1"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/known_on_another_server",
+      "title": "the same record and KE1 on another server give another KE2",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "1afb92a7f2500070a3a7270bf135bd34dd87736afd92ee9802aaa32f6bfb34483a7d40248e1f526cc0d8f8df92dd4783c3d84a50c1bad16ead7a48a3f56ce53b",
+        "09c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff427636",
+        "636d5d81f885e1af9a7c8497be1da6a55ef23897ab72f184af0d0059d68ee2d7",
+        "dd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402",
+        "ecd3546a9954eae06162f631f6ead5d4",
+        "0959986b26dff4c8282da4f7008758e004edcf1810f38a22"
+      ],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "ebe71c0616d99b98c361ed9b0bbb6f5da91de30ce7cfe403fd4b703e3c780c79",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "13783251106083bd18ada3a1a356dfaf5d776a2a8028ba95b1ddb4290e320bf63331db3d838bce19474996c39696fc025ea68dc8e6b8d5d3ece496c348a95c7887bb630665a8eb2321f60430d79dc71fafbf0b79f3a2a8980c49fe82331cca07f4ded44af9d769b0f46d3b1bff8b1d60eef008790bd4b863f117a856b943d934",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect": {
+        "ke2": "76ff54fdf0b692fc61d5e8737a3ec36b89f8c63e161b79a9b974238551484c4a09c8b15e8ce58182a6021404abd0d06ccbab488e646844013ed429aaff4276363afe8dac884f6409f806169426fffcde98404ac6ee36963607f295b58cbc58fa26c66fdac409e4bfc045f135b7eff9e4d8dc12861909c9c2f3bcb8ab73f1eb39f2da2f61965684beba52d49912eecb75c3d515148fcd990acd9814b071ed7ab51d876d29b19b1cb67beb898bb0f0d997e550b88c803abce831424942d71bfbccdd6257354fce4ba15f2eb87a347e02797a04deea8b1818141b1393064cd68402aa34f0a6e82be78a8767e1e7e4e47366dfe8996162dd3c79ef44500e79995074f9511aeb5edb57d52c7e964df2bdd661a612ccf6d1aa3ee439344d6901dd21da7f9c5da6556f4c8075a233dde6e0826c34bee704a0cba3f44f1d2ea74a9db766",
+        "ksf_profile": 1,
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "sk_hint": false,
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a22032e2a6a3ac3176627cd748d84922d392257cc4c0a7fccc7bf9abd46f952e932c2c4c5c55104942bf993072684a01dcd85bbea2986602f3cd58a4494b518f3e152612493a9f242bbedb5263263f475b4e13c2cda5d37424e4ce0b9545b950386c0071e9bd097b22425589fcd3f15dbf16d0baead05edd1888d2da8e37b9c77b40028fa063c7996d0b2fb6f7bdcf09fbbff6d4f881c64c777aaa87e25d360d60fc360d56b4655d0fe9aa481c34a8b02a619d0d5e383ecca360d4fd97243c153db3c3a48b925238ac75c7dd5d96825236b5c16e0a37d1e53b09a2d32"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_start/throttled",
+      "title": "a caller the limiter refuses is told to wait, before any other work",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1,
+        "throttle_wait_secs": 30
+      },
+      "expect_error": "throttled"
+    },
+    {
+      "id": "server-opaque/login_start/ke1_95_bytes",
+      "title": "KE1 of 95 bytes",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a67",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect_error": "malformed_ke1"
+    },
+    {
+      "id": "server-opaque/login_start/ke1_97_bytes",
+      "title": "KE1 of 97 bytes",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "06a66b58e74dcc3264ffa7cf661867b628d70feed6ca0cca20aff7a8ab0bc96ff455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a674100",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect_error": "malformed_ke1"
+    },
+    {
+      "id": "server-opaque/login_start/ke1_empty",
+      "title": "empty KE1",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect_error": "malformed_ke1"
+    },
+    {
+      "id": "server-opaque/login_start/ke1_not_elements",
+      "title": "96 bytes that are no elements",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect_error": "malformed_ke1"
+    },
+    {
+      "id": "server-opaque/login_start/ke1_first_element_identity",
+      "title": "the blinded element is the identity",
+      "op": "server.login_start",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "credential_id": "42424242424242424242424242424242",
+        "ke1": "0000000000000000000000000000000000000000000000000000000000000000f455836ec9374eb3173d91fc309f1572c5085e5fbceba25e3564eb1cde432fc1347bfde5770d82345216fa9597be42aa7fae3a7d94a140c77e450ae23d2a6741",
+        "lookup": "known",
+        "name": "alice@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect_error": "malformed_ke1"
+    },
+    {
+      "id": "server-opaque/login_finish/login",
+      "title": "the right KE3 finishes the login of the account",
+      "op": "server.login_finish",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect": {
+        "credential_id": "42424242424242424242424242424242",
+        "purpose": {
+          "type": "login"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_finish/reauth",
+      "title": "the right KE3 finishes a re-authentication of the session of the account",
+      "op": "server.login_finish",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": {
+          "account": "42424242424242424242424242424242",
+          "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        "ke3": "67b399f0e2ba2ba66f0e7fad751d2b7c9a759bffd18ef96e30d3c4cf36fae5063eb4c47a570b95a5e61a606d3326cbed079ec6e7d1398f3d186b3b1494357e5c",
+        "login_id": "574a23e2b8f76cd18173329bdc0a87a5",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "01638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e2cc952984a3f99c29a71be7ab44be47993c34584475daa6407f7232b8e066e2140cd89c35a6dda3c22c41e2fef0c48b62ec29aab38bd24c71b9f960f8393ea7d02bce350a8c39e55265c53634b929d1c85530f49ca3f9cff37bd21bcdf06ca90acfb89c41b59062b98b305b61a962ea376b051b631a599193be903e1dd597a98edfa82c1d0bedf22833b014dbf274fdfbb69dfec5fc907e936e1c4a1189440211e4f450081e28e408cefb59126af537f541f756b03074e9812e6ab821ce19e5e157299fe1c132894ae0aca61a5f1cff0d6feaab8c99b39dbdf3377"
+      },
+      "expect": {
+        "credential_id": "42424242424242424242424242424242",
+        "purpose": {
+          "account": "42424242424242424242424242424242",
+          "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+          "type": "reauth"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_bit_flipped",
+      "title": "a changed bit in KE3",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "808d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_last_bit_flipped",
+      "title": "a changed last bit in KE3",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f5",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_zero",
+      "title": "KE3 of 64 zero bytes",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_start/known_login_bob",
+      "title": "a second account that may log in, for a login",
+      "op": "server.login_start",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [
+        "3fe124b0bfdeb42e7d19f68159f181124190574b2262d5ccae0718307730692014bc010ff32a834809781695fb05933b239ad38899ef2dffcfaa351050ce8e58",
+        "fd6954ef845fa25b630b343cbaf7e10631e1c82ef1cbccdf886da209cf18a948",
+        "11f875df737c96b225b3d0ffecb57bb81b20aa9348c51659530f0dfcea4c3e6b",
+        "3ad0eb6d3f04422738feb405ad26cb1911b5dfa12a2e5ef4ee919325d453377f",
+        "b5ceaf97e452e81388cc6820d60ef230",
+        "64e4f54fbba06f713d9b89c5520b60b56e2166c1dd737e6a"
+      ],
+      "input": {
+        "credential_id": "43434343434343434343434343434343",
+        "ke1": "ee91e09b9f61476afc8c29596b1fbcb20a9c67f454fda6763d24e0030437ca10dc08b384ef26ccfa108b4d5a9d9cd2560896f91de3e716a8d68e92137d7f3113e257f544dec41e72ab8f70b4af182a7e08550a7627d75f9e955464d729c14d06",
+        "lookup": "known",
+        "name": "bob@example.com",
+        "now": "1700000000",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "purpose": {
+          "type": "login"
+        },
+        "record": "1a06c9719b71e8ca8725b0a455032a775dfd0e839542f76aada0c5fdc7ad3f18067db499f57eca3292d32c56b7d68f625aabcbe7baadc6b60b6b71e46d2364941c009cb4213c6fbdfbe65c192a3d8021395483f3b68fa60be2c0b069d2883238f61ab488246d9605d56610890408b54a92f47bcb3bc8b5e1079ccfa5d18a68dbe37012c01de5c54b7d6907c72128e569b0fd366c07ab3e5e24c41fecbb417ab6bf8453b6cb376bee4bafe318dcd2141d0dce2f71c229add7b1fcddf5cc7fe506",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "sk_hint": false,
+        "stored_ksf_profile": 1
+      },
+      "expect": {
+        "ke2": "e66b4d2652d0ded326586b2af9c7f08ffd370465b64aa596d047fd1c875ddf21fd6954ef845fa25b630b343cbaf7e10631e1c82ef1cbccdf886da209cf18a948e68701d436319a4098a1dbadb65528325f25831f14ec0e8ec17cfd3cfef6771f9ed9323ebdbaa9f2a019ff277ef6136e8b27a2b56ccf7a85e890ed7fd0955ec9b5e8976e9d2bb692d254122c9aaebf7bdd54f3d7e10c7df787b4235a96b69a171090f945c37cb472a35c96cd63cab427c7eac67754ceef73bdf843487d7e0dff3ad0eb6d3f04422738feb405ad26cb1911b5dfa12a2e5ef4ee919325d453377f9ada9574fbeda24afa228922282bd9c27b08b25ab5ef29bfc9bcc9c34b94dd5284e0ed75d28ec10d50baa05915bea75507f391b6f8db657d0019b274e7ba2ca42b195a6b8172428b6561a22942756039a236c04092a238e93e252d5f4a00de69",
+        "ksf_profile": 1,
+        "login_id": "b5ceaf97e452e81388cc6820d60ef230",
+        "sk_hint": false,
+        "state_blob": "0164e4f54fbba06f713d9b89c5520b60b56e2166c1dd737e6a6b4067aceb72db565f2df09871752abbd0cece42fbd3de0874e5d0ba8473f2f4bbb41ea903a3380f29aa41033ca0d42c7d1e0bc6942917a23d83105998030f0300abf8ed22a63bfb68b4299dbcd342c16954096dc8dba8573886e173ed8b6f70994a562e443250402a901ecffa700f247183b52b6afaac3209247bda9b91fe47359af8cc5a4f95ad916790b0141ca74d0a142404866d6e11cc02053bda8be4d0ac68dfd4ea4a290aca38ab9cc3b892c3419a17e8b9912cf6ef698782683abd00ab1dbbd136ac050e398e8fb586c9da1e2b959aef23f4413bbc1f29"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_of_another_login",
+      "title": "KE3 of another account's login",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "a435b9c5cd0e3698cb4c24566a203c930e48670f7b93343fee65a7cb9eacb1d2a3dddb117fb5157f0a9008c987de678265b684bf1c154163ca7a7553418ddb0b",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/state_missing",
+      "title": "no login state for the id",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": null
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/state_tampered",
+      "title": "a changed byte in the sealed state",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2048ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/state_of_another_login_id",
+      "title": "the sealed state under the id of another login",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "b5ceaf97e452e81388cc6820d60ef230",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/state_expired",
+      "title": "the state is used after its 60 seconds",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000060",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/login_state_with_a_session",
+      "title": "a state made for a login is not finished as a re-authentication",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": {
+          "account": "42424242424242424242424242424242",
+          "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/reauth_state_without_a_session",
+      "title": "a state made for a re-authentication is not finished as a login",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "67b399f0e2ba2ba66f0e7fad751d2b7c9a759bffd18ef96e30d3c4cf36fae5063eb4c47a570b95a5e61a606d3326cbed079ec6e7d1398f3d186b3b1494357e5c",
+        "login_id": "574a23e2b8f76cd18173329bdc0a87a5",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "01638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e2cc952984a3f99c29a71be7ab44be47993c34584475daa6407f7232b8e066e2140cd89c35a6dda3c22c41e2fef0c48b62ec29aab38bd24c71b9f960f8393ea7d02bce350a8c39e55265c53634b929d1c85530f49ca3f9cff37bd21bcdf06ca90acfb89c41b59062b98b305b61a962ea376b051b631a599193be903e1dd597a98edfa82c1d0bedf22833b014dbf274fdfbb69dfec5fc907e936e1c4a1189440211e4f450081e28e408cefb59126af537f541f756b03074e9812e6ab821ce19e5e157299fe1c132894ae0aca61a5f1cff0d6feaab8c99b39dbdf3377"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/reauth_for_another_session",
+      "title": "a re-authentication is for one session",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": {
+          "account": "42424242424242424242424242424242",
+          "session": "707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f"
+        },
+        "ke3": "67b399f0e2ba2ba66f0e7fad751d2b7c9a759bffd18ef96e30d3c4cf36fae5063eb4c47a570b95a5e61a606d3326cbed079ec6e7d1398f3d186b3b1494357e5c",
+        "login_id": "574a23e2b8f76cd18173329bdc0a87a5",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "01638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e2cc952984a3f99c29a71be7ab44be47993c34584475daa6407f7232b8e066e2140cd89c35a6dda3c22c41e2fef0c48b62ec29aab38bd24c71b9f960f8393ea7d02bce350a8c39e55265c53634b929d1c85530f49ca3f9cff37bd21bcdf06ca90acfb89c41b59062b98b305b61a962ea376b051b631a599193be903e1dd597a98edfa82c1d0bedf22833b014dbf274fdfbb69dfec5fc907e936e1c4a1189440211e4f450081e28e408cefb59126af537f541f756b03074e9812e6ab821ce19e5e157299fe1c132894ae0aca61a5f1cff0d6feaab8c99b39dbdf3377"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/reauth_for_another_account",
+      "title": "a re-authentication is for the account of the session",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": {
+          "account": "43434343434343434343434343434343",
+          "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        "ke3": "67b399f0e2ba2ba66f0e7fad751d2b7c9a759bffd18ef96e30d3c4cf36fae5063eb4c47a570b95a5e61a606d3326cbed079ec6e7d1398f3d186b3b1494357e5c",
+        "login_id": "574a23e2b8f76cd18173329bdc0a87a5",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "01638328475b82c2a1ff428706c7f8fb90e9c8b60d4a90312e2cc952984a3f99c29a71be7ab44be47993c34584475daa6407f7232b8e066e2140cd89c35a6dda3c22c41e2fef0c48b62ec29aab38bd24c71b9f960f8393ea7d02bce350a8c39e55265c53634b929d1c85530f49ca3f9cff37bd21bcdf06ca90acfb89c41b59062b98b305b61a962ea376b051b631a599193be903e1dd597a98edfa82c1d0bedf22833b014dbf274fdfbb69dfec5fc907e936e1c4a1189440211e4f450081e28e408cefb59126af537f541f756b03074e9812e6ab821ce19e5e157299fe1c132894ae0aca61a5f1cff0d6feaab8c99b39dbdf3377"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/login_finish/throttled",
+      "title": "a caller the limiter refuses is told to wait after the state is taken",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3",
+        "throttle_wait_secs": 30
+      },
+      "expect_error": "throttled"
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_63_bytes",
+      "title": "KE3 of 63 bytes",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "malformed_ke3"
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_65_bytes",
+      "title": "KE3 of 65 bytes",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f400",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "malformed_ke3"
+    },
+    {
+      "id": "server-opaque/login_finish/ke3_empty",
+      "title": "empty KE3",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "malformed_ke3"
+    },
+    {
+      "id": "server-opaque/login_finish/login_id_upper_case",
+      "title": "a login id in upper case",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ECD3546A9954EAE06162F631F6EAD5D4",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "malformed_login_id"
+    },
+    {
+      "id": "server-opaque/login_finish/login_id_31_characters",
+      "title": "a login id of 31 characters",
+      "op": "server.login_finish",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "current_session": null,
+        "ke3": "818d641bc408f892ce5109d60ffe82ec62de1ec91ae673a38aab2796a2ae5d81b1fb4048bfdfc00d9265d4706307d91e70ab9892f3a6ec73ffc3b0bf8c4f05f4",
+        "login_id": "ecd3546a9954eae06162f631f6ead5d",
+        "now": "1700000005",
+        "prelogin_secret": "a11573cda59b22f2c470dd983895c8c5882cc8bba45e01fe9bf82395ca3789cd",
+        "setup_hex": "70615cc554f792c96fa2649f2db65e30cd6d3880635b12d042a292a2b76413ab24fb53d2d39539400bcddc3d052b90ba5f8ebbe447b96ddff2e46ccf0e16d7372fd51cea4607f7c2bfb6138a48672ddc26bef9f81d8a8d5c7db87ca234cfa1053eab90177d0c3215747b02df35da5352181278ca0bd641a1d6a23d72b0ffbd5d",
+        "state_blob": "010959986b26dff4c8282da4f7008758e004edcf1810f38a229dadd1caa5b15d40fbda628e71d1958a190a16cc039fc21513c54759e8dd03759727d95e40f669673978f0345b7ddca942a1494a71017af64d0f6958cb79271ac213820f6fe93c729ff51d2148ec14b880e01d5560c32149cce76589d6914bf05387ff8c8b06c68513b461af9ad202206e3b24710926dcb73ca72fb7b10bd5a2be664b9f0db33aa6a1ac3b4e92d964b1e61fcae6c8824ac10d090c11e2e310b41e2dc14f9a59bb18accf0b8e772db64d63ed0d0cc74a1501a48e198863c704904d224a4ceb03ad1f782834dc0a329a425152546fee3f643d5ca9f3"
+      },
+      "expect_error": "malformed_login_id"
+    },
+    {
+      "id": "server-opaque/replace_authorize/password_put",
+      "title": "a signed change of the password with the stored profile",
+      "op": "server.replace_authorize",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect": {
+        "permit": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "body_sha256": "15da3b4f2d6fb4b732c4c264ce8c05c52ee777189847503f54d50ceaa908f0d3",
+          "kind": "password_put",
+          "ksf_profile": 1,
+          "new_pk_r": null,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+          "stored_ksf_profile": 1
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/replace_authorize/recover",
+      "title": "a signed recovery with a new recovery key",
+      "op": "server.replace_authorize",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "recover",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "e5dc19805e8d31a580500c4ad18390dff94dc64fcc5a3416c83d4789843bee5b4adbb3de33877872b39541c4d355cbfa41ce1ffd7f41caafe56f85fe1cc79d02",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect": {
+        "permit": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "body_sha256": "581617305871ded7efd1f81f1ae65ea870c9150971cf7a10bcbfe0649f45f36a",
+          "kind": "recover",
+          "ksf_profile": 1,
+          "new_pk_r": "c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7",
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750",
+          "stored_ksf_profile": 1
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "server-opaque/replace_authorize/scope_pending_2fa",
+      "title": "a session that has not finished the second factor may not change the password",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "scope": "pending_2fa",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "forbidden"
+    },
+    {
+      "id": "server-opaque/replace_authorize/throttled",
+      "title": "a caller the limiter refuses is told to wait",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+        "throttle_wait_secs": 30
+      },
+      "expect_error": "throttled"
+    },
+    {
+      "id": "server-opaque/replace_authorize/nonce_not_issued",
+      "title": "a nonce that was never issued to the session",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": false,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/proof_bit_flipped",
+      "title": "a changed bit in the proof",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35ae2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/body_changed_after_signing",
+      "title": "a body other than the one that was signed",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000002",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/epoch_of_the_account_is_higher",
+      "title": "the proof was made for an older vault key epoch",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "2"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/recovery_signed_by_the_auth_key",
+      "title": "a recovery signed with sk_a",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "recover",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "9ed014e51b5c7a48d154afc422c3b8fc02fc20415dd08e9cb43870b715abdf606e19e2c21d7251db660abdca551abfd99b93b5b9683dcb43996362e2f18af901",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/password_put_signed_by_the_recovery_key",
+      "title": "a change of the password signed with sk_r",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "66722c5b89d6c875726ef856123f39bb184f87f6d36551c813717956caad92ff2303cf3665b273e6a783562ba0cd12aeb2c526e99219d3217a50e7dbaeb92a02",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "denied"
+    },
+    {
+      "id": "server-opaque/replace_authorize/nonce_31_bytes",
+      "title": "a nonce of 31 bytes",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbe",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_nonce"
+    },
+    {
+      "id": "server-opaque/replace_authorize/proof_63_bytes",
+      "title": "a proof of 63 bytes",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f2926377",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_proof"
+    },
+    {
+      "id": "server-opaque/replace_authorize/profile_unknown",
+      "title": "a profile that clients do not know",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000007",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "25fbb00c840f9f49dbace4679b062501239bea1cb37d2716f480f4a65dcfa8bd9cf12c251225172c0b2d08aba511d932f86f787fd9c2829a9d873e1630734d04",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "profile_rejected"
+    },
+    {
+      "id": "server-opaque/replace_authorize/profile_below_the_stored_one",
+      "title": "a profile below the one that is stored",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 2,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "3e270b2a35af2c8d7ecf2c80279e3ceffb4ba530b3b5146da5590b499bfee8a37108a4375821524de647bc4139b71773d02ab7584bf5d307ddc257f292637709",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "profile_rejected"
+    },
+    {
+      "id": "server-opaque/replace_authorize/record_with_a_bad_public_key",
+      "title": "a record whose client public key is no element",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "940c53ce9f173beceb4bb6e1321c7fe519d5e51230b3b623271865389741c2391d76eeef110315b593d24d062ca4841418ab0d2527be2f70783296bad6839404",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_registration_record"
+    },
+    {
+      "id": "server-opaque/replace_authorize/record_191_bytes",
+      "title": "a record of 191 bytes",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad700000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "b0e53425234091b1b32938bd14e75ea790f601dc7bf1c0644e9be059e7cd50a2073f7f20f5cd6dd247d7287770bb58523a638d92db31a92516c6d3b3cec9470b",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_registration_record"
+    },
+    {
+      "id": "server-opaque/replace_authorize/recovery_with_the_old_recovery_key",
+      "title": "a recovery that keeps the stored recovery key",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750000000019315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "recover",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "be6029fb97f9db2a22e4011be43bf3ed6b08b06e13799a7a4eaa0dd3400fcf1b800118d639c063f0d28126c12e0f1d75192cbdb98028134c2e0cda184ae35805",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_recovery_key"
+    },
+    {
+      "id": "server-opaque/replace_authorize/recovery_without_a_new_key",
+      "title": "a recovery without a new recovery key",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "recover",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "66722c5b89d6c875726ef856123f39bb184f87f6d36551c813717956caad92ff2303cf3665b273e6a783562ba0cd12aeb2c526e99219d3217a50e7dbaeb92a02",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_recovery_key"
+    },
+    {
+      "id": "server-opaque/replace_authorize/password_put_with_a_recovery_key",
+      "title": "a change of the password that brings a recovery key",
+      "op": "server.replace_authorize",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the server half has no WebAssembly binding",
+      "rng": [],
+      "input": {
+        "account": {
+          "account_id": "101112131415161718191a1b1c1d1e1f",
+          "pk_a": "4fd099ccd47d7893dfe9ec24414ecb0d9b5420232aad30d91c465be33cbe65c4",
+          "pk_r": "9315d0ebcb7b11b5d2cfa84f6cb2506516f8d872469ec34de3b4b27289c02418",
+          "row_version": "7",
+          "vk_epoch": "1"
+        },
+        "body": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad75000000001c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7",
+        "current": {
+          "ksf_profile": 1,
+          "record": "727df61893dc7b4c696a426533be37aba9d160ec16401297da4177adcb11791b9a347521d098f660b704c567d39ef15595606c0d05cce11ae39c7bd0969544c21be53ea754597ee05a37dac9142143f778a29ac4ce46651c807fa38886e91f211911c32d6a49b682272205ffeb77169e1f6b0bb255cf0ffd8c8de1e8d1b70ebba5bbcfa8f59c4df6b4c60a9cba180f5735faa97327830b878b1ca658238fa8400e86fcbb23b2646d7fc4420060a60d4775330f8ae31eec82de6db95ef22ad750"
+        },
+        "kind": "password_put",
+        "nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "nonce_issued": true,
+        "now": "1700000000",
+        "proof": "9ed014e51b5c7a48d154afc422c3b8fc02fc20415dd08e9cb43870b715abdf606e19e2c21d7251db660abdca551abfd99b93b5b9683dcb43996362e2f18af901",
+        "session": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+      },
+      "expect_error": "malformed_recovery_key"
+    }
+  ]
+}
