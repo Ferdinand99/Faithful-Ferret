@@ -14,18 +14,18 @@
 //! 5. Sensitive fields are shown one at a time.
 
 use crate::convert::{
-    ANY, CheckpointDto, PinnedDto, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16, bytes,
-    core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
+    ANY, ByteBuf, CheckpointDto, PinnedDto, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16,
+    bytes, core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
 };
 use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PrfOutput, RecoveryKey, SecretKey,
-    ServerRow, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest, emergency_sheet,
-    encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint, make_tombstone,
-    parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint, verify_recovery_setup,
-    verify_secret_key_entry,
+    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PrfOutput, RecoveryKey, RollbackMemory,
+    SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest,
+    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
+    make_tombstone, parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint,
+    verify_recovery_setup, verify_secret_key_entry,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -34,7 +34,7 @@ use zeroize::Zeroizing;
 
 /// The most items that can be open at once. An open item holds its decrypted
 /// body in WASM memory.
-const MAX_OPEN: usize = 4_096;
+pub(crate) const MAX_OPEN: usize = 4_096;
 
 /// An item that is open: its decrypted body and the envelope it came from
 /// (kept so that an edit can keep the item key).
@@ -89,24 +89,69 @@ pub(crate) struct PendingRekey {
     pub(crate) setup: Setup,
 }
 
+/// A passkey that has been made but not yet released: the answer for the
+/// page is held here until the caller has stored the sealed item
+/// (`passkey_create_confirm`), and the item it goes into is not open before
+/// that either.
+pub(crate) struct PendingPasskey {
+    pub(crate) handle: u32,
+    pub(crate) response: ferret_core::passkey::CreateResponse,
+    /// The item as sealed: its id, envelope (the item key is kept) and body.
+    pub(crate) item: OpenItem,
+    /// The open item the passkey was added to and the envelope it had then.
+    pub(crate) attach_to: Option<(u32, Vec<u8>)>,
+}
+
+/// How long a re-authentication token is good for, in milliseconds.
+pub(crate) const GRANT_TTL_MS: u64 = 300_000;
+
+/// A one-time permission for a plaintext export. Only a fresh sign-in with
+/// the master password makes one (`UnlockJob.reauth_grant`); the vault keeps
+/// it until the export consumes it, a new one replaces it, it is
+/// [`GRANT_TTL_MS`] old, or the vault is locked or rekeyed.
+pub(crate) struct ReauthGrant {
+    pub(crate) token: Zeroizing<[u8; 32]>,
+    /// The caller's clock when the token was made (unix milliseconds).
+    pub(crate) granted_ms: u64,
+}
+
 /// Everything an unlocked vault holds.
 pub(crate) struct Inner {
     pub(crate) vault: UnlockedVault,
     pub(crate) items: BTreeMap<u32, OpenItem>,
+    /// The next handle to hand out. It starts at a random value for each
+    /// vault, so a handle kept from an earlier session is almost surely not
+    /// open in this one (`invalid_handle`) instead of naming another item.
     next_handle: u32,
     pub(crate) pending: Option<PendingRekey>,
     pub(crate) setup: Option<Setup>,
     pub(crate) export: Option<ExportDraft>,
     pub(crate) import: Option<Vec<ExportItem>>,
+    pub(crate) passkey: Option<PendingPasskey>,
+    pub(crate) grant: Option<ReauthGrant>,
 }
 
 impl Inner {
+    /// A handle that is not in use. Item handles and the handle of a pending
+    /// passkey share one space, so none is handed out twice.
+    pub(crate) fn new_handle(&mut self) -> Res<u32> {
+        for _ in 0..=MAX_OPEN {
+            let handle = self.next_handle;
+            self.next_handle = handle.wrapping_add(1);
+            let in_use = self.items.contains_key(&handle)
+                || self.passkey.as_ref().is_some_and(|p| p.handle == handle);
+            if !in_use {
+                return Ok(handle);
+            }
+        }
+        Err(Error::TooLarge.into())
+    }
+
     pub(crate) fn open(&mut self, item: OpenItem) -> Res<u32> {
         if self.items.len() >= MAX_OPEN {
             return Err(Error::TooLarge.into());
         }
-        let handle = self.next_handle;
-        self.next_handle = handle.checked_add(1).ok_or(Fail::Input)?;
+        let handle = self.new_handle()?;
         self.items.insert(handle, item);
         Ok(handle)
     }
@@ -126,15 +171,19 @@ impl Vault {
     /// A vault around an unlocked one (a flow made it). `setup` holds the
     /// secrets that are shown once.
     pub(crate) fn from_unlocked(vault: UnlockedVault, setup: Option<Setup>) -> Vault {
+        let mut start = [0u8; 4];
+        ferret_core::SecureRng::fill(&mut OsRng, &mut start);
         Vault {
             inner: Some(Box::new(Inner {
                 vault,
                 items: BTreeMap::new(),
-                next_handle: 1,
+                next_handle: u32::from_le_bytes(start),
                 pending: None,
                 setup,
                 export: None,
                 import: None,
+                passkey: None,
+                grant: None,
             })),
         }
     }
@@ -236,6 +285,54 @@ struct SheetDto {
     recovery_key_code: String,
 }
 
+/// The core's checkpoint from the one the client sends.
+fn checkpoint_of(cp: CheckpointDto) -> Checkpoint {
+    Checkpoint {
+        seq: cp.seq,
+        digest: cp.digest,
+        mac: cp.mac,
+        entries: cp.entries,
+    }
+}
+
+/// The rows the server shows, each with its tag or tombstone checked.
+fn server_rows_of(vault: &UnlockedVault, list: Vec<ServerRowDto>) -> Res<Vec<ServerRow>> {
+    let mut server_rows = Vec::with_capacity(list.len());
+    for r in &list {
+        let id = ItemId::from_bytes(r.item_id);
+        server_rows.push(match r.state.as_str() {
+            "live" => ServerRow::live(
+                vault,
+                id,
+                r.rev,
+                r.envelope.as_deref().ok_or(Fail::Input)?,
+                &r.tag.ok_or(Fail::Input)?,
+            )?,
+            "deleted" => {
+                ServerRow::deleted(vault, id, r.rev, r.tomb.as_deref().ok_or(Fail::Input)?)?
+            }
+            _ => return Err(Fail::Input),
+        });
+    }
+    Ok(server_rows)
+}
+
+/// The value of `stored_credential_ids` that says the vault has no passkey
+/// items. An empty array is refused instead, so that "none" is a decision.
+const NO_STORED_PASSKEYS: &str = "no_stored_passkeys";
+
+/// The credential ids the caller lists as stored, or none when it says so.
+fn stored_list(v: JsValue) -> Res<Vec<ByteBuf>> {
+    if v.as_string().as_deref() == Some(NO_STORED_PASSKEYS) {
+        return Ok(Vec::new());
+    }
+    let list: Vec<ByteBuf> = from_js_list(v)?;
+    if list.is_empty() {
+        return Err(Fail::Input);
+    }
+    Ok(list)
+}
+
 fn auth_op(name: &str) -> Res<AuthOp> {
     match AuthOp::from_name(name) {
         Some(op) => Ok(op),
@@ -325,11 +422,15 @@ impl Vault {
     }
 
     /// The item without its secrets: no private key, no PRF seed, no TOTP
-    /// address, no notes, no value of a hidden field.
+    /// address, no notes, no value of a hidden field. A passkey shows its
+    /// public ids (`cred_id`, `rp_id`, `user_handle`), which are what
+    /// `excludeCredentials`, `allowCredentials` and the check of
+    /// `wrap_prf` are built from.
     pub fn item_view(&self, handle: u32) -> Result<JsValue, JsValue> {
         run(|| {
-            let view = self.inner()?.item(handle)?.body.view();
-            to_js(&ViewDto::of(&view))
+            let body = &self.inner()?.item(handle)?.body;
+            let view = body.view();
+            to_js(&ViewDto::of(&view, body))
         })
     }
 
@@ -485,48 +586,60 @@ impl Vault {
     /// `{ item_id, rev, state: "deleted", tomb }`; its tag or tombstone is
     /// checked here, before the rows are compared. A failure is a
     /// `checkpoint_*` code.
+    ///
+    /// `sync_memory` is required: the client's stored rollback memory
+    /// (`SyncMemory` bytes; `sync_memory_new()` for a device that has seen
+    /// nothing of this vault yet). A checkpoint below the highest verified
+    /// one, a top `seq` below the highest seen, or a row with a lower `rev`
+    /// than the highest seen for its item is refused
+    /// (`checkpoint_seq_below_remembered`,
+    /// `checkpoint_top_seq_below_remembered`,
+    /// `checkpoint_rev_below_remembered`). Returns the updated memory bytes,
+    /// which the client stores in place of the old ones; on any error nothing
+    /// is returned and the old bytes stay valid.
     pub fn verify_checkpoint(
         &self,
         checkpoint: JsValue,
         rows: JsValue,
         top_seq: f64,
-    ) -> Result<(), JsValue> {
+        sync_memory: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
         run(|| {
             let vault = self.unlocked()?;
-            let cp: CheckpointDto = from_js(checkpoint)?;
-            let list: Vec<ServerRowDto> = from_js_list(rows)?;
-            let mut server_rows = Vec::with_capacity(list.len());
-            for r in &list {
-                let id = ItemId::from_bytes(r.item_id);
-                server_rows.push(match r.state.as_str() {
-                    "live" => ServerRow::live(
-                        vault,
-                        id,
-                        r.rev,
-                        r.envelope.as_deref().ok_or(Fail::Input)?,
-                        &r.tag.ok_or(Fail::Input)?,
-                    )?,
-                    "deleted" => {
-                        ServerRow::deleted(vault, id, r.rev, r.tomb.as_deref().ok_or(Fail::Input)?)?
-                    }
-                    _ => return Err(Fail::Input),
-                });
-            }
-            let checkpoint = Checkpoint {
-                seq: cp.seq,
-                digest: cp.digest,
-                mac: cp.mac,
-                entries: cp.entries,
-            };
-            // The rollback memory (`SyncMemory`) is not exposed through this
-            // binding yet: this call checks the checkpoint on its own.
+            let checkpoint = checkpoint_of(from_js(checkpoint)?);
+            let server_rows = server_rows_of(vault, from_js_list(rows)?)?;
+            let mut memory = SyncMemory::from_bytes(&sync_memory)?;
             core(verify_checkpoint(
                 vault,
                 &checkpoint,
                 &server_rows,
                 js_u64(top_seq)?,
-                ferret_core::RollbackMemory::NoMemory,
-            ))
+                RollbackMemory::Remembered(&mut memory),
+            ))?;
+            Ok(memory.to_bytes())
+        })
+    }
+
+    /// Accepts an older state **after the user has confirmed** it (for
+    /// example a server restored from a backup): the memory is replaced by
+    /// the state of `checkpoint` and `rows`, which must verify on their own.
+    /// This is the only call that lowers the floors of the rollback memory;
+    /// it is never made by another call. `rows` and `top_seq` are as in
+    /// `verify_checkpoint`. The old memory is not needed: the result is a new
+    /// record. Returns the new memory bytes.
+    pub fn accept_older_state(
+        &self,
+        checkpoint: JsValue,
+        rows: JsValue,
+        top_seq: f64,
+    ) -> Result<Vec<u8>, JsValue> {
+        run(|| {
+            let vault = self.unlocked()?;
+            let checkpoint = checkpoint_of(from_js(checkpoint)?);
+            let server_rows = server_rows_of(vault, from_js_list(rows)?)?;
+            let mut memory = SyncMemory::new();
+            core(memory.accept_older_state(vault, &checkpoint, &server_rows, js_u64(top_seq)?))?;
+            Ok(memory.to_bytes())
         })
     }
 
@@ -582,6 +695,28 @@ impl Vault {
 
     /// A passkey (PRF) wrap of the vault key: `prf_output` is the 32 bytes
     /// the authenticator returned for `prf_salt`. Returns the wrap record.
+    ///
+    /// A passkey that Ferret itself stores cannot unlock the vault that holds
+    /// it: its PRF seeds are inside the vault, so the method would lock the
+    /// user out of the very vault it was meant to open (spec § 9.4). It is
+    /// refused with `invalid_state` when
+    ///
+    /// * `aaguid` (16 bytes, from the attestation of the registration) is
+    ///   Ferret's own (`ferret_aaguid()`), or
+    /// * `credential_id` is the id of a passkey in an open item, or of one
+    ///   in `stored_credential_ids`.
+    ///
+    /// `stored_credential_ids` is required: pass the `cred_id` of every
+    /// passkey item of the vault (from `item_view`), as a non-empty array of
+    /// `Uint8Array`, or the marker `"no_stored_passkeys"`
+    /// (`NO_STORED_PASSKEYS` in the client) when there are none. An empty
+    /// array is `invalid_input`. The binding cannot see items that are not
+    /// open.
+    ///
+    /// `aaguid` is the 16 bytes at offset 37 of the authenticator data that
+    /// the client parsed from the registration. It is the client's claim; the
+    /// binding cannot see the attestation.
+    #[allow(clippy::too_many_arguments)]
     pub fn wrap_prf(
         &self,
         credential_id: Vec<u8>,
@@ -589,10 +724,25 @@ impl Vault {
         prf_output: Vec<u8>,
         method_id: Vec<u8>,
         kek_generation: f64,
+        aaguid: Vec<u8>,
+        stored_credential_ids: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let prf_output = Zeroizing::new(prf_output);
             let vault = self.unlocked()?;
+            let aaguid: [u8; 16] = arr(&aaguid)?;
+            let stored = stored_list(stored_credential_ids)?;
+            if aaguid == ferret_core::passkey::AAGUID
+                || stored.iter().any(|s| s.0 == credential_id)
+                || self.inner()?.items.values().any(|i| {
+                    i.body
+                        .passkey
+                        .as_ref()
+                        .is_some_and(|p| p.cred_id == credential_id)
+                })
+            {
+                return Err(Error::InvalidState.into());
+            }
             let kek = Kek::from_prf(&credential_id, &PrfOutput::from_slice(&prf_output)?)?;
             let rec = vault.wrap_for_method(
                 &mut OsRng,
@@ -720,6 +870,8 @@ impl Vault {
             inner.items.clear();
             inner.export = None;
             inner.import = None;
+            inner.passkey = None;
+            inner.grant = None;
             Ok(())
         })
     }

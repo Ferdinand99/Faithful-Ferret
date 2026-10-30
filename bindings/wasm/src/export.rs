@@ -27,13 +27,14 @@ use crate::convert::{
 };
 use crate::error::{Fail, Res, run};
 use crate::item::ViewDto;
-use crate::vault::Vault;
+use crate::vault::{GRANT_TTL_MS, Vault};
 use ferret_core::{
     EXPORT_KDF, ExportItem, ExportPassword, ExportWrapKey, ItemId, MasterPassword, OsRng,
     PlainExportOptions, decrypt_item, encrypt_item, export_begin, export_plain_csv,
     export_plain_json, export_wrap_key, import_decrypt_with_key, import_prepare,
 };
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 
@@ -147,8 +148,10 @@ pub fn import_header(file: &[u8]) -> Result<JsValue, JsValue> {
 impl Vault {
     /// First half of an encrypted export. `rows` are the items to write, each
     /// `{ item_id, rev, envelope, tag }`; they are opened here. The file is
-    /// written with 256 MiB, 3 passes (`kdf` may be given to write it with
-    /// more). Returns `{ salt, kdf }` for `argon2_export_key`.
+    /// written with 256 MiB, 3 passes. `kdf` may be given to write it with
+    /// more; parameters below that default are `kdf_out_of_range`, since an
+    /// export file is attacked offline. Returns `{ salt, kdf }` for
+    /// `argon2_export_key`.
     pub fn export_begin(
         &mut self,
         rows: JsValue,
@@ -156,31 +159,28 @@ impl Vault {
         kdf: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
-            let created = js_time(created_at)?;
             let params = if kdf.is_undefined() || kdf.is_null() {
                 EXPORT_KDF
             } else {
                 from_js::<KdfDto>(kdf)?.core()
             };
-            let items = items_of(self, rows)?;
-            let draft = export_begin(&mut OsRng, params, created, &items)?;
-            let out = BeginDto {
-                salt: *draft.salt(),
-                kdf: KdfDto::of(draft.kdf()),
-            };
-            let value = to_js(&out)?;
-            self.inner_mut()?.export = Some(draft);
-            Ok(value)
+            if params.m_kib < EXPORT_KDF.m_kib || params.t < EXPORT_KDF.t || params.p < EXPORT_KDF.p
+            {
+                return Err(ferret_core::Error::KdfOutOfRange.into());
+            }
+            self.begin_export(rows, created_at, params)
         })
     }
 
     /// Second half of an encrypted export: seals the file with the `K_exp`
-    /// that the job worker made. Returns the file.
+    /// that the job worker made. Returns the file. A key that is refused
+    /// (for example all zero, because the array was wiped after an earlier
+    /// call) leaves the draft in place.
     pub fn export_finish(&mut self, wrap_key: Vec<u8>) -> Result<Vec<u8>, JsValue> {
         run(|| {
             let wrap_key = Zeroizing::new(wrap_key);
-            let draft = self.inner_mut()?.export.take().ok_or(Fail::Input)?;
             let key = ExportWrapKey::from_slice(&wrap_key)?;
+            let draft = self.inner_mut()?.export.take().ok_or(Fail::Input)?;
             Ok(draft.finish(&mut OsRng, &key)?)
         })
     }
@@ -195,20 +195,50 @@ impl Vault {
 
     /// A plaintext export of the rows, `"json"` or `"csv"`, on an explicit
     /// request by the user. It holds every secret in the clear. The passkey
-    /// keys and PRF seeds are in the JSON only with `include_passkeys`.
+    /// keys and PRF seeds are in the JSON only with `include_passkeys`; this
+    /// is the one path by which a passkey's private key leaves WASM.
+    ///
+    /// It needs `token`, the one-time token of `UnlockJob.reauth_grant`, which
+    /// only a fresh sign-in with the master password in this session makes
+    /// (the same way a rekey needs one). `now_ms` is the caller's clock in
+    /// unix milliseconds. The token is used up by the first attempt whether
+    /// it matched or not. A missing, wrong, used or replaced token, a token
+    /// that is more than five minutes old, and a `now_ms` earlier than the
+    /// time of the grant (the clock cannot go backwards) are
+    /// `reauth_required`. A format other than `"json"` and `"csv"` and a
+    /// `now_ms` that is not a time are `invalid_input` and leave the token
+    /// valid.
     pub fn reveal_plain_export(
-        &self,
+        &mut self,
         rows: JsValue,
         format: &str,
         include_passkeys: bool,
+        token: Option<Vec<u8>>,
+        now_ms: f64,
     ) -> Result<String, JsValue> {
         run(|| {
+            let token = Zeroizing::new(token.unwrap_or_default());
+            let now = js_time(now_ms)?;
+            if format != "json" && format != "csv" {
+                return Err(Fail::Input);
+            }
+            let grant = self.inner_mut()?.grant.take();
+            let granted = grant.is_some_and(|g| {
+                // Both checks always run; the token comparison is constant time.
+                let same = same_token(&g.token, &token);
+                let fresh = now
+                    .checked_sub(g.granted_ms)
+                    .is_some_and(|age| age <= GRANT_TTL_MS);
+                same & fresh
+            });
+            if !granted {
+                return Err(Fail::Reauth);
+            }
             let items = items_of(self, rows)?;
             let options = PlainExportOptions { include_passkeys };
             Ok(match format {
                 "json" => export_plain_json(&items, &options)?,
-                "csv" => export_plain_csv(&items, &options)?,
-                _ => return Err(Fail::Input),
+                _ => export_plain_csv(&items, &options)?,
             })
         })
     }
@@ -243,7 +273,7 @@ impl Vault {
             let view = item.body.view();
             to_js(&ImportViewDto {
                 item_id: *item.item_id.as_bytes(),
-                view: ViewDto::of(&view),
+                view: ViewDto::of(&view, &item.body),
             })
         })
     }
@@ -276,6 +306,33 @@ impl Vault {
             self.inner_mut()?.import = None;
             Ok(())
         })
+    }
+}
+
+/// Whether `given` is the 32-byte token `made`, compared in constant time
+/// (a different length is a mismatch; the length is not secret).
+pub(crate) fn same_token(made: &[u8; 32], given: &[u8]) -> bool {
+    given.len() == made.len() && bool::from(made.as_slice().ct_eq(given))
+}
+
+impl Vault {
+    /// Starts an export with `params`, which the caller has checked.
+    pub(crate) fn begin_export(
+        &mut self,
+        rows: JsValue,
+        created_at: f64,
+        params: ferret_core::KdfParams,
+    ) -> Res<JsValue> {
+        let created = js_time(created_at)?;
+        let items = items_of(self, rows)?;
+        let draft = export_begin(&mut OsRng, params, created, &items)?;
+        let out = BeginDto {
+            salt: *draft.salt(),
+            kdf: KdfDto::of(draft.kdf()),
+        };
+        let value = to_js(&out)?;
+        self.inner_mut()?.export = Some(draft);
+        Ok(value)
     }
 }
 

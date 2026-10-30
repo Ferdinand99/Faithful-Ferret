@@ -485,6 +485,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "sha2 0.11.1",
+ "subtle",
  "wasm-bindgen",
  "zeroize",
 ]

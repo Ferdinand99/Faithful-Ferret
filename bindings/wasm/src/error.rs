@@ -3,14 +3,17 @@
 //! An error is a JavaScript `Error` whose `message` and `code` are the same
 //! stable code and nothing else: no value, no length and no position from the
 //! input ever goes into it. The codes of the core are those of
-//! `vectors/ERRORS.md` (`Error::code`). The glue adds three of its own, for
-//! mistakes in how the binding is called:
+//! `vectors/ERRORS.md` (`Error::code`). The glue adds four of its own: three for
+//! mistakes in how the binding is called and one for a missing
+//! permission:
 //!
 //! * `invalid_input`: an argument has the wrong type, a wrong length or a
 //!   value out of range (a time that is not finite, a number above 2^53, an
 //!   unknown key in an object, a missing pin state);
 //! * `vault_locked`: the vault has been locked or has no such state;
-//! * `invalid_handle`: an item handle that is not open.
+//! * `invalid_handle`: an item handle that is not open;
+//! * `reauth_required`: a plaintext export without the one-time token that a
+//!   fresh sign-in with the master password makes (`UnlockJob.reauth_grant`).
 //!
 //! Nothing in this crate formats data into text.
 
@@ -28,6 +31,8 @@ pub(crate) enum Fail {
     Locked,
     /// No such open item.
     Handle,
+    /// An action that needs a fresh sign-in did not come with one.
+    Reauth,
 }
 
 impl Fail {
@@ -38,6 +43,7 @@ impl Fail {
             Fail::Input => "invalid_input",
             Fail::Locked => "vault_locked",
             Fail::Handle => "invalid_handle",
+            Fail::Reauth => "reauth_required",
         }
     }
 }

@@ -49,6 +49,12 @@ max = 7
 reason = "serde-wasm-bindgen's reading of a JS value into a Rust type, inlined: a match on the kind of each value (number, string, array, object) and on field names; the structure of a call from JavaScript, not key bytes: key material arrives as byte arrays that are copied."
 
 [[allow]]
+function = "^ferret_core_wasm::convert::from_js_list$"
+instruction = "br_table"
+max = 3
+reason = "APPROVED: Same code as the entry for from_js, now a function of its own for lists: serde-wasm-bindgen reads a JavaScript array into a Rust list, a match on the kind of each value (number, string, array, object) and on field names. This is the structure of a call from JavaScript; key material arrives as byte arrays that are copied."
+
+[[allow]]
 function = "^ferret_core_wasm::convert::PinArg>::core$"
 instruction = "br_table"
 max = 1
@@ -133,6 +139,12 @@ max = 1
 reason = "Binding a pin to the setup QR: a match on first use against a pinned record and on whether a QR was scanned; the server key and the secret-key bit are compared, not used as an address."
 
 [[allow]]
+function = "^ferret_core_wasm::methods::MethodChangeDto>::of$"
+instruction = "i32\\.load\\(static-table\\)"
+max = 2
+reason = "APPROVED: The two loads read the static name of the operation (unlock-method.add or unlock-method.remove) from a table indexed by the operation, which is a public tag chosen by the caller; the rest of the function copies the sealed row, the request body and the public key pk_a, which are public."
+
+[[allow]]
 function = "^ferret_core_wasm::passkey::user_verification$"
 instruction = "br_table"
 max = 1
@@ -149,6 +161,12 @@ function = "^ferret_core_wasm::vault::Inner>::open$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
 reason = "Registering an opened item under a handle: the handle is a counter, the map is a BTreeMap keyed by it (its node search is the indexed load); the item body is moved in, not used as an address."
+
+[[allow]]
+function = "^ferret_core_wasm::vault::server_rows_of$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: The match on the state label of each row the server shows (live or deleted), which is public text from the server; the tag or tombstone of the row is then checked by the core, in the functions that have their own entries."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
@@ -433,6 +451,12 @@ max = 1
 reason = "The load of the byte at `base + index` in the scan of the padding; the index is the loop counter, which runs over the whole buffer whatever it holds. The byte it reads is never used as an address."
 
 [[allow]]
+function = "^ferret_core::methods::hex$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The load reads the byte at base plus the loop counter while hex() writes its two digits; the digits come from char::from_digit by arithmetic, so no byte value is an address. The values written are the method id, the wrap ciphertext, the credential id, the PRF salt and the ciphertext and tag of the manifest row, which are all public (the server stores them)."
+
+[[allow]]
 function = "^ferret_core::passkey::client_data::client_data_json$"
 instruction = "i32\\.div_u"
 max = 1
@@ -613,6 +637,18 @@ max = 2
 reason = "Building the setup QR text: the same hexadecimal table, inlined from push_hex, for the account id and the server public key (public)."
 
 [[allow]]
+function = "^ferret_core::sync_memory::SyncMemory>::from_bytes$"
+instruction = "i32\\.rem_u"
+max = 1
+reason = "APPROVED: The remainder is the length of the stored record divided by the 24-byte size of one entry (item id and revision), taken by as_chunks. It is a public length of a record that holds item ids and revision numbers only, which the server shows as well; no key material is read."
+
+[[allow]]
+function = "^ferret_core::sync_memory::SyncMemory>::record$"
+instruction = "i64\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The 64-bit load is the revision read from a BTreeMap node while rows are merged in: the node search compares public item ids and the address follows that position, and the value is a public revision number. The rows are the ones the server shows; no key material is read."
+
+[[allow]]
 function = "^ferret_core::text::password::MasterPassword>::opaque_input$"
 instruction = "br_table"
 max = 1
@@ -697,6 +733,12 @@ max = 1
 reason = "Wrapping the vault key: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit."
 
 [[allow]]
+function = "^sync_memory_prune externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 3
+reason = "APPROVED: The indexed loads walk the list of 16-byte item ids the caller passes and the entries of the rollback memory while it is read and written back. The addresses follow public loop counters; the values are item ids and revision numbers, which are public data (the server holds them), not key material."
+
+[[allow]]
 function = "^totp_parse multivalue shim$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
@@ -763,6 +805,12 @@ max = 2
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
+function = "^vault_check_server_methods externref shim multivalue shim$"
+instruction = "br_table"
+max = 3
+reason = "APPROVED: The three table jumps are the serde-wasm-bindgen reading of the manifest row and of the server list inlined into the shim (a match on the kind of each JavaScript value and on field names), and the match on the kind of difference the core reports. All of it is the structure of the call and public method ids, types and generations."
+
+[[allow]]
 function = "^vault_close_item multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3
@@ -779,6 +827,12 @@ function = "^vault_make_checkpoint externref shim multivalue shim$"
 instruction = "br_table"
 max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+
+[[allow]]
+function = "^vault_manifest_add_method externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The indexed load is in Manifest::with_method (inlined into the shim): the scan of the list of 56-byte manifest entries for a method id that is already there, and the copy of that list, at a position given by a public loop counter. The values are method types, ids and generations of the manifest, which the server lists too; no key bytes."
 
 [[allow]]
 function = "^vault_passkey_get externref shim multivalue shim$"
@@ -814,12 +868,6 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 function = "^vault_reveal_emergency_sheet multivalue shim$"
 instruction = "i32\\.load\\(const-add\\)"
 max = 2
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
-
-[[allow]]
-function = "^vault_reveal_plain_export externref shim multivalue shim$"
-instruction = "br_table"
-max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
@@ -863,9 +911,3 @@ function = "^vault_totp_code multivalue shim$"
 instruction = "i64\\.rem_u"
 max = 1
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R2). The one-time code is the dynamic truncation of the HMAC output taken modulo 10^digits (RFC 4226 section 5.3). The dividend is the HMAC output of this one code, not the TOTP secret; the code is shown to the user and sent to a server. The offset of the truncation is the low nibble of that HMAC output, an index into this code's own digest. This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
-
-[[allow]]
-function = "^vault_verify_checkpoint externref shim multivalue shim$"
-instruction = "br_table"
-max = 4
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."

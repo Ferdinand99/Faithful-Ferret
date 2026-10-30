@@ -213,6 +213,22 @@ test("lock_destroys_vault_worker_and_clears_buffers", async ({ page }) => {
   expect(r.afterLock).toBe("vault_locked");
 });
 
+// A lock must not wait for the worker: during a sign-in step that runs
+// Argon2id for seconds, `lock()` returns at once, the worker is ended and the
+// running call is rejected with `locked` instead of being allowed to finish.
+test("lock_ends_the_worker_during_a_long_argon2id", async ({ page, browserName }) => {
+  test.setTimeout(180_000);
+  await openHarness(page);
+  const r = await page.evaluate(() => window.ferret.lockUnderLoadRun());
+  expect(r.baselineOutcome, "the step finishes when nobody locks").toBe("finished");
+  expect(r.outcome).toBe("locked");
+  expect(r.lockMs).toBeLessThan(1000);
+  expect(r.settleMs, "the running call was rejected as soon as the lock was made").toBeLessThan(Math.min(1000, r.stepMs * 0.5));
+  expect(r.workers).toEqual([true]);
+  expect(r.afterLock).toBe("vault_locked");
+  console.log(`[${browserName}] lock during Argon2id (step takes ${r.stepMs} ms): ${r.lockMs} ms, running call rejected after ${r.settleMs} ms`);
+});
+
 test("passkey_signature_verifies_with_webcrypto", async ({ page }) => {
   test.setTimeout(180_000);
   await openHarness(page);

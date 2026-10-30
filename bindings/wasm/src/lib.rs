@@ -31,6 +31,7 @@ mod error;
 mod export;
 mod item;
 mod job;
+mod methods;
 mod passkey;
 mod vault;
 
@@ -41,12 +42,13 @@ pub use export::{argon2_export_key, import_header};
 pub use job::UnlockJob;
 pub use vault::Vault;
 
-use crate::convert::{arr, b16, b32, to_js};
+use crate::convert::{ByteBuf, arr, b16, b32, bytes, from_js_list, to_js};
 use crate::error::{Fail, run};
 use crate::item::normalize_otpauth;
 use ferret_core::{
-    AccountId, KsfProfile, MasterPassword, MpPolicy, decode_recovery_key, decode_secret_key,
-    parse_otpauth, parse_server_address, parse_setup_qr, setup_qr_payload,
+    AccountId, ItemId, KsfProfile, MasterPassword, MpPolicy, OsRng, SyncMemory,
+    decode_recovery_key, decode_secret_key, parse_otpauth, parse_server_address, parse_setup_qr,
+    setup_qr_payload,
 };
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -72,6 +74,68 @@ struct QrDto {
     /// The `o` value: the OPAQUE server key to compare, inside `recover`.
     #[serde(with = "b32")]
     server_public_key: [u8; 32],
+}
+
+/// The AAGUID that Ferret writes into every passkey it makes (16 bytes,
+/// `dc704a44-b994-410c-a689-ed8d71a84ac3`). It is public. A client that
+/// registers a passkey as an unlock method passes the AAGUID of that
+/// registration to `Vault.wrap_prf`, which refuses Ferret's own: such a
+/// passkey's PRF seeds are inside the vault it would have to open.
+/// `FERRET_AAGUID` in the client is the same value.
+#[wasm_bindgen]
+pub fn ferret_aaguid() -> Vec<u8> {
+    ferret_core::passkey::AAGUID.to_vec()
+}
+
+/// A fresh PRF salt for one passkey registration: 32 random bytes. It is
+/// public and is stored with the wrap; every registration needs its own. Pass
+/// it as the salt of the PRF evaluation and then as `prf_salt` to `wrap_prf`,
+/// which refuses an all-zero salt (`input_all_zero`), as does the unlock.
+#[wasm_bindgen]
+pub fn prf_salt_new() -> Vec<u8> {
+    ferret_core::prf_salt_new(&mut OsRng).to_vec()
+}
+
+/// An empty rollback memory (`SyncMemory`) as bytes, for a device that has
+/// seen nothing of this vault yet. The client stores the bytes, hands them to
+/// `verify_checkpoint` and `rekey` (which return the updated bytes) and
+/// replaces its copy each time. The record holds item ids and revision
+/// numbers only; it is public data.
+#[wasm_bindgen]
+pub fn sync_memory_new() -> Vec<u8> {
+    SyncMemory::new().to_bytes()
+}
+
+/// What `sync_memory_prune` returns.
+#[derive(Serialize)]
+struct PrunedDto {
+    #[serde(with = "bytes")]
+    sync_memory: Vec<u8>,
+    dropped: usize,
+}
+
+/// Drops the entries of items that are gone for good (their tombstones have
+/// expired on the server, or the user purged them) from the stored rollback
+/// memory, so that a full record can take new items. `ids` is a list of
+/// 16-byte item ids; ids that are not tracked are ignored. The floor of a
+/// dropped id is gone: a row for it with any revision is accepted again, so
+/// call it only for items that no longer exist. Nothing calls it on its own.
+/// Returns `{ sync_memory, dropped }`.
+#[wasm_bindgen]
+pub fn sync_memory_prune(sync_memory: Vec<u8>, ids: JsValue) -> Result<JsValue, JsValue> {
+    run(|| {
+        let mut memory = SyncMemory::from_bytes(&sync_memory)?;
+        let ids: Vec<ByteBuf> = from_js_list(ids)?;
+        let ids = ids
+            .iter()
+            .map(|b| arr::<16>(&b.0).map(ItemId::from_bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        let dropped = memory.prune(&ids);
+        to_js(&PrunedDto {
+            sync_memory: memory.to_bytes(),
+            dropped,
+        })
+    })
 }
 
 /// The payload of the QR code of the emergency sheet
