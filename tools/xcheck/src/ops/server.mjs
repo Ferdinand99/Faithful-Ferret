@@ -63,9 +63,11 @@ ops['server.setup_fingerprint'] = ({ input }) => ({
 
 const INVISIBLE = /[\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]/u;
 const MAX_ROUNDS = 4;
+// OPS.md: trimmed of Unicode White_Space (not String.prototype.trim, which differs on U+0085 and U+FEFF).
+const WHITE_SPACE_ENDS = /^\p{White_Space}+|\p{White_Space}+$/gu;
 
 function normalizeName(raw) {
-  const round = (t) => t.normalize('NFKC').toLowerCase().normalize('NFKC').trim();
+  const round = (t) => t.normalize('NFKC').toLowerCase().normalize('NFKC').replace(WHITE_SPACE_ENDS, '');
   let text = raw;
   let stable = false;
   for (let i = 0; i < MAX_ROUNDS; i++) {
