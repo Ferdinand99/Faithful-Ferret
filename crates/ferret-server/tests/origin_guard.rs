@@ -17,6 +17,7 @@ use ferret_server::state::FerretState;
 use support::{ADMIN_URL, Req, TestApp, VAULT_URL, Which};
 use tower::ServiceExt as _;
 use vole_kit::auth::session::{PendingLogin, SessionClaims, pending_cookie, session_cookie};
+use vole_kit::http::headers::MACHINE_CSP;
 
 const COOKIE: &str = "__Host-ferret_sid=abc";
 
@@ -36,6 +37,7 @@ fn layered(app: &TestApp, which: Which, routes: Router<FerretState>) -> Router {
 fn listener(app: &TestApp, which: Which) -> Router {
     let routes: Router<FerretState> = Router::new()
         .route("/probe", any(ok))
+        .route("/api/probe", any(ok))
         .route("/api/auth/handoff", post(ok))
         .route("/api/auth/handoff/redeem", post(ok));
     layered(app, which, routes)
@@ -68,7 +70,15 @@ async fn origin_guard_requires_the_protocol_header_on_mutations() {
     let app = TestApp::new().await;
     for which in [Which::Vault, Which::Admin] {
         let router = listener(&app, which);
-        for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+        // Every method that may change state, known or not.
+        let purge = Method::from_bytes(b"PURGE").expect("a method");
+        for method in [
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            purge,
+        ] {
             for header in [
                 None,
                 Some(""),
@@ -77,7 +87,7 @@ async fn origin_guard_requires_the_protocol_header_on_mutations() {
                 Some("1 "),
                 Some("true"),
             ] {
-                let mut req = Req::new(method.clone(), "/probe");
+                let mut req = Req::new(method.clone(), "/api/probe");
                 if let Some(value) = header {
                     req = req.header("ferret-protocol", value);
                 }
@@ -85,17 +95,18 @@ async fn origin_guard_requires_the_protocol_header_on_mutations() {
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {header:?}");
                 assert_eq!(error_code(&body), "protocol_header_missing");
             }
-            let req = Req::new(method.clone(), "/probe").header("ferret-protocol", "1");
+            let req = Req::new(method.clone(), "/api/probe").header("ferret-protocol", "1");
             let (status, _, _) = send(&router, req.build()).await;
             assert_eq!(status, StatusCode::NO_CONTENT, "{method}");
         }
         // Reads need nothing.
         for method in [Method::GET, Method::HEAD, Method::OPTIONS] {
-            let (status, _, _) = send(&router, Req::new(method.clone(), "/probe").build()).await;
+            let (status, _, _) =
+                send(&router, Req::new(method.clone(), "/api/probe").build()).await;
             assert_eq!(status, StatusCode::NO_CONTENT, "{method}");
         }
         // The same header twice is not the header.
-        let req = Req::post("/probe")
+        let req = Req::post("/api/probe")
             .header("ferret-protocol", "1")
             .header("ferret-protocol", "1");
         let (status, _, _) = send(&router, req.build()).await;
@@ -292,13 +303,11 @@ fn setting(app: &TestApp, which: Which, cookies: Vec<String>) -> Router {
     layered(app, which, routes)
 }
 
-/// The cookie without its `SameSite` attribute.
-fn without_same_site(cookie: &str) -> String {
-    cookie
-        .split("; ")
-        .filter(|a| !a.to_ascii_lowercase().starts_with("samesite="))
-        .collect::<Vec<_>>()
-        .join("; ")
+/// A `Set-Cookie` as `(name=value, attributes)`, the attributes lower-cased.
+fn split_cookie(cookie: &str) -> (String, Vec<String>) {
+    let mut parts = cookie.split("; ");
+    let first = parts.next().expect("a name").to_string();
+    (first, parts.map(str::to_ascii_lowercase).collect())
 }
 
 #[tokio::test]
@@ -327,7 +336,10 @@ async fn strict_cookie_rewrites_the_kits_lax_cookie_including_the_hourly_reissue
         );
     }
     let mut cookies = kit;
-    cookies.push("no_attribute=1; Path=/".to_string());
+    // Cookies with weaker or wrong attributes, and without any.
+    cookies.push("no_attribute=1".to_string());
+    cookies.push("wide=1; Domain=ferret.test; Path=/x; Max-Age=60".to_string());
+    cookies.push("open=1; Path=/; SameSite=None".to_string());
     for which in [Which::Vault, Which::Admin] {
         let router = setting(&app, which, cookies.clone());
         let (status, headers, _) = send(&router, Req::get("/set").build()).await;
@@ -339,16 +351,153 @@ async fn strict_cookie_rewrites_the_kits_lax_cookie_including_the_hourly_reissue
             .collect();
         assert_eq!(sent.len(), cookies.len(), "{which:?}");
         for (rewritten, original) in sent.iter().zip(&cookies) {
-            assert_eq!(rewritten.matches("SameSite=").count(), 1, "{rewritten}");
-            assert!(rewritten.ends_with("SameSite=Strict"), "{rewritten}");
-            // The rest is as it was: name, value and the other attributes.
-            assert_eq!(
-                without_same_site(rewritten),
-                without_same_site(original),
+            let (name, attributes) = split_cookie(rewritten);
+            let (original_name, original_attributes) = split_cookie(original);
+            assert_eq!(name, original_name, "{rewritten}");
+            for required in ["path=/", "httponly", "secure", "samesite=strict"] {
+                assert_eq!(
+                    attributes.iter().filter(|a| *a == required).count(),
+                    1,
+                    "{required}: {rewritten}"
+                );
+            }
+            assert!(
+                !attributes.iter().any(|a| a.starts_with("domain")),
                 "{rewritten}"
+            );
+            assert_eq!(
+                attributes.iter().filter(|a| a.starts_with("path")).count(),
+                1
+            );
+            // The other attributes are as they were.
+            let kept = |attributes: &[String]| {
+                attributes
+                    .iter()
+                    .filter(|a| a.starts_with("max-age") || a.starts_with("expires"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(kept(&attributes), kept(&original_attributes), "{rewritten}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn removal_cookies_get_secure_so_a_host_cookie_is_really_removed() {
+    let app = TestApp::new().await;
+    // What the kit sends to sign out: a path and nothing else, run through
+    // the cookie jar's removal.
+    let mut removal = vole_kit::auth::session::removal_cookie("__Host-ferret_session");
+    removal.make_removal();
+    let removals = vec![
+        removal.to_string(),
+        "__Host-ferret_sid=; Max-Age=0; Path=/".to_string(),
+        "__Host-ferret_2fa=gone; Max-Age=0".to_string(),
+        "ferret_flash=; Path=/".to_string(),
+        "other=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT".to_string(),
+    ];
+    for which in [Which::Vault, Which::Admin] {
+        let router = setting(&app, which, removals.clone());
+        let (_, headers, _) = send(&router, Req::get("/set").build()).await;
+        let sent: Vec<&str> = headers
+            .get_all(SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("text"))
+            .collect();
+        assert_eq!(sent.len(), removals.len());
+        for (cookie, original) in sent.iter().zip(&removals) {
+            let (_, attributes) = split_cookie(cookie);
+            assert!(
+                attributes.iter().any(|a| a == "secure"),
+                "{original} -> {cookie}"
+            );
+            assert!(attributes.iter().any(|a| a == "path=/"), "{cookie}");
+            assert!(
+                attributes.iter().any(|a| a == "samesite=strict"),
+                "{cookie}"
+            );
+            // Still a removal.
+            assert!(
+                attributes
+                    .iter()
+                    .any(|a| a.starts_with("max-age=0") || a.starts_with("expires"))
+                    || cookie
+                        .split_once('=')
+                        .is_some_and(|(_, v)| v.starts_with(';')),
+                "{cookie}"
             );
         }
     }
+}
+
+#[tokio::test]
+async fn kit_forms_on_the_admin_listener_need_the_origin_not_the_protocol_header() {
+    let app = TestApp::new().await;
+    let form = |path: &str| {
+        Req::post(path)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("hx-request", "true")
+            .header("cookie", "__Host-ferret_session=x; __Host-ferret_sid=y")
+    };
+    // A browser form post or htmx request: the admin origin, no protocol
+    // header. The guard lets it through (what the page then answers is the
+    // kit's own business: here it has no valid session).
+    for path in ["/logout", "/settings/general"] {
+        let ours = |res: &support::Res| {
+            res.status == StatusCode::BAD_REQUEST && res.text().contains("protocol_header_missing")
+                || res.status == StatusCode::FORBIDDEN && res.text().contains("forbidden_origin")
+        };
+        let res = app
+            .call_raw(
+                Which::Admin,
+                form(path)
+                    .header("origin", ADMIN_URL)
+                    .header("sec-fetch-site", "same-origin")
+                    .build(),
+            )
+            .await;
+        assert!(!ours(&res), "{path}: {} {}", res.status, res.text());
+        // A foreign page, another site, the vault origin and no origin at all.
+        for (origin, site) in [
+            (Some("https://evil.test"), "cross-site"),
+            (Some("https://evil.test"), "same-origin"),
+            (Some(VAULT_URL), "same-site"),
+            (Some(ADMIN_URL), "same-site"),
+            (None, "cross-site"),
+        ] {
+            let mut req = form(path).header("sec-fetch-site", site);
+            if let Some(origin) = origin {
+                req = req.header("origin", origin);
+            }
+            let res = app.call_raw(Which::Admin, req.build()).await;
+            assert_eq!(
+                res.status,
+                StatusCode::FORBIDDEN,
+                "{path} {origin:?} {site}"
+            );
+            assert_eq!(res.json()["error"], "forbidden_origin");
+        }
+    }
+    // The API still needs the header.
+    let res = app
+        .call_raw(
+            Which::Admin,
+            Req::post("/api/auth/handoff/redeem")
+                .header("origin", ADMIN_URL)
+                .build(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(res.json()["error"], "protocol_header_missing");
+    // The vault listener asks for it on every mutation.
+    let res = app
+        .call_raw(
+            Which::Vault,
+            form("/anything").header("origin", VAULT_URL).build(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(res.json()["error"], "protocol_header_missing");
 }
 
 #[tokio::test]
@@ -427,7 +576,7 @@ async fn refusals_carry_the_headers_of_their_listener() {
         serde_json::from_str(include_str!("fixtures/wire/headers.json")).expect("headers.json");
     let router = listener(&app, Which::Vault);
     for request in [
-        Req::post("/probe").build(),
+        Req::post("/api/probe").build(),
         with_cookie("/probe")
             .header("origin", "https://evil.test")
             .build(),
@@ -439,8 +588,11 @@ async fn refusals_carry_the_headers_of_their_listener() {
         }
     }
     let router = listener(&app, Which::Admin);
-    let (status, got, _) = send(&router, Req::post("/probe").build()).await;
+    let (status, got, _) = send(&router, Req::post("/api/probe").build()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(got["referrer-policy"], "no-referrer");
     assert_eq!(got["x-content-type-options"], "nosniff");
+    // The kit's layers are inside this one, so the refusal gets the policy
+    // for machines.
+    assert_eq!(got["content-security-policy"], MACHINE_CSP);
 }

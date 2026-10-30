@@ -197,6 +197,9 @@ async fn path_traversal_variants_are_404() {
     let app = TestApp::new().await;
     let router = vault(&app, source());
     assert_eq!(get(&router, "/app/boot.mjs").await.0, StatusCode::OK);
+    // A raw NUL never reaches the router: the parser refuses it. A raw
+    // backslash does, and is refused by the path check.
+    assert!("/app/boot.mjs\0".parse::<axum::http::Uri>().is_err());
     for path in [
         "/app/../index.html",
         "/app/../app/boot.mjs",
@@ -208,6 +211,7 @@ async fn path_traversal_variants_are_404() {
         "/app/..%2findex.html",
         "/app/%2e%2e%2findex.html",
         "/app/%2e%2e%2Findex.html",
+        "/app/..\\index.html",
         "/app/..%5cindex.html",
         "/app/%5c..%5cindex.html",
         "/app/%252e%252e/index.html",
@@ -342,9 +346,10 @@ async fn admin_listener_serves_no_wasm_no_workers_and_no_password_field() {
     .collect();
     let mut seen = BTreeSet::new();
     while let Some(path) = queue.pop() {
-        if !seen.insert(path.clone()) || seen.len() > 60 {
+        if !seen.insert(path.clone()) {
             continue;
         }
+        assert!(seen.len() <= 80, "the crawl does not end: {seen:?}");
         let res = app.call(Which::Admin, Req::get(&path).build()).await;
         let text = res.text().to_ascii_lowercase();
         assert!(!text.contains("type=\"password\""), "{path}");

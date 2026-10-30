@@ -66,6 +66,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
 
+[features]
+# Lets a release build go ahead without web/dist (the build script refuses
+# otherwise: a release binary without the web vault serves no vault). For jobs
+# that build the server alone.
+dev-no-web = []
+
 [target.'cfg(unix)'.dependencies]
 # RLIMIT_CORE = 0 at start-up: a safe setrlimit.
 rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
