@@ -67,6 +67,8 @@ mod ct;
 pub mod error;
 pub mod ids;
 pub mod keys;
+pub mod name;
+pub mod prelogin;
 pub mod secret_file;
 pub mod startup;
 pub mod throttle;
@@ -79,6 +81,10 @@ pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
 pub use keys::{
     CreatePolicy, FileOrigin, LoadedSecrets, PreloginSecret, ServerKeys, SetupFingerprint,
     load_or_create,
+};
+pub use name::{LOGIN_NAME_MAX_BYTES, NormalizedLoginName, normalize_login_name};
+pub use prelogin::{
+    PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, resolve_credential,
 };
 pub use secret_file::{
     FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,
