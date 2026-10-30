@@ -80,6 +80,7 @@ pub mod name;
 pub mod prelogin;
 pub mod record;
 pub mod registration;
+pub mod scope;
 pub mod secret_file;
 pub mod startup;
 pub mod state;
@@ -102,6 +103,7 @@ pub use prelogin::{
 };
 pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
 pub use registration::{register_finish, register_start};
+pub use scope::{Capability, ScopeEffect, SessionScope, authorize};
 pub use secret_file::{
     FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,
     encode_secret_file, permissions_enforced, read_secret_file, write_new_secret_file,

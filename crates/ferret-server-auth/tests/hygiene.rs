@@ -57,6 +57,10 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "PreloginAnswer",
     // Login state store: the three ways a store can refuse. No content.
     "StoreError",
+    // Session scopes: closed sets of names, no content.
+    "SessionScope",
+    "Capability",
+    "ScopeEffect",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines
