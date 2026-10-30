@@ -102,46 +102,6 @@ T11 @ ct_select @ ^(ct_select::ct_select_u8|subtle::.*conditional_select.*)$ @ .
 
 ```counts
 # file @ arch @ opt @ functions analysed, findings per row
-base32__arm64__O0.json       functions  18  errors 0  warnings 4
-base32__arm64__O2.json       functions   4  errors 0  warnings 4
-base32__arm64__O3.json       functions   4  errors 0  warnings 4
-base32__arm64__Os.json       functions   4  errors 0  warnings 4
-base32__x86_64__O0.json      functions  18  errors 0  warnings 7
-base32__x86_64__O2.json      functions   4  errors 0  warnings 4
-base32__x86_64__O3.json      functions   4  errors 0  warnings 4
-base32__x86_64__Os.json      functions   4  errors 0  warnings 4
-crockford__arm64__O0.json    functions  34  errors 0  warnings 7
-crockford__arm64__O2.json    functions  10  errors 0  warnings 8
-crockford__arm64__O3.json    functions  10  errors 0  warnings 9
-crockford__arm64__Os.json    functions  10  errors 0  warnings 8
-crockford__x86_64__O0.json   functions  34  errors 0  warnings 11
-crockford__x86_64__O2.json   functions  10  errors 0  warnings 8
-crockford__x86_64__O3.json   functions  10  errors 0  warnings 8
-crockford__x86_64__Os.json   functions  10  errors 0  warnings 8
-ct_eq__arm64__O0.json        functions  55  errors 1  warnings 4
-ct_eq__arm64__O2.json        functions   7  errors 0  warnings 4
-ct_eq__arm64__O3.json        functions   7  errors 0  warnings 4
-ct_eq__arm64__Os.json        functions  11  errors 0  warnings 4
-ct_eq__x86_64__O0.json       functions  55  errors 0  warnings 7
-ct_eq__x86_64__O2.json       functions   7  errors 0  warnings 4
-ct_eq__x86_64__O3.json       functions   7  errors 0  warnings 4
-ct_eq__x86_64__Os.json       functions  11  errors 0  warnings 4
-ct_select__arm64__O0.json    functions  87  errors 2  warnings 6
-ct_select__arm64__O2.json    functions  10  errors 0  warnings 9
-ct_select__arm64__O3.json    functions  10  errors 0  warnings 9
-ct_select__arm64__Os.json    functions  19  errors 0  warnings 4
-ct_select__x86_64__O0.json   functions  87  errors 0  warnings 9
-ct_select__x86_64__O2.json   functions  10  errors 0  warnings 10
-ct_select__x86_64__O3.json   functions  10  errors 0  warnings 10
-ct_select__x86_64__Os.json   functions  19  errors 0  warnings 4
-unpad__arm64__O0.json        functions  20  errors 0  warnings 3
-unpad__arm64__O2.json        functions   2  errors 0  warnings 2
-unpad__arm64__O3.json        functions   2  errors 0  warnings 2
-unpad__arm64__Os.json        functions   2  errors 0  warnings 2
-unpad__x86_64__O0.json       functions  20  errors 0  warnings 4
-unpad__x86_64__O2.json       functions   2  errors 0  warnings 2
-unpad__x86_64__O3.json       functions   2  errors 0  warnings 2
-unpad__x86_64__Os.json       functions   2  errors 0  warnings 2
 base32 @ arm64 @ O0 @ T3=2 T8=2 functions=18
 base32 @ arm64 @ O2 @ T3=4 functions=4
 base32 @ arm64 @ O3 @ T3=4 functions=4
@@ -344,7 +304,8 @@ with its reason, and each is repeated in the report.
   with one repetition `base32_decode` gave |t| of 5 to 14 in some runs, with
   alternating sign, and even two fixed strings (`info_base32_a_vs_z`) gave 5 to
   7; with eight repetitions 24 runs of the bench and its three variants stayed
-  below 4. In native, `unpad_ct` failed the gate (|t| of 7 to 22 at 10^6 and 26
+  below 4; at 10^7, five runs on the LANBox were all below 2.7
+  (`ct/results/base32-wasm-1e7.md`). In native, `unpad_ct` failed the gate (|t| of 7 to 22 at 10^6 and 26
   to 66 at 10^7, growing with n, so not noise) while the inputs of the zero
   class were `vec![0; n]`: `calloc` gives the shared zero page, so the source
   of the copy into the working cell was a different memory for that class. It is
@@ -352,7 +313,15 @@ with its reason, and each is repeated in the report.
   zero inputs the same bench, its content variant, a random-pair null and a
   same-input null all sit at 1 to 4. The lesson is the one the null controls
   teach; the controls of `unpad_scan` are `info_unpad_random_pair` and
-  `info_unpad_same`.
+  `info_unpad_same`. On hosted runners `unpad_ct` stayed positive and grew with
+  n, and its own null `info_unpad_random_pair` was at the threshold on some
+  machines (-4.77 on the LANBox once, +4.99 hosted), so a smaller bias remained:
+  the two buffers of a pair were always allocated left then right, which fixes
+  their offsets in a cache line by class. They are now allocated in a random
+  order per pair. After that, on the LANBox, `unpad_ct` at 10^6 (five runs) is
+  within +-2.4 and the random-pair and same-input nulls at 10^7 (five runs
+  each) within +-3.3 (`ct/results/base32-wasm-1e7.md`); the hosted values are in
+  the CI log of the pull request.
 - **R8. The accumulators are not wiped.** The harness is `core` only and has
   no `zeroize`, so the local `acc` of `base32::decode_letters` (up to 13 bits of
   the TOTP secret, which the old loop in `totp.rs` wiped with `acc.zeroize()`),

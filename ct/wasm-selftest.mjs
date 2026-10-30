@@ -11,7 +11,7 @@
 //   * clean.wat (a struct field, a load from a constant address, an xor and a
 //     mask) is not flagged,
 //   * an allow list with the right `max` accepts flagged.wat, an entry whose
-//     `max` is one too small fails, and an entry without `max` is refused.
+//     `max` is one too small or one too large fails, and an entry without `max` is refused.
 //
 //   node ct/wasm-selftest.mjs
 
@@ -82,8 +82,34 @@ check(enough.status === 0, "an entry that covers three hits with max = 3 accepts
 const tooSmall = scan("ct/wasm-fixtures/flagged.wat", group(2) + "\n" + rest);
 check(tooSmall.status === 1 && /allows 2, found 3/.test(tooSmall.out), "the same entry with max = 2 fails");
 
+// `max` is exact: slack would absorb a later hit of the same kind.
+const slack = scan("ct/wasm-fixtures/flagged.wat", group(4) + "\n" + rest);
+check(slack.status === 1 && /allows 4, found 3/.test(slack.out), "an entry whose max is one too large fails");
+
 const noMax = scan("ct/wasm-fixtures/flagged.wat", `[[allow]]\nfunction = "x"\ninstruction = "y"\nreason = "z"\n`);
 check(noMax.status !== 0 && /without max/.test(noMax.out), "an entry without max is refused");
+
+// The generator of the allow list does not bless a new hit in a function that
+// handles key material.
+const generate = (hits, extra = []) => {
+  const existing = join(dir, "existing.toml");
+  const hitsFile = join(dir, "hits.json");
+  writeFileSync(existing, `[[allow]]\nfunction = "^ferret_core::wrap::unwrap_vk$"\ninstruction = "br_table"\nmax = 1\nreason = "written by a person"\n`);
+  writeFileSync(hitsFile, JSON.stringify({ hits }));
+  const r = spawnSync(process.execPath, ["ct/wasm-allow-gen.mjs", hitsFile, "--existing", existing, ...extra], { encoding: "utf8" });
+  return { status: r.status, out: r.stdout, err: r.stderr };
+};
+const unwrap = (count) => ({ norm: "ferret_core::wrap::unwrap_vk", ins: "br_table", count });
+const same = generate([unwrap(1)]);
+check(same.status === 0 && /reason = "written by a person"/.test(same.out), "the generator keeps an existing entry and its reason");
+const more = generate([unwrap(2)]);
+check(more.status === 3 && /max 1 -> 2/.test(more.err), "the generator refuses a higher max in a key-handling function");
+const fresh = generate([unwrap(1), { norm: "ferret_core::wrap::unwrap_vk", ins: "i32.load(static-table)", count: 1 }]);
+check(fresh.status === 3 && /new entry/.test(fresh.err), "the generator refuses a new kind of hit in a key-handling function");
+const approved = generate([unwrap(2)], ["--approve", "ferret_core::wrap::unwrap_vk=I read the code of unwrap_vk and the second jump is the same match"]);
+check(approved.status === 0 && /max = 2/.test(approved.out) && /I read the code of unwrap_vk/.test(approved.out), "--approve lets it through and writes the reason");
+const other = generate([unwrap(1), { norm: "ferret_core::cbor::decode::item", ins: "br_table", count: 3 }]);
+check(other.status === 0 && /decode::item/.test(other.out), "a new entry outside the key-handling modules is generated");
 
 rmSync(dir, { recursive: true, force: true });
 process.exitCode = failed ? 1 : 0;

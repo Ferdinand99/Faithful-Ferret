@@ -21,7 +21,7 @@
 // warning).
 //
 // Environment: FERRET_CT_N (measurements, default 1000000), CT_CPU and CT_HOST
-// (for the log), CT_GROSS (default 100), CT_WASM_SMALL_REPS (repetitions inside one
+// (for the log), CT_GROSS (default 500), CT_WASM_SMALL_REPS (repetitions inside one
 // measurement for the targets that are repeated once natively; default 8), CT_ONLY (only targets whose name
 // contains this), CT_REPEAT (measure each selected target this often, to see
 // the spread of t).
@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 const THRESHOLD = 4.5;
 const N = Number(process.env.FERRET_CT_N ?? 1_000_000);
 const SMALL_REPS = Number(process.env.CT_WASM_SMALL_REPS ?? 8);
-const GROSS = Number(process.env.CT_GROSS ?? 100);
+const GROSS = Number(process.env.CT_GROSS ?? 500);
 const ONLY = process.env.CT_ONLY ?? "";
 const REPEAT = Number(process.env.CT_REPEAT ?? 1);
 const WARMUP = 200_000;

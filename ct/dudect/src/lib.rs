@@ -535,26 +535,36 @@ fn unpad_target(mix: &mut Mix, name: &'static str, info: bool, kind: UnpadKind) 
         info,
         leaky: matches!(kind, UnpadKind::Leaky),
         pools: Pools::new(mix, |m| {
-            let random = m.array::<1023>();
-            match kind {
+            let random = m.array::<1023>().to_vec();
+            let zeros = vec![0u8; 1023];
+            // The plaintext of each class.
+            let (left, right) = match kind {
                 // Marker last (a full plaintext of 1023 random bytes) against
                 // marker first (a plaintext of length 0).
-                UnpadKind::Position | UnpadKind::Leaky => {
-                    (padded(&random, PADDED), padded(&[], PADDED))
-                }
+                UnpadKind::Position | UnpadKind::Leaky => (random, Vec::new()),
                 // The same positions, but the plaintext is zeros: only the
                 // position of the marker differs.
-                UnpadKind::PositionZeros => (padded(&[0u8; 1023], PADDED), padded(&[], PADDED)),
+                UnpadKind::PositionZeros => (zeros, Vec::new()),
                 // Marker last in both; random plaintext against zeros.
-                UnpadKind::Content => (padded(&random, PADDED), padded(&[0u8; 1023], PADDED)),
+                UnpadKind::Content => (random, zeros),
                 // Marker last in both; two random plaintexts from the same
                 // distribution (the null of a target with random inputs), and
                 // the same plaintext in both classes (the null of the setup).
-                UnpadKind::RandomPair => {
-                    let other = m.array::<1023>();
-                    (padded(&random, PADDED), padded(&other, PADDED))
-                }
-                UnpadKind::Same => (padded(&random, PADDED), padded(&random, PADDED)),
+                UnpadKind::RandomPair => (random, m.array::<1023>().to_vec()),
+                UnpadKind::Same => (random.clone(), random),
+            };
+            // The two buffers are allocated in a random order, so that where a
+            // buffer sits (its offset in a cache line, which the allocator
+            // decides by the order of the allocations) is not a function of its
+            // class.
+            if m.below(2) == 0 {
+                let l = padded(&left, PADDED);
+                let r = padded(&right, PADDED);
+                (l, r)
+            } else {
+                let r = padded(&right, PADDED);
+                let l = padded(&left, PADDED);
+                (l, r)
             }
         }),
         cell: vec![0u8; PADDED],

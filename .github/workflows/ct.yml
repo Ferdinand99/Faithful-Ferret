@@ -20,10 +20,15 @@
 # measurements. So here the smoke job checks that the harness builds and runs
 # and that the controls behave (a leaky control that is not seen makes the run
 # invalid). A gated bench over 4.5 is a warning, because a hosted runner is
-# noisy; but a bench that is still over 100 when it is measured again with ten
-# times as many measurements fails the job, as that is the size of a real leak
-# (the leaky controls sit at 10^4; on hosted runners a bench was seen at up to
-# 20 and the others at 1 to 3, so the limit is 100). The run that decides
+# noisy; but a bench that is still over 500 when it is measured again with ten
+# times as many measurements fails the job. The limit of 500 comes from the CI
+# history of this workflow: the reruns of the gated benches on hosted runners
+# were 12.4, 17.3, 19.7, 20.8, 29.4, 33.7 and 41.0 in absolute value (the worst
+# 41.0, a native unpad_ct; the others are at 1 to 3), and the leaky controls were
+# at 9.0e3 (WebAssembly, the lowest) to 4.3e4 at 10^5, so at least 2.8e4 at the
+# rerun of 10^6. 500 is twelve times the worst noise seen and more than fifty
+# times below the weakest leak the controls show; an early exit in the three
+# 32-byte comparisons is thousands. The run that decides
 # is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
 # LANBox; a bench over 4.5 is measured again with 10^7), whose result is
 # committed in ct/results/dudect-lanbox.md.
@@ -107,6 +112,8 @@ jobs:
         run: ct/run.sh triage
       - name: ct_select_bytes reads both slices
         run: ct/run.sh select-asm
+      - name: The assembly check flags a known-bad select (negative control)
+        run: ct/run.sh select-asm-negative
       - name: Keep the reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -147,6 +154,8 @@ jobs:
         run: ct/run.sh wasm-selftest
       - name: Only allow-listed instructions in our functions (wasm_scan_only_allowlisted)
         run: ct/run.sh wasm-scan
+      - name: The allow list is what a regeneration gives (nothing new in a key-handling function without approval)
+        run: ct/run.sh wasm-allow-check
       - name: The scanned module is the shipped module
         run: ct/run.sh wasm-shipped
       - name: Keep the scan report
@@ -190,7 +199,7 @@ jobs:
         run: |
           cargo fmt --check --manifest-path ct/dudect/Cargo.toml
           cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
-      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 100 a failure)
+      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 500 a failure)
         env:
           CT_SMOKE: "1"
           FERRET_CT_N: "100000"

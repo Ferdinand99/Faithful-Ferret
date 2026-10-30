@@ -2,6 +2,7 @@
 # The timing tests (ct/dudect) have a Cargo.lock of their own. This checks that
 #   * every crate of the tree of ferret-core in ct/dudect has the same version
 #     as in the root workspace, so the timing is of the code that ships, and
+#     every crate that both locks have at the same version has the same checksum,
 #   * the [profile.release] of ct/dudect is a copy of the one in the root.
 # Run it where cargo is (the builder image, CI).
 set -euo pipefail
@@ -18,6 +19,16 @@ extra="$(comm -13 <(tree Cargo.toml normal,build,dev) <(tree ct/dudect/Cargo.tom
 if [ -n "$extra" ]; then
   echo "FAIL: ct/dudect resolves these crates of the tree of ferret-core to versions that the root lock does not use:" >&2
   echo "$extra" >&2
+  fail=1
+fi
+
+# The same crate at the same version must have the same checksum in both locks
+# (a different source or a re-published crate would have another).
+sums() { awk '/^name = /{n=$3} /^version = /{v=$3} /^checksum = /{print n, v, $3}' "$1" | tr -d '"' | sort -u; }
+changed="$(awk 'NR==FNR{ck[$1" "$2]=$3; next} ($1" "$2) in ck && ck[$1" "$2]!=$3 {print $1, $2}'   <(sums Cargo.lock) <(sums ct/dudect/Cargo.lock))"
+if [ -n "$changed" ]; then
+  echo "FAIL: these crates have another checksum in ct/dudect/Cargo.lock than in Cargo.lock:" >&2
+  echo "$changed" >&2
   fail=1
 fi
 

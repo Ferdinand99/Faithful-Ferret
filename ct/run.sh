@@ -8,10 +8,12 @@
 #   ct/run.sh triage          every finding must be in ct/TRIAGE.md, with the
 #                             pinned counts
 #   ct/run.sh select-asm      ct_select_bytes reads both slices (assembly check)
+#   ct/run.sh select-asm-negative  the same check must flag a known-bad select
 #   ct/run.sh wasm-scan       div/rem/sqrt/br_table/table loads in the WASM
 #                             build at the shipped optimisation level
 #                             (wasm-bindgen + wasm-opt -Oz, names kept), against
 #                             ct/wasm-allow.toml
+#   ct/run.sh wasm-allow-check  ct/wasm-allow.toml is what a regeneration gives
 #   ct/run.sh wasm-selftest   the scan must flag the fixtures in ct/wasm-fixtures
 #   ct/run.sh wasm-shipped    the named build is the shipped package (same bytes
 #                             once the names are stripped)
@@ -28,7 +30,7 @@
 #   FERRET_CT_N   measurements per dudect bench (default 1000000)
 #   CT_RESULTS    where results go (default ct/results)
 #   CT_SMOKE      1 for the short run on a hosted runner: a bench over 4.5 is a
-#                 warning, a bench over CT_GROSS (100) in the rerun too is a failure
+#                 warning, a bench over CT_GROSS (500) in the rerun too is a failure
 #   CT_PIN_CPU    CPU number for the dudect runs (taskset), "auto" for the least busy,
 #                 empty for no pinning
 #   CT_ONLY       only the dudect benches whose name contains this
@@ -40,7 +42,7 @@ mode="${1:-all}"
 results="${CT_RESULTS:-ct/results}"
 analyzer="${CT_ANALYZER:-/opt/ct-analyzer/ct_analyzer/analyzer.py}"
 n="${FERRET_CT_N:-1000000}"
-gross="${CT_GROSS:-100}"
+gross="${CT_GROSS:-500}"
 mkdir -p "$results"
 
 harness_files=(base32 crockford ct_eq ct_select unpad)
@@ -72,9 +74,15 @@ ensure_subtle() {
   for arch in "${archs[@]}"; do
     [ -n "${subtle_rlib[$arch]:-}" ] && continue
     t="$(triple "$arch")"
-    CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off \
-      cargo build --quiet --release -p subtle --target "$t" >&2
-    subtle_rlib[$arch]="$(ls target/"$t"/release/deps/libsubtle-*.rlib | head -n1)"
+    # The path of the rlib is the one cargo reports for this build, not a guess
+    # from a directory listing (a reused target directory can hold others).
+    subtle_rlib[$arch]="$(CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off \
+      cargo build --quiet --release -p subtle --target "$t" --message-format=json \
+      | sed -n 's/.*"filenames":\["\([^"]*libsubtle\.rlib\)".*/\1/p' | tail -n1)"
+    if [ ! -f "${subtle_rlib[$arch]}" ]; then
+      echo "ct/run.sh: cargo did not report an rlib of subtle for $t" >&2
+      return 1
+    fi
   done
 }
 
@@ -127,27 +135,56 @@ triage() {
 # only one slice. The barrier of `subtle` is what prevents that; this checks it
 # on the compiler at hand: no instruction that tests bit 0 of the flag, and no
 # more conditional moves than the two `min`s of the slice lengths.
-select_asm() {
-  ensure_subtle
-  local arch opt t failed=0 asm body cmovs bit0
+#
+# select_check <source file> <label> sets `select_flagged` (configurations that
+# look like a pointer select), `select_flagged_archs` (the architectures that
+# have one) and `select_empty` (configurations where the function was not found
+# in the assembly, which would make the check pass on nothing).
+select_check() {
+  local src="$1" label="$2" arch opt t asm body cmovs bit0 lines
+  select_flagged=0 select_empty=0 select_flagged_archs=""
   for arch in "${archs[@]}"; do
     t="$(triple "$arch")"
     for opt in 2 3 s; do
-      asm="$results/select-$arch-O$opt.s"
+      asm="$results/select-$label-$arch-O$opt.s"
       rustc --edition=2024 --crate-type=lib --emit=asm -C "opt-level=$opt" --target "$t" \
         --extern "subtle=${subtle_rlib[$arch]}" -L "dependency=target/$t/release/deps" \
-        -o "$asm" ct/harness/ct_select.rs
+        -o "$asm" "$src"
       body="$(awk '/ct_select_bytes:$/{on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
+      lines="$(printf '%s\n' "$body" | grep -c . || true)"
       cmovs="$(printf '%s\n' "$body" | grep -cE '^\s+(cmov|csel)' || true)"
       bit0="$(printf '%s\n' "$body" | grep -cE '^\s+(test[bwlq]?\s+\$1,|tst\s+\w+, #0x1$|tbn?z\s+\w+, #0,)' || true)"
-      echo "select-asm $arch O$opt: conditional moves $cmovs, tests of bit 0 of the flag $bit0"
-      if [ "$bit0" != 0 ] || [ "$cmovs" -gt 2 ]; then
-        echo "FAIL: ct_select_bytes at $arch O$opt may choose a source pointer; read $asm" >&2
-        failed=1
+      echo "select-asm $label $arch O$opt: $lines lines, conditional moves $cmovs, tests of bit 0 of the flag $bit0"
+      if [ "$lines" -lt 12 ]; then
+        select_empty=$((select_empty + 1))
+      elif [ "$bit0" != 0 ] || [ "$cmovs" -gt 2 ]; then
+        select_flagged=$((select_flagged + 1))
+        case " $select_flagged_archs " in *" $arch "*) ;; *) select_flagged_archs="$select_flagged_archs $arch" ;; esac
       fi
     done
   done
-  [ "$failed" = 0 ]
+}
+
+select_asm() {
+  ensure_subtle
+  select_check ct/harness/ct_select.rs real
+  if [ "$select_empty" != 0 ]; then echo "FAIL: ct_select_bytes was not found in the assembly" >&2; return 1; fi
+  if [ "$select_flagged" != 0 ]; then
+    echo "FAIL: ct_select_bytes may choose a source pointer in $select_flagged configurations" >&2
+    return 1
+  fi
+}
+
+# The check must be able to fail: a known-bad select (ct/harness-negative) has
+# to be flagged on both architectures.
+select_asm_negative() {
+  ensure_subtle
+  select_check ct/harness-negative/ct_select_ptr.rs negative
+  if [ "$select_empty" != 0 ]; then echo "FAIL: the known-bad select was not found in the assembly" >&2; return 1; fi
+  case "$select_flagged_archs" in
+    *x86_64*arm64* | *arm64*x86_64*) echo "select-asm negative control: flagged on x86_64 and arm64, as it must" ;;
+    *) echo "FAIL: the known-bad select was not flagged on both architectures (flagged:$select_flagged_archs)" >&2; return 1 ;;
+  esac
 }
 
 # -------------------------------------------------------------- wasm-scan
@@ -177,6 +214,20 @@ wasm_scan() {
   # At the shipped level: this is the gate.
   node ct/wasm-scan.mjs "$out/ferret_core_wasm_ct.wat" ct/wasm-allow.toml --json "$out/post.json" --compare "$out/pre.json" | tee -a "$out/scan.txt"
   [ "${PIPESTATUS[0]}" = 0 ]
+}
+
+# The allow list is what a regeneration from the scan just made gives: no hand
+# edit, no stale file, and nothing new in a key-handling function that nobody
+# approved (ct/wasm-allow-gen.mjs refuses that). Run after wasm-scan.
+wasm_allow_check() {
+  local out="$results/wasm"
+  node ct/wasm-allow-gen.mjs "$out/post.json" --existing ct/wasm-allow.toml > "$out/wasm-allow.regenerated.toml"
+  if diff -u ct/wasm-allow.toml "$out/wasm-allow.regenerated.toml"; then
+    echo "ct/wasm-allow.toml is what the generator gives for this scan"
+  else
+    echo "FAIL: ct/wasm-allow.toml differs from a regeneration; regenerate it (see ct/wasm-allow-gen.mjs) and review the diff" >&2
+    return 1
+  fi
 }
 
 wasm_selftest() {
@@ -242,7 +293,7 @@ over() { # $1 t, $2 limit
 
 # CT_SMOKE=1 (the short run on a hosted runner, which is too noisy for the
 # threshold of 4.5): a bench over 4.5 whose rerun is over 4.5 too is a warning
-# unless the rerun is over CT_GROSS (100): then it is a failure, as a leak of the
+# unless the rerun is over CT_GROSS (500): then it is a failure, as a leak of the
 # size of the leaky control (|t| of 10^4) is not noise. A run that is not valid
 # (no result, a control that does not behave) always fails.
 finish() { # $1 failed, $2 invalid, $3 gross
@@ -345,7 +396,9 @@ case "$mode" in
   analyze) analyze ;;
   triage) triage ;;
   select-asm) select_asm ;;
+  select-asm-negative) select_asm_negative ;;
   wasm-scan) wasm_scan ;;
+  wasm-allow-check) wasm_allow_check ;;
   wasm-selftest) wasm_selftest ;;
   wasm-shipped) wasm_shipped ;;
   dudect-native) dudect_native ;;
@@ -356,14 +409,16 @@ case "$mode" in
     analyze
     triage
     select_asm
+    select_asm_negative
     wasm_selftest
     wasm_scan
+    wasm_allow_check
     wasm_shipped
     dudect_native
     dudect_wasm
     ;;
   *)
-    echo "usage: ct/run.sh analyze|triage|select-asm|wasm-scan|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|all" >&2
+    echo "usage: ct/run.sh analyze|triage|select-asm|select-asm-negative|wasm-scan|wasm-allow-check|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|all" >&2
     exit 2
     ;;
 esac

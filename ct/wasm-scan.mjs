@@ -21,6 +21,13 @@
 //     (`local.get i ; i32.const 1048700 ; i32.add ; i32.load8_u`). A static
 //     address is one at or above the start of the data segment.
 //
+// What it does not see: an address that was built with an add, put in a local
+// with `local.set` or `local.tee` and loaded from there, and stores. Tried and
+// dropped: flagging every load from a local that was ever set from an add gives
+// thousands of hits, as wasm-opt keeps every running pointer of a loop that way;
+// telling a table lookup from a pointer increment needs data flow that this
+// scan does not have. The pins per function bound what a miss can hide. Parked.
+//
 // and puts each function in a class by its name: `ferret_core`, `binding`
 // (ferret_core_wasm), `unnamed` (a function without a name, which wasm-opt may
 // have made), or another crate (argon2, sha2, core, alloc, ...). The first
@@ -254,8 +261,13 @@ if (gate) {
     }
   }
   for (const e of allow) {
+    // `max` is exact: slack that is left over would absorb a later hit of the
+    // same kind in the same function.
     if (e.used > e.max) {
       console.log(`  FAIL     the entry for ${e.function} / ${e.instruction} allows ${e.max}, found ${e.used}`);
+      failed = true;
+    } else if (e.used < e.max && e.used > 0) {
+      console.log(`  FAIL     the entry for ${e.function} / ${e.instruction} allows ${e.max}, found ${e.used}; regenerate (ct/wasm-allow-gen.mjs) and review the diff`);
       failed = true;
     }
   }
@@ -270,7 +282,12 @@ for (const [cls, t] of others) {
 if (others.length === 0) console.log("  none");
 
 if (gate) {
-  for (const e of allow) if (e.used === 0) console.log(`note: allow entry for ${e.function} / ${e.instruction} matched nothing`);
+  for (const e of allow) {
+    if (e.used === 0) {
+      console.log(`  FAIL     the entry for ${e.function} / ${e.instruction} matched nothing; regenerate and review the diff`);
+      failed = true;
+    }
+  }
   console.log(failed ? "\nwasm-scan: FAILED" : "\nwasm-scan: ok (every hit in our functions is allowed, within its max)");
 }
 process.exitCode = failed ? 1 : 0;

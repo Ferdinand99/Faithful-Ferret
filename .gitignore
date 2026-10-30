@@ -15,6 +15,6 @@ node_modules/
 /target-cov/
 
 # Output of the constant-time runs (ct/run.sh); only the decisive dudect result
-# written by scripts/lanbox-ct.sh is committed
+# written by scripts/lanbox-ct.sh, and other notes in .md files, are committed
 /ct/results/*
-!/ct/results/dudect-lanbox.md
+!/ct/results/*.md

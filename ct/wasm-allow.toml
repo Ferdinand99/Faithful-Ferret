@@ -238,43 +238,43 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R4). The decrypted item body (CBOR),
 function = "^ferret_core::codes::decode_recovery_key$"
 instruction = "br_table"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed recovery key code: a match on how the length of the typed code compares with the expected length (too short, too long, right), and on the error kind: public lengths. The letters of the key are read by crockford::decode_symbols, which wasm-opt left as a call and which has no hit."
 
 [[allow]]
 function = "^ferret_core::codes::decode_recovery_key$"
 instruction = "i32\\.load\\(const-add\\)"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed recovery key code: the prefix `FFR1` is compared with the constant prefix, byte `i` of the typed text (folded by normalize_byte) against byte `i` of the static prefix, i being the loop counter; the branch on the comparison is on the prefix, which is public (the typed letters of the key come after it)."
 
 [[allow]]
 function = "^ferret_core::codes::decode_recovery_key$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed recovery key code: the copy of the typed characters into a fixed buffer at `base + count`, and the read of the constant prefix bytes at `base + loop counter`: the index is a count, a character is only stored."
 
 [[allow]]
 function = "^ferret_core::codes::decode_secret_key$"
 instruction = "br_table"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed secret key code: a match on how the length of the typed code compares with the expected length (too short, too long, right), and on the error kind: public lengths. The letters of the key are read by crockford::decode_symbols, which wasm-opt left as a call and which has no hit."
 
 [[allow]]
 function = "^ferret_core::codes::decode_secret_key$"
 instruction = "i32\\.load\\(const-add\\)"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed secret key code: the prefix `FFS1` is compared with the constant prefix, byte `i` of the typed text (folded by normalize_byte) against byte `i` of the static prefix, i being the loop counter; the branch on the comparison is on the prefix, which is public (the typed letters of the key come after it)."
 
 [[allow]]
 function = "^ferret_core::codes::decode_secret_key$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "The typed secret key code: the copy of the typed characters into a fixed buffer at `base + count`, and the read of the constant prefix bytes at `base + loop counter`: the index is a count, a character is only stored."
 
 [[allow]]
 function = "^ferret_core::envelope::encrypt_manifest$"
 instruction = "i32\\.div_u"
 max = 3
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "The length of the list of manifest entries divided by the size of one entry, when the vectors are sized: element sizes of a public list (the entries are public data of the manifest)."
 
 [[allow]]
 function = "^ferret_core::export::plain::export_plain_csv::\\{closure#2\\}$"
@@ -346,31 +346,31 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R4). The decrypted item body (CBOR),
 function = "^ferret_core::integrity::checkpoint::verify_checkpoint$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "A match on the state of a row (live or deleted) of the checkpoint, which the server states; the MAC and the digest are compared by mac_eq, which has no hit."
 
 [[allow]]
 function = "^ferret_core::integrity::checkpoint::verify_checkpoint$"
 instruction = "i32\\.div_u"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "The length of the checkpoint entries divided by the size of one entry (a public length of a public blob)."
 
 [[allow]]
 function = "^ferret_core::integrity::checkpoint::verify_checkpoint$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 2
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "Walking the rows of the checkpoint at `base + index`: the rows are public data that the server stores; the index is the loop counter."
 
 [[allow]]
 function = "^ferret_core::integrity::proof::proof_message$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "The static label and name of the operation, chosen by a match on the operation (public); the account id, nonce and hash are copied by the TLV builder, not used as an address."
 
 [[allow]]
 function = "^ferret_core::integrity::rekey::manifest_next$"
 instruction = "i32\\.div_u"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "Iterating the manifest's list of unlock methods to find the highest key generation: the element size of a public list."
 
 [[allow]]
 function = "^ferret_core::item::body::FieldKind>::as_str$"
@@ -526,13 +526,13 @@ reason = "Public text: server addresses, QR text, origins, relying party ids, th
 function = "^ferret_core::pinning::MethodKey>::of$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "A match on the unlock method of a record (password, recovery key, passkey, or a local method that has no floor): a public tag."
 
 [[allow]]
 function = "^ferret_core::pinning::Pinned>::after_flow$"
 instruction = "br_table"
 max = 2
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "A match on the kind of method key (password, recovery key, passkey) of a floor that is checked and raised: a public tag; the generation numbers are public counters."
 
 [[allow]]
 function = "^ferret_core::prim::argon2::argon2id$"
@@ -562,7 +562,7 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R6). The `argon2` crate, inlined int
 function = "^ferret_core::secret::PrfOutput>::from_slice$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "A match on how the length of the bytes handed in compares with 32 (too short, too long, right): a public length. The bytes are copied into the key, not used as an address."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
@@ -610,7 +610,7 @@ reason = "Public text: server addresses, QR text, origins, relying party ids, th
 function = "^ferret_core::text::password::MasterPassword>::opaque_input$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "A match on whether a password policy was checked and which one, and whether a secret key is present: public flags. The password bytes are copied into the wiped buffer."
 
 [[allow]]
 function = "^ferret_core::text::unicode::normalize_password$"
@@ -634,7 +634,7 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normaliz
 function = "^ferret_core::tlv::Tlv>::label$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "The bytes of a label (a public ASCII constant such as `ferret/v1/wrap`) are read at `base + index` while they are copied into the message."
 
 [[allow]]
 function = "^ferret_core::totp::parse_otpauth$"
@@ -670,19 +670,19 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth 
 function = "^ferret_core::wrap::unwrap_vk$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "Opening a wrap: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit, before the AEAD is opened."
 
 [[allow]]
 function = "^ferret_core::wrap::wrap_aad$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "Building the AAD of a wrap: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call."
 
 [[allow]]
 function = "^ferret_core::wrap::wrap_vk$"
 instruction = "br_table"
 max = 1
-reason = "A match on an enum (the unlock method, the error kind, the pinned field, the operation) or the labels of the TLV builder (public ASCII constants), and loads and element-size divisions on slices whose lengths are public. The key commitment, the tags and the MACs are compared by ct_eq, which has no hit."
+reason = "Wrapping the vault key: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit."
 
 [[allow]]
 function = "^totp_parse multivalue shim$"
