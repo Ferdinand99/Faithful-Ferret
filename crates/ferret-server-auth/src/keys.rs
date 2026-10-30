@@ -356,6 +356,41 @@ mod tests {
     }
 
     #[test]
+    fn a_first_start_creates_and_the_next_start_loads() {
+        let dir = std::env::temp_dir().join(format!("ferret-keys-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first =
+            load_or_create(&dir, CreatePolicy::CreateIfMissing, &mut TestRng::new(b"u")).unwrap();
+        assert_eq!(first.setup_origin, FileOrigin::Created);
+        assert_eq!(first.prelogin_origin, FileOrigin::Created);
+        let second =
+            load_or_create(&dir, CreatePolicy::MustExist, &mut TestRng::new(b"v")).unwrap();
+        assert_eq!(second.setup_origin, FileOrigin::Existing);
+        assert_eq!(second.keys.fingerprint(), first.keys.fingerprint());
+        assert_eq!(second.prelogin.as_bytes(), first.prelogin.as_bytes());
+        // A missing directory is no missing file.
+        assert_eq!(
+            load_or_create(
+                &dir.join("none"),
+                CreatePolicy::MustExist,
+                &mut TestRng::new(b"w")
+            )
+            .map(drop),
+            Err(SecretFileError::Missing)
+        );
+        assert!(matches!(
+            load_or_create(
+                &dir.join("none"),
+                CreatePolicy::CreateIfMissing,
+                &mut TestRng::new(b"w")
+            )
+            .map(drop),
+            Err(SecretFileError::Io(_))
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn restored_keys_answer_like_the_original() {
         let original = ServerKeys::generate(&mut TestRng::new(b"restore"));
         let restored = ServerKeys::from_payload(&original.payload()).unwrap();
@@ -365,6 +400,9 @@ mod tests {
             .message
             .serialize()
             .to_vec();
+        // Anything but 128 bytes is no set-up.
+        let payload = original.payload();
+        assert!(ServerKeys::from_payload(&payload[..127]).is_err());
         let first = answer(&original, &request);
         // The evaluated element (32) and the server public key (32).
         assert_eq!(first.len(), 64);

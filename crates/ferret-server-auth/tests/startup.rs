@@ -355,6 +355,37 @@ fn write_new_refuses_a_payload_of_the_wrong_length_and_writes_nothing() {
 }
 
 #[test]
+fn an_error_of_the_file_system_keeps_only_its_kind() {
+    let dir = TempDir::new();
+    let file = dir.path().join("plain");
+    std::fs::write(&file, b"x").unwrap();
+    // A path below a file: not "missing", an error of the file system.
+    assert!(matches!(
+        read_secret_file(&file.join("prelogin_secret"), FileKind::PreloginSecret).map(drop),
+        Err(SecretFileError::Io(_))
+    ));
+}
+
+#[test]
+fn a_truncated_file_is_waited_for_and_then_refused() {
+    let dir = TempDir::new();
+    load_or_create(dir.path(), CreatePolicy::CreateIfMissing, &mut rng("short")).unwrap();
+    let path = dir.path().join(OPAQUE_SETUP_FILE);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.truncate(100);
+    std::fs::write(&path, &bytes).unwrap();
+    // Another start might still be writing it, so the loader looks again for
+    // a moment (two seconds) before it gives up.
+    let started = std::time::Instant::now();
+    assert_eq!(
+        load_or_create(dir.path(), CreatePolicy::MustExist, &mut rng("x")).map(drop),
+        Err(SecretFileError::BadLength)
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+}
+
+#[test]
 fn the_loader_reads_at_most_4_kib() {
     let dir = TempDir::new();
     let path = dir.path().join("prelogin_secret");

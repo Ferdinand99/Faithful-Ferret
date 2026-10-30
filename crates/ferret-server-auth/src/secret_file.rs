@@ -247,14 +247,10 @@ pub fn decode_secret_file(
     if bytes.get(..seen) != MAGIC.get(..seen) {
         return Err(SecretFileError::BadMagic);
     }
-    let Some((header, rest)) = bytes.split_at_checked(HEADER_LEN) else {
+    let Some((header, rest)) = bytes.split_first_chunk::<HEADER_LEN>() else {
         return Err(SecretFileError::BadLength);
     };
-    let Ok([_, _, _, _, version, file_kind, suite, len_high, len_low]) =
-        <[u8; HEADER_LEN]>::try_from(header)
-    else {
-        return Err(SecretFileError::BadLength);
-    };
+    let [_, _, _, _, version, file_kind, suite, len_high, len_low] = *header;
     if version != FORMAT_VERSION {
         return Err(SecretFileError::UnsupportedVersion(version));
     }
@@ -286,6 +282,20 @@ pub fn decode_secret_file(
     Ok(Zeroizing::new(payload.to_vec()))
 }
 
+/// Whether two looks at a path are at the same file (same device and inode).
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (a.dev() == b.dev()) & (a.ino() == b.ino())
+}
+
+/// Without device and inode numbers the loader cannot compare; it relies on
+/// the look at the open handle alone.
+#[cfg(not(unix))]
+fn same_file(_a: &std::fs::Metadata, _b: &std::fs::Metadata) -> bool {
+    true
+}
+
 /// Whether this platform lets the loader check and set file permissions.
 ///
 /// `true` on Unix. On other platforms the loader cannot tell who may read a
@@ -314,16 +324,14 @@ pub fn read_secret_file(
     }
     let file = File::open(path).map_err(|e| io_error(&e))?;
     let meta = file.metadata().map_err(|e| io_error(&e))?;
-    if !meta.is_file() {
+    // The handle must be a regular file, and the file the path showed a moment
+    // ago. (`&` and not `&&`: one decision, no short cut.)
+    if !(meta.is_file() & same_file(&before, &meta)) {
         return Err(SecretFileError::NotARegularFile);
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        // The handle must be the file the path showed a moment ago.
-        if meta.dev() != before.dev() || meta.ino() != before.ino() {
-            return Err(SecretFileError::NotARegularFile);
-        }
+        use std::os::unix::fs::PermissionsExt;
         let mode = meta.permissions().mode();
         if mode & 0o077 != 0 {
             return Err(SecretFileError::PermissionsTooOpen {
@@ -384,22 +392,23 @@ fn create_and_fill(
     })?;
     let written = fill(&mut file, bytes).and_then(|()| file.sync_all());
     drop(file);
-    let synced = written.and_then(|()| sync_directory(path));
-    if let Err(error) = synced {
-        // Best effort: the error to report is the first one.
-        let _ = std::fs::remove_file(path);
-        return Err(SecretFileError::Io(error.kind()));
-    }
-    Ok(())
+    written
+        .and_then(|()| sync_directory(path))
+        .map_err(|error| {
+            // Best effort: the error to report is the first one.
+            let _ = std::fs::remove_file(path);
+            SecretFileError::Io(error.kind())
+        })
 }
 
 /// Syncs the directory that holds `path`, so the new entry survives a crash.
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
+    // A bare file name has the empty path as its parent: that is ".".
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     File::open(parent)?.sync_all()
 }
 
