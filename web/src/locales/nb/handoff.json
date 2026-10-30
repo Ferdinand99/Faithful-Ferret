@@ -1,0 +1,5 @@
+{
+  "handoff.failed": "Kunne ikke overlevere innloggingen til administrasjonssidene.",
+  "handoff.retry": "Prøv igjen",
+  "handoff.working": "Sender deg til administrasjonssidene…"
+}

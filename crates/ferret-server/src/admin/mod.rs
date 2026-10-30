@@ -12,11 +12,15 @@ pub mod redirects;
 pub mod settings;
 
 use axum::Router;
+use axum::extract::FromRef;
+
+use crate::config::Origins;
 
 /// The routes of the admin listener that are not the kit's and need no session.
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
+    Origins: FromRef<S>,
 {
     Router::new()
         .merge(redirects::routes())

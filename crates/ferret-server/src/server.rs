@@ -74,11 +74,16 @@ pub fn admin_router(state: FerretState) -> Router {
         .route("/static/{*path}", get(vole_kit::http::assets::static_asset))
         .merge(admin::routes())
         .merge(auth::routes_admin())
-        .merge(kit_pages::public_router());
+        .merge(kit_pages::public_router().layer(from_fn_with_state(
+            state.clone(),
+            admin::guard::end_session_on_logout,
+        )));
     let app = kit_protected
         .merge(open)
         .fallback(vole_kit::http::error::not_found)
         .with_state(state.clone())
+        // Inside the kit's CSRF layer, so a refused request is refused first.
+        .layer(from_fn(admin::guard::block_unsupported_kit_routes))
         .layer(from_fn_with_state(core.clone(), guard::csrf_guard))
         .layer(from_fn_with_state(core, vole_kit::i18n::layer))
         .layer(from_fn(vole_kit::http::error::negotiate))

@@ -73,6 +73,15 @@ pub const fn limits(origin: Origin) -> (i64, i64) {
     }
 }
 
+/// Whether `row` is within the limits of its origin at `now`: not idle for
+/// longer than the idle limit and not older than the absolute limit. Both
+/// limits are inclusive.
+pub fn within_limits(row: &SessionRow, now: i64) -> bool {
+    let (idle, absolute) = limits(row.origin);
+    now.saturating_sub(row.last_seen).max(0) <= idle
+        && now.saturating_sub(row.issued_at).max(0) <= absolute
+}
+
 /// A session to insert.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSession {
@@ -218,7 +227,7 @@ pub fn clear_cookies(jar: SignedCookieJar) -> SignedCookieJar {
 /// A cookie that, passed to `remove`, deletes `name`. Unlike the kit's, it is
 /// `Secure`: a browser ignores a `__Host-` cookie without the flag, deletions
 /// included.
-fn removal(name: &'static str) -> Cookie<'static> {
+pub(crate) fn removal(name: &'static str) -> Cookie<'static> {
     let mut cookie = Cookie::from(name);
     cookie.set_path("/");
     cookie.set_secure(true);
@@ -226,15 +235,34 @@ fn removal(name: &'static str) -> Cookie<'static> {
     cookie
 }
 
-/// Ends the session `sid` at `now`. `true` if a live session was ended, `false`
-/// if there is none or it was ended before. The row stays: a session id is not
-/// used twice.
+/// Ends the session `sid` at `now`, and every session that was handed over
+/// from it (the admin sessions made from a vault session: signing out of the
+/// vault signs out of the admin pages that came from it; the other way round
+/// ends only the admin session). `true` if a live session `sid` was ended,
+/// `false` if there is none or it was ended before. The rows stay: a session id
+/// is not used twice.
 pub fn revoke(conn: &Connection, sid: &SidHash, now: i64) -> rusqlite::Result<bool> {
     let changed = conn.execute(
         "UPDATE ferret_sessions SET revoked_at = ?2 WHERE sid_hash = ?1 AND revoked_at IS NULL",
         params![sid.0.as_slice(), now],
     )?;
+    // Also when `sid` was ended before: the children of a row that an earlier
+    // version of the code ended are ended now.
+    conn.execute(
+        "UPDATE ferret_sessions SET revoked_at = ?2 WHERE parent_sid = ?1 AND revoked_at IS NULL",
+        params![sid.0.as_slice(), now],
+    )?;
     Ok(changed > 0)
+}
+
+/// Records that session `child` was handed over from session `parent`, so that
+/// [`revoke`] of the parent ends the child too.
+pub fn set_parent(conn: &Connection, child: &SidHash, parent: &SidHash) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE ferret_sessions SET parent_sid = ?2 WHERE sid_hash = ?1",
+        params![child.0.as_slice(), parent.0.as_slice()],
+    )?;
+    Ok(())
 }
 
 /// Ends every live session of `user_id` at `now`, except `except` if given (the

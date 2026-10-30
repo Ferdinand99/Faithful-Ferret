@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src/**/*.mjs"]
+  "include": ["src/**/*.mjs", "admin/**/*.mjs"]
 }

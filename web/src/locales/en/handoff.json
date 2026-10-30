@@ -1,0 +1,5 @@
+{
+  "handoff.failed": "Could not hand the sign-in over to the admin pages.",
+  "handoff.retry": "Try again",
+  "handoff.working": "Taking you to the admin pages…"
+}

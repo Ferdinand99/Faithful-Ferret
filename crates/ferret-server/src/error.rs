@@ -171,6 +171,12 @@ impl ApiError {
 /// of the sign-in and the guards; 409 is a state that does not allow the call;
 /// 410 is a feed cursor that is too old; 413 is a size or a quota; 422 is
 /// content the server will not store.
+///
+/// `handoff_invalid` is 400 for every reason a hand-over code does not redeem
+/// (unknown, used, expired, wrong browser, ended parent session, another user's
+/// admin session): the call is made without a session, so 401 would tell the
+/// page that the user is signed out, and one status for every reason keeps the
+/// answer from saying which check failed.
 pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("unauthorized", StatusCode::UNAUTHORIZED),
     ("denied", StatusCode::UNAUTHORIZED),

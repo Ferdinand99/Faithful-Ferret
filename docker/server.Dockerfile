@@ -50,6 +50,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY ct/harness ./ct/harness
 COPY --from=web /src/web/dist ./web/dist
+# The hand-over page of the admin origin is compiled into the binary from here.
+COPY --from=web /src/web/admin ./web/admin
 
 RUN --mount=type=cache,id=ferret-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=ferret-cargo-git,target=/usr/local/cargo/git,sharing=locked \

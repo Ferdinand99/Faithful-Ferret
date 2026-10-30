@@ -29,6 +29,9 @@ pub const PENDING_2FA_COOKIE: &str = "__Host-ferret_2fa";
 /// Name of the cookie that holds the random session id of Ferret's own session
 /// (`ferret_sessions`), next to the kit's signed cookie.
 pub const SID_COOKIE: &str = "__Host-ferret_sid";
+/// Name of the cookie that holds the verifier of a hand-over to the admin
+/// origin, between `/auth/handoff/begin` and the redeeming of the code.
+pub const HANDOFF_COOKIE: &str = "__Host-ferret_handoff";
 /// The database file in the data directory.
 pub const DB_FILE: &str = "ferret.sqlite";
 

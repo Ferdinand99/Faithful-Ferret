@@ -36,7 +36,12 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
     let names: Vec<&str> = MIGRATION_FILES.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
-        ["0001_vault.sql", "0002_auth.sql", "0003_sessions.sql"]
+        [
+            "0001_vault.sql",
+            "0002_auth.sql",
+            "0003_sessions.sql",
+            "0004_handoff_links.sql"
+        ]
     );
     let mut sorted = names.clone();
     sorted.sort_unstable();
@@ -322,6 +327,20 @@ fn sessions_and_handoffs_keep_their_rules() {
     assert!(session(&[5; 32], "vault", "root").is_err(), "unknown scope");
     // The same hash twice is the same row: no INSERT OR IGNORE hides it.
     assert!(session(&[1; 32], "vault", "full").is_err());
+
+    // The parent link of a handed-over session is empty or 32 bytes.
+    let linked = |hash: &[u8], parent: Option<&[u8]>| {
+        conn.execute(
+            "INSERT INTO ferret_sessions (sid_hash, user_id, issued_at, origin, device_id, scope, last_seen, parent_sid)              VALUES (?1, ?2, 0, 'admin', ?3, 'full', 0, ?4)",
+            params![hash, user, &[1u8; 16][..], parent],
+        )
+    };
+    assert!(linked(&[6; 32], Some(&[1; 32][..])).is_ok());
+    assert!(linked(&[7; 32], None).is_ok());
+    assert!(
+        linked(&[8; 32], Some(&[1; 31][..])).is_err(),
+        "parent of 31 bytes"
+    );
 
     let handoff = |code: &[u8], sid: &[u8], purpose: &str, next: &str, challenge: &[u8]| {
         conn.execute(
