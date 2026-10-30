@@ -340,7 +340,7 @@ Both classes now run the same copies.
 
 `ct/results/dudect-lanbox-server.md` (`CT_ONLY=server CT_REPEAT=2
 scripts/lanbox-ct.sh dudect-native`, 10^6 measurements per bench, a bench over
-4.5 measured again with 10^7), taken while other agents built on the LANBox
+4.5 measured again with 10^7), taken while other builds ran on the LANBox
 (load average 21 at the start, the dudect process pinned to the least busy core):
 
 | bench | t at 10^6 (two runs) | result |
