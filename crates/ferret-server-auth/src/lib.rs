@@ -27,6 +27,12 @@
 //! A [`DenyReason`] is for the server's own log. An endpoint must not choose
 //! a status or a body from it.
 //!
+//! # Rate limits
+//!
+//! The library counts nothing. It asks a [`Throttle`] before it does any
+//! work for a request and reports the outcome afterwards. A refusal is an
+//! [`AuthError::Throttled`] with a wait between one second and one hour.
+//!
 //! # Features
 //!
 //! * `test-support` (off by default, never part of a release): the manual
@@ -57,12 +63,16 @@ pub mod clock;
 mod ct;
 pub mod error;
 pub mod ids;
+pub mod throttle;
 
 #[cfg(feature = "test-support")]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
 pub use error::{AuthError, DenyReason, ErrorClass, InternalKind, Malformed};
 pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
+pub use throttle::{Caller, NoThrottle, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
+#[cfg(feature = "test-support")]
+pub use throttle::{RecordingThrottle, ThrottleCall};
 
 /// How long the sealed state between `login_start` and `login_finish` lives,
 /// in seconds. The state is used once.
