@@ -10,6 +10,9 @@ ARG CARGO_VET_VERSION=0.10.3
 ARG CARGO_FUZZ_VERSION=0.13.2
 ARG CARGO_LLVM_COV_VERSION=0.9.1
 ARG WASM_PACK_VERSION=0.15.0
+# The nightly toolchain for cargo-fuzz and branch coverage. Keep it equal to
+# fuzz/NIGHTLY: the fuzz and coverage scripts name this toolchain.
+ARG NIGHTLY_TOOLCHAIN=nightly-2026-10-29
 ARG WASM_BINDGEN_CLI_VERSION=0.2.129
 ARG WASM_TOOLS_VERSION=1.262.0
 ARG NODE_VERSION=22.23.4
@@ -22,11 +25,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # The project toolchain (rust-toolchain.toml says channel "1.99"), with the
-# components and targets the checks need, plus a minimal nightly for cargo-fuzz.
+# components and targets the checks need, plus a pinned nightly for cargo-fuzz and
+# cargo llvm-cov --branch.
 RUN rustup toolchain install 1.99 --profile minimal \
         -c clippy -c rustfmt -c llvm-tools -t wasm32-unknown-unknown \
  && rustup default 1.99 \
- && rustup toolchain install nightly --profile minimal -c rust-src
+ && rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal -c rust-src -c llvm-tools
 
 # Node 22 (WASM tests in Node, ct scripts).
 RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \

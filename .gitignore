@@ -10,3 +10,6 @@ node_modules/
 
 # Output of the browser tests
 /tests/browser/results/
+
+# Output of scripts/lanbox-coverage.sh
+/target-cov/

@@ -6,8 +6,8 @@
 
 use ferret_core::integrity::{ENTRY_LEN, encode_entries, parse_entries};
 use ferret_core::{
-    AccountId, ItemId, RowState, ServerRow, UnlockedVault, VaultContext, VaultId,
-    VaultKey, make_checkpoint, verify_checkpoint,
+    AccountId, ItemId, RowState, ServerRow, UnlockedVault, VaultContext, VaultId, VaultKey,
+    make_checkpoint, verify_checkpoint,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -46,7 +46,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let vault = vault();
-    let cp = make_checkpoint(&vault, seq, entries.clone()).expect("a parsed list makes a checkpoint");
+    let cp =
+        make_checkpoint(&vault, seq, entries.clone()).expect("a parsed list makes a checkpoint");
     assert_eq!(cp.entries, entry_bytes);
 
     let rows: Vec<ServerRow> = row_bytes

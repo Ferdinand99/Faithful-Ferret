@@ -32,7 +32,15 @@ fuzz_target!(|data: &[u8]| {
 
     // 1. The bytes as KE2.
     let (_ke1, state) = opaque_login_start(&mut rng, &pw).expect("login start");
-    match login_finish_with(&mut rng, state, &pw, data, &ksf, Some(OPAQUE_CONTEXT), PinState::FirstUse) {
+    match login_finish_with(
+        &mut rng,
+        state,
+        &pw,
+        data,
+        &ksf,
+        Some(OPAQUE_CONTEXT),
+        PinState::FirstUse,
+    ) {
         Ok(_) => panic!("random bytes were accepted as a KE2"),
         Err(Error::Decrypt | Error::Malformed(MalformedKind::OpaqueMessage)) => {}
         Err(other) => panic!("unexpected error {other:?}"),

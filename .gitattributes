@@ -9,3 +9,7 @@
 *.dat text eol=lf
 *.mjs text eol=lf
 *.txt text eol=lf
+/fuzz/corpus/** -text
+/fuzz/regression/** -text
+/fuzz/dict/*.dict text eol=lf
+/fuzz/NIGHTLY text eol=lf

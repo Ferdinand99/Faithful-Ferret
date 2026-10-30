@@ -783,3 +783,26 @@ fn a_live_hash_of_32_zero_bytes_is_refused() {
         Err(Error::Malformed(MalformedKind::Entries))
     );
 }
+
+#[test]
+fn encode_entries_refuses_more_than_the_limit_and_repeated_ids() {
+    let one = |n: usize| {
+        let mut id = [0u8; 16];
+        id[8..].copy_from_slice(&u64::try_from(n).unwrap().to_be_bytes());
+        CheckpointEntry::tombstone(ItemId::from_bytes(id), 1)
+    };
+    let many: Vec<CheckpointEntry> = (0..=MAX_ENTRIES).map(one).collect();
+    assert_eq!(encode_entries(&many).err(), Some(Error::TooLarge));
+    // Exactly at the limit is fine, and the list is sorted.
+    let at_limit = &many[..MAX_ENTRIES];
+    assert_eq!(
+        encode_entries(at_limit).unwrap().len(),
+        MAX_ENTRIES * ENTRY_LEN
+    );
+    // The same id twice is not a checkpoint.
+    let twice = vec![one(1), one(1)];
+    assert_eq!(
+        encode_entries(&twice).err(),
+        Some(Error::Malformed(ferret_core::MalformedKind::Entries))
+    );
+}

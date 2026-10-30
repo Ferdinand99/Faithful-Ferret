@@ -1,0 +1,140 @@
+# Fuzzing of the parsers and verifiers of the core (plan section 9.2):
+# libFuzzer with AddressSanitizer through cargo-fuzz, on the pinned nightly
+# toolchain named in fuzz/NIGHTLY.
+#
+#   pull request  60 seconds per target
+#   every night   20 minutes per target; the grown corpus is cached from one
+#                 night to the next (per target) and kept as an artifact
+#
+# Every run first replays the seed corpus (fuzz/corpus, made from the test
+# vectors by scripts/fuzz-seeds.mjs) and the regression inputs of earlier
+# crashes (fuzz/regression/<target>/), so a fixed crash stays fixed.
+# Third-party actions are pinned by commit SHA.
+name: Fuzz
+
+on:
+  pull_request:
+    paths:
+      - "crates/ferret-core/**"
+      - "ct/harness/**"
+      - "fuzz/**"
+      - "scripts/fuzz-run.sh"
+      - "scripts/fuzz-seeds.mjs"
+      - "scripts/check-nightly-pin.sh"
+      - "docker/builder.Dockerfile"
+      - "vectors/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target (at most 2400)"
+        default: "1200"
+
+# A pull request run is replaced by a newer one. Nightly and manual runs each
+# have their own group, so one never waits for, or cancels, the other.
+concurrency:
+  group: fuzz-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_FUZZ_VERSION: "0.13.2"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  targets:
+    name: Targets and seeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The seed corpus is what the vectors give.
+      - run: node scripts/fuzz-seeds.mjs --check
+      # The nightly of fuzz/NIGHTLY is the one of the builder image.
+      - run: scripts/check-nightly-pin.sh
+      # The matrix is the list of targets in fuzz/Cargo.toml.
+      - id: list
+        run: |
+          list="$(sed -n 's/^name = "\(fuzz_[a-z_]*\)"$/\1/p' fuzz/Cargo.toml | jq -R -s -c 'split("\n")[:-1]')"
+          echo "$list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: ${{ matrix.target }}
+    needs: targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.list) }}
+    env:
+      SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '60' || (github.event.inputs.seconds || '1200') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check the time per target
+        run: |
+          case "$SECONDS_PER_TARGET" in '' | *[!0-9]*) echo "not a number" >&2; exit 1 ;; esac
+          [ "$SECONDS_PER_TARGET" -le 2400 ] || { echo "more than 2400 seconds does not fit the job" >&2; exit 1; }
+      - name: Install the pinned nightly toolchain
+        run: |
+          nightly="$(tr -d '[:space:]' < fuzz/NIGHTLY)"
+          rustup toolchain install "$nightly" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$nightly" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: fuzz
+      - run: cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"
+      # Nightly and manual runs go on from the corpus of the last night. A
+      # pull request neither reads nor writes it.
+      - name: Restore the corpus
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Replay the seeds and the regression inputs
+        run: bash scripts/fuzz-run.sh replay "${{ matrix.target }}"
+      - name: Fuzz
+        run: bash scripts/fuzz-run.sh run "${{ matrix.target }}" "$SECONDS_PER_TARGET"
+      # Saved also after a crash: the corpus is worth keeping, and the crash is
+      # in the artifact.
+      - name: Save the corpus
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### ${{ matrix.target }}'
+            echo '```'
+            cat fuzz/.out/*.summary 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the crash, the logs and the corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}
+            fuzz/.out/${{ matrix.target }}.*
+            fuzz/corpus/${{ matrix.target }}
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+          include-hidden-files: true
+          if-no-files-found: ignore

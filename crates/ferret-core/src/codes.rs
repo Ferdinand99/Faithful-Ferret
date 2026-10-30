@@ -321,4 +321,21 @@ mod tests {
             assert_eq!(decoded.spare, 0, "the padding bits are zero");
         }
     }
+
+    /// With an output shorter than the symbols fill, the bytes that fit are
+    /// written and the rest of the bit stream is dropped; nothing panics.
+    /// (The callers pass exact lengths; this is the documented behaviour of
+    /// the harness function for any other lengths.)
+    #[test]
+    fn symbol_unpacking_into_a_short_output_fills_what_fits() {
+        // Eight symbols are 40 bits, five bytes; the output holds two.
+        let mut short = [0u8; 2];
+        let decoded = decode_symbols(b"ZZZZZZZZ", &mut short);
+        assert!(decoded.all_valid);
+        assert_eq!(short, [0xff, 0xff]);
+        assert_eq!(decoded.spare, 0);
+        // An empty output takes none of them.
+        let mut none: [u8; 0] = [];
+        assert!(decode_symbols(b"ZZZZZZZZ", &mut none).all_valid);
+    }
 }

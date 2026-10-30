@@ -19,6 +19,10 @@ fn config() -> ProptestConfig {
         .unwrap_or(512);
     ProptestConfig {
         cases,
+        // `allowed_char` rejects the unassigned and control characters one by
+        // one; with tens of thousands of cases the default budget of 65 536
+        // rejects runs out although no property was violated.
+        max_local_rejects: 1 << 24,
         ..ProptestConfig::default()
     }
 }

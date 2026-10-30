@@ -514,6 +514,19 @@ pub(crate) fn seal_manifest_cbor<R: SecureRng>(
     cbor: &[u8],
 ) -> Result<SealedItem, Error> {
     let padded = pad::pad(cbor)?;
+    seal_manifest_padded(rng, vault, rev, &padded)
+}
+
+/// Seals an already padded manifest body.
+pub(crate) fn seal_manifest_padded<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    rev: u64,
+    padded: &[u8],
+) -> Result<SealedItem, Error> {
+    if !is_padded_len(padded.len()) {
+        return Err(Error::Malformed(MalformedKind::Envelope));
+    }
     let item_id = ItemId::MANIFEST;
     let aad = body_aad(
         AadHeader::new(KIND_MANIFEST),
@@ -522,7 +535,7 @@ pub(crate) fn seal_manifest_cbor<R: SecureRng>(
         &item_id,
         rev,
     )?;
-    let body = aead_seal(rng, vault.k_meta().expose(), &aad, &padded)?;
+    let body = aead_seal(rng, vault.k_meta().expose(), &aad, padded)?;
     let mut envelope = Vec::with_capacity(HEADER_LEN.saturating_add(body.len()));
     envelope.extend_from_slice(&[VERSION, SUITE, KIND_MANIFEST]);
     envelope.extend_from_slice(&body);

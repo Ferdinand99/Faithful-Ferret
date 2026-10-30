@@ -88,3 +88,17 @@ path = "fuzz_targets/fuzz_sheet.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_codes"
+path = "fuzz_targets/fuzz_codes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_mp_input"
+path = "fuzz_targets/fuzz_mp_input.rs"
+test = false
+doc = false
+bench = false

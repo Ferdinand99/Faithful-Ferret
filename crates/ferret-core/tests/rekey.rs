@@ -1070,3 +1070,26 @@ fn a_rekey_gives_the_pinned_record_to_store() {
         Some(Error::Pinned(PinnedField::VaultId))
     );
 }
+
+#[test]
+fn the_pinned_record_after_a_rekey_is_refused_for_a_bundle_that_does_not_fit() {
+    let f = fixture();
+    let old = pinned_for(&f.old, PASSWORD_FLOOR, RECOVERY_FLOOR);
+    let mut b = rekey(&f, "pinned refusals");
+    // Another account.
+    let mut other = old.clone();
+    other.account_id = ferret_core::AccountId::from_bytes([9; 16]);
+    assert_eq!(
+        b.pinned(&other).err(),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+    // A bundle with one wrap, or with a password wrap that is not one.
+    let recovery = b.wraps.pop().unwrap();
+    assert_eq!(
+        b.pinned(&old).err(),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    b.wraps.push(recovery);
+    b.wraps[0].method = Method::Recovery;
+    assert_eq!(b.pinned(&old).err(), Some(Error::Unsupported));
+}
