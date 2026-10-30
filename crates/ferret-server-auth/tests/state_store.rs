@@ -101,6 +101,16 @@ fn the_store_works_behind_a_trait_object_across_threads() {
     assert_send_sync::<InMemoryLoginStateStore>();
 }
 
+#[test]
+fn put_of_an_expired_entry_is_refused() {
+    testing::put_of_an_expired_entry_is_refused(make);
+}
+
+#[test]
+fn concurrent_put_respects_capacity() {
+    testing::concurrent_put_respects_capacity(make);
+}
+
 /// Stores with one deliberate mistake each. The checks of the suite must
 /// notice every one of them, or they would pass for any store.
 mod broken_stores {
@@ -110,20 +120,33 @@ mod broken_stores {
     use ferret_server_auth::testing;
     use ferret_server_auth::{LoginStateStore, SealedState, StateKey, StoreError};
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     enum Mistake {
         /// `take` reads, lets go of the lock, and removes later.
         NonAtomicTake,
+        /// `take` hands out the state but leaves it in the store.
+        TakeKeeps,
+        /// `put` checks for the key and the limit, lets go of the lock, and
+        /// stores later.
+        NonAtomicPut,
         /// `put` overwrites a live state.
         OverwriteOnPut,
+        /// `put` accepts a state that is already expired.
+        AcceptsExpiredPut,
         /// A state is still valid in the second of its expiry.
         ExpiresInclusive,
+        /// `take` never looks at the expiry.
+        NoExpiryCheck,
+        /// `take` of an expired state says nothing but leaves it in the store.
+        TakeLeavesExpired,
+        /// `purge_expired` removes every state, live ones too.
+        PurgeRemovesLive,
         /// A full store refuses instead of making room.
         NoEviction,
         /// A full store removes the newest state instead of the oldest.
         NewestOut,
-        /// `take` hands out the state but leaves it in the store.
-        TakeKeeps,
+        /// The store has no limit.
+        Unbounded,
     }
 
     struct Broken {
@@ -142,11 +165,47 @@ mod broken_stores {
             }
         }
 
+        fn is(&self, mistake: Mistake) -> bool {
+            self.mistake == Some(mistake)
+        }
+
         fn live(&self, expires_at: u64, now: u64) -> bool {
-            match self.mistake {
-                Some(Mistake::ExpiresInclusive) => now <= expires_at,
-                _ => now < expires_at,
+            if self.is(Mistake::NoExpiryCheck) {
+                return true;
             }
+            if self.is(Mistake::ExpiresInclusive) {
+                return now <= expires_at;
+            }
+            now < expires_at
+        }
+
+        /// The honest part of `put`, with the lock held by the caller.
+        fn insert(
+            &self,
+            states: &mut Vec<(StateKey, Vec<u8>, u64)>,
+            key: StateKey,
+            bytes: Vec<u8>,
+            expires_at: u64,
+            now: u64,
+        ) -> Result<(), StoreError> {
+            if let Some(at) = states.iter().position(|(k, _, _)| *k == key) {
+                if self.live(states[at].2, now) && !self.is(Mistake::OverwriteOnPut) {
+                    return Err(StoreError::Collision);
+                }
+                states.remove(at);
+            }
+            if states.len() >= self.capacity && !self.is(Mistake::Unbounded) {
+                if self.is(Mistake::NoEviction) {
+                    return Err(StoreError::Full);
+                }
+                if self.is(Mistake::NewestOut) {
+                    states.pop();
+                } else {
+                    states.remove(0);
+                }
+            }
+            states.push((key, bytes, expires_at));
+            Ok(())
         }
     }
 
@@ -158,52 +217,62 @@ mod broken_stores {
             expires_at: u64,
             now: u64,
         ) -> Result<(), StoreError> {
-            let mut states = self.states.lock().unwrap();
-            if let Some(at) = states.iter().position(|(k, _, _)| *k == key) {
-                let live = self.live(states[at].2, now);
-                if live && !matches!(self.mistake, Some(Mistake::OverwriteOnPut)) {
+            if now >= expires_at && !self.is(Mistake::AcceptsExpiredPut) {
+                return Err(StoreError::Expired);
+            }
+            let bytes = sealed.into_bytes();
+            if self.is(Mistake::NonAtomicPut) {
+                // Look first, store later: two puts can both pass the checks.
+                let (taken, full) = {
+                    let states = self.states.lock().unwrap();
+                    (
+                        states
+                            .iter()
+                            .any(|(k, _, e)| *k == key && self.live(*e, now)),
+                        states.len() >= self.capacity,
+                    )
+                };
+                if taken {
                     return Err(StoreError::Collision);
                 }
-                states.remove(at);
-            }
-            if states.len() >= self.capacity {
-                match self.mistake {
-                    Some(Mistake::NoEviction) => return Err(StoreError::Full),
-                    Some(Mistake::NewestOut) => {
-                        states.pop();
-                    }
-                    _ => {
-                        states.remove(0);
-                    }
+                std::thread::sleep(Duration::from_millis(2));
+                let mut states = self.states.lock().unwrap();
+                if full && !states.is_empty() {
+                    states.remove(0);
                 }
+                states.push((key, bytes, expires_at));
+                return Ok(());
             }
-            states.push((key, sealed.into_bytes(), expires_at));
-            Ok(())
+            let mut states = self.states.lock().unwrap();
+            self.insert(&mut states, key, bytes, expires_at, now)
         }
 
         fn take(&self, key: &StateKey, now: u64) -> Result<Option<SealedState>, StoreError> {
-            let entry = match self.mistake {
-                Some(Mistake::NonAtomicTake) => {
-                    // Read, let go of the lock, remove later.
-                    let found = {
-                        let states = self.states.lock().unwrap();
-                        states.iter().find(|(k, _, _)| k == key).cloned()
-                    };
-                    std::thread::sleep(Duration::from_millis(2));
-                    self.states.lock().unwrap().retain(|(k, _, _)| k != key);
-                    found
-                }
-                Some(Mistake::TakeKeeps) => {
+            let entry = if self.is(Mistake::NonAtomicTake) {
+                // Read, let go of the lock, remove later.
+                let found = {
                     let states = self.states.lock().unwrap();
                     states.iter().find(|(k, _, _)| k == key).cloned()
-                }
-                _ => {
-                    // Find and remove under one lock.
-                    let mut states = self.states.lock().unwrap();
-                    states
-                        .iter()
-                        .position(|(k, _, _)| k == key)
-                        .map(|at| states.remove(at))
+                };
+                std::thread::sleep(Duration::from_millis(2));
+                self.states.lock().unwrap().retain(|(k, _, _)| k != key);
+                found
+            } else if self.is(Mistake::TakeKeeps) {
+                let states = self.states.lock().unwrap();
+                states.iter().find(|(k, _, _)| k == key).cloned()
+            } else {
+                // Find and remove under one lock.
+                let mut states = self.states.lock().unwrap();
+                match states.iter().position(|(k, _, _)| k == key) {
+                    Some(at) if self.is(Mistake::TakeLeavesExpired) => {
+                        let entry = states[at].clone();
+                        if self.live(entry.2, now) {
+                            states.remove(at);
+                        }
+                        Some(entry)
+                    }
+                    Some(at) => Some(states.remove(at)),
+                    None => None,
                 }
             };
             Ok(entry.and_then(|(_, bytes, expires_at)| {
@@ -215,7 +284,11 @@ mod broken_stores {
         fn purge_expired(&self, now: u64) -> Result<usize, StoreError> {
             let mut states = self.states.lock().unwrap();
             let before = states.len();
-            states.retain(|(_, _, expires_at)| self.live(*expires_at, now));
+            if self.is(Mistake::PurgeRemovesLive) {
+                states.clear();
+            } else {
+                states.retain(|(_, _, expires_at)| self.live(*expires_at, now));
+            }
             Ok(before - states.len())
         }
     }
@@ -249,8 +322,26 @@ mod broken_stores {
 
     #[test]
     #[should_panic(expected = "assertion")]
+    fn a_put_that_is_not_atomic_is_caught_with_takers() {
+        testing::concurrent_put_and_take_never_duplicate(make(Some(Mistake::NonAtomicPut)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_put_that_is_not_atomic_is_caught_at_the_limit() {
+        testing::concurrent_put_respects_capacity(make(Some(Mistake::NonAtomicPut)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
     fn an_overwriting_put_is_caught() {
         testing::put_same_key_twice_is_collision(make(Some(Mistake::OverwriteOnPut)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_put_of_an_expired_state_is_caught() {
+        testing::put_of_an_expired_entry_is_refused(make(Some(Mistake::AcceptsExpiredPut)));
     }
 
     #[test]
@@ -261,9 +352,31 @@ mod broken_stores {
 
     #[test]
     #[should_panic(expected = "assertion")]
+    fn a_take_that_ignores_the_expiry_is_caught() {
+        testing::expiry_boundary(make(Some(Mistake::NoExpiryCheck)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
     fn a_purge_with_the_same_mistake_is_caught() {
         testing::expired_entries_are_removed_by_take_and_purge(make(Some(
             Mistake::ExpiresInclusive,
+        )));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_take_that_leaves_an_expired_state_is_caught() {
+        testing::expired_entries_are_removed_by_take_and_purge(make(Some(
+            Mistake::TakeLeavesExpired,
+        )));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_purge_that_removes_live_states_is_caught() {
+        testing::expired_entries_are_removed_by_take_and_purge(make(Some(
+            Mistake::PurgeRemovesLive,
         )));
     }
 
@@ -277,5 +390,17 @@ mod broken_stores {
     #[should_panic(expected = "assertion")]
     fn a_full_store_that_drops_the_newest_is_caught() {
         testing::capacity_evicts_oldest_first(make(Some(Mistake::NewestOut)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_store_without_a_limit_is_caught() {
+        testing::capacity_evicts_oldest_first(make(Some(Mistake::Unbounded)));
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn a_store_without_a_limit_is_caught_under_concurrent_puts() {
+        testing::concurrent_put_respects_capacity(make(Some(Mistake::Unbounded)));
     }
 }

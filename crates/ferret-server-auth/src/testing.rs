@@ -65,9 +65,11 @@ pub fn conformance<S: LoginStateStore>(make: impl Fn(usize) -> S) {
     expiry_boundary(&make);
     expired_entries_are_removed_by_take_and_purge(&make);
     put_same_key_twice_is_collision(&make);
+    put_of_an_expired_entry_is_refused(&make);
     capacity_evicts_oldest_first(&make);
     concurrent_take_yields_exactly_one(&make);
     concurrent_put_and_take_never_duplicate(&make);
+    concurrent_put_respects_capacity(&make);
 }
 
 /// A state is returned once; the second `take` finds nothing.
@@ -157,6 +159,36 @@ pub fn put_same_key_twice_is_collision<S: LoginStateStore>(make: impl Fn(usize) 
     store.put(key(2), blob(4), 1_300, 1_100).unwrap();
     let got = store.take(&key(2), 1_101).unwrap().unwrap();
     assert_eq!(got.as_bytes(), blob(4).as_bytes());
+}
+
+/// A state that is already expired when it is put, or a put at `u64::MAX`
+/// (the reading of a failed clock), is refused with `Expired` and stores
+/// nothing: it must not take a slot, push out a live state, or become valid
+/// when the clock reads a normal time again.
+pub fn put_of_an_expired_entry_is_refused<S: LoginStateStore>(make: impl Fn(usize) -> S) {
+    let store = make(1);
+    store.put(key(1), blob(1), expiry(1_000), 1_000).unwrap();
+    for (expires_at, now) in [
+        (1_000, 1_000),
+        (999, 1_000),
+        (0, 1),
+        (u64::MAX, u64::MAX),
+        (expiry(1_000), u64::MAX),
+    ] {
+        assert_eq!(
+            store.put(key(2), blob(2), expires_at, now),
+            Err(StoreError::Expired),
+            "expires_at {expires_at}, now {now}"
+        );
+    }
+    // Nothing was stored, and the live state was not pushed out by a refused one.
+    assert!(store.take(&key(2), 1_001).unwrap().is_none());
+    assert!(store.take(&key(2), 0).unwrap().is_none());
+    let kept = store.take(&key(1), 1_001).unwrap().unwrap();
+    assert_eq!(kept.as_bytes(), blob(1).as_bytes());
+    // A state that expires one second after it is made is accepted.
+    store.put(key(3), blob(3), 1_001, 1_000).unwrap();
+    assert!(store.take(&key(3), 1_000).unwrap().is_some());
 }
 
 /// At the limit the oldest state is removed to make room, whatever its
@@ -274,6 +306,42 @@ pub fn concurrent_put_and_take_never_duplicate<S: LoginStateStore>(make: impl Fn
     }
 }
 
+/// Threads put different keys at a store that has room for few states, at the
+/// same moment. The store never holds more than its limit, and every state it
+/// still holds can be taken once.
+pub fn concurrent_put_respects_capacity<S: LoginStateStore>(make: impl Fn(usize) -> S) {
+    const LIMIT: usize = 10;
+    const THREADS: u32 = 16;
+    const EACH: u32 = 20;
+    for round in 0..5u32 {
+        let store = make(LIMIT);
+        let barrier = Barrier::new(THREADS as usize);
+        std::thread::scope(|scope| {
+            for thread in 0..THREADS {
+                let (store, barrier) = (&store, &barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    for n in 0..EACH {
+                        let id = 100 + round * 1_000 + thread * EACH + n;
+                        store.put(key(id), blob(id), expiry(1_000), 1_000).unwrap();
+                    }
+                });
+            }
+        });
+        let mut held = 0;
+        for thread in 0..THREADS {
+            for n in 0..EACH {
+                let id = 100 + round * 1_000 + thread * EACH + n;
+                if store.take(&key(id), 1_001).unwrap().is_some() {
+                    held += 1;
+                }
+            }
+        }
+        // 320 states were put and nothing was taken: exactly the limit is left.
+        assert_eq!(held, LIMIT, "round {round}");
+    }
+}
+
 /// Builds a sealed state's content filled with `fill`, calls
 /// `reader(Before, ptr, len)` on the bytes of its `ServerLogin`, drops the
 /// content in place and calls `reader(After, ptr, len)`. The allocation lives
@@ -291,7 +359,14 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
         ksf_profile: 1,
         server_login: Zeroizing::new([fill; SERVER_LOGIN_LEN]),
     });
-    let ptr = held.first().unwrap().server_login.as_ptr();
+    // The address comes from the vector's own buffer pointer plus the offset
+    // of the field, with no reference to the element in between.
+    let offset = core::mem::offset_of!(StatePlain, server_login);
+    let ptr = held
+        .as_mut_ptr()
+        .cast::<u8>()
+        .wrapping_add(offset)
+        .cast_const();
     reader(WipePhase::Before, ptr, SERVER_LOGIN_LEN);
     held.clear();
     reader(WipePhase::After, ptr, SERVER_LOGIN_LEN);

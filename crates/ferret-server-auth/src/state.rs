@@ -34,12 +34,20 @@
 //! know them before it has opened it, and the login id that the blob was
 //! sealed for must be the one the reader holds.
 //!
+//! `open_state` does not hand a state to its caller before it has checked
+//! that the purpose and the session are the ones the request expects (a
+//! login is not a re-authentication, and a re-authentication is for one
+//! session) and that the state has not expired. Nothing reads the account or
+//! the `ServerLogin` bytes of a state that failed these checks.
+//!
 //! # Time
 //!
 //! A state expires when `now >= expires_at`. The expiry of a new state is
-//! `now.saturating_add(STATE_TTL_SECS)`. A clock that cannot tell the time
-//! reads `u64::MAX`, which makes the expiry equal to `now`: the state is
-//! expired the moment it is made, and the login fails closed.
+//! `now + STATE_TTL_SECS`, and a sum that does not fit is a refusal, not a
+//! value near the end of time: a clock that cannot tell the time reads
+//! `u64::MAX`, and a state made then would otherwise become valid again as
+//! soon as the clock was repaired. `seal_state` and the stores refuse a
+//! state that is already expired or that is made at `u64::MAX`.
 //!
 //! # Store
 //!
@@ -183,8 +191,8 @@ impl fmt::Debug for SealedState {
 /// proof for it is not accepted from any other.
 ///
 /// There is no `PartialEq`: the binding is a value derived from a session id,
-/// and two purposes are compared with [`LoginPurpose::same_as`], in constant
-/// time.
+/// and `open_state` compares the purpose it finds with the one the request
+/// expects, in constant time.
 #[derive(Clone, Copy)]
 pub enum LoginPurpose {
     /// An ordinary login.
@@ -206,19 +214,27 @@ impl LoginPurpose {
     }
 
     /// The binding bytes: the session of a re-authentication, zero for a login.
-    const fn binding(&self) -> [u8; 32] {
-        match self {
+    /// The copy is wiped when dropped.
+    fn binding(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(match self {
             LoginPurpose::Login => [0u8; 32],
             LoginPurpose::Reauth { session } => session.0,
+        })
+    }
+
+    /// Wipes the session binding, if there is one.
+    fn wipe(&mut self) {
+        if let LoginPurpose::Reauth { session } = self {
+            session.0.zeroize();
         }
     }
 
     /// Whether the two purposes are the same, and for a re-authentication
     /// the same session. The comparison of the sessions takes the same time
     /// wherever they differ.
-    pub fn same_as(&self, other: &LoginPurpose) -> bool {
+    fn same_as(&self, other: &LoginPurpose) -> bool {
         let same_kind = self.code() == other.code();
-        let same_binding = ct_eq(&self.binding(), &other.binding());
+        let same_binding = ct_eq(self.binding().as_slice(), other.binding().as_slice());
         same_kind & same_binding
     }
 }
@@ -248,17 +264,17 @@ pub(crate) struct StatePlain {
 }
 
 impl StatePlain {
-    /// The expiry of a state made at `now`: `now + STATE_TTL_SECS`, stopping
-    /// at the largest value. A clock that failed reads `u64::MAX`, which makes
-    /// the expiry equal to `now`, and the state is expired at once.
-    pub(crate) const fn expiry_from(now: u64) -> u64 {
-        now.saturating_add(STATE_TTL_SECS)
+    /// The expiry of a state made at `now`: `now + STATE_TTL_SECS`. A sum that
+    /// does not fit (a clock that failed reads `u64::MAX`) is a refusal with
+    /// `Internal(Clock)`, never a value near the end of time.
+    pub(crate) fn expiry_from(now: u64) -> Result<u64, AuthError> {
+        now.checked_add(STATE_TTL_SECS).ok_or_else(clock_failed)
     }
 
     /// Fails with `StateExpired` when the state is no longer valid at `now`.
     /// The store checks the expiry too; this is the check on the sealed
     /// value itself, which a store cannot tamper with.
-    pub(crate) fn check_live(&self, now: u64) -> Result<(), AuthError> {
+    fn check_live(&self, now: u64) -> Result<(), AuthError> {
         if now >= self.expires_at {
             return Err(AuthError::Denied(DenyReason::StateExpired));
         }
@@ -274,7 +290,7 @@ impl StatePlain {
             self.purpose,
             LoginPurpose::Reauth { .. }
         )));
-        out.extend_from_slice(&self.purpose.binding());
+        out.extend_from_slice(self.purpose.binding().as_slice());
         out.extend_from_slice(self.credential.as_bytes());
         out.push(self.ksf_profile);
         out.extend_from_slice(self.server_login.as_slice());
@@ -292,17 +308,19 @@ impl StatePlain {
         let expires_at = u64::from_be_bytes(*take::<8>(&mut rest).ok_or(invalid)?);
         let [code] = *take::<1>(&mut rest).ok_or(invalid)?;
         let [flag] = *take::<1>(&mut rest).ok_or(invalid)?;
-        let binding = *take::<32>(&mut rest).ok_or(invalid)?;
+        let mut binding = *take::<32>(&mut rest).ok_or(invalid)?;
         let credential = CredentialId::from_bytes(*take::<16>(&mut rest).ok_or(invalid)?);
         let [ksf_profile] = *take::<1>(&mut rest).ok_or(invalid)?;
         let login = take::<SERVER_LOGIN_LEN>(&mut rest).ok_or(invalid)?;
         let purpose = match (code, flag) {
-            (PURPOSE_LOGIN, 0) if binding == [0u8; 32] => LoginPurpose::Login,
-            (PURPOSE_REAUTH, 1) => LoginPurpose::Reauth {
+            (PURPOSE_LOGIN, 0) if binding == [0u8; 32] => Some(LoginPurpose::Login),
+            (PURPOSE_REAUTH, 1) => Some(LoginPurpose::Reauth {
                 session: SessionBinding(binding),
-            },
-            _ => return Err(invalid),
+            }),
+            _ => None,
         };
+        binding.zeroize();
+        let purpose = purpose.ok_or(invalid)?;
         let mut server_login = Zeroizing::new([0u8; SERVER_LOGIN_LEN]);
         for (slot, byte) in server_login.iter_mut().zip(login) {
             *slot = *byte;
@@ -314,6 +332,13 @@ impl StatePlain {
             ksf_profile,
             server_login,
         })
+    }
+}
+
+impl Drop for StatePlain {
+    fn drop(&mut self) {
+        // `server_login` wipes itself; the purpose is `Copy`, so it cannot.
+        self.purpose.wipe();
     }
 }
 
@@ -331,10 +356,15 @@ fn take<'a, const N: usize>(rest: &mut &'a [u8]) -> Option<&'a [u8; N]> {
 }
 
 /// The failure of the sealing itself. It depends on nothing a client sent,
-/// and it cannot happen for the sizes used here; it is reported as a storage
+/// and it cannot happen for the sizes used here; it is reported as an internal
 /// failure and never reaches a client with its cause.
 const fn sealing_failed() -> AuthError {
-    AuthError::Internal(InternalKind::Storage)
+    AuthError::Internal(InternalKind::Crypto)
+}
+
+/// The refusal to make a state when the clock cannot give a usable time.
+const fn clock_failed() -> AuthError {
+    AuthError::Internal(InternalKind::Clock)
 }
 
 /// The associated data of a blob made for `id`.
@@ -350,14 +380,24 @@ fn associated_data(id: &LoginId) -> Result<Vec<u8>, AuthError> {
 
 /// Seals a state for the login `id`: `version ‖ nonce ‖ ciphertext ‖ tag`.
 ///
-/// One draw of 24 bytes from `rng`, new for every call. Fails only with an
-/// internal error, which cannot happen for these sizes.
+/// One draw of 24 bytes from `rng`, new for every call.
+///
+/// Refuses with `Internal(Clock)` when `now` is `u64::MAX` (the reading of a
+/// clock that failed) or when the state is already expired at `now`
+/// (`now >= expires_at`): a state that is dead when it is made is never
+/// sealed. Apart from that it fails only with an internal error that cannot
+/// happen for these sizes.
 pub(crate) fn seal_state<R: SecureRng>(
     key: &StateSealKey,
     rng: &mut R,
     id: &LoginId,
     state: &StatePlain,
+    now: u64,
 ) -> Result<SealedState, AuthError> {
+    // `now >= expires_at` includes `now == u64::MAX`, whatever the expiry.
+    if now >= state.expires_at {
+        return Err(clock_failed());
+    }
     let aad = associated_data(id)?;
     let mut nonce = [0u8; NONCE_LEN];
     rng.fill(&mut nonce);
@@ -373,19 +413,26 @@ pub(crate) fn seal_state<R: SecureRng>(
     Ok(SealedState(out))
 }
 
-/// Opens a state that was sealed for the login `id`.
+/// Opens a state that was sealed for the login `id`, for a request that
+/// expects the purpose `expected`, at the time `now`.
 ///
-/// Every failure is `Denied(StateInvalid)`: a blob of the wrong length or
-/// version, one made for another id or under another key, one that was
-/// changed, and one whose content does not parse. The length is checked
-/// before anything else.
+/// The state is handed over only if it passes every check:
 ///
-/// The expiry in the state is not checked here: see
-/// [`StatePlain::check_live`].
+/// * `Denied(StateInvalid)` for a blob of the wrong length or version, one
+///   made for another id or under another key, one that was changed, one
+///   whose content does not parse, and one whose purpose or session is not
+///   the expected one (so a login cannot be finished as a re-authentication,
+///   or for another session, and the caller learns nothing about which);
+/// * `Denied(StateExpired)` when `now >= expires_at` of the sealed state.
+///
+/// The length is checked before anything else. The caller reads the account
+/// and the `ServerLogin` bytes only from the state this returns.
 pub(crate) fn open_state(
     key: &StateSealKey,
     id: &LoginId,
     sealed: &SealedState,
+    expected: &LoginPurpose,
+    now: u64,
 ) -> Result<StatePlain, AuthError> {
     let invalid = AuthError::Denied(DenyReason::StateInvalid);
     let blob: &[u8; BLOB_LEN] = sealed.0.as_slice().try_into().map_err(|_| invalid)?;
@@ -399,7 +446,13 @@ pub(crate) fn open_state(
     key.cipher()
         .decrypt_in_place(&XNonce::from(*nonce), &aad, &mut *buf)
         .map_err(|_| invalid)?;
-    StatePlain::parse(&buf)
+    let state = StatePlain::parse(&buf)?;
+    // A state that is dropped here on a failure wipes itself.
+    if !state.purpose.same_as(expected) {
+        return Err(invalid);
+    }
+    state.check_live(now)?;
+    Ok(state)
 }
 
 /// Why a store could not do what it was asked.
@@ -407,6 +460,9 @@ pub(crate) fn open_state(
 pub enum StoreError {
     /// The store cannot hold any state.
     Full,
+    /// The state is already expired (`now >= expires_at`) or the clock failed
+    /// (`now` is `u64::MAX`); nothing was stored.
+    Expired,
     /// There is a live state under the key.
     Collision,
     /// The store itself failed.
@@ -414,8 +470,13 @@ pub enum StoreError {
 }
 
 impl From<StoreError> for AuthError {
-    fn from(_: StoreError) -> Self {
-        AuthError::Internal(InternalKind::Storage)
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Expired => clock_failed(),
+            StoreError::Full | StoreError::Collision | StoreError::Backend => {
+                AuthError::Internal(InternalKind::Storage)
+            }
+        }
     }
 }
 
@@ -428,15 +489,30 @@ impl From<StoreError> for AuthError {
 ///   one after the other, never both succeed;
 /// * a state is valid while `now < expires_at`: at `now == expires_at` it is
 ///   gone, and `take` removes it;
-/// * `put` never replaces a live state;
+/// * `put` never replaces a live state, and refuses a state that is already
+///   expired or made at `now == u64::MAX` (`Expired`);
 /// * a store with a limit removes the oldest state to make room.
+///
+/// # A full store makes room
+///
+/// A full store does not refuse the new state; it drops the oldest one. The
+/// other choice, `Full`, would let a flood of unauthenticated `login_start`
+/// calls keep every real login out for as long as the flood lasts. With
+/// eviction the flood can only push out logins in progress, and only when it
+/// outpaces the limit within one lifetime of a state (60 seconds). Oldest
+/// first is also soonest to expire first, so expired states go before live
+/// ones. The defence against the flood itself is the rate limit that runs
+/// before any work for `login_start`; `Full` is returned only by a store that
+/// cannot hold any state.
 ///
 /// The store holds sealed bytes under the hash of the login id. It cannot
 /// read what it holds and holds no value a client could present.
 pub trait LoginStateStore: Send + Sync {
-    /// Stores a state until `expires_at`. A live state under the same key is
-    /// never overwritten (`Collision`); an expired one counts as absent. When
-    /// the store is at its limit, the oldest state is removed first.
+    /// Stores a state until `expires_at`. Refuses with `Expired` a state that
+    /// is already expired (`now >= expires_at`) and any call with `now ==
+    /// u64::MAX`. A live state under the same key is never overwritten
+    /// (`Collision`); an expired one counts as absent. When the store is at
+    /// its limit, the oldest state is removed first (see above).
     fn put(
         &self,
         key: StateKey,
@@ -576,6 +652,10 @@ impl LoginStateStore for InMemoryLoginStateStore {
         expires_at: u64,
         now: u64,
     ) -> Result<(), StoreError> {
+        // This includes `now == u64::MAX`, whatever the expiry.
+        if now >= expires_at {
+            return Err(StoreError::Expired);
+        }
         if self.capacity == 0 {
             return Err(StoreError::Full);
         }
@@ -669,8 +749,21 @@ mod tests {
         }
     }
 
+    /// A moment inside the life of the states of these tests (`expires_at` is
+    /// sixty seconds later).
+    const NOW: u64 = 1_700_000_000;
+
     fn seal(key: &StateSealKey, id: &LoginId, state: &StatePlain) -> SealedState {
-        seal_state(key, &mut TestRng::new(b"nonce"), id, state).unwrap()
+        seal_state(key, &mut TestRng::new(b"nonce"), id, state, NOW).unwrap()
+    }
+
+    /// Opens a state at `NOW` for a request that expects a login.
+    fn open(
+        key: &StateSealKey,
+        id: &LoginId,
+        sealed: &SealedState,
+    ) -> Result<StatePlain, AuthError> {
+        open_state(key, id, sealed, &LoginPurpose::Login, NOW)
     }
 
     fn assert_same(a: &StatePlain, b: &StatePlain) {
@@ -703,7 +796,7 @@ mod tests {
         for purpose in [LoginPurpose::Login, reauth(0x77)] {
             let state = plain(purpose);
             let sealed = seal(&seal_key(), &id(), &state);
-            let opened = open_state(&seal_key(), &id(), &sealed).unwrap();
+            let opened = open_state(&seal_key(), &id(), &sealed, &purpose, NOW).unwrap();
             assert_same(&opened, &state);
         }
     }
@@ -712,14 +805,14 @@ mod tests {
     fn open_with_wrong_key_fails() {
         let sealed = seal(&seal_key(), &id(), &plain(LoginPurpose::Login));
         let other = StateSealKey(Zeroizing::new([0x43; 32]));
-        assert_eq!(open_state(&other, &id(), &sealed).err(), Some(invalid()));
+        assert_eq!(open(&other, &id(), &sealed).err(), Some(invalid()));
     }
 
     #[test]
     fn open_with_other_login_id_fails() {
         let sealed = seal(&seal_key(), &id(), &plain(LoginPurpose::Login));
         assert_eq!(
-            open_state(&seal_key(), &other_id(), &sealed).err(),
+            open(&seal_key(), &other_id(), &sealed).err(),
             Some(invalid())
         );
     }
@@ -733,7 +826,14 @@ mod tests {
                     let mut blob = sealed.as_bytes().to_vec();
                     blob[at] ^= 1 << bit;
                     assert_eq!(
-                        open_state(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
+                        open_state(
+                            &seal_key(),
+                            &id(),
+                            &SealedState::from_bytes(blob),
+                            &purpose,
+                            NOW
+                        )
+                        .err(),
                         Some(invalid()),
                         "byte {at} bit {bit}"
                     );
@@ -752,7 +852,7 @@ mod tests {
             let mut blob = sealed.as_bytes().to_vec();
             blob.resize(len, 0);
             assert_eq!(
-                open_state(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
+                open(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
                 Some(invalid()),
                 "length {len}"
             );
@@ -760,7 +860,7 @@ mod tests {
         // Trailing bytes after a valid blob are not ignored.
         let mut longer = sealed.as_bytes().to_vec();
         longer.push(0);
-        assert!(open_state(&seal_key(), &id(), &SealedState::from_bytes(longer)).is_err());
+        assert!(open(&seal_key(), &id(), &SealedState::from_bytes(longer)).is_err());
     }
 
     #[test]
@@ -769,7 +869,7 @@ mod tests {
         let mut blob = sealed.as_bytes().to_vec();
         blob[0] = 2;
         assert_eq!(
-            open_state(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
+            open(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
             Some(invalid())
         );
     }
@@ -786,11 +886,11 @@ mod tests {
         let (id_a, id_b) = (id(), other_id());
         let (sealed_a, sealed_b) = (seal(&key, &id_a, &a), seal(&key, &id_b, &b));
         // Swapped between the ids: neither opens.
-        assert!(open_state(&key, &id_a, &sealed_b).is_err());
-        assert!(open_state(&key, &id_b, &sealed_a).is_err());
+        assert!(open(&key, &id_a, &sealed_b).is_err());
+        assert!(open(&key, &id_b, &sealed_a).is_err());
         // Each opens only for its own id, and keeps its own account and purpose.
-        let opened_a = open_state(&key, &id_a, &sealed_a).unwrap();
-        let opened_b = open_state(&key, &id_b, &sealed_b).unwrap();
+        let opened_a = open(&key, &id_a, &sealed_a).unwrap();
+        let opened_b = open_state(&key, &id_b, &sealed_b, &reauth(0x55), NOW).unwrap();
         assert_same(&opened_a, &a);
         assert_same(&opened_b, &b);
         assert_ne!(opened_a.credential, opened_b.credential);
@@ -801,20 +901,27 @@ mod tests {
     fn nonce_is_fresh_per_seal() {
         let state = plain(LoginPurpose::Login);
         let mut rng = TestRng::new(b"fresh");
-        let a = seal_state(&seal_key(), &mut rng, &id(), &state).unwrap();
-        let b = seal_state(&seal_key(), &mut rng, &id(), &state).unwrap();
+        let a = seal_state(&seal_key(), &mut rng, &id(), &state, NOW).unwrap();
+        let b = seal_state(&seal_key(), &mut rng, &id(), &state, NOW).unwrap();
         assert_ne!(a.as_bytes(), b.as_bytes());
         assert_ne!(a.as_bytes().get(1..25), b.as_bytes().get(1..25));
         // Both still open.
-        assert!(open_state(&seal_key(), &id(), &a).is_ok());
-        assert!(open_state(&seal_key(), &id(), &b).is_ok());
+        assert!(open(&seal_key(), &id(), &a).is_ok());
+        assert!(open(&seal_key(), &id(), &b).is_ok());
     }
 
     #[test]
     fn sealing_draws_exactly_one_nonce_of_24_bytes() {
         let nonce: Vec<u8> = (0xa0..0xb8).collect();
         let mut rng = ReplayRng::new(vec![nonce.clone()]);
-        let sealed = seal_state(&seal_key(), &mut rng, &id(), &plain(LoginPurpose::Login)).unwrap();
+        let sealed = seal_state(
+            &seal_key(),
+            &mut rng,
+            &id(),
+            &plain(LoginPurpose::Login),
+            NOW,
+        )
+        .unwrap();
         rng.finish().unwrap();
         assert_eq!(sealed.as_bytes().get(1..25), Some(nonce.as_slice()));
     }
@@ -923,7 +1030,7 @@ mod tests {
         let nonce: Vec<u8> = (0xa0..0xb8).collect();
         let state = plain(reauth(0x77));
         let mut rng = ReplayRng::new(vec![nonce.clone()]);
-        let sealed = seal_state(&key, &mut rng, &id(), &state).unwrap();
+        let sealed = seal_state(&key, &mut rng, &id(), &state, NOW).unwrap();
         rng.finish().unwrap();
         let blob = sealed.as_bytes();
         assert_eq!(blob.len(), 228);
@@ -973,18 +1080,27 @@ mod tests {
         assert_eq!(*key.0, [0x09; 32]);
     }
 
+    fn clock_error() -> AuthError {
+        AuthError::Internal(InternalKind::Clock)
+    }
+
     #[test]
-    fn expiry_stops_at_the_largest_value() {
-        assert_eq!(StatePlain::expiry_from(1_000), 1_060);
-        assert_eq!(StatePlain::expiry_from(0), STATE_TTL_SECS);
-        assert_eq!(StatePlain::expiry_from(u64::MAX - 10), u64::MAX);
-        assert_eq!(StatePlain::expiry_from(u64::MAX), u64::MAX);
+    fn an_expiry_that_does_not_fit_is_a_refusal() {
+        assert_eq!(StatePlain::expiry_from(1_000), Ok(1_060));
+        assert_eq!(StatePlain::expiry_from(0), Ok(STATE_TTL_SECS));
+        assert_eq!(
+            StatePlain::expiry_from(u64::MAX - STATE_TTL_SECS),
+            Ok(u64::MAX)
+        );
+        for now in [u64::MAX - STATE_TTL_SECS + 1, u64::MAX - 10, u64::MAX] {
+            assert_eq!(StatePlain::expiry_from(now), Err(clock_error()), "{now}");
+        }
     }
 
     #[test]
     fn a_state_is_live_until_the_second_before_its_expiry() {
         let mut state = plain(LoginPurpose::Login);
-        state.expires_at = StatePlain::expiry_from(1_000);
+        state.expires_at = StatePlain::expiry_from(1_000).unwrap();
         assert!(state.check_live(1_000).is_ok());
         assert!(state.check_live(1_059).is_ok());
         assert_eq!(
@@ -996,18 +1112,154 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_clock_never_gives_a_live_state() {
+    fn open_checks_the_expiry_itself() {
+        let sealed = seal(&seal_key(), &id(), &plain(LoginPurpose::Login));
+        let expires_at = plain(LoginPurpose::Login).expires_at;
+        let at = |now: u64| open_state(&seal_key(), &id(), &sealed, &LoginPurpose::Login, now);
+        assert!(at(0).is_ok());
+        assert!(at(expires_at - 1).is_ok());
+        for now in [expires_at, expires_at + 1, u64::MAX] {
+            assert_eq!(
+                at(now).err(),
+                Some(AuthError::Denied(DenyReason::StateExpired)),
+                "now {now}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_refuses_another_purpose() {
+        let key = seal_key();
+        let login = seal(&key, &id(), &plain(LoginPurpose::Login));
+        let reauth_77 = seal(&key, &id(), &plain(reauth(0x77)));
+        let open_as = |sealed: &SealedState, expected: &LoginPurpose| {
+            open_state(&key, &id(), sealed, expected, NOW)
+        };
+        // Right id and right key, but the request expects something else.
+        assert!(open_as(&login, &LoginPurpose::Login).is_ok());
+        assert!(open_as(&reauth_77, &reauth(0x77)).is_ok());
+        assert_eq!(open_as(&login, &reauth(0x77)).err(), Some(invalid()));
+        assert_eq!(
+            open_as(&reauth_77, &LoginPurpose::Login).err(),
+            Some(invalid())
+        );
+        // Another session.
+        assert_eq!(open_as(&reauth_77, &reauth(0x78)).err(), Some(invalid()));
+        assert_eq!(open_as(&reauth_77, &reauth(0)).err(), Some(invalid()));
+        // A single differing bit in any byte of the binding.
+        for at in 0..32 {
+            for bit in 0..8 {
+                let mut session = [0x77u8; 32];
+                session[at] ^= 1 << bit;
+                let other = LoginPurpose::Reauth {
+                    session: SessionBinding(session),
+                };
+                assert_eq!(
+                    open_as(&reauth_77, &other).err(),
+                    Some(invalid()),
+                    "byte {at} bit {bit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mismatch_gives_the_same_error_as_a_damaged_blob() {
+        // No difference for a client between "wrong purpose" and "not a state".
+        let key = seal_key();
+        let sealed = seal(&key, &id(), &plain(LoginPurpose::Login));
+        let mismatch = open_state(&key, &id(), &sealed, &reauth(1), NOW).err();
+        let damaged = open(&key, &other_id(), &sealed).err();
+        assert_eq!(mismatch, damaged);
+        assert_eq!(mismatch, Some(invalid()));
+    }
+
+    #[test]
+    fn a_state_that_is_dead_or_made_at_a_failed_clock_is_never_sealed() {
+        let mut rng = TestRng::new(b"refuse");
+        let mut state = plain(LoginPurpose::Login);
+        let expires_at = state.expires_at;
+        let mut seal_at =
+            |state: &StatePlain, now: u64| seal_state(&seal_key(), &mut rng, &id(), state, now);
+        assert!(seal_at(&state, expires_at - 1).is_ok());
+        for now in [expires_at, expires_at + 1] {
+            assert_eq!(seal_at(&state, now).err(), Some(clock_error()), "{now}");
+        }
+        // The reading of a failed clock, whatever the expiry says.
+        for expires_at in [0, NOW, u64::MAX] {
+            state.expires_at = expires_at;
+            assert_eq!(seal_at(&state, u64::MAX).err(), Some(clock_error()));
+        }
+    }
+
+    #[test]
+    fn a_failed_clock_never_gives_a_state_that_is_valid_later() {
         // `SystemClock` reads u64::MAX before 1970.
         let now = u64::MAX;
-        let mut state = plain(LoginPurpose::Login);
-        state.expires_at = StatePlain::expiry_from(now);
-        assert!(state.check_live(now).is_err());
-        // A sealed state made then is dead on arrival, in the store as well.
+        assert_eq!(StatePlain::expiry_from(now), Err(clock_error()));
+        // The store refuses an entry with the largest expiry made at that
+        // reading, so nothing is waiting for the clock to be repaired.
         let store = InMemoryLoginStateStore::new();
         let key = id().store_key();
-        let sealed = seal(&seal_key(), &id(), &state);
-        store.put(key, sealed, state.expires_at, now).unwrap();
-        assert!(store.take(&key, now).unwrap().is_none());
+        assert_eq!(
+            store.put(key, small(1), u64::MAX, now),
+            Err(StoreError::Expired)
+        );
+        assert!(store.is_empty());
+        assert!(store.take(&key, 1_000).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_session_binding_is_wiped() {
+        let mut state = plain(reauth(0x77));
+        assert_eq!(*state.purpose.binding(), [0x77; 32]);
+        state.purpose.wipe();
+        assert_eq!(*state.purpose.binding(), [0u8; 32]);
+        // A login has nothing to wipe.
+        let mut login = plain(LoginPurpose::Login);
+        login.purpose.wipe();
+        assert!(login.purpose.same_as(&LoginPurpose::Login));
+    }
+
+    /// The state key shares its source with the made-up pre-login answers.
+    /// Different labels and different HMAC keys keep them apart; this pins it
+    /// for a fixed secret, so a later shared helper cannot merge them.
+    #[test]
+    fn the_state_key_is_not_any_other_use_of_the_secret() {
+        use hmac::{Hmac, KeyInit, Mac};
+        use sha2::Sha512;
+
+        let secret = PreloginSecret::from_payload(&[0x11; 32]).unwrap();
+        let key = StateSealKey::derive(&secret).unwrap();
+        let hmac = |msg: &[u8]| {
+            let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&[0x11; 32]).unwrap();
+            mac.update(msg);
+            let out: [u8; 32] = mac.finalize().into_bytes().into();
+            out
+        };
+        // HMAC-SHA256 keyed with the secret itself, over the info, with and
+        // without the HKDF counter byte.
+        assert_ne!(*key.0, hmac(b"ferret/v1/state-seal"));
+        assert_ne!(*key.0, hmac(b"ferret/v1/state-seal\x01"));
+        // The made-up id and hint of a name (first bytes of the same kind of
+        // value) and the made-up record body.
+        for name in [&b""[..], b"alice", b"ferret/v1/state-seal"] {
+            for label in [&b"prelogin-id"[..], b"prelogin-hint"] {
+                let value = hmac(&[label, name].concat());
+                assert_ne!(*key.0, value);
+                assert_ne!(key.0[..16], value[..16]);
+            }
+        }
+        for id in [[0u8; 16], [1u8; 16], [0x11; 16]] {
+            let mut body = [0u8; 160];
+            Hkdf::<Sha512>::new(None, &[0x11; 32])
+                .expand_multi_info(&[b"ferret/v1/prelogin/record", &id], &mut body)
+                .unwrap();
+            assert_ne!(key.0[..], body[..32]);
+        }
+        // Another secret gives another key.
+        let other = StateSealKey::derive(&PreloginSecret::from_payload(&[0x12; 32]).unwrap());
+        assert_ne!(*key.0, *other.unwrap().0);
     }
 
     #[test]
@@ -1066,6 +1318,10 @@ mod tests {
                 AuthError::Internal(InternalKind::Storage)
             );
         }
+        assert_eq!(
+            AuthError::from(StoreError::Expired),
+            AuthError::Internal(InternalKind::Clock)
+        );
     }
 
     fn some_key(n: u8) -> StateKey {
