@@ -1,0 +1,587 @@
+// The sync engine against a model of the server: rows in, items out, and what
+// happens to rows that are wrong.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { ApiError } from "../../src/api.mjs";
+import { b64u, hex16 } from "../../src/b64.mjs";
+import { cache } from "../../src/store/cache.mjs";
+import { createSyncEngine, MANIFEST_ID, SyncError } from "../../src/sync/engine.mjs";
+import { freshStore, scope } from "./idbHelpers.mjs";
+import {
+  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, settle, until,
+} from "./syncHelpers.mjs";
+
+const MARKER = "Secret Bank Login";
+const DRAFT = { item_type: "login", name: MARKER, urls: ["https://bank.example"] };
+const ID_A = "11".repeat(16);
+const ID_B = "22".repeat(16);
+
+/** One device: an engine over its own fake browser storage and a fake clock. */
+async function device({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, win = null } = {}) {
+  const order = [];
+  const store = await createFakeStore({ order, db });
+  const api = createFakeApi(model, { order });
+  const timers = new FakeTimers();
+  const events = { changed: [], error: [], state: [] };
+  const engine = createSyncEngine({
+    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), pollMs, win,
+    now: () => 1_700_000_000_000 + timers.time,
+  });
+  for (const name of Object.keys(events)) engine.on(name, (payload) => events[name].push(payload));
+  return { model, client, store, api, timers, engine, events, order };
+}
+
+const rowsOf = (d) => cache.getRows(d.store.database.store, scope());
+const warnings = (d) => d.events.state.filter((s) => s.kind === "warning");
+
+test("create_update_delete_roundtrip_against_the_model", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  const id = await d.engine.create(DRAFT);
+  assert.match(id, /^[0-9a-f]{32}$/);
+  await until(() => d.model.items.get(id)?.rev === 1, "the server has rev 1");
+  await until(async () => (await rowsOf(d)).some((r) => r.itemId === id && r.rev === 1), "rev 1 in the cache");
+  let [item] = d.engine.list();
+  assert.equal(item.id, id);
+  assert.equal(item.name, MARKER);
+  assert.equal(item.type, "login");
+  assert.deepEqual(item.urls, ["https://bank.example"]);
+  assert.equal(item.rev, 1);
+  await until(() => d.engine.list()[0].pending === false, "no longer pending");
+
+  await d.engine.update(id, { name: "Renamed" });
+  await until(() => d.model.items.get(id)?.rev === 2, "the server has rev 2");
+  await until(async () => (await rowsOf(d)).some((r) => r.rev === 2), "rev 2 in the cache");
+  [item] = d.engine.list();
+  assert.equal(item.name, "Renamed");
+  assert.deepEqual(item.urls, ["https://bank.example"], "the edit keeps what the draft does not mention");
+  assert.equal(item.rev, 2);
+
+  const open = await d.engine.open(id);
+  assert.equal(typeof open.handle, "number");
+  assert.equal(open.view.name, "Renamed");
+  assert.equal(d.client.vault.handles.size, 1);
+  await open.close();
+  await open.close(); // closing twice is harmless
+  assert.equal(d.client.vault.handles.size, 0);
+
+  await d.engine.remove(id);
+  await until(() => d.model.items.get(id)?.deleted === true, "the server has the tombstone");
+  assert.equal(d.model.items.get(id).rev, 3);
+  assert.equal(d.engine.list().length, 0);
+  await until(async () => (await rowsOf(d)).some((r) => r.deleted && r.rev === 3), "the tombstone in the cache");
+  await assert.rejects(d.engine.open(id), (e) => e instanceof SyncError && e.code === "not_found");
+  assert.ok(d.events.changed.length > 0);
+});
+
+test("second_engine_sees_the_change_within_one_poll", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const a = await device({ model, client: createFakeClient(), seed: 1 });
+  const b = await device({ model, client, seed: 2 });
+  await a.engine.start();
+  await b.engine.start();
+  assert.equal(b.engine.list().length, 0);
+
+  const id = await a.engine.create(DRAFT);
+  await until(() => model.items.has(id), "the write reaches the server");
+  assert.equal(b.engine.list().length, 0, "nothing until B polls");
+
+  b.timers.advance(4_999);
+  await settle();
+  assert.equal(b.engine.list().length, 0, "not before the poll time");
+  b.timers.advance(1);
+  await until(() => b.engine.list().length === 1, "B sees the item");
+  assert.equal(b.engine.list()[0].name, MARKER);
+
+  await a.engine.update(id, { name: "Changed on A" });
+  await until(() => model.items.get(id).rev === 2);
+  b.timers.advance(5_000);
+  await until(() => b.engine.list()[0].name === "Changed on A", "B sees the edit");
+
+  await a.engine.remove(id);
+  await until(() => model.items.get(id).deleted);
+  b.timers.advance(5_000);
+  await until(() => b.engine.list().length === 0, "B sees the deletion");
+  a.engine.stop();
+  b.engine.stop();
+});
+
+test("a_focus_event_syncs_at_once", async () => {
+  const model = new Model();
+  const win = new EventTarget();
+  const d = await device({ model, win });
+  await d.engine.start();
+  const before = d.api.gets.length;
+  win.dispatchEvent(new Event("focus"));
+  await until(() => d.api.gets.length > before, "a sync after the focus");
+  d.engine.stop();
+  const after = d.api.gets.length;
+  win.dispatchEvent(new Event("focus"));
+  await settle();
+  assert.equal(d.api.gets.length, after, "no listener is left after stop");
+});
+
+test("row_with_invalid_tag_is_not_accepted_and_marks_damaged", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const bad = client.wireRow(ID_A, 1, { item_type: "login", name: "Broken" });
+  const tag = b64u.decode(bad.tag);
+  tag[0] ^= 1;
+  model.set(ID_A, { rev: 1, blob: bad.blob, tag: b64u.encode(tag) });
+  const good = client.wireRow(ID_B, 1, { item_type: "login", name: "Fine" });
+  model.set(ID_B, { rev: 1, ...good });
+
+  const d = await device({ model, client });
+  await d.engine.start();
+  const list = d.engine.list();
+  assert.deepEqual(list.map((i) => [i.id, i.damaged]), [[ID_A, true], [ID_B, false]]);
+  assert.equal(list[0].name, "", "nothing good to show");
+  assert.deepEqual((await rowsOf(d)).map((r) => r.itemId), [ID_B], "the bad row is not cached");
+  assert.ok(warnings(d).some((w) => w.code === "row_damaged" && w.id === ID_A));
+  await assert.rejects(d.engine.open(ID_A), (e) => e.code === "damaged");
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "damaged");
+
+  // A good version first, then a bad newer row: the good one stays.
+  model.set(ID_B, { rev: 2, ...client.wireRow(ID_B, 2, { item_type: "login", name: "Newer" }), tag: b64u.encode(new Uint8Array(32)) });
+  await d.engine.syncNow();
+  const b = d.engine.list().find((i) => i.id === ID_B);
+  assert.equal(b.name, "Fine");
+  assert.equal(b.damaged, true);
+  assert.equal(b.rev, 1);
+  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 1);
+  assert.equal((await d.engine.open(ID_B)).view.name, "Fine");
+
+  // A later good row clears the mark.
+  model.set(ID_B, { rev: 3, ...client.wireRow(ID_B, 3, { item_type: "login", name: "Mended" }) });
+  await d.engine.syncNow();
+  const mended = d.engine.list().find((i) => i.id === ID_B);
+  assert.equal(mended.name, "Mended");
+  assert.equal(mended.damaged, false);
+  d.engine.stop();
+});
+
+test("a_damaged_mark_survives_a_restart", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "First" }) });
+  const db = await freshStore();
+  const one = await device({ model, client, db });
+  await one.engine.start();
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Second" }), tag: b64u.encode(new Uint8Array(32)) });
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Later" }) });
+  await one.engine.syncNow();
+  assert.equal(one.engine.list().find((i) => i.id === ID_A).damaged, true);
+  one.engine.stop();
+
+  await db.reopen();
+  const two = await device({ model, client, db });
+  await two.engine.start();
+  // The cache cursor is past the bad row, so the row is not read again: the mark has to come from storage.
+  assert.equal(two.api.gets[0].includes("since=3"), true);
+  const a = two.engine.list().find((i) => i.id === ID_A);
+  assert.equal(a.damaged, true);
+  assert.equal(a.name, "First");
+  two.engine.stop();
+});
+
+test("tombstone_without_valid_tag_is_quarantined_and_the_local_copy_is_kept", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Keep me" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.equal(d.engine.list()[0].quarantined, false);
+
+  // The server says deleted, with a tombstone that is not the right one.
+  model.set(ID_A, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(9)) });
+  await d.engine.syncNow();
+  const [item] = d.engine.list();
+  assert.equal(item.id, ID_A);
+  assert.equal(item.quarantined, true);
+  assert.equal(item.name, "Keep me");
+  assert.equal(item.rev, 1);
+  assert.ok(warnings(d).some((w) => w.code === "tombstone_unverified" && w.id === ID_A));
+  const rows = await rowsOf(d);
+  assert.deepEqual(rows.map((r) => [r.rev, r.deleted]), [[1, false]], "the cache still has the live row");
+  assert.equal((await d.engine.open(ID_A)).view.name, "Keep me");
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "quarantined");
+  await assert.rejects(d.engine.remove(ID_A), (e) => e.code === "quarantined");
+  d.engine.stop();
+
+  // A wrong tombstone for the right item at another revision is wrong too.
+  const model2 = new Model();
+  model2.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "B" }) });
+  const e = await device({ model: model2, client });
+  await e.engine.start();
+  model2.set(ID_B, { rev: 2, deleted: true, tomb: client.wireTomb(ID_B, 5) });
+  await e.engine.syncNow();
+  assert.equal(e.engine.list()[0].quarantined, true);
+  // A valid tombstone later removes the item.
+  model2.set(ID_B, { rev: 3, deleted: true, tomb: client.wireTomb(ID_B, 3) });
+  await e.engine.syncNow();
+  assert.equal(e.engine.list().length, 0);
+  e.engine.stop();
+});
+
+test("lower_rev_than_local_is_rejected_with_a_warning", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Two" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.equal(d.engine.list()[0].rev, 2);
+
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "One" }) });
+  await d.engine.syncNow();
+  assert.equal(d.engine.list()[0].name, "Two");
+  assert.equal(d.engine.list()[0].rev, 2);
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.rev === 1 && w.localRev === 2));
+  assert.equal((await rowsOf(d))[0].rev, 2, "the cache keeps rev 2");
+
+  // The same revision with other bytes is refused too.
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Other two" }) });
+  await d.engine.syncNow();
+  assert.equal(d.engine.list()[0].name, "Two");
+  assert.ok(warnings(d).some((w) => w.code === "rev_same_row_changed"));
+
+  // A tombstone below the local revision does not delete either.
+  model.set(ID_A, { rev: 1, deleted: true, tomb: client.wireTomb(ID_A, 1) });
+  await d.engine.syncNow();
+  assert.equal(d.engine.list().length, 1);
+  d.engine.stop();
+});
+
+test("manifest_row_is_skipped_in_list_but_kept_in_cache", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  // Not a valid item row: the engine must not try to open it as one.
+  model.set(MANIFEST_ID, { rev: 1, blob: b64u.encode(new Uint8Array(64).fill(3)), tag: b64u.encode(new Uint8Array(32).fill(4)) });
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Item" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.deepEqual(d.engine.list().map((i) => i.id), [ID_A]);
+  const rows = await rowsOf(d);
+  assert.ok(rows.some((r) => r.itemId === MANIFEST_ID && r.rev === 1), "kept in the cache");
+  assert.equal(d.client.vault.calls.some((c) => c[1] === MANIFEST_ID), false, "never opened as an item");
+  await assert.rejects(d.engine.open(MANIFEST_ID), (e) => e.code === "not_found");
+  await assert.rejects(d.engine.update(MANIFEST_ID, { name: "x" }), (e) => e.code === "not_found");
+  d.engine.stop();
+});
+
+test("cache_never_receives_plaintext", async () => {
+  const model = new Model();
+  const d = await device({ model });
+  await d.engine.start();
+  const id = await d.engine.create(DRAFT);
+  await until(() => model.items.has(id));
+  await d.engine.update(id, { name: `${MARKER} 2`, notes: "TopSecretNotes" });
+  await until(() => model.items.get(id).rev === 2);
+  await d.engine.syncNow();
+  await until(async () => (await rowsOf(d)).some((r) => r.rev === 2));
+  await d.engine.remove(id);
+  await until(() => model.items.get(id).deleted);
+  await d.engine.syncNow();
+
+  const leaks = (value) => {
+    const needles = [MARKER, "bank.example", "TopSecretNotes", "Renamed"].map((s) => Buffer.from(s));
+    const bytes = [];
+    const walk = (v) => {
+      if (v instanceof Uint8Array) bytes.push(Buffer.from(v));
+      else if (typeof v === "string") bytes.push(Buffer.from(v));
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(value);
+    return bytes.some((b) => needles.some((n) => b.includes(n)));
+  };
+  const { spy } = d.store;
+  assert.ok(spy.putRows.length > 0);
+  assert.equal(spy.enqueued.length, 3);
+  assert.equal(leaks(spy.putRows), false, "rows");
+  assert.equal(leaks(spy.enqueued), false, "outbox entries");
+  assert.equal(leaks(spy.settings), false, "settings");
+  assert.equal(leaks(await rowsOf(d)), false, "stored rows");
+  // The same check finds a plaintext view, so a silent check would not pass.
+  const open = await (async () => {
+    const other = await device({ model: new Model() });
+    await other.engine.start();
+    const made = await other.engine.create(DRAFT);
+    const handle = await other.engine.open(made);
+    other.engine.stop();
+    return handle.view;
+  })();
+  assert.equal(leaks(open), true, "control: a decrypted view holds the marker");
+  d.engine.stop();
+});
+
+test("writes_to_different_items_do_not_block_each_other", async () => {
+  const model = new Model();
+  const d = await device({ model });
+  await d.engine.start();
+  const a = await d.engine.create({ item_type: "login", name: "A" });
+  await until(async () => model.items.has(a) && (await d.store.outbox.all(d.store.database.store, scope())).length === 0, "A is stored on the server");
+  // From now on writes of item A fail three times; B must go through regardless.
+  d.api.faults.push(...Array.from({ length: 3 }, () => ({ kind: "network", only: a })));
+  await d.engine.update(a, { name: "A2" });
+  await until(() => d.timers.pending >= 1, "A waits for its retry");
+  const b = await d.engine.create({ item_type: "login", name: "B" });
+  await until(() => model.items.has(b), "B reaches the server while A waits");
+  assert.equal(model.items.get(a).rev, 1, "A has not gone through yet");
+  assert.equal(d.engine.list().find((i) => i.id === a).pending, true);
+  for (const wait of [1_000, 2_000, 4_000]) {
+    await until(() => d.timers.waiting.some((t) => t.at - d.timers.time === wait), `a wait of ${wait} ms`);
+    d.timers.advance(wait);
+  }
+  await until(() => model.items.get(a)?.rev === 2, "A gets through after its retries");
+  d.engine.stop();
+});
+
+test("restart_resumes_from_cached_max_seq_and_outbox", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  for (const [n, id] of ["11", "22", "33"].entries()) {
+    model.set(id.repeat(16), { rev: 1, ...client.wireRow(id.repeat(16), 1, { item_type: "login", name: `Item ${n}` }) });
+  }
+  const db = await freshStore();
+  const one = await device({ model, client, db });
+  await one.engine.start();
+  assert.equal(one.engine.list().length, 3);
+  assert.match(one.api.gets[0], /since=0&/);
+
+  // Offline: the write is queued and stays in the outbox.
+  one.api.faults.push(...Array.from({ length: 50 }, () => ({ kind: "network" })));
+  const id = await one.engine.create({ item_type: "login", name: "Queued" });
+  await settle();
+  assert.equal(model.items.has(id), false);
+  one.engine.stop();
+
+  await db.reopen();
+  const two = await device({ model, client, db, seed: 9 });
+  await two.engine.start();
+  assert.match(two.api.gets[0], /since=3&/, "resumes after the highest cached seq");
+  const queued = two.engine.list().find((i) => i.id === id);
+  assert.equal(queued.name, "Queued", "the draft shows after the restart");
+  await until(() => model.items.has(id), "the queued write is sent after the restart");
+  await until(() => two.engine.list().find((i) => i.id === id).pending === false);
+  assert.equal(model.writes.filter((w) => w.id === id).length, 1);
+  two.engine.stop();
+});
+
+test("stop_drops_the_summary_index_and_closes_handles", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: MARKER }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.equal(d.engine.list().length, 1);
+  const open = await d.engine.open(ID_A);
+  assert.equal(d.client.vault.handles.size, 1);
+  const seen = [];
+  d.engine.on("changed", (e) => seen.push(e));
+
+  d.engine.stop();
+  await settle();
+  assert.equal(d.client.vault.handles.size, 0, "the handle was closed");
+  assert.deepEqual(d.engine.list(), []);
+  assert.equal(d.timers.pending, 0, "no poll timer is left");
+  await assert.rejects(d.engine.open(ID_A), (e) => e.code === "stopped");
+  await assert.rejects(d.engine.create(DRAFT), (e) => e.code === "stopped");
+  await open.close(); // after stop: no error
+  const gets = d.api.gets.length;
+  await d.engine.syncNow();
+  assert.equal(d.api.gets.length, gets, "no request after stop");
+  d.engine.stop(); // twice is fine
+});
+
+test("after_stop_no_decrypted_field_is_reachable_from_the_engine", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: MARKER, urls: ["https://bank.example"] }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.ok(JSON.stringify(d.engine.list()).includes(MARKER), "control: the index holds it while running");
+  await d.engine.open(ID_A);
+  d.engine.stop();
+  await settle();
+
+  // Everything a caller can reach: the engine's members and what they return.
+  const reachable = [];
+  const walk = (value, depth = 0) => {
+    if (depth > 6 || value === null) return;
+    if (typeof value === "string") reachable.push(value);
+    else if (typeof value === "function") return;
+    else if (typeof value === "object") {
+      for (const key of Reflect.ownKeys(value)) walk(Object.getOwnPropertyDescriptor(value, key).value, depth + 1);
+    }
+  };
+  walk(d.engine);
+  walk(d.engine.list());
+  assert.ok(Object.values(d.engine).every((member) => typeof member === "function"));
+  assert.ok(Object.isFrozen(d.engine));
+  assert.equal(reachable.some((s) => s.includes(MARKER) || s.includes("bank.example")), false);
+  assert.equal(JSON.stringify(d.engine.list()), "[]");
+  // Events carry nothing after stop, and a listener added after stop is ignored.
+  const heard = [];
+  d.engine.on("changed", (e) => heard.push(e));
+  d.api.gets.length = 0;
+  await d.engine.syncNow();
+  assert.deepEqual(heard, []);
+});
+
+test("the_feed_is_read_from_the_last_row_not_from_latest_seq", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  for (const n of [1, 2, 3, 4, 5]) {
+    const id = String(n).repeat(32);
+    model.set(id, { rev: 1, ...client.wireRow(id, 1, { item_type: "login", name: `N${n}` }) });
+  }
+  model.pageSize = 2;
+  model.latestSeqLie = 1_000_000;
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.equal(d.engine.list().length, 5);
+  const sinces = d.api.gets.map((p) => /since=(\d+)/.exec(p)[1]);
+  assert.deepEqual(sinces, ["0", "2", "4"], "each page starts at the last row of the one before");
+
+  // A row written after the lie is still seen: the cursor is the last row, not latest_seq.
+  const late = "6".repeat(32);
+  model.set(late, { rev: 1, ...client.wireRow(late, 1, { item_type: "login", name: "Late" }) });
+  await d.engine.syncNow();
+  assert.equal(d.engine.list().length, 6);
+  d.engine.stop();
+});
+
+test("a_410_is_answered_with_one_full_listing_from_zero", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Stays" }) });
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "Purged elsewhere" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  assert.equal(d.engine.list().length, 2);
+
+  // B is deleted and the tombstone purged on the server; the floor moves up.
+  model.items.delete(ID_B);
+  model.seq += 5;
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "Stays 2" }) });
+  model.minValidSince = model.seq;
+  d.api.gets.length = 0;
+  await d.engine.syncNow();
+  assert.match(d.api.gets[0], /since=2&/);
+  assert.match(d.api.gets[1], /since=0&/, "restarts from 0");
+  assert.equal(d.api.gets.length, 2, "once");
+  assert.deepEqual(d.engine.list().map((i) => i.name), ["Stays 2"], "what the listing no longer shows is gone");
+  assert.deepEqual((await rowsOf(d)).map((r) => r.itemId), [ID_A]);
+  assert.ok(warnings(d).some((w) => w.code === "relisted"));
+  assert.equal(d.events.error.length, 0);
+  d.engine.stop();
+});
+
+test("a_410_on_a_later_page_restarts_once_and_then_surfaces_an_error", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  for (const n of [1, 2, 3]) {
+    const id = String(n).repeat(32);
+    model.set(id, { rev: 1, ...client.wireRow(id, 1, { item_type: "login", name: `N${n}` }) });
+  }
+  model.pageSize = 2;
+  const d = await device({ model, client });
+  // The floor rises while page 2 of the first listing is being read; the second answer is a 410 as well.
+  const real = d.api.get;
+  let calls = 0;
+  d.api.get = async (path) => {
+    calls += 1;
+    if (calls === 2 || calls === 4) throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 9 });
+    return real(path);
+  };
+  await d.engine.start();
+  assert.equal(calls, 4, "page 1, 410, restart from 0, 410 again: no third try in the same pass");
+  assert.deepEqual(d.events.error, [{ code: "gone" }]);
+  assert.ok(d.events.state.some((s) => s.kind === "failed" && s.code === "gone"));
+  // The next pass can recover.
+  calls = 100;
+  await d.engine.syncNow();
+  assert.equal(d.engine.list().length, 3);
+  d.engine.stop();
+});
+
+test("a_feed_that_cannot_be_right_changes_nothing", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
+  const d = await device({ model, client });
+  model.vkEpoch = 2;
+  await d.engine.start();
+  assert.equal(d.engine.list().length, 0);
+  assert.deepEqual(d.events.error, [{ code: "epoch_mismatch" }]);
+  assert.equal((await rowsOf(d)).length, 0);
+  d.engine.stop();
+
+  const bad = new Model();
+  bad.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
+  const e = await device({ model: bad, client });
+  const real = e.api.get;
+  e.api.get = async (path) => ({ ...(await real(path)), has_more: true, changes: [] });
+  await e.engine.start();
+  assert.deepEqual(e.events.error, [{ code: "bad_feed" }]);
+  e.engine.stop();
+});
+
+test("a_server_behind_the_device_is_a_warning_once_and_nothing_is_lowered", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
+  model.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "B" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  model.items.delete(ID_B);
+  model.seq = 1; // a restore: the server counts from an older point
+  model.latestSeqLie = 1;
+  await d.engine.syncNow();
+  await d.engine.syncNow();
+  assert.equal(warnings(d).filter((w) => w.code === "server_behind").length, 1);
+  assert.equal(d.engine.list().length, 2, "the device keeps what it has");
+  d.engine.stop();
+});
+
+test("a_409_on_a_deleted_item_is_checked_through_the_feed", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
+  const d = await device({ model, client });
+  await d.engine.start();
+  // Another device deletes it (a good tombstone) before this one writes.
+  model.set(ID_A, { rev: 2, deleted: true, tomb: client.wireTomb(ID_A, 2) });
+  await d.engine.update(ID_A, { name: "Late edit" });
+  await until(() => d.events.error.some((e) => e.code === "conflict"), "the conflict");
+  const conflict = d.events.error.find((e) => e.code === "conflict");
+  assert.deepEqual([conflict.id, conflict.currentRev, conflict.deleted], [ID_A, 2, true]);
+  await until(() => d.engine.list().length === 0, "the deletion arrives through /changes and is verified");
+  assert.ok(d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 2));
+  d.engine.stop();
+
+  // The same with a tombstone that does not verify: the item is quarantined, not removed.
+  const model2 = new Model();
+  model2.set(ID_B, { rev: 1, ...client.wireRow(ID_B, 1, { item_type: "login", name: "B" }) });
+  const e = await device({ model: model2, client });
+  await e.engine.start();
+  model2.set(ID_B, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(1)) });
+  await e.engine.update(ID_B, { name: "Late edit" });
+  await until(() => e.events.error.some((x) => x.code === "conflict"));
+  await until(() => e.engine.list()[0]?.quarantined === true, "quarantined");
+  e.engine.stop();
+});
+
+test("the_engine_is_not_given_a_wrong_id_or_a_second_start", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  await assert.rejects(d.engine.start(), (e) => e.code === "invalid_state");
+  await assert.rejects(d.engine.update("nothex", { name: "x" }), (e) => e.code === "not_found");
+  await assert.rejects(d.engine.remove(ID_A), (e) => e.code === "not_found");
+  assert.throws(() => d.engine.on("nothing", () => {}), TypeError);
+  const off = d.engine.on("changed", () => assert.fail("removed listeners are not called"));
+  off();
+  await d.engine.create(DRAFT);
+  assert.equal(hex16.is(d.engine.list()[0].id), true);
+  d.engine.stop();
+});

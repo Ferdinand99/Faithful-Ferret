@@ -1,0 +1,282 @@
+// The outbox sender: what is stored before a request, what is sent again and
+// when, and which answers end a write for good.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { ApiError } from "../../src/api.mjs";
+import { b64u } from "../../src/b64.mjs";
+import { outbox } from "../../src/store/outbox.mjs";
+import { encodeWireBytes } from "../../src/wire.mjs";
+import { backoffMs, classify, createOutboxRunner, itemPath, MAX_BACKOFF_MS } from "../../src/sync/outbox.mjs";
+import { createSyncEngine } from "../../src/sync/engine.mjs";
+import { freshStore, scope } from "./idbHelpers.mjs";
+import {
+  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, settle, until,
+} from "./syncHelpers.mjs";
+
+const hex = (n) => n.toString(16).padStart(32, "0");
+
+/** A queued live write for item `n` as the engine would build it. */
+function entryFor(n, { baseRev = 0, idem = 5000 + n, fill = n } = {}) {
+  const blob = new Uint8Array(48).fill(fill);
+  const tag = new Uint8Array(32).fill(fill + 100);
+  const bytes = encodeWireBytes("put_item_req", { base_rev: baseRev, blob: b64u.encode(blob), tag: b64u.encode(tag), idem: hex(idem) });
+  return { idem: hex(idem), itemId: hex(n), baseRev, body: { blob, tag }, bytes };
+}
+
+async function runner({ hooks = {}, model = new Model() } = {}) {
+  const order = [];
+  const store = await createFakeStore({ order });
+  const api = createFakeApi(model, { order });
+  const timers = new FakeTimers();
+  const log = { done: [], blocked: [], retry: [] };
+  const run = createOutboxRunner({
+    api, store, scope: scope(), timers,
+    hooks: {
+      onDone: (entry, answer) => log.done.push([entry.itemId, answer]),
+      onBlocked: (entry, error, kind) => log.blocked.push([entry.itemId, error.code, kind]),
+      onRetry: (entry, ms) => log.retry.push([entry.itemId, ms]),
+      ...hooks,
+    },
+  });
+  const stored = () => outbox.all(store.database.store, scope());
+  return { run, api, model, store, timers, log, order, stored };
+}
+
+test("backoff_is_1_2_4_up_to_60_seconds_and_retry_after_can_only_lengthen_it", () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 20].map((n) => backoffMs(n)), [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000]);
+  assert.equal(backoffMs(0, 10), 10_000);
+  assert.equal(backoffMs(3, 2), 8000);
+  assert.equal(backoffMs(0, 3600), MAX_BACKOFF_MS);
+});
+
+test("answers_are_classified_by_what_retrying_can_do", () => {
+  const kind = (status, code) => classify(new ApiError(status, code));
+  for (const [status, code] of [[0, "network"], [500, "internal"], [502, "bad_response"], [503, "internal"], [408, "bad_response"], [429, "throttled"], [200, "bad_response"]]) {
+    assert.equal(kind(status, code), "retry", `${status} ${code}`);
+  }
+  for (const [status, code] of [[400, "bad_request"], [403, "manifest_not_writable"], [413, "too_large"], [413, "quota_exceeded"], [422, "unsupported_envelope"], [422, "tombstone_invalid"], [422, "idem_reuse"]]) {
+    assert.equal(kind(status, code), "terminal", `${status} ${code}`);
+  }
+  assert.equal(kind(409, "conflict"), "conflict");
+  assert.equal(kind(401, "unauthorized"), "unauthorized");
+  // 401 and 404 are not terminal for the client, but a 404 is not sent again either.
+  assert.equal(new ApiError(401, "unauthorized").terminal, false);
+  assert.equal(new ApiError(404, "not_found").terminal, false);
+  assert.equal(kind(404, "not_found"), "other");
+  assert.equal(kind(410, "gone"), "other");
+});
+
+test("outbox_is_written_before_the_request_and_resends_identical_bytes", async () => {
+  const t = await runner();
+  const entry = entryFor(1);
+  t.api.faults.push({ kind: "network" }, { kind: "network" });
+  await t.run.enqueue(entry);
+  await until(() => t.api.puts.length === 1);
+  assert.deepEqual(t.order, ["outbox.enqueue", "put"], "stored first");
+  assert.equal((await t.stored()).length, 1, "stored while the request is out");
+  t.timers.advance(1_000);
+  await until(() => t.api.puts.length === 2);
+  t.timers.advance(2_000);
+  await until(() => t.model.items.has(entry.itemId));
+  const sent = t.api.puts.map((p) => p.text);
+  assert.equal(sent.length, 3);
+  assert.deepEqual(new Set(sent).size, 1, "the same text each time");
+  assert.deepEqual(t.api.puts.map((p) => Buffer.from(p.bytes).toString("hex")), Array(3).fill(Buffer.from(entry.bytes).toString("hex")));
+  assert.equal(sent[0], new TextDecoder().decode(entry.bytes));
+  await until(async () => (await t.stored()).length === 0, "removed after the 200");
+});
+
+test("a_stored_entry_keeps_its_own_byte_layout", async () => {
+  // Not what JSON.stringify makes: another key order and spacing. The server hashes these bytes.
+  const t = await runner();
+  const base = entryFor(2);
+  const wire = JSON.parse(new TextDecoder().decode(base.bytes));
+  const text = `{ "idem":"${wire.idem}",\n"tag":"${wire.tag}", "blob":"${wire.blob}",\n "base_rev":0 }\n`;
+  const entry = { ...base, bytes: new TextEncoder().encode(text) };
+  t.api.faults.push({ kind: "lost" });
+  await t.run.enqueue(entry);
+  await until(() => t.api.puts.length === 1);
+  t.timers.advance(1_000);
+  await until(() => t.log.done.length === 1);
+  assert.deepEqual(t.api.puts.map((p) => p.text), [text, text]);
+});
+
+test("network_failure_retries_with_backoff_and_same_idem", async () => {
+  const t = await runner();
+  const entry = entryFor(3);
+  for (let i = 0; i < 8; i += 1) t.api.faults.push({ kind: "network" });
+  await t.run.enqueue(entry);
+  await until(() => t.api.puts.length === 1);
+  const waits = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000];
+  for (const [i, wait] of waits.entries()) {
+    await until(() => t.timers.pending === 1, `a wait after try ${i + 1}`);
+    assert.equal(t.timers.delays[i], wait);
+    t.timers.advance(wait - 1);
+    await settle(5);
+    assert.equal(t.api.puts.length, i + 1, "not sent before the wait is over");
+    t.timers.advance(1);
+    await until(() => t.api.puts.length === i + 2);
+  }
+  await until(() => t.log.done.length === 1);
+  assert.deepEqual(t.log.retry.map(([, ms]) => ms), waits);
+  const idems = t.api.puts.map((p) => JSON.parse(p.text).idem);
+  assert.equal(new Set(idems).size, 1);
+  assert.equal(idems[0], entry.idem);
+  assert.equal(t.model.writes.length, 1);
+});
+
+test("a_5xx_and_a_429_are_retried_and_retry_after_is_kept_within_60_seconds", async () => {
+  const t = await runner();
+  const entry = entryFor(4);
+  t.api.faults.push({ kind: "status", status: 503, code: "internal" }, { kind: "status", status: 429, code: "throttled", retryAfter: 7 }, { kind: "status", status: 429, code: "throttled", retryAfter: 900 });
+  await t.run.enqueue(entry);
+  await until(() => t.timers.delays.length === 1);
+  t.timers.advance(1_000);
+  await until(() => t.timers.delays.length === 2);
+  t.timers.advance(7_000);
+  await until(() => t.timers.delays.length === 3);
+  t.timers.advance(60_000);
+  await until(() => t.log.done.length === 1);
+  assert.deepEqual(t.timers.delays, [1_000, 7_000, 60_000]);
+});
+
+test("a_200_after_a_lost_response_is_replayed_true_and_counts_as_done", async () => {
+  const t = await runner();
+  const entry = entryFor(5);
+  t.api.faults.push({ kind: "lost" }); // the server wrote, the answer never came
+  await t.run.enqueue(entry);
+  await until(() => t.model.writes.length === 1 && t.timers.pending === 1);
+  assert.equal(t.log.done.length, 0);
+  t.timers.advance(1_000);
+  await until(() => t.log.done.length === 1);
+  assert.equal(t.log.done[0][1].replayed, true);
+  assert.equal(t.model.writes.length, 1, "written once");
+  assert.equal(t.model.items.get(entry.itemId).rev, 1);
+  await until(async () => (await t.stored()).length === 0, "the entry is removed");
+  assert.equal(t.run.entriesOf(entry.itemId).length, 0);
+});
+
+test("terminal_answers_are_not_sent_again_and_the_draft_stays", async () => {
+  for (const [status, code] of [[400, "bad_request"], [403, "manifest_not_writable"], [413, "too_large"], [413, "quota_exceeded"], [422, "unsupported_envelope"], [422, "tombstone_invalid"], [422, "idem_reuse"], [404, "not_found"]]) {
+    const t = await runner();
+    const entry = entryFor(6);
+    t.api.faults.push({ kind: "status", status, code });
+    await t.run.enqueue(entry);
+    await until(() => t.log.blocked.length === 1, `${status} ${code}`);
+    t.timers.advance(120_000);
+    await settle(10);
+    assert.equal(t.api.puts.length, 1, `${code}: sent once`);
+    assert.equal(t.timers.pending, 0, `${code}: no retry wait`);
+    assert.equal(t.log.blocked[0][1], code, "the server's code is passed on");
+    assert.equal((await t.stored()).length, 1, `${code}: the draft stays`);
+    assert.equal(t.run.entriesOf(entry.itemId).length, 1);
+    t.run.stop();
+  }
+});
+
+test("a_401_stops_the_sender_until_it_is_resumed", async () => {
+  const t = await runner();
+  const first = entryFor(7);
+  t.api.faults.push({ kind: "status", status: 401, code: "unauthorized" });
+  await t.run.enqueue(first);
+  await until(() => t.log.blocked.length === 1);
+  assert.equal(t.log.blocked[0][2], "unauthorized");
+  t.timers.advance(120_000);
+  await settle(10);
+  assert.equal(t.api.puts.length, 1);
+  t.run.resume();
+  await until(() => t.log.done.length === 1);
+  assert.equal(t.api.puts.length, 2);
+  assert.equal(t.api.puts[0].text, t.api.puts[1].text);
+});
+
+test("409_keeps_the_draft_and_does_not_overwrite", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const make = async (seed) => {
+    const store = await createFakeStore({ order: [] });
+    const api = createFakeApi(model);
+    const timers = new FakeTimers();
+    const events = { error: [] };
+    const engine = createSyncEngine({
+      api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), win: null,
+    });
+    engine.on("error", (e) => events.error.push(e));
+    return { store, api, timers, engine, events };
+  };
+  const a = await make(1);
+  const b = await make(2);
+  await a.engine.start();
+  await b.engine.start();
+  const id = await a.engine.create({ item_type: "login", name: "Original" });
+  await until(() => model.items.get(id)?.rev === 1);
+  b.timers.advance(5_000);
+  await until(() => b.engine.list().length === 1);
+
+  // B edits and the server takes it; A, which has not polled, edits from rev 1.
+  await b.engine.update(id, { name: "From B" });
+  await until(() => model.items.get(id).rev === 2);
+  const serverRow = { ...model.items.get(id) };
+  await a.engine.update(id, { name: "From A" });
+  await until(() => a.events.error.length === 1, "the conflict event");
+  assert.equal(a.events.error[0].code, "conflict");
+  assert.equal(a.events.error[0].id, id);
+  assert.equal(a.events.error[0].currentRev, 2);
+  assert.deepEqual(model.items.get(id), serverRow, "the server row is not overwritten");
+  assert.equal(model.writes.filter((w) => w.id === id).length, 2, "A's write never landed");
+  const draft = await outbox.all(a.store.database.store, scope());
+  assert.equal(draft.length, 1, "the draft stays in A's outbox");
+  assert.equal(draft[0].baseRev, 1);
+  const puts = a.api.puts.filter((p) => p.id === id).length;
+  a.timers.advance(120_000);
+  await settle(20);
+  assert.equal(a.api.puts.filter((p) => p.id === id).length, puts, "no automatic retry");
+  // After A has read the feed, B's version is on screen and the draft is still stored.
+  await until(() => a.engine.list()[0].rev >= 2, "A reads the server row");
+  assert.equal((await outbox.all(a.store.database.store, scope())).length, 1);
+  a.engine.stop();
+  b.engine.stop();
+});
+
+test("a_401_on_the_feed_pauses_the_poll_until_syncNow_succeeds", async () => {
+  const model = new Model();
+  const timers = new FakeTimers();
+  const store = await createFakeStore();
+  const api = createFakeApi(model);
+  const states = [];
+  const engine = createSyncEngine({ api, client: { vault: createFakeClient().vault }, store, scope: scope(), timers, win: null, rand: counterRand(1) });
+  engine.on("state", (s) => states.push(s.kind));
+  api.failFeed = new ApiError(401, "unauthorized");
+  api.failFeedTimes = 1;
+  await engine.start();
+  assert.ok(states.includes("unauthorized"));
+  assert.equal(timers.pending, 0, "no poll while signed out");
+  await engine.syncNow();
+  assert.equal(states.at(-1), "idle");
+  assert.equal(timers.pending, 1, "polling is back");
+  engine.stop();
+});
+
+test("a_network_failure_on_the_feed_looks_offline_and_the_poll_goes_on", async () => {
+  const model = new Model();
+  const timers = new FakeTimers();
+  const store = await createFakeStore();
+  const api = createFakeApi(model);
+  const states = [];
+  const engine = createSyncEngine({ api, client: { vault: createFakeClient().vault }, store, scope: scope(), timers, win: null, rand: counterRand(1) });
+  engine.on("state", (s) => states.push(s.kind));
+  api.failFeed = new ApiError(0, "network");
+  api.failFeedTimes = 2;
+  await engine.start();
+  assert.deepEqual(states, ["syncing", "offline"]);
+  assert.equal(timers.pending, 1);
+  timers.advance(5_000);
+  await until(() => api.gets.length === 2);
+  timers.advance(5_000);
+  await until(() => states.at(-1) === "idle", "back online");
+  engine.stop();
+});
+
+test("itemPath_is_under_the_sync_items_route", () => {
+  assert.equal(itemPath("ab".repeat(16)), `/api/sync/items/${"ab".repeat(16)}`);
+});
