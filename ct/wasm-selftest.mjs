@@ -89,27 +89,83 @@ check(slack.status === 1 && /allows 4, found 3/.test(slack.out), "an entry whose
 const noMax = scan("ct/wasm-fixtures/flagged.wat", `[[allow]]\nfunction = "x"\ninstruction = "y"\nreason = "z"\n`);
 check(noMax.status !== 0 && /without max/.test(noMax.out), "an entry without max is refused");
 
+
+// An allow entry in TOML for a function path and a kind of hit, with the
+// regular expressions escaped the way the generator writes them.
+const BS = String.fromCharCode(92);
+const regexEscape = (text) => text.replace(/[.()|]/g, (c) => BS + c);
+const tomlEscape = (text) => text.split(BS).join(BS + BS);
+const entryOf = (norm, ins, max, reason) =>
+  `[[allow]]\nfunction = "${tomlEscape("^" + regexEscape(norm) + "$")}"\ninstruction = "${tomlEscape(regexEscape(ins))}"\nmax = ${max}\nreason = "${reason}"\n`;
+const UNWRAP = "ferret_core::wrap::unwrap_vk";
+const PASSKEY = "ferret_core_wasm::vault::Vault>::passkey_create";
+const PUSH_HEX = "ferret_core::sheet::push_hex";
+const EXISTING = [
+  entryOf(UNWRAP, "br_table", 1, "written by a person"),
+  entryOf(PASSKEY, "i32.load(indexed)", 1, "written by a person"),
+  entryOf(PUSH_HEX, "i32.load(static-table)", 2, "written by a person"),
+].join("\n");
+
 // The generator of the allow list does not bless a new hit in a function that
 // handles key material.
 const generate = (hits, extra = []) => {
   const existing = join(dir, "existing.toml");
   const hitsFile = join(dir, "hits.json");
-  writeFileSync(existing, `[[allow]]\nfunction = "^ferret_core::wrap::unwrap_vk$"\ninstruction = "br_table"\nmax = 1\nreason = "written by a person"\n`);
+  writeFileSync(existing, EXISTING);
   writeFileSync(hitsFile, JSON.stringify({ hits }));
   const r = spawnSync(process.execPath, ["ct/wasm-allow-gen.mjs", hitsFile, "--existing", existing, ...extra], { encoding: "utf8" });
   return { status: r.status, out: r.stdout, err: r.stderr };
 };
-const unwrap = (count) => ({ norm: "ferret_core::wrap::unwrap_vk", ins: "br_table", count });
-const same = generate([unwrap(1)]);
+const unwrap = (count) => ({ norm: UNWRAP, ins: "br_table", count });
+const passkey = (count) => ({ norm: PASSKEY, ins: "i32.load(indexed)", count });
+const pushHex = (count) => ({ norm: PUSH_HEX, ins: "i32.load(static-table)", count });
+const baseHits = [unwrap(1), passkey(1), pushHex(2)];
+const withChange = (change) => baseHits.map((h) => change.find((c) => c.norm === h.norm && c.ins === h.ins) ?? h);
+
+const same = generate(baseHits);
 check(same.status === 0 && /reason = "written by a person"/.test(same.out), "the generator keeps an existing entry and its reason");
-const more = generate([unwrap(2)]);
+const more = generate(withChange([unwrap(2)]));
 check(more.status === 3 && /max 1 -> 2/.test(more.err), "the generator refuses a higher max in a key-handling function");
-const fresh = generate([unwrap(1), { norm: "ferret_core::wrap::unwrap_vk", ins: "i32.load(static-table)", count: 1 }]);
+const fresh = generate([...baseHits, { norm: UNWRAP, ins: "i32.load(static-table)", count: 1 }]);
 check(fresh.status === 3 && /new entry/.test(fresh.err), "the generator refuses a new kind of hit in a key-handling function");
-const approved = generate([unwrap(2)], ["--approve", "ferret_core::wrap::unwrap_vk=I read the code of unwrap_vk and the second jump is the same match"]);
-check(approved.status === 0 && /max = 2/.test(approved.out) && /I read the code of unwrap_vk/.test(approved.out), "--approve lets it through and writes the reason");
-const other = generate([unwrap(1), { norm: "ferret_core::cbor::decode::item", ins: "br_table", count: 3 }]);
+const approved = generate(withChange([unwrap(2)]), ["--approve", `${UNWRAP}=I read the code of unwrap_vk and the second jump is the same match`]);
+check(
+  approved.status === 0 && /max = 2/.test(approved.out) && /APPROVED: I read the code of unwrap_vk/.test(approved.out),
+  "--approve lets it through and writes the reason, marked APPROVED",
+);
+const raisedBinding = generate(withChange([passkey(3)]));
+check(
+  raisedBinding.status === 3 && /Vault>::passkey_create/.test(raisedBinding.err) && /max 1 -> 3/.test(raisedBinding.err),
+  "the generator refuses a higher max in Vault>::passkey_create (a named function of the binding)",
+);
+const newBinding = generate([...baseHits, { norm: "ferret_core_wasm::vault::Vault>::unlock", ins: "i32.load(indexed)", count: 2 }]);
+check(newBinding.status === 3, "the generator refuses a new entry in a named function of the binding");
+const raisedSheet = generate(withChange([pushHex(5)]));
+check(raisedSheet.status === 3, "the generator refuses a higher max in sheet");
+const other = generate([...baseHits, { norm: "ferret_core::cbor::decode::item", ins: "br_table", count: 3 }]);
 check(other.status === 0 && /decode::item/.test(other.out), "a new entry outside the key-handling modules is generated");
+
+// The file against the base branch: a raised max or a new entry in a
+// key-handling function has to carry an APPROVED reason.
+const baseline = (newText) => {
+  const base = join(dir, "base.toml");
+  const now = join(dir, "now.toml");
+  writeFileSync(base, EXISTING);
+  writeFileSync(now, newText);
+  const r = spawnSync(process.execPath, ["ct/wasm-allow-baseline.mjs", base, now], { encoding: "utf8" });
+  return { status: r.status, out: r.stdout + r.stderr };
+};
+check(baseline(EXISTING).status === 0, "the baseline check passes on an unchanged file");
+const handRaised = baseline(EXISTING.replace(`br_table"\nmax = 1`, `br_table"\nmax = 2`));
+check(handRaised.status === 1 && /unwrap_vk.*max 1 -> 2/.test(handRaised.out), "a hand-raised max in a key-handling function fails against the base");
+const approvedRaise = baseline(
+  EXISTING.replace(`br_table"\nmax = 1\nreason = "written by a person"`, `br_table"\nmax = 2\nreason = "APPROVED: I read it"`),
+);
+check(approvedRaise.status === 0, "the same raise with an APPROVED reason passes");
+const newKey = baseline(EXISTING + "\n" + entryOf("ferret_core::codes::decode_secret_key", "br_table", 1, "plausible"));
+check(newKey.status === 1 && /new entry/.test(newKey.out), "a new entry in a key-handling function without APPROVED fails");
+const newOutside = baseline(EXISTING + "\n" + entryOf("ferret_core::cbor::decode::item", "br_table", 9, "plausible"));
+check(newOutside.status === 0, "a new entry outside the key-handling modules passes");
 
 rmSync(dir, { recursive: true, force: true });
 process.exitCode = failed ? 1 : 0;

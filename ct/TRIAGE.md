@@ -337,3 +337,12 @@ with its reason, and each is repeated in the report.
   is optimised the same way, but it is another module (the harness code, not
   the binding); its code for the harness functions is not byte-identical to the
   one in the binding, because `wasm-opt` inlines across `#[inline(never)]`.
+  **What the scan cannot see:** a table lookup whose address was built with an
+  add, put in a local (`local.set`, `local.tee`) and loaded from there, and a
+  store at a computed address. The pins of `ct/wasm-allow.toml` count only the
+  hits that were flagged, so such a lookup is not counted in any function, with
+  pins or without. A flow that flags it was tried and gave 6341 hits against
+  168, because `wasm-opt` keeps every running pointer of a loop in such a local.
+  It would take a data-flow pass over the output of `wasm-opt` to close the gap,
+  or a dudect run on an input that selects the table index of a secret-dependent
+  lookup; no such lookup is known in our code. Parked for 14c.

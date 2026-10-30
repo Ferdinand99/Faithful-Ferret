@@ -40,61 +40,61 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 function = "^ferret_core_wasm::convert::check$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "The check of the shape of a JavaScript argument before it is read: a match on the shape (any, list, object) and on the kind of the JS value; the structure of a call from JavaScript, not key bytes: key material arrives as byte arrays that are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::from_js$"
 instruction = "br_table"
 max = 7
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "serde-wasm-bindgen's reading of a JS value into a Rust type, inlined: a match on the kind of each value (number, string, array, object) and on field names; the structure of a call from JavaScript, not key bytes: key material arrives as byte arrays that are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::PinArg>::core$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Converting the pin argument of an unlock flow to the core's type: a match on first use against a pinned record; public tags and counters."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::PinnedDto>::of$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Converting a pinned record to a JS object: a match on the kind of method key of each floor, and element-size divisions of the list of floors (public counters)."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::PinnedDto>::of$"
 instruction = "i32\\.div_u"
 max = 3
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Converting a pinned record to a JS object: a match on the kind of method key of each floor, and element-size divisions of the list of floors (public counters)."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::WrapDto>::core$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Converting a wrap record from JS to the core's type: a match on the unlock method (a public tag); the wrap bytes are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::WrapDto>::of$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Converting a wrap record to a JS object: a match on the unlock method (a public tag); the wrap bytes are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::export::items_of$"
 instruction = "br_table"
 max = 3
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Decrypting the rows of an export request: matches on the result and the error kind of each decrypt_item (inlined) and on the row; the keys are inside decrypt_item and the AEAD, not addresses here."
 
 [[allow]]
 function = "^ferret_core_wasm::item::build_body$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Building an item body from the JS draft: matches on the item type and the field kind, and element-size divisions of the lists of fields and URLs; the field values are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::item::build_body$"
 instruction = "i32\\.div_u"
 max = 3
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Building an item body from the JS draft: matches on the item type and the field kind, and element-size divisions of the lists of fields and URLs; the field values are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::item::normalize_otpauth$"
@@ -124,55 +124,55 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth 
 function = "^ferret_core_wasm::item::ViewDto>::of$"
 instruction = "i32\\.div_u"
 max = 6
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Building the JS view of an item body: element-size divisions of the lists of fields and URLs that are mapped; the field values are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::job::bind_to_qr$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Binding a pin to the setup QR: a match on first use against a pinned record and on whether a QR was scanned; the server key and the secret-key bit are compared, not used as an address."
 
 [[allow]]
 function = "^ferret_core_wasm::passkey::user_verification$"
 instruction = "br_table"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "A match on the user verification mode a caller names (required, preferred, discouraged): a public string turned into an enum."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Inner>::open$"
 instruction = "br_table"
 max = 2
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Registering an opened item under a handle: the handle is a counter, the map is a BTreeMap keyed by it (its node search is the indexed load); the item body is moved in, not used as an address."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Inner>::open$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Registering an opened item under a handle: the handle is a counter, the map is a BTreeMap keyed by it (its node search is the indexed load); the item body is moved in, not used as an address."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
 instruction = "br_table"
 max = 8
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
 instruction = "i32\\.div_u"
 max = 3
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
 instruction = "i64\\.load\\(indexed\\)"
 max = 1
-reason = "The glue to JavaScript: serde field and variant names of the call (public strings), the kind of an error, the unlock method, the user verification mode, element sizes of the lists it converts. These are the structure of a call, not the key material behind it."
+reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
 
 [[allow]]
 function = "^ferret_core::cbor::decode::item$"
@@ -568,43 +568,43 @@ reason = "A match on how the length of the bytes handed in compares with 32 (too
 function = "^ferret_core::sheet::parse_server_address$"
 instruction = "br_table"
 max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Reading the server address the user typed or scanned: scheme, host and port checks, and the IPv4 form, on public text; the index is the loop counter. The emergency sheet carries the key as a Crockford code that codes.rs reads, not through this function."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
 instruction = "i32\\.load\\(const-add\\)"
 max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Reading the server address the user typed or scanned: scheme, host and port checks, and the IPv4 form, on public text; the index is the loop counter. The emergency sheet carries the key as a Crockford code that codes.rs reads, not through this function."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 9
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Reading the server address the user typed or scanned: scheme, host and port checks, and the IPv4 form, on public text; the index is the loop counter. The emergency sheet carries the key as a Crockford code that codes.rs reads, not through this function."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_setup_qr$"
 instruction = "br_table"
 max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Reading the setup QR text (`ferret-setup:v1?u=...&a=...&k=...&s=...&o=...`): matches on the parameter names and loads at `base + index` of public text (server address, account id, server public key, the secret-key bit)."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_setup_qr$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Reading the setup QR text (`ferret-setup:v1?u=...&a=...&k=...&s=...&o=...`): matches on the parameter names and loads at `base + index` of public text (server address, account id, server public key, the secret-key bit)."
 
 [[allow]]
 function = "^ferret_core::sheet::push_hex$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Lower-case hexadecimal output, with a table of the 16 digits, of the account id and the server public key for the setup QR: both are public, so the nibble that indexes the table is public."
 
 [[allow]]
 function = "^ferret_core::sheet::setup_qr_payload$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+reason = "Building the setup QR text: the same hexadecimal table, inlined from push_hex, for the account id and the server public key (public)."
 
 [[allow]]
 function = "^ferret_core::text::password::MasterPassword>::opaque_input$"

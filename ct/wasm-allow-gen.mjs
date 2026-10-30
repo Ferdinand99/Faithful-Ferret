@@ -16,13 +16,15 @@
 // generator refuses to add an entry, to add a kind of hit or to raise a `max`
 // unless the existing file has that entry with at least that `max`, or the
 // function is passed with `--approve 'function=reason'`; the reason of the
-// person goes into the entry. Entries that already exist keep the reason that
+// person goes into the entry, marked `APPROVED: ` (ct/wasm-allow-baseline.mjs
+// looks for the mark when a pull request is compared with its base). Entries that already exist keep the reason that
 // the file has (so a reason written by hand stays); a new entry gets the reason
 // of the table below, by module, and a hit in a module that the table does not
 // know stops the generator. `--table-reasons` ignores the existing reasons (to
 // rewrite them all from the table). CI regenerates the file and fails on a diff.
 
 import { readFileSync } from "node:fs";
+import { KEY } from "./wasm-key.mjs";
 
 const argv = process.argv.slice(2);
 const option = (name) => {
@@ -69,8 +71,7 @@ function parseExisting(path) {
 const existingPath = option("--existing")[0];
 const existing = existingPath ? parseExisting(existingPath) : new Map();
 
-/** Modules that handle key material, passwords, codes or tags. */
-const KEY = /^ferret_core::(wrap|secret|codes|integrity|envelope|keys|account|opaque|prim|text|totp|item::pad|pinning|ids|tlv)::|^ferret_core::passkey::prf|^ferret_core::export::(?!plain)|shim$|^unnamed$/;
+/** Modules that handle key material, passwords, codes or tags (ct/wasm-key.mjs). */
 
 const R1 = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations.";
 const R2 = "ACCEPTED RESIDUAL RISK (TRIAGE.md R2). The one-time code is the dynamic truncation of the HMAC output taken modulo 10^digits (RFC 4226 section 5.3). The dividend is the HMAC output of this one code, not the TOTP secret; the code is shown to the user and sent to a server. The offset of the truncation is the low nibble of that HMAC output, an index into this code's own digest.";
@@ -110,8 +111,31 @@ const SPECIFIC = {
   "ferret_core::wrap::unwrap_vk|br_table": `Opening a wrap: ${METHOD}; the key commitment is compared by commit_eq, which has no hit, before the AEAD is opened.`,
 };
 
+const JS_STRUCTURE = "the structure of a call from JavaScript, not key bytes: key material arrives as byte arrays that are copied";
+/** Reasons written for a named function of the binding or of `sheet`, for every kind of hit in it. */
+const BY_PATH = {
+  "ferret_core_wasm::convert::check": `The check of the shape of a JavaScript argument before it is read: a match on the shape (any, list, object) and on the kind of the JS value; ${JS_STRUCTURE}.`,
+  "ferret_core_wasm::convert::from_js": `serde-wasm-bindgen's reading of a JS value into a Rust type, inlined: a match on the kind of each value (number, string, array, object) and on field names; ${JS_STRUCTURE}.`,
+  "ferret_core_wasm::convert::PinArg>::core": "Converting the pin argument of an unlock flow to the core's type: a match on first use against a pinned record; public tags and counters.",
+  "ferret_core_wasm::convert::PinnedDto>::of": "Converting a pinned record to a JS object: a match on the kind of method key of each floor, and element-size divisions of the list of floors (public counters).",
+  "ferret_core_wasm::convert::WrapDto>::core": "Converting a wrap record from JS to the core's type: a match on the unlock method (a public tag); the wrap bytes are copied.",
+  "ferret_core_wasm::convert::WrapDto>::of": "Converting a wrap record to a JS object: a match on the unlock method (a public tag); the wrap bytes are copied.",
+  "ferret_core_wasm::export::items_of": "Decrypting the rows of an export request: matches on the result and the error kind of each decrypt_item (inlined) and on the row; the keys are inside decrypt_item and the AEAD, not addresses here.",
+  "ferret_core_wasm::item::build_body": "Building an item body from the JS draft: matches on the item type and the field kind, and element-size divisions of the lists of fields and URLs; the field values are copied.",
+  "ferret_core_wasm::item::ViewDto>::of": "Building the JS view of an item body: element-size divisions of the lists of fields and URLs that are mapped; the field values are copied.",
+  "ferret_core_wasm::job::bind_to_qr": "Binding a pin to the setup QR: a match on first use against a pinned record and on whether a QR was scanned; the server key and the secret-key bit are compared, not used as an address.",
+  "ferret_core_wasm::passkey::user_verification": "A match on the user verification mode a caller names (required, preferred, discouraged): a public string turned into an enum.",
+  "ferret_core_wasm::vault::Inner>::open": "Registering an opened item under a handle: the handle is a counter, the map is a BTreeMap keyed by it (its node search is the indexed load); the item body is moved in, not used as an address.",
+  "ferret_core_wasm::vault::Vault>::passkey_create": "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it.",
+  "ferret_core::sheet::parse_server_address": "Reading the server address the user typed or scanned: scheme, host and port checks, and the IPv4 form, on public text; the index is the loop counter. The emergency sheet carries the key as a Crockford code that codes.rs reads, not through this function.",
+  "ferret_core::sheet::parse_setup_qr": "Reading the setup QR text (`ferret-setup:v1?u=...&a=...&k=...&s=...&o=...`): matches on the parameter names and loads at `base + index` of public text (server address, account id, server public key, the secret-key bit).",
+  "ferret_core::sheet::push_hex": "Lower-case hexadecimal output, with a table of the 16 digits, of the account id and the server public key for the setup QR: both are public, so the nibble that indexes the table is public.",
+  "ferret_core::sheet::setup_qr_payload": "Building the setup QR text: the same hexadecimal table, inlined from push_hex, for the account id and the server public key (public).",
+};
+
 /** The reason for a function path, or null. */
 function reason(path, ins) {
+  if (BY_PATH[path]) return BY_PATH[path];
   const specific = SPECIFIC[`${path}|${ins}`];
   if (specific) return specific;
   if (/^ferret_core::text::unicode::normalize_password$/.test(path)) return R1;
@@ -182,7 +206,7 @@ for (const { norm, ins, count } of [...merged.values()].sort((a, b) => a.norm.lo
         refused.push(`${norm} / ${ins}: ${old ? `max ${old.max} -> ${count}` : `new entry, ${count}`}`);
         continue;
       }
-      why = approved;
+      why = `APPROVED: ${approved}`;
     }
   }
   if (why === null) {

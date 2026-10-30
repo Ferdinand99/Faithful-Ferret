@@ -26,7 +26,9 @@
 // dropped: flagging every load from a local that was ever set from an add gives
 // thousands of hits, as wasm-opt keeps every running pointer of a loop that way;
 // telling a table lookup from a pointer increment needs data flow that this
-// scan does not have. The pins per function bound what a miss can hide. Parked.
+// scan does not have. A lookup that the scan does not flag is not pinned by
+// anything, in a function with pins or without: the pins count only the hits that
+// were flagged, so a miss is not counted at all. Parked (TRIAGE.md R9).
 //
 // and puts each function in a class by its name: `ferret_core`, `binding`
 // (ferret_core_wasm), `unnamed` (a function without a name, which wasm-opt may

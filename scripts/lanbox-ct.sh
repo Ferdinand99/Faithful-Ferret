@@ -35,9 +35,9 @@ cd "$(dirname "$0")/.."
 
 mode="${1:-all}"
 case "$mode" in
-  all | lock | analyze | triage | select-asm | select-asm-negative | wasm-selftest | wasm-scan | wasm-allow-check | wasm-shipped | dudect-native | dudect-wasm) ;;
+  all | lock | lock-selftest | analyze | triage | select-asm | select-asm-negative | wasm-selftest | wasm-scan | wasm-allow-check | wasm-allow-baseline | wasm-shipped | dudect-native | dudect-wasm) ;;
   *)
-    echo "usage: scripts/lanbox-ct.sh [all|lock|analyze|triage|select-asm|select-asm-negative|wasm-selftest|wasm-scan|wasm-allow-check|wasm-shipped|dudect-native|dudect-wasm]" >&2
+    echo "usage: scripts/lanbox-ct.sh [all|lock|lock-selftest|analyze|triage|select-asm|select-asm-negative|wasm-selftest|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-shipped|dudect-native|dudect-wasm]" >&2
     exit 2
     ;;
 esac

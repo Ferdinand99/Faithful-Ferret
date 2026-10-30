@@ -106,6 +106,8 @@ jobs:
         run: echo "CT_ANALYZER=$(ct/fetch-analyzer.sh "$RUNNER_TEMP/ct-analyzer")" >> "$GITHUB_ENV"
       - name: The timing tests use the lock and the profile of the root
         run: ct/run.sh lock
+      - name: The checksum comparison of the two locks fails on a doctored lock
+        run: ct/run.sh lock-selftest
       - name: ct_analyzer on every harness file, two architectures, four levels
         run: ct/run.sh analyze
       - name: Every finding is triaged, with the pinned counts (ct_analyzer_clean_or_triaged)
@@ -154,8 +156,15 @@ jobs:
         run: ct/run.sh wasm-selftest
       - name: Only allow-listed instructions in our functions (wasm_scan_only_allowlisted)
         run: ct/run.sh wasm-scan
-      - name: The allow list is what a regeneration gives (nothing new in a key-handling function without approval)
+      - name: The allow file matches the scan (a regeneration gives the committed file, no hand edit, no stale file)
         run: ct/run.sh wasm-allow-check
+      - name: Nothing raised or new in a key-handling function without an APPROVED reason (against the base branch)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --depth=1 origin "$BASE_REF"
+          ct/run.sh wasm-allow-baseline
       - name: The scanned module is the shipped module
         run: ct/run.sh wasm-shipped
       - name: Keep the scan report

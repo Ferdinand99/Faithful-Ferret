@@ -13,7 +13,11 @@
 #                             build at the shipped optimisation level
 #                             (wasm-bindgen + wasm-opt -Oz, names kept), against
 #                             ct/wasm-allow.toml
-#   ct/run.sh wasm-allow-check  ct/wasm-allow.toml is what a regeneration gives
+#   ct/run.sh wasm-allow-check  (after wasm-scan) ct/wasm-allow.toml is what a regeneration
+#                             from that scan gives (no hand edit, no stale file)
+#   ct/run.sh wasm-allow-baseline  against the base branch: nothing raised or new in a
+#                             key-handling function without an APPROVED reason
+#   ct/run.sh lock-selftest   the checksum comparison of the two locks fails on a doctored lock
 #   ct/run.sh wasm-selftest   the scan must flag the fixtures in ct/wasm-fixtures
 #   ct/run.sh wasm-shipped    the named build is the shipped package (same bytes
 #                             once the names are stripped)
@@ -155,7 +159,7 @@ select_check() {
       cmovs="$(printf '%s\n' "$body" | grep -cE '^\s+(cmov|csel)' || true)"
       bit0="$(printf '%s\n' "$body" | grep -cE '^\s+(test[bwlq]?\s+\$1,|tst\s+\w+, #0x1$|tbn?z\s+\w+, #0,)' || true)"
       echo "select-asm $label $arch O$opt: $lines lines, conditional moves $cmovs, tests of bit 0 of the flag $bit0"
-      if [ "$lines" -lt 12 ]; then
+      if [ "$lines" -lt 8 ]; then
         select_empty=$((select_empty + 1))
       elif [ "$bit0" != 0 ] || [ "$cmovs" -gt 2 ]; then
         select_flagged=$((select_flagged + 1))
@@ -228,6 +232,33 @@ wasm_allow_check() {
     echo "FAIL: ct/wasm-allow.toml differs from a regeneration; regenerate it (see ct/wasm-allow-gen.mjs) and review the diff" >&2
     return 1
   fi
+}
+
+# The allow list against the one on the base branch: a new entry or a higher
+# `max` in a key-handling function has to carry an APPROVED reason (written by
+# `ct/wasm-allow-gen.mjs --approve`). BASE_REF names the base branch (CI sets it
+# for a pull request); CT_BASE_ALLOW gives a file instead.
+wasm_allow_baseline() {
+  mkdir -p "$results/wasm"
+  local base="${CT_BASE_ALLOW:-}"
+  if [ -z "$base" ]; then
+    base="$results/wasm/base-allow.toml"
+    if ! git show "origin/${BASE_REF:?set BASE_REF or CT_BASE_ALLOW}:ct/wasm-allow.toml" > "$base" 2>/dev/null; then
+      echo "the base branch has no ct/wasm-allow.toml yet (first introduction): nothing to compare"
+      return 0
+    fi
+  fi
+  node ct/wasm-allow-baseline.mjs "$base" ct/wasm-allow.toml
+}
+
+# The checksum comparison of the two locks must fail on a doctored lock.
+lock_selftest() {
+  ct/check-lock-sums.sh ct/lock-fixtures/a.lock ct/lock-fixtures/b-same.lock
+  if ct/check-lock-sums.sh ct/lock-fixtures/a.lock ct/lock-fixtures/b-doctored.lock 2>/dev/null; then
+    echo "FAIL: a lock with another checksum was accepted" >&2
+    return 1
+  fi
+  echo "lock checksum check: the same lock passes, a doctored one fails"
 }
 
 wasm_selftest() {
@@ -404,8 +435,11 @@ case "$mode" in
   dudect-native) dudect_native ;;
   dudect-wasm) dudect_wasm ;;
   lock) ct/check-lock.sh ;;
+  lock-selftest) lock_selftest ;;
+  wasm-allow-baseline) wasm_allow_baseline ;;
   all)
     ct/check-lock.sh
+    lock_selftest
     analyze
     triage
     select_asm
@@ -418,7 +452,7 @@ case "$mode" in
     dudect_wasm
     ;;
   *)
-    echo "usage: ct/run.sh analyze|triage|select-asm|select-asm-negative|wasm-scan|wasm-allow-check|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|all" >&2
+    echo "usage: ct/run.sh analyze|triage|select-asm|select-asm-negative|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|lock-selftest|all" >&2
     exit 2
     ;;
 esac

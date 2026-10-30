@@ -22,15 +22,8 @@ if [ -n "$extra" ]; then
   fail=1
 fi
 
-# The same crate at the same version must have the same checksum in both locks
-# (a different source or a re-published crate would have another).
-sums() { awk '/^name = /{n=$3} /^version = /{v=$3} /^checksum = /{print n, v, $3}' "$1" | tr -d '"' | sort -u; }
-changed="$(awk 'NR==FNR{ck[$1" "$2]=$3; next} ($1" "$2) in ck && ck[$1" "$2]!=$3 {print $1, $2}'   <(sums Cargo.lock) <(sums ct/dudect/Cargo.lock))"
-if [ -n "$changed" ]; then
-  echo "FAIL: these crates have another checksum in ct/dudect/Cargo.lock than in Cargo.lock:" >&2
-  echo "$changed" >&2
-  fail=1
-fi
+# The same crate at the same version must have the same checksum in both locks.
+ct/check-lock-sums.sh Cargo.lock ct/dudect/Cargo.lock || fail=1
 
 profile() {
   sed -n '/^\[profile\.release\]/,/^$/p;/^\[profile\.release\.package\."argon2@0.6.0"\]/,/^$/p' "$1" \
