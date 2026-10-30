@@ -2,7 +2,10 @@
 # The `test-support` feature (replay RNG, unchecked Argon2, intermediate
 # results) must never reach a release.
 #
-#  1. No release dependency graph may enable ferret-core/test-support.
+#  1. No release dependency graph may enable ferret-core/test-support. The
+#     WASM package must not enable ferret-core/server-suite either: that
+#     feature opens the OPAQUE suite and the RNG adapter for the server
+#     library, and nothing of it belongs in the client package.
 #  2. If a built .wasm file is given (or the default exists), its export list
 #     must not contain a `test_*` function or method, or a replay function.
 #
@@ -21,6 +24,10 @@ for crate in "${release_crates[@]}"; do
   tree="$(cargo tree -p "$crate" -e normal,features --prefix none)"
   if printf '%s\n' "$tree" | grep -q 'ferret-core feature "test-support"'; then
     echo "FAIL: $crate enables ferret-core/test-support in its release graph" >&2
+    fail=1
+  fi
+  if printf '%s\n' "$tree" | grep -q 'ferret-core feature "server-suite"'; then
+    echo "FAIL: $crate enables ferret-core/server-suite in its release graph" >&2
     fail=1
   fi
   if printf '%s\n' "$tree" | grep -q '^ferret-vectorgen '; then

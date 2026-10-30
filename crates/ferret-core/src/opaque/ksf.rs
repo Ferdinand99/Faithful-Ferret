@@ -35,7 +35,11 @@ pub(crate) const KSF_SALT: [u8; 16] = [0; 16];
 type Run = fn(&[u8], &[u8], KdfParams, &mut [u8]) -> Result<(), Error>;
 
 /// Argon2id for OPAQUE with the parameters of one profile.
-pub(crate) struct FerretKsf {
+///
+/// The type is `pub` only because the associated type of the public
+/// `FerretSuite` must be at least as visible as the suite; the
+/// module is private, so the name cannot be written outside the crate.
+pub struct FerretKsf {
     params: KdfParams,
     run: Run,
     /// Why the last call failed, for the caller (opaque-ke can only say "the

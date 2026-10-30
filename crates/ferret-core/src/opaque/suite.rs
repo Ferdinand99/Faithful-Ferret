@@ -24,9 +24,11 @@ pub const OPAQUE_CONTEXT: &[u8] = b"ferret/v1/opaque";
 
 /// Ferret suite 1: the configuration of the table in the module docs.
 ///
-/// The type is private: nothing outside the crate gets to build a protocol
-/// state of another configuration.
-pub(crate) struct FerretSuite;
+/// The type is reachable from outside the crate only through
+/// `opaque::server_suite`, behind the feature `server-suite`. Without it,
+/// nothing outside the crate gets to build a protocol state of this
+/// configuration, and no other configuration exists.
+pub struct FerretSuite;
 
 impl CipherSuite for FerretSuite {
     type OprfCs = Ristretto255;
