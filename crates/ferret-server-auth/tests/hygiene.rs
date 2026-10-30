@@ -39,6 +39,8 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "ErrorClass",
     "SystemClock",
     "ManualClock",
+    "Stage",
+    "Outcome",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines
