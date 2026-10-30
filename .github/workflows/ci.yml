@@ -42,7 +42,7 @@ jobs:
           - target: native
             args: --workspace --all-targets
           - target: wasm32-unknown-unknown
-            args: -p ferret-core --target wasm32-unknown-unknown
+            args: -p ferret-core -p ferret-core-wasm --target wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99

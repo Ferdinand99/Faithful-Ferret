@@ -60,7 +60,7 @@ use crate::prim::argon2::argon2id;
 use crate::prim::hkdf::hkdf_sha256;
 use crate::prim::{KdfParams, check_kdf_params};
 use crate::rng::SecureRng;
-use crate::secret::ExportContentKey;
+use crate::secret::{ExportContentKey, ExportWrapKey};
 use crate::text::ExportPassword;
 use crate::tlv::{SUITE, Tlv, tag};
 use std::collections::BTreeSet;
@@ -410,31 +410,119 @@ pub(crate) fn seal_file<R: SecureRng>(
     created_at: u64,
     plain: &[u8],
 ) -> Result<Vec<u8>, Error> {
+    let draft = begin_file(rng, kdf, created_at, plain)?;
+    let k_exp = derive_k_exp(runner, pw, &draft.salt, kdf)?;
+    let mut bytes = *k_exp;
+    let key = ExportWrapKey::from_array_wiping(&mut bytes);
+    draft.finish(rng, &key)
+}
+
+/// The first half of an export: the salt, the header and the content key are
+/// made, the items are encoded, and the file waits for `K_exp`.
+///
+/// This is [`export_encrypt`] cut in two so that the slow Argon2id step can
+/// run in another worker (plan U2, U15): [`ExportDraft::salt`] and
+/// [`ExportDraft::kdf`] go to that worker, [`export_wrap_key`] runs there, and
+/// [`ExportDraft::finish`] seals the file with the `K_exp` it sends back. The
+/// draws are the same as in [`export_encrypt`], in the same order: the salt
+/// and `EK` here, the two nonces in `finish`.
+///
+/// `kdf` is checked against the floor and ceiling and the items are checked
+/// before anything is drawn.
+pub fn export_begin<R: SecureRng>(
+    rng: &mut R,
+    kdf: KdfParams,
+    created_at: u64,
+    items: &[ExportItem],
+) -> Result<ExportDraft, Error> {
+    let kdf = check_kdf_params(kdf)?;
+    let plain = encode_items(items)?;
+    begin_file(rng, kdf, created_at, &plain)
+}
+
+fn begin_file<R: SecureRng>(
+    rng: &mut R,
+    kdf: KdfParams,
+    created_at: u64,
+    plain: &[u8],
+) -> Result<ExportDraft, Error> {
     if plain.len().saturating_add(OVERHEAD) > MAX_BODY_LEN {
         return Err(Error::TooLarge);
     }
-
     let mut salt = [0u8; SALT_LEN];
     rng.fill(&mut salt);
     let header = encode_header(&salt, kdf, created_at)?;
-    let aad_ek = aad_ek(&header)?;
-    let aad_body = aad_body(&header)?;
-
     let ek = ExportContentKey::random(rng);
-    let k_exp = derive_k_exp(runner, pw, &salt, kdf)?;
-    let ek_wrap = aead_seal(rng, &k_exp, &aad_ek, ek.expose())?;
-    let body = aead_seal(rng, ek.expose(), &aad_body, plain)?;
+    Ok(ExportDraft {
+        header,
+        salt,
+        kdf,
+        ek,
+        plain: Zeroizing::new(plain.to_vec()),
+    })
+}
 
-    let mut file = Vec::with_capacity(
-        header
-            .len()
-            .saturating_add(ek_wrap.len())
-            .saturating_add(body.len()),
-    );
-    file.extend_from_slice(&header);
-    file.extend_from_slice(&ek_wrap);
-    file.extend_from_slice(&body);
-    Ok(file)
+/// An export that waits for `K_exp`. See [`export_begin`]. It holds the
+/// plain body and the content key, so it has no `Clone` and no `Debug`; both
+/// are wiped when it is dropped.
+pub struct ExportDraft {
+    header: Vec<u8>,
+    salt: [u8; SALT_LEN],
+    kdf: KdfParams,
+    ek: ExportContentKey,
+    plain: Zeroizing<Vec<u8>>,
+}
+
+impl ExportDraft {
+    /// The Argon2id salt of the file. Not secret.
+    pub fn salt(&self) -> &[u8; SALT_LEN] {
+        &self.salt
+    }
+
+    /// The Argon2id parameters of the file. Not secret.
+    pub fn kdf(&self) -> KdfParams {
+        self.kdf
+    }
+
+    /// Seals the file with `K_exp`. Draws the nonce of `ek_wrap` and then
+    /// the nonce of the body.
+    ///
+    /// Spec: Fase 1 § 6.4.
+    pub fn finish<R: SecureRng>(self, rng: &mut R, key: &ExportWrapKey) -> Result<Vec<u8>, Error> {
+        let aad_ek = aad_ek(&self.header)?;
+        let aad_body = aad_body(&self.header)?;
+        let ek_wrap = aead_seal(rng, key.expose(), &aad_ek, self.ek.expose())?;
+        let body = aead_seal(rng, self.ek.expose(), &aad_body, &self.plain)?;
+        let mut file = Vec::with_capacity(
+            self.header
+                .len()
+                .saturating_add(ek_wrap.len())
+                .saturating_add(body.len()),
+        );
+        file.extend_from_slice(&self.header);
+        file.extend_from_slice(&ek_wrap);
+        file.extend_from_slice(&body);
+        Ok(file)
+    }
+}
+
+/// The slow step of an export or an import: `K_exp` for a password, the salt
+/// of the file's header and its Argon2id parameters.
+///
+/// `kdf` is checked against the floor and the 512 MiB ceiling before any
+/// memory is reserved. Use `ExportPassword::new_checked` when a file is
+/// written and `ExportPassword::for_open` when one is read.
+///
+/// Spec: Fase 1 § 6.4.
+pub fn export_wrap_key(
+    pw: &ExportPassword,
+    salt: &[u8; SALT_LEN],
+    kdf: KdfParams,
+) -> Result<ExportWrapKey, Error> {
+    let kdf = check_kdf_params(kdf)?;
+    let k_exp = derive_k_exp(KdfRunner::PRODUCTION, pw, salt, kdf)?;
+    let mut bytes = *k_exp;
+    Ok(ExportWrapKey::from_array_wiping(&mut bytes))
 }
 
 /// Opens an export file and returns its items.
@@ -458,6 +546,25 @@ pub(crate) fn decrypt_with(
     pw: &ExportPassword,
     file: &[u8],
 ) -> Result<Vec<ExportItem>, Error> {
+    let layout = check_layout(runner, file)?;
+    let k_exp = derive_k_exp(runner, pw, &layout.header.salt, layout.kdf)?;
+    let mut bytes = *k_exp;
+    let key = ExportWrapKey::from_array_wiping(&mut bytes);
+    open_with_key(&key, &layout)
+}
+
+/// The file after the checks that need no secret and no Argon2id.
+struct Layout<'a> {
+    header: ExportHeader,
+    kdf: KdfParams,
+    header_bytes: &'a [u8],
+    ek_wrap: &'a [u8],
+    body: &'a [u8],
+}
+
+/// The structure of the header, the floor and ceiling and the length of the
+/// file, in that order.
+fn check_layout(runner: KdfRunner, file: &[u8]) -> Result<Layout<'_>, Error> {
     let (header, used) = parse_export_header(file)?;
     let kdf = (runner.gate)(header.kdf)?;
     let header_bytes = file.get(..used).ok_or_else(bad)?;
@@ -469,11 +576,42 @@ pub(crate) fn decrypt_with(
     if body.len() > MAX_BODY_LEN {
         return Err(Error::TooLarge);
     }
+    Ok(Layout {
+        header,
+        kdf,
+        header_bytes,
+        ek_wrap,
+        body,
+    })
+}
 
-    let k_exp = derive_k_exp(runner, pw, &header.salt, kdf)?;
-    let ek_plain = aead_open(&k_exp, &aad_ek(header_bytes)?, ek_wrap)?;
+fn open_with_key(k_exp: &ExportWrapKey, layout: &Layout<'_>) -> Result<Vec<ExportItem>, Error> {
+    let ek_plain = aead_open(
+        k_exp.expose(),
+        &aad_ek(layout.header_bytes)?,
+        layout.ek_wrap,
+    )?;
     let mut ek_bytes: [u8; 32] = ek_plain.as_slice().try_into().map_err(|_| Error::Decrypt)?;
     let ek = ExportContentKey::from_array_wiping(&mut ek_bytes);
-    let plain = aead_open(ek.expose(), &aad_body(header_bytes)?, body)?;
+    let plain = aead_open(ek.expose(), &aad_body(layout.header_bytes)?, layout.body)?;
     decode_items(&plain)
+}
+
+/// The first half of an import: reads the header and runs every check that
+/// needs no password (the structure, the floor and the 512 MiB ceiling, the
+/// length of the file), and returns the header, so that its salt and
+/// parameters can go to the worker that runs [`export_wrap_key`].
+///
+/// Spec: Fase 1 § 6.4; plan U15.
+pub fn import_prepare(file: &[u8]) -> Result<ExportHeader, Error> {
+    check_layout(KdfRunner::PRODUCTION, file).map(|l| l.header)
+}
+
+/// The second half of an import: opens `file` with the `K_exp` that
+/// [`export_wrap_key`] made for its header. The checks of [`import_prepare`]
+/// run again, so this alone is as strict as [`import_decrypt`]. A wrong
+/// password (a wrong `K_exp`) and any changed byte are [`Error::Decrypt`].
+pub fn import_decrypt_with_key(key: &ExportWrapKey, file: &[u8]) -> Result<Vec<ExportItem>, Error> {
+    let layout = check_layout(KdfRunner::PRODUCTION, file)?;
+    open_with_key(key, &layout)
 }

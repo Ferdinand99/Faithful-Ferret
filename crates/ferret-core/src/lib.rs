@@ -69,8 +69,9 @@ pub use envelope::{
 };
 pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField};
 pub use export::{
-    EXPORT_KDF, ExportHeader, ExportItem, PlainExportOptions, export_encrypt, export_plain_csv,
-    export_plain_json, import_decrypt, parse_export_header,
+    EXPORT_KDF, ExportDraft, ExportHeader, ExportItem, PlainExportOptions, export_begin,
+    export_encrypt, export_plain_csv, export_plain_json, export_wrap_key, import_decrypt,
+    import_decrypt_with_key, import_prepare, parse_export_header,
 };
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use integrity::{
@@ -98,12 +99,12 @@ pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
 pub use rng::{OsRng, SecureRng};
 pub use secret::{
-    AuthSeed, ExportContentKey, ExportKey, ItemKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput,
-    PrfSeed, RecoveryKey, SecretKey, VaultKey,
+    AuthSeed, ExportContentKey, ExportKey, ExportWrapKey, ItemKey, KDel, KHead, KMeta, Kek,
+    KekDevPin, PrfOutput, PrfSeed, RecoveryKey, SecretKey, VaultKey,
 };
 pub use sheet::{
-    AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, SetupQr, account_id_text,
-    emergency_sheet, parse_setup_qr, setup_qr_payload,
+    AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, ServerAddress, SetupQr,
+    account_id_text, emergency_sheet, parse_server_address, parse_setup_qr, setup_qr_payload,
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};

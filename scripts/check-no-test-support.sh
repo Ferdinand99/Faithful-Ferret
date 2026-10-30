@@ -4,7 +4,7 @@
 #
 #  1. No release dependency graph may enable ferret-core/test-support.
 #  2. If a built .wasm file is given (or the default exists), its export list
-#     must not contain a function whose name starts with `test_`.
+#     must not contain a `test_*` function or method, or a replay function.
 #
 # Run it through scripts/lanbox.sh --exec scripts/check-no-test-support.sh.
 set -euo pipefail
@@ -29,11 +29,22 @@ for crate in "${release_crates[@]}"; do
   fi
 done
 
-# 2. WASM export list.
+# 2. WASM export list. wasm-bindgen exports a method as `<class>_<method>`
+# (`vault_test_vk_region`), so the pattern is a `test_` at the start or after
+# an underscore. The list is read with Node, which every build environment
+# for the WASM packages has.
 wasm="${1:-bindings/wasm/pkg-web/ferret_core_wasm_bg.wasm}"
 if [ -f "$wasm" ]; then
-  if wasm-tools print "$wasm" | grep -Eq '\(export "test_'; then
-    echo "FAIL: $wasm exports a function with the prefix test_" >&2
+  exports="$(node -e '
+    const m = new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));
+    for (const e of WebAssembly.Module.exports(m)) console.log(e.name);
+  ' "$wasm")"
+  if [ -z "$exports" ]; then
+    echo "FAIL: could not read the export list of $wasm" >&2
+    fail=1
+  elif printf '%s\n' "$exports" | grep -Eq '(^|_)test_|replay'; then
+    echo "FAIL: $wasm exports a test-support function:" >&2
+    printf '%s\n' "$exports" | grep -E '(^|_)test_|replay' >&2
     fail=1
   fi
 else

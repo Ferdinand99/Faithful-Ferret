@@ -67,7 +67,7 @@ use crate::cbor::redacted_debug;
 use crate::envelope::{SealedItem, encrypt_item};
 use crate::error::{Error, MalformedKind};
 use crate::ids::ItemId;
-use crate::item::{ItemBody, ItemType, Passkey};
+use crate::item::{ItemBody, ItemType, Passkey, UrlEntry, UrlMatch};
 use crate::keys::UnlockedVault;
 use crate::rng::SecureRng;
 use crate::secret::PrfSeed;
@@ -296,6 +296,17 @@ impl PasskeyRecord {
         }
     }
 
+    /// Puts the passkey into `body`, replacing the one it had. Nothing else
+    /// of the body is touched, so a login keeps its name, addresses, fields,
+    /// notes and everything this version does not know. The key and the seeds
+    /// go into the body and leave the core only inside a sealed envelope.
+    ///
+    /// Add the site to the addresses of a new item yourself (see
+    /// [`seal_passkey_item`], which does it for the item it makes).
+    pub fn attach_to(&self, body: &mut ItemBody) {
+        body.passkey = Some(self.to_item());
+    }
+
     /// True when the passkey was made with `prf`, so it has both seeds.
     pub fn has_prf(&self) -> bool {
         self.prf_seed_uv.is_some() && self.prf_seed_nouv.is_some()
@@ -351,7 +362,10 @@ pub struct GetResponse {
 /// concerned.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ExistingCredential {
-    /// The RP ID it was made for (canonical).
+    /// The RP ID it was made for, in canonical form (a canonical origin's
+    /// host, lower-case, IDNA A-labels). A value that is not canonical never
+    /// matches the RP ID of a request, so the credential is not counted for
+    /// `excludeCredentials`; canonicalize it first.
     pub rp_id: String,
     /// The credential id.
     pub cred_id: Vec<u8>,
@@ -547,12 +561,19 @@ pub fn passkey_get(
     })
 }
 
-/// Seals a passkey into an item envelope, as a login item named `name`.
+/// Seals a passkey into an item envelope, as a **new** login item named
+/// `name`, with the site of the passkey (`https://` and its RP ID) as its
+/// address.
 ///
 /// This is the one way a record leaves the core for storage: the PKCS#8 key
 /// and the PRF seeds go into the body and the body into the encrypted
-/// envelope; no plain bytes are returned. `existing` is the current envelope
-/// when the item is rewritten (the item key is kept).
+/// envelope; no plain bytes are returned.
+///
+/// `existing` is the current envelope of the item and only lets the item key
+/// be kept. The body is built from the passkey alone, so **it replaces
+/// everything else the item had** (other fields, notes, addresses). To add a
+/// passkey to a login that exists, change its body with
+/// [`PasskeyRecord::attach_to`] and seal it with `encrypt_item`.
 ///
 /// Spec: Fase 1 § 9.1.
 #[allow(clippy::too_many_arguments)]
@@ -567,7 +588,12 @@ pub fn seal_passkey_item<R: SecureRng>(
     existing: Option<&[u8]>,
 ) -> Result<SealedItem, Error> {
     let mut body = ItemBody::new(ItemType::Login, name, now_ms);
-    body.passkey = Some(record.to_item());
+    body.urls.push(UrlEntry {
+        url: format!("https://{}", record.rp_id),
+        matching: UrlMatch::Host,
+        extra: Vec::new(),
+    });
+    record.attach_to(&mut body);
     encrypt_item(rng, vault, item_id, rev, &body, existing)
 }
 

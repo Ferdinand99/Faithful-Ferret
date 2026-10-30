@@ -1855,3 +1855,113 @@ fn the_password_change_proof_is_made_only_by_its_own_vault() {
         Some(Error::Pinned(PinnedField::AuthKey))
     );
 }
+
+// ------------------------------------------------- the pinned record after a flow
+
+fn floor_of(pinned: &Pinned, key: MethodKey) -> Option<u64> {
+    pinned
+        .kek_generation_max
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, g)| *g)
+}
+
+#[test]
+fn a_password_change_gives_the_pinned_record_to_store() {
+    let s = create("pp1", true);
+    let pinned = pinned_of(&s);
+    let (changed, export) = change(&s, &pinned, PASSWORD_2, KsfProfile::P1, "pp1").unwrap();
+    let mut after = changed.pinned(&pinned).unwrap();
+    // The password floor is the new generation, the recovery floor is as it
+    // was, and the record that was passed in is untouched.
+    assert_eq!(floor_of(&after, MethodKey::Password), Some(2));
+    assert_eq!(floor_of(&after, MethodKey::Recovery), Some(1));
+    assert_eq!(floor_of(&pinned, MethodKey::Password), Some(1));
+    assert_eq!(after.server_public_key, pinned.server_public_key);
+    // The new record opens the new wrap and refuses the old one without any
+    // unlock in between.
+    let seen = view(&after);
+    assert_eq!(
+        after
+            .unlock_server(&seen, &s.account.wraps[0], &kek_pw(&s.export))
+            .err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    let vault = after
+        .unlock_server(&seen, &changed.wrap, &kek_pw(&export))
+        .unwrap();
+    assert!(vault.same_vault_key(&s.account.vault));
+    // A record for another vault key is refused.
+    let mut other = pinned.clone();
+    other.pk_a = [9; 32];
+    assert_eq!(
+        changed.pinned(&other).err(),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+}
+
+#[test]
+fn a_recovery_gives_the_pinned_record_to_store() {
+    let s = create("pp2", true);
+    let code = rk_code(&s);
+    let key = sk(0x5a);
+
+    // A device with a record: both floors go up.
+    let pinned = pinned_of(&s);
+    let (rec, export) = recover_with(
+        &s,
+        &code,
+        PinState::Pinned(&pinned),
+        PASSWORD_2,
+        Some(&key),
+        "pp2",
+    )
+    .unwrap();
+    let mut after = rec.pinned(URL, Some(&pinned)).unwrap();
+    assert_eq!(floor_of(&after, MethodKey::Password), Some(2));
+    assert_eq!(floor_of(&after, MethodKey::Recovery), Some(2));
+    assert_eq!(after.account_id, pinned.account_id);
+    let seen = view(&after);
+    let vault = after
+        .unlock_server(&seen, &rec.password_wrap, &kek_pw(&export))
+        .unwrap();
+    assert!(vault.same_vault_key(&s.account.vault));
+    // A record of another account is refused.
+    let mut other = pinned.clone();
+    other.account_id = account(0x99);
+    assert_eq!(
+        rec.pinned(URL, Some(&other)).err(),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+
+    // A new device (trust on first use): a new record with the server key of
+    // the registration and the SK bit of the new input.
+    let (rec, export) = recover_with(
+        &s,
+        &code,
+        PinState::FirstUse,
+        PASSWORD_2,
+        Some(&key),
+        "pp2b",
+    )
+    .unwrap();
+    let mut fresh = rec.pinned(URL, None).unwrap();
+    assert_eq!(fresh.server_url, URL);
+    assert!(fresh.sk_bit);
+    assert_eq!(fresh.server_public_key, Some(s.server.public_key()));
+    assert_eq!(floor_of(&fresh, MethodKey::Password), Some(2));
+    assert_eq!(floor_of(&fresh, MethodKey::Recovery), Some(2));
+    assert_eq!(fresh.pk_a, rec.vault.auth_public_key());
+    let seen = view(&fresh);
+    assert!(
+        fresh
+            .unlock_server(&seen, &rec.password_wrap, &kek_pw(&export))
+            .is_ok()
+    );
+    // An address that cannot be pinned is refused.
+    let long = "x".repeat(600);
+    assert_eq!(
+        rec.pinned(&long, None).err(),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+}

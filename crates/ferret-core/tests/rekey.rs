@@ -1024,3 +1024,49 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
 fn rekey_vectors_from_file() {
     assert_all_passed(&run_vectors(), 20);
 }
+
+#[test]
+fn a_rekey_gives_the_pinned_record_to_store() {
+    let f = fixture();
+    let b = rekey(&f, "pinned");
+    let old = pinned_for(&f.old, PASSWORD_FLOOR, RECOVERY_FLOOR);
+    let after = b.pinned(&old).unwrap();
+    // The epoch and pk_a are the new vault's, the floors are the generations
+    // of the new wraps, and the record that was passed in is untouched.
+    assert_eq!(after.vk_epoch_max, 2);
+    assert_eq!(after.pk_a, b.pk_a);
+    assert_eq!(old.vk_epoch_max, 1);
+    assert_eq!(old.pk_a, f.old.auth_public_key());
+    let floor = |p: &Pinned, k: MethodKey| {
+        p.kek_generation_max
+            .iter()
+            .find(|(key, _)| *key == k)
+            .map(|(_, g)| *g)
+    };
+    assert_eq!(
+        floor(&after, MethodKey::Password),
+        Some(b.wraps[0].kek_generation)
+    );
+    assert_eq!(
+        floor(&after, MethodKey::Recovery),
+        Some(b.wraps[1].kek_generation)
+    );
+    assert_eq!(b.wraps[0].kek_generation, PASSWORD_FLOOR + 1);
+    // The new password wrap unlocks under it, the old epoch does not.
+    let mut p = after.clone();
+    let seen = ferret_core::ServerView {
+        server_url: "https://ferret.example",
+        context: *b.vault.context(),
+        sk_bit: true,
+        server_public_key: None,
+    };
+    let vault = p.unlock_server(&seen, &b.wraps[0], &kek()).unwrap();
+    assert!(vault.same_vault_key(&b.vault));
+    // A record of another account or vault is refused.
+    let mut other = old.clone();
+    other.vault_id = ferret_core::VaultId::from_bytes([9; 16]);
+    assert_eq!(
+        b.pinned(&other).err(),
+        Some(Error::Pinned(PinnedField::VaultId))
+    );
+}

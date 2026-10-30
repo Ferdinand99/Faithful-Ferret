@@ -362,6 +362,41 @@ impl Pinned {
         Ok(next)
     }
 
+    /// The record after an account flow (password change, recovery, rekey):
+    /// the KSF profile and the floors of the new wraps go up, and, after a
+    /// rekey, the epoch and `pk_a` move to the new vault's. Nothing is set
+    /// lower, and the original is not touched. The result is validated.
+    ///
+    /// The client stores the result once the server has accepted the
+    /// request, so that the next unlock already checks against the new
+    /// generations (Fase 1 § 4.3).
+    pub(crate) fn after_flow(
+        &self,
+        ksf_profile: u8,
+        floors: &[(MethodKey, u64)],
+        epoch: Option<(u64, [u8; 32])>,
+    ) -> Result<Pinned, Error> {
+        self.validate()?;
+        let mut next = self.clone();
+        next.ksf_profile = next.ksf_profile.max(ksf_profile);
+        for (key, generation) in floors {
+            check_floor(key, *generation)?;
+            if next.floor(key).is_none() && next.kek_generation_max.len() >= MAX_FLOORS {
+                return Err(malformed());
+            }
+            next.raise_floor(key.clone(), *generation);
+        }
+        if let Some((vk_epoch, pk_a)) = epoch {
+            if vk_epoch < next.vk_epoch_max {
+                return Err(Error::Pinned(PinnedField::VkEpoch));
+            }
+            next.vk_epoch_max = vk_epoch;
+            next.pk_a = pk_a;
+        }
+        next.validate()?;
+        Ok(next)
+    }
+
     /// Seeds the floors of methods this device never unlocks with from the
     /// decrypted method manifest. Password and recovery entries are keyed by
     /// type, a passkey by the credential id in its entry; PIN, device and

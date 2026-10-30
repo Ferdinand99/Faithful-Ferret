@@ -1,0 +1,44 @@
+[package]
+name = "ferret-core-wasm"
+description = "Worker-friendly WebAssembly binding of the Ferret crypto core: key material stays in WASM memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Vector operations, a test OPAQUE server and memory probes for the Node tests.
+# Never part of a release: scripts/check-no-test-support.sh looks for exports
+# named `test_*` in the .wasm file.
+test-support = [
+    "ferret-core/test-support",
+    "dep:serde_json",
+    "dep:sha2",
+    "dep:p256",
+    "dep:chacha20poly1305",
+]
+
+[dependencies]
+ferret-core = { path = "../../crates/ferret-core" }
+wasm-bindgen = "=0.2.129"
+js-sys = "=0.3.106"
+serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
+serde-wasm-bindgen = "=0.6.5"
+zeroize = { version = "=1.9.1", default-features = false, features = ["alloc", "derive"] }
+# Only behind `test-support`:
+serde_json = { version = "=1.0.154", optional = true }
+sha2 = { version = "=0.11.1", default-features = false, optional = true }
+# The Wycheproof files for ECDSA P-256 and ChaCha20-Poly1305 are run against
+# the very crates the core uses, compiled for wasm32.
+p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"], optional = true }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc"], optional = true }
+
+# wasm-opt is run by scripts/lanbox-wasm.sh with the features rustc 1.99
+# switches on (bulk-memory, sign-ext, ...), not by wasm-pack.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

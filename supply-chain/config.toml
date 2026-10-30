@@ -189,6 +189,18 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.futures-core]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+
+[[exemptions.futures-task]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+
+[[exemptions.futures-util]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+
 [[exemptions.generic-array]]
 version = "0.14.7"
 criteria = "safe-to-deploy"
@@ -313,6 +325,10 @@ criteria = "safe-to-deploy"
 version = "0.6.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.pin-project-lite]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+
 [[exemptions.pkcs8]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
@@ -393,6 +409,10 @@ criteria = "safe-to-deploy"
 version = "1.0.229"
 criteria = "safe-to-deploy"
 
+[[exemptions.serde-wasm-bindgen]]
+version = "0.6.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.serde_core]]
 version = "1.0.229"
 criteria = "safe-to-deploy"
@@ -423,6 +443,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.signature]]
 version = "3.0.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.slab]]
+version = "0.4.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.smallvec]]

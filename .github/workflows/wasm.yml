@@ -1,0 +1,62 @@
+# The WebAssembly binding: build the web and Node packages, optimize them with
+# wasm-opt, hold the size budget (2 MiB raw), run every test vector through the
+# WASM build in Node and the tests of the binding.
+# Third-party actions are pinned by commit SHA; tools are pinned by version and
+# checksum.
+name: WASM
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: wasm-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_PACK_VERSION: 0.15.0
+  WASM_BINDGEN_CLI_VERSION: 0.2.129
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+  NODE_VERSION: 22.23.4
+  NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+
+jobs:
+  wasm:
+    name: Build, size and Node tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install wasm-pack and wasm-bindgen-cli
+        run: cargo install --locked "wasm-pack@${WASM_PACK_VERSION}" "wasm-bindgen-cli@${WASM_BINDGEN_CLI_VERSION}"
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+      - name: Install Node
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Build pkg-web and pkg-node (release)
+        run: scripts/build-wasm.sh
+      - name: Build pkg-node-test (test-support; never released)
+        run: scripts/build-wasm.sh --test
+      - name: The release build exports nothing from test-support
+        run: scripts/check-no-test-support.sh
+      - name: Tests of the binding, the vectors through the WASM build, the exports and the size budget
+        run: node --test tests/node/*.test.mjs
