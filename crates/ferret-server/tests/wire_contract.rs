@@ -1,6 +1,6 @@
 //! The wire contract: the JSON shapes of the server API, as the fixtures in
-//! `tests/fixtures/wire/` write them. `web/test/unit/wire.test.mjs` reads the
-//! same files.
+//! `tests/fixtures/wire/` write them, and the inputs in `invalid.json` that
+//! must be refused. `web/test/unit/wire.test.mjs` reads the same files.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -11,8 +11,9 @@ use ferret_server::wire::{
     self, ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, ConflictRes, ERROR_CODES,
     ErrorRes, HandoffRedeemRes, HandoffReq, HandoffRes, LoginFinishReq, LoginFinishRes,
     LoginPurposeJson, LoginStartReq, LoginStartRes, MethodsRes, PutItemForm, PutItemReq,
-    PutItemRes, RedeemReq, RegisterFinishReq, RegisterStartReq, RegisterStartRes, SealedRowJson,
-    SessionRes, WireError, WrapJson, b64url, hex16, parse_handoff_code,
+    PutItemRes, RedeemReq, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
+    RegisterStartRes, SealedRowJson, SessionRes, WireError, WrapJson, b64url, hex16,
+    parse_handoff_code, refusal_code,
 };
 use ferret_server_auth::{AuthError, DenyReason, Malformed};
 use serde::Serialize;
@@ -37,7 +38,12 @@ fn json_of(name: &str) -> Value {
 }
 
 /// Files in the directory that are not fixtures of one shape.
-const NOT_SHAPES: &[&str] = &["headers.json", "generate.mjs", "error_codes.json"];
+const NOT_SHAPES: &[&str] = &[
+    "headers.json",
+    "generate.mjs",
+    "error_codes.json",
+    "invalid.json",
+];
 
 /// All fixture files: (file name, shape name before the first dot).
 fn fixtures() -> Vec<(String, String)> {
@@ -69,6 +75,7 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "register_start_req" => through::<RegisterStartReq>(text),
         "register_start_res" => through::<RegisterStartRes>(text),
         "register_finish_req" => through::<RegisterFinishReq>(text),
+        "register_finish_res" => through::<RegisterFinishRes>(text),
         "login_start_req" => through::<LoginStartReq>(text),
         "login_start_res" => through::<LoginStartRes>(text),
         "login_finish_req" => through::<LoginFinishReq>(text),
@@ -97,6 +104,7 @@ const SHAPES: &[&str] = &[
     "register_start_req",
     "register_start_res",
     "register_finish_req",
+    "register_finish_res",
     "login_start_req",
     "login_start_res",
     "login_finish_req",
@@ -147,6 +155,8 @@ fn optional_fields_have_a_fixture_with_and_without() {
     assert!(json_of("changes_res.empty.json")["checkpoint"].is_null());
     assert!(json_of("wrap.passkey.json")["credential_id"].is_string());
     assert!(json_of("wrap.password.json")["credential_id"].is_null());
+    assert!(json_of("put_item_req.live.json")["resurrect"].is_null());
+    assert_eq!(json_of("put_item_req.resurrect.json")["resurrect"], true);
 }
 
 #[test]
@@ -424,7 +434,7 @@ fn error_codes_are_stable_and_unique() {
             "{code}"
         );
     }
-    // The codes that the brief and the reviews name.
+    // Codes that later endpoints rely on.
     for needed in [
         "manifest_not_writable",
         "tombstone_invalid",
@@ -513,6 +523,11 @@ fn device_id_is_required_and_device_name_is_optional_and_at_most_64_chars() {
             ("tab\there".into(), false),
             ("line\nbreak".into(), false),
             ("nul\u{0}".into(), false),
+            ("phone\u{202e}knil".into(), false), // right-to-left override
+            ("phone\u{2066}x".into(), false),    // bidirectional isolate
+            ("pho\u{200b}ne".into(), false),     // zero-width space
+            ("\u{feff}phone".into(), false),     // byte order mark
+            ("a\u{200d}b".into(), true),         // zero-width joiner stays: it is part of scripts
         ] {
             let mut named = value.clone();
             named["device_name"] = json!(name);
@@ -641,5 +656,144 @@ fn types_with_ciphertext_never_print_it() {
     assert_eq!(
         format!("{:?}", put.validate().unwrap()),
         "PutItemForm::Live([redacted])"
+    );
+}
+
+#[derive(serde::Deserialize)]
+struct Invalid {
+    name: String,
+    shape: String,
+    json: String,
+    layer: String,
+    error: String,
+    why: String,
+}
+
+/// The check that comes with a shape after it is read; the answer is its code.
+fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
+    match shape {
+        "put_item_req" => serde_json::from_str::<PutItemReq>(text)
+            .unwrap()
+            .validate()
+            .map(|_| ())
+            .map_err(|e| e.code()),
+        "redeem_req" => {
+            let request: RedeemReq = serde_json::from_str(text).unwrap();
+            parse_handoff_code(&request.code)
+                .map(|_| ())
+                .map_err(|_| "handoff_invalid")
+        }
+        _ => Ok(()),
+    }
+}
+
+#[test]
+fn invalid_inputs_are_refused_at_their_layer_with_their_code() {
+    let cases: Vec<Invalid> = parse("invalid.json");
+    assert!(cases.len() >= 200, "found only {} cases", cases.len());
+    let names: BTreeSet<&str> = cases.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names.len(), cases.len(), "a case name is used twice");
+    for case in &cases {
+        let label = format!("{} ({})", case.name, case.why);
+        assert!(!case.why.is_empty(), "{label}");
+        assert!(
+            ERROR_CODES.contains(&case.error.as_str()),
+            "{label}: {} is not a listed code",
+            case.error
+        );
+        match round_trip(&case.shape, &case.json) {
+            Err(error) => {
+                assert_eq!(case.layer, "parse", "{label}: refused at parse time");
+                assert_eq!(
+                    refusal_code(&error.to_string()),
+                    case.error,
+                    "{label}: {error}"
+                );
+            }
+            Ok(_) => {
+                assert_eq!(case.layer, "validate", "{label}: read without error");
+                assert_eq!(
+                    check_step(&case.shape, &case.json),
+                    Err(case.error.as_str()),
+                    "{label}: check passed"
+                );
+            }
+        }
+    }
+    // Both layers and every code the parse layer can give are covered.
+    let layers: BTreeSet<&str> = cases.iter().map(|c| c.layer.as_str()).collect();
+    assert_eq!(layers, BTreeSet::from(["parse", "validate"]));
+    let codes: BTreeSet<&str> = cases.iter().map(|c| c.error.as_str()).collect();
+    for code in [
+        "bad_request",
+        "handoff_invalid",
+        "malformed_ke1",
+        "malformed_ke3",
+        "malformed_registration_request",
+        "malformed_registration_record",
+        "tombstone_invalid",
+    ] {
+        assert!(codes.contains(code), "no case for {code}");
+    }
+    // Every shape has an invalid case.
+    let shapes: BTreeSet<&str> = cases.iter().map(|c| c.shape.as_str()).collect();
+    for shape in SHAPES {
+        assert!(shapes.contains(shape), "no invalid case for {shape}");
+    }
+}
+
+#[test]
+fn every_fixture_passes_its_own_check() {
+    for (name, shape) in fixtures() {
+        let text = read(&name);
+        let result = check_step(&shape, &text);
+        if name == "put_item_req.resurrect.json" {
+            // It reads, and this version of the server refuses it.
+            assert_eq!(result, Err("bad_request"));
+        } else {
+            assert_eq!(result, Ok(()), "{name}");
+        }
+    }
+}
+
+#[test]
+fn resurrect_is_read_and_refused_only_when_true() {
+    let live = |resurrect: Value| {
+        let mut fields = json!({
+            "blob": b64url::encode(&[1, 1, 1, 9]),
+            "tag": b64url::encode(&[3; 32]),
+        });
+        if !resurrect.is_null() {
+            fields["resurrect"] = resurrect;
+        }
+        put_item(fields)
+    };
+    assert!(live(Value::Null).validate().is_ok());
+    assert!(live(json!(false)).validate().is_ok());
+    assert!(live(json!(true)).validate().is_err());
+    // The field reads back as it came.
+    let text = read("put_item_req.resurrect.json");
+    let request: PutItemReq = serde_json::from_str(&text).unwrap();
+    assert_eq!(request.resurrect, Some(true));
+    assert_eq!(request.validate(), Err(WireError::Field("resurrect")));
+}
+
+#[test]
+fn refusal_codes_come_from_the_message_prefix_only() {
+    assert_eq!(
+        refusal_code("malformed_ke1: expected 96 bytes, got 95"),
+        "malformed_ke1"
+    );
+    assert_eq!(
+        refusal_code("tombstone_invalid: not base64url"),
+        "tombstone_invalid"
+    );
+    assert_eq!(refusal_code("unknown field `x`"), "bad_request");
+    assert_eq!(refusal_code("nonsense: expected 96 bytes"), "bad_request");
+    assert_eq!(refusal_code(""), "bad_request");
+    // A value in the message after the prefix does not count.
+    assert_eq!(
+        refusal_code("invalid type: string \"malformed_ke1: x\""),
+        "bad_request"
     );
 }

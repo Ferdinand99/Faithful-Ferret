@@ -7,12 +7,19 @@
 //! * Integers are whole numbers no larger than [`MAX_JSON_INT`], the largest
 //!   one a JavaScript number holds exactly. A larger one is refused on input.
 //! * Times are Unix seconds.
-//! * A shape that comes from a client refuses unknown fields. Optional fields
-//!   are left out when empty, so a shape written back is the text it came from.
+//! * A shape that comes from a client refuses unknown fields and repeated
+//!   fields. Optional fields are left out when empty, so a shape written back
+//!   is the text it came from.
+//! * Fields with a fixed size in the protocol (the OPAQUE messages, the
+//!   tombstone) are refused at parse time when they have another size. The
+//!   refusal carries the code the server answers with, as `"<code>: <detail>"`
+//!   in the message; [`refusal_code`] reads it.
 //!
-//! `tests/fixtures/wire/` holds one example of every shape. The Rust tests in
-//! `tests/wire_contract.rs` and the web tests in `web/test/unit/wire.test.mjs`
-//! read the same files, so the two sides cannot drift apart.
+//! `tests/fixtures/wire/` holds one example of every shape and `invalid.json`
+//! lists inputs that must be refused, with the layer that refuses them and the
+//! code of the answer. The Rust tests in `tests/wire_contract.rs` and the web
+//! tests in `web/test/unit/wire.test.mjs` read the same files, so the two sides
+//! cannot drift apart.
 //!
 //! The types that carry ciphertext, tags, OPAQUE messages or codes have a
 //! `Debug` that prints `[redacted]`, so a stray `{:?}` in a log line shows no
@@ -55,6 +62,14 @@ impl fmt::Display for WireError {
 
 impl std::error::Error for WireError {}
 
+impl WireError {
+    /// The code of the answer: always `bad_request`. A caller with a better
+    /// code (a hand-over code is `handoff_invalid`) maps the error itself.
+    pub const fn code(&self) -> &'static str {
+        "bad_request"
+    }
+}
+
 /// The largest integer on the wire: 2^53 - 1, the largest whole number a
 /// JavaScript number holds exactly. A client that sends more is refused.
 pub const MAX_JSON_INT: u64 = (1 << 53) - 1;
@@ -67,6 +82,22 @@ pub const HANDOFF_CODE_CHARS: usize = 43;
 
 /// The length of a hand-over code in bytes.
 pub const HANDOFF_CODE_BYTES: usize = 32;
+
+/// The longest `next` of a hand-over, in characters.
+pub const NEXT_MAX_CHARS: usize = 512;
+
+/// The code of the answer for a refusal that came out of parsing `message`.
+///
+/// A field with a fixed size refuses with a message that starts with
+/// `"<code>: "` (for example `malformed_ke1`). Every other refusal (unknown or
+/// repeated field, wrong type, bad base64url, bad id, integer out of range) is
+/// `bad_request`.
+pub fn refusal_code(message: &str) -> &'static str {
+    message
+        .split_once(": ")
+        .and_then(|(code, _)| ERROR_CODES.iter().copied().find(|c| *c == code))
+        .unwrap_or("bad_request")
+}
 
 /// Strict base64url without padding.
 pub mod b64url {
@@ -177,6 +208,95 @@ pub mod serde_b64_opt {
     }
 }
 
+/// Decodes base64url that must hold exactly `len` bytes; a refusal carries
+/// `code` (see [`refusal_code`]).
+fn decode_len(text: &str, len: usize, code: &str) -> Result<Vec<u8>, String> {
+    let bytes = b64url::decode(text).map_err(|_| format!("{code}: not base64url"))?;
+    if bytes.len() != len {
+        return Err(format!("{code}: expected {len} bytes, got {}", bytes.len()));
+    }
+    Ok(bytes)
+}
+
+/// A `#[serde(with = ...)]` module for a `Vec<u8>` of one fixed size.
+macro_rules! fixed_len_b64 {
+    ($(#[$meta:meta])* $name:ident, $len:expr, $code:literal) => {
+        $(#[$meta])*
+        pub mod $name {
+            use super::{Deserialize, Deserializer, Serializer, b64url, decode_len, de};
+
+            /// Writes bytes as base64url.
+            pub fn serialize<S: Serializer>(
+                bytes: &[u8],
+                serializer: S,
+            ) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&b64url::encode(bytes))
+            }
+
+            /// Reads strict base64url of exactly the size; another size is
+            /// refused with the code of the field.
+            pub fn deserialize<'de, D: Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Vec<u8>, D::Error> {
+                let text = String::deserialize(deserializer)?;
+                decode_len(&text, $len, $code).map_err(de::Error::custom)
+            }
+        }
+    };
+}
+
+fixed_len_b64!(
+    /// The first OPAQUE login message: 96 bytes, `malformed_ke1`.
+    serde_ke1, 96, "malformed_ke1"
+);
+fixed_len_b64!(
+    /// The second OPAQUE login message: 320 bytes.
+    serde_ke2, 320, "bad_request"
+);
+fixed_len_b64!(
+    /// The third OPAQUE login message: 64 bytes, `malformed_ke3`.
+    serde_ke3, 64, "malformed_ke3"
+);
+fixed_len_b64!(
+    /// The OPAQUE registration request: 32 bytes, `malformed_registration_request`.
+    serde_reg_request, 32, "malformed_registration_request"
+);
+fixed_len_b64!(
+    /// The OPAQUE registration response: 64 bytes.
+    serde_reg_response, 64, "bad_request"
+);
+fixed_len_b64!(
+    /// The OPAQUE registration record: 192 bytes, `malformed_registration_record`.
+    serde_reg_record, 192, "malformed_registration_record"
+);
+
+/// `#[serde(with = "serde_tomb_opt")]` for `Option<Vec<u8>>`: a tombstone is
+/// 40 bytes, else `tombstone_invalid`. Pair it with `default` and
+/// `skip_serializing_if = "Option::is_none"`.
+pub mod serde_tomb_opt {
+    use super::{Deserialize, Deserializer, Serializer, b64url, de, decode_len};
+
+    /// Writes a tombstone as base64url, or `null`.
+    pub fn serialize<S: Serializer>(
+        bytes: &Option<Vec<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(bytes) => serializer.serialize_str(&b64url::encode(bytes)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Reads a 40-byte tombstone, or `null`.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<u8>>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| decode_len(&text, 40, "tombstone_invalid").map_err(de::Error::custom))
+            .transpose()
+    }
+}
+
 /// `#[serde(with = "serde_b32")]` for `[u8; 32]`: base64url of exactly 32
 /// bytes.
 pub mod serde_b32 {
@@ -275,10 +395,29 @@ pub mod u53 {
     }
 }
 
+/// Whether a character may not be in a device name: control characters, the
+/// bidirectional controls (they can make one name read as another) and the
+/// zero-width and invisible characters.
+fn is_forbidden_in_name(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{61c}'
+                | '\u{200b}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
+        )
+}
+
 /// `deserialize_with = "device_name::deserialize"`: an optional name of at most
-/// [`DEVICE_NAME_MAX_CHARS`] characters with no control characters.
+/// [`DEVICE_NAME_MAX_CHARS`] characters with no control, bidirectional-control
+/// or zero-width characters.
 pub mod device_name {
-    use super::{DEVICE_NAME_MAX_CHARS, Deserialize, Deserializer, de};
+    use super::{DEVICE_NAME_MAX_CHARS, Deserialize, Deserializer, de, is_forbidden_in_name};
 
     /// Reads an optional device name and refuses a long one.
     pub fn deserialize<'de, D: Deserializer<'de>>(
@@ -286,13 +425,45 @@ pub mod device_name {
     ) -> Result<Option<String>, D::Error> {
         let name = Option::<String>::deserialize(deserializer)?;
         if let Some(name) = &name
-            && (name.chars().count() > DEVICE_NAME_MAX_CHARS || name.chars().any(char::is_control))
+            && (name.chars().count() > DEVICE_NAME_MAX_CHARS
+                || name.chars().any(is_forbidden_in_name))
         {
             return Err(de::Error::custom(
-                "device name is too long or has control characters",
+                "device name is too long or has forbidden characters",
             ));
         }
         Ok(name)
+    }
+}
+
+/// `deserialize_with = "method_type::deserialize"`: 1 password, 2 recovery,
+/// 3 passkey.
+pub mod method_type {
+    use super::{Deserialize, Deserializer, de};
+
+    /// Reads a method type and refuses any other number.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+        let value = u8::deserialize(deserializer)?;
+        if !(1..=3).contains(&value) {
+            return Err(de::Error::custom("method type is not 1, 2 or 3"));
+        }
+        Ok(value)
+    }
+}
+
+/// `deserialize_with = "next_path::deserialize"`: 1 to [`NEXT_MAX_CHARS`]
+/// characters.
+pub mod next_path {
+    use super::{Deserialize, Deserializer, NEXT_MAX_CHARS, de};
+
+    /// Reads a `next` and refuses an empty or a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let next = String::deserialize(deserializer)?;
+        let chars = next.chars().count();
+        if chars == 0 || chars > NEXT_MAX_CHARS {
+            return Err(de::Error::custom("next is empty or too long"));
+        }
+        Ok(next)
     }
 }
 
@@ -329,6 +500,7 @@ pub struct WrapJson {
     #[serde(with = "serde_hex16")]
     pub method_id: [u8; 16],
     /// 1 password, 2 recovery, 3 passkey.
+    #[serde(deserialize_with = "method_type::deserialize")]
     pub method_type: u8,
     /// The generation of the key-encryption key.
     #[serde(deserialize_with = "u53::deserialize")]
@@ -394,8 +566,8 @@ pub struct RegisterStartReq {
     pub setup_token: Option<String>,
     /// The login name.
     pub email: String,
-    /// The OPAQUE registration request.
-    #[serde(with = "serde_b64")]
+    /// The OPAQUE registration request (32 bytes).
+    #[serde(with = "serde_reg_request")]
     pub request: Vec<u8>,
 }
 
@@ -412,8 +584,8 @@ pub struct RegisterStartRes {
     /// The id of the new vault.
     #[serde(with = "serde_hex16")]
     pub vault_id: [u8; 16],
-    /// The OPAQUE registration response.
-    #[serde(with = "serde_b64")]
+    /// The OPAQUE registration response (64 bytes).
+    #[serde(with = "serde_reg_response")]
     pub response: Vec<u8>,
     /// The key-stretching profile the client must use.
     pub ksf_profile: u8,
@@ -437,7 +609,7 @@ pub struct RegisterFinishReq {
     )]
     pub device_name: Option<String>,
     /// The OPAQUE registration record (192 bytes).
-    #[serde(with = "serde_b64")]
+    #[serde(with = "serde_reg_record")]
     pub record: Vec<u8>,
     /// The key-stretching profile the client used.
     pub ksf_profile: u32,
@@ -457,6 +629,18 @@ pub struct RegisterFinishReq {
     pub pk_r: [u8; 32],
 }
 
+/// The `201` answer to [`RegisterFinishReq`]; the session cookies come with it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterFinishRes {
+    /// The account.
+    #[serde(with = "serde_hex16")]
+    pub account_id: [u8; 16],
+    /// The vault.
+    #[serde(with = "serde_hex16")]
+    pub vault_id: [u8; 16],
+}
+
 /// What a sign-in is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -474,7 +658,7 @@ pub struct LoginStartReq {
     /// The login name.
     pub email: String,
     /// The first OPAQUE message (96 bytes).
-    #[serde(with = "serde_b64")]
+    #[serde(with = "serde_ke1")]
     pub ke1: Vec<u8>,
     /// What the sign-in is for; `login` when left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -489,7 +673,7 @@ pub struct LoginStartRes {
     #[serde(with = "serde_hex16")]
     pub login_id: [u8; 16],
     /// The second OPAQUE message (320 bytes).
-    #[serde(with = "serde_b64")]
+    #[serde(with = "serde_ke2")]
     pub ke2: Vec<u8>,
     /// The key-stretching profile the client must use.
     pub ksf_profile: u8,
@@ -505,7 +689,7 @@ pub struct LoginFinishReq {
     #[serde(with = "serde_hex16")]
     pub login_id: [u8; 16],
     /// The third OPAQUE message (64 bytes).
-    #[serde(with = "serde_b64")]
+    #[serde(with = "serde_ke3")]
     pub ke3: Vec<u8>,
     /// The device that signs in (required).
     #[serde(with = "serde_hex16")]
@@ -550,7 +734,9 @@ pub enum HandoffPurposeJson {
 pub struct HandoffReq {
     /// What the hand-over is for.
     pub purpose: HandoffPurposeJson,
-    /// Where to go on the admin origin; the server cleans it.
+    /// Where to go on the admin origin; the server cleans it. 1 to 512
+    /// characters.
+    #[serde(deserialize_with = "next_path::deserialize")]
     pub next: String,
     /// `SHA-256` of the verifier the admin origin holds.
     #[serde(with = "serde_b32")]
@@ -611,8 +797,18 @@ pub struct SessionRes {
     pub email: String,
     /// The scope of the session.
     pub scope: String,
-    /// `vault` or `admin`.
-    pub origin: String,
+    /// The origin the session belongs to.
+    pub origin: OriginJson,
+}
+
+/// The origin a session belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginJson {
+    /// The vault origin.
+    Vault,
+    /// The admin origin.
+    Admin,
 }
 
 /// `GET /api/vault/unlock-methods`.
@@ -664,7 +860,7 @@ pub struct ChangeJson {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "serde_b64_opt"
+        with = "serde_tomb_opt"
     )]
     pub tomb: Option<Vec<u8>>,
 }
@@ -720,12 +916,18 @@ pub struct PutItemReq {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "serde_b64_opt"
+        with = "serde_tomb_opt"
     )]
     pub tomb: Option<Vec<u8>>,
     /// Makes a retry of this request safe.
     #[serde(with = "serde_hex16")]
     pub idem: [u8; 16],
+    /// `true` asks to bring a deleted item back. The field is part of the
+    /// protocol, so a client that sends it parses. This version of the server
+    /// does not bring items back: [`PutItemReq::validate`] refuses `true`, and
+    /// the answer is `bad_request`. Absent and `false` are the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resurrect: Option<bool>,
 }
 
 /// The one form a [`PutItemReq`] has.
@@ -757,8 +959,14 @@ impl fmt::Debug for PutItemForm<'_> {
 impl PutItemReq {
     /// Checks that the request has exactly one form: `blob` and `tag` (and
     /// neither `tomb` nor `deleted: true`), or `deleted: true` and `tomb` (and
-    /// neither `blob` nor `tag`). Lengths are the caller's to check.
+    /// neither `blob` nor `tag`), and that it does not ask to bring an item
+    /// back (`resurrect: true`, not supported yet). The size of the tombstone
+    /// is already checked by parsing; the envelope is the caller's to check.
+    /// Every failure is answered with `bad_request`.
     pub fn validate(&self) -> Result<PutItemForm<'_>, WireError> {
+        if self.resurrect == Some(true) {
+            return Err(WireError::Field("resurrect"));
+        }
         match (&self.blob, &self.tag, self.deleted, &self.tomb) {
             (Some(blob), Some(tag), None | Some(false), None) => {
                 Ok(PutItemForm::Live { blob, tag })
@@ -824,6 +1032,7 @@ redacted_debug!(
     RegisterStartReq,
     RegisterStartRes,
     RegisterFinishReq,
+    RegisterFinishRes,
     LoginStartReq,
     LoginStartRes,
     LoginFinishReq,
