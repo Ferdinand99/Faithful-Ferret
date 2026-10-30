@@ -1,0 +1,22 @@
+# Keeps secrets, local build output and files the image does not need out of the
+# build context (docker/server.Dockerfile copies only parts of it).
+.git
+.github
+.superpowers
+**/.env
+**/.env.*
+**/target
+**/node_modules
+web/dist
+site
+assets
+docs
+fuzz
+supply-chain
+tests
+vectors
+bindings
+tools
+ct/dudect
+ct/results
+**/*.log

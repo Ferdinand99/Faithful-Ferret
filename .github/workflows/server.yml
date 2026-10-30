@@ -17,6 +17,11 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "ct/check-lock-sums.sh"
+      - "docker/**"
+      - ".dockerignore"
+      - ".gitignore"
+      - "scripts/lanbox-ferret-test.sh"
+      - "scripts/check-ferret-test-stack.sh"
       - "release-please-config.json"
       - ".github/workflows/server.yml"
   push:
@@ -94,3 +99,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
       - run: crates/ferret-server/check-lock.sh
+
+  stack:
+    name: Test stack files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: scripts/check-ferret-test-stack.sh
+      - run: shellcheck docker/ferret-entrypoint.sh scripts/lanbox-ferret-test.sh scripts/check-ferret-test-stack.sh
