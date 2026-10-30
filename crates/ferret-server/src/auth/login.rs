@@ -595,7 +595,7 @@ fn require_transport(
 ) -> Result<(), ApiError> {
     if state.origins.vault_is_https() && !request_is_https(headers, peer.ip(), &state.proxies, true)
     {
-        return Err(ApiError::bad_request("insecure_transport"));
+        return Err(ApiError::coded("insecure_transport"));
     }
     Ok(())
 }
@@ -619,9 +619,9 @@ fn to_i64(now: u64) -> Result<i64, ApiError> {
 async fn read_json<T: DeserializeOwned>(body: Body) -> Result<T, ApiError> {
     let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
         .await
-        .map_err(|_| ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large"))?;
+        .map_err(|_| ApiError::coded("too_large"))?;
     serde_json::from_slice(&bytes)
-        .map_err(|error| ApiError::bad_request(refusal_code(&error.to_string())))
+        .map_err(|error| ApiError::coded(refusal_code(&error.to_string())))
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -899,7 +899,7 @@ async fn login_finish_route(
                 }
                 Opened::SecondFactor => {
                     tracing::info!("sign-in refused: the kit's second factor is on");
-                    return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden"));
+                    return Err(ApiError::coded("forbidden"));
                 }
             };
             let jar = session_cookies(jar, &signed_in.secret, &signed_in.claims, secure);
