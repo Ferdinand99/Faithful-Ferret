@@ -13,4 +13,19 @@
 /fuzz/regression/** -text
 /fuzz/dict/*.dict text eol=lf
 /fuzz/NIGHTLY text eol=lf
-/web/** text eol=lf
+/web/**/*.html text eol=lf
+/web/**/*.css text eol=lf
+/web/**/*.mts text eol=lf
+/web/**/*.svg text eol=lf
+/web/**/*.wasm binary
+/web/**/*.png binary
+/web/**/*.jpg binary
+/web/**/*.jpeg binary
+/web/**/*.gif binary
+/web/**/*.webp binary
+/web/**/*.ico binary
+/web/**/*.woff binary
+/web/**/*.woff2 binary
+/web/**/*.ttf binary
+/web/**/*.otf binary
+/web/**/*.pdf binary

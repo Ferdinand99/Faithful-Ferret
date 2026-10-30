@@ -34,6 +34,17 @@ fi
 # shellcheck disable=SC2206
 docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
 
+# The test server needs the server's header fixture. Without the server crate the
+# stub stands in (opt-in); with the crate and no fixture, stop.
+stub=0
+if [ ! -f crates/ferret-server/tests/fixtures/wire/headers.json ]; then
+  if [ -d crates/ferret-server ]; then
+    echo "lanbox-web.sh: crates/ferret-server exists but tests/fixtures/wire/headers.json is missing" >&2
+    exit 2
+  fi
+  stub=1
+fi
+
 mode=all
 case "${1:-}" in
   --lock) mode=lock; shift ;;
@@ -68,6 +79,7 @@ run=(docker "${docker_args[@]}" run --rm -i --init
   --shm-size 2g
   -e CI=1
   -e FERRET_WEB_MODE="$mode"
+  -e FERRET_HEADERS_STUB="$stub"
   --tmpfs /work:exec,size=2g
   --tmpfs /root/.npm:size=512m
   --tmpfs /tmp:exec,size=2g

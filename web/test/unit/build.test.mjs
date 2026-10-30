@@ -64,7 +64,7 @@ test("build_generates_routes_services_locales_and_css_from_feature_files", async
   for (const path of ["js/client.mjs", "js/vault.worker.mjs", "js/job.worker.mjs", "js/protocol.mjs", "pkg-web/ferret_core_wasm.js", "pkg-web/ferret_core_wasm_bg.wasm", "index.html", "assets/app.css", "manifest.json"]) {
     assert.ok(existsSync(join(out, path)), path);
   }
-  for (const path of ["js/vector-runner.mjs", "pkg-web/ferret_core_wasm.d.ts", "pkg-web/package.json", "LICENSE"]) {
+  for (const path of ["js/helper.mjs", "js/vector-runner.mjs", "pkg-web/ferret_core_wasm.d.ts", "pkg-web/package.json", "LICENSE"]) {
     assert.ok(!existsSync(join(out, path)), path);
   }
 
@@ -153,6 +153,7 @@ test("build_rejects_sourcemaps_inline_script_style_and_large_files", async () =>
     [{ "src/index.html": '<!doctype html><script src="//cdn.example/x.js"></script>' }, /third-party/],
     [{ "src/styles/x.css": '@import "https://x/y.css";' }, /@import/],
     [{ "src/styles/x.css": "a { background: url(https://x/y.png); }" }, /url\(\)/],
+    [{ "src/styles/x.css": "a { background: \\75rl(https://x/y.png); }" }, /backslash/],
     [{ "admin/handoff.html": "<script>1</script>" }, /inline script/],
     [{ "src/big.mjs": `export const x = "${"a".repeat(4 * 1024 * 1024)}";\n` }, /over 4 MiB/],
   ];

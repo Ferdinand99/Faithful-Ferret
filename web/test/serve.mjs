@@ -3,9 +3,13 @@
 // headers on every answer, including 404.
 //
 // The headers come from crates/ferret-server/tests/fixtures/wire/headers.json,
-// the file the server's own tests compare its header constant with. Until
-// that file exists in the checkout, test/fixtures/headers.stub.json (the same
-// values from the design document) stands in.
+// the file the server's own tests compare its header constant with. The
+// loader fails closed: the file must be the flat object with exactly the five
+// section 12 headers and a CSP that has the key directives, else it throws.
+// While the server crate is not in the checkout, test/fixtures/headers.stub.json
+// (the same values from the design document) can stand in, but only when
+// FERRET_HEADERS_STUB=1 is set; if crates/ferret-server/ exists and its
+// fixture is missing, nothing is served.
 //
 //   node test/serve.mjs     port 4578 (FERRET_WEB_PORT overrides it)
 import { existsSync, readFileSync } from "node:fs";
@@ -20,19 +24,80 @@ const repo = resolve(web, "..");
 export const SERVER_HEADERS_JSON = join(repo, "crates", "ferret-server", "tests", "fixtures", "wire", "headers.json");
 export const STUB_HEADERS_JSON = join(here, "fixtures", "headers.stub.json");
 
+export const HEADER_NAMES = Object.freeze([
+  "Content-Security-Policy",
+  "Cross-Origin-Opener-Policy",
+  "Cross-Origin-Resource-Policy",
+  "Referrer-Policy",
+  "Strict-Transport-Security",
+]);
+
 /**
- * The header list as a flat object. The file may be that object, or hold it
- * under `headers` or `vault`.
+ * Throws unless `data` is the flat object of exactly the five section 12
+ * headers, with a CSP that keeps the directives the vault depends on.
+ * @param {unknown} data
+ * @returns {Record<string, string>}
+ */
+export function validateHeaders(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("headers: expected one flat object of header names and values");
+  }
+  const flat = /** @type {Record<string, unknown>} */ (data);
+  const names = Object.keys(flat).sort();
+  if (names.join(",") !== [...HEADER_NAMES].sort().join(",")) {
+    throw new Error(`headers: expected exactly ${HEADER_NAMES.join(", ")}; got ${names.join(", ") || "nothing"}`);
+  }
+  for (const name of names) {
+    if (typeof flat[name] !== "string" || flat[name] === "") throw new Error(`headers: ${name} is not a text value`);
+  }
+  const csp = /** @type {string} */ (flat["Content-Security-Policy"]);
+  /** @type {Map<string, string[]>} */
+  const directives = new Map();
+  for (const part of csp.split(";")) {
+    const [name, ...tokens] = part.trim().split(/\s+/);
+    // A browser uses the first of a repeated directive.
+    if (name && !directives.has(name)) directives.set(name, tokens);
+  }
+  const is = (/** @type {string} */ name, /** @type {string[]} */ expected) =>
+    directives.get(name)?.join(" ") === expected.join(" ");
+  const problems = [];
+  if (!is("default-src", ["'none'"])) problems.push("default-src 'none'");
+  if (!is("require-trusted-types-for", ["'script'"])) problems.push("require-trusted-types-for 'script'");
+  if (!is("trusted-types", ["ferret"])) problems.push("trusted-types ferret");
+  if (!is("frame-ancestors", ["'none'"])) problems.push("frame-ancestors 'none'");
+  for (const tokens of directives.values()) {
+    if (tokens.some((t) => t === "'unsafe-inline'" || t === "'unsafe-eval'" || t === "*")) {
+      problems.push("no 'unsafe-inline', 'unsafe-eval' or *");
+      break;
+    }
+  }
+  if (problems.length > 0) throw new Error(`headers: the CSP lacks: ${problems.join("; ")}`);
+  return /** @type {Record<string, string>} */ (flat);
+}
+
+/**
+ * The file to read the headers from.
+ * @param {{ env?: Record<string, string | undefined>, repoDir?: string }} [options]
+ */
+export function headersFile({ env = process.env, repoDir = repo } = {}) {
+  const real = join(repoDir, "crates", "ferret-server", "tests", "fixtures", "wire", "headers.json");
+  if (existsSync(real)) return real;
+  if (existsSync(join(repoDir, "crates", "ferret-server"))) {
+    throw new Error("headers: crates/ferret-server exists but tests/fixtures/wire/headers.json is missing");
+  }
+  if (env.FERRET_HEADERS_STUB !== "1") {
+    throw new Error("headers: the server fixture is missing; set FERRET_HEADERS_STUB=1 to use the stub");
+  }
+  return join(repoDir, "web", "test", "fixtures", "headers.stub.json");
+}
+
+/**
+ * The header list of the vault origin.
  * @param {string} [file]
  * @returns {Record<string, string>}
  */
-export function loadHeaders(file = existsSync(SERVER_HEADERS_JSON) ? SERVER_HEADERS_JSON : STUB_HEADERS_JSON) {
-  const data = JSON.parse(readFileSync(file, "utf8"));
-  const flat = data.headers ?? data.vault ?? data;
-  for (const [name, value] of Object.entries(flat)) {
-    if (typeof value !== "string") throw new Error(`headers: ${name} is not a string`);
-  }
-  return flat;
+export function loadHeaders(file = headersFile()) {
+  return validateHeaders(JSON.parse(readFileSync(file, "utf8")));
 }
 
 /**

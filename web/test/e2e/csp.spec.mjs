@@ -63,6 +63,8 @@ test("crypto_worker_starts_under_the_csp", async ({ page }) => {
   });
   expect(result.isBytes).toBe(true);
   expect(result.length).toBeGreaterThan(0);
+  // The three pinned browsers all have Trusted Types: the string fallback is a regression here.
+  expect(result.trustedTypes).toBe(true);
   expect(wasm.length).toBeGreaterThan(0);
   for (const r of wasm) {
     expect(r.status).toBe(200);
@@ -72,24 +74,82 @@ test("crypto_worker_starts_under_the_csp", async ({ page }) => {
   expect(seen.errors).toEqual([]);
 });
 
-test("string_worker_url_and_html_sinks_are_blocked_by_trusted_types", async ({ page }) => {
+test("job_worker_starts_under_the_csp", async ({ page }) => {
+  const seen = await watch(page);
   await page.goto("/");
   await expect(page.locator("#app h1")).toBeVisible();
-  const out = await page.evaluate(() => {
-    if (!("trustedTypes" in window)) return null;
-    const attempt = (fn) => {
-      try {
-        fn();
-        return "allowed";
-      } catch (e) {
-        return /** @type {Error} */ (e).name;
-      }
-    };
-    return {
-      worker: attempt(() => new Worker("/js/vault.worker.mjs", { type: "module" }).terminate()),
-      html: attempt(() => { document.createElement("div").innerHTML = "<b>x</b>"; }),
-    };
+  const reply = await page.evaluate(async () => {
+    const { ready } = await import("/app/boot.mjs");
+    const { tt } = await ready;
+    const worker = new Worker(/** @type {string} */ (tt.workerUrl("job")), { type: "module" });
+    try {
+      // An unknown method gets an error reply, but only after the worker has loaded the WASM module.
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no reply from the job worker")), 15_000);
+        worker.onmessage = (e) => { clearTimeout(timer); resolve(e.data); };
+        worker.onerror = () => { clearTimeout(timer); reject(new Error("the job worker failed")); };
+        worker.postMessage({ id: 7, target: "job", method: "no_such_method", args: [] });
+      });
+    } finally {
+      worker.terminate();
+    }
   });
-  test.skip(out === null, "this browser has no Trusted Types");
-  expect(out).toEqual({ worker: "TypeError", html: "TypeError" });
+  expect(reply).toEqual({ id: 7, ok: false, code: "invalid_input" });
+  expect(await violations(page)).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
+// Code that runs as a page script (a module from the page's own origin, served
+// with the page's headers), not through the test runner's evaluation, which the
+// browsers do not hold to the page's policy.
+const PROBE = `
+const attempt = (fn) => {
+  try {
+    fn();
+    return "allowed";
+  } catch (e) {
+    return e.name;
+  }
+};
+export const result = {
+  hasTrustedTypes: "trustedTypes" in window,
+  // A string where a TrustedScriptURL is required.
+  worker: attempt(() => new Worker("/js/vault.worker.mjs", { type: "module" }).terminate()),
+  // A string where a TrustedHTML is required.
+  html: attempt(() => { document.createElement("div").innerHTML = "<b>x</b>"; }),
+  // A policy name that the CSP does not list, and the listed one a second time.
+  defaultPolicy: attempt(() => window.trustedTypes.createPolicy("default", {})),
+  otherPolicy: attempt(() => window.trustedTypes.createPolicy("other", {})),
+  duplicatePolicy: attempt(() => window.trustedTypes.createPolicy("ferret", {})),
+  // Only 'wasm-unsafe-eval' is allowed, so text cannot become code.
+  eval: attempt(() => (0, eval)("1 + 1")),
+  newFunction: attempt(() => new Function("return 1")()),
+};
+`;
+
+test("the_browser_enforces_trusted_types_and_the_script_policy", async ({ page }) => {
+  await watch(page);
+  await page.route("**/app/probe.mjs", (route) =>
+    route.fulfill({ status: 200, headers: { ...headers, "content-type": "text/javascript; charset=utf-8" }, body: PROBE }));
+  await page.goto("/");
+  await expect(page.locator("#app h1")).toBeVisible();
+  const before = (await violations(page)).length;
+  const result = await page.evaluate(async () => (await import("/app/probe.mjs")).result);
+  // Reports are queued as events; give them a turn.
+  await page.waitForTimeout(200);
+  const reported = (await violations(page)).length - before;
+  expect(result.hasTrustedTypes).toBe(true);
+  expect(result).toMatchObject({
+    worker: "TypeError",
+    html: "TypeError",
+    defaultPolicy: "TypeError",
+    otherPolicy: "TypeError",
+    duplicatePolicy: "TypeError",
+  });
+  // A string is refused as code: a blocked eval is an EvalError, and a string where
+  // Trusted Types wants a TrustedScript is a TypeError. Never "allowed".
+  expect(["EvalError", "TypeError"]).toContain(result.eval);
+  expect(["EvalError", "TypeError"]).toContain(result.newFunction);
+  // The browser reported what it blocked.
+  expect(reported).toBeGreaterThan(0);
 });

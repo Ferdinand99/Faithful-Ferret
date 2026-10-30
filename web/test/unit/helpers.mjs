@@ -145,6 +145,7 @@ export function wasmFiles() {
     "js/vault.worker.mjs": "export const vault = 1;\n",
     "js/job.worker.mjs": "export const job = 1;\n",
     "js/vector-runner.mjs": "export const vectors = 1;\n",
+    "js/helper.mjs": "export const helper = 1;\n",
     "pkg-web/ferret_core_wasm.js": "export default 1;\n",
     "pkg-web/ferret_core_wasm_bg.wasm": Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]),
     "pkg-web/ferret_core_wasm.d.ts": "export {};\n",

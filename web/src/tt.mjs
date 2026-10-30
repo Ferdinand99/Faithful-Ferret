@@ -5,7 +5,7 @@
 // worker files. Browsers without Trusted Types get the same check and a plain
 // string.
 
-/** The workers of the first milestone; a later one adds an entry here. */
+/** The two workers of the current client; a new worker is added here. */
 export const DEFAULT_WORKERS = Object.freeze({
   vault: "/js/vault.worker.mjs",
   job: "/js/job.worker.mjs",

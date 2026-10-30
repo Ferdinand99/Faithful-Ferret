@@ -1,7 +1,7 @@
 // The part of the worker client (bindings/wasm/js/client.mjs of the published
 // WASM package) that the web vault's sources use. The build copies this file
 // next to the unpacked client as js/client.d.mts, so the type check reads these
-// declarations instead of checking the third-party file.
+// declarations instead of checking the published file.
 export type Method = (...args: any[]) => Promise<any>;
 
 export interface WorkerLike {

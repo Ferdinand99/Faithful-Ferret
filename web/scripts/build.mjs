@@ -5,7 +5,11 @@
 //
 // 1. Reads wasm.lock.json ({version, url, sha256}), fetches the published
 //    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar or
-//    FERRET_WASM_TAR), checks its SHA-256 and unpacks pkg-web/ and js/.
+//    FERRET_WASM_TAR), checks its SHA-256 and unpacks pkg-web/ and js/. Only
+//    the files in WASM_FILES are used. To move the pin, take the SHA-256 of the
+//    new release file from the release's signed SHA256SUMS (verify its cosign
+//    bundle first), never from the download alone, and change version, url and
+//    sha256 in wasm.lock.json together.
 // 2. Scans the feature files and writes the generated files:
 //      src/routes/*.route.mjs       -> src/routes.gen.mjs
 //      src/services/*.service.mjs   -> src/services.gen.mjs
@@ -251,8 +255,10 @@ function generateCss(root) {
   const parts = [];
   for (const name of names) {
     const text = readFileSync(join(base, name), "utf8");
-    if (/@import/i.test(text) || /url\(\s*['"]?(?!data:)/i.test(text) || /expression\(/i.test(text)) {
-      throw new Error(`styles/${name}: no @import and no url() other than data: URLs`);
+    // A CSS escape can spell `url(`, so a backslash is refused too; the page's CSP
+    // (img-src 'self' data:, no font-src) is the control that does not depend on this check.
+    if (text.includes("\\") || /@import/i.test(text) || /url\(\s*['"]?(?!data:)/i.test(text) || /expression\(/i.test(text)) {
+      throw new Error(`styles/${name}: no @import, no backslash and no url() other than data: URLs`);
     }
     parts.push(`/* ${name} */\n${text.trimEnd()}\n`);
   }
@@ -361,10 +367,10 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
   const staged = new Map();
   for (const [path, bytes] of tar) {
     if (path.endsWith(".map")) throw new Error(`wasm package: ${path}: source maps are not allowed`);
-    const isJs = path.startsWith("js/") && path.endsWith(".mjs") && !path.startsWith("js/vector-");
-    const isPkg = path.startsWith("pkg-web/") && (path.endsWith(".js") || path.endsWith(".wasm"));
-    if (isJs || isPkg) dist.set(path, bytes);
-    if (isJs) staged.set(path, bytes);
+    // Only the listed files are shipped; anything else in the package is left out.
+    if (!WASM_FILES.includes(path)) continue;
+    dist.set(path, bytes);
+    if (path.startsWith("js/")) staged.set(path, bytes);
   }
 
   /** @type {Record<string, { sha256: string, type: string }>} */

@@ -29,11 +29,17 @@ jobs:
     env:
       HOME: /root
       CI: "1"
+      # The stub of the server's header fixture, used only while the fixture is not in the
+      # repository (the test server refuses to start without it, or with the server crate
+      # and no fixture).
+      FERRET_HEADERS_STUB: "1"
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
       - name: Build (fetches the published WASM package and checks its SHA-256)
@@ -57,11 +63,17 @@ jobs:
     env:
       HOME: /root
       CI: "1"
+      # The stub of the server's header fixture, used only while the fixture is not in the
+      # repository (the test server refuses to start without it, or with the server crate
+      # and no fixture).
+      FERRET_HEADERS_STUB: "1"
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
       - name: Build
