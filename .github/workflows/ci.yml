@@ -76,6 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+      - run: scripts/check-no-test-support.sh --self-test
       - run: scripts/check-no-test-support.sh
 
   nightly-pin:

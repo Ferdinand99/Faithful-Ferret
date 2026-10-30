@@ -12,9 +12,9 @@ default = []
 # Replay and test RNGs, the vector loader and runner. Never part of a release
 # build: see scripts/check-no-test-support.sh.
 test-support = ["dep:serde", "dep:serde_json"]
-# The OPAQUE cipher suite, the RNG adapter and the message lengths, for the
-# server library (`opaque::server_suite`). Nothing in the client API changes.
-# Never enabled by a release build of the WASM package: see
+# The OPAQUE cipher suite, the RNG adapter and the message lengths, for a
+# server built on this crate (`opaque::server_suite`). Nothing in the client
+# API changes. Never enabled by a release build of the WASM package: see
 # scripts/check-no-test-support.sh.
 server-suite = []
 
@@ -60,9 +60,9 @@ serde_json = { version = "=1.0.154", optional = true }
 getrandom = { version = "=0.4.3", features = ["wasm_js"] }
 
 [dev-dependencies]
-# The integration tests need the test-support API (and the server suite);
-# ferret-vectorgen is used
-# for the determinism test (a dev-dependency cycle is allowed by cargo).
+# The integration tests need the test-support API and the server suite.
+# ferret-vectorgen is used for the determinism test (a dev-dependency cycle is
+# allowed by cargo).
 ferret-core = { path = ".", features = ["test-support", "server-suite"] }
 ferret-vectorgen = { path = "../../tools/vectorgen" }
 serde = "=1.0.229"

@@ -8,11 +8,13 @@
 #![cfg(feature = "server-suite")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use ferret_core::opaque::server_suite::opaque_ke::generic_array::typenum::Unsigned;
 use ferret_core::opaque::server_suite::opaque_ke::keypair::{OprfSeed, PrivateKey, PublicKey};
 use ferret_core::opaque::server_suite::opaque_ke::{
-    CredentialFinalization, CredentialRequest, Identifiers, RegistrationRequest,
-    RegistrationUpload, Ristretto255, ServerLogin, ServerLoginParameters, ServerRegistration,
-    ServerSetup,
+    CredentialFinalization, CredentialFinalizationLen, CredentialRequest, CredentialRequestLen,
+    CredentialResponseLen, Identifiers, RegistrationRequest, RegistrationRequestLen,
+    RegistrationResponseLen, RegistrationUpload, RegistrationUploadLen, Ristretto255, ServerLogin,
+    ServerLoginParameters, ServerRegistration, ServerSetup,
 };
 use ferret_core::opaque::server_suite::{
     FerretSuite, KE1_LEN, KE2_LEN, KE3_LEN, OPAQUE_CONTEXT, REGISTRATION_RECORD_LEN,
@@ -20,9 +22,7 @@ use ferret_core::opaque::server_suite::{
     SERVER_SETUP_LEN,
 };
 use ferret_core::testing::keys::export_key_bytes;
-use ferret_core::testing::opaque::{
-    KE2_BYTES, REGISTRATION_RESPONSE_BYTES, TestKsf, login_finish_with, register_finish_with,
-};
+use ferret_core::testing::opaque::{TestKsf, login_finish_with, register_finish_with};
 use ferret_core::testing::{ReplayRng, TestRng};
 use ferret_core::{
     ExportKey, KdfParams, LoginState, MasterPassword, OpaqueInput, PinState, SecureRng,
@@ -226,10 +226,27 @@ fn lengths_match_the_wire_format() {
     let done = client_finish(started, "login/finish");
     assert_eq!(done.ke3.len(), KE3_LEN);
     assert_eq!(setup.serialize().len(), SERVER_SETUP_LEN);
+}
 
-    // The two constants that are re-exports of the client's, not copies.
-    assert_eq!(REGISTRATION_RESPONSE_LEN, REGISTRATION_RESPONSE_BYTES);
-    assert_eq!(KE2_LEN, KE2_BYTES);
+/// The constants are also the lengths `opaque-ke` itself computes for the
+/// suite (its type-level sizes), not only what the messages happened to have.
+#[test]
+fn lengths_match_the_library_sizes() {
+    assert_eq!(
+        <RegistrationRequestLen<FerretSuite>>::USIZE,
+        REGISTRATION_REQUEST_LEN
+    );
+    assert_eq!(
+        <RegistrationResponseLen<FerretSuite>>::USIZE,
+        REGISTRATION_RESPONSE_LEN
+    );
+    assert_eq!(
+        <RegistrationUploadLen<FerretSuite>>::USIZE,
+        REGISTRATION_RECORD_LEN
+    );
+    assert_eq!(<CredentialRequestLen<FerretSuite>>::USIZE, KE1_LEN);
+    assert_eq!(<CredentialResponseLen<FerretSuite>>::USIZE, KE2_LEN);
+    assert_eq!(<CredentialFinalizationLen<FerretSuite>>::USIZE, KE3_LEN);
 }
 
 /// `ServerSetup` is the OPRF seed (64), the private key (32) and the public
@@ -261,6 +278,32 @@ fn server_setup_is_128_bytes_seed_key_dummy() {
     for len in 0..SERVER_SETUP_LEN {
         assert!(ServerSetup::<FerretSuite>::deserialize(&bytes[..len]).is_err());
     }
+}
+
+/// `ServerSetup::new` draws three times 64 bytes, in this order: the key pair,
+/// the OPRF seed, the second key pair of which the public half is kept as the
+/// dummy key. The seed is the first 64 bytes of the serialized setup.
+#[test]
+fn server_setup_draws_key_pair_seed_dummy_in_order() {
+    let mut source = rng("setup-draws");
+    let mut draws = Vec::new();
+    for _ in 0..3 {
+        let mut d = vec![0u8; 64];
+        source.fill(&mut d);
+        draws.push(d);
+    }
+    let mut replay = ReplayRng::new(draws.clone());
+    let setup = ServerSetup::<FerretSuite>::new(&mut Rng06(&mut replay));
+    assert_eq!(replay.remaining(), 0);
+    let bytes = setup.serialize();
+    assert_eq!(&bytes[..64], draws[1].as_slice());
+    // The key pair and the dummy key come from the other two draws: swapping
+    // them swaps the private key and the dummy key.
+    let mut swapped = ReplayRng::new(vec![draws[2].clone(), draws[1].clone(), draws[0].clone()]);
+    let other = ServerSetup::<FerretSuite>::new(&mut Rng06(&mut swapped)).serialize();
+    assert_eq!(&other[..64], &bytes[..64]);
+    assert_ne!(&other[64..96], &bytes[64..96]);
+    assert_ne!(&other[96..], &bytes[96..]);
 }
 
 /// `ServerLogin::start` draws, in this order: the masking key of the fake
@@ -485,7 +528,7 @@ fn malformed_points_are_errors() {
 }
 
 /// The parsers of `opaque-ke` read a prefix and ignore what follows. The
-/// server library therefore checks each length itself; this test is the reason.
+/// caller therefore has to check each length itself; this test is the reason.
 #[test]
 fn library_parsers_ignore_trailing_bytes() {
     let setup = setup("setup");
@@ -504,6 +547,7 @@ fn library_parsers_ignore_trailing_bytes() {
     assert!(RegistrationUpload::<FerretSuite>::deserialize(&with_tail(&reg.record)).is_ok());
     assert!(CredentialFinalization::<FerretSuite>::deserialize(&with_tail(&done.ke3)).is_ok());
     assert!(ServerLogin::<FerretSuite>::deserialize(&with_tail(&done.server.serialize())).is_ok());
+    assert!(ServerSetup::<FerretSuite>::deserialize(&with_tail(&setup.serialize())).is_ok());
 }
 
 // ------------------------------------------------------------ zeroization
@@ -515,9 +559,8 @@ fn library_parsers_ignore_trailing_bytes() {
 /// `ZeroizeOnDrop`. (The public parts are not secret.)
 ///
 /// What the setup also has is a derived `Debug` that prints the key material.
-/// The server library therefore wraps it in a guard of its own that has no
-/// `Debug` (`ServerKeys`); the setup is never put in a struct that derives
-/// `Debug`.
+/// A server built on this feature therefore keeps the setup in a guard with a
+/// hand-written `Debug`, and never in a struct that derives `Debug`.
 #[test]
 fn server_setup_zeroize_on_drop() {
     assert_not_impl_any!(ServerSetup<FerretSuite>: ZeroizeOnDrop);

@@ -17,9 +17,9 @@
 //! # The server suite
 //!
 //! With the feature `server-suite` (off by default, never enabled by the
-//! WASM package) the module [`server_suite`] exports the cipher suite, the RNG
-//! adapter and the message lengths, so that the server library runs exactly
-//! the configuration of the client. Without the feature none of them is
+//! WASM package) the module `server_suite` exports the cipher suite, the RNG
+//! adapter and the message lengths, so that a server built on this crate runs
+//! exactly the configuration of the client. Without the feature none of them is
 //! reachable.
 //!
 //! # Pinning

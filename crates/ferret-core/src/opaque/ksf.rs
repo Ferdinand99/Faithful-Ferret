@@ -37,8 +37,11 @@ type Run = fn(&[u8], &[u8], KdfParams, &mut [u8]) -> Result<(), Error>;
 /// Argon2id for OPAQUE with the parameters of one profile.
 ///
 /// The type is `pub` only because the associated type of the public
-/// `FerretSuite` must be at least as visible as the suite; the
-/// module is private, so the name cannot be written outside the crate.
+/// `FerretSuite` must be at least as visible as the suite. The module is
+/// private, so the name cannot be written outside the crate; with the feature
+/// `server-suite` it can only be reached as `<FerretSuite as CipherSuite>::Ksf`.
+/// The one instance anyone outside can make is `Default`, the checked
+/// profile 1 function: the constructors with other parameters are crate-private.
 pub struct FerretKsf {
     params: KdfParams,
     run: Run,

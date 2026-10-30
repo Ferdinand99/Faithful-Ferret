@@ -1,4 +1,4 @@
-//! The OPAQUE suite of Ferret, for the server library.
+//! The OPAQUE suite of Ferret, for a server built on this crate.
 //!
 //! Only with the feature `server-suite` (off by default). The server runs the
 //! very same cipher suite, context and message lengths as the client in
@@ -6,7 +6,7 @@
 //! the feature (`scripts/check-no-test-support.sh` checks it), so the client
 //! API does not grow.
 //!
-//! The module re-exports `opaque_ke`: the server library has no `opaque-ke`
+//! The module re-exports `opaque_ke`: a server needs no `opaque-ke`
 //! dependency of its own, and so cannot end up on another version of it.
 //!
 //! What was read in `opaque-ke` 4.0.1 before this module was written is in
