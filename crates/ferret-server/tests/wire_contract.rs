@@ -151,6 +151,10 @@ fn optional_fields_have_a_fixture_with_and_without() {
     assert!(json_of("register_start_req.no_token.json")["setup_token"].is_null());
     assert!(json_of("login_start_req.json")["purpose"].is_null());
     assert_eq!(json_of("login_start_req.reauth.json")["purpose"], "reauth");
+    assert!(json_of("login_finish_req.json")["purpose"].is_null());
+    assert_eq!(json_of("login_finish_req.reauth.json")["purpose"], "reauth");
+    let finish: LoginFinishReq = parse("login_finish_req.reauth.json");
+    assert_eq!(finish.purpose, Some(LoginPurposeJson::Reauth));
     assert!(json_of("session_res.admin.json")["account_id"].is_null());
     assert!(json_of("changes_res.empty.json")["checkpoint"].is_null());
     assert!(json_of("wrap.passkey.json")["credential_id"].is_string());

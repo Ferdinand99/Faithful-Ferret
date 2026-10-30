@@ -21,15 +21,18 @@
 //!   same status, same body shape, same effects.
 //! * For a re-authentication the account is the one of the session that asks,
 //!   never one named in the request body.
-//! * `login/finish` does not know from the request whether the sign-in was
-//!   started as an ordinary sign-in or as a re-authentication: the request has
-//!   no such field, and the purpose is sealed inside the state. When the
-//!   request presents a session cookie of this origin, the state is first
-//!   opened as a re-authentication of that session and, if the library says
-//!   the state is not that, once more as an ordinary sign-in from the same
-//!   sealed bytes. The state was taken out of the store once and is never put
-//!   back, so it keeps its single use. Only the opening of the state can fail
-//!   that way; no OPAQUE work has started when it does.
+//! * `login/finish` names its purpose (`login`, the default, or `reauth`), like
+//!   `login/start`. The state is taken and opened once against that purpose; the
+//!   purpose sealed inside the state stays the authority, so a state made for
+//!   the other purpose, or for another session, is refused (`denied`). A
+//!   `reauth` finish needs a live vault session and is bound to it.
+//! * A body that does not parse or has the wrong length is refused (400) before
+//!   the throttle is asked. Those checks depend on the client's bytes alone and
+//!   cost no database access, so they say nothing about any account and are not
+//!   worth a throttle entry.
+//! * The kit's own second factor is not asked for on the vault origin yet. A
+//!   user for whom it is on gets no session after a good proof (403
+//!   `forbidden`) instead of a session that skips it.
 //!
 //! After a proof the account is read again. A user who was disabled during the
 //! sixty seconds between the steps gets nothing.
@@ -37,9 +40,10 @@
 //! # Sessions
 //!
 //! An ordinary sign-in makes a new session row and its two cookies in one
-//! transaction that also ends the session the browser presented, if that one
-//! belongs to the same user and origin. Only that one: other devices stay signed
-//! in. A re-authentication keeps the session and sets the kit's re-auth grant.
+//! transaction that also ends the vault session the browser presented, whoever
+//! it belongs to: its cookies are replaced, so the row would be left behind.
+//! Only that one: other devices stay signed in. A re-authentication keeps the
+//! session and sets the kit's re-auth grant.
 //!
 //! Sign-out ends the row named by the presented session cookie and clears the
 //! cookies; it answers 204 whether or not there was a valid session.
@@ -48,7 +52,7 @@
 //! they are a day past anything that could still read them.
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -64,10 +68,9 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use ferret_core::{KsfProfile, OsRng};
 use ferret_server_auth::{
     AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId, DenyReason,
-    LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginStateStore, LoginVerified,
-    NormalizedLoginName, PreloginPolicy, ProfileRules, SealedState, SessionBinding, SessionScope,
-    StateKey, StoreError as LoginStoreError, StoredRecord, ValidatedRecord, login_finish,
-    login_start, normalize_login_name,
+    LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginVerified, NormalizedLoginName,
+    PreloginPolicy, ProfileRules, SessionBinding, SessionScope, StoredRecord, ValidatedRecord,
+    login_finish, login_start, normalize_login_name,
 };
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::de::DeserializeOwned;
@@ -79,7 +82,6 @@ use crate::auth::session::{
     ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS,
     clear_cookies, insert_session, lookup, new_session, revoke, session_cookies,
 };
-use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
 use crate::http::extract::{AdminSession, VaultSession};
@@ -231,7 +233,10 @@ fn finish_lookup(row: LookupRow) -> rusqlite::Result<AccountLookupOwned> {
 
 /// How the made-up answers of unknown names are spread, from the real accounts:
 /// the share of each key stretching profile and the share of accounts with a
-/// second factor, in permille. With no accounts: profile 1 for every answer.
+/// second factor. The shares are kept in buckets of 100 permille that change
+/// only when the real share is more than 50 permille past a bucket's edge, and
+/// the current buckets are stored in the database, so a restart keeps them. With
+/// no accounts: profile 1 for every answer.
 pub fn load_prelogin_policy(conn: &Connection) -> PreloginPolicy {
     match try_load_prelogin_policy(conn) {
         Ok(policy) => policy,
@@ -240,6 +245,134 @@ pub fn load_prelogin_policy(conn: &Connection) -> PreloginPolicy {
             PreloginPolicy::single(KsfProfile::P1)
         }
     }
+}
+
+/// The width of a share bucket, in permille.
+const BUCKET_STEP: u64 = 100;
+/// A stored bucket is kept while the real share is within this distance of
+/// it: a bucket reaches 50 permille to each side, so the real share must be
+/// more than 50 past an edge before the bucket changes.
+const BUCKET_HOLD: u64 = 100;
+/// The `ferret_meta` key that holds the current buckets.
+const BUCKETS_KEY: &str = "prelogin_buckets";
+
+/// The buckets the pre-login policy is built from, as they are kept in the
+/// database: the bucket of the second-factor hint and one per profile.
+#[derive(Default)]
+struct Buckets {
+    sk: Option<u16>,
+    profiles: Vec<(u8, u16)>,
+}
+
+impl Buckets {
+    fn encode(&self) -> Vec<u8> {
+        let mut text = String::new();
+        if let Some(sk) = self.sk {
+            text.push_str(&format!("sk={sk};"));
+        }
+        for (profile, bucket) in &self.profiles {
+            text.push_str(&format!("p{profile}={bucket};"));
+        }
+        text.into_bytes()
+    }
+
+    /// Reads what `encode` wrote. Anything that does not parse is left out, so
+    /// a damaged value only means the bucket is chosen again.
+    fn decode(bytes: &[u8]) -> Self {
+        let mut buckets = Buckets::default();
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return buckets;
+        };
+        for item in text.split(';') {
+            let Some((name, value)) = item.split_once('=') else {
+                continue;
+            };
+            let Some(bucket) = value.parse::<u16>().ok().filter(|b| is_bucket(*b)) else {
+                continue;
+            };
+            if name == "sk" {
+                buckets.sk = Some(bucket);
+            } else if let Some(profile) = name.strip_prefix('p').and_then(|p| p.parse::<u8>().ok())
+            {
+                buckets.profiles.push((profile, bucket));
+            }
+        }
+        buckets
+    }
+
+    fn profile(&self, profile: u8) -> Option<u16> {
+        self.profiles
+            .iter()
+            .find(|(p, _)| *p == profile)
+            .map(|(_, b)| *b)
+    }
+}
+
+/// Whether `value` is a bucket: a multiple of 100 from 0 to 1000.
+fn is_bucket(value: u16) -> bool {
+    value <= 1000 && value.checked_rem(100) == Some(0)
+}
+
+/// The bucket for a real share: the stored one while the share stays within
+/// [`BUCKET_HOLD`] of it, else the multiple of 100 nearest to the share
+/// (halves round up).
+fn settle(stored: Option<u16>, share: u64) -> u16 {
+    if let Some(bucket) = stored
+        && is_bucket(bucket)
+        && share.abs_diff(u64::from(bucket)) <= BUCKET_HOLD
+    {
+        return bucket;
+    }
+    let nearest = share
+        .checked_add(BUCKET_STEP / 2)
+        .and_then(|s| s.checked_div(BUCKET_STEP))
+        .and_then(|s| s.checked_mul(BUCKET_STEP))
+        .unwrap_or(1000)
+        .min(1000);
+    u16::try_from(nearest).unwrap_or(1000)
+}
+
+/// Makes the profile buckets add up to exactly 1000, as the policy needs: a
+/// missing amount goes to the largest bucket, an excess comes off the largest
+/// ones first (ties: the lower profile number).
+fn fit_to_whole(buckets: &[(u8, u16)]) -> Option<Vec<(u8, u16)>> {
+    let mut out = buckets.to_vec();
+    let sum = out
+        .iter()
+        .try_fold(0u32, |sum, (_, bucket)| sum.checked_add(u32::from(*bucket)))?;
+    let mut order: Vec<usize> = (0..out.len()).collect();
+    order.sort_by(|a, b| match (out.get(*a), out.get(*b)) {
+        (Some(a), Some(b)) => b.1.cmp(&a.1).then(a.0.cmp(&b.0)),
+        _ => std::cmp::Ordering::Equal,
+    });
+    if sum < 1000 {
+        let first = out.get_mut(*order.first()?)?;
+        let missing = u16::try_from(1000u32.checked_sub(sum)?).ok()?;
+        first.1 = first.1.checked_add(missing)?;
+    } else {
+        let mut excess = sum.checked_sub(1000)?;
+        for index in order {
+            if excess == 0 {
+                break;
+            }
+            let entry = out.get_mut(index)?;
+            let take = excess.min(u32::from(entry.1));
+            entry.1 = entry.1.checked_sub(u16::try_from(take).ok()?)?;
+            excess = excess.checked_sub(take)?;
+        }
+    }
+    Some(out)
+}
+
+fn read_buckets(conn: &Connection) -> rusqlite::Result<Buckets> {
+    let stored: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT value FROM ferret_meta WHERE key = ?1",
+            params![BUCKETS_KEY],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(stored.map_or_else(Buckets::default, |bytes| Buckets::decode(&bytes)))
 }
 
 fn try_load_prelogin_policy(conn: &Connection) -> Result<PreloginPolicy, String> {
@@ -269,58 +402,44 @@ fn try_load_prelogin_policy(conn: &Connection) -> Result<PreloginPolicy, String>
         counts.push((profile, count));
         with_hint = with_hint.saturating_add(hints);
     }
+    drop(statement);
     let total: u64 = counts.iter().map(|(_, c)| *c).fold(0, u64::saturating_add);
     if total == 0 {
         return Ok(PreloginPolicy::single(KsfProfile::P1));
     }
-    let shares = permille_shares(&counts, total).ok_or("the shares do not add up")?;
-    let hint_permille = share_permille(with_hint.min(total), total)
-        .and_then(|p| u16::try_from(p).ok())
-        .ok_or("the hint share does not fit")?;
-    PreloginPolicy::new(&shares, hint_permille).map_err(|e| format!("{e:?}"))
+
+    // The shares are coarse and sticky: a made-up answer must not change when
+    // the real accounts move a little, or the names whose answer changed would
+    // be the ones nobody holds.
+    let stored = read_buckets(conn).map_err(|e| e.to_string())?;
+    let share_of = |part: u64| share_permille(part.min(total), total).ok_or("a share overflows");
+    let sk = settle(stored.sk, share_of(with_hint)?);
+    let mut profiles = Vec::with_capacity(counts.len());
+    for (profile, count) in &counts {
+        profiles.push((
+            *profile,
+            settle(stored.profile(*profile), share_of(*count)?),
+        ));
+    }
+    let fresh = Buckets {
+        sk: Some(sk),
+        profiles,
+    };
+    if fresh.encode() != stored.encode() {
+        conn.execute(
+            "INSERT OR REPLACE INTO ferret_meta (key, value) VALUES (?1, ?2)",
+            params![BUCKETS_KEY, fresh.encode()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let shares = fit_to_whole(&fresh.profiles).ok_or("the shares do not add up")?;
+    PreloginPolicy::new(&shares, sk).map_err(|e| format!("{e:?}"))
 }
 
 /// `part / total` in permille, rounded to the nearest.
 fn share_permille(part: u64, total: u64) -> Option<u64> {
     let scaled = part.checked_mul(1000)?.checked_add(total / 2)?;
     scaled.checked_div(total)
-}
-
-/// Shares in permille that add up to exactly 1000: each profile gets the floor
-/// of its share, and the rest goes one by one to the largest remainders (ties:
-/// the lower profile number).
-fn permille_shares(counts: &[(u8, u64)], total: u64) -> Option<Vec<(u8, u16)>> {
-    let mut shares: Vec<(u8, u64, u64)> = Vec::with_capacity(counts.len());
-    for (profile, count) in counts {
-        let scaled = count.checked_mul(1000)?;
-        shares.push((
-            *profile,
-            scaled.checked_div(total)?,
-            scaled.checked_rem(total)?,
-        ));
-    }
-    let given = shares
-        .iter()
-        .try_fold(0u64, |sum, (_, share, _)| sum.checked_add(*share))?;
-    let mut left = 1000u64.checked_sub(given)?;
-    let mut order: Vec<usize> = (0..shares.len()).collect();
-    order.sort_by(|a, b| match (shares.get(*a), shares.get(*b)) {
-        (Some(a), Some(b)) => b.2.cmp(&a.2).then(a.0.cmp(&b.0)),
-        _ => std::cmp::Ordering::Equal,
-    });
-    for index in order {
-        if left == 0 {
-            break;
-        }
-        if let Some(share) = shares.get_mut(index) {
-            share.1 = share.1.checked_add(1)?;
-            left = left.checked_sub(1)?;
-        }
-    }
-    shares
-        .into_iter()
-        .map(|(profile, share, _)| Some((profile, u16::try_from(share).ok()?)))
-        .collect()
 }
 
 /// Renews the policy in `policy` from the database every ten minutes, and
@@ -590,147 +709,36 @@ async fn login_start_route(
 
 // ------------------------------------------------------------ login/finish
 
-/// A store that forwards to the real one and keeps a copy of the sealed state
-/// it hands out, so the state can be opened a second time with another
-/// expectation. It is never put back anywhere.
-struct TeeStore<'a> {
-    inner: &'a SqliteLoginStateStore,
-    seen: Mutex<Option<SealedState>>,
-}
-
-impl std::fmt::Debug for TeeStore<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TeeStore([redacted])")
-    }
-}
-
-impl LoginStateStore for TeeStore<'_> {
-    fn put(
-        &self,
-        key: StateKey,
-        sealed: SealedState,
-        expires_at: u64,
-        now: u64,
-    ) -> Result<(), LoginStoreError> {
-        self.inner.put(key, sealed, expires_at, now)
-    }
-
-    fn take(&self, key: &StateKey, now: u64) -> Result<Option<SealedState>, LoginStoreError> {
-        let taken = self.inner.take(key, now)?;
-        if let Some(sealed) = &taken {
-            *self.seen.lock().unwrap_or_else(PoisonError::into_inner) = Some(sealed.clone());
-        }
-        Ok(taken)
-    }
-
-    fn purge_expired(&self, now: u64) -> Result<usize, LoginStoreError> {
-        self.inner.purge_expired(now)
-    }
-}
-
-/// A store with one state in it, the one the first attempt took.
-struct OnceStore(Mutex<Option<SealedState>>);
-
-impl std::fmt::Debug for OnceStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("OnceStore([redacted])")
-    }
-}
-
-impl LoginStateStore for OnceStore {
-    fn put(&self, _: StateKey, _: SealedState, _: u64, _: u64) -> Result<(), LoginStoreError> {
-        Err(LoginStoreError::Backend)
-    }
-
-    fn take(&self, _: &StateKey, _: u64) -> Result<Option<SealedState>, LoginStoreError> {
-        Ok(self.0.lock().unwrap_or_else(PoisonError::into_inner).take())
-    }
-
-    fn purge_expired(&self, _: u64) -> Result<usize, LoginStoreError> {
-        Ok(0)
-    }
-}
-
-/// The session the request presents by its session id cookie, read without any
-/// effect: the row's id hash and the account of its user, if the row is a live
-/// vault session. Whether the session counts in full is decided afterwards,
-/// and only for a re-authentication.
-async fn presented_session(
-    state: &FerretState,
-    jar: &SignedCookieJar,
-) -> Result<Option<(SidHash, CredentialId)>, ApiError> {
-    let Some(secret) = jar
-        .get(product::SID_COOKIE)
+/// The session id hash in the request's session cookie, if the cookie is one
+/// this server signed. Nothing is read from the database.
+fn presented_sid(jar: &SignedCookieJar) -> Option<SidHash> {
+    jar.get(product::SID_COOKIE)
         .and_then(|c| SessionSecret::from_cookie(c.value()).ok())
-    else {
-        return Ok(None);
-    };
-    let sid = secret.hash();
-    drop(secret);
-    let found = state
-        .vault_db
-        .with_conn(move |conn| {
-            let Some(row) = lookup(conn, &sid)? else {
-                return Ok(None);
-            };
-            if row.revoked_at.is_some() || row.origin != Origin::Vault {
-                return Ok(None);
-            }
-            let account: Option<Vec<u8>> = conn
-                .query_row(
-                    "SELECT account_id FROM ferret_accounts WHERE user_id = ?1",
-                    params![row.user_id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            Ok(account
-                .and_then(|a| <[u8; 16]>::try_from(a).ok())
-                .map(|a| (sid, CredentialId::from_bytes(a))))
-        })
-        .await?;
-    Ok(found)
+        .map(|secret| secret.hash())
 }
 
-/// The library's `login_finish`, with the second try described in the module
-/// documentation.
+/// The library's `login_finish`: it takes and opens the sealed state once,
+/// against the purpose the request names, and asks the throttle with the
+/// account of the state before any OPAQUE work.
 fn finish_blocking(
     state: &FerretState,
     caller: Caller,
     login_id: &str,
     ke3: &[u8],
-    presented: Option<(SessionBinding, CredentialId)>,
+    current_session: Option<(SessionBinding, CredentialId)>,
 ) -> Result<LoginVerified, AuthError> {
     let policy = read_policy(state);
     let cx = context(state, &policy, profiles());
-    let request = |current_session| LoginFinishRequest {
-        caller,
-        login_id: login_id.as_bytes(),
-        ke3,
-        current_session,
-    };
-    let Some(presented) = presented else {
-        return login_finish(&cx, state.login_states.as_ref(), &request(None));
-    };
-    let tee = TeeStore {
-        inner: state.login_states.as_ref(),
-        seen: Mutex::new(None),
-    };
-    match login_finish(&cx, &tee, &request(Some(presented))) {
-        Err(AuthError::Denied(DenyReason::StateInvalid)) => {
-            let taken = tee
-                .seen
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            match taken {
-                Some(sealed) => {
-                    login_finish(&cx, &OnceStore(Mutex::new(Some(sealed))), &request(None))
-                }
-                None => Err(AuthError::Denied(DenyReason::StateInvalid)),
-            }
-        }
-        other => other,
-    }
+    login_finish(
+        &cx,
+        state.login_states.as_ref(),
+        &LoginFinishRequest {
+            caller,
+            login_id: login_id.as_bytes(),
+            ke3,
+            current_session,
+        },
+    )
 }
 
 /// What a finished ordinary sign-in leaves behind.
@@ -740,6 +748,17 @@ struct SignedIn {
     account: AccountId,
     vault: VaultId,
     vk_epoch: u64,
+}
+
+/// How the database side of an ordinary sign-in ended.
+enum Opened {
+    /// A new session.
+    Session(SignedIn),
+    /// The user is gone or was disabled since the first step.
+    Refused,
+    /// The kit's second factor is on for the user and this server cannot ask
+    /// for it yet.
+    SecondFactor,
 }
 
 async fn login_finish_route(
@@ -753,7 +772,20 @@ async fn login_finish_route(
     let req: LoginFinishReq = read_json(body).await?;
     let caller = caller_from(&parts.headers, Some(peer));
     let jar = SignedCookieJar::from_headers(&parts.headers, state.core.session_key.clone());
-    let presented = presented_session(&state, &jar).await?;
+
+    // The request says what it is for; the purpose sealed in the state stays
+    // the authority, and a state made for the other purpose is refused.
+    let (current_session, reauth_session) = match req.purpose.unwrap_or(LoginPurposeJson::Login) {
+        LoginPurposeJson::Login => (None, None),
+        LoginPurposeJson::Reauth => {
+            let session = VaultSession::from_request_parts(&mut parts, &state).await?;
+            let bound = (
+                session_binding(&session.sid),
+                CredentialId::from(&session.account),
+            );
+            (Some(bound), Some(session))
+        }
+    };
 
     let login_id = hex16::encode(&req.login_id);
     let ke3 = req.ke3;
@@ -762,12 +794,11 @@ async fn login_finish_route(
         .device_name
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
-    let presented_sid = presented.as_ref().map(|(sid, _)| *sid);
-    let offered = presented.map(|(sid, account)| (session_binding(&sid), account));
+    let presented = presented_sid(&jar);
 
     let worker = state.clone();
     let verified = tokio::task::spawn_blocking(move || {
-        finish_blocking(&worker, caller, &login_id, &ke3, offered)
+        finish_blocking(&worker, caller, &login_id, &ke3, current_session)
     })
     .await
     .map_err(|_| ApiError::internal())?
@@ -776,14 +807,7 @@ async fn login_finish_route(
     let secure = state.origins.vault_is_https();
     match verified.purpose {
         LoginPurpose::Reauth { .. } => {
-            // The state belongs to the session the request presented; now the
-            // session must also count in full (both cookies, limits, scope).
-            let session = VaultSession::from_request_parts(&mut parts, &state).await?;
-            let same = presented_sid == Some(session.sid)
-                && session.account.as_bytes() == verified.credential.as_bytes();
-            if !same {
-                return Err(ApiError::unauthorized());
-            }
+            let session = reauth_session.ok_or_else(ApiError::internal)?;
             let jar = reauth::grant(jar, &state.core.session_key, secure);
             Ok(no_store(
                 (
@@ -800,20 +824,22 @@ async fn login_finish_route(
         LoginPurpose::Login => {
             let account_bytes = *verified.credential.as_bytes();
             let now = to_i64(now)?;
-            let signed_in = state
+            let opened = state
                 .vault_db
                 .with_conn(move |conn| {
-                    open_session(
-                        conn,
-                        account_bytes,
-                        now,
-                        device,
-                        &device_name,
-                        presented_sid,
-                    )
+                    open_session(conn, account_bytes, now, device, &device_name, presented)
                 })
-                .await?
-                .ok_or_else(|| auth_refusal(AuthError::Denied(DenyReason::StateInvalid)))?;
+                .await?;
+            let signed_in = match opened {
+                Opened::Session(signed_in) => signed_in,
+                Opened::Refused => {
+                    return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
+                }
+                Opened::SecondFactor => {
+                    tracing::info!("sign-in refused: the kit's second factor is on");
+                    return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden"));
+                }
+            };
             let jar = session_cookies(jar, &signed_in.secret, &signed_in.claims, secure);
             Ok(no_store(
                 (
@@ -831,9 +857,9 @@ async fn login_finish_route(
 }
 
 /// The database side of an ordinary sign-in, in one transaction: read the
-/// account again (a user disabled since the first step gets `None`), note the
-/// sign-in, insert the new session and end the presented one when it is the
-/// same user's vault session.
+/// account again (a user disabled since the first step gets `Refused`), refuse
+/// a user whose second factor is on, note the sign-in, insert the new session
+/// and end the vault session the browser presented, whoever it belongs to.
 fn open_session(
     conn: &mut Connection,
     account: [u8; 16],
@@ -841,20 +867,32 @@ fn open_session(
     device: DeviceId,
     device_name: &str,
     presented: Option<SidHash>,
-) -> Result<Option<SignedIn>, StoreError> {
+) -> Result<Opened, StoreError> {
     let tx = conn.transaction()?;
-    let found: Option<(i64, bool, i64, Vec<u8>, i64)> = tx
+    let found: Option<(i64, bool, i64, Vec<u8>, i64, bool)> = tx
         .query_row(
-            "SELECT u.id, u.active, u.session_version, a.vault_id, a.vk_epoch
+            "SELECT u.id, u.active, u.session_version, a.vault_id, a.vk_epoch, u.totp_enabled
              FROM ferret_accounts a JOIN users u ON u.id = a.user_id
              WHERE a.account_id = ?1",
             params![account.as_slice()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((user_id, true, version, vault, epoch)) = found else {
-        return Ok(None);
+    let Some((user_id, true, version, vault, epoch, totp)) = found else {
+        return Ok(Opened::Refused);
     };
+    if totp {
+        return Ok(Opened::SecondFactor);
+    }
     let vault = <[u8; 16]>::try_from(vault).map_err(|_| StoreError::Invalid("vault id"))?;
     let vk_epoch = u64::try_from(epoch).map_err(|_| StoreError::Invalid("vk epoch"))?;
 
@@ -870,15 +908,16 @@ fn open_session(
         SessionScope::Full,
     );
     insert_session(&tx, &session)?;
+    // The browser's cookies are replaced by the new ones, so the row they
+    // named would be left live and unreachable; it ends here, for any user.
     if let Some(previous) = presented
         && let Some(row) = lookup(&tx, &previous)?
-        && row.user_id == user_id
         && row.origin == Origin::Vault
     {
         revoke(&tx, &previous, now)?;
     }
     tx.commit()?;
-    Ok(Some(SignedIn {
+    Ok(Opened::Session(SignedIn {
         secret,
         claims,
         account: AccountId::from_bytes(account),
@@ -903,18 +942,23 @@ async fn logout(
         .and_then(|c| SessionSecret::from_cookie(c.value()).ok())
         .map(|secret| secret.hash());
     if let Some(sid) = sid {
-        let now = to_i64(state.clock.now_unix())?;
-        state
-            .vault_db
-            .with_conn(move |conn| {
-                if let Some(row) = lookup(conn, &sid)?
-                    && row.origin == origin
-                {
-                    revoke(conn, &sid, now)?;
-                }
-                Ok(())
-            })
-            .await?;
+        // A failed clock skips the revoke but never the clearing of cookies.
+        match to_i64(state.clock.now_unix()) {
+            Ok(now) => {
+                state
+                    .vault_db
+                    .with_conn(move |conn| {
+                        if let Some(row) = lookup(conn, &sid)?
+                            && row.origin == origin
+                        {
+                            revoke(conn, &sid, now)?;
+                        }
+                        Ok(())
+                    })
+                    .await?;
+            }
+            Err(_) => tracing::error!("the clock failed; the session row was not ended"),
+        }
     }
     Ok(no_store(
         (clear_cookies(jar), StatusCode::NO_CONTENT).into_response(),
@@ -1006,24 +1050,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shares_add_up_to_a_thousand_with_the_largest_remainders_rounded_up() {
-        let shares = permille_shares(&[(1, 1), (2, 1), (3, 1)], 3).unwrap();
-        assert_eq!(shares, vec![(1, 334), (2, 333), (3, 333)]);
-        let shares = permille_shares(&[(1, 2), (2, 1)], 3).unwrap();
-        assert_eq!(shares, vec![(1, 667), (2, 333)]);
-        let shares = permille_shares(&[(1, 5)], 5).unwrap();
-        assert_eq!(shares, vec![(1, 1000)]);
-        for (counts, total) in [
-            (vec![(1u8, 7u64), (2, 11), (3, 13)], 31u64),
-            (vec![(1, 1), (2, 999)], 1000),
-        ] {
-            let sum: u32 = permille_shares(&counts, total)
-                .unwrap()
-                .iter()
-                .map(|(_, s)| u32::from(*s))
-                .sum();
-            assert_eq!(sum, 1000);
+    fn a_bucket_holds_until_the_share_is_more_than_50_past_its_edge() {
+        // Nothing stored: the nearest multiple of 100, halves up.
+        assert_eq!(settle(None, 0), 0);
+        assert_eq!(settle(None, 49), 0);
+        assert_eq!(settle(None, 50), 100);
+        assert_eq!(settle(None, 449), 400);
+        assert_eq!(settle(None, 1000), 1000);
+        // A stored bucket of 500 covers 450..550; it holds up to 100 away.
+        for share in [400, 450, 500, 550, 600] {
+            assert_eq!(settle(Some(500), share), 500, "{share}");
         }
+        assert_eq!(settle(Some(500), 601), 600);
+        assert_eq!(settle(Some(500), 650), 700);
+        assert_eq!(settle(Some(500), 399), 400);
+        assert_eq!(settle(Some(500), 0), 0);
+        // A stored value that is not a bucket is ignored.
+        assert_eq!(settle(Some(530), 530), 500);
+    }
+
+    #[test]
+    fn profile_buckets_are_fitted_to_a_thousand() {
+        assert_eq!(fit_to_whole(&[(1, 1000)]).unwrap(), vec![(1, 1000)]);
+        assert_eq!(
+            fit_to_whole(&[(1, 300), (2, 300), (3, 300)]).unwrap(),
+            vec![(1, 400), (2, 300), (3, 300)]
+        );
+        assert_eq!(
+            fit_to_whole(&[(1, 600), (2, 600)]).unwrap(),
+            vec![(1, 400), (2, 600)]
+        );
+        assert_eq!(
+            fit_to_whole(&[(1, 0), (2, 0)]).unwrap(),
+            vec![(1, 1000), (2, 0)]
+        );
+    }
+
+    #[test]
+    fn buckets_round_trip_and_damage_is_ignored() {
+        let buckets = Buckets {
+            sk: Some(500),
+            profiles: vec![(1, 700), (2, 300)],
+        };
+        let back = Buckets::decode(&buckets.encode());
+        assert_eq!(back.sk, Some(500));
+        assert_eq!(back.profiles, vec![(1, 700), (2, 300)]);
+        let damaged = Buckets::decode(b"sk=530;p1=abc;p2=300;junk;p=1;");
+        assert_eq!(damaged.sk, None);
+        assert_eq!(damaged.profiles, vec![(2, 300)]);
+        assert!(Buckets::decode(&[0xff, 0xfe]).profiles.is_empty());
     }
 
     #[test]

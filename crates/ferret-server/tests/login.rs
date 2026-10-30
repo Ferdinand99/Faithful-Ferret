@@ -29,8 +29,8 @@ use ferret_server::wire::b64url;
 use ferret_server_auth::testing::{SMALL, register_start_open};
 use ferret_server_auth::{
     Clock, CredentialId, ManualClock, PreloginPolicy, ProfileRules, RecordingThrottle,
-    RegistrationKind, Stage, StoredRecord, Throttle, ThrottleCall, normalize_login_name,
-    register_finish,
+    RegistrationKind, Stage, StoredRecord, Throttle, ThrottleCall, fake_prelogin,
+    normalize_login_name, register_finish,
 };
 use serde_json::{Value, json};
 use support::accounts::{account_ids, insert_user, rows};
@@ -209,25 +209,40 @@ fn ke3_of(started: Started) -> Result<Vec<u8>, ferret_core::Error> {
     .map(|done| done.finished.ke3)
 }
 
-fn finish_body(login_id: &str, ke3: &[u8], device: u8) -> Value {
-    json!({
+fn finish_body(login_id: &str, ke3: &[u8], device: u8, purpose: Option<&str>) -> Value {
+    let mut body = json!({
         "login_id": login_id,
         "ke3": b64url::encode(ke3),
         "device_id": format!("{device:02x}").repeat(16),
         "device_name": "Test browser",
-    })
+    });
+    if let Some(purpose) = purpose {
+        body["purpose"] = json!(purpose);
+    }
+    body
 }
 
-async fn finish(app: &TestApp, jar: &mut Jar, login_id: &str, ke3: &[u8], device: u8) -> Res {
+async fn finish_as(
+    app: &TestApp,
+    jar: &mut Jar,
+    login_id: &str,
+    ke3: &[u8],
+    device: u8,
+    purpose: Option<&str>,
+) -> Res {
     send(
         app,
         jar,
         vault_post(
             "/api/auth/opaque/login/finish",
-            &finish_body(login_id, ke3, device),
+            &finish_body(login_id, ke3, device, purpose),
         ),
     )
     .await
+}
+
+async fn finish(app: &TestApp, jar: &mut Jar, login_id: &str, ke3: &[u8], device: u8) -> Res {
+    finish_as(app, jar, login_id, ke3, device, None).await
 }
 
 /// A whole sign-in with the right password.
@@ -722,29 +737,6 @@ async fn login_finish_revokes_the_presented_previous_session_and_only_that_one()
 }
 
 #[tokio::test]
-async fn a_session_of_another_user_is_not_revoked_by_my_sign_in() {
-    let app = app().await;
-    seed(&app, 1, "alice@example.com").await;
-    seed(&app, 2, "bob@example.com").await;
-    let mut alice = Jar::default();
-    assert_eq!(
-        sign_in(&app, &mut alice, "alice@example.com", 1)
-            .await
-            .status,
-        200
-    );
-    // A browser that holds alice's session signs in as bob.
-    assert_eq!(
-        sign_in(&app, &mut alice.clone(), "bob@example.com", 2)
-            .await
-            .status,
-        200
-    );
-    assert_eq!(live_session_rows(&app).await, 2);
-    assert_eq!(session_info(&app, &mut alice).await.status, StatusCode::OK);
-}
-
-#[tokio::test]
 async fn logout_revokes_server_side() {
     let app = app().await;
     seed(&app, 1, "alice@example.com").await;
@@ -897,7 +889,7 @@ async fn reauth_purpose_keeps_the_session_and_sets_the_grant() {
     let started = started.unwrap();
     let login_id = started.login_id.clone();
     let ke3 = ke3_of(started).unwrap();
-    let done = finish(&app, &mut jar, &login_id, &ke3, 1).await;
+    let done = finish_as(&app, &mut jar, &login_id, &ke3, 1, Some("reauth")).await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text());
     assert_eq!(done.json()["vk_epoch"], 1);
 
@@ -933,36 +925,6 @@ async fn reauth_without_a_session_is_denied() {
         count(&app, "SELECT COUNT(*) FROM ferret_login_states").await,
         0
     );
-}
-
-#[tokio::test]
-async fn a_reauth_state_cannot_be_finished_without_its_session() {
-    let app = app().await;
-    seed(&app, 1, "alice@example.com").await;
-    let mut jar = Jar::default();
-    assert_eq!(
-        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
-        200
-    );
-    let (_, started) = start(
-        &app,
-        &mut jar,
-        "alice@example.com",
-        PASSWORD,
-        Some("reauth"),
-    )
-    .await;
-    let started = started.unwrap();
-    let login_id = started.login_id.clone();
-    let ke3 = ke3_of(started).unwrap();
-    // Somebody without the session cookies cannot use it to sign in.
-    let mut stranger = Jar::default();
-    let res = finish(&app, &mut stranger, &login_id, &ke3, 9).await;
-    assert_eq!(
-        (res.status.as_u16(), error_code(&res).as_str()),
-        (401, "denied")
-    );
-    assert_eq!(session_rows(&app).await, 1);
 }
 
 #[tokio::test]
@@ -1022,7 +984,7 @@ async fn insecure_transport_is_refused_before_any_work() {
     );
     let req = Req::post("/api/auth/opaque/login/finish")
         .page_fetch(Which::Vault)
-        .json(&finish_body(&"ab".repeat(16), &[1u8; 64], 1));
+        .json(&finish_body(&"ab".repeat(16), &[1u8; 64], 1, None));
     let res = app.call_raw(Which::Vault, req.build()).await;
     assert_eq!(
         (res.status.as_u16(), error_code(&res).as_str()),
@@ -1530,4 +1492,403 @@ async fn e2e_real_client_production_profile() {
         support::session::hex(account_ids(user, 1).account_id.as_bytes())
     );
     assert_eq!(session_info(&app, &mut jar).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_sign_in_ends_the_vault_session_the_browser_presented_whoever_owns_it() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    seed(&app, 2, "bob@example.com").await;
+    let mut alice = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut alice, "alice@example.com", 1)
+            .await
+            .status,
+        200
+    );
+    let alice_cookies = alice.clone();
+    // A browser that holds alice's session signs in as bob: its cookies are
+    // replaced, so alice's row would be left live and unreachable.
+    let mut browser = alice.clone();
+    assert_eq!(
+        sign_in(&app, &mut browser, "bob@example.com", 2)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(session_rows(&app).await, 2);
+    assert_eq!(live_session_rows(&app).await, 1);
+    let mut old = alice_cookies;
+    assert_eq!(
+        session_info(&app, &mut old).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        session_info(&app, &mut browser).await.json()["email"],
+        "bob@example.com"
+    );
+}
+
+/// Starts a re-authentication in `jar` and returns the login id and KE3.
+async fn reauth_proof(app: &TestApp, jar: &mut Jar) -> (String, Vec<u8>) {
+    let (res, started) = start(app, jar, "alice@example.com", PASSWORD, Some("reauth")).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let started = started.unwrap();
+    let login_id = started.login_id.clone();
+    (login_id, ke3_of(started).unwrap())
+}
+
+fn assert_denied(res: &Res) {
+    assert_eq!(
+        (res.status.as_u16(), error_code(res).as_str()),
+        (401, "denied"),
+        "{}",
+        res.text()
+    );
+    assert!(res.set_cookies().is_empty(), "{:?}", res.set_cookies());
+}
+
+#[tokio::test]
+async fn a_reauth_state_finished_as_a_login_is_denied() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    let mut jar = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
+        200
+    );
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    // The session is presented, but the request says login: no new session.
+    let res = finish_as(&app, &mut jar, &login_id, &ke3, 1, None).await;
+    assert_denied(&res);
+    assert_eq!(session_rows(&app).await, 1);
+    assert!(jar.get("__Host-ferret_reauth").is_none());
+    // The state was used up by the refusal.
+    let again = finish_as(&app, &mut jar, &login_id, &ke3, 1, Some("reauth")).await;
+    assert_denied(&again);
+    assert_eq!(session_info(&app, &mut jar).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_login_state_finished_as_a_reauth_is_denied() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    let mut session = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut session, "alice@example.com", 1)
+            .await
+            .status,
+        200
+    );
+    // A login started with no cookies, finished as a re-authentication with a
+    // live session: no grant.
+    let mut fresh = Jar::default();
+    let (_, started) = start(&app, &mut fresh, "alice@example.com", PASSWORD, None).await;
+    let started = started.unwrap();
+    let login_id = started.login_id.clone();
+    let ke3 = ke3_of(started).unwrap();
+    let res = finish_as(&app, &mut session, &login_id, &ke3, 1, Some("reauth")).await;
+    assert_denied(&res);
+    assert!(session.get("__Host-ferret_reauth").is_none());
+    assert_eq!(session_rows(&app).await, 1);
+    assert_eq!(
+        session_info(&app, &mut session).await.status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_reauth_state_finished_with_a_different_live_session_is_denied() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    seed(&app, 2, "bob@example.com").await;
+    let mut laptop = Jar::default();
+    let mut phone = Jar::default();
+    let mut bob = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut laptop, "alice@example.com", 1)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        sign_in(&app, &mut phone, "alice@example.com", 2)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        sign_in(&app, &mut bob, "bob@example.com", 3).await.status,
+        200
+    );
+    for (other, name) in [
+        (&mut phone, "the same user's other session"),
+        (&mut bob, "another user's session"),
+    ] {
+        let (login_id, ke3) = reauth_proof(&app, &mut laptop).await;
+        let res = finish_as(&app, other, &login_id, &ke3, 9, Some("reauth")).await;
+        assert_denied(&res);
+        assert!(other.get("__Host-ferret_reauth").is_none(), "{name}");
+        // The session that was presented is still live, no row was made, and
+        // the state is gone for the laptop as well.
+        assert_eq!(session_rows(&app).await, 3, "{name}");
+        assert_eq!(live_session_rows(&app).await, 3, "{name}");
+        assert_eq!(session_info(&app, other).await.status, StatusCode::OK);
+        let late = finish_as(&app, &mut laptop, &login_id, &ke3, 1, Some("reauth")).await;
+        assert_denied(&late);
+    }
+}
+
+#[tokio::test]
+async fn a_reauth_finish_without_a_session_is_unauthorized() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    let mut jar = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
+        200
+    );
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    let mut stranger = Jar::default();
+    let res = finish_as(&app, &mut stranger, &login_id, &ke3, 9, Some("reauth")).await;
+    assert_eq!(
+        (res.status.as_u16(), error_code(&res).as_str()),
+        (401, "unauthorized")
+    );
+    // Nor can the same proof open a sign-in.
+    let res = finish_as(&app, &mut stranger, &login_id, &ke3, 9, None).await;
+    assert_denied(&res);
+    assert_eq!(session_rows(&app).await, 1);
+}
+
+type Calls = Vec<(&'static str, Stage)>;
+
+fn stages(calls: Vec<ThrottleCall>) -> Calls {
+    calls
+        .into_iter()
+        .map(|c| match c {
+            ThrottleCall::Admit { stage, .. } => ("admit", stage),
+            ThrottleCall::Record { stage, .. } => ("record", stage),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_session_cookie_adds_no_throttle_call_to_either_step() {
+    let recording = Arc::new(RecordingThrottle::new());
+    let app = app_with(recording.clone() as Arc<dyn Throttle>).await;
+    seed(&app, 1, "alice@example.com").await;
+    let mut jar = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
+        200
+    );
+    let pair = |stage| -> Calls { vec![("admit", stage), ("record", stage)] };
+
+    // A sign-in from a browser that holds a live session.
+    recording.clear();
+    let (_, started) = start(&app, &mut jar, "alice@example.com", PASSWORD, None).await;
+    let started = started.unwrap();
+    let login_id = started.login_id.clone();
+    let ke3 = ke3_of(started).unwrap();
+    assert_eq!(stages(recording.calls()), pair(Stage::LoginStart));
+    recording.clear();
+    assert_eq!(finish(&app, &mut jar, &login_id, &ke3, 1).await.status, 200);
+    assert_eq!(stages(recording.calls()), pair(Stage::LoginFinish));
+
+    // A re-authentication in that session.
+    recording.clear();
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    assert_eq!(stages(recording.calls()), pair(Stage::LoginStart));
+    recording.clear();
+    let done = finish_as(&app, &mut jar, &login_id, &ke3, 1, Some("reauth")).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text());
+    assert_eq!(stages(recording.calls()), pair(Stage::LoginFinish));
+
+    // A refused purpose is still one pair, taken with the address alone.
+    recording.clear();
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    recording.clear();
+    let res = finish_as(&app, &mut jar, &login_id, &ke3, 1, None).await;
+    assert_denied(&res);
+    assert_eq!(stages(recording.calls()), pair(Stage::LoginFinish));
+}
+
+#[tokio::test]
+async fn a_user_with_the_kits_second_factor_gets_no_session_after_a_good_proof() {
+    let app = app().await;
+    let user = seed(&app, 1, "alice@example.com").await;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute("UPDATE users SET totp_enabled = 1 WHERE id = ?1", [user])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut jar = Jar::default();
+    let res = sign_in(&app, &mut jar, "alice@example.com", 1).await;
+    assert_eq!(
+        (res.status.as_u16(), error_code(&res).as_str()),
+        (403, "forbidden"),
+        "{}",
+        res.text()
+    );
+    assert!(res.set_cookies().is_empty(), "{:?}", res.set_cookies());
+    assert!(jar.names().is_empty());
+    assert_eq!(session_rows(&app).await, 0);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM users WHERE last_login_at IS NOT NULL"
+        )
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn reauth_is_unchanged_for_a_user_who_turned_the_second_factor_on() {
+    let app = app().await;
+    let user = seed(&app, 1, "alice@example.com").await;
+    let mut jar = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
+        200
+    );
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute("UPDATE users SET totp_enabled = 1 WHERE id = ?1", [user])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    let done = finish_as(&app, &mut jar, &login_id, &ke3, 1, Some("reauth")).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text());
+    assert!(jar.get("__Host-ferret_reauth").is_some());
+    assert_eq!(session_rows(&app).await, 1);
+}
+
+#[tokio::test]
+async fn logout_with_a_failed_clock_still_clears_the_cookies() {
+    let app = app().await;
+    seed(&app, 1, "alice@example.com").await;
+    let mut jar = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut jar, "alice@example.com", 1).await.status,
+        200
+    );
+    app.clock.set(u64::MAX);
+    let out = send(
+        &app,
+        &mut jar,
+        Req::post("/api/auth/logout")
+            .page_fetch(Which::Vault)
+            .header("x-forwarded-proto", "https"),
+    )
+    .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    let cookies = out.set_cookies().join("\n");
+    for name in ["__Host-ferret_sid", "__Host-ferret_session"] {
+        assert!(cookies.contains(name), "{name} is cleared: {cookies}");
+    }
+    assert!(jar.names().is_empty(), "{:?}", jar.names());
+    // Only the revoke was skipped.
+    assert_eq!(live_session_rows(&app).await, 1);
+}
+
+/// Adds kit users with vault accounts `from..to`, all with the same hint.
+async fn add_plain_accounts(app: &TestApp, from: u8, to: u8, hint: bool) {
+    let now = i64::try_from(app.clock.now_unix()).unwrap();
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            for n in from..to {
+                let account = support::accounts::add_account(conn, n, now);
+                conn.execute(
+                    "UPDATE ferret_accounts SET sk_hint = ?1 WHERE account_id = ?2",
+                    rusqlite::params![i64::from(hint), account.account_id.as_bytes().as_slice()],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+async fn policy_now(app: &TestApp) -> PreloginPolicy {
+    app.state
+        .vault_db
+        .with_conn(|conn| Ok(load_prelogin_policy(conn)))
+        .await
+        .unwrap()
+}
+
+/// What the made-up answer says for 300 names that nobody holds.
+fn made_up_answers(app: &TestApp, policy: &PreloginPolicy) -> Vec<(u8, bool)> {
+    (0..300)
+        .map(|i| {
+            let name = normalize_login_name(&format!("nobody-{i}@example.com")).unwrap();
+            let answer = fake_prelogin(&app.state.secrets.prelogin, &name, policy);
+            (answer.ksf_profile, answer.sk_hint)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_made_up_hint_does_not_move_while_the_real_share_stays_inside_the_band() {
+    let app = app().await;
+    // Ten accounts, five with a secret key: a share of 500.
+    add_plain_accounts(&app, 1, 6, true).await;
+    add_plain_accounts(&app, 6, 11, false).await;
+    let first = policy_now(&app).await;
+    assert_eq!(first, PreloginPolicy::new(&[(1, 1000)], 500).unwrap());
+    let before = made_up_answers(&app, &first);
+    assert!(
+        before.iter().any(|a| a.1) && before.iter().any(|a| !a.1),
+        "the check needs names on both sides"
+    );
+
+    // 6 of 11 (545) and 7 of 12 (583) stay inside the band around 500.
+    add_plain_accounts(&app, 11, 12, true).await;
+    add_plain_accounts(&app, 12, 13, true).await;
+    let moved = policy_now(&app).await;
+    assert_eq!(moved, first);
+    assert_eq!(made_up_answers(&app, &moved), before);
+
+    // 8 of 13 (615) is more than 50 past the edge of the bucket: it moves.
+    add_plain_accounts(&app, 13, 14, true).await;
+    let crossed = policy_now(&app).await;
+    assert_eq!(crossed, PreloginPolicy::new(&[(1, 1000)], 600).unwrap());
+
+    // The bucket is kept in the database: the real share falls back to 545 and
+    // a fresh read (what a restart does) still gives 600.
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE users SET active = 0
+                 WHERE username IN ('user12@example.com', 'user13@example.com')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(policy_now(&app).await, crossed);
+    let stored: Vec<u8> = app
+        .state
+        .vault_db
+        .with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT value FROM ferret_meta WHERE key = 'prelogin_buckets'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(stored, b"sk=600;p1=1000;");
 }

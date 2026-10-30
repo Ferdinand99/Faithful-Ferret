@@ -159,6 +159,13 @@ export function fixtures() {
       device_id: id("device"),
       device_name: "Firefox on a laptop",
     },
+    "login_finish_req.reauth.json": {
+      login_id: id("login"),
+      ke3: b64("ke3", 64),
+      device_id: id("device"),
+      device_name: "Firefox on a laptop",
+      purpose: "reauth",
+    },
     "login_finish_req.minimal.json": {
       login_id: id("login"),
       ke3: b64("ke3", 64),
@@ -503,6 +510,9 @@ export function invalidCases() {
   // Enumerations.
   for (const value of ["Login", "delete", "", 1]) {
     parse(`login purpose ${JSON.stringify(value)}`, "login_start_req", with_("login_start_req.reauth.json", { purpose: value }), "purpose is login or reauth");
+  }
+  for (const value of ["Login", "delete", "", 1]) {
+    parse(`login finish purpose ${JSON.stringify(value)}`, "login_finish_req", with_("login_finish_req.reauth.json", { purpose: value }), "purpose is login or reauth");
   }
   for (const value of ["Login", "delete", ""]) {
     parse(`handoff purpose ${JSON.stringify(value)}`, "handoff_req", with_("handoff_req.json", { purpose: value }), "purpose is login or reauth");

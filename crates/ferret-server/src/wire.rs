@@ -701,6 +701,10 @@ pub struct LoginFinishReq {
         deserialize_with = "device_name::deserialize"
     )]
     pub device_name: Option<String>,
+    /// What the sign-in is for; `login` when left out. The same value as in
+    /// [`LoginStartReq`]; the server refuses a state made for the other one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<LoginPurposeJson>,
 }
 
 /// The answer to [`LoginFinishReq`].
