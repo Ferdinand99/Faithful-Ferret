@@ -310,10 +310,10 @@ fn unwrap_checks_commit_before_aead() {
 
 #[test]
 fn unwrap_commit_compare_is_constant_time_api() {
-    // The commit is compared through `subtle` (via `prim::ct::ct_eq`), never
-    // with `==` or `!=`. A grep over the source of the wrap module: no
-    // comparison operator on a line that mentions the commit, and the
-    // comparison is the `ct_eq` call.
+    // The commit is compared through `subtle` (via `prim::ct::commit_eq`,
+    // from `ct/harness/ct_eq.rs`), never with `==` or `!=`. A grep over the
+    // source of the wrap module: no comparison operator on a line that
+    // mentions the commit, and the comparison is the `commit_eq` call.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/wrap.rs");
     let source = std::fs::read_to_string(path).unwrap();
     let code: Vec<&str> = source
@@ -330,14 +330,14 @@ fn unwrap_commit_compare_is_constant_time_api() {
     }
     assert!(
         code.iter()
-            .any(|l| l.contains("ct_eq(") && l.contains("commit")),
-        "the commit comparison must go through ct_eq"
+            .any(|l| l.contains("commit_eq(") && l.contains("commit")),
+        "the commit comparison must go through commit_eq"
     );
     let ct = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prim/ct.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ct/harness/ct_eq.rs"),
     )
     .unwrap();
-    assert!(ct.contains("subtle::ConstantTimeEq") && ct.contains("ct_eq(b)"));
+    assert!(ct.contains("subtle::ConstantTimeEq") && ct.contains("ct_eq(b"));
 }
 
 // ------------------------------------------------------------ one error

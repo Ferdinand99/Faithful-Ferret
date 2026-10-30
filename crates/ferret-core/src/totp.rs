@@ -319,30 +319,10 @@ pub fn totp_seconds_left(p: &TotpParams, unix_seconds: u64) -> u32 {
 
 // ---------------------------------------------------------------- base32
 
-/// 1 if `value >= bound`, else 0. Both must be below 2^31.
-#[inline(always)]
-fn ge(value: u32, bound: u32) -> u32 {
-    value.wrapping_sub(bound).wrapping_shr(31) ^ 1
-}
-
-/// 1 if `lo <= value <= hi`, else 0. All must be below 2^31.
-#[inline(always)]
-fn in_range(value: u32, lo: u32, hi: u32) -> u32 {
-    ge(value, lo) & ge(hi, value)
-}
-
-/// The 5-bit value of a base32 letter (RFC 4648: `A`-`Z`, `2`-`7`, either
-/// case) and 1 if the letter is valid, else 0. Arithmetic and masks, no
-/// table and no branch on the letter: the secret is the input here.
-fn symbol(byte: u8) -> (u32, u32) {
-    let c = u32::from(byte);
-    let upper = c.wrapping_sub(in_range(c, 97, 122).wrapping_mul(32));
-    let letter = in_range(upper, 65, 90);
-    let digit = in_range(upper, 50, 55);
-    let value = letter
-        .wrapping_mul(upper.wrapping_sub(65))
-        .wrapping_add(digit.wrapping_mul(upper.wrapping_sub(24)));
-    (value & 31, letter | digit)
+/// The table-free base32 reading, included from `ct/harness/`. It is the
+/// code the constant-time analyzer and the timing tests read as well.
+mod base32 {
+    include!("../../../ct/harness/base32.rs");
 }
 
 /// Space, tab, carriage return and line feed.
@@ -392,21 +372,10 @@ fn decode_base32(text: &[u8]) -> Result<TotpSecret, Error> {
     if fill != 0 && fill != expected_fill {
         return Err(bad());
     }
+    // `bytes` is the number of whole bytes in `n` letters (checked above).
     let mut out = Zeroizing::new(Vec::with_capacity(MAX_SECRET_LEN));
-    let mut acc: u32 = 0;
-    let mut bits: u32 = 0;
-    let mut all_valid: u32 = 1;
-    for &letter in letters.iter() {
-        let (value, valid) = symbol(letter);
-        all_valid &= valid;
-        acc = (acc.wrapping_shl(5) | value) & 0x1fff;
-        bits = bits.wrapping_add(5);
-        if bits >= 8 {
-            bits = bits.wrapping_sub(8);
-            out.push((acc.wrapping_shr(bits) & 0xff) as u8);
-        }
-    }
-    acc.zeroize();
+    out.resize(bytes, 0u8);
+    let all_valid = base32::decode_letters(&letters, &mut out);
     if all_valid != 1 {
         return Err(bad());
     }

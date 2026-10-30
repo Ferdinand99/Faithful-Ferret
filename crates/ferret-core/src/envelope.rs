@@ -41,7 +41,7 @@ use crate::item::pad::{self, is_padded_len};
 use crate::item::{DecodedItem, ItemBody, Manifest};
 use crate::keys::UnlockedVault;
 use crate::prim::aead::{OVERHEAD, aead_open, aead_seal};
-use crate::prim::{ct::ct_eq, mac::hmac_sha256};
+use crate::prim::{ct::mac_eq, mac::hmac_sha256};
 use crate::rng::SecureRng;
 use crate::secret::ItemKey;
 use crate::tlv::{SUITE, Tlv, tag};
@@ -264,7 +264,7 @@ pub fn verify_item_tag(
     tag: &[u8; 32],
 ) -> Result<(), Error> {
     let expected = item_tag(vault, item_id, rev, envelope).map_err(|_| Error::Decrypt)?;
-    if ct_eq(&expected, tag) {
+    if mac_eq(&expected, tag) {
         Ok(())
     } else {
         Err(Error::Decrypt)
