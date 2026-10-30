@@ -4,8 +4,8 @@
 # crates. This checks that the two graphs do not drift apart where they must
 # not:
 #
-#   * every crate in the tree of ferret-core and ferret-server-auth that the
-#     root lock also has in that tree has the same version in the server lock, so the crypto that is
+#   * every crate in the tree of ferret-core and ferret-server-auth of the root
+#     graph (what the release builds) is at the same version in the server, so the crypto that is
 #     served is the crypto that was tested and vetted (vole-kit's own crates,
 #     such as a second `rand_core`, are outside that tree and may differ);
 #   * every crate that both locks have at the same name and version has the same
@@ -28,17 +28,18 @@ normalise() {
   sed -E ':a; s/ \((\*|proc-macro|build|\/[^)]*)\)$//; ta' | sort -u
 }
 
-# `compare ROOT_TREE SERVER_TREE`: the crates that both trees have, at a version
-# that the root tree does not have. A crate that only the server tree has is
-# not a mismatch: vole-kit switches on features (the password hashing of its own
-# `argon2`, for one) that bring crates the root graph does not build.
+# `compare ROOT_TREE SERVER_TREE`: the crates (at a version) of the root tree
+# that the server tree does not have. The server may have more: vole-kit
+# switches on features (the password hashing of its own `argon2`, for one) that
+# bring crates the root graph does not build, sometimes at another version of a
+# name the root has too. What must not happen is that a crate the root builds is
+# not at that version in the server.
 compare() {
-  local extra
-  extra="$(awk 'NR==FNR { seen[$1] = seen[$1] " " $2; next }
-                ($1 in seen) && index(seen[$1] " ", " " $2 " ") == 0 { print $1, $2 }'     <(normalise < "$1") <(normalise < "$2"))"
-  if [ -n "$extra" ]; then
-    echo "FAIL: the server resolves these crates of the tree of ferret-core and ferret-server-auth to versions that the root lock does not use:" >&2
-    echo "$extra" >&2
+  local missing
+  missing="$(comm -23 <(normalise < "$1") <(normalise < "$2"))"
+  if [ -n "$missing" ]; then
+    echo "FAIL: these crates of the tree of ferret-core and ferret-server-auth in the root lock are not at that version in the server lock:" >&2
+    echo "$missing" >&2
     return 1
   fi
 }
@@ -57,7 +58,7 @@ root_tree="$(mktemp)"
 server_tree="$(mktemp)"
 trap 'rm -f "$root_tree" "$server_tree"' EXIT
 for package in ferret-core ferret-server-auth; do
-  tree Cargo.toml "$package" normal,build,dev >> "$root_tree"
+  tree Cargo.toml "$package" normal,build >> "$root_tree"
   tree crates/ferret-server/Cargo.toml "$package" normal,build >> "$server_tree"
 done
 

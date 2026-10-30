@@ -197,7 +197,7 @@ fn check_lock_passes_and_detects_a_planted_version_mismatch() {
     .expect("write");
     std::fs::write(
         &same,
-        "ferret-core v0.1.0 (/src/crates/ferret-core)\nsha2 v0.11.1\nzeroize v1.9.1\n",
+        "ferret-core v0.1.0 (/src/crates/ferret-core)\nsha2 v0.11.1\nsubtle v2.6.1\nzeroize v1.9.1\nrand_core v0.6.4\n",
     )
     .expect("write");
     std::fs::write(
@@ -210,7 +210,7 @@ fn check_lock_passes_and_detects_a_planted_version_mismatch() {
     let bad = bash(&[Path::new("--compare"), &root_tree, &doctored]);
     assert!(!bad.status.success(), "a version mismatch must fail");
     assert!(
-        text(&bad.stderr).contains("sha2 v0.11.0"),
+        text(&bad.stderr).contains("sha2 v0.11.1"),
         "{}",
         text(&bad.stderr)
     );
@@ -439,7 +439,17 @@ fn test_support_stays_out_of_the_release_graph_of_the_server() {
     // helpers of the core or of the OPAQUE library switched on. The server
     // suite of the core is on by design.
     let output = run(cargo()
-        .args(["tree", "-e", "normal,build", "-f", "{p} [{f}]", "--prefix", "none", "--locked", "--manifest-path"])
+        .args([
+            "tree",
+            "-e",
+            "normal,build",
+            "-f",
+            "{p} [{f}]",
+            "--prefix",
+            "none",
+            "--locked",
+            "--manifest-path",
+        ])
         .arg(server_dir().join("Cargo.toml")));
     assert!(output.status.success(), "{}", text(&output.stderr));
     let tree = text(&output.stdout);

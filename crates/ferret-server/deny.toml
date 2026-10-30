@@ -17,6 +17,10 @@ targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 [advisories]
 yanked = "deny"
 ignore = [
+  # basic-toml is unmaintained. askama's derive macro (in vole-kit) uses it at
+  # build time to read askama.toml; it never sees untrusted input. Same entry as
+  # Keen Kestrel and Wise Wren. Drop it when askama moves off it.
+  { id = "RUSTSEC-2026-0374", reason = "build-time only, via askama_derive; no untrusted input" },
   # crypto-bigint 0.5.5 timing issue. It is reached only through elliptic-curve 0.13,
   # which opaque-ke 4.0 and voprf 0.5 pull in. Our OPAQUE suite is ristretto255
   # (curve25519-dalek); from elliptic-curve it uses only the hash-based ExpandMsgXmd,
@@ -35,14 +39,13 @@ allow = [
   "Unicode-3.0",
   "CC0-1.0",
   "Zlib",
-  "MPL-2.0",
   "AGPL-3.0-only",
-  "AGPL-3.0-or-later",
   # minicbor (CBOR for item bodies): permissive (Blue Oak Model License).
   "BlueOak-1.0.0",
-  # aws-lc-sys (rustls' crypto): ISC AND Apache-2.0 AND OpenSSL (the permissive
-  # OpenSSL license; the OpenSSL library itself is not used).
-  "OpenSSL",
+  # The root certificates of webpki, through vole-kit.
+  "CDLA-Permissive-2.0",
+  # quoted_printable, through lettre in vole-kit.
+  "0BSD",
 ]
 
 [bans]

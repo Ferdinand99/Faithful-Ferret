@@ -177,7 +177,7 @@ impl Req {
 
     /// What a page of listener `which` sends with a `fetch`: its `Origin` and
     /// the protocol header.
-    pub fn from_page(self, which: Which) -> Self {
+    pub fn page_fetch(self, which: Which) -> Self {
         self.header("origin", which.url())
             .header("ferret-protocol", "1")
     }

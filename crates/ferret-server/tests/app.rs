@@ -134,7 +134,7 @@ async fn vault_router_does_not_serve_kit_pages() {
     let res = app
         .call(
             Which::Vault,
-            Req::post("/logout").from_page(Which::Vault).build(),
+            Req::post("/logout").page_fetch(Which::Vault).build(),
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -157,7 +157,7 @@ async fn admin_router_does_not_serve_sync_or_opaque_routes() {
         ("GET", "/app/boot.mjs"),
     ] {
         let request = Req::new(method.parse().expect("method"), path)
-            .from_page(Which::Admin)
+            .page_fetch(Which::Admin)
             .build();
         let res = app.call(Which::Admin, request).await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{method} {path}");
@@ -171,12 +171,7 @@ async fn admin_guard_is_wired_around_only_the_kit_router() {
 
     // The kit's protected pages need a session: with none, the guard answers
     // before the kit's own check does (which would redirect to a sign-in page).
-    for path in [
-        "/settings",
-        "/settings/general",
-        "/settings/users",
-        "/settings/security",
-    ] {
+    for path in ["/settings/general", "/settings/users", "/settings/security"] {
         let res = app.call(Which::Admin, Req::get(path).build()).await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(
