@@ -15,6 +15,10 @@ arbitrary = { version = "=1.5.0", features = ["derive"] }
 # The fuzz targets use the same code as the release build; `test-support` is only
 # for the fixed vault key in `fuzz_envelope`, and this crate is never released.
 ferret-core = { path = "../crates/ferret-core", features = ["test-support"] }
+# The server library: its parsers and entry points are fuzzed through the
+# `fuzz_server_*` targets; `test-support` gives the fixed server, the state
+# internals and the reference JSON parser of the replacement body.
+ferret-server-auth = { path = "../crates/ferret-server-auth", features = ["test-support"] }
 
 # Not a member of the root workspace (cargo-fuzz builds it with its own flags).
 [workspace]
@@ -99,6 +103,48 @@ bench = false
 [[bin]]
 name = "fuzz_mp_input"
 path = "fuzz_targets/fuzz_mp_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_messages"
+path = "fuzz_targets/fuzz_server_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_secret_file"
+path = "fuzz_targets/fuzz_server_secret_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_sealed_state"
+path = "fuzz_targets/fuzz_server_sealed_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_login_name"
+path = "fuzz_targets/fuzz_server_login_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_wire_fields"
+path = "fuzz_targets/fuzz_server_wire_fields.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_server_replace_body"
+path = "fuzz_targets/fuzz_server_replace_body.rs"
 test = false
 doc = false
 bench = false
