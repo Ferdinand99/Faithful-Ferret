@@ -110,6 +110,21 @@ pub fn disable_core_dumps() -> Result<(), StartError> {
     Ok(())
 }
 
+/// The clock the server runs on: the system clock, or in the end-to-end image
+/// (cargo feature `e2e-clock`) the system clock plus the offset in the file
+/// named by `FERRET_E2E_CLOCK_FILE`.
+fn process_clock() -> Arc<dyn Clock> {
+    #[cfg(feature = "e2e-clock")]
+    if let Some(clock) = crate::e2e_clock::from_env() {
+        tracing::warn!(
+            file = %clock.path().display(),
+            "TEST BUILD: the clock is moved by the offset in a file"
+        );
+        return Arc::new(clock);
+    }
+    Arc::new(SystemClock)
+}
+
 /// Starts the server with `config` and serves both listeners until Ctrl-C or
 /// SIGTERM, then lets the requests in flight finish.
 pub async fn run(config: Config) -> Result<(), StartError> {
@@ -120,7 +135,7 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     if config.vault_port == config.admin_port {
         return Err("the vault port and the admin port must differ".into());
     }
-    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let clock = process_clock();
     let state = crate::start(&config, clock).await?;
     // Notifications and other work outside a request use the site language.
     vole_kit::i18n::site_language(&state.core).await;

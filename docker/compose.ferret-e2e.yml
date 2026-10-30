@@ -1,0 +1,129 @@
+# The Faithful Ferret end-to-end test stack on the LANBox: a throwaway server
+# that the browser tests (Playwright) talk to over https, with a test clock.
+#
+# It is separate from the stack of the owner (docker/compose.ferret-test.yml,
+# project ferret-test) in every way:
+#
+#  * its own compose project (ferret-e2e), network, containers and image, all
+#    named ferret-e2e* and labelled owner=ferret-e2e;
+#  * its own app, built with the cargo feature `e2e-clock` (the test clock; a
+#    release image does not have it);
+#  * no named volume and no published port: the data is in tmpfs, so every start
+#    is a fresh, empty database, and the only way in is from a container on the
+#    network ferret-e2e-net;
+#  * its own host names, vault-e2e.test and admin-e2e.test, that are aliases of
+#    the TLS terminator on that network; and its own trusted proxy, the address
+#    of that terminator and nothing else. It never goes through Pangolin and
+#    never reaches the app or the data of the other stack.
+#
+# Use scripts/lanbox-ferret-test.sh e2e-up | e2e-run | e2e-clock | e2e-down.
+name: ferret-e2e
+
+services:
+  ferret-e2e-app:
+    image: ferret-e2e-app:latest
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+      args:
+        # The test clock (FERRET_E2E_CLOCK_FILE below). Only this image has it.
+        FEATURES: e2e-clock
+      labels:
+        owner: ferret-e2e
+    container_name: ferret-e2e-app
+    restart: "no"
+    mem_limit: 512m
+    labels:
+      owner: ferret-e2e
+    # As in the stack of the owner: the entrypoint starts as root only to give
+    # /data to uid 1000 and then drops to that user; nothing else is kept.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      # Throwaway data: empty at every start, never written to the SSD.
+      - /data:size=64m
+    networks:
+      ferret-e2e-net:
+        ipv4_address: 172.30.250.3
+    environment:
+      FERRET_DATA_DIR: /data
+      FERRET_VAULT_URL: https://vault-e2e.test
+      FERRET_ADMIN_URL: https://admin-e2e.test
+      # Only the TLS terminator is believed. Never the network's gateway.
+      FERRET_TRUSTED_PROXIES: 172.30.250.2
+      FERRET_TRUST_PROXY: "1"
+      # Made up by `e2e-up` for every start; the tests read it from the container.
+      FERRET_SETUP_TOKEN: ${FERRET_E2E_SETUP_TOKEN:?start the stack with scripts/lanbox-ferret-test.sh e2e-up}
+      FERRET_LOG_PEERS: "1"
+      # The test clock: a number of seconds that is added to the system time.
+      # `scripts/lanbox-ferret-test.sh e2e-clock <seconds>` writes it.
+      FERRET_E2E_CLOCK_FILE: /tmp/e2e-clock
+
+  ferret-e2e-tls:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    container_name: ferret-e2e-tls
+    restart: "no"
+    mem_limit: 128m
+    labels:
+      owner: ferret-e2e
+    depends_on:
+      ferret-e2e-app:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # The image declares /data and /config as volumes; tmpfs mounts keep Docker
+    # from making anonymous volumes (and keep the test CA out of any volume).
+    tmpfs:
+      - /tmp:size=8m
+      - /data:size=16m
+      - /config:size=8m
+    networks:
+      ferret-e2e-net:
+        ipv4_address: 172.30.250.2
+        # The two test host names. `.test` never exists on the internet.
+        aliases:
+          - vault-e2e.test
+          - admin-e2e.test
+    entrypoint:
+      - /bin/sh
+      - -c
+      - printf '%s\n' "$$CADDYFILE" > /tmp/Caddyfile && exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    environment:
+      # The terminator makes its own certificates from an internal CA that lives
+      # in tmpfs (`tls internal`); `e2e-run` hands the CA to the browser.
+      CADDYFILE: |
+        {
+          admin off
+          auto_https disable_redirects
+          skip_install_trust
+        }
+        https://vault-e2e.test {
+          tls internal
+          reverse_proxy ferret-e2e-app:3041
+        }
+        https://admin-e2e.test {
+          tls internal
+          reverse_proxy ferret-e2e-app:3040
+        }
+
+networks:
+  ferret-e2e-net:
+    name: ferret-e2e-net
+    labels:
+      owner: ferret-e2e
+    ipam:
+      config:
+        - subnet: 172.30.250.0/28

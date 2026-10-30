@@ -34,6 +34,7 @@ done
 # belong to the user it runs as: chown and run use the same numbers.
 data_dir="${FERRET_DATA_DIR:-/data}"
 mkdir -p "$data_dir"
-chown -R "$uid:$gid" "$data_dir" 2>/dev/null     || echo "warning: could not chown $data_dir; make it writable for uid $uid" >&2
+chown -R "$uid:$gid" "$data_dir" 2>/dev/null \
+    || echo "warning: could not chown $data_dir; make it writable for uid $uid" >&2
 
 exec su-exec "$uid:$gid" "$app" "$@"

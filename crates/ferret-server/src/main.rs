@@ -9,6 +9,10 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    if ferret_server::build_info::requested(std::env::args_os()) {
+        print!("{}", ferret_server::build_info::text());
+        return;
+    }
     // vole-kit needs to know which product it runs in before anything else.
     ferret_server::install();
     let config = Config::parse();

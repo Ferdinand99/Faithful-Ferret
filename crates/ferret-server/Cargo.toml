@@ -74,6 +74,11 @@ zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "d
 # otherwise: a release binary without the web vault serves no vault). For jobs
 # that build the server alone.
 dev-no-web = []
+# The clock of the end-to-end test stack: FERRET_E2E_CLOCK_FILE names a file with
+# a number of seconds that is added to the system time (src/e2e_clock.rs). Only
+# the e2e image is built with it; a release build has neither the code nor the
+# variable name (tests/build_info.rs).
+e2e-clock = []
 
 [target.'cfg(unix)'.dependencies]
 # RLIMIT_CORE = 0 at start-up: a safe setrlimit.
