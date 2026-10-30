@@ -442,8 +442,12 @@ fn random_base32(m: &mut Mix, case: u8) -> [u8; 32] {
 fn base32_target(mix: &mut Mix, name: &'static str) -> Base32 {
     let pools = match name {
         "info_base32_a_vs_z" => Pools::new(mix, |_| ([b'A'; 32], [b'z'; 32])),
-        "info_base32_upper_vs_lower" => Pools::new(mix, |m| (random_base32(m, 1), random_base32(m, 2))),
-        "info_base32_random_pair" => Pools::new(mix, |m| (random_base32(m, 0), random_base32(m, 0))),
+        "info_base32_upper_vs_lower" => {
+            Pools::new(mix, |m| (random_base32(m, 1), random_base32(m, 2)))
+        }
+        "info_base32_random_pair" => {
+            Pools::new(mix, |m| (random_base32(m, 0), random_base32(m, 0)))
+        }
         _ => Pools::new(mix, |m| ([b'A'; 32], random_base32(m, 0))),
     };
     Base32 {
@@ -694,7 +698,12 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
             true,
             UnpadKind::RandomPair,
         )),
-        Box::new(unpad_target(&mut mix, "info_unpad_same", true, UnpadKind::Same)),
+        Box::new(unpad_target(
+            &mut mix,
+            "info_unpad_same",
+            true,
+            UnpadKind::Same,
+        )),
         Box::new(base32_target(&mut mix, "base32_decode")),
         Box::new(base32_target(&mut mix, "info_base32_a_vs_z")),
         Box::new(base32_target(&mut mix, "info_base32_upper_vs_lower")),
