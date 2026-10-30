@@ -59,12 +59,6 @@
 //! second line of defence against memory filled by unauthenticated
 //! `login_start` calls; the first is the rate limit.
 
-// The first callers are `login_start` and `login_finish`.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no entry point seals or opens a state yet")
-)]
-
 use core::fmt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, MutexGuard, PoisonError};

@@ -14,8 +14,6 @@ use sha2::{Digest, Sha256};
 ///
 /// The store never sees the login id, only this hash of it, so
 /// a dump of the store holds no value a client can present.
-// Used by `store_key`, whose first caller is the login state store.
-#[allow(dead_code)]
 const STATE_KEY_LABEL: &[u8] = b"ferret/v1/server/login-state-key";
 
 /// The identifier OPAQUE binds a record to (`credential_identifier`). It is
@@ -91,8 +89,6 @@ impl LoginId {
     }
 
     /// The raw bytes, for the one place that binds a sealed state to the id.
-    // The first caller is the sealing of a login state by `login_start`.
-    #[allow(dead_code)]
     pub(crate) const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
@@ -111,7 +107,6 @@ impl LoginId {
     /// `SHA-256(label ‖ login_id)`.
     ///
     /// A label and a hash are used so that a dump of the store holds no id.
-    #[allow(dead_code)]
     pub(crate) fn store_key(&self) -> StateKey {
         let mut hash = Sha256::new();
         hash.update(STATE_KEY_LABEL);

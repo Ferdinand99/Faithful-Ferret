@@ -53,7 +53,6 @@ const HINT_LABEL: &[u8] = b"prelogin-hint";
 ///
 /// HKDF-SHA512 with the pre-login secret as the key material, no salt, and
 /// this label and the id as `info`.
-#[cfg_attr(not(test), allow(dead_code))]
 const RECORD_LABEL: &[u8] = b"ferret/v1/prelogin/record";
 
 /// The shares of a policy add up to this many permille.
@@ -61,11 +60,9 @@ const WHOLE: u16 = 1000;
 
 /// Length of a made-up record: the length of a stored one (public key 32,
 /// masking key 64, envelope 96).
-#[cfg_attr(not(test), allow(dead_code))]
 const FAKE_RECORD_LEN: usize = REGISTRATION_RECORD_LEN;
 
 /// Bytes drawn for the masking key and the envelope.
-#[cfg_attr(not(test), allow(dead_code))]
 const FAKE_BODY_LEN: usize = 160;
 
 // Records which steps ran, so a test can see that a known and an unknown
@@ -77,13 +74,23 @@ thread_local! {
 }
 
 #[cfg(test)]
-fn step(name: &'static str) {
+pub(crate) fn step(name: &'static str) {
     STEPS.with(|steps| steps.borrow_mut().push(name));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_steps() {
+    STEPS.with(|steps| steps.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn steps() -> Vec<&'static str> {
+    STEPS.with(|steps| steps.borrow().clone())
 }
 
 #[cfg(not(test))]
 #[inline(always)]
-fn step(_name: &'static str) {}
+pub(crate) fn step(_name: &'static str) {}
 
 /// `HMAC-SHA256(secret, label ‖ name)`.
 fn hmac_with_name(
@@ -301,8 +308,6 @@ pub fn fake_prelogin(
 /// Spec: Fase 1 § 4.2 (the answer for an unknown name). The record is handed to
 /// the OPAQUE login as if it were the stored one, because `opaque-ke` draws a
 /// new masking key for its own made-up record on every call.
-// Login start is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn fake_record_bytes(
     keys: &ServerKeys,
     secret: &PreloginSecret,
