@@ -122,6 +122,9 @@ pub enum InternalKind {
     Policy,
     /// A cryptographic step that cannot fail on well formed input failed.
     Crypto,
+    /// The clock could not give a usable time (it reads `u64::MAX`), or a
+    /// state would be expired when it is made.
+    Clock,
 }
 
 /// The class of status a caller should answer with. The library does not
@@ -320,6 +323,7 @@ mod tests {
             InternalKind::SecretFile,
             InternalKind::Policy,
             InternalKind::Crypto,
+            InternalKind::Clock,
         ] {
             assert_eq!(AuthError::Internal(kind).public_code(), "internal");
         }

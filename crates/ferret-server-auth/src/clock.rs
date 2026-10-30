@@ -9,7 +9,9 @@ pub trait Clock: Send + Sync {
     ///
     /// A clock that cannot tell the time returns `u64::MAX`, so that every
     /// expiry check sees every stored state and nonce as expired. Code that
-    /// computes an expiry from this value must add with `saturating_add`.
+    /// computes an expiry from this value must not let the sum wrap, and must
+    /// refuse a sum that does not fit (`checked_add`) rather than store
+    /// `u64::MAX`, which would be valid again once the clock is repaired.
     fn now_unix(&self) -> u64;
 }
 

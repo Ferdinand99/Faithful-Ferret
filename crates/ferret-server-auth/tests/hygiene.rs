@@ -55,6 +55,8 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     // for a name, with no name, key or secret in them.
     "PreloginPolicy",
     "PreloginAnswer",
+    // Login state store: the three ways a store can refuse. No content.
+    "StoreError",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines
