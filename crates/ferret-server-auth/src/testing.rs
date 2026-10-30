@@ -4,6 +4,8 @@
 //! * [`conformance`] is the set of checks every [`LoginStateStore`] must
 //!   pass. The memory store runs it in this crate; the database store of the
 //!   next layer runs the same checks.
+//! * [`challenge_conformance`] is the same set of checks for a
+//!   [`ChallengeStore`](crate::ChallengeStore).
 //! * [`state_plain_wipe_probe`] lets a test crate look at the memory of a
 //!   sealed state's content before and after it is dropped.
 //! * [`LoginFixture`] is a server with one registered account and the pieces
@@ -638,5 +640,365 @@ pub fn take_state<S: LoginStateStore>(store: &S, id: &LoginId, now: u64) -> Seal
 pub fn put_state<S: LoginStateStore>(store: &S, id: &LoginId, sealed: SealedState, now: u64) {
     store
         .put(id.store_key(), sealed, now + STATE_TTL_SECS, now)
+        .unwrap();
+}
+
+// ------------------------------------------------------------ challenge store
+
+/// The key of the n-th test nonce: the key of a nonce made from `n` in a
+/// session of zeros.
+pub fn challenge_key(n: u32) -> crate::ChallengeKey {
+    let mut nonce = [0u8; 32];
+    nonce[..4].copy_from_slice(&n.to_be_bytes());
+    crate::ChallengeKey::new(&SessionBinding([0; 32]), &nonce)
+}
+
+/// Runs every check on challenge stores made by `make`. `make(capacity)` must
+/// give a fresh, empty store that holds at most `capacity` keys.
+pub fn challenge_conformance<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    challenge_is_consumed_once(&make);
+    challenge_unknown_key_is_unknown(&make);
+    challenge_expiry_boundary(&make);
+    challenge_expired_is_removed_by_consume_and_purge(&make);
+    challenge_same_key_twice_is_collision(&make);
+    challenge_put_of_an_expired_key_is_refused(&make);
+    challenge_capacity_evicts_oldest_first(&make);
+    challenge_concurrent_consume_yields_exactly_one(&make);
+    challenge_concurrent_put_respects_capacity(&make);
+}
+
+/// A key is consumed once; the second `consume` finds nothing.
+pub fn challenge_is_consumed_once<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    use crate::ConsumeOutcome::{Consumed, Unknown};
+    let store = make(ROOMY);
+    store.put(challenge_key(1), 1_300, 1_000).unwrap();
+    store.put(challenge_key(2), 1_300, 1_000).unwrap();
+    assert_eq!(store.consume(&challenge_key(1), 1_001).unwrap(), Consumed);
+    assert_eq!(store.consume(&challenge_key(1), 1_001).unwrap(), Unknown);
+    // Only that key was consumed.
+    assert_eq!(store.consume(&challenge_key(2), 1_001).unwrap(), Consumed);
+    // The key is free again.
+    store.put(challenge_key(1), 1_400, 1_002).unwrap();
+    assert_eq!(store.consume(&challenge_key(1), 1_003).unwrap(), Consumed);
+}
+
+/// A key that was never stored is `Unknown`, not an error.
+pub fn challenge_unknown_key_is_unknown<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    use crate::ConsumeOutcome::Unknown;
+    let store = make(ROOMY);
+    assert_eq!(store.consume(&challenge_key(9), 1_000).unwrap(), Unknown);
+    store.put(challenge_key(1), 1_300, 1_000).unwrap();
+    assert_eq!(store.consume(&challenge_key(9), 1_000).unwrap(), Unknown);
+}
+
+/// With a lifetime of 300 seconds a key is valid in the seconds `t` to
+/// `t + 299`, and `Expired` from `t + 300`.
+pub fn challenge_expiry_boundary<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    use crate::ConsumeOutcome::{Consumed, Expired};
+    let expires_at = 1_000 + crate::CHALLENGE_TTL_SECS;
+    assert_eq!(expires_at, 1_300);
+    for (now, expected) in [
+        (1_000, Consumed),
+        (1_299, Consumed),
+        (1_300, Expired),
+        (1_301, Expired),
+        (u64::MAX, Expired),
+    ] {
+        let store = make(ROOMY);
+        store.put(challenge_key(1), expires_at, 1_000).unwrap();
+        assert_eq!(
+            store.consume(&challenge_key(1), now).unwrap(),
+            expected,
+            "consume at {now}"
+        );
+    }
+}
+
+/// An expired key is reported once by `consume` and removed with it; the rest
+/// are removed by `purge_expired`, which counts only what it removes. A live
+/// key is left alone.
+pub fn challenge_expired_is_removed_by_consume_and_purge<S: crate::ChallengeStore>(
+    make: impl Fn(usize) -> S,
+) {
+    use crate::ConsumeOutcome::{Consumed, Expired, Unknown};
+    let store = make(ROOMY);
+    assert_eq!(store.purge_expired(0).unwrap(), 0);
+    store.put(challenge_key(1), 100, 50).unwrap();
+    store.put(challenge_key(2), 100, 50).unwrap();
+    store.put(challenge_key(3), 200, 50).unwrap();
+    store.put(challenge_key(4), 1_000, 50).unwrap();
+    assert_eq!(store.consume(&challenge_key(1), 100).unwrap(), Expired);
+    assert_eq!(store.consume(&challenge_key(1), 100).unwrap(), Unknown);
+    assert_eq!(store.purge_expired(100).unwrap(), 1);
+    assert_eq!(store.consume(&challenge_key(2), 100).unwrap(), Unknown);
+    assert_eq!(store.purge_expired(150).unwrap(), 0);
+    assert_eq!(store.consume(&challenge_key(3), 150).unwrap(), Consumed);
+    assert_eq!(store.purge_expired(999).unwrap(), 0);
+    assert_eq!(store.purge_expired(1_000).unwrap(), 1);
+    assert_eq!(store.consume(&challenge_key(4), 1_000).unwrap(), Unknown);
+}
+
+/// A live key is never stored twice. An expired one does not block its key.
+pub fn challenge_same_key_twice_is_collision<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    use crate::ConsumeOutcome::Consumed;
+    let store = make(ROOMY);
+    store.put(challenge_key(1), 1_300, 1_000).unwrap();
+    assert_eq!(
+        store.put(challenge_key(1), 1_310, 1_010),
+        Err(StoreError::Collision)
+    );
+    assert_eq!(store.consume(&challenge_key(1), 1_011).unwrap(), Consumed);
+    store.put(challenge_key(2), 1_100, 1_000).unwrap();
+    store.put(challenge_key(2), 1_400, 1_100).unwrap();
+    assert_eq!(store.consume(&challenge_key(2), 1_101).unwrap(), Consumed);
+}
+
+/// A key that is already expired when it is put, or a put at `u64::MAX`, is
+/// refused with `Expired` and stores nothing: it must not take a slot, push
+/// out a live key, or become valid when the clock reads a normal time again.
+pub fn challenge_put_of_an_expired_key_is_refused<S: crate::ChallengeStore>(
+    make: impl Fn(usize) -> S,
+) {
+    use crate::ConsumeOutcome::{Consumed, Unknown};
+    let store = make(1);
+    store.put(challenge_key(1), 1_300, 1_000).unwrap();
+    for (expires_at, now) in [
+        (1_000, 1_000),
+        (999, 1_000),
+        (0, 1),
+        (u64::MAX, u64::MAX),
+        (1_300, u64::MAX),
+    ] {
+        assert_eq!(
+            store.put(challenge_key(2), expires_at, now),
+            Err(StoreError::Expired),
+            "expires_at {expires_at}, now {now}"
+        );
+    }
+    assert_eq!(store.consume(&challenge_key(2), 1_001).unwrap(), Unknown);
+    assert_eq!(store.consume(&challenge_key(2), 0).unwrap(), Unknown);
+    assert_eq!(store.consume(&challenge_key(1), 1_001).unwrap(), Consumed);
+    // A key that expires one second after it is made is accepted.
+    store.put(challenge_key(3), 1_001, 1_000).unwrap();
+    assert_eq!(store.consume(&challenge_key(3), 1_000).unwrap(), Consumed);
+}
+
+/// At the limit the oldest key is removed to make room.
+pub fn challenge_capacity_evicts_oldest_first<S: crate::ChallengeStore>(make: impl Fn(usize) -> S) {
+    use crate::ConsumeOutcome::{Consumed, Unknown};
+    let store = make(3);
+    for n in 1..=3 {
+        store.put(challenge_key(n), 1_300, 1_000).unwrap();
+    }
+    store.put(challenge_key(4), 1_300, 1_000).unwrap();
+    assert_eq!(store.consume(&challenge_key(1), 1_001).unwrap(), Unknown);
+    for n in 2..=4 {
+        assert_eq!(store.consume(&challenge_key(n), 1_001).unwrap(), Consumed);
+    }
+    // A consumed key frees its place; the next oldest goes first after that.
+    let store = make(2);
+    store.put(challenge_key(1), 1_300, 1_000).unwrap();
+    store.put(challenge_key(2), 1_300, 1_000).unwrap();
+    assert_eq!(store.consume(&challenge_key(1), 1_001).unwrap(), Consumed);
+    store.put(challenge_key(3), 1_301, 1_001).unwrap();
+    store.put(challenge_key(4), 1_301, 1_001).unwrap();
+    assert_eq!(store.consume(&challenge_key(2), 1_002).unwrap(), Unknown);
+    assert_eq!(store.consume(&challenge_key(3), 1_002).unwrap(), Consumed);
+    assert_eq!(store.consume(&challenge_key(4), 1_002).unwrap(), Consumed);
+}
+
+/// 32 threads consume the same key at the same moment: exactly one gets it.
+pub fn challenge_concurrent_consume_yields_exactly_one<S: crate::ChallengeStore>(
+    make: impl Fn(usize) -> S,
+) {
+    use crate::ConsumeOutcome::{Consumed, Unknown};
+    const THREADS: usize = 32;
+    let store = make(ROOMY);
+    for round in 0..20u32 {
+        store.put(challenge_key(round), 1_300, 1_000).unwrap();
+        let barrier = Barrier::new(THREADS);
+        let winners = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    barrier.wait();
+                    match store.consume(&challenge_key(round), 1_001).unwrap() {
+                        Consumed => {
+                            winners.fetch_add(1, Ordering::SeqCst);
+                        }
+                        other => assert_eq!(other, Unknown),
+                    }
+                });
+            }
+        });
+        assert_eq!(winners.load(Ordering::SeqCst), 1, "round {round}");
+        assert_eq!(
+            store.consume(&challenge_key(round), 1_001).unwrap(),
+            Unknown
+        );
+    }
+}
+
+/// Threads put different keys at a store that has room for few, at the same
+/// moment. The store never holds more than its limit.
+pub fn challenge_concurrent_put_respects_capacity<S: crate::ChallengeStore>(
+    make: impl Fn(usize) -> S,
+) {
+    use crate::ConsumeOutcome::Consumed;
+    const LIMIT: usize = 10;
+    const THREADS: u32 = 16;
+    const EACH: u32 = 20;
+    for round in 0..5u32 {
+        let store = make(LIMIT);
+        let barrier = Barrier::new(THREADS as usize);
+        std::thread::scope(|scope| {
+            for thread in 0..THREADS {
+                let (store, barrier) = (&store, &barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    for n in 0..EACH {
+                        let id = 100 + round * 1_000 + thread * EACH + n;
+                        store.put(challenge_key(id), 1_300, 1_000).unwrap();
+                    }
+                });
+            }
+        });
+        let mut held = 0;
+        for thread in 0..THREADS {
+            for n in 0..EACH {
+                let id = 100 + round * 1_000 + thread * EACH + n;
+                if store.consume(&challenge_key(id), 1_001).unwrap() == Consumed {
+                    held += 1;
+                }
+            }
+        }
+        assert_eq!(held, LIMIT, "round {round}");
+    }
+}
+
+// ------------------------------------------------------------- account row
+
+/// The auth state of one account as a test server keeps it: what
+/// [`SignedAccount`](crate::SignedAccount) carries and the stored record.
+#[derive(Clone)]
+pub struct AccountRow {
+    /// The keys, the epoch and the row version.
+    pub account: crate::SignedAccount,
+    /// The record stored now.
+    pub record: crate::StoredRecord,
+}
+
+impl AccountRow {
+    /// The state to hand to `authorize_replacement`.
+    pub fn state(&self) -> crate::AccountAuthState<'_> {
+        crate::AccountAuthState {
+            account: self.account,
+            current: &self.record,
+        }
+    }
+}
+
+impl core::fmt::Debug for AccountRow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AccountRow([redacted])")
+    }
+}
+
+/// Why a write was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteRefused {
+    /// The account is no longer what the permit was checked against.
+    Stale,
+}
+
+/// One account row with the write an endpoint has to make: it applies a
+/// permit only if the row still is what the permit was checked against, and
+/// then changes the record, the recovery key and the row version together,
+/// under one lock. A real endpoint does the same in one SQL transaction.
+pub struct TestAccountStore {
+    row: Mutex<AccountRow>,
+}
+
+impl TestAccountStore {
+    /// A store holding `account` with `record`.
+    pub fn new(account: crate::SignedAccount, record: crate::StoredRecord) -> Self {
+        Self {
+            row: Mutex::new(AccountRow { account, record }),
+        }
+    }
+
+    /// A copy of the row now.
+    pub fn read(&self) -> AccountRow {
+        self.row.lock().unwrap().clone()
+    }
+
+    /// Applies a permit for a replacement: the record, and for a recovery the
+    /// new `pk_r`, are written and the row version is raised; or nothing is
+    /// written and the permit is refused as stale.
+    pub fn apply_replacement(&self, permit: &crate::ReplacePermit) -> Result<(), WriteRefused> {
+        let mut row = self.row.lock().unwrap();
+        if !Self::is_current(&row, &permit.basis)
+            || row.record.ksf_profile != permit.stored_ksf_profile
+        {
+            return Err(WriteRefused::Stale);
+        }
+        row.record = permit.new.clone();
+        if let Some(key) = permit.new_pk_r {
+            row.account.pk_r = key;
+        }
+        row.account.row_version += 1;
+        Ok(())
+    }
+
+    /// Applies a permit for another signed request: only the row version is
+    /// raised, since the wraps are not part of this row.
+    pub fn apply_signed(&self, permit: &crate::SignedPermit) -> Result<(), WriteRefused> {
+        let mut row = self.row.lock().unwrap();
+        if !Self::is_current(&row, &permit.basis) {
+            return Err(WriteRefused::Stale);
+        }
+        row.account.row_version += 1;
+        Ok(())
+    }
+
+    /// A rekey that was committed by another request: a new epoch and a new
+    /// `pk_a`.
+    pub fn rekey(&self, vk_epoch: u64, pk_a: ferret_core::AuthPublicKey) {
+        let mut row = self.row.lock().unwrap();
+        row.account.vk_epoch = vk_epoch;
+        row.account.pk_a = pk_a;
+        row.account.row_version += 1;
+    }
+
+    fn is_current(row: &AccountRow, basis: &crate::WriteBasis) -> bool {
+        let now = &row.account;
+        now.account_id == basis.account_id
+            && now.vk_epoch == basis.vk_epoch
+            && now.pk_a == basis.pk_a
+            && now.pk_r == basis.pk_r
+            && now.row_version == basis.row_version
+    }
+}
+
+impl core::fmt::Debug for TestAccountStore {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("TestAccountStore([redacted])")
+    }
+}
+
+/// Puts the nonce `nonce` in `store` as if `issue_challenge` had issued it to
+/// `session` at `now`, so a test can use a nonce that is fixed in a vector.
+pub fn put_nonce<S: crate::ChallengeStore>(
+    store: &S,
+    session: &SessionBinding,
+    nonce: &[u8; 32],
+    now: u64,
+) {
+    store
+        .put(
+            crate::ChallengeKey::new(session, nonce),
+            now + crate::CHALLENGE_TTL_SECS,
+            now,
+        )
         .unwrap();
 }

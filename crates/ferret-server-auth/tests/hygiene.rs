@@ -61,6 +61,10 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "SessionScope",
     "Capability",
     "ScopeEffect",
+    // Signed requests: closed sets of names, no content.
+    "ReplaceKind",
+    "ConsumeOutcome",
+    "WriteRefused",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines
@@ -415,4 +419,25 @@ fn ct_include_is_the_analyzer_source() {
             path.display()
         );
     }
+}
+
+/// A proof is verified in `replace.rs` and nowhere else, so every proof meets
+/// the single-use nonce first. The comment-free text is searched, so a mention
+/// in documentation does not count.
+#[test]
+fn proofs_are_verified_in_one_module_only() {
+    let mut found = 0;
+    for (path, text) in sources() {
+        let code: String = blank_comments_and_strings(&text).into_iter().collect();
+        for name in ["verify_auth_proof", "verify_recovery_proof"] {
+            let count = code.matches(name).count();
+            if path.file_name().is_some_and(|n| n == "replace.rs") {
+                found += count;
+            } else {
+                assert_eq!(count, 0, "{} calls {name}", path.display());
+            }
+        }
+    }
+    // The module itself uses both (an import and a call each).
+    assert!(found >= 2, "replace.rs no longer verifies proofs");
 }

@@ -36,6 +36,10 @@ pub enum Malformed {
     Proof,
     /// The login name.
     LoginName,
+    /// The new recovery public key of a recovery request: missing from a
+    /// recovery, present in a request that is not one, or equal to the stored
+    /// one.
+    RecoveryKey,
 }
 
 impl Malformed {
@@ -49,6 +53,7 @@ impl Malformed {
         Malformed::Nonce,
         Malformed::Proof,
         Malformed::LoginName,
+        Malformed::RecoveryKey,
     ];
 
     /// The code of the kind, as it appears in an error body.
@@ -62,6 +67,7 @@ impl Malformed {
             Malformed::Nonce => "malformed_nonce",
             Malformed::Proof => "malformed_proof",
             Malformed::LoginName => "malformed_login_name",
+            Malformed::RecoveryKey => "malformed_recovery_key",
         }
     }
 }
@@ -275,12 +281,13 @@ mod tests {
                 Malformed::Nonce => 5,
                 Malformed::Proof => 6,
                 Malformed::LoginName => 7,
+                Malformed::RecoveryKey => 8,
             }
         }
         let deny: Vec<usize> = DenyReason::ALL.iter().map(|r| deny_index(*r)).collect();
         assert_eq!(deny, (0..8).collect::<Vec<_>>());
         let malformed: Vec<usize> = Malformed::ALL.iter().map(|m| malformed_index(*m)).collect();
-        assert_eq!(malformed, (0..8).collect::<Vec<_>>());
+        assert_eq!(malformed, (0..9).collect::<Vec<_>>());
     }
 
     #[test]
@@ -300,6 +307,7 @@ mod tests {
             (Malformed::Nonce, "malformed_nonce"),
             (Malformed::Proof, "malformed_proof"),
             (Malformed::LoginName, "malformed_login_name"),
+            (Malformed::RecoveryKey, "malformed_recovery_key"),
         ];
         assert_eq!(golden.len(), Malformed::ALL.len());
         for (kind, code) in golden {
