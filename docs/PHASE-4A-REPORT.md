@@ -13,7 +13,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 | Question | Answer |
 |---|---|
 | Does the core cover what phase 4A set out to do? | Yes: key hierarchy and wraps, envelope and items, tombstones, checkpoints, mutation proofs and re-key, encrypted and plain export, OPAQUE sign-in and the account flows, passkeys, TOTP, the WebAssembly binding and the worker client |
-| Test vectors | 1 141 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
+| Test vectors | 1 143 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
 | Property tests and fuzzing | 20 000 cases per property pass; all twelve fuzz targets run clean |
 | Constant-time checks | Everything the analysis found is triaged; timing tests pass natively and in Node; the WebAssembly scan has no finding outside its allow list |
 | Dependencies | `cargo deny` and `cargo vet` pass; the duplicate versions are the approved ones |
@@ -23,7 +23,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 
 Run in the builder image on a Docker host from the state of the repository at the time of
 writing: formatting, clippy for native and `wasm32-unknown-unknown`, `cargo test
---workspace` (497 tests passed, none failed), the vector check, the passkey API and
+--workspace` (509 tests passed, none failed), the vector check, the passkey API and
 test-support scripts, `cargo deny`, `cargo vet --locked`, the MSRV (1.88) check and the Node tests
 of the binding (48 passed, none failed).
 
@@ -62,11 +62,11 @@ CI only with the `browsers` label, nightly and on manual runs, because of its le
 
 ## Vectors and the independent reference
 
-- Internal vectors: 1 141 cases, of which 29 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
-  the Node and browser runners run the other 1 112. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
+- Internal vectors: 1 143 cases, of which 29 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
+  the Node and browser runners run the other 1 114. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
   the XChaCha20 draft, Wycheproof, the Public Suffix List test file): 1 634 cases.
 - `tools/xcheck` is a second implementation in JavaScript, written from the design and the vector
-  files only. It matches 1 119 of the 1 141 internal cases and does not cover the 22 OPAQUE cases
+  files only. It matches 1 121 of the 1 143 internal cases and does not cover the 22 OPAQUE cases
   (see the risks below). It also runs a self-test in which every damaged expectation must be detected.
 - Rules the vectors now pin down: the order in which a body or a manifest is written (known keys in
   schema order, then unknown keys as read, at every level), the error codes of a damaged envelope,
@@ -99,22 +99,34 @@ for the whole core):
 | export | 97.8 % | 93.6 % |
 | whole core | 97.0 % | 91.6 % |
 
-The remaining uncovered code is defensive code that cannot be reached through the public API. A weekly
-workflow keeps the thresholds enforced.
+The remaining uncovered code is defensive code that cannot be reached through the public API. A workflow on pull requests and a weekly run keep the thresholds enforced.
 
 ## Constant-time checks
 
 - The core's own constant-time code (equality of commitments and tags, selection, the padding scan,
   Crockford and base32 decoding) is in small single-file modules under `ct/harness/`. A static analyzer
-  reads their assembly for x86-64 and arm64 at four optimisation levels. Every finding is triaged in
-  `ct/TRIAGE.md` and the counts are pinned, so a change in either direction fails the check. One real
-  finding was fixed: a masked select that the compiler turned into a pointer select at `-O2`.
+  reads their assembly for x86-64 and arm64 at four optimisation levels (40 reports, 220 findings). Every
+  finding is triaged in `ct/TRIAGE.md` and the counts are pinned, so a change in either direction fails the
+  check. One real finding was fixed: a masked select that the compiler turned into a pointer select at `-O2`;
+  a check of the assembly (`select-asm`) now fails on that shape, and a deliberately bad copy of the old code
+  must be flagged.
 - A scan of the shipped WebAssembly module lists every division, remainder, square root, table jump
-  and computed load in the core's functions; each must be in an allow list with a reason and an exact
-  count. The scanned module is byte-identical to the shipped one.
+  and computed load in the core's functions; each must be in an allow list (140 entries) with a reason and an
+  exact count, and a regeneration must give the committed file. A new entry or a higher count in a function
+  that handles keys needs a reason that is marked as approved. The scanned module is byte-identical to the
+  shipped one. The scan does not see an address that went through a local variable, and it does not look at
+  stores; `ct/TRIAGE.md` says why and what would close the gap.
 - Timing tests (dudect) run natively and in Node against the WebAssembly build, for the commitment
-  check, the MAC check, key equality, Crockford decoding, the padding scan and the unwrap path. In the
-  last full native run every statistic stayed under 3.1 at one million measurements, against a limit of 4.5.
+  check, the MAC check, key equality, Crockford decoding, the padding scan, base32 decoding and the path of
+  the password-wrap commitment. The decisive run is on a pinned core of the build host, with one million
+  measurements per bench and a limit of |t| < 4.5 (a bench over the limit is measured again with ten million).
+  It is committed in `ct/results/dudect-lanbox.md` for the commit it was made on. Natively every gated bench
+  stayed at or under 2.3 and in Node at or under 2.6. The controls work: the null control stayed at 2.2 and
+  3.3, and the controls with a deliberate early exit were seen at 3e4 to 7e4. One information bench (base32
+  upper case against lower case) showed -5.8 once; five repeats with ten million measurements gave values
+  between -1.9 and +2.2. On GitHub-hosted runners the timing job is a smoke run: it checks that the setup runs
+  and sees the controls, and fails only on a gross difference (over 500 after a rerun), because a shared
+  runner is too noisy for the real limit.
 - The limits are listed under the risks below.
 
 ## Dependencies
@@ -160,7 +172,7 @@ These are the points where the design left a choice, with what was decided.
   (1 024 scalars, 4 096 bytes). Export passwords follow the same rules and need 12 characters. A PIN is digits
   only. The JavaScript glue rejects lone surrogates before encoding.
 - Decision: the CBOR decoder is the core's own strict reader over the low-level `minicbor` decoder. No tags are
-  allowed in version 1, map keys are text, 64-bit floats are allowed and 16- and 32-bit floats are rejected.
+  allowed in version 1, map keys are text, and floats of 16, 32 and 64 bits are read and kept as they were in unknown fields. A float in a known field is refused.
 - Decision: the Public Suffix List is an embedded snapshot in the core, with private domains, and its age is
   checked (warning at 75 days, failure at 90).
 - Decision: the local `device` wrap uses the generic wrap AAD without a method-specific field and without a key
@@ -205,9 +217,10 @@ These are the points where the design left a choice, with what was decided.
   - The timing tests are statistical, on one CPU. The WebAssembly ones depend on Node and V8, are quiet only
     because each measurement repeats the call eight times, and may need that adjusted on another machine. The
     measured module is not the binding's own.
-  - The timing test of the unwrap path compares a right and a wrong commitment for information only. A change
-    from the constant-time comparison of the commitment to a plain `==` in `wrap.rs` is caught by the timing run
-    on the build host, not in CI.
+  - Comparing a right with a wrong commitment in `unwrap_vk` is expected to differ (the right one goes on to
+    the AEAD) and is reported, not gated. A change from the constant-time comparison of the commitment to a
+    plain `==` in `wrap.rs` is therefore caught by the decisive timing run on the build host and the
+    source check of the test suite, not by the smoke run in CI.
   - The shipped WebAssembly module has more flagged instructions than the unoptimised one, because inlining
     duplicates code; the allow list gates the shipped level. One unnamed function holds a floating-point
     division, counted but not named.
@@ -230,8 +243,8 @@ These are the points where the design left a choice, with what was decided.
     without losing its other fields.
   - Server-side address parsing differs from the browser's in the spelling of IPv6 addresses.
   - The PRF output reaches the vault worker as an argument, because the browser produces it on the page.
-- **Plain CSV export of a body with a newer schema** uses the typed view of the body (a mistyped known key shows
-  its default), while the JSON export writes the body as it was read. The CSV never contains passkey secrets.
+- **Plain CSV export of a body with a newer schema** is refused (`unsupported`), so no secret is dropped from the file
+  without a word. The JSON export holds such a body whole.
 - **Tests that are not run on every change.** The 256 MiB export test in the three browsers needs a label on a
   pull request. The twelve fuzz targets run for 60 seconds on a pull request and for 20 minutes each night. The
   timing tests that are decisive are run by hand on a quiet host.

@@ -13,9 +13,10 @@ Please report findings as described in [`SECURITY.md`](../SECURITY.md).
 
 In scope:
 
-- `crates/ferret-core/`: the cryptographic core, safe Rust, no I/O. About 22 700 lines
-  outside `src/testing/` (the test-support code, 1 900 lines, which is never part of a
-  release).
+- `crates/ferret-core/`: the cryptographic core, safe Rust, no I/O. About 12 200 lines
+  of Rust outside `src/testing/` (the test-support code, 1 900 lines, which is never part of a
+  release); counted with `wc -l` over the `.rs` files under `crates/ferret-core/src/`, without comments or
+  blank lines taken out.
 - `bindings/wasm/`: the WebAssembly binding and the worker client in `bindings/wasm/js/`,
   which keep key material inside WebAssembly memory.
 - `vectors/`, `tools/vectorgen/`, `tools/xcheck/`: the test vectors, their generator and an
@@ -56,14 +57,15 @@ below is a composition of these.
 
 - Each item has its own random item key (IK), wrapped under VK with an AAD of
   `vault_id`, `item_id` and `vk_epoch`.
-- The body is deterministic CBOR (strict decoder, `cbor/`), padded to a size class, and sealed
+- The body is CBOR (a strict reader, `cbor/`: definite lengths, text keys, no duplicate keys, no tags; the writer
+  uses the shortest forms, and the reader accepts longer heads), padded to a size class, and sealed
   under IK with an AAD of `version`, `suite`, `kind`, `vault_id`, `item_id` and `rev`.
 - The server-visible row tag is HMAC-SHA-256 under `K_head` over the SHA-256 of the whole envelope.
 - The whole envelope is at most 65 536 bytes. Opening checks the structure, then the tag,
   then the AEADs, and only then the padding and the CBOR. Every failure from the tag on is
   the single `decrypt` error.
 - Unknown keys at every level of the body are kept and written back after the known keys.
-  A body with a newer `schema` is read-only and is written back exactly as it was read.
+  A body with a newer `schema` is read-only and is written back as the value that was read (same keys, same order, shortest-form encoding).
 
 **Integrity** (`integrity/`): tombstones, signed checkpoints over the list of rows
 (sequence number, digest, MAC), mutation proofs (signatures over operation, request body
@@ -113,7 +115,7 @@ Docker host (`scripts/lanbox.sh` and the `scripts/lanbox-*.sh` wrappers; set
 | Property tests (20 000 cases per property in the nightly run) | `PROPTEST_CASES=20000 cargo test -p ferret-core --test 'props_*'` | `.github/workflows/props.yml` |
 | Twelve fuzz targets with AddressSanitizer | `scripts/lanbox-fuzz.sh <target\|all> <seconds>` | `fuzz/`, `.github/workflows/fuzz.yml` |
 | Line and branch coverage thresholds | `scripts/lanbox-coverage.sh` | `scripts/coverage-thresholds.json` |
-| Constant-time analysis and timing tests | the tooling under `ct/` | `ct/TRIAGE.md` |
+| Constant-time analysis and timing tests | `ct/run.sh` (analyzer, WebAssembly scan, timing tests) and `scripts/lanbox-ct.sh` | `ct/TRIAGE.md`, `ct/results/` |
 | Dependencies | `cargo deny check`, `cargo vet` | `deny.toml`, `supply-chain/` |
 | No test code in a release | `scripts/check-no-test-support.sh`, `tests/node/release.test.mjs` | [`RELEASING.md`](RELEASING.md) |
 
