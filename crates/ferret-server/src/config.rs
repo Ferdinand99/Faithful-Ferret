@@ -10,7 +10,13 @@ use crate::error::ConfigError;
 
 /// The Faithful Ferret server.
 #[derive(Debug, Clone, Parser)]
-#[command(name = "ferret", version, about, long_about = None)]
+#[command(
+    name = "ferret",
+    version,
+    about,
+    long_about = None,
+    after_help = "Run `ferret --build-info` on its own to print the version and the cargo features of this build."
+)]
 pub struct Config {
     /// Directory for the database (ferret.sqlite), the secret files
     /// (opaque_setup, prelogin_secret), the session key and pre-migration

@@ -36,8 +36,11 @@
 pub mod admin;
 pub mod auth;
 pub mod backup;
+pub mod build_info;
 pub mod config;
 pub mod db;
+#[cfg(feature = "e2e-clock")]
+pub mod e2e_clock;
 pub mod error;
 pub mod http;
 pub mod ids;

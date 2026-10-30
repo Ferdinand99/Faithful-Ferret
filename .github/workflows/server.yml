@@ -22,6 +22,7 @@ on:
       - ".gitignore"
       - "scripts/lanbox-ferret-test.sh"
       - "scripts/check-ferret-test-stack.sh"
+      - "scripts/lanbox-ferret-e2e-check.sh"
       - "release-please-config.json"
       - ".github/workflows/server.yml"
   push:
@@ -64,6 +65,8 @@ jobs:
         with:
           workspaces: crates/ferret-server
       - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets -- -D warnings
+      # The test clock of the end-to-end image.
+      - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets --features e2e-clock -- -D warnings
 
   test:
     name: Tests
@@ -75,6 +78,8 @@ jobs:
         with:
           workspaces: crates/ferret-server
       - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked
+      # The same tests with the test clock of the end-to-end image built in.
+      - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked --features e2e-clock
 
   deny:
     name: cargo-deny
@@ -108,4 +113,4 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/check-ferret-test-stack.sh
-      - run: shellcheck docker/ferret-entrypoint.sh scripts/lanbox-ferret-test.sh scripts/check-ferret-test-stack.sh
+      - run: shellcheck docker/ferret-entrypoint.sh scripts/lanbox-ferret-test.sh scripts/lanbox-ferret-e2e-check.sh scripts/check-ferret-test-stack.sh
