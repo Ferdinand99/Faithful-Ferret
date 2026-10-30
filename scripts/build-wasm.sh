@@ -6,6 +6,9 @@
 #   scripts/build-wasm.sh          pkg-web and pkg-node (the release build)
 #   scripts/build-wasm.sh --test   pkg-node-test (the build with `test-support`
 #                                  that the Node tests use; never released)
+#   scripts/build-wasm.sh --test-web  pkg-web-test (the same build for the
+#                                  browser: the Playwright tests in
+#                                  tests/browser use it; never released)
 #
 # The release packages are optimized with wasm-opt -Oz and the features that
 # rustc 1.99 switches on for wasm32 (bulk memory, sign extension, saturating
@@ -17,6 +20,12 @@ cd "$(dirname "$0")/.."
 if [ "${1:-}" = "--test" ]; then
   wasm-pack build bindings/wasm --release --no-opt --target nodejs --out-dir pkg-node-test -- --features test-support
   echo "wasm size (test-support build, never released): $(wc -c < bindings/wasm/pkg-node-test/ferret_core_wasm_bg.wasm) bytes" >&2
+  exit 0
+fi
+
+if [ "${1:-}" = "--test-web" ]; then
+  wasm-pack build bindings/wasm --release --no-opt --target web --out-dir pkg-web-test -- --features test-support
+  echo "wasm size (web, test-support build, never released): $(wc -c < bindings/wasm/pkg-web-test/ferret_core_wasm_bg.wasm) bytes" >&2
   exit 0
 fi
 
