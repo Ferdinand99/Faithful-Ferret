@@ -479,7 +479,6 @@ version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
- "ferret-server-auth",
  "js-sys",
  "p256",
  "serde",
