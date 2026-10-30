@@ -85,7 +85,7 @@ CI only with the `browsers` label, nightly and on manual runs, because of its le
 
 ## Coverage
 
-`cargo llvm-cov --branch` on the pinned nightly toolchain, against the thresholds of the plan
+`cargo llvm-cov --branch` on the pinned nightly toolchain, against the thresholds set for the project
 (95 % of lines and 90 % of branches per module for the security-critical modules, 90 % of lines
 for the whole core):
 
