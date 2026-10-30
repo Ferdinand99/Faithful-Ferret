@@ -109,9 +109,12 @@ pub fn export_plain_json(items: &[ExportItem], o: &PlainExportOptions) -> Result
     }))
 }
 
-/// Removes the secret keys from the passkey object of a body.
+/// Removes the secret keys from the passkey object of a body. A `passkey`
+/// that is not a map (only a body of a newer schema can have one) cannot be
+/// told apart from its secrets, so it is left out.
 fn strip_passkey_secrets(body: &mut Value) {
     if let Value::Map(entries) = body {
+        entries.retain(|(key, value)| key != "passkey" || matches!(value, Value::Map(_)));
         for (key, value) in entries.iter_mut() {
             if key == "passkey"
                 && let Value::Map(passkey) = value

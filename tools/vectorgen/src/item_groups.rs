@@ -844,6 +844,10 @@ impl Body {
     }
 
     fn cbor(&self) -> Vec<u8> {
+        cb::map(&self.entries())
+    }
+
+    fn entries(&self) -> Vec<(&str, Vec<u8>)> {
         let mut e: Vec<(&str, Vec<u8>)> = vec![
             ("schema", cb::uint(self.schema)),
             ("type", cb::text(&self.ty)),
@@ -869,7 +873,7 @@ impl Body {
         for (k, v) in &self.extra {
             e.push((k, v.clone()));
         }
-        cb::map(&e)
+        e
     }
 
     /// A body whose CBOR is exactly `len` bytes, by the length of the notes.
@@ -1321,6 +1325,115 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
         true,
     ));
 
+    // ---- key order: known keys in schema order, then unknown keys as read
+    // The reader keeps an unknown key that stands before a known one, and the
+    // writer puts it after the known keys, at every level.
+    let mut ordered = Body::new("login", "Key order");
+    ordered.fields = vec![field("u", "User", "text", "alice", &[("zz", cb::uint(1))])];
+    ordered.urls = vec![url("https://example.com", "host", &[("yy", cb::text("b"))])];
+    ordered.extra = vec![
+        ("zzz-first".into(), cb::uint(7)),
+        ("mmm-last".into(), cb::text("end")),
+    ];
+    let foreign = {
+        cb::map(&[
+            ("zzz-first", cb::uint(7)),
+            ("schema", cb::uint(1)),
+            ("type", cb::text("login")),
+            ("name", cb::text("Key order")),
+            (
+                "fields",
+                cb::array(&[cb::map(&[
+                    ("zz", cb::uint(1)),
+                    ("id", cb::text("u")),
+                    ("label", cb::text("User")),
+                    ("kind", cb::text("text")),
+                    ("value", cb::text("alice")),
+                ])]),
+            ),
+            (
+                "urls",
+                cb::array(&[cb::map(&[
+                    ("yy", cb::text("b")),
+                    ("url", cb::text("https://example.com")),
+                    ("match", cb::text("host")),
+                ])]),
+            ),
+            ("created", cb::uint(ordered.created)),
+            ("modified", cb::uint(ordered.modified)),
+            ("favorite", cb::boolean(false)),
+            ("mmm-last", cb::text("end")),
+        ])
+    };
+    let ordered_it = seal_item(
+        "item/key_order",
+        &c1,
+        id(0x36),
+        1,
+        &ordered.cbor(),
+        None,
+        &GOOD_ITEM,
+    )?;
+    let mut seal_unordered = seal_case(
+        "item/seal/key_order",
+        "unknown keys that stand before known keys are written after them, at every level",
+        &ordered_it,
+        None,
+    );
+    seal_unordered.input["body"] = segments(&foreign);
+    cases.push(seal_unordered);
+    let foreign_it = seal_item(
+        "item/key_order_foreign",
+        &c1,
+        id(0x37),
+        1,
+        &foreign,
+        None,
+        &GOOD_ITEM,
+    )?;
+    cases.push(valid_case(
+        "item/open/key_order",
+        "an authentic body with unknown keys before known ones opens in the order the core writes",
+        "item.open",
+        vec![],
+        item_input_with(&foreign_it),
+        json!({ "read_only": false, "body": hex_encode(&ordered.cbor()) }),
+    ));
+
+    // ---- a newer schema is written back as it was read
+    // `name` and `fields` have the wrong type for schema 1. A reader that
+    // keeps them as unknown keys and rebuilds the body would write them
+    // twice; the body is returned as it was read instead.
+    let mistyped = cb::map(&[
+        ("zzz-first", cb::uint(7)),
+        ("schema", cb::uint(2)),
+        ("type", cb::text("login")),
+        ("name", cb::uint(5)),
+        ("fields", cb::text("not a list")),
+        (
+            "urls",
+            cb::array(&[cb::map(&[("yy", cb::uint(1)), ("url", cb::boolean(true))])]),
+        ),
+        ("created", cb::uint(1)),
+        ("modified", cb::uint(2)),
+        ("favorite", cb::boolean(false)),
+    ]);
+    let mistyped_it = seal_item(
+        "item/open/schema_2_mistyped",
+        &c1,
+        id(0x38),
+        1,
+        &mistyped,
+        None,
+        &GOOD_ITEM,
+    )?;
+    cases.push(open_case(
+        "item/open/schema_2_mistyped",
+        "a body with schema 2 and mistyped known keys opens read-only and is returned as it was read",
+        &mistyped_it,
+        true,
+    ));
+
     // ---- sabotage of one envelope
     let base = seal_item(
         "item/sabotage/base",
@@ -1764,6 +1877,52 @@ fn manifest_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         ));
         sealed.push(s);
     }
+    // Key order: known keys in schema order, then unknown keys as read, at the
+    // top level and in a method entry.
+    let unordered = cb::map(&[
+        ("zz", cb::uint(1)),
+        ("v", cb::uint(1)),
+        ("vk_epoch", cb::uint(1)),
+        (
+            "methods",
+            cb::array(&[cb::map(&[
+                ("note", cb::text("n")),
+                ("t", cb::uint(1)),
+                ("id", cb::bytes(&[0x70; 16])),
+                ("g", cb::uint(1)),
+            ])]),
+        ),
+        ("aa", cb::text("x")),
+    ]);
+    let normal = manifest_cbor(
+        1,
+        1,
+        &[method(1, 0x70, 1, &[("note", cb::text("n"))])],
+        &[("zz", cb::uint(1)), ("aa", cb::text("x"))],
+    );
+    let written = seal_manifest("item/manifest/key_order", &c1, 3, &normal)?;
+    let mut input = c1.input();
+    input["rev"] = json!("3");
+    input["manifest"] = h(&unordered);
+    let mut c = valid_case(
+        "item/manifest_seal/key_order",
+        "unknown keys that stand before known keys are written after them, at both levels",
+        "item.manifest.seal",
+        vec![],
+        input,
+        json!({ "envelope": hex_encode(&written.envelope), "tag": hex_encode(&written.tag) }),
+    );
+    c.rng = vec![hex_encode(&written.nonce)];
+    cases.push(c);
+    let foreign = seal_manifest("item/manifest/key_order_foreign", &c1, 3, &unordered)?;
+    cases.push(valid_case(
+        "item/manifest_open/key_order",
+        "an authentic manifest with unknown keys before known ones opens in the order the core writes",
+        "item.manifest.open",
+        vec![],
+        manifest_open_input(&foreign.ctx, foreign.rev, &foreign.envelope, &foreign.tag),
+        json!({ "manifest": hex_encode(&normal) }),
+    ));
     // Sealing a manifest for another epoch than the vault's is refused.
     let mut input = c1.input();
     input["rev"] = json!("1");

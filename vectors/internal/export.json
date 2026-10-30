@@ -1511,6 +1511,72 @@
         "text": "{\"v\":1,\"items\":[{\"id\":\"11111111111111111111111111111111\",\"body\":{\"schema\":1,\"type\":\"login\",\"name\":\"Example\",\"fields\":[{\"id\":\"user\",\"label\":\"Username\",\"kind\":\"text\",\"value\":\"alice\",\"future\":7},{\"id\":\"pass\",\"label\":\"Password\",\"kind\":\"password\",\"value\":\"pa,ss\\\"word\"}],\"urls\":[{\"url\":\"https://example.com\",\"match\":\"host\"},{\"url\":\"https://example.org\",\"match\":\"host\"}],\"totp\":{\"uri\":\"otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP\"},\"notes\":\"first line\\nsecond line\",\"created\":1700000000000,\"modified\":1700000100000,\"favorite\":true,\"x_future\":\"kept as it was\"}},{\"id\":\"22222222222222222222222222222222\",\"body\":{\"schema\":1,\"type\":\"note\",\"name\":\"Æøå note\",\"fields\":[],\"urls\":[],\"created\":1700000000000,\"modified\":1700000100000,\"favorite\":false}}]}"
       },
       "expect_error": null
+    },
+    {
+      "id": "export/plain/json-006",
+      "title": "a body of schema 2 with mistyped known keys is written as it was read",
+      "op": "export.plain.json",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "include_passkeys": false,
+        "items": [
+          {
+            "body": "a9697a7a7a2d66697273740766736368656d61026474797065656c6f67696e646e616d6505666669656c64736a6e6f742061206c6973746475726c7380676372656174656401686d6f64696669656402686661766f72697465f4",
+            "id": "72727272727272727272727272727272"
+          }
+        ]
+      },
+      "expect": {
+        "text": "{\"v\":1,\"items\":[{\"id\":\"72727272727272727272727272727272\",\"body\":{\"zzz-first\":7,\"schema\":2,\"type\":\"login\",\"name\":5,\"fields\":\"not a list\",\"urls\":[],\"created\":1,\"modified\":2,\"favorite\":false}}]}"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "export/plain/json-007",
+      "title": "a passkey of a newer schema that is not a map is left out by default",
+      "op": "export.plain.json",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "include_passkeys": false,
+        "items": [
+          {
+            "body": "aa697a7a7a2d66697273740766736368656d61026474797065656c6f67696e646e616d6505666669656c64736a6e6f742061206c6973746475726c738067706173736b657981a1647072697642e3e3676372656174656401686d6f64696669656402686661766f72697465f4",
+            "id": "72727272727272727272727272727272"
+          }
+        ]
+      },
+      "expect": {
+        "text": "{\"v\":1,\"items\":[{\"id\":\"72727272727272727272727272727272\",\"body\":{\"zzz-first\":7,\"schema\":2,\"type\":\"login\",\"name\":5,\"fields\":\"not a list\",\"urls\":[],\"created\":1,\"modified\":2,\"favorite\":false}}]}"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "export/plain/json-008",
+      "title": "and kept when the passkey secrets are asked for",
+      "op": "export.plain.json",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "include_passkeys": true,
+        "items": [
+          {
+            "body": "aa697a7a7a2d66697273740766736368656d61026474797065656c6f67696e646e616d6505666669656c64736a6e6f742061206c6973746475726c738067706173736b657981a1647072697642e3e3676372656174656401686d6f64696669656402686661766f72697465f4",
+            "id": "72727272727272727272727272727272"
+          }
+        ]
+      },
+      "expect": {
+        "text": "{\"v\":1,\"items\":[{\"id\":\"72727272727272727272727272727272\",\"body\":{\"zzz-first\":7,\"schema\":2,\"type\":\"login\",\"name\":5,\"fields\":\"not a list\",\"urls\":[],\"passkey\":[{\"priv\":\"e3e3\"}],\"created\":1,\"modified\":2,\"favorite\":false}}]}"
+      },
+      "expect_error": null
     }
   ]
 }
