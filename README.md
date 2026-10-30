@@ -60,8 +60,9 @@ Security is the top priority of the project, and this is how the design handles 
 - **Recovery you control.** Recovery uses a recovery key and an encrypted export that you keep. There is **no
   admin recovery** of vaults: if the master password, the recovery key and every export are lost, nobody can open
   the vault. Administrators can reset a login, which never opens the vault.
-- **Published before built.** A threat model and the cryptographic design will be published in this repository
-  before the implementation starts.
+- **Open design.** The threat model and the cryptographic design are published in
+  [`docs/design/phase-1-security-design.md`](docs/design/phase-1-security-design.md).
+  [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a guide to the code that implements it.
 - **Established cryptography only.** Well-known algorithms and reviewed libraries; no home-made cryptography.
 - **Internal review and testing.** A review and testing programme, including test vectors and fuzzing for the
   cryptographic core.

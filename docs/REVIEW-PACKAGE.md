@@ -26,11 +26,10 @@ In scope:
 Out of scope here: the server, the web vault, the browser extension and the mobile apps.
 They are not written yet; this package covers phase 4A only.
 
-The code cites the design document with references such as "Spec: Fase 1 § 4.3". That
-document is written in Norwegian and is not in this repository yet. Until it is
-published, this page and the doc comments at the top of each module are the description of
-the constructions. A reference to a section number is still useful for matching code to
-the design later.
+The code cites the design document with references such as "Spec: Fase 1 § 4.3" ("Fase 1"
+is Norwegian for phase 1). That document is
+[`docs/design/phase-1-security-design.md`](design/phase-1-security-design.md); the section
+numbers in the code match its headings.
 
 ## What the core does
 
