@@ -93,18 +93,32 @@ pub struct ServerAddress {
     pub port: Option<u16>,
 }
 
-fn is_ipv4_literal(host: &str) -> bool {
+/// Whether `host` is exactly four labels of canonical decimal (`0` to `255`,
+/// no leading zero).
+fn is_canonical_ipv4(host: &str) -> bool {
     let mut parts = 0usize;
     for part in host.split('.') {
         parts = parts.saturating_add(1);
-        if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
-            return false;
-        }
-        if part.parse::<u16>().map_or(true, |n| n > 255) {
+        let digits =
+            !part.is_empty() && part.len() <= 3 && part.bytes().all(|b| b.is_ascii_digit());
+        let leading_zero = part.len() > 1 && part.starts_with('0');
+        if !digits || leading_zero || part.parse::<u16>().map_or(true, |n| n > 255) {
             return false;
         }
     }
     parts == 4
+}
+
+/// Whether a browser would read `host` as an IPv4 address: its last label
+/// (a trailing dot is ignored) is all digits or starts with `0x`. Such a
+/// host may be written in octal, hex or a short form (`010.0.0.1` is
+/// `8.0.0.1`, `127.1` and `2130706433` are `127.0.0.1`), so only the canonical
+/// dotted decimal is accepted for it.
+fn looks_like_ipv4(host: &str) -> bool {
+    let trimmed = host.strip_suffix('.').unwrap_or(host);
+    let last = trimmed.rsplit('.').next().unwrap_or("");
+    let hex = last.len() >= 2 && last.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("0x"));
+    hex || (!last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Reads a server address for the sheet and for the pinned record.
@@ -116,7 +130,13 @@ fn is_ipv4_literal(host: &str) -> bool {
 ///   optional port and nothing else: no `user@`, no `%` escape, no `\` (a
 ///   browser reads `\` as `/`, which would move the host), at most the
 ///   characters `A-Z a-z 0-9 - . _ ~ : [ ]`. An IPv6 literal is in brackets;
-/// * the port, when there is one, is 1 to 5 digits up to 65535;
+/// * the port, when there is one, is 1 to 5 digits from 1 to 65535;
+/// * a host that a browser would read as an IPv4 address (its last label is
+///   all digits or starts with `0x`) must be canonical dotted decimal: four
+///   labels from `0` to `255` without a leading zero, and no trailing dot,
+///   so `010.0.0.1`, `0x7f.0.0.1`, `127.1` and `2130706433` are refused;
+/// * the scheme is lower case (`HTTPS://` is refused), and a trailing dot on a
+///   name (`a.example.`) is kept as written;
 /// * the host is lower-cased in the result. The address itself is kept as it
 ///   was written everywhere else.
 ///
@@ -175,11 +195,19 @@ pub fn parse_server_address(url: &str) -> Result<ServerAddress, Error> {
             if text.is_empty() || text.len() > 5 || !text.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(bad());
             }
-            Some(text.parse::<u16>().map_err(|_| bad())?)
+            // Port 0 is no port a server listens on.
+            match text.parse::<u16>().map_err(|_| bad())? {
+                0 => return Err(bad()),
+                n => Some(n),
+            }
         }
     };
     let host = host.to_ascii_lowercase();
-    let local = host == "localhost" || host.starts_with('[') || is_ipv4_literal(&host);
+    let ipv4 = looks_like_ipv4(&host);
+    if ipv4 && !is_canonical_ipv4(&host) {
+        return Err(bad());
+    }
+    let local = host == "localhost" || host.starts_with('[') || ipv4;
     if !https && !local {
         return Err(bad());
     }

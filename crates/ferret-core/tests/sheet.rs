@@ -159,7 +159,8 @@ proptest! {
         let path = path.replace([' ', '\\'], "_");
         // http is for a LAN or local server only.
         let url = if https {
-            format!("https://{host}/{path}")
+            // A last label of digits or `0x...` is read as an IPv4 address.
+            format!("https://{host}.example/{path}")
         } else {
             format!("http://localhost/{path}")
         };
@@ -307,6 +308,18 @@ fn the_host_is_what_a_browser_connects_to() {
         "https://a.example:",
         "https://a.example:80x",
         "https://a.example:80:80",
+        "https://a.example:0",
+        "https://a.example:00000",
+        "http://010.0.0.1",
+        "http://192.168.1.010",
+        "https://0x7f.0.0.1",
+        "https://0X7F.0.0.1",
+        "https://127.1",
+        "https://2130706433",
+        "https://1.2.3.4.5",
+        "http://127.0.0.1.",
+        "https://a.example.1",
+        "HTTPS://vault.example",
         "https://:8443",
         "https://[::1",
         "https://[]",
@@ -351,6 +364,20 @@ fn the_host_is_what_a_browser_connects_to() {
     assert_eq!(
         (a.https, a.host.as_str(), a.port),
         (true, "[2001:db8::1]", None)
+    );
+    // Canonical dotted decimal is an IPv4 address; a name with a trailing dot
+    // is kept as written.
+    for ok in [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+        "http://0.0.0.0:1",
+        "http://192.168.1.10",
+    ] {
+        assert!(parse_server_address(ok).is_ok(), "{ok}");
+    }
+    assert_eq!(
+        parse_server_address("https://vault.example.").unwrap().host,
+        "vault.example."
     );
     // A user@ after the path is part of the path, not of the authority.
     let a = parse_server_address("https://vault.example/a@b").unwrap();

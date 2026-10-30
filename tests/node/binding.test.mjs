@@ -455,6 +455,11 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key, "https://other.example")).call()), "pinned_server_url");
   assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key, URL_, fill(16, 0x99))).call()), "pinned_account_id");
   assert.equal(code(() => recoverWith(firstUse(true), "not a qr code").call()), "malformed_setup_qr");
+  // The sheet's secret key bit must be the one of the new password input and
+  // the answer given.
+  const noSk = wasm.setup_qr_build(URL_, IDS.account_id, 1, false, created.server_public_key);
+  assert.equal(code(() => recoverWith(firstUse(false), noSk).call()), "pinned_sk_bit");
+  assert.equal(code(() => recoverWith(firstUse(false), qrOf(created.server_public_key)).call()), "pinned_sk_bit");
   // A typo in the code is checksum, a wrong key decrypt.
   assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key), rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0")).call()), "checksum");
   // The right one works, and returns the record to store.
@@ -577,9 +582,29 @@ test("pin_and_passkey_unlock_go_through_the_same_checks", () => {
   assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, fill(32, 0x34), prfWrap, withKey)), "decrypt");
   // Recovery key unlock, first use: the SK bit is the user's answer.
   const rk = vault.reveal_recovery_code();
-  const rec = new wasm.UnlockJob().unlock_recovery(URL_, CTX, rk, created.wraps[1], firstUse(true));
+  // On a new device the scanned sheet is required and binds the address, the
+  // account, the secret key bit and the server key.
+  const sheetQr = (key = created.server_public_key, url = URL_, sk = true, account = IDS.account_id) =>
+    wasm.setup_qr_build(url, account, 1, sk, key);
+  const unlockRecovery = (pin, qr) => new wasm.UnlockJob().unlock_recovery(URL_, CTX, rk, created.wraps[1], pin, qr);
+  const rec = unlockRecovery(firstUse(true), sheetQr());
   assert.equal(rec.pinned.sk_bit, true);
-  assert.equal(code(() => new wasm.UnlockJob().unlock_recovery(URL_, CTX, rk, created.wraps[1], { kind: "first_use" })), "invalid_input");
+  assert.deepEqual(rec.pinned.server_public_key, created.server_public_key, "the record pins the sheet's key");
+  assert.equal(rec.pinned.server_url, URL_);
+  assert.equal(code(() => unlockRecovery(firstUse(true), null)), "invalid_input");
+  assert.equal(unlockRecovery({ kind: "first_use" }, sheetQr()).pinned.sk_bit, true, "the bit comes from the sheet");
+  assert.equal(code(() => unlockRecovery(firstUse(true), sheetQr(created.server_public_key, "https://other.example"))), "pinned_server_url");
+  assert.equal(code(() => unlockRecovery(firstUse(true), sheetQr(created.server_public_key, URL_, true, fill(16, 9)))), "pinned_account_id");
+  assert.equal(code(() => unlockRecovery(firstUse(false), sheetQr())), "pinned_sk_bit");
+  assert.equal(code(() => unlockRecovery(firstUse(true, { server_public_key: fill(32, 1) }), sheetQr())), "pinned_server_key");
+  // The same for the passkey unlock.
+  const viaPrf2 = new wasm.UnlockJob().unlock_prf(URL_, CTX, prf.slice(), prfWrap, firstUse(true), sheetQr());
+  assert.deepEqual(viaPrf2.pinned.server_public_key, created.server_public_key);
+  assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, prf.slice(), prfWrap, firstUse(true), null)), "invalid_input");
+  assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, prf.slice(), prfWrap, firstUse(true), sheetQr(created.server_public_key, "https://other.example"))), "pinned_server_url");
+  // A pinned device may bring the sheet; a key that is not the record's is refused.
+  unlockRecovery(pinned(created.pinned, { server_public_key: created.pinned.server_public_key }), sheetQr());
+  assert.equal(code(() => unlockRecovery(pinned(created.pinned, { server_public_key: created.pinned.server_public_key }), sheetQr(fill(32, 2)))), "pinned_server_key");
 });
 
 // ----------------------------------------------------- export and import

@@ -1432,3 +1432,24 @@ impl Vault {
             .map_err(|e| JsValue::from_str(e.code()))
     }
 }
+
+#[wasm_bindgen]
+impl Vault {
+    /// A secret of the passkey in an open item: `"scalar"` (the private
+    /// scalar), `"pkcs8"` (the private key as stored), `"seed_uv"` or
+    /// `"seed_nouv"` (the PRF seeds).
+    pub fn test_passkey_secret(&self, handle: u32, which: &str) -> Option<Vec<u8>> {
+        let inner = self.inner.as_ref()?;
+        let pk = inner.items.get(&handle)?.body.passkey.as_ref()?;
+        match which {
+            "scalar" => {
+                let record = PasskeyRecord::from_item(pk).ok()?;
+                private_scalar(&record).map(|s| s.to_vec())
+            }
+            "pkcs8" => Some(pk.private_key.clone()),
+            "seed_uv" => pk.prf_seed_uv.clone(),
+            "seed_nouv" => pk.prf_seed_nouv.clone(),
+            _ => None,
+        }
+    }
+}

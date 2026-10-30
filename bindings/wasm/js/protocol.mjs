@@ -105,6 +105,7 @@ export const U32_ARGS = {
   import_seal: [[0, false]],
   login_finish: [[1, false]],
   register_finish: [[1, false]],
+  setup_qr_build: [[2, false]],
 };
 
 /** Throws `invalid_input` unless the `u32` arguments of a call are whole numbers in range. */

@@ -956,6 +956,94 @@ pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
         "malformed_setup_qr",
     )?;
 
+    m.err(
+        "sheet/build/020",
+        "http to an IPv4 literal with a leading zero (a browser reads 010 as octal 8)",
+        "sheet.qr.build",
+        build("http://010.0.0.1", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/021",
+        "an IPv4 literal with a leading zero in the last label",
+        "sheet.qr.build",
+        build("http://192.168.1.010", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/022",
+        "an IPv4 literal in hex",
+        "sheet.qr.build",
+        build("https://0x7f.0.0.1", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/023",
+        "a short IPv4 form",
+        "sheet.qr.build",
+        build("https://127.1", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/024",
+        "an IPv4 address as one number",
+        "sheet.qr.build",
+        build("https://2130706433", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/025",
+        "an IPv4 literal with a trailing dot",
+        "sheet.qr.build",
+        build("http://127.0.0.1.", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/026",
+        "an IPv4 literal with five labels",
+        "sheet.qr.build",
+        build("http://1.2.3.4.5", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/027",
+        "port 0",
+        "sheet.qr.build",
+        build("https://vault.example:0", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/028",
+        "an upper-case scheme",
+        "sheet.qr.build",
+        build("HTTPS://vault.example", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.ok(
+        "sheet/build/029",
+        "canonical loopback over http",
+        "sheet.qr.build",
+        build("http://127.0.0.1:3001", account, 1, true, &key),
+    )?;
+    m.ok(
+        "sheet/build/030",
+        "canonical private address over http",
+        "sheet.qr.build",
+        build("http://10.0.0.1", account, 1, true, &key),
+    )?;
+    m.ok(
+        "sheet/build/031",
+        "a name with a trailing dot is kept as written",
+        "sheet.qr.build",
+        build("https://vault.example.", account, 1, true, &key),
+    )?;
+    m.ok(
+        "sheet/build/032",
+        "port 65535",
+        "sheet.qr.build",
+        build("https://vault.example:65535", account, 1, true, &key),
+    )?;
+
     // ---- parse
     let parse = |p: &str| json!({ "payload": p });
     m.ok(

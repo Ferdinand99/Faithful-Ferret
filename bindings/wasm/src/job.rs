@@ -46,10 +46,11 @@ use ferret_core::{
     Error, ExportKey, Kek, KekDevPin, KsfProfile, LoginState, MasterPassword, Method, MethodId,
     MpPolicy, NewAccountIds, NewPassword, OpaqueInput, OsRng, Pin as PinDigits, Pinned,
     PinnedField, PrfOutput, Recovered, RecoveryInput, RecoveryKey, RegistrationFinished,
-    RegistrationState, RekeyInput, RekeyItem, RekeyTombstone, SecretKey, ServerView, UnlockedVault,
-    change_password, create_account, decode_recovery_key, decode_secret_key, encode_recovery_key,
-    encode_secret_key, opaque_login_finish, opaque_login_start, opaque_register_finish,
-    opaque_register_start, parse_setup_qr, recover, unwrap_vk,
+    RegistrationState, RekeyInput, RekeyItem, RekeyTombstone, SecretKey, ServerView, SetupQr,
+    UnlockedVault, VaultContext, change_password, create_account, decode_recovery_key,
+    decode_secret_key, encode_recovery_key, encode_secret_key, opaque_login_finish,
+    opaque_login_start, opaque_register_finish, opaque_register_start, parse_setup_qr, recover,
+    unwrap_vk,
 };
 use js_sys::{Object, Reflect};
 use serde::{Deserialize, Serialize};
@@ -320,6 +321,72 @@ fn unlock_server(
     }
 }
 
+/// What the scanned emergency sheet states, against what the caller states:
+/// the account (`ctx`) and the address. Both are `pinned_*` hard errors.
+fn check_qr(qr: &SetupQr, ctx: &VaultContext, server_url: &str) -> Res<()> {
+    if qr.account_id != ctx.account_id {
+        return Err(Error::Pinned(PinnedField::AccountId).into());
+    }
+    if qr.server_url != server_url {
+        return Err(Error::Pinned(PinnedField::ServerUrl).into());
+    }
+    Ok(())
+}
+
+/// Binds an unlock without the password to the scanned sheet.
+///
+/// * `first_use` (a new device) needs the sheet: its account and address are
+///   compared with the call, its secret key bit with the one the caller
+///   answered, its server key with the one the caller has seen (if any), and
+///   what the record then pins is the sheet's key and bit.
+/// * `pinned` may bring the sheet too; then the same account and address
+///   checks are made, and its key must be the record's.
+fn bind_to_qr(pin: Pin, qr: Option<String>, ctx: &VaultContext, server_url: &str) -> Res<Pin> {
+    let qr = qr.map(|t| parse_setup_qr(&t)).transpose()?;
+    match (pin, qr) {
+        (Pin::FirstUse { .. }, None) => Err(Fail::Input),
+        (
+            Pin::FirstUse {
+                sk_bit,
+                server_public_key,
+            },
+            Some(qr),
+        ) => {
+            check_qr(&qr, ctx, server_url)?;
+            if sk_bit.is_some_and(|b| b != qr.sk_bit) {
+                return Err(Error::Pinned(PinnedField::SkBit).into());
+            }
+            if server_public_key.is_some_and(|k| k != qr.server_public_key) {
+                return Err(Error::Pinned(PinnedField::ServerKey).into());
+            }
+            Ok(Pin::FirstUse {
+                sk_bit: Some(qr.sk_bit),
+                server_public_key: Some(qr.server_public_key),
+            })
+        }
+        (
+            Pin::Pinned {
+                record,
+                server_public_key,
+            },
+            Some(qr),
+        ) => {
+            check_qr(&qr, ctx, server_url)?;
+            if record
+                .server_public_key
+                .is_some_and(|k| k != qr.server_public_key)
+            {
+                return Err(Error::Pinned(PinnedField::ServerKey).into());
+            }
+            Ok(Pin::Pinned {
+                record,
+                server_public_key,
+            })
+        }
+        (pin, None) => Ok(pin),
+    }
+}
+
 #[wasm_bindgen]
 impl UnlockJob {
     /// An empty job.
@@ -448,8 +515,13 @@ impl UnlockJob {
     /// wrap. The code is read first: a typo is `checksum` before any key is
     /// used. `pin` is always required; with `first_use` it carries the
     /// answer to "does the account have a secret key" (`sk_bit`), with
-    /// either it may carry the OPAQUE server key the caller has seen. Returns
-    /// `{ vault, pinned }`.
+    /// either it may carry the OPAQUE server key the caller has seen.
+    ///
+    /// On a new device (`first_use`) `qr`, the text of the scanned emergency
+    /// sheet, is required: its account and address must be `ctx` and
+    /// `server_url`, its secret key bit the answer given, and the record that
+    /// is returned pins its server key. A pinned device may pass it too.
+    /// Returns `{ vault, pinned }`.
     pub fn unlock_recovery(
         &mut self,
         server_url: &str,
@@ -457,11 +529,13 @@ impl UnlockJob {
         rk_code: String,
         rk_wrap: JsValue,
         pin: JsValue,
+        qr: Option<String>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let rk_code = Zeroizing::new(rk_code);
             let pin = from_js::<PinArg>(pin)?.core()?;
             let ctx = from_js::<CtxDto>(ctx)?.core();
+            let pin = bind_to_qr(pin, qr, &ctx, server_url)?;
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
             let rk = decode_recovery_key(&rk_code)?;
             if !matches!(rec.method, Method::Recovery) {
@@ -474,7 +548,8 @@ impl UnlockJob {
     }
 
     /// Unlocks with a passkey: `prf_output` is the 32 bytes the authenticator
-    /// returned for the salt in the wrap. `pin` as for `unlock_recovery`.
+    /// returned for the salt in the wrap. `pin` and `qr` as for
+    /// `unlock_recovery`.
     /// Returns `{ vault, pinned }`.
     pub fn unlock_prf(
         &mut self,
@@ -483,11 +558,13 @@ impl UnlockJob {
         prf_output: Vec<u8>,
         prf_wrap: JsValue,
         pin: JsValue,
+        qr: Option<String>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let prf_output = Zeroizing::new(prf_output);
             let pin = from_js::<PinArg>(pin)?.core()?;
             let ctx = from_js::<CtxDto>(ctx)?.core();
+            let pin = bind_to_qr(pin, qr, &ctx, server_url)?;
             let rec = from_js::<WrapDto>(prf_wrap)?.core()?;
             let Method::Prf { credential_id, .. } = &rec.method else {
                 return Err(Fail::Input);
@@ -757,14 +834,28 @@ impl UnlockJob {
             match (&pin, &qr) {
                 (Pin::FirstUse { .. }, None) => return Err(Fail::Input),
                 (_, Some(qr)) => {
-                    if qr.account_id != ctx.account_id {
-                        return Err(Error::Pinned(PinnedField::AccountId).into());
-                    }
-                    if qr.server_url != server_url {
-                        return Err(Error::Pinned(PinnedField::ServerUrl).into());
-                    }
+                    check_qr(qr, &ctx, server_url)?;
                     if qr.server_public_key != registered.finished.server_public_key {
                         return Err(Error::Pinned(PinnedField::ServerKey).into());
+                    }
+                    // The sheet states whether the account has a secret key
+                    // and the profile it was set up with. The new password
+                    // must have the same secret key bit, and a profile that
+                    // is not lower (a sheet printed before an upgrade is
+                    // older than the account, which is fine).
+                    if input.includes_secret_key() != qr.sk_bit {
+                        return Err(Error::Pinned(PinnedField::SkBit).into());
+                    }
+                    if registered.profile.number() < qr.ksf_profile.number() {
+                        return Err(Error::KdfProfileDowngrade.into());
+                    }
+                    if let Pin::FirstUse {
+                        sk_bit: Some(answered),
+                        ..
+                    } = &pin
+                        && *answered != qr.sk_bit
+                    {
+                        return Err(Error::Pinned(PinnedField::SkBit).into());
                     }
                 }
                 _ => {}

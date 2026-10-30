@@ -143,3 +143,40 @@ test("wasm_size_budget", () => {
   assert.ok(raw <= 2 * 1024 * 1024, `${raw} bytes`);
   assert.equal(raw, statSync(pkg("pkg-node", "ferret_core_wasm_bg.wasm")).size);
 });
+
+test("u32_args_table_matches_the_rust_signatures", async () => {
+  // wasm-bindgen types both u32 and f64 as `number` in the .d.ts, so the
+  // table of the u32 parameters is compared with the Rust signatures: every
+  // exported `pub fn` with a `u32` or `Option<u32>` parameter has its place
+  // in `U32_ARGS`, and the table has nothing else.
+  const { U32_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
+  const { readdirSync } = await import("node:fs");
+  const dir = join(root, "bindings", "wasm", "src");
+  const found = {};
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".rs") && f !== "vector_ops.rs")) {
+    const text = readFileSync(join(dir, file), "utf8");
+    for (const m of text.matchAll(/^\s*pub fn (\w+)\(([^)]*)\)/gm)) {
+      // The parameters, without `self`; commas inside <> do not split.
+      const params = [];
+      let depth = 0;
+      let current = "";
+      for (const ch of m[2]) {
+        if (ch === "<") depth++;
+        if (ch === ">") depth--;
+        if (ch === "," && depth === 0) {
+          params.push(current.trim());
+          current = "";
+        } else current += ch;
+      }
+      if (current.trim()) params.push(current.trim());
+      const args = params.filter((p) => !/^&?(mut )?self\b/.test(p));
+      args.forEach((p, index) => {
+        const type = p.split(":").slice(1).join(":").trim();
+        if (type === "u32" || type === "Option<u32>") {
+          (found[m[1]] ??= []).push([index, type !== "u32"]);
+        }
+      });
+    }
+  }
+  assert.deepEqual(found, U32_ARGS);
+});
