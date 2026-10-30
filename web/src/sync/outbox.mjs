@@ -203,6 +203,7 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     /**
      * Removes every queued write of an item (from the store too) and lets the item be written again.
      * @param {string} itemId
+     * @returns {Promise<string[]>} the idempotency keys of the writes that were dropped
      */
     async discard(itemId) {
       // The store first, read by item (the lane may be gone already): if that fails, nothing in memory has changed.
@@ -210,10 +211,13 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
       const stored = (await store.outbox.all(db, scope)).filter((entry) => entry.itemId === itemId);
       for (const entry of stored) await store.outbox.remove(db, scope, entry.idem);
       const lane = lanes.get(itemId);
-      if (!lane) return;
-      cancelWait(lane);
-      lane.entries.length = 0;
-      lanes.delete(itemId);
+      const idems = new Set([...stored, ...(lane?.entries ?? [])].map((entry) => entry.idem));
+      if (lane) {
+        cancelWait(lane);
+        lane.entries.length = 0;
+        lanes.delete(itemId);
+      }
+      return [...idems];
     },
 
     /** The queued entries of an item, oldest first (not yet confirmed by the server). @param {string} itemId */

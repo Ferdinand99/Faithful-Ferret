@@ -702,10 +702,10 @@ test("the_engine_is_not_given_a_wrong_id_or_a_second_start", async () => {
 });
 
 /** Two items, B at revision 3; the server then hides B and moves its floor up, and one pass lists the vault again. */
-async function hideItemB({ uploadWaits = false, db = null, model = new Model(), client = createFakeClient() } = {}) {
-  const rowB = client.wireRow(ID_B, 3, { item_type: "login", name: "Hidden B" });
+async function hideItemB({ uploadWaits = false, db = null, model = new Model(), client = createFakeClient(), floor = 3 } = {}) {
+  const rowB = client.wireRow(ID_B, floor, { item_type: "login", name: "Hidden B" });
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
-  model.set(ID_B, { rev: 3, ...rowB });
+  model.set(ID_B, { rev: floor, ...rowB });
   const d = await device({ model, client, db });
   await d.engine.start();
   if (uploadWaits) d.api.faults.push({ kind: "network", only: ID_B }, { kind: "network", only: ID_B });
@@ -892,4 +892,140 @@ test("discardMissing_while_the_upload_is_under_way_wins", async () => {
   assert.deepEqual(d.events.error, []);
   assert.deepEqual((await rowsOf(d)).filter((r) => r.itemId === ID_B), []);
   d.engine.stop();
+});
+
+const copyIsBack = (d) => until(() => itemB(d)?.missingOnServer === false && d.model.items.has(ID_B), "the copy is back");
+const marksOf = async (d) => {
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  return (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+};
+const editB = async (d, name, rev) => {
+  await d.engine.update(ID_B, { name });
+  await until(() => d.model.items.get(ID_B).rev === rev && itemB(d)?.rev === rev && !itemB(d).pending, `rev ${rev}`);
+  await until(async () => (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === rev, `rev ${rev} cached`);
+};
+
+test("a_replay_of_an_own_earlier_version_does_not_roll_the_item_back_or_bring_it_back", async () => {
+  const d = await hideItemB({ floor: 5 });
+  await copyIsBack(d);
+  await editB(d, "Mine 2", 2);
+  const rev2 = { ...d.model.items.get(ID_B) };
+  await editB(d, "Mine 3", 3);
+  const rev3 = { ...d.model.items.get(ID_B) };
+
+  // The server serves the bytes of the device's own rev 2 again.
+  d.model.set(ID_B, { rev: 2, blob: rev2.blob, tag: rev2.tag });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.id === ID_B && w.rev === 2 && w.localRev === 3));
+  assert.deepEqual([itemB(d).name, itemB(d).rev], ["Mine 3", 3]);
+  d.model.set(ID_B, { rev: 3, blob: rev3.blob, tag: rev3.tag }); // an honest server again
+  await d.engine.syncNow();
+
+  // The user deletes the item (an own tombstone below the old floor); a replay of an own live version must not revive it.
+  await d.engine.remove(ID_B);
+  await until(() => d.model.items.get(ID_B).deleted && itemB(d) === undefined, "deleted");
+  await until(async () => (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 4, "the tombstone is cached");
+  d.model.set(ID_B, { rev: 2, blob: rev2.blob, tag: rev2.tag });
+  await d.engine.syncNow();
+  assert.equal(itemB(d), undefined, "still deleted");
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.localRev === 4));
+  d.engine.stop();
+});
+
+test("a_foreign_row_at_exactly_the_old_floor_is_refused_after_the_device_has_edited_the_copy", async () => {
+  const d = await hideItemB({ floor: 3 });
+  await copyIsBack(d);
+  await editB(d, "Mine 2", 2);
+  d.model.set(ID_B, { rev: 3, ...d.client.wireRow(ID_B, 3, { item_type: "login", name: "Old three" }) });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "rev_same_row_changed" && w.id === ID_B && w.rev === 3));
+  assert.deepEqual([itemB(d).name, itemB(d).rev], ["Mine 2", 2]);
+  d.engine.stop();
+});
+
+test("a_forged_tombstone_above_the_floor_does_not_drop_the_floor", async () => {
+  const d = await hideItemB({ floor: 3 });
+  await copyIsBack(d);
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded", "the mark is saved");
+  d.model.set(ID_B, { rev: 4, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(7)) });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "tombstone_unverified" && w.id === ID_B));
+  assert.equal(itemB(d).quarantined, false, "the floor mark is not replaced");
+  // The genuine old row at revision 2 is still below the floor.
+  d.model.set(ID_B, { rev: 2, ...d.client.wireRow(ID_B, 2, { item_type: "login", name: "Old two" }) });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 3));
+  assert.equal(itemB(d).name, "Hidden B");
+  assert.equal((await marksOf(d))[ID_B].rev, 3, "the floor is still saved");
+  d.engine.stop();
+});
+
+test("a_failed_save_of_the_digest_list_stops_the_write", async () => {
+  const d = await hideItemB({ floor: 5 });
+  await copyIsBack(d);
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded", "the mark is saved");
+  const sent = d.api.puts.length;
+  d.store.failSet = 1;
+  await assert.rejects(d.engine.update(ID_B, { name: "Not queued" }), /disk is full/);
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
+  assert.equal(d.api.puts.length, sent, "nothing was sent");
+  assert.equal(itemB(d).name, "Hidden B");
+  await editB(d, "Queued now", 2); // the next try works, and its row is recognised
+  assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local").length, 0);
+  d.engine.stop();
+});
+
+test("the_answer_to_a_dropped_upload_is_ignored", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const rowB = client.wireRow(ID_B, 3, { item_type: "login", name: "Hidden B" });
+  model.set(ID_B, { rev: 3, ...rowB });
+  const d = await device({ model, client });
+  await d.engine.start();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const put = d.api.put;
+  let started = 0;
+  d.api.put = async (path, body) => {
+    started += 1;
+    await gate;
+    return put(path, body);
+  };
+  model.items.delete(ID_B);
+  model.seq += 4;
+  model.minValidSince = model.seq;
+  await d.engine.syncNow();
+  await until(() => started === 1, "the upload is under way");
+  // The server shows the item again with the same row: the upload nobody asked for is dropped ...
+  model.set(ID_B, { rev: 3, ...rowB });
+  await d.engine.syncNow();
+  assert.equal(itemB(d).missingOnServer, false);
+  // ... and when its (conflicting) answer arrives, nothing happens.
+  release();
+  await settle(40);
+  assert.deepEqual(d.events.error, []);
+  assert.equal(itemB(d).blocked, false);
+  d.engine.stop();
+});
+
+test("a_mark_that_was_not_saved_after_the_copy_was_cached_is_finished_at_the_next_start_without_a_second_upload", async () => {
+  const db = await freshStore();
+  const d = await hideItemB({ floor: 3, db });
+  await copyIsBack(d);
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded");
+  d.engine.stop();
+  // A crash between caching the row and saving the mark: the mark is still "missing" in storage.
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const saved = await d.store.getSetting(db.store, key);
+  saved.marks[ID_B].kind = "missing_on_server";
+  await d.store.setSetting(db.store, key, saved);
+
+  await db.reopen();
+  const back = await device({ model: d.model, client: d.client, db, seed: 8 });
+  await back.engine.start();
+  await settle(30);
+  assert.equal(back.api.puts.length, 0, "no second upload");
+  await until(async () => (await marksOf(back))[ID_B]?.kind === "reuploaded", "the mark is finished");
+  assert.equal(itemB(back).blocked, false);
+  back.engine.stop();
 });

@@ -172,6 +172,8 @@ export function createSyncEngine({
   const acked = new Set();
   /** Items being sealed for another upload right now. @type {Set<string>} */
   const sealing = new Set();
+  /** Idempotency keys of writes that were dropped from the outbox in this session: their answers are ignored. @type {Set<string>} */
+  const droppedIdems = new Set();
   /** Items the user gave up on in this session: nothing about them is applied any more. @type {Set<string>} */
   const abandoned = new Set();
   /** Items with a write that was refused for good; the code that blocked them (saved). @type {Map<string, string>} */
@@ -259,7 +261,7 @@ export function createSyncEngine({
     timers,
     hooks: {
       onDone: (entry, answer) => {
-        if (abandoned.has(entry.itemId)) return; // the user gave this item up while it was being sent
+        if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return; // given up or dropped while it was being sent
         if (flags.get(entry.itemId)?.kind === "missing_on_server") acked.add(entry.itemId);
         if (answer.rev !== entry.baseRev + 1) {
           warn("unexpected_rev", { id: entry.itemId, rev: answer.rev, expected: entry.baseRev + 1 });
@@ -274,7 +276,7 @@ export function createSyncEngine({
           setStatus("unauthorized");
           return;
         }
-        if (abandoned.has(entry.itemId)) return;
+        if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return;
         /** @type {Record<string, any>} */
         const detail = { code: kind === "conflict" ? "conflict" : error.code, id: entry.itemId };
         if (kind === "conflict") {
@@ -392,22 +394,23 @@ export function createSyncEngine({
         alive();
         if (mark.sent?.includes(key)) {
           ours = true;
-          local = undefined;
+          // Only the row that replaces the old one skips the check against the local row; a replay of an own
+          // earlier version still has to be above what this device has now.
+          if (local && local.rev >= mark.rev) local = undefined;
         } else if (row.rev < mark.rev) {
           warn("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
           continue;
-        } else if (mark.kind === "missing_on_server") {
-          if (!row.deleted && local && sameRow(row, local)) {
-            // The server shows the item again with the row this device has: it was only left out.
-            await clearMissing(id);
-            accepted.push(row);
-            touched.add(id);
-          } else {
-            warn("rev_same_row_changed", { id, rev: row.rev });
-          }
+        } else if (mark.kind === "missing_on_server" && !row.deleted && local && sameRow(row, local)) {
+          // The server shows the item again with the row this device has: it was only left out.
+          await clearMissing(id);
+          accepted.push(row);
+          touched.add(id);
+          continue;
+        } else {
+          // Exactly the old floor, and not a row this device wrote: no honest path leads here.
+          warn("rev_same_row_changed", { id, rev: row.rev });
           continue;
         }
-        // A row at exactly the floor of an uploaded copy is the old revision itself: it goes on as a normal row.
       }
       if (local) {
         if (row.rev < local.rev) {
@@ -430,8 +433,11 @@ export function createSyncEngine({
           await client.vault.verify_tombstone(hex16.decode(id), row.rev, /** @type {Uint8Array} */ (row.tomb));
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
-          flags.set(id, { kind: "quarantined", rev: row.rev });
-          flagsDirty = true;
+          // A mark that keeps a floor is not replaced: the floor would go with it.
+          if (!keepsFloor(id)) {
+            flags.set(id, { kind: "quarantined", rev: row.rev });
+            flagsDirty = true;
+          }
           touched.add(id);
           warn("tombstone_unverified", { id, rev: row.rev });
           continue;
@@ -481,6 +487,12 @@ export function createSyncEngine({
     warn("row_damaged", { id, rev, reason });
   }
 
+  /** Whether the item has a mark that holds the floor of an item uploaded again. @param {string} id */
+  function keepsFloor(id) {
+    const kind = flags.get(id)?.kind;
+    return kind === "missing_on_server" || kind === "reuploaded";
+  }
+
   /**
    * The highest revision this device holds for an item, or null when it holds none.
    * @param {string} id
@@ -495,15 +507,15 @@ export function createSyncEngine({
 
   /**
    * An accepted row settles the mark of its item. A row this device wrote
-   * itself, at or below the old floor, leaves the item `reuploaded` with the
-   * old floor; a row above the floor ends the mark (and, if the item was only
-   * left out of a listing, the upload that was queued for it).
+   * itself, below the old floor, leaves the item `reuploaded` with the old
+   * floor; a row at or above the floor ends the mark (rows then hold the floor),
+   * and, if the item was only left out of a listing, the upload queued for it.
    * @param {string} id @param {number} rev @param {boolean} ours
    */
   async function settleMark(id, rev, ours) {
     const mark = flags.get(id);
     if (!mark) return;
-    if (ours && (mark.kind === "missing_on_server" || mark.kind === "reuploaded") && rev <= mark.rev) {
+    if (ours && (mark.kind === "missing_on_server" || mark.kind === "reuploaded") && rev < mark.rev) {
       flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
     } else if (mark.kind === "missing_on_server") {
       await clearMissing(id);
@@ -523,7 +535,7 @@ export function createSyncEngine({
     flagsDirty = true;
     acked.delete(id);
     try {
-      await runner.discard(id);
+      for (const idem of await runner.discard(id)) droppedIdems.add(idem);
       blocked.delete(id);
     } catch {
       emit("error", { code: "storage" });
@@ -571,6 +583,14 @@ export function createSyncEngine({
     ) return;
     sealing.add(id);
     try {
+      if (row.rev < mark.rev && mark.sent?.includes(await ownKeyOf(row))) {
+        // The cache holds the copy this device uploaded (a restart came between caching it and saving the mark): finish the change.
+        alive();
+        flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
+        flagsDirty = true;
+        await persistFlags();
+        return;
+      }
       const handle = await client.vault.open_item(hex16.decode(id), row.rev, row.envelope, row.tag);
       /** @type {{ envelope: Uint8Array, tag: Uint8Array }} */
       let sealed;
@@ -647,11 +667,16 @@ export function createSyncEngine({
     // After a lock the maps are empty: saving them would wipe the marks that are stored.
     if (!flagsDirty || stopped) return;
     flagsDirty = false;
-    if (flags.size === 0 && blocked.size === 0) {
-      await store.deleteSetting(db, flagsKey);
-      return;
+    try {
+      if (flags.size === 0 && blocked.size === 0) {
+        await store.deleteSetting(db, flagsKey);
+        return;
+      }
+      await store.setSetting(db, flagsKey, { v: 1, marks: Object.fromEntries(flags), blocked: Object.fromEntries(blocked) });
+    } catch (error) {
+      flagsDirty = true; // not saved: the next save writes it
+      throw error;
     }
-    await store.setSetting(db, flagsKey, { v: 1, marks: Object.fromEntries(flags), blocked: Object.fromEntries(blocked) });
   }
 
   /** One pass: the feed. Failures become events; they never reject. */
@@ -797,9 +822,17 @@ export function createSyncEngine({
     if (why !== undefined) throw new SyncError("blocked", "blocked", why); // a refusal came in while this write was being made
     const mark = flags.get(id);
     if (key !== null && mark && (mark.kind === "missing_on_server" || mark.kind === "reuploaded")) {
-      mark.sent = [...(mark.sent ?? []), key].slice(-256);
+      const before = mark.sent;
+      mark.sent = [...(before ?? []), key].slice(-256);
       flagsDirty = true;
-      await persistFlags(); // saved before the write is stored: a crash in between leaves a digest nobody sent, which is harmless
+      try {
+        // Saved before the write is stored, and a failed save stops the write: without its key the row would be
+        // refused when it comes back. A crash in between leaves a key nobody used, which is harmless.
+        await saveFlags(await store.open());
+      } catch (error) {
+        mark.sent = before;
+        throw error;
+      }
       alive();
     }
     const before = { overlay: overlay.get(id), index: index.get(id) };
@@ -864,8 +897,10 @@ export function createSyncEngine({
           index.set(row.itemId, summary);
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
-          flags.set(row.itemId, { kind: "damaged", rev: row.rev });
-          flagsDirty = true;
+          if (!flags.has(row.itemId)) {
+            flags.set(row.itemId, { kind: "damaged", rev: row.rev });
+            flagsDirty = true;
+          }
           index.set(row.itemId, summaryOf({}, row.rev));
         }
       }
@@ -951,6 +986,7 @@ export function createSyncEngine({
       acked.clear();
       sealing.clear();
       abandoned.clear();
+      droppedIdems.clear();
       flagsDirty = false;
       itemQueues.clear();
       listing = null;
@@ -1076,7 +1112,7 @@ export function createSyncEngine({
       if (typeof id !== "string" || !blocked.has(id)) throw new SyncError("not_found");
       await withItem(id, async () => {
         // The stored entries go first; the block stays until that has worked, so a failed store leaves the item blocked.
-        await runner.discard(id);
+        for (const idem of await runner.discard(id)) droppedIdems.add(idem);
         alive();
         blocked.delete(id);
         flagsDirty = true;
@@ -1098,7 +1134,7 @@ export function createSyncEngine({
       if (typeof id !== "string" || flags.get(id)?.kind !== "missing_on_server") throw new SyncError("not_found");
       abandoned.add(id);
       await withItem(id, async () => {
-        await runner.discard(id);
+        for (const idem of await runner.discard(id)) droppedIdems.add(idem);
         alive();
         const db = await store.open();
         await store.cache.removeRows(db, scope, [id]);

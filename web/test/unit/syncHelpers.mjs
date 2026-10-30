@@ -311,7 +311,12 @@ export async function createFakeStore({ order = [], db = null } = {}) {
       },
     },
     getSetting,
+    failSet: 0, // the next this many settings writes fail
     setSetting: async (store, key, value) => {
+      if (service.failSet > 0) {
+        service.failSet -= 1;
+        throw new Error("the disk is full");
+      }
       spy.settings.push([key, value]);
       return setSetting(store, key, value);
     },
