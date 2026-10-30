@@ -364,6 +364,15 @@ export function createSyncEngine({
     const accepted = [];
     /** @type {Set<string>} */
     const touched = new Set();
+    /** Marks that end with this page; they go only after the rows are in the cache. @type {Map<string, "clear" | "drop">} */
+    const ending = new Map();
+    /** The rows this page replaced, to put back when the cache write fails. @type {Map<string, CachedRow | undefined>} */
+    const replaced = new Map();
+    /** @param {string} itemId @param {CachedRow} next */
+    const setRow = (itemId, next) => {
+      if (!replaced.has(itemId)) replaced.set(itemId, rows.get(itemId));
+      rows.set(itemId, next);
+    };
     for (const change of changes) {
       if (stopped) return;
       const id = /** @type {string} */ (change.id);
@@ -396,13 +405,13 @@ export function createSyncEngine({
           ours = true;
           // Only the row that replaces the old one skips the check against the local row; a replay of an own
           // earlier version still has to be above what this device has now.
-          if (local && local.rev >= mark.rev) local = undefined;
+          if (mark.kind === "missing_on_server" && local && local.rev === mark.rev) local = undefined;
         } else if (row.rev < mark.rev) {
           warn("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
           continue;
         } else if (mark.kind === "missing_on_server" && !row.deleted && local && sameRow(row, local)) {
           // The server shows the item again with the row this device has: it was only left out.
-          await clearMissing(id);
+          ending.set(id, "clear");
           accepted.push(row);
           touched.add(id);
           continue;
@@ -424,7 +433,7 @@ export function createSyncEngine({
         }
       }
       if (id === MANIFEST_ID) {
-        rows.set(id, row); // kept in the cache, never an item
+        setRow(id, row); // kept in the cache, never an item
         accepted.push(row);
         continue;
       }
@@ -443,8 +452,8 @@ export function createSyncEngine({
           continue;
         }
         alive();
-        await settleMark(id, row.rev, ours);
-        rows.set(id, row);
+        settleMark(id, row.rev, ours, ending);
+        setRow(id, row);
         accepted.push(row);
         index.delete(id);
         overlay.delete(id);
@@ -454,9 +463,8 @@ export function createSyncEngine({
       try {
         const summary = await summarize(id, row.rev, /** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag));
         alive();
-        await settleMark(id, row.rev, ours);
-        alive();
-        rows.set(id, row);
+        settleMark(id, row.rev, ours, ending);
+        setRow(id, row);
         accepted.push(row);
         const mine = overlay.get(id);
         if (mine && mine.rev > row.rev) {
@@ -471,7 +479,24 @@ export function createSyncEngine({
       }
       touched.add(id);
     }
-    if (accepted.length > 0) await store.cache.putRows(db, scope, accepted);
+    if (accepted.length > 0) {
+      try {
+        await store.cache.putRows(db, scope, accepted);
+      } catch (error) {
+        // Not cached: the rows go back to what they were, and the marks stay, so the next pass does it all again.
+        for (const [itemId, previous] of replaced) {
+          if (previous) rows.set(itemId, previous);
+          else rows.delete(itemId);
+        }
+        throw error;
+      }
+    }
+    // A mark that keeps a floor ends only now that the row that ends it is stored.
+    for (const [itemId, how] of ending) {
+      if (how === "clear") await clearMissing(itemId);
+      else flags.delete(itemId);
+      flagsDirty = true;
+    }
     await saveFlags(db);
     changed(touched);
   }
@@ -510,15 +535,19 @@ export function createSyncEngine({
    * itself, below the old floor, leaves the item `reuploaded` with the old
    * floor; a row at or above the floor ends the mark (rows then hold the floor),
    * and, if the item was only left out of a listing, the upload queued for it.
-   * @param {string} id @param {number} rev @param {boolean} ours
+   * A mark that holds a floor is not removed here but listed in `ending`: the
+   * caller removes it after the row has been written to the cache.
+   * @param {string} id @param {number} rev @param {boolean} ours @param {Map<string, "clear" | "drop">} ending
    */
-  async function settleMark(id, rev, ours) {
+  function settleMark(id, rev, ours, ending) {
     const mark = flags.get(id);
     if (!mark) return;
     if (ours && (mark.kind === "missing_on_server" || mark.kind === "reuploaded") && rev < mark.rev) {
       flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
     } else if (mark.kind === "missing_on_server") {
-      await clearMissing(id);
+      ending.set(id, "clear");
+    } else if (mark.kind === "reuploaded") {
+      ending.set(id, "drop");
     } else {
       flags.delete(id);
     }
@@ -583,10 +612,15 @@ export function createSyncEngine({
     ) return;
     sealing.add(id);
     try {
-      if (row.rev < mark.rev && mark.sent?.includes(await ownKeyOf(row))) {
+      if (row.rev <= mark.rev && mark.sent?.includes(await ownKeyOf(row))) {
         // The cache holds the copy this device uploaded (a restart came between caching it and saving the mark): finish the change.
         alive();
-        flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
+        if (row.rev === mark.rev) {
+          flags.delete(id); // the copy is at the old floor itself: the rows hold it now
+          acked.delete(id);
+        } else {
+          flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
+        }
         flagsDirty = true;
         await persistFlags();
         return;
@@ -662,8 +696,18 @@ export function createSyncEngine({
     }
   }
 
+  /** Saves run one after the other, so a save that finds nothing dirty knows that the one before it has finished. @type {Promise<void>} */
+  let saveChain = Promise.resolve();
+
+  /** @param {any} db @returns {Promise<void>} */
+  function saveFlags(db) {
+    const run = saveChain.then(() => writeFlags(db));
+    saveChain = run.catch(() => {});
+    return run;
+  }
+
   /** @param {any} db */
-  async function saveFlags(db) {
+  async function writeFlags(db) {
     // After a lock the maps are empty: saving them would wipe the marks that are stored.
     if (!flagsDirty || stopped) return;
     flagsDirty = false;
@@ -822,15 +866,15 @@ export function createSyncEngine({
     if (why !== undefined) throw new SyncError("blocked", "blocked", why); // a refusal came in while this write was being made
     const mark = flags.get(id);
     if (key !== null && mark && (mark.kind === "missing_on_server" || mark.kind === "reuploaded")) {
-      const before = mark.sent;
-      mark.sent = [...(before ?? []), key].slice(-256);
+      const previousSent = mark.sent;
+      mark.sent = [...(previousSent ?? []), key].slice(-256);
       flagsDirty = true;
       try {
         // Saved before the write is stored, and a failed save stops the write: without its key the row would be
         // refused when it comes back. A crash in between leaves a key nobody used, which is harmless.
         await saveFlags(await store.open());
       } catch (error) {
-        mark.sent = before;
+        mark.sent = previousSent;
         throw error;
       }
       alive();
@@ -907,7 +951,7 @@ export function createSyncEngine({
       for (const [id, flag] of [...flags]) {
         // A flag needs its item: a damaged one may have no good version, but a quarantine keeps one.
         if (!rows.has(id) && flag.kind === "quarantined") flags.delete(id);
-        else if (!index.has(id)) index.set(id, summaryOf({}, flag.rev));
+        else if (!index.has(id) && !rows.get(id)?.deleted) index.set(id, summaryOf({}, flag.rev)); // an own delete below the floor shows nothing
       }
       await saveFlags(db);
       if (stopped) return;

@@ -1,6 +1,7 @@
 // The sync engine against a model of the server: rows in, items out, and what
 // happens to rows that are wrong.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
@@ -1028,4 +1029,119 @@ test("a_mark_that_was_not_saved_after_the_copy_was_cached_is_finished_at_the_nex
   await until(async () => (await marksOf(back))[ID_B]?.kind === "reuploaded", "the mark is finished");
   assert.equal(itemB(back).blocked, false);
   back.engine.stop();
+});
+
+const settingsKey = () => `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+
+test("a_saved_mark_behind_the_cache_does_not_let_an_own_replay_roll_the_item_back", async () => {
+  const db = await freshStore();
+  const d = await hideItemB({ floor: 3, db });
+  await copyIsBack(d);
+  await editB(d, "Mine 2", 2);
+  const rev2 = { ...d.model.items.get(ID_B) };
+  await until(async () => ((await marksOf(d))[ID_B]?.sent ?? []).length >= 2, "the keys of rev 1 and rev 2 are saved");
+  const older = (await marksOf(d))[ID_B];
+  await editB(d, "Mine 3", 3);
+  await until(async () => !(ID_B in (await marksOf(d))), "the mark ended");
+  d.engine.stop();
+  // A lock or a crash left the older mark in storage while the cache holds rev 3 (the old floor itself).
+  const saved = (await d.store.getSetting(db.store, settingsKey())) ?? { v: 1, marks: {}, blocked: {} };
+  saved.marks[ID_B] = older;
+  await d.store.setSetting(db.store, settingsKey(), saved);
+
+  await db.reopen();
+  const back = await device({ model: d.model, client: d.client, db, seed: 8 });
+  await back.engine.start();
+  d.model.set(ID_B, { rev: 2, blob: rev2.blob, tag: rev2.tag });
+  await back.engine.syncNow();
+  assert.ok(warnings(back).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 3));
+  assert.deepEqual([itemB(back).name, itemB(back).rev], ["Mine 3", 3]);
+  back.engine.stop();
+});
+
+test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => {
+  const d = await hideItemB({ floor: 3 });
+  await copyIsBack(d);
+  await editB(d, "Mine 2", 2);
+  d.store.failPutRows = 1;
+  await d.engine.update(ID_B, { name: "Mine 3" }); // its row reaches the old floor and would end the mark
+  await until(() => d.events.state.some((s) => s.kind === "failed"), "the cache write fails");
+  // Another flag save follows (an unrelated item is refused); it must still carry the mark of B.
+  d.api.faults.push({ kind: "status", status: 413, code: "too_large" });
+  const other = await d.engine.create({ item_type: "login", name: "Other" });
+  await until(() => d.engine.list().find((i) => i.id === other)?.blocked === true, "the other item is blocked");
+  await until(async () => ((await d.store.getSetting(d.store.database.store, settingsKey()))?.blocked ?? {})[other] === "too_large");
+  assert.equal((await marksOf(d))[ID_B]?.kind, "reuploaded", "the saved mark is still there");
+  await d.engine.syncNow(); // the cache works again: the same row is processed again and ends the mark
+  await until(async () => !(ID_B in (await marksOf(d))), "the mark ends once the row is cached");
+  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 3);
+  assert.equal(itemB(d).name, "Mine 3");
+  d.engine.stop();
+});
+
+test("an_own_delete_below_the_floor_shows_nothing_after_a_restart", async () => {
+  const db = await freshStore();
+  const d = await hideItemB({ floor: 5, db });
+  await copyIsBack(d);
+  await editB(d, "Mine 2", 2);
+  await d.engine.remove(ID_B);
+  await until(async () => (await rowsOf(d)).find((r) => r.itemId === ID_B)?.deleted === true && itemB(d) === undefined, "deleted and cached");
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded");
+  d.engine.stop();
+
+  await db.reopen();
+  const back = await device({ model: d.model, client: d.client, db, seed: 8 });
+  await back.engine.start();
+  assert.equal(itemB(back), undefined, "no blank item");
+  await assert.rejects(back.engine.open(ID_B), (e) => e.code === "not_found");
+  assert.equal((await marksOf(back))[ID_B]?.kind, "reuploaded", "the floor mark is kept");
+  back.engine.stop();
+});
+
+test("the_heal_also_finishes_an_item_that_was_never_edited", async () => {
+  const db = await freshStore();
+  const d = await hideItemB({ floor: 1, db });
+  await copyIsBack(d);
+  await until(async () => !(ID_B in (await marksOf(d))) && (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 1, "the copy is cached and the mark ended");
+  const row = (await rowsOf(d)).find((r) => r.itemId === ID_B);
+  d.engine.stop();
+  // A crash between caching the copy and saving the mark: the mark is still "missing" in storage.
+  const digest = createHash("sha256").update(Buffer.concat([Buffer.from([1]), row.envelope, row.tag])).digest("base64url");
+  const saved = (await d.store.getSetting(db.store, settingsKey())) ?? { v: 1, marks: {}, blocked: {} };
+  saved.marks[ID_B] = { kind: "missing_on_server", rev: 1, sent: [`1:r:${digest}`] };
+  await d.store.setSetting(db.store, settingsKey(), saved);
+
+  await db.reopen();
+  const back = await device({ model: d.model, client: d.client, db, seed: 8 });
+  await back.engine.start();
+  await settle(30);
+  assert.equal(back.api.puts.length, 0, "no second upload");
+  assert.deepEqual([itemB(back).missingOnServer, itemB(back).blocked], [false, false]);
+  await until(async () => !(ID_B in (await marksOf(back))), "the mark is gone");
+  back.engine.stop();
+});
+
+test("a_write_waits_for_the_save_of_its_digest_that_another_save_has_taken_over", async () => {
+  const d = await hideItemB({ floor: 5 });
+  await copyIsBack(d);
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded", "the mark is saved");
+  let releaseOpen;
+  let releaseSet;
+  d.store.holdOpen = new Promise((resolve) => { releaseOpen = resolve; });
+  const update = d.engine.update(ID_B, { name: "Mine 2" }); // stops in `queue`, after it has noted its digest
+  await settle(10);
+  d.store.holdSet = new Promise((resolve) => { releaseSet = resolve; });
+  const pass = d.engine.syncNow(); // its save takes the changed marks and is slow
+  await settle(10);
+  const sent = d.api.puts.length;
+  releaseOpen();
+  await settle(30);
+  assert.equal(d.api.puts.length, sent, "the write is not sent before its digest is stored");
+  releaseSet();
+  await update;
+  await pass;
+  await until(() => d.model.items.get(ID_B).rev === 2, "the write is sent");
+  await until(async () => ((await marksOf(d))[ID_B]?.sent ?? []).some((k) => k.startsWith("2:r:")), "the digest of rev 2 is stored");
+  assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local").length, 0);
+  d.engine.stop();
 });

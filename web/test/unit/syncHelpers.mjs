@@ -286,10 +286,24 @@ export async function createFakeStore({ order = [], db = null } = {}) {
   const service = {
     spy,
     database,
-    open: async () => database.store,
+    holdOpen: null, // a promise that the next `open()` waits for
+    holdSet: null, // a promise that the next settings write waits for
+    failPutRows: 0, // the next this many row writes to the cache fail
+    open: async () => {
+      if (service.holdOpen) {
+        const gate = service.holdOpen;
+        service.holdOpen = null;
+        await gate;
+      }
+      return database.store;
+    },
     cache: {
       ...cache,
       putRows: async (store, scope, rows) => {
+        if (service.failPutRows > 0) {
+          service.failPutRows -= 1;
+          throw new Error("the cache is full");
+        }
         spy.putRows.push(rows);
         return cache.putRows(store, scope, rows);
       },
@@ -316,6 +330,11 @@ export async function createFakeStore({ order = [], db = null } = {}) {
       if (service.failSet > 0) {
         service.failSet -= 1;
         throw new Error("the disk is full");
+      }
+      if (service.holdSet) {
+        const gate = service.holdSet;
+        service.holdSet = null;
+        await gate;
       }
       spy.settings.push([key, value]);
       return setSetting(store, key, value);
