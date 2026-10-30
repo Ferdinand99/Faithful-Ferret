@@ -700,3 +700,196 @@ test("the_engine_is_not_given_a_wrong_id_or_a_second_start", async () => {
   assert.equal(hex16.is(d.engine.list()[0].id), true);
   d.engine.stop();
 });
+
+/** Two items, B at revision 3; the server then hides B and moves its floor up, and one pass lists the vault again. */
+async function hideItemB({ uploadWaits = false, db = null, model = new Model(), client = createFakeClient() } = {}) {
+  const rowB = client.wireRow(ID_B, 3, { item_type: "login", name: "Hidden B" });
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
+  model.set(ID_B, { rev: 3, ...rowB });
+  const d = await device({ model, client, db });
+  await d.engine.start();
+  if (uploadWaits) d.api.faults.push({ kind: "network", only: ID_B }, { kind: "network", only: ID_B });
+  model.items.delete(ID_B);
+  model.seq += 4;
+  model.minValidSince = model.seq;
+  model.set(ID_A, { rev: 2, ...client.wireRow(ID_A, 2, { item_type: "login", name: "A2" }) });
+  await d.engine.syncNow();
+  return { ...d, rowB, client };
+}
+
+const itemB = (d) => d.engine.list().find((i) => i.id === ID_B);
+
+test("a_reuploaded_item_keeps_its_old_floor_and_an_old_genuine_row_is_refused", async () => {
+  const d = await hideItemB();
+  await until(() => model_has(d, ID_B) && itemB(d)?.missingOnServer === false, "the copy is back");
+  assert.equal(itemB(d).rev, 1);
+  assert.equal(itemB(d).name, "Hidden B");
+  // The server now serves the genuine old revision 2 of B: valid for the id, above the new revision 1, below the old floor 3.
+  d.model.set(ID_B, { rev: 2, ...d.client.wireRow(ID_B, 2, { item_type: "login", name: "Old two" }) });
+  await d.engine.syncNow();
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.id === ID_B && w.rev === 2 && w.localRev === 3));
+  assert.equal(itemB(d).name, "Hidden B", "the content stays");
+  assert.equal(itemB(d).rev, 1);
+  d.engine.stop();
+});
+
+const model_has = (d, id) => d.model.items.has(id);
+
+test("a_reuploaded_item_accepts_its_own_writes_below_the_floor_and_drops_the_mark_above_it", async () => {
+  const d = await hideItemB();
+  await until(() => itemB(d)?.missingOnServer === false && d.model.items.has(ID_B), "the copy is back");
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const marks = async () => (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the mark is saved as reuploaded");
+  assert.equal((await marks())[ID_B].rev, 3, "the old floor is saved");
+  for (const rev of [2, 3, 4]) {
+    await d.engine.update(ID_B, { name: `Mine ${rev}` });
+    await until(() => d.model.items.get(ID_B).rev === rev && itemB(d).rev === rev && !itemB(d).pending, `rev ${rev}`);
+    assert.equal(itemB(d).name, `Mine ${rev}`);
+  }
+  assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local").length, 0, "its own writes are never refused");
+  await until(async () => !(ID_B in (await marks())), "above the floor the mark is gone");
+  d.engine.stop();
+});
+
+test("the_same_row_shown_again_clears_missing_and_no_upload_is_sent", async () => {
+  const d = await hideItemB({ uploadWaits: true });
+  await until(() => itemB(d)?.missingOnServer === true && d.timers.pending >= 1, "marked, the upload waits");
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 1);
+  const sent = d.api.puts.length;
+  // The server shows B again with the very row this device has.
+  d.model.set(ID_B, { rev: 3, ...d.rowB });
+  await d.engine.syncNow();
+  assert.equal(itemB(d).missingOnServer, false);
+  assert.equal(itemB(d).blocked, false);
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0, "the unsent upload is dropped");
+  d.timers.advance(120_000);
+  await settle(20);
+  assert.equal(d.api.puts.length, sent, "nothing more is sent");
+  assert.equal(d.model.writes.filter((w) => w.id === ID_B).length, 0);
+  d.engine.stop();
+});
+
+test("rows_at_or_below_the_floor_never_overwrite_other_marks", async () => {
+  const d = await hideItemB({ uploadWaits: true });
+  await until(() => itemB(d)?.missingOnServer === true);
+  // A malformed row, a valid row with a bad tag and a good old row, all at or below the floor of 3.
+  d.model.set(ID_B, { rev: 2, blob: null, tag: null, deleted: false });
+  await d.engine.syncNow();
+  d.model.set(ID_B, { rev: 3, ...d.client.wireRow(ID_B, 3, { item_type: "login", name: "Other three" }) });
+  await d.engine.syncNow();
+  d.model.set(ID_B, { rev: 1, ...d.client.wireRow(ID_B, 1, { item_type: "login", name: "Old one" }) });
+  await d.engine.syncNow();
+  const b = itemB(d);
+  assert.deepEqual([b.missingOnServer, b.damaged, b.name, b.rev], [true, false, "Hidden B", 3]);
+  assert.ok(warnings(d).some((w) => w.code === "rev_lower_than_local" && w.rev === 2));
+  assert.ok(warnings(d).some((w) => w.code === "rev_same_row_changed" && w.rev === 3));
+  await d.engine.discardMissing(ID_B); // the mark still allows the user's discard
+  assert.equal(itemB(d), undefined);
+  d.engine.stop();
+});
+
+test("a_lock_during_a_mark_save_never_wipes_the_saved_marks", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Quarantined later" }) });
+  const db = await freshStore();
+  const d = await device({ model, client, db });
+  await d.engine.start();
+  model.set(ID_A, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(1)) });
+  await d.engine.syncNow();
+  assert.equal(d.engine.list()[0].quarantined, true);
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  assert.ok((await d.store.getSetting(db.store, key)).marks[ID_A], "the quarantine is saved");
+
+  // Another item is refused by the server.
+  const id = await d.engine.create({ item_type: "login", name: "C" });
+  await until(() => model.items.get(id)?.rev === 1 && d.engine.list().find((i) => i.id === id)?.pending === false);
+  model.set(id, { rev: 2, ...client.wireRow(id, 2, { item_type: "login", name: "From elsewhere" }) });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const itemView = client.vault.item_view;
+  let slow = false;
+  client.vault.item_view = async (handle) => {
+    if (slow) await gate;
+    return itemView(handle);
+  };
+  await d.engine.update(id, { name: "Late edit" });
+  await until(() => d.engine.list().find((i) => i.id === id)?.blocked === true, "the refusal");
+  // The user discards the refused draft; the worker is slow to describe the item, and the lock lands in that wait.
+  slow = true;
+  const discarding = d.engine.discard(id).catch(() => {});
+  await until(() => d.engine.list().find((i) => i.id === id)?.blocked === false, "the block is lifted in memory");
+  d.engine.stop();
+  release();
+  await discarding;
+  await settle(40);
+  const saved = await d.store.getSetting(db.store, key);
+  assert.ok(saved, "the saved marks are still there");
+  assert.ok(saved.marks[ID_A], "the quarantine is not wiped");
+
+  await db.reopen();
+  const back = await device({ model, client, db, seed: 9 });
+  await back.engine.start();
+  assert.equal(back.engine.list().find((i) => i.id === ID_A).quarantined, true);
+  back.engine.stop();
+});
+
+test("a_failed_pass_at_start_does_not_upload_an_item_again", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const db = await freshStore();
+  const one = await hideItemB({ uploadWaits: true, db, model, client });
+  await until(() => itemB(one)?.missingOnServer === true);
+  one.engine.stop();
+  // The upload went through before the restart, as far as this device knows: its entry is gone, the mark and its digest stay.
+  const entries = await one.store.outbox.all(db.store, scope());
+  assert.equal(entries.length, 1);
+  await one.store.outbox.remove(db.store, scope(), entries[0].idem);
+
+  await db.reopen();
+  const two = await device({ model, client, db, seed: 4 });
+  two.api.failFeed = new ApiError(0, "network");
+  two.api.failFeedTimes = 1;
+  await two.engine.start();
+  await settle(30);
+  assert.equal(two.api.puts.length, 0, "no upload after a pass that failed");
+  assert.equal(itemB(two).missingOnServer, true);
+  // The next pass reads the whole feed, and B is still not in it: now it is uploaded, once.
+  await two.engine.syncNow();
+  await until(() => model.items.has(ID_B), "uploaded after a good pass");
+  assert.equal(model.writes.filter((w) => w.id === ID_B).length, 1);
+  two.engine.stop();
+});
+
+test("discardMissing_while_the_upload_is_under_way_wins", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const rowB = client.wireRow(ID_B, 3, { item_type: "login", name: "Hidden B" });
+  model.set(ID_B, { rev: 3, ...rowB });
+  const d = await device({ model, client });
+  await d.engine.start();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const put = d.api.put;
+  let started = 0;
+  d.api.put = async (path, body) => {
+    started += 1;
+    await gate;
+    return put(path, body);
+  };
+  model.items.delete(ID_B);
+  model.seq += 4;
+  model.minValidSince = model.seq;
+  await d.engine.syncNow();
+  await until(() => started === 1, "the upload is under way");
+  const discarded = d.engine.discardMissing(ID_B);
+  release();
+  await discarded;
+  await settle(40);
+  await d.engine.syncNow();
+  assert.equal(itemB(d), undefined, "the item does not come back");
+  assert.deepEqual(d.events.error, []);
+  assert.deepEqual((await rowsOf(d)).filter((r) => r.itemId === ID_B), []);
+  d.engine.stop();
+});

@@ -205,14 +205,15 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
      * @param {string} itemId
      */
     async discard(itemId) {
+      // The store first, read by item (the lane may be gone already): if that fails, nothing in memory has changed.
+      const db = await store.open();
+      const stored = (await store.outbox.all(db, scope)).filter((entry) => entry.itemId === itemId);
+      for (const entry of stored) await store.outbox.remove(db, scope, entry.idem);
       const lane = lanes.get(itemId);
       if (!lane) return;
       cancelWait(lane);
-      const entries = [...lane.entries];
       lane.entries.length = 0;
       lanes.delete(itemId);
-      const db = await store.open();
-      for (const entry of entries) await store.outbox.remove(db, scope, entry.idem);
     },
 
     /** The queued entries of an item, oldest first (not yet confirmed by the server). @param {string} itemId */

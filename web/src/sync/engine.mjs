@@ -158,13 +158,22 @@ export function createSyncEngine({
   /** The decrypted item index, in memory only. @type {Map<string, Omit<ItemSummary, "id" | "pending" | "damaged" | "quarantined" | "missingOnServer" | "blocked" | "blockedReason">>} */
   const index = new Map();
   /**
-   * Marks on items (saved, ids and numbers only). `damaged` and `quarantined`:
-   * the server's newest row is not usable. `missing_on_server`: a full listing
-   * did not show the item; `rev` is the revision of the local copy (its floor)
-   * and `sent` the digest of the copy that was uploaded again.
-   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server", rev: number, sent?: string }>}
+   * Marks on items (saved, ids, numbers and digests only). `damaged` and
+   * `quarantined`: the server's newest row is not usable. `missing_on_server`: a
+   * full listing did not show the item; `rev` is the revision of the local copy
+   * and stays the floor of the item. `reuploaded`: the copy was uploaded again
+   * (the server numbers it from 1) and the old floor is kept. `sent` lists the
+   * writes of this device made since (`<rev>:<r|t>:<digest>`): they are the only
+   * rows below the floor that are accepted, byte for byte.
+   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server" | "reuploaded", rev: number, sent?: string[] }>}
    */
   const flags = new Map();
+  /** Items whose upload has been answered by the server in this session. @type {Set<string>} */
+  const acked = new Set();
+  /** Items being sealed for another upload right now. @type {Set<string>} */
+  const sealing = new Set();
+  /** Items the user gave up on in this session: nothing about them is applied any more. @type {Set<string>} */
+  const abandoned = new Set();
   /** Items with a write that was refused for good; the code that blocked them (saved). @type {Map<string, string>} */
   const blocked = new Map();
   let flagsDirty = false;
@@ -250,6 +259,8 @@ export function createSyncEngine({
     timers,
     hooks: {
       onDone: (entry, answer) => {
+        if (abandoned.has(entry.itemId)) return; // the user gave this item up while it was being sent
+        if (flags.get(entry.itemId)?.kind === "missing_on_server") acked.add(entry.itemId);
         if (answer.rev !== entry.baseRev + 1) {
           warn("unexpected_rev", { id: entry.itemId, rev: answer.rev, expected: entry.baseRev + 1 });
         }
@@ -263,6 +274,7 @@ export function createSyncEngine({
           setStatus("unauthorized");
           return;
         }
+        if (abandoned.has(entry.itemId)) return;
         /** @type {Record<string, any>} */
         const detail = { code: kind === "conflict" ? "conflict" : error.code, id: entry.itemId };
         if (kind === "conflict") {
@@ -275,6 +287,7 @@ export function createSyncEngine({
         blocked.set(entry.itemId, detail.code);
         flagsDirty = true;
         overlay.delete(entry.itemId);
+        void persistFlags();
         void showServerVersion(entry.itemId).then(persistFlags);
         emit("error", detail);
         // A 409 on a deleted item carries no tombstone, and a live one carries a
@@ -353,6 +366,7 @@ export function createSyncEngine({
       if (stopped) return;
       const id = /** @type {string} */ (change.id);
       listing?.add(id);
+      if (abandoned.has(id)) continue;
       /** @type {CachedRow} */
       let row;
       try {
@@ -360,15 +374,40 @@ export function createSyncEngine({
       } catch (error) {
         // A row that is not even a well-formed live row or tombstone: the item is damaged, the pass goes on.
         if (!hex16.is(id) || !Number.isSafeInteger(change.rev)) throw error;
+        const floor = floorOf(id);
+        if (floor !== null && change.rev <= floor) {
+          warn("rev_lower_than_local", { id, rev: change.rev, localRev: floor });
+          continue;
+        }
         markDamaged(id, change.rev, "malformed");
         touched.add(id);
         continue;
       }
       let local = rows.get(id);
       const mark = flags.get(id);
-      if (local && row.rev <= local.rev && mark?.kind === "missing_on_server" && mark.sent && !row.deleted
-        && (await digestOf(/** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag))) === mark.sent) {
-        local = undefined; // the copy this device uploaded again, byte for byte: it replaces the old floor
+      let ours = false;
+      if ((mark?.kind === "missing_on_server" || mark?.kind === "reuploaded") && row.rev <= mark.rev) {
+        // At or below the floor of an item that was uploaded again: only a row this device wrote is accepted.
+        const key = await ownKeyOf(row);
+        alive();
+        if (mark.sent?.includes(key)) {
+          ours = true;
+          local = undefined;
+        } else if (row.rev < mark.rev) {
+          warn("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
+          continue;
+        } else if (mark.kind === "missing_on_server") {
+          if (!row.deleted && local && sameRow(row, local)) {
+            // The server shows the item again with the row this device has: it was only left out.
+            await clearMissing(id);
+            accepted.push(row);
+            touched.add(id);
+          } else {
+            warn("rev_same_row_changed", { id, rev: row.rev });
+          }
+          continue;
+        }
+        // A row at exactly the floor of an uploaded copy is the old revision itself: it goes on as a normal row.
       }
       if (local) {
         if (row.rev < local.rev) {
@@ -398,20 +437,21 @@ export function createSyncEngine({
           continue;
         }
         alive();
+        await settleMark(id, row.rev, ours);
         rows.set(id, row);
         accepted.push(row);
         index.delete(id);
         overlay.delete(id);
-        if (flags.delete(id)) flagsDirty = true;
         touched.add(id);
         continue;
       }
       try {
         const summary = await summarize(id, row.rev, /** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag));
         alive();
+        await settleMark(id, row.rev, ours);
+        alive();
         rows.set(id, row);
         accepted.push(row);
-        if (flags.delete(id)) flagsDirty = true;
         const mine = overlay.get(id);
         if (mine && mine.rev > row.rev) {
           // A local write is ahead of this row: it stays on screen.
@@ -432,10 +472,62 @@ export function createSyncEngine({
 
   /** @param {string} id @param {number} rev @param {string} reason */
   function markDamaged(id, rev, reason) {
-    flags.set(id, { kind: "damaged", rev });
-    flagsDirty = true;
-    if (!index.has(id)) index.set(id, summaryOf({}, rev)); // nothing good to show
+    // A mark that keeps a floor or says "deleted, not verified" is not replaced by "damaged".
+    if (!flags.has(id) || flags.get(id)?.kind === "damaged") {
+      flags.set(id, { kind: "damaged", rev });
+      flagsDirty = true;
+      if (!index.has(id)) index.set(id, summaryOf({}, rev)); // nothing good to show
+    }
     warn("row_damaged", { id, rev, reason });
+  }
+
+  /**
+   * The highest revision this device holds for an item, or null when it holds none.
+   * @param {string} id
+   */
+  function floorOf(id) {
+    const mark = flags.get(id);
+    const kept = mark?.kind === "missing_on_server" || mark?.kind === "reuploaded" ? mark.rev : -1;
+    const known = rows.get(id)?.rev ?? -1;
+    const floor = Math.max(kept, known);
+    return floor < 0 ? null : floor;
+  }
+
+  /**
+   * An accepted row settles the mark of its item. A row this device wrote
+   * itself, at or below the old floor, leaves the item `reuploaded` with the
+   * old floor; a row above the floor ends the mark (and, if the item was only
+   * left out of a listing, the upload that was queued for it).
+   * @param {string} id @param {number} rev @param {boolean} ours
+   */
+  async function settleMark(id, rev, ours) {
+    const mark = flags.get(id);
+    if (!mark) return;
+    if (ours && (mark.kind === "missing_on_server" || mark.kind === "reuploaded") && rev <= mark.rev) {
+      flags.set(id, { kind: "reuploaded", rev: mark.rev, sent: mark.sent });
+    } else if (mark.kind === "missing_on_server") {
+      await clearMissing(id);
+    } else {
+      flags.delete(id);
+    }
+    flagsDirty = true;
+  }
+
+  /**
+   * The server shows the item (again): the mark goes, and so does the upload
+   * that was queued for it, which nobody asked for.
+   * @param {string} id
+   */
+  async function clearMissing(id) {
+    if (flags.get(id)?.kind === "missing_on_server") flags.delete(id);
+    flagsDirty = true;
+    acked.delete(id);
+    try {
+      await runner.discard(id);
+      blocked.delete(id);
+    } catch {
+      emit("error", { code: "storage" });
+    }
   }
 
   /**
@@ -460,19 +552,24 @@ export function createSyncEngine({
     await saveFlags(db);
     warn("missing_on_server", { count: missing.length });
     changed(missing);
-    for (const id of missing) await uploadAgain(id);
   }
 
   /**
    * Queues the local copy of a missing item as a new write (revision 1 against
-   * nothing), unless one is already queued. The digest of what is sent is saved
-   * with the mark, so the row that comes back is recognised as ours.
+   * nothing), unless one is queued, was answered, or is being made. The digest
+   * of what is sent is saved with the mark before the write is stored, so the
+   * row that comes back is recognised as ours. The floor of the old revision
+   * stays in the mark.
    * @param {string} id
    */
   async function uploadAgain(id) {
     const row = rows.get(id);
     const mark = flags.get(id);
-    if (!row || row.deleted || mark?.kind !== "missing_on_server" || runner.entriesOf(id).length > 0 || blocked.has(id)) return;
+    if (
+      !row || row.deleted || mark?.kind !== "missing_on_server" || runner.entriesOf(id).length > 0 ||
+      blocked.has(id) || acked.has(id) || sealing.has(id) || abandoned.has(id)
+    ) return;
+    sealing.add(id);
     try {
       const handle = await client.vault.open_item(hex16.decode(id), row.rev, row.envelope, row.tag);
       /** @type {{ envelope: Uint8Array, tag: Uint8Array }} */
@@ -483,22 +580,39 @@ export function createSyncEngine({
         await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
       }
       alive();
-      flags.set(id, { kind: "missing_on_server", rev: row.rev, sent: await digestOf(sealed.envelope, sealed.tag) });
-      flagsDirty = true;
-      await persistFlags();
+      if (flags.get(id)?.kind !== "missing_on_server" || abandoned.has(id)) return;
       await queue(id, 0, { blob: sealed.envelope, tag: sealed.tag }, null, null);
     } catch (error) {
       if (stopped || isFatal(error)) return;
       emit("error", { code: "upload_again_failed", id });
+    } finally {
+      sealing.delete(id);
     }
   }
 
-  /** @param {Uint8Array} envelope @param {Uint8Array} tag */
-  async function digestOf(envelope, tag) {
-    const all = new Uint8Array(envelope.length + tag.length);
-    all.set(envelope);
-    all.set(tag, envelope.length);
+  /**
+   * @param {Uint8Array} first @param {Uint8Array} second @param {number} [domain] 1 for a sealed row, 2 for a tombstone
+   */
+  async function digestOf(first, second, domain = 1) {
+    const all = new Uint8Array(1 + first.length + second.length);
+    all[0] = domain;
+    all.set(first, 1);
+    all.set(second, 1 + first.length);
     return b64u.encode(new Uint8Array(await crypto.subtle.digest("SHA-256", all)));
+  }
+
+  /** The name of a write in the `sent` list of a mark. @param {number} rev @param {{ blob: Uint8Array, tag: Uint8Array } | { tomb: Uint8Array }} body */
+  async function ownKeyOfBody(rev, body) {
+    return "tomb" in body
+      ? `${rev}:t:${await digestOf(body.tomb, new Uint8Array(0), 2)}`
+      : `${rev}:r:${await digestOf(body.blob, body.tag)}`;
+  }
+
+  /** @param {CachedRow} row */
+  function ownKeyOf(row) {
+    return row.deleted
+      ? ownKeyOfBody(row.rev, { tomb: /** @type {Uint8Array} */ (row.tomb) })
+      : ownKeyOfBody(row.rev, { blob: /** @type {Uint8Array} */ (row.envelope), tag: /** @type {Uint8Array} */ (row.tag) });
   }
 
   /** What the screen shows for an item whose write was refused: the server's version. @param {string} id */
@@ -520,6 +634,7 @@ export function createSyncEngine({
   }
 
   async function persistFlags() {
+    if (stopped) return;
     try {
       await saveFlags(await store.open());
     } catch (error) {
@@ -529,7 +644,8 @@ export function createSyncEngine({
 
   /** @param {any} db */
   async function saveFlags(db) {
-    if (!flagsDirty) return;
+    // After a lock the maps are empty: saving them would wipe the marks that are stored.
+    if (!flagsDirty || stopped) return;
     flagsDirty = false;
     if (flags.size === 0 && blocked.size === 0) {
       await store.deleteSetting(db, flagsKey);
@@ -543,6 +659,9 @@ export function createSyncEngine({
     setStatus("syncing");
     try {
       await cycle();
+      if (stopped) return;
+      // Only after a pass that read the whole feed: an item that is still missing and has no upload under way is uploaded.
+      for (const [id, mark] of [...flags]) if (mark.kind === "missing_on_server") await uploadAgain(id);
       if (stopped) return;
       if (paused) {
         paused = false;
@@ -647,7 +766,7 @@ export function createSyncEngine({
     // A refused write is still in the outbox: a new one would only queue behind it.
     if (why !== undefined) throw new SyncError("blocked", "blocked", why);
     const flag = flags.get(id);
-    if (flag) throw new SyncError(flag.kind);
+    if (flag && flag.kind !== "reuploaded") throw new SyncError(flag.kind);
     const version = newest(id);
     if (!version || version.deleted || !index.has(id)) throw new SyncError("not_found");
     if (index.get(id)?.readOnly) throw new SyncError("read_only");
@@ -671,7 +790,18 @@ export function createSyncEngine({
         ? { base_rev: baseRev, deleted: true, tomb: b64u.encode(body.tomb), idem }
         : { base_rev: baseRev, blob: b64u.encode(body.blob), tag: b64u.encode(body.tag), idem };
     const bytes = encodeWireBytes("put_item_req", request);
+    const kept = flags.get(id)?.kind;
+    const key = kept === "missing_on_server" || kept === "reuploaded" ? await ownKeyOfBody(baseRev + 1, body) : null;
     alive();
+    const why = blocked.get(id);
+    if (why !== undefined) throw new SyncError("blocked", "blocked", why); // a refusal came in while this write was being made
+    const mark = flags.get(id);
+    if (key !== null && mark && (mark.kind === "missing_on_server" || mark.kind === "reuploaded")) {
+      mark.sent = [...(mark.sent ?? []), key].slice(-256);
+      flagsDirty = true;
+      await persistFlags(); // saved before the write is stored: a crash in between leaves a digest nobody sent, which is harmless
+      alive();
+    }
     const before = { overlay: overlay.get(id), index: index.get(id) };
     if (next) {
       overlay.set(id, next);
@@ -716,9 +846,10 @@ export function createSyncEngine({
       }
       const savedMarks = saved?.v === 1 && saved.marks && typeof saved.marks === "object" ? saved.marks : {};
       for (const [id, flag] of Object.entries(savedMarks)) {
-        const kinds = ["damaged", "quarantined", "missing_on_server"];
+        const kinds = ["damaged", "quarantined", "missing_on_server", "reuploaded"];
         if (hex16.is(id) && kinds.includes(flag?.kind) && Number.isSafeInteger(flag.rev)) {
-          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(typeof flag.sent === "string" ? { sent: flag.sent } : {}) });
+          const sent = Array.isArray(flag.sent) ? flag.sent.filter((/** @type {unknown} */ k) => typeof k === "string").slice(-256) : [];
+          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(sent.length > 0 ? { sent } : {}) });
         }
       }
       const savedBlocked = saved?.v === 1 && saved.blocked && typeof saved.blocked === "object" ? saved.blocked : {};
@@ -793,8 +924,6 @@ export function createSyncEngine({
       runner.start();
       await syncNow();
       if (stopped) return;
-      // Items a listing did not show and that have no upload queued (a restart in between): queue it.
-      for (const [id, flag] of [...flags]) if (flag.kind === "missing_on_server") await uploadAgain(id);
       for (const name of FOCUS_EVENTS) win?.addEventListener?.(name, onFocus);
       schedule();
     },
@@ -819,6 +948,10 @@ export function createSyncEngine({
       rows.clear();
       flags.clear();
       blocked.clear();
+      acked.clear();
+      sealing.clear();
+      abandoned.clear();
+      flagsDirty = false;
       itemQueues.clear();
       listing = null;
       for (const set of Object.values(listeners)) set.clear();
@@ -941,38 +1074,47 @@ export function createSyncEngine({
     async discard(id) {
       if (stopped) throw new SyncError("stopped");
       if (typeof id !== "string" || !blocked.has(id)) throw new SyncError("not_found");
-      await runner.discard(id);
-      alive();
-      blocked.delete(id);
-      flagsDirty = true;
-      overlay.delete(id);
-      if (!rows.has(id)) index.delete(id);
-      await showServerVersion(id);
-      await persistFlags();
+      await withItem(id, async () => {
+        // The stored entries go first; the block stays until that has worked, so a failed store leaves the item blocked.
+        await runner.discard(id);
+        alive();
+        blocked.delete(id);
+        flagsDirty = true;
+        overlay.delete(id);
+        if (!rows.has(id)) index.delete(id);
+        await showServerVersion(id);
+        await persistFlags();
+      });
     },
 
     /**
      * Gives up an item that a full listing did not show, on the user's word:
      * the local copy, its row and its revision floor are removed, and so is
-     * the upload that was queued for it.
+     * the upload that was queued for it (or is under way: its result is dropped).
      * @param {string} id
      */
     async discardMissing(id) {
       if (stopped) throw new SyncError("stopped");
       if (typeof id !== "string" || flags.get(id)?.kind !== "missing_on_server") throw new SyncError("not_found");
-      await runner.discard(id);
-      alive();
-      const db = await store.open();
-      await store.cache.removeRows(db, scope, [id]);
-      alive();
-      rows.delete(id);
-      index.delete(id);
-      overlay.delete(id);
-      flags.delete(id);
-      blocked.delete(id);
-      flagsDirty = true;
-      await persistFlags();
-      changed([id]);
+      abandoned.add(id);
+      await withItem(id, async () => {
+        await runner.discard(id);
+        alive();
+        const db = await store.open();
+        await store.cache.removeRows(db, scope, [id]);
+        alive();
+        rows.delete(id);
+        index.delete(id);
+        overlay.delete(id);
+        flags.delete(id);
+        blocked.delete(id);
+        flagsDirty = true;
+        await persistFlags();
+        changed([id]);
+      }).catch((error) => {
+        abandoned.delete(id); // nothing was given up
+        throw error;
+      });
     },
 
     /**

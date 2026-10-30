@@ -294,8 +294,16 @@ export async function createFakeStore({ order = [], db = null } = {}) {
         return cache.putRows(store, scope, rows);
       },
     },
+    failRemove: 0, // the next this many removals from the outbox fail
     outbox: {
       ...outbox,
+      remove: async (store, scope, idem) => {
+        if (service.failRemove > 0) {
+          service.failRemove -= 1;
+          throw new Error("the disk is full");
+        }
+        return outbox.remove(store, scope, idem);
+      },
       enqueue: async (store, scope, entry) => {
         order.push("outbox.enqueue");
         spy.enqueued.push(entry);

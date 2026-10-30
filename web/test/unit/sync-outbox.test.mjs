@@ -403,3 +403,53 @@ test("a_create_refused_for_good_keeps_its_draft_on_screen_until_it_is_discarded"
   assert.equal((await stored(back)).length, 0);
   back.engine.stop();
 });
+
+test("a_failed_store_during_discard_leaves_the_item_blocked_and_nothing_is_sent_after_a_restart", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const db = await freshStore();
+  const a = await engineOn(model, client, { db, seed: 1 });
+  const b = await engineOn(model, client, { seed: 2 });
+  await a.engine.start();
+  await b.engine.start();
+  const id = await a.engine.create({ item_type: "login", name: "Original" });
+  await until(() => model.items.get(id)?.rev === 1);
+  b.timers.advance(5_000);
+  await until(() => b.engine.list().length === 1);
+  await b.engine.update(id, { name: "From B" });
+  await until(() => model.items.get(id).rev === 2);
+  await a.engine.update(id, { name: "From A" });
+  await until(() => a.engine.list()[0]?.blocked === true && a.engine.list()[0].name === "From B");
+
+  a.store.failRemove = 1;
+  await assert.rejects(a.engine.discard(id), /disk is full/);
+  assert.equal(a.engine.list()[0].blocked, true, "the block is held");
+  await assert.rejects(a.engine.update(id, { name: "Again" }), (e) => e.code === "blocked");
+  assert.equal((await stored(a)).length, 1, "the entry is still stored");
+  a.engine.stop();
+
+  // After a restart the entry is loaded blocked; nothing is sent.
+  await db.reopen();
+  const again = await engineOn(model, client, { db, seed: 5 });
+  await again.engine.start();
+  again.timers.advance(120_000);
+  await settle(20);
+  assert.equal(again.api.puts.length, 0);
+  assert.equal(again.engine.list()[0].blocked, true);
+
+  // A second discard in the same session works the same way and now succeeds, with the store first.
+  again.store.failRemove = 1;
+  await assert.rejects(again.engine.discard(id), /disk is full/);
+  await again.engine.discard(id);
+  assert.equal((await stored(again)).length, 0);
+  again.engine.stop();
+  await db.reopen();
+  const last = await engineOn(model, client, { db, seed: 6 });
+  await last.engine.start();
+  last.timers.advance(120_000);
+  await settle(20);
+  assert.equal(last.api.puts.length, 0, "a discarded write is never sent");
+  assert.equal(last.engine.list()[0].blocked, false);
+  last.engine.stop();
+  b.engine.stop();
+});
