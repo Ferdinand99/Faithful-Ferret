@@ -18,8 +18,22 @@ const vectors = join(root, 'vectors');
 const corpus = join(root, 'fuzz', 'corpus');
 const check = process.argv.includes('--check');
 
-/** Longest seed, matching libFuzzer's default -max_len. */
-const MAX_LEN = 4096;
+/**
+ * Longest seed of a target: its -max_len in scripts/fuzz-run.sh. The targets
+ * that take bodies of up to 61 440 bytes, envelopes of up to 65 536 bytes and
+ * byte strings over 64 KiB are run with a larger -max_len; the others keep
+ * libFuzzer's default of 4096.
+ */
+const BIG = 70000;
+const MAX_LEN_OF = {
+  fuzz_envelope: BIG,
+  fuzz_item_body: BIG,
+  fuzz_cbor_value: BIG,
+  fuzz_export_file: BIG,
+};
+const DEFAULT_MAX_LEN = 4096;
+/** The most any seed may be, for reading vector values. */
+const MAX_LEN = BIG;
 /** Most seeds per target (the shortest are kept, spread over the length range). */
 const MAX_SEEDS = 160;
 
@@ -47,7 +61,7 @@ function bytesOf(v) {
 
 const seeds = {};
 const add = (target, buf) => {
-  if (buf && buf.length <= MAX_LEN) (seeds[target] ??= []).push(buf);
+  if (buf && buf.length <= (MAX_LEN_OF[target] ?? DEFAULT_MAX_LEN)) (seeds[target] ??= []).push(buf);
 };
 const withMode = (mode, body) => (body ? Buffer.concat([Buffer.from([mode]), body]) : null);
 

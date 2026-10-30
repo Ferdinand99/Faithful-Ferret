@@ -60,7 +60,9 @@ fi
 
 # Build once, so that the time of each run is fuzzing and not compiling.
 echo "fuzz-run.sh: building ${#targets[@]} target(s) with $nightly" >&2
-if ! cargo fuzz build "${fuzz_args[@]}"; then
+build_args=()
+[ "$target" = all ] || build_args=("$target")
+if ! cargo fuzz build "${fuzz_args[@]}" "${build_args[@]}"; then
   echo "fuzz-run.sh: build failed" >&2
   exit 1
 fi
@@ -80,10 +82,17 @@ for t in "${targets[@]}"; do
     limits=("-max_total_time=$seconds")
     corpora=("fuzz/corpus/$t" "fuzz/regression/$t")
   fi
+  # The targets that take bodies, envelopes and byte strings up to their real
+  # limits (61 440 padded, 65 536 envelope, 64 KiB strings) get a larger input
+  # size; keep this map equal to MAX_LEN_OF in scripts/fuzz-seeds.mjs.
+  case "$t" in
+    fuzz_envelope | fuzz_item_body | fuzz_cbor_value | fuzz_export_file) maxlen=70000 ;;
+    *) maxlen=4096 ;;
+  esac
   echo "fuzz-run.sh: $mode $t" >&2
   # shellcheck disable=SC2086
   cargo fuzz run "${fuzz_args[@]}" "$t" "${corpora[@]}" -- \
-    "${limits[@]}" "${dict[@]}" -timeout=60 -rss_limit_mb=4096 -print_final_stats=1 ${FUZZ_EXTRA:-} \
+    "${limits[@]}" "${dict[@]}" -max_len=$maxlen -timeout=60 -rss_limit_mb=4096 -print_final_stats=1 ${FUZZ_EXTRA:-} \
     >"$log" 2>&1
   rc=$?
   echo "$rc" >"fuzz/.out/$t.status"

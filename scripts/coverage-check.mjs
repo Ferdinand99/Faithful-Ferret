@@ -7,9 +7,15 @@
 // format). The thresholds live in scripts/coverage-thresholds.json: lines and
 // branches per module, and the lines of the whole core. Files under
 // "exclude" (the test-support code) are not counted anywhere. Exit code 1 if
-// a threshold is not met.
+// a threshold is not met, or if a path listed for a module matches no file.
+//
+// Inline #[cfg(test)] modules (for example in codes.rs) are counted too:
+// llvm-cov cannot leave them out without #[coverage(off)] attributes, which
+// need a nightly feature gate in the library source. Leaving them out changes
+// the figures by under half a point (codes.rs lines 98.75 -> 98.29, core total
+// 97.30 -> 97.26, branches unchanged) and no threshold turns on it.
 import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,8 +29,14 @@ if (!input) {
 const config = JSON.parse(readFileSync(join(here, 'coverage-thresholds.json'), 'utf8'));
 const report = JSON.parse(readFileSync(resolve(input), 'utf8'));
 
-// Paths in the report are absolute (/src/...); make them relative to the repo.
-const rel = (f) => f.replace(/\\/g, '/').replace(/^.*?(crates\/ferret-core\/|ct\/harness\/)/, '$1');
+// Paths in the report are absolute (/src/...) and, for the files that the core
+// includes with include!, spelled with ".." (for example
+// /src/crates/ferret-core/src/../../../ct/harness/crockford.rs). Resolve the
+// ".." first, then make the path relative to the repo.
+const rel = (f) =>
+  posix
+    .normalize(f.replace(/\\/g, '/'))
+    .replace(/^.*?(crates\/ferret-core\/|ct\/harness\/)/, '$1');
 
 const files = new Map();
 for (const datum of report.data) {
@@ -62,12 +74,17 @@ const verdict = (value, min) => {
 };
 
 for (const [name, mod] of Object.entries(config.modules)) {
-  const selected = counted.filter(([f]) => mod.paths.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p)));
-  if (selected.length === 0) {
-    console.error(`coverage-check: module ${name} matches no file`);
-    failed = true;
-    continue;
+  const matches = (p) => (f) => (p.endsWith('/') ? f.startsWith(p) : f === p);
+  // Every listed path must match a file: a path that silently matches nothing
+  // would leave code out of the module and flatter its figure.
+  for (const p of mod.paths) {
+    if (!counted.some(([f]) => matches(p)(f))) {
+      console.error(`coverage-check: module ${name}: the path ${p} matches no file of the report`);
+      failed = true;
+    }
   }
+  const selected = counted.filter(([f]) => mod.paths.some((p) => matches(p)(f)));
+  if (selected.length === 0) continue;
   const t = sum(selected);
   rows.push({
     name,
