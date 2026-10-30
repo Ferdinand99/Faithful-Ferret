@@ -1,0 +1,12 @@
+# The methods of the WebAssembly binding whose name starts with `reveal_`.
+# Each one hands one secret to the interface, on an explicit request by the
+# user (show a field, show the recovery key after setup). The test
+# `reveal_allowlist_matches_exports` compares this list with the exports of
+# the build in both directions. One name per line; `#` starts a comment.
+reveal_emergency_sheet
+reveal_item_field
+reveal_item_notes
+reveal_plain_export
+reveal_recovery_code
+reveal_secret_key_code
+reveal_totp_secret

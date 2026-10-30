@@ -3,3 +3,7 @@
 /pkg-node/
 node_modules/
 *.log
+
+# WebAssembly packages built by scripts/lanbox-wasm.sh
+/bindings/wasm/pkg-*
+/bindings/wasm/node_modules
