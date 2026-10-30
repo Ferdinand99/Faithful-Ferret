@@ -42,6 +42,7 @@ const NOT_SHAPES: &[&str] = &[
     "headers.json",
     "generate.mjs",
     "error_codes.json",
+    "error_statuses.json",
     "invalid.json",
 ];
 
@@ -417,6 +418,29 @@ fn lengths_match_the_spec() {
         let text = json_of(name)[key].as_str().unwrap().to_string();
         assert_eq!(text.len(), 32, "{name} {key}");
         assert!(hex16::decode(&text).is_ok(), "{name} {key}");
+    }
+}
+
+#[test]
+fn error_statuses_are_the_status_table() {
+    // The same file is read by the web vault, which decides what to do with an
+    // error from its status; both sides must agree on every code.
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(&read("error_statuses.json")).unwrap();
+    assert_eq!(
+        golden.len(),
+        ERROR_CODES.len(),
+        "the file lists every code once"
+    );
+    for code in ERROR_CODES {
+        let status = golden
+            .get(*code)
+            .unwrap_or_else(|| panic!("{code} has no status in error_statuses.json"));
+        assert_eq!(
+            u64::from(ferret_server::error::status_of(code).as_u16()),
+            status.as_u64().unwrap(),
+            "{code}"
+        );
     }
 }
 
