@@ -1,7 +1,7 @@
 // Setup QR payload of the emergency sheet (vectors/OPS.md, sheet.qr.build and sheet.qr.parse).
 import net from 'node:net';
 import { fail, hex, unhex, ascii } from './util.mjs';
-import { KSF_PROFILES } from './keys.mjs';
+import { ksfParams } from './keys.mjs';
 
 const bad = (why) => fail('malformed_setup_qr', why);
 const UNRESERVED = /^[A-Za-z0-9\-._~]$/;
@@ -74,7 +74,7 @@ function pctEncode(s) {
 
 export function buildPayload({ url, accountId, profile, skBit, serverKey }) {
   checkServerAddress(url);
-  if (!KSF_PROFILES[profile]) fail('kdf_profile_unknown');
+  if (!ksfParams(profile)) fail('kdf_profile_unknown');
   return `ferret-setup:v1?u=${pctEncode(url)}&a=${hex(accountId)}&k=${profile}&s=${skBit ? 1 : 0}&o=${hex(serverKey)}`;
 }
 
@@ -114,6 +114,6 @@ export function parsePayload(payload) {
   if (vals.s !== '0' && vals.s !== '1') bad('sk bit');
   if (!/^[0-9a-f]{64}$/.test(vals.o)) bad('server key');
   const profile = Number(vals.k);
-  if (!KSF_PROFILES[profile]) fail('kdf_profile_unknown');
+  if (!ksfParams(profile)) fail('kdf_profile_unknown');
   return { url, accountId: unhex(vals.a), profile, skBit: vals.s === '1', serverKey: unhex(vals.o) };
 }

@@ -9,7 +9,7 @@ import { get, webcryptoVerify, spki } from './passkey.mjs';
 import * as p256 from './p256.mjs';
 import { unhex, hex } from './util.mjs';
 import { encode } from './cbor.mjs';
-import { parseBody } from './body.mjs';
+import { parseBody, parseManifest } from './body.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(fs.readFileSync(path.join(here, '../../../vectors/internal/passkey.json'), 'utf8'));
@@ -71,28 +71,68 @@ ok('a signature with one bit changed is refused');
   assert.equal(await webcryptoVerify(key, msg, sig.subarray(0, sig.length - 1)), false);
   ok('WebCrypto verification accepts only the right key, data and DER');
 }
-// 6. item bodies are written with the known keys in schema order first, then the unknown keys as read
+// 6. item bodies are written with the known keys in schema order first, then the unknown keys as read,
+//    at every level: top level, fields[], urls[], totp and passkey
+const t = (x) => ({ k: 'text', v: x });
+const u = (x) => ({ k: 'int', v: BigInt(x) });
+const bytes = (n) => ({ k: 'bytes', v: new Uint8Array(n) });
+const map = (v) => ({ k: 'map', v });
+const keysOf = (m) => m.v.map(([k]) => k);
+const at = (m, key) => m.v.find(([k]) => k === key)[1];
+const scrambled = (extra) =>
+  map([
+    ...extra('top'),
+    ['favorite', { k: 'bool', v: false }],
+    ['name', t('n')],
+    ['modified', u(2)],
+    ['passkey', map([...extra('passkey'), ['prf_seed_nouv', bytes(32)], ['created', u(1)], ['sign_count', u(0)], ['priv', bytes(8)], ['user_name', t('a')], ['user_handle', bytes(4)], ['rp_id', t('r')], ['cred_id', bytes(4)], ['prf_seed_uv', bytes(32)]])],
+    ['schema', u(1)],
+    ['created', u(1)],
+    ['totp', map([...extra('totp'), ['uri', t('otpauth://totp/x?secret=ME')]])],
+    ['urls', { k: 'array', v: [map([...extra('url'), ['match', t('host')], ['url', t('https://a')]])] }],
+    ['fields', { k: 'array', v: [map([...extra('field'), ['value', t('v')], ['kind', t('text')], ['label', t('l')], ['id', t('i')]])] }],
+    ['type', t('login')],
+  ]);
 {
-  const t = (s) => ({ k: 'text', v: s });
-  const body = {
-    k: 'map',
-    v: [
-      ['zz_unknown', t('a')],
-      ['favorite', { k: 'bool', v: false }],
-      ['name', t('n')],
-      ['modified', { k: 'int', v: 2n }],
-      ['aa_unknown', { k: 'int', v: 1n }],
-      ['schema', { k: 'int', v: 1n }],
-      ['created', { k: 'int', v: 1n }],
-      ['urls', { k: 'array', v: [{ k: 'map', v: [['x', t('u')], ['url', t('https://a')]] }] }],
-      ['fields', { k: 'array', v: [] }],
-      ['type', t('login')],
-    ],
+  const out = parseBody(encode(scrambled((where) => [[`zz_${where}`, t('a')], [`aa_${where}`, u(1)]]))).value;
+  assert.deepEqual(keysOf(out), ['schema', 'type', 'name', 'fields', 'urls', 'totp', 'passkey', 'created', 'modified', 'favorite', 'zz_top', 'aa_top']);
+  assert.deepEqual(keysOf(at(out, 'fields').v[0]), ['id', 'label', 'kind', 'value', 'zz_field', 'aa_field']);
+  assert.deepEqual(keysOf(at(out, 'urls').v[0]), ['url', 'match', 'zz_url', 'aa_url']);
+  assert.deepEqual(keysOf(at(out, 'totp')), ['uri', 'zz_totp', 'aa_totp']);
+  assert.deepEqual(keysOf(at(out, 'passkey')), ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv', 'zz_passkey', 'aa_passkey']);
+  ok('known keys come first in schema order at every level, unknown keys follow as read');
+}
+// 6b. unknown keys named like members of Object.prototype are kept as any other unknown key, at every level
+{
+  const names = ['toString', 'valueOf', 'hasOwnProperty', 'constructor', '__proto__', 'isPrototypeOf'];
+  const input = scrambled((where) => names.map((n, i) => [n, t(`${where}-${i}`)]));
+  const out = parseBody(encode(input)).value;
+  const sameTail = (m, where, known) => {
+    assert.deepEqual(keysOf(m).slice(known), names);
+    assert.deepEqual(m.v.slice(known).map(([, v]) => v.v), names.map((n, i) => `${where}-${i}`));
   };
-  const out = parseBody(encode(body)).value;
-  assert.deepEqual(out.v.map(([k]) => k), ['schema', 'type', 'name', 'fields', 'urls', 'created', 'modified', 'favorite', 'zz_unknown', 'aa_unknown']);
-  assert.deepEqual(out.v.find(([k]) => k === 'urls')[1].v[0].v.map(([k]) => k), ['url', 'x']);
-  ok('known keys come first in schema order, unknown keys follow as read');
+  sameTail(out, 'top', 10);
+  sameTail(at(out, 'fields').v[0], 'field', 4);
+  sameTail(at(out, 'urls').v[0], 'url', 2);
+  sameTail(at(out, 'totp'), 'totp', 1);
+  sameTail(at(out, 'passkey'), 'passkey', 9);
+  // and the bytes survive a round trip
+  assert.equal(hex(encode(parseBody(encode(out)).value)), hex(encode(out)));
+  ok('unknown keys named toString, valueOf, __proto__ ... round-trip unchanged at every level');
+}
+// 6c. manifests: known keys first in schema order (top level and method entries), then unknown keys as read
+{
+  const raw = (extra) =>
+    map([
+      ...extra('top'),
+      ['methods', { k: 'array', v: [map([...extra('m'), ['g', u(1)], ['id', bytes(16)], ['t', u(1)]])] }],
+      ['vk_epoch', u(1)],
+      ['v', u(1)],
+    ]);
+  const out = parseManifest(encode(raw((w) => [[`zz_${w}`, u(1)], ['toString', t('x')], ['__proto__', t('y')]]))).value;
+  assert.deepEqual(keysOf(out), ['v', 'vk_epoch', 'methods', 'zz_top', 'toString', '__proto__']);
+  assert.deepEqual(keysOf(at(out, 'methods').v[0]), ['t', 'id', 'g', 'zz_m', 'toString', '__proto__']);
+  ok('manifest keys follow the same rule as body keys');
 }
 // 7. an op without a handler (and not in NOT_COVERED) makes the runner exit non-zero
 {

@@ -83,12 +83,12 @@ for (const f of files) {
       if (c.status === 'valid') c.expect = damage(c.expect);
       else c.expect_error = `${c.expect_error}_damaged`;
     }
-    if (NOT_COVERED[c.op]) {
+    if (Object.hasOwn(NOT_COVERED, c.op)) {
       row.notCovered.push(c.id);
       row.reasons.add(`${c.op}: ${NOT_COVERED[c.op]}`);
       continue;
     }
-    const fn = registry[c.op];
+    const fn = Object.hasOwn(registry, c.op) ? registry[c.op] : undefined;
     if (!fn) {
       row.notCovered.push(c.id);
       row.reasons.add(`${c.op}: NO HANDLER (not in the NOT_COVERED list)`);

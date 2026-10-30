@@ -4,7 +4,7 @@
 import { unhex, hex, fail, equal, textInputToBytes, utf8, concat } from '../util.mjs';
 import { sha256, ed25519Sign } from '../crypto.mjs';
 import { C, decode, encode } from '../cbor.mjs';
-import { vkDerive, kekPassword, kekRecovery, recoveryKeypair, KSF_PROFILES } from '../keys.mjs';
+import { vkDerive, kekPassword, kekRecovery, recoveryKeypair, ksfParams } from '../keys.mjs';
 import { wrapSeal, wrapOpen } from '../wrap.mjs';
 import { KIND, ZERO_ID, sealEnvelope, openEnvelope, splitEnvelope, itemTag, verifyItemTag } from '../items.mjs';
 import { parseManifest } from '../body.mjs';
@@ -97,7 +97,7 @@ function checkRegistration(pinned, input, hasSk, currentProfile) {
     if (input.registration.server_public_key !== pinned.server_public_key) fail('pinned_server_key');
     if (hasSk !== pinned.sk_bit) fail('pinned_sk_bit');
   }
-  if (!KSF_PROFILES[input.ksf_profile]) fail('kdf_profile_unknown');
+  if (!ksfParams(input.ksf_profile)) fail('kdf_profile_unknown');
   if ((pinned && input.ksf_profile < pinned.ksf_profile) || (currentProfile !== undefined && input.ksf_profile < currentProfile)) fail('kdf_profile_downgrade');
   checkPassword(input);
 }

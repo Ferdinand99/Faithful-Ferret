@@ -74,13 +74,18 @@ None of these changed an expected value of a vector. Everything else matched on 
 10. **Body shape (appendix B).** Required for schema 1: `schema`, `type`, `name`, `fields` (each with `id`,
     `label`, `kind`, `value`), `urls` (each with `url`; `match` is optional), `created`, `modified`, `favorite`.
     Optional: `totp.uri`, the `passkey` map (the seeds optional), `notes`, `device`. A body with `schema` above 1 is
-    only checked to be a map with an integer `schema` and is written back unchanged.
+    only checked to be a map with an integer `schema` and is written back unchanged. **Open:** a reference that follows the
+    typed structure would rewrite such a body in schema order with defaults for missing keys; xcheck does not, and
+    no vector tells the two apart (the only schema 2 vector is a complete, in-order body). Left as it is, to be decided.
 11. **Order of unknown keys.** Written back with the known keys in schema order (appendix B), then the unknown keys in
     the order they were read, at the top level and in `fields[]`, `urls[]`, `totp` and `passkey`. This is what
     `OPS.md` says for `export.plain.json` ("schema order, then unknown keys as read") and what "typed structure plus
     `extra`" in section 5.2 means. The first version of xcheck kept the read order, which the vectors could not
     tell apart; it was corrected in fix round 1. No vector tells the two readings apart yet; `src/selftest.mjs`
-    covers it. Manifests are still written in the order read (no document says otherwise).
+    covers it.
+    Manifests follow the same rule (known keys first in schema order, at the top level and in each method entry,
+    then unknown keys as read): the controller ruled this on 30.10 to close a gap in the documents; `OPS.md` is to
+    be amended. A vector with an unknown key before a known one is still missing.
 12. **Floats** are kept at the width they were read (half, single, double) because `OPS.md` says "read and written
     back as it was". The JSON export prints finite floats with the shortest round-trip form and NaN or infinity as
     `null`; the design does not say, and no vector has a finite float in the plain export.

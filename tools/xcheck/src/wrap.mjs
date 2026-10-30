@@ -2,19 +2,23 @@
 import { aeadSeal, aeadOpen, ctEqual } from './crypto.mjs';
 import { tlvs, label, fU8, fU64, fBytes, T } from './tlv.mjs';
 import { concat, u32be, fail } from './util.mjs';
-import { commitOf, vkDerive, KSF_PROFILES } from './keys.mjs';
+import { commitOf, vkDerive, ksfParams } from './keys.mjs';
 
 export const METHOD = { password: 1, recovery: 2, prf: 3, pin: 4, device: 5 };
+function methodType(type) {
+  if (!Object.hasOwn(METHOD, type)) fail('unsupported');
+  return METHOD[type];
+}
 
 function kdfField(profile) {
-  const p = KSF_PROFILES[profile];
+  const p = ksfParams(profile);
   if (!p) fail('kdf_profile_unknown');
   return fBytes(T.kdf, concat(u32be(p.m), u32be(p.t), u32be(p.p)));
 }
 
 // type: password | recovery | prf | pin | device
 export function wrapAad(type, v) {
-  const common = [fU8(T.suite, 1), fBytes(T.account_id, v.accountId), fBytes(T.vault_id, v.vaultId), fU8(T.method_type, METHOD[type]), fBytes(T.method_id, v.methodId), fU64(T.vk_epoch, v.vkEpoch)];
+  const common = [fU8(T.suite, 1), fBytes(T.account_id, v.accountId), fBytes(T.vault_id, v.vaultId), fU8(T.method_type, methodType(type)), fBytes(T.method_id, v.methodId), fU64(T.vk_epoch, v.vkEpoch)];
   if (type === 'pin') {
     // The PIN AAD has its own label, vault_id and method_id, no kek_generation, and the device salt.
     return tlvs(label('ferret/v1/pin'), ...common, fBytes(T.device_salt, v.deviceSalt));

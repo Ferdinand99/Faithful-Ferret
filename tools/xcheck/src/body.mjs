@@ -108,21 +108,37 @@ const SCHEMA_ORDER = {
   passkey: ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv'],
 };
 
-function inSchemaOrder(map, order, nested = {}) {
+// `nested` is a Map: an unknown key named like a member of Object.prototype (toString, __proto__, ...) must be
+// treated as any other unknown key.
+function inSchemaOrder(map, order, nested = new Map()) {
   const known = order.map((k) => map.v.find(([key]) => key === k)).filter(Boolean);
   const unknown = map.v.filter(([k]) => !order.includes(k));
-  const fix = ([k, v]) => (nested[k] ? [k, nested[k](v)] : [k, v]);
+  const fix = ([k, v]) => (nested.has(k) ? [k, nested.get(k)(v)] : [k, v]);
   return { k: 'map', v: [...known, ...unknown].map(fix) };
 }
 
 export function normalizeBody(value) {
   const listOf = (order) => (arr) => ({ k: 'array', v: arr.v.map((m) => inSchemaOrder(m, order)) });
-  return inSchemaOrder(value, SCHEMA_ORDER.body, {
-    fields: listOf(SCHEMA_ORDER.field),
-    urls: listOf(SCHEMA_ORDER.url),
-    totp: (m) => inSchemaOrder(m, SCHEMA_ORDER.totp),
-    passkey: (m) => inSchemaOrder(m, SCHEMA_ORDER.passkey),
-  });
+  return inSchemaOrder(
+    value,
+    SCHEMA_ORDER.body,
+    new Map([
+      ['fields', listOf(SCHEMA_ORDER.field)],
+      ['urls', listOf(SCHEMA_ORDER.url)],
+      ['totp', (m) => inSchemaOrder(m, SCHEMA_ORDER.totp)],
+      ['passkey', (m) => inSchemaOrder(m, SCHEMA_ORDER.passkey)],
+    ]),
+  );
+}
+
+// Manifests follow the same rule (controller ruling, 30.10): known keys first in schema order, at the top
+// level and in each method entry, then unknown keys in the order read.
+export function normalizeManifest(value) {
+  return inSchemaOrder(
+    value,
+    ['v', 'vk_epoch', 'methods'],
+    new Map([['methods', (arr) => ({ k: 'array', v: arr.v.map((m) => inSchemaOrder(m, ['t', 'id', 'g', 'c'])) })]]),
+  );
 }
 
 export function parseBody(bytes) {
@@ -152,7 +168,7 @@ export function parseManifest(bytes) {
     list.push({ t: Number(t.v), id: id.v, g: g.v, c: c ? c.v : undefined });
   }
   // A manifest of another version is not read at all (unsupported), before the rest is judged.
-  return { value, version: v.v, epoch: epoch.v, methods: list };
+  return { value: normalizeManifest(value), version: v.v, epoch: epoch.v, methods: list };
 }
 
 export { decode, encode, concat };

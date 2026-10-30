@@ -9,6 +9,8 @@ export function checkKdfRange(m, t, p) {
 }
 
 export const KSF_PROFILES = { 1: { m: 65536, t: 3, p: 1 } };
+// Own properties only: a profile number from outside must never find an Object.prototype member.
+export const ksfParams = (profile) => (Object.hasOwn(KSF_PROFILES, profile) ? KSF_PROFILES[profile] : undefined);
 
 export function kekPassword(accountId, exportKey) {
   const salt = tlvs(label('ferret/v1/kek/password'), fBytes(T.account_id, accountId));
