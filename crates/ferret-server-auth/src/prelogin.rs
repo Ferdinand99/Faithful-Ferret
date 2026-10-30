@@ -95,11 +95,11 @@ fn hmac_with_name(
     let mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes());
     debug_assert!(mac.is_ok());
     mac.map(|mut mac| {
-            mac.update(label);
-            mac.update(name.as_str().as_bytes());
-            Zeroizing::new(mac.finalize().into_bytes().into())
-        })
-        .unwrap_or_default()
+        mac.update(label);
+        mac.update(name.as_str().as_bytes());
+        Zeroizing::new(mac.finalize().into_bytes().into())
+    })
+    .unwrap_or_default()
 }
 
 /// The credential id of a name that has no account.

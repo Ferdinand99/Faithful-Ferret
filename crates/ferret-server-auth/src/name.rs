@@ -222,8 +222,19 @@ mod tests {
             '\u{ad}', '\u{61c}', '\u{200b}', '\u{200d}', '\u{200e}', '\u{200f}', '\u{2028}',
             '\u{2029}', '\u{202a}', '\u{202e}', '\u{2060}', '\u{2066}', '\u{feff}', '\u{fff9}',
         ] {
-            for raw in [format!("a{c}b@x.no"), format!("{c}ab@x.no"), format!("ab@x.no{c}")] {
-                assert_eq!(normalize_login_name(&raw).unwrap_err(), refused(), "{raw:?}");
+            let mut raws = vec![format!("a{c}b@x.no")];
+            // The line and paragraph separators are white space: at the
+            // ends they are trimmed, inside they are refused.
+            if !c.is_whitespace() {
+                raws.push(format!("{c}ab@x.no"));
+                raws.push(format!("ab@x.no{c}"));
+            }
+            for raw in raws {
+                assert_eq!(
+                    normalize_login_name(&raw).unwrap_err(),
+                    refused(),
+                    "{raw:?}"
+                );
             }
         }
     }
