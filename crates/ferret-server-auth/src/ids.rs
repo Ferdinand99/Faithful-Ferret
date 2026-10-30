@@ -90,6 +90,13 @@ impl LoginId {
         Ok(Self(bytes))
     }
 
+    /// The raw bytes, for the one place that binds a sealed state to the id.
+    // The first caller is the sealing of a login state by `login_start`.
+    #[allow(dead_code)]
+    pub(crate) const fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+
     /// The wire form: 32 lower-case hexadecimal characters.
     pub fn to_hex(&self) -> String {
         let mut out = String::with_capacity(Self::HEX_LEN);

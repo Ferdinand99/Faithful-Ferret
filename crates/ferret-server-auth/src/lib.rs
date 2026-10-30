@@ -36,10 +36,19 @@
 //! /64, an IPv4-mapped one as IPv4) and counts a caller without an address in
 //! one shared bucket, so a limit cannot be skipped by a missing header.
 //!
+//! # Login state
+//!
+//! Between `login_start` and `login_finish` the server keeps the state of the
+//! OPAQUE exchange, sealed, in a [`LoginStateStore`]. The state lives for
+//! [`STATE_TTL_SECS`] seconds and is used once: the first `take` removes it,
+//! so a repeated or simultaneous `login_finish` finds nothing.
+//!
 //! # Features
 //!
 //! * `test-support` (off by default, never part of a release): the manual
-//!   clock `ManualClock` and the replay RNGs of the core.
+//!   clock `ManualClock`, the replay RNGs of the core, the recording
+//!   throttle, and the `testing` module with the checks every login state
+//!   store must pass.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -73,6 +82,9 @@ pub mod record;
 pub mod registration;
 pub mod secret_file;
 pub mod startup;
+pub mod state;
+#[cfg(feature = "test-support")]
+pub mod testing;
 pub mod throttle;
 
 #[cfg(feature = "test-support")]
@@ -95,6 +107,9 @@ pub use secret_file::{
     encode_secret_file, permissions_enforced, read_secret_file, write_new_secret_file,
 };
 pub use startup::{StartupDecision, StartupRefusal, startup_decision};
+pub use state::{
+    InMemoryLoginStateStore, LoginPurpose, LoginStateStore, SealedState, StateSealKey, StoreError,
+};
 pub use throttle::{Caller, NoThrottle, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
 #[cfg(feature = "test-support")]
 pub use throttle::{RecordingThrottle, ThrottleCall};
