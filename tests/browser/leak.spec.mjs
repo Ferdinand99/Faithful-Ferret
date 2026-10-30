@@ -3,16 +3,24 @@
 // client of bindings/wasm/js.
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { findLeaks } from "./walker.mjs";
+import { findLeaks, findTextLeaks } from "./walker.mjs";
 import { keep, openHarness } from "./support.mjs";
 
 const place = (l) => `${l.worker}:${l.dir}:${l.method}`;
+
+// The methods that take a code as an argument, by the code.
+const CODE_ARGUMENTS = {
+  "recovery key code": ["unlock_recovery", "recover"],
+  "secret key code": ["login_start", "register_start"],
+  "recovery key code (recovered)": [],
+  "recovery key code (rekey)": [],
+};
 
 test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) => {
   test.setTimeout(240_000);
   await openHarness(page);
   const run = await page.evaluate(() => window.ferret.leakRun());
-  const { messages, secrets, zeroChecks } = run;
+  const { messages, secrets, texts, anchored, zeroChecks } = run;
 
   // The watch sees both workers and both directions.
   for (const worker of ["vault", "job"]) {
@@ -27,8 +35,39 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     "k_head (epoch 2)", "seed_a (epoch 2)",
     "KEK_pw", "KEK_pw (changed)", "KEK_pw (recovered)", "KEK_rk", "KEK_rk (rekey)", "KEK_pin", "KEK_prf",
     "passkey scalar", "passkey seed_uv", "passkey seed_nouv", "PRF output", "RK", "SK",
+    "export key (create)", "export key (changed)", "export key (recovered)",
   ];
   for (const name of required) expect(Object.keys(secrets), name).toContain(name);
+
+  // Every secret that the page derived was proven right against the vault, or
+  // is read from the vault itself. Without this, a wrong derivation would be a
+  // secret that is never found, and the search would pass for nothing.
+  const proof = (name) => {
+    let m;
+    if (/^(VK|IK|passkey )/.test(name)) return "read from the worker";
+    if (name === "PRF output") return "generated here and found in its arguments";
+    if (/^(RK|SK)( \(.*\))?$/.test(name)) return "decoded from the code the worker revealed";
+    if ((m = /^(KEK_(?:pw|rk|pin|prf)(?: \((?:changed|recovered|rekey)\))?)$/.exec(name))) return `${m[1]} opens the wrap to the vault key`;
+    if ((m = /^export key \((create|changed|recovered)\)$/.exec(name))) {
+      return `KEK_pw${m[1] === "create" ? "" : ` (${m[1]})`} opens the wrap to the vault key`;
+    }
+    if ((m = /^(k_head|k_del|k_meta|seed_a) \(epoch (\d)\)$/.exec(name))) {
+      return {
+        k_head: `k_head tags an item, epoch ${m[2]}`,
+        k_del: `k_del opens a tombstone, epoch ${m[2]}`,
+        k_meta: `k_meta opens the manifest, epoch ${m[2]}`,
+        seed_a: `pk_a from seed_a, epoch ${m[2]}`,
+      }[m[1]];
+    }
+    return null;
+  };
+  for (const name of Object.keys(secrets)) {
+    const how = proof(name);
+    expect(how, `${name} has a proof`).not.toBeNull();
+    const fromSource = ["read from the worker", "generated here and found in its arguments", "decoded from the code the worker revealed"];
+    expect(fromSource.includes(how) || anchored.includes(how), `${name}: ${how}`).toBe(true);
+  }
+  expect(anchored).toHaveLength(17);
 
   // The export-file key K_exp is the one secret that crosses, from the job
   // worker to the page and on to the vault worker.
@@ -59,6 +98,20 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     return false;
   };
 
+  // The codes the user is shown and types back (base32 text, not bytes).
+  const codeAllowed = (m, name) =>
+    m.worker === "vault" &&
+    ((m.dir === "in" && (m.method === "reveal_recovery_code" || m.method === "reveal_secret_key_code")) ||
+      (m.dir === "out" && CODE_ARGUMENTS[name]?.includes(m.method)));
+  const codeLeaks = findTextLeaks(messages, texts, codeAllowed);
+  expect(codeLeaks.map((l) => `${place(l)} ${l.path} holds ${l.secret}`)).toEqual([]);
+  const codePlaces = Object.fromEntries(
+    Object.keys(texts).map((name) => [
+      name,
+      [...new Set(findTextLeaks(messages, { [name]: texts[name] }).map(place))].sort(),
+    ]),
+  );
+
   const all = findLeaks(messages, everything);
   const leaks = findLeaks(messages, everything, allowed);
   expect(leaks.map((l) => `${place(l)} ${l.path} holds ${l.secret}`)).toEqual([]);
@@ -66,6 +119,8 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
   // And the exceptions are exactly where they should be.
   const placements = (pick) => [...new Set(all.filter((l) => pick(l.secret)).map(place))].sort();
   expect(placements(isKexp)).toEqual(["job:in:argon2_export_key", "vault:out:export_finish", "vault:out:import_open"]);
+  // The file is written and opened with the same password, salt and parameters: one key, twice.
+  expect(kexp["K_exp #1"]).toBe(kexp["K_exp #2"]);
   expect(placements((n) => n === "PRF output")).toEqual(["vault:out:unlock_prf", "vault:out:wrap_prf"]);
   expect(all.filter((l) => !isKexp(l.secret) && l.secret !== "PRF output")).toEqual([]);
 
@@ -74,6 +129,13 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
   expect(zeroChecks.exportKeyAfterOpen).toBe(true);
   expect(run.jobWorkers).toEqual([true, true]);
   expect(run.imported).toBe(2);
+
+  expect(codePlaces).toEqual({
+    "recovery key code": ["vault:in:reveal_recovery_code", "vault:out:recover", "vault:out:unlock_recovery"],
+    "secret key code": ["vault:in:reveal_secret_key_code", "vault:out:login_start", "vault:out:register_start"],
+    "recovery key code (recovered)": ["vault:in:reveal_recovery_code"],
+    "recovery key code (rekey)": ["vault:in:reveal_recovery_code"],
+  });
 
   console.log(
     `[${browserName}] leak walk: ${messages.length} messages, ${Object.keys(everything).length} secrets, ${leaks.length} leaks`,
@@ -84,6 +146,24 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     leaks: leaks.length,
     exceptions: all.length,
   });
+});
+
+test("the_code_search_finds_a_planted_code", () => {
+  const code = "FFR1-ABCD-EFGH-JKMN-PQRS-TVWX-YZ23-4567-ABCD-EFGH-JKMN-PQRS-TVWX";
+  const text = (t) => [{ worker: "vault", dir: "in", method: "x", leaves: [{ path: "", text: t }] }];
+  const bytes = (t) => [{ worker: "vault", dir: "in", method: "x", leaves: [{ path: "", hex: Buffer.from(t).toString("hex") }] }];
+  for (const m of [
+    text(code),
+    text(`before ${code} after`),
+    text(code.replaceAll("-", "").toLowerCase()),
+    text(code.replaceAll("-", " ")),
+    bytes(code),
+    bytes(`note: ${code}`),
+  ]) {
+    expect(findTextLeaks(m, { code }).length).toBe(1);
+  }
+  expect(findTextLeaks(text("FFR1-ABCD-EFGH"), { code })).toEqual([]);
+  expect(findTextLeaks(text(code), { code }, () => true)).toEqual([]);
 });
 
 test("the_walk_finds_a_secret_when_one_is_there", async ({ page }) => {

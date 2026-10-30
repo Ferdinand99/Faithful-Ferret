@@ -303,17 +303,91 @@ async function leakRun() {
     secrets[name] = bytesHex;
   };
   const zeroChecks = {};
+  /** Codes the user is shown and types back: text secrets, searched as written. */
+  const texts = {};
   const accountHex = hex(IDS.account_id);
   const server = new wasm.TestServer(enc.encode("browser-leak"));
 
+  /** What each derived secret was checked against in the vault, by name. */
+  const anchored = [];
+  const ext = (kind, input) => JSON.parse(wasm.test_external(kind, JSON.stringify(input)));
+  const must = (condition, what) => {
+    if (!condition) throw new Error(`not anchored: ${what}`);
+    anchored.push(what);
+  };
+
+  /** The keys derived from a vault key; `seed_a` is proven by `pk_a` (`anchorKeys` does the rest). */
   const derive = (vkHex, epoch) => {
     const k = op(wasm, "vault_derive_keys", "kdf.vk_derive", {
       account_id: accountHex, vault_id: hex(IDS.vault_id), vk_epoch: String(epoch), vk: vkHex,
     });
     for (const name of ["k_head", "k_del", "k_meta", "seed_a"]) add(`${name} (epoch ${epoch})`, k[name]);
+    return k;
   };
+
+  // TLV, as the spec writes it: tag, two-byte length, value.
+  const tlv = (...fields) =>
+    Uint8Array.from(fields.flatMap(([tag, bytes]) => [tag, bytes.length >> 8, bytes.length & 255, ...bytes]));
+  const label = (text) => [0x01, enc.encode(text)];
+  const u8 = (tag, v) => [tag, Uint8Array.of(v)];
+  const u64 = (tag, v) => {
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setBigUint64(0, BigInt(v));
+    return [tag, b];
+  };
+  const idField = (tag, bytes) => [tag, bytes];
+
+  /**
+   * Known answers against the vault for the derived keys of an epoch: the
+   * public key from `seed_a` is the vault's own; a tag made by the vault is
+   * the HMAC under `k_head`; a tombstone and a manifest made by the vault
+   * open under `k_del` and `k_meta`.
+   */
+  const anchorKeys = async (k, epoch, { authPublicKey, item, manifest, tombstone }) => {
+    must(k.pk_a === hex(authPublicKey), `pk_a from seed_a, epoch ${epoch}`);
+    const message = tlv(
+      label("ferret/v1/item-tag"),
+      idField(0x12, item.item_id),
+      u64(0x22, item.rev),
+      idField(0x35, await sha256(item.envelope)),
+    );
+    must(ext("hmac", { key: k.k_head, msg: hex(message) }).mac === hex(item.tag), `k_head tags an item, epoch ${epoch}`);
+    const tombAad = tlv(label("ferret/v1/tomb"), u8(0x02, 1), u8(0x03, 1), idField(0x11, IDS.vault_id), idField(0x12, tombstone.item_id), u64(0x22, tombstone.rev));
+    const tomb = ext("aead_open", { key: k.k_del, aad: hex(tombAad), blob: hex(tombstone.tomb) });
+    must(tomb.ok && tomb.pt === "", `k_del opens a tombstone, epoch ${epoch}`);
+    const metaAad = tlv(label("ferret/v1/manifest"), u8(0x02, 1), u8(0x03, 1), u8(0x04, 2), idField(0x11, IDS.vault_id), idField(0x12, new Uint8Array(16)), u64(0x22, manifest.rev));
+    const meta = ext("aead_open", { key: k.k_meta, aad: hex(metaAad), blob: hex(manifest.envelope.slice(3)) });
+    must(meta.ok && meta.pt.length > 0, `k_meta opens the manifest, epoch ${epoch}`);
+  };
+
   const kekPassword = (exportKeyHex) =>
     op(wasm, "kek_from_export_key", "kdf.kek.password", { account_id: accountHex, export_key: exportKeyHex }).kek;
+  const kekRecovery = (rkHex) => op(wasm, "kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk: rkHex }).kek;
+
+  /** Opens a wrap with a KEK the page derived: it must give the vault key of the worker. */
+  const anchorWrap = (what, wrap, kek, vkHex, epoch) => {
+    const method = { type: wrap.method.type };
+    if (wrap.method.ksf_profile != null) method.ksf_profile = wrap.method.ksf_profile;
+    if (wrap.method.credential_id != null) method.credential_id = hex(wrap.method.credential_id);
+    if (wrap.method.prf_salt != null) method.prf_salt = hex(wrap.method.prf_salt);
+    if (wrap.method.device_salt != null) method.device_salt = hex(wrap.method.device_salt);
+    const reply = JSON.parse(
+      wasm.test_run_case(
+        "wrap_open",
+        JSON.stringify({
+          op: "wrap.open",
+          input: {
+            account_id: accountHex, vault_id: hex(IDS.vault_id), vk_epoch: String(epoch),
+            method_id: hex(wrap.method_id), kek_generation: String(wrap.kek_generation),
+            kek, wrap: hex(wrap.wrap), method,
+          },
+          rng: [],
+        }),
+      ),
+    );
+    must(reply.ok && reply.output.vk === vkHex, `${what} opens the wrap to the vault key`);
+    return reply.output.pk_a;
+  };
   /** The OPAQUE export key of a registration, found by signing in on the page. */
   const exportKeyOf = (password, skCode, record, pin) => {
     const job = new wasm.UnlockJob();
@@ -330,17 +404,25 @@ async function leakRun() {
   const created = await client.vault.create_account(URL_, IDS);
   const vk1 = (await probe({ op: "vk" })).vk;
   add("VK", vk1);
-  derive(vk1, 1);
+  const keys1 = derive(vk1, 1);
   const rkCode = await client.vault.reveal_recovery_code();
   const skCode = await client.vault.reveal_secret_key_code();
+  texts["recovery key code"] = rkCode;
+  texts["secret key code"] = skCode;
   const rk = op(wasm, "recovery_key_decode", "code.rk.decode", { code: rkCode }).key;
   add("RK", rk);
-  add("KEK_rk", op(wasm, "kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk }).kek);
+  const kekRk1 = kekRecovery(rk);
+  add("KEK_rk", kekRk1);
   add("SK", op(wasm, "secret_key_decode", "code.sk.decode", { code: skCode }).key);
   const pin1 = pinned(created.pinned);
-  add("KEK_pw", kekPassword(exportKeyOf(PASSWORD, skCode, registration.record, pin1)));
+  const exportKey1 = exportKeyOf(PASSWORD, skCode, registration.record, pin1);
+  const kekPw1 = kekPassword(exportKey1);
+  add("export key (create)", exportKey1);
+  add("KEK_pw", kekPw1);
+  anchorWrap("KEK_pw", created.wraps[0], kekPw1, vk1, 1);
+  anchorWrap("KEK_rk", created.wraps[1], kekRk1, vk1, 1);
   await client.vault.context();
-  await client.vault.auth_public_key();
+  const authPublicKey1 = await client.vault.auth_public_key();
 
   // ---- items
   const id = fill(16, 0x41);
@@ -350,10 +432,16 @@ async function leakRun() {
   await client.vault.item_view(h);
   await client.vault.totp_code(h, 59);
   const edited = await client.vault.encrypt_item(id, 2, { name: "Renamed" }, h, NOW + 1);
-  await client.vault.make_tombstone(fill(16, 0x42), 3);
+  const tomb1 = await client.vault.make_tombstone(fill(16, 0x42), 3);
   await client.vault.auth_sign("unlock-method.add", fill(32, 1), enc.encode("body"));
   await client.vault.make_checkpoint(1, [{ item_id: id, rev: 2, hash: fill(32, 7) }]);
   await client.vault.seed_pinned(created.pinned, created.manifest);
+  await anchorKeys(keys1, 1, {
+    authPublicKey: authPublicKey1,
+    item: { item_id: id, rev: sealed.rev, envelope: sealed.envelope, tag: sealed.tag },
+    manifest: created.manifest,
+    tombstone: { item_id: fill(16, 0x42), rev: 3, tomb: tomb1.tomb },
+  });
 
   // ---- a passkey inside the vault
   const caller = { origin: "https://example.com", top_origin_is_same: true };
@@ -375,11 +463,15 @@ async function leakRun() {
 
   // ---- the wraps of a PIN and of a passkey method
   const pinWrap = await client.vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), null);
-  add("KEK_pin", op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt) }).kek);
+  const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt) }).kek;
+  add("KEK_pin", kekPin);
+  anchorWrap("KEK_pin", pinWrap, kekPin, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
   add("PRF output", hex(prfOutput));
   const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1);
-  add("KEK_prf", op(wasm, "kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek);
+  const kekPrf = op(wasm, "kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek;
+  add("KEK_prf", kekPrf);
+  anchorWrap("KEK_prf", prfWrap, kekPrf, vk1, 1);
 
   // ---- every way to unlock (each replaces the vault in the worker)
   const ke1 = await client.vault.login_start(enc.encode(PASSWORD), skCode);
@@ -395,17 +487,29 @@ async function leakRun() {
   // ---- change the password
   const changeRequest = await client.vault.register_start(enc.encode(PASSWORD_2), { kind: "code", code: skCode });
   const changeReg = await client.vault.register_finish(server.register_response(IDS.account_id, changeRequest), 1);
-  add("KEK_pw (changed)", kekPassword(exportKeyOf(PASSWORD_2, skCode, changeReg.record, pin1)));
-  await client.vault.change_password(created.pinned, created.wraps[0], created.manifest);
+  const exportKeyChanged = exportKeyOf(PASSWORD_2, skCode, changeReg.record, pin1);
+  const kekPwChanged = kekPassword(exportKeyChanged);
+  add("export key (changed)", exportKeyChanged);
+  add("KEK_pw (changed)", kekPwChanged);
+  const changed = await client.vault.change_password(created.pinned, created.wraps[0], created.manifest);
+  anchorWrap("KEK_pw (changed)", changed.wrap, kekPwChanged, vk1, 1);
 
   // ---- recover
   const recoverRequest = await client.vault.register_start(enc.encode(PASSWORD_2), { kind: "code", code: skCode });
   const recoverReg = await client.vault.register_finish(server.register_response(IDS.account_id, recoverRequest), 1);
-  add("KEK_pw (recovered)", kekPassword(exportKeyOf(PASSWORD_2, skCode, recoverReg.record, pin1)));
-  await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr);
-  const rkNew = op(wasm, "recovery_key_decode", "code.rk.decode", { code: await client.vault.reveal_recovery_code() }).key;
+  const exportKeyRecovered = exportKeyOf(PASSWORD_2, skCode, recoverReg.record, pin1);
+  const kekPwRecovered = kekPassword(exportKeyRecovered);
+  add("export key (recovered)", exportKeyRecovered);
+  add("KEK_pw (recovered)", kekPwRecovered);
+  const recovered = await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr);
+  const rkNewCode = await client.vault.reveal_recovery_code();
+  texts["recovery key code (recovered)"] = rkNewCode;
+  const rkNew = op(wasm, "recovery_key_decode", "code.rk.decode", { code: rkNewCode }).key;
   add("RK (recovered)", rkNew);
-  add("KEK_rk (recovered)", op(wasm, "kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk: rkNew }).kek);
+  const kekRkRecovered = kekRecovery(rkNew);
+  add("KEK_rk (recovered)", kekRkRecovered);
+  anchorWrap("KEK_pw (recovered)", recovered.password_wrap, kekPwRecovered, vk1, 1);
+  anchorWrap("KEK_rk (recovered)", recovered.recovery_wrap, kekRkRecovered, vk1, 1);
   await client.vault.recover_sign(fill(32, 2), enc.encode("request"));
   await client.vault.recover_done();
 
@@ -431,11 +535,25 @@ async function leakRun() {
   await client.vault.rekey_commit();
   const vk2 = (await probe({ op: "vk" })).vk;
   add("VK (new epoch)", vk2);
-  derive(vk2, 2);
-  const rkRekey = op(wasm, "recovery_key_decode", "code.rk.decode", { code: await client.vault.reveal_recovery_code() }).key;
+  const keys2 = derive(vk2, 2);
+  const rkRekeyCode = await client.vault.reveal_recovery_code();
+  texts["recovery key code (rekey)"] = rkRekeyCode;
+  const rkRekey = op(wasm, "recovery_key_decode", "code.rk.decode", { code: rkRekeyCode }).key;
   add("RK (rekey)", rkRekey);
-  add("KEK_rk (rekey)", op(wasm, "kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk: rkRekey }).kek);
+  const kekRkRekey = kekRecovery(rkRekey);
+  add("KEK_rk (rekey)", kekRkRekey);
+  for (const wrap of plan.wraps) {
+    if (wrap.method.type === "password") anchorWrap("KEK_pw (rekey)", wrap, kekPw1, vk2, 2);
+    else anchorWrap("KEK_rk (rekey)", wrap, kekRkRekey, vk2, 2);
+  }
   const newItem = plan.items[0];
+  const tomb2 = await client.vault.make_tombstone(fill(16, 0x43), 4);
+  await anchorKeys(keys2, 2, {
+    authPublicKey: await client.vault.auth_public_key(),
+    item: { item_id: id, rev: newItem.rev, envelope: newItem.envelope, tag: newItem.tag },
+    manifest: plan.manifest,
+    tombstone: { item_id: fill(16, 0x43), rev: 4, tomb: tomb2.tomb },
+  });
   add("IK (new epoch)", (await probe({ op: "call", method: "test_item_key", args: [id, newItem.rev, newItem.envelope, newItem.tag] })).value);
 
   // ---- export and import (64 MiB here; the 256 MiB step has its own test)
@@ -458,6 +576,8 @@ async function leakRun() {
 
   return {
     secrets,
+    texts,
+    anchored,
     messages: recorder.dump(),
     imported: opened.count,
     zeroChecks,

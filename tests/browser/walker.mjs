@@ -84,3 +84,34 @@ export function findLeaks(messages, secrets, allowed = () => false) {
   });
   return leaks;
 }
+
+// ------------------------------------------------------------- text secrets
+
+/** A code as the user types it: separators dropped, upper case. */
+const squash = (text) => text.replace(/[-\s]/g, "").toUpperCase();
+
+/**
+ * Every place where a message holds a code (a recovery or secret key as the
+ * `FFR1-...` / `FFS1-...` text) as written, with or without its separators,
+ * in a string or as UTF-8 in a byte value. These are values that a
+ * `reveal_*` method hands out and that the user types back, so the caller
+ * names the few places where they may sit.
+ *
+ * @param texts   `{ name: code }`
+ * @param allowed `(message, name) => boolean`
+ */
+export function findTextLeaks(messages, texts, allowed = () => false) {
+  const needles = Object.entries(texts).map(([name, code]) => [name, squash(code)]);
+  const leaks = [];
+  messages.forEach((message, index) => {
+    for (const leaf of message.leaves) {
+      const haystack = squash(leaf.hex !== undefined ? Buffer.from(leaf.hex, "hex").toString("utf8") : leaf.text);
+      for (const [name, needle] of needles) {
+        if (haystack.includes(needle) && !allowed(message, name)) {
+          leaks.push({ index, worker: message.worker, dir: message.dir, method: message.method, path: leaf.path, secret: name });
+        }
+      }
+    }
+  });
+  return leaks;
+}

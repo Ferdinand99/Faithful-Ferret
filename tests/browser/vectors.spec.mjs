@@ -7,7 +7,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { INTERNAL_FILES } from "../../bindings/wasm/js/vector-runner.mjs";
+import { EXTERNAL_FILES, INTERNAL_FILES } from "../../bindings/wasm/js/vector-runner.mjs";
 import { keep, openHarness, repo } from "./support.mjs";
 
 const internalDir = join(repo, "vectors", "internal");
@@ -23,6 +23,25 @@ function expected() {
     files[name] = { total: cases.length, nativeOnly, slow, fast: cases.length - nativeOnly - slow };
   }
   return files;
+}
+
+const readExternal = (name) => JSON.parse(readFileSync(join(repo, "vectors", "external", name), "utf8"));
+
+/**
+ * How many cases of a third-party file the runner counts as passed, from the
+ * file itself. The runner counts every case of the RFC files, the cases of
+ * Wycheproof that are `valid` or `invalid` (an `acceptable` one is counted
+ * only for Ed25519 and ECDSA, where the runner pins how it must go), and
+ * nothing for the OPRF file (no adapter).
+ */
+function externalCount(name) {
+  const file = readExternal(name);
+  if (name === "rfc9497-oprf-ristretto255.json") return 0;
+  if (name === "rfc9807-opaque-ristretto255.json") return file.vectors.length;
+  if (!name.startsWith("wycheproof/")) return file.cases.length;
+  const tests = file.testGroups.flatMap((g) => g.tests);
+  const withAcceptable = name.includes("ed25519") || name.includes("ecdsa");
+  return tests.filter((t) => withAcceptable || t.result !== "acceptable").length;
 }
 
 const failures = (files) => files.flatMap((f) => f.failures.map((x) => ({ file: f.name, ...x })));
@@ -46,10 +65,11 @@ test("vectors pass", async ({ page, browserName }) => {
     expect(f.passed, f.name).toBe(want[f.name].fast);
   }
   const external = files.filter((f) => f.kind === "external");
+  expect(external.map((f) => f.name)).toEqual(EXTERNAL_FILES);
   for (const f of external) {
-    // The OPRF file has no adapter (see vector-runner.mjs); every other file runs.
-    if (f.notes?.length) continue;
-    expect(f.passed, f.name).toBeGreaterThan(0);
+    expect(f.passed, f.name).toBe(externalCount(f.name));
+    // Only the OPRF file has no adapter (see vector-runner.mjs).
+    expect((f.notes ?? []).length, f.name).toBe(f.name === "rfc9497-oprf-ristretto255.json" ? 1 : 0);
   }
 
   const totals = {
