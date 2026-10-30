@@ -61,6 +61,9 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "SessionScope",
     "Capability",
     "ScopeEffect",
+    // Signed requests: closed sets of names, no content.
+    "ReplaceKind",
+    "ConsumeOutcome",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines

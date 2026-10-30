@@ -51,6 +51,13 @@
 //! one, so the answer to the first message does not tell which names exist.
 //! The module documentation of [`login`] has the order of the steps.
 //!
+//! # Signed requests
+//!
+//! [`issue_challenge`] gives a session a nonce, and [`authorize_replacement`]
+//! checks the signed proof that must come with a change of the password, an
+//! upgrade of the key stretching profile or a recovery. The module
+//! documentation of [`replace`] has the order of the checks.
+//!
 //! # Start-up
 //!
 //! A server loads its secrets (`load_or_create`), takes the
@@ -100,6 +107,7 @@ pub mod name;
 pub mod prelogin;
 pub mod record;
 pub mod registration;
+pub mod replace;
 pub mod scope;
 pub mod secret_file;
 pub mod startup;
@@ -127,6 +135,11 @@ pub use prelogin::{
 };
 pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
 pub use registration::{register_finish, register_start};
+pub use replace::{
+    AccountAuthState, Challenge, ChallengeKey, ChallengeStore, ConsumeOutcome,
+    InMemoryChallengeStore, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest,
+    authorize_replacement, issue_challenge,
+};
 pub use scope::{Capability, ScopeEffect, SessionScope, authorize};
 pub use secret_file::{
     FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,
