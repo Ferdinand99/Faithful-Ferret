@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+mod account_groups;
 mod groups;
 mod item_groups;
 mod key_groups;
@@ -70,6 +71,8 @@ const GROUPS: &[Group] = &[
     ("internal/totp.json", totp_groups::totp),
     ("internal/origin.json", origin_groups::origin),
     ("internal/passkey.json", passkey_groups::passkey),
+    ("internal/account.json", account_groups::account),
+    ("internal/sheet.json", account_groups::sheet),
 ];
 
 /// Serializes a vector file the way every generated file is written:

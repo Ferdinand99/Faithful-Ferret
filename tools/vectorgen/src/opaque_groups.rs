@@ -26,13 +26,13 @@ use serde_json::{Value, json};
 const CRED: &[u8] = b"0123456789abcdef";
 
 /// Records the draws of a generator, so that a case can list them.
-struct Recording {
+pub(crate) struct Recording {
     inner: TestRng,
-    draws: Vec<String>,
+    pub(crate) draws: Vec<String>,
 }
 
 impl Recording {
-    fn new(seed: &str) -> Self {
+    pub(crate) fn new(seed: &str) -> Self {
         Self {
             inner: TestRng::new(seed.as_bytes()),
             draws: vec![],

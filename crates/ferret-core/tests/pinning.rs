@@ -66,16 +66,8 @@ struct Fixture {
 fn fixture() -> Fixture {
     let c = ctx();
     let rec = seal(&c, 0x70, 1, password_method(), 0x5a);
-    let (pinned, vault) = Pinned::first_unlock(
-        URL,
-        KsfProfile::P1,
-        true,
-        Some(SERVER_KEY),
-        &c,
-        &rec,
-        &kek(),
-    )
-    .unwrap();
+    let (pinned, vault) =
+        Pinned::first_unlock(URL, true, Some(SERVER_KEY), &c, &rec, &kek()).unwrap();
     assert_eq!(unlocked_vault_keys(&vault)[0], [0x5a; 32]);
     Fixture {
         ctx: c,
@@ -131,19 +123,19 @@ fn first_unlock_needs_a_server_wrap_and_a_good_kek() {
     for method in [pin_method(), Method::Device] {
         let rec = seal(&c, 0x78, 1, method, 0x5a);
         assert_eq!(
-            Pinned::first_unlock(URL, KsfProfile::P1, true, None, &c, &rec, &kek()).err(),
+            Pinned::first_unlock(URL, true, None, &c, &rec, &kek()).err(),
             Some(Error::Unsupported)
         );
     }
     let rec = seal(&c, 0x70, 1, password_method(), 0x5a);
     let wrong = Kek::from_test_bytes([10; 32]);
     assert_eq!(
-        Pinned::first_unlock(URL, KsfProfile::P1, true, None, &c, &rec, &wrong).err(),
+        Pinned::first_unlock(URL, true, None, &c, &rec, &wrong).err(),
         Some(Error::Decrypt)
     );
     let long_url = "u".repeat(MAX_URL_LEN + 1);
     assert_eq!(
-        Pinned::first_unlock(&long_url, KsfProfile::P1, true, None, &c, &rec, &kek()).err(),
+        Pinned::first_unlock(&long_url, true, None, &c, &rec, &kek()).err(),
         Some(Error::Malformed(MalformedKind::PinnedRecord))
     );
 }
@@ -976,4 +968,77 @@ fn seed_from_manifest_takes_the_decrypted_manifest_only() {
         );
         assert_eq!(f.pinned, before);
     }
+}
+
+#[test]
+fn first_unlock_takes_the_profile_from_the_wrap() {
+    // A password wrap states its profile in the AAD; the record gets that
+    // one. A recovery wrap says nothing about it, so the record starts at the
+    // lowest profile of the table.
+    let f = fixture();
+    assert_eq!(f.pinned.ksf_profile, KsfProfile::P1.number());
+    let c = ctx();
+    let rec = seal(&c, 0x71, 1, Method::Recovery, 0x5a);
+    let (pinned, _) = Pinned::first_unlock(URL, true, None, &c, &rec, &kek()).unwrap();
+    assert_eq!(pinned.ksf_profile, 1);
+    assert_eq!(pinned.kek_generation_max, vec![(MethodKey::Recovery, 1)]);
+}
+
+#[test]
+fn a_stored_record_is_validated() {
+    let f = fixture();
+    f.pinned.validate().unwrap();
+    let bad = Error::Malformed(MalformedKind::PinnedRecord);
+
+    // Two floors for one key.
+    let mut p = f.pinned.clone();
+    p.kek_generation_max.push((MethodKey::Password, 9));
+    assert_eq!(p.validate().err(), Some(bad));
+    let mut p = f.pinned.clone();
+    p.kek_generation_max = vec![
+        (MethodKey::Prf(vec![1, 2]), 1),
+        (MethodKey::Recovery, 1),
+        (MethodKey::Prf(vec![1, 2]), 2),
+    ];
+    assert_eq!(p.validate().err(), Some(bad));
+    // Too many floors.
+    let mut p = f.pinned.clone();
+    p.kek_generation_max = (0..=MAX_FLOORS)
+        .map(|i| (MethodKey::Prf(vec![u8::try_from(i).unwrap()]), 1))
+        .collect();
+    assert_eq!(p.validate().err(), Some(bad));
+    // A generation above the maximum, a credential id and an address that
+    // are too long.
+    let mut p = f.pinned.clone();
+    p.kek_generation_max = vec![(MethodKey::Password, MAX_GENERATION + 1)];
+    assert_eq!(p.validate().err(), Some(bad));
+    let mut p = f.pinned.clone();
+    p.kek_generation_max = vec![(MethodKey::Prf(vec![0; MAX_CREDENTIAL_ID_LEN + 1]), 1)];
+    assert_eq!(p.validate().err(), Some(bad));
+    let mut p = f.pinned.clone();
+    p.server_url = "u".repeat(MAX_URL_LEN + 1);
+    assert_eq!(p.validate().err(), Some(bad));
+    // The limits themselves are fine.
+    let mut p = f.pinned.clone();
+    p.kek_generation_max = (0..MAX_FLOORS)
+        .map(|i| {
+            (
+                MethodKey::Prf(vec![u8::try_from(i).unwrap()]),
+                MAX_GENERATION,
+            )
+        })
+        .collect();
+    p.server_url = "u".repeat(MAX_URL_LEN);
+    p.validate().unwrap();
+}
+
+#[test]
+fn the_unlock_entry_points_refuse_an_invalid_record() {
+    let mut f = fixture();
+    f.pinned.kek_generation_max.push((MethodKey::Password, 9));
+    let rec = f.rec.clone();
+    let bad = Error::Malformed(MalformedKind::PinnedRecord);
+    assert_eq!(unlock(&mut f, &rec).err(), Some(bad));
+    let local = seal(&f.ctx, 0x78, 1, Method::Device, 0x5a);
+    assert_eq!(f.pinned.unlock_local(&local, &kek()).err(), Some(bad));
 }

@@ -1,0 +1,471 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "sheet",
+  "suite": 1,
+  "spec": "Fase 1 § 6.1 and plan U17, U19",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "sheet/build/001",
+      "title": "an address with a port and a path, with a secret key",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://vault.example.com:8443/ferret",
+        "sk_bit": true
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/002",
+      "title": "a LAN address over http, no secret key",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+        "server_url": "http://10.0.3.26:3001",
+        "sk_bit": false
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=http%3A%2F%2F10.0.3.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/003",
+      "title": "an address of exactly 512 bytes",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sk_bit": true
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/004",
+      "title": "unreserved characters stay, the rest is percent-encoded in upper case",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://a-b.c_d~e.example/p?q=1&r=%7e#f",
+        "sk_bit": true
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fa-b.c_d~e.example%2Fp%3Fq%3D1%26r%3D%257e%23f&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/005",
+      "title": "an address of 513 bytes",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sk_bit": true
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "sheet/build/006",
+      "title": "no http or https scheme",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "ftp://vault.example",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/007",
+      "title": "a space in the address",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://vault example",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/008",
+      "title": "nothing after the scheme",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/009",
+      "title": "a non-ASCII address (a host is written in punycode)",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://væult.example",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/010",
+      "title": "a profile number this version does not know",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 2,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://vault.example",
+        "sk_bit": true
+      },
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "sheet/parse/001",
+      "title": "reads what the first case builds",
+      "op": "sheet.qr.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://vault.example.com:8443/ferret",
+        "sk_bit": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/parse/002",
+      "title": "reads the LAN address, no secret key",
+      "op": "sheet.qr.parse",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=http%3A%2F%2F10.0.3.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+        "server_url": "http://10.0.3.26:3001",
+        "sk_bit": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/parse/003",
+      "title": "another version of the format",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v2?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "sheet/parse/004",
+      "title": "a version that is not a number",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:vx?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/005",
+      "title": "another scheme",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-login:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/006",
+      "title": "percent-encoding in lower case",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3a%2F%2Fvault.example.com%3a8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/007",
+      "title": "a character that is written as %XX although it is unreserved",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2F%76ault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/008",
+      "title": "a character that must be encoded written raw",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https:%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/009",
+      "title": "the secret key bit is neither 0 nor 1",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=2&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/010",
+      "title": "a profile the client does not know",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=2&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "sheet/parse/011",
+      "title": "a profile with a leading zero",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=01&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/012",
+      "title": "the server key is missing",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/013",
+      "title": "an extra parameter",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5&x=1"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/014",
+      "title": "the parameters in another order",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5&a=0123456789abcdef1032547698badcfe"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/015",
+      "title": "an account id in upper case",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789ABCDEF1032547698BADCFE&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/016",
+      "title": "an account id one digit short",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/017",
+      "title": "a server key that is not hex",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5zz"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/018",
+      "title": "an address over 512 bytes inside a well-formed payload",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "sheet/parse/019",
+      "title": "a payload longer than any valid one",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "sheet/parse/020",
+      "title": "nothing",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": ""
+      },
+      "expect_error": "malformed_setup_qr"
+    }
+  ]
+}
