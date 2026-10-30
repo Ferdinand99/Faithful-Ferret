@@ -1,7 +1,7 @@
 # Phase 1 – Security design for Faithful Ferret
 
 > [!NOTE] Status
-> This is draft 2. It builds on draft 1 and on an independent review with 38 findings. Every finding has been handled (§ 0).
+> **Approved by the maintainer on 2026-10-30.** This is draft 2. It builds on draft 1 and on an independent review with 38 findings. Every finding has been handled (§ 0).
 > The draft builds on the idea note, the roadmap for v1 and the phase 0 report. These are not published.
 > - **References** such as U2, U17 and E11 point to clarifications in the implementation plan. Where a clarification matters for the design, its content is written into this document.
 > - **Applies to all clients:** web vault, browser extension, iOS and Android. Step B therefore needs no new design.
