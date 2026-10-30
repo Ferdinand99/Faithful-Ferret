@@ -1,0 +1,50 @@
+# Independent JavaScript reference (tools/xcheck): opens the internal test vectors without any Rust.
+# It runs on Node only, so it needs no Docker and no toolchain. A mismatch means either a mistake in the
+# design, a misreading shared by the Rust authors, or a mistake in xcheck; each one is a finding.
+name: xcheck
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/xcheck/**"
+      - "vectors/**"
+      - ".github/workflows/xcheck.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/xcheck/**"
+      - "vectors/**"
+      - ".github/workflows/xcheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcheck:
+    name: Open every internal vector with the JavaScript reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/xcheck
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: tools/xcheck/package-lock.json
+      - name: Install the pinned dependency
+        run: npm ci --ignore-scripts
+      - name: Open the vectors
+        run: node src/run.mjs
+      - name: Self-test (every damaged expectation must be detected)
+        run: node src/run.mjs --mutate --quiet
