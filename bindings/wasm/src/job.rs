@@ -983,6 +983,8 @@ impl UnlockJob {
                 .collect();
             let unlocked = vault.unlocked()?;
             let kek = Kek::from_export_key(&unlocked.context().account_id, &done.export_key)?;
+            // The rollback memory (`SyncMemory`) is not exposed through this
+            // binding yet, so the rekey runs without one.
             let bundle = unlocked.rekey(
                 &mut OsRng,
                 &RekeyInput {
@@ -1004,6 +1006,7 @@ impl UnlockJob {
                     recovery_method_id: MethodId::from_bytes(dto.recovery_method_id),
                     pinned: &record,
                 },
+                ferret_core::RollbackMemory::NoMemory,
             )?;
             let new_record = bundle.pinned(&record)?;
             let out = to_js(&RekeyBundleDto {

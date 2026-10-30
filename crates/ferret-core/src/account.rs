@@ -79,6 +79,7 @@ use crate::pinning::{MAX_GENERATION, MethodKey, Pinned};
 use crate::prim::{check_kdf_params, ct::ct_eq};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, RecoveryKey, SecretKey, VaultKey};
+use crate::sync_memory::RollbackMemory;
 use crate::text::OpaqueInput;
 use crate::wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};
 
@@ -372,7 +373,13 @@ pub fn create_account<R: SecureRng>(
         &manifest.envelope,
         &manifest.tag,
     )?;
-    verify_checkpoint(&vault, &checkpoint, &[row], FIRST_SEQ)?;
+    verify_checkpoint(
+        &vault,
+        &checkpoint,
+        &[row],
+        FIRST_SEQ,
+        RollbackMemory::NoMemory,
+    )?;
 
     Ok(NewAccount {
         pk_a: vault.auth_public_key(),

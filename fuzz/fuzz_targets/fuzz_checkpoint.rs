@@ -65,7 +65,15 @@ fuzz_target!(|data: &[u8]| {
         })
         .collect();
 
-    if verify_checkpoint(&vault, &cp, &rows, top).is_ok() {
+    if verify_checkpoint(
+        &vault,
+        &cp,
+        &rows,
+        top,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .is_ok()
+    {
         assert!(seq <= top);
         // Every live entry is shown by the server, at the same or a higher
         // revision, with the same blob if the revision is the same.
@@ -85,5 +93,14 @@ fuzz_target!(|data: &[u8]| {
     // A flipped MAC never verifies.
     let mut bad = cp.clone();
     bad.mac[0] ^= 1;
-    assert!(verify_checkpoint(&vault, &bad, &rows, top).is_err());
+    assert!(
+        verify_checkpoint(
+            &vault,
+            &bad,
+            &rows,
+            top,
+            ferret_core::RollbackMemory::NoMemory
+        )
+        .is_err()
+    );
 });

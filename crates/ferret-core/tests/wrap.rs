@@ -387,7 +387,7 @@ fn unwrap_reports_nothing_but_decrypt_for_a_malformed_record() {
         kek_generation: 1,
         method: Method::Prf {
             credential_id: vec![0; 70_000],
-            prf_salt: [0; 32],
+            prf_salt: [7; 32],
         },
         wrap: vec![0; 72],
     };
@@ -403,7 +403,7 @@ fn unwrap_reports_nothing_but_decrypt_for_a_malformed_record() {
             1,
             Method::Prf {
                 credential_id: vec![0; 70_000],
-                prf_salt: [0; 32]
+                prf_salt: [7; 32]
             }
         )
         .err(),
@@ -810,4 +810,41 @@ fn the_unlocked_vault_wraps_its_own_key_for_every_method() {
         let opened = unwrap_vk(&c, &k, &rec).unwrap();
         assert!(opened.same_vault_key(&vault));
     }
+}
+
+// ---------------------------------------------------------- PRF salt
+
+#[test]
+fn prf_salt_new_draws_32_random_bytes_once() {
+    let mut rng = ReplayRng::new(vec![vec![0x42; 32]]);
+    assert_eq!(ferret_core::prf_salt_new(&mut rng), [0x42; 32]);
+    rng.finish().unwrap();
+}
+
+#[test]
+fn an_all_zero_prf_salt_is_refused_at_wrap_and_at_unlock() {
+    let c = ctx();
+    let k = kek(9);
+    let method = |salt: [u8; 32]| Method::Prf {
+        credential_id: vec![5; 20],
+        prf_salt: salt,
+    };
+    let mut rng = TestRng::new(b"zero salt");
+    assert_eq!(
+        wrap_vk(&mut rng, &c, &vk(1), &k, method_id(1), 1, method([0; 32])).err(),
+        Some(Error::InvalidInput(ferret_core::InputError::AllZero))
+    );
+    // A wrap record with the zero salt (from a damaged or hostile server)
+    // does not open, whatever it holds.
+    let good = seal(method([3; 32]), &c, &k);
+    let record = WrapRecord {
+        method: method([0; 32]),
+        ..good.clone()
+    };
+    assert_eq!(unwrap_vk(&c, &k, &record).err(), Some(Error::Decrypt));
+    unwrap_vk(&c, &k, &good).unwrap();
+    // One set bit is enough for the wrap.
+    let mut salt = [0u8; 32];
+    salt[31] = 1;
+    wrap_vk(&mut rng, &c, &vk(1), &k, method_id(1), 1, method(salt)).unwrap();
 }

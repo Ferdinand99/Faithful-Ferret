@@ -39,6 +39,8 @@ export function wrapSeal(type, v, kek, vk, nonce) {
 }
 
 export function wrapOpen(type, v, kek, wrap) {
+  // a passkey record with an all-zero PRF salt does not open
+  if (type === 'prf' && v.prfSalt.every((x) => x === 0)) fail('decrypt');
   const want = hasCommit(type) ? 104 : 72;
   if (wrap.length !== want) fail('decrypt');
   let body = wrap;

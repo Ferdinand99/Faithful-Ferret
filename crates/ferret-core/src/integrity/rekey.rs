@@ -74,6 +74,7 @@ use crate::keys::{UnlockedVault, VaultContext, recovery_public_key};
 use crate::pinning::{MAX_GENERATION, MethodKey, Pinned};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, RecoveryKey, VaultKey};
+use crate::sync_memory::RollbackMemory;
 use crate::wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};
 use std::collections::BTreeSet;
 
@@ -113,7 +114,8 @@ pub struct RekeyInput<'a> {
     /// The server `seq` the request is based on; the server applies the
     /// request only if this is its top. The new checkpoint is made for it.
     pub base_seq: u64,
-    /// The last checkpoint the client verified (any `seq` up to `base_seq`).
+    /// The last checkpoint the client verified, which must be the one at
+    /// `base_seq` (a checkpoint behind it is `malformed_entries`).
     pub old_checkpoint: &'a Checkpoint,
     /// The current manifest row (its `item_id` is `ItemId::MANIFEST`).
     pub old_manifest: RekeyItem<'a>,
@@ -221,6 +223,15 @@ fn manifest_next(manifest: &Manifest, method_type: u8) -> Result<u64, Error> {
 impl UnlockedVault {
     /// Builds a full rekey as described in the module documentation.
     ///
+    /// `memory` is the client's [`crate::SyncMemory`] (or the named
+    /// [`RollbackMemory::NoMemory`]). The checkpoint and the rows are the
+    /// server's word, and a rekey replaces the whole server state with a
+    /// re-sealed copy of them, so a rolled-back state would be made current.
+    /// With `Remembered`, a checkpoint, a top `seq` or a row below what the
+    /// device has seen is refused (`checkpoint_*_below_remembered`) before any
+    /// draw, and the memory advances to the state the rekey is based on. Pass
+    /// `NoMemory` only where the device has seen nothing of this vault before.
+    ///
     /// Input that cannot make a valid plan is refused before any random
     /// number is drawn: a checkpoint that is not for `base_seq`, an `item_id`
     /// twice (or the manifest's), a `rev` of `u64::MAX`, a password method
@@ -238,6 +249,7 @@ impl UnlockedVault {
         &self,
         rng: &mut R,
         input: &RekeyInput<'_>,
+        memory: RollbackMemory<'_>,
     ) -> Result<RekeyBundle, Error> {
         let old = *self.context();
         // A checkpoint that is behind `base_seq` leaves the newest rows
@@ -246,12 +258,17 @@ impl UnlockedVault {
             return Err(malformed());
         }
         let (password_id, password_method) = &input.password_method;
-        if !matches!(password_method, Method::Password { .. }) {
+        let Method::Password { ksf } = password_method else {
             return Err(Error::Unsupported);
-        }
+        };
         // The pinned record must be this vault's, at this epoch.
         let pinned = input.pinned;
         pinned.validate()?;
+        // A new password wrap below the pinned profile would lock this device
+        // out at the next unlock (`kdf_profile_downgrade`).
+        if ksf.number() < pinned.ksf_profile {
+            return Err(Error::KdfProfileDowngrade);
+        }
         if pinned.account_id != old.account_id {
             return Err(Error::Pinned(PinnedField::AccountId));
         }
@@ -325,7 +342,7 @@ impl UnlockedVault {
             m.envelope,
             m.tag,
         )?);
-        verify_checkpoint(self, input.old_checkpoint, &rows, input.base_seq)?;
+        verify_checkpoint(self, input.old_checkpoint, &rows, input.base_seq, memory)?;
 
         // The new vault.
         let new = UnlockedVault::from_vault_key(new_ctx, VaultKey::generate(rng))?;
@@ -455,7 +472,13 @@ impl RekeyBundle {
             &self.manifest.envelope,
             &self.manifest.tag,
         )?);
-        verify_checkpoint(new, &self.checkpoint, &rows, self.checkpoint.seq)?;
+        verify_checkpoint(
+            new,
+            &self.checkpoint,
+            &rows,
+            self.checkpoint.seq,
+            RollbackMemory::NoMemory,
+        )?;
 
         let [password_wrap, recovery_wrap] = self.wraps.as_slice() else {
             return Err(Error::Decrypt);

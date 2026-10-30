@@ -192,6 +192,29 @@ fn finish_error(e: ProtocolError, ksf: &impl KsfFailure) -> Error {
     }
 }
 
+/// Wipes the bytes it borrows when it goes out of scope. `opaque-ke`'s finish
+/// results hold the export key and the session key in `Copy` arrays and wipe
+/// nothing themselves, so the keys are wiped in place and never copied out.
+pub(crate) struct WipeOnDrop<'a>(pub(crate) &'a mut [u8]);
+
+impl Drop for WipeOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.zeroize();
+        #[cfg(feature = "test-support")]
+        if self.0.iter().all(|b| *b == 0) {
+            WIPED_KEY_ARRAYS.with(|n| n.set(n.get().saturating_add(1)));
+        }
+    }
+}
+
+#[cfg(feature = "test-support")]
+thread_local! {
+    /// How many key arrays of finish results this thread has wiped (and found
+    /// zero afterwards), so a test can see that the production path uses the
+    /// guard.
+    pub(crate) static WIPED_KEY_ARRAYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The export key as our secret type; the library's copy is wiped.
 fn export_key_from(out: &mut [u8]) -> Result<ExportKey, Error> {
     let mut bytes = [0u8; ExportKey::LEN];
@@ -267,13 +290,15 @@ macro_rules! protocol {
                     RegistrationResponse::<$suite>::deserialize(response).map_err(malformed)?;
                 let params =
                     ClientRegistrationFinishParameters::<$suite>::new(identifiers, Some(ksf));
-                let finished = state
+                let mut finished = state
                     .finish(&mut Rng06(rng), pwd, response, params)
                     .map_err(|e| finish_error(e, ksf))?;
-                let mut export = finished.export_key;
+                // The key stays inside `finished` and is wiped there, on
+                // every path out of this function.
+                let export = WipeOnDrop(finished.export_key.as_mut_slice());
                 Ok(Registered {
                     record: finished.message.serialize().to_vec(),
-                    export_key: export_key_from(&mut export)?,
+                    export_key: export_key_from(&mut *export.0)?,
                     server_public_key: public_key_bytes(&finished.server_s_pk)?,
                 })
             }
@@ -307,17 +332,19 @@ macro_rules! protocol {
                     CredentialResponse::<$suite>::deserialize(ke2).map_err(malformed)?;
                 let params =
                     ClientLoginFinishParameters::<$suite>::new(context, identifiers, Some(ksf));
-                let finished = state
+                let mut finished = state
                     .finish(&mut Rng06(rng), pwd, response, params)
                     .map_err(|e| finish_error(e, ksf))?;
-                let mut export = finished.export_key;
-                let mut session = finished.session_key;
+                // Both keys stay inside `finished` and are wiped there, on
+                // every path out of this function.
+                let export = WipeOnDrop(finished.export_key.as_mut_slice());
+                let session = WipeOnDrop(finished.session_key.as_mut_slice());
                 #[cfg(feature = "test-support")]
-                let session_key = Zeroizing::new(session.to_vec());
-                session.as_mut_slice().zeroize();
+                let session_key = Zeroizing::new(session.0.to_vec());
+                drop(session);
                 Ok(LoggedIn {
                     ke3: finished.message.serialize().to_vec(),
-                    export_key: export_key_from(&mut export)?,
+                    export_key: export_key_from(&mut *export.0)?,
                     #[cfg(feature = "test-support")]
                     session_key,
                     server_public_key: public_key_bytes(&finished.server_s_pk)?,

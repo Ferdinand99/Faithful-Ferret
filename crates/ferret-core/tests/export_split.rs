@@ -155,3 +155,28 @@ fn the_wrap_key_has_a_release_constructor_for_the_hand_over() {
     assert!(ferret_core::KekDevPin::from_slice(&[1u8; 32]).is_ok());
     assert!(ferret_core::KekDevPin::from_slice(&[]).is_err());
 }
+
+#[test]
+fn keys_that_come_from_outside_are_never_all_zero() {
+    let zero = Some(Error::InvalidInput(ferret_core::InputError::AllZero));
+    assert_eq!(ExportWrapKey::from_slice(&[0u8; 32]).err(), zero);
+    assert_eq!(ferret_core::PrfOutput::from_slice(&[0u8; 32]).err(), zero);
+    assert_eq!(ferret_core::KekDevPin::from_slice(&[0u8; 32]).err(), zero);
+    // One non-zero byte anywhere is enough.
+    for at in [0usize, 15, 31] {
+        let mut bytes = [0u8; 32];
+        bytes[at] = 1;
+        assert!(ExportWrapKey::from_slice(&bytes).is_ok());
+        assert!(ferret_core::PrfOutput::from_slice(&bytes).is_ok());
+        assert!(ferret_core::KekDevPin::from_slice(&bytes).is_ok());
+    }
+    // The length is judged first.
+    assert_eq!(
+        ferret_core::PrfOutput::from_slice(&[0u8; 16]).err(),
+        Some(Error::InvalidInput(ferret_core::InputError::TooShort))
+    );
+    assert_eq!(
+        Error::InvalidInput(ferret_core::InputError::AllZero).code(),
+        "input_all_zero"
+    );
+}

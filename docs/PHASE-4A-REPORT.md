@@ -13,7 +13,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 | Question | Answer |
 |---|---|
 | Does the core cover what phase 4A set out to do? | Yes: key hierarchy and wraps, envelope and items, tombstones, checkpoints, mutation proofs and re-key, encrypted and plain export, OPAQUE sign-in and the account flows, passkeys, TOTP, the WebAssembly binding and the worker client |
-| Test vectors | 1 143 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
+| Test vectors | 1 208 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
 | Property tests and fuzzing | 20 000 cases per property pass; all twelve fuzz targets run clean |
 | Constant-time checks | Everything the analysis found is triaged; timing tests pass natively and in Node; the WebAssembly scan has no finding outside its allow list |
 | Dependencies | `cargo deny` and `cargo vet` pass; the duplicate versions are the approved ones |
@@ -23,7 +23,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 
 Run in the builder image on a Docker host from the state of the repository at the time of
 writing: formatting, clippy for native and `wasm32-unknown-unknown`, `cargo test
---workspace` (509 tests passed, none failed), the vector check, the passkey API and
+--workspace` (537 tests passed, none failed), the vector check, the passkey API and
 test-support scripts, `cargo deny`, `cargo vet --locked`, the MSRV (1.88) check and the Node tests
 of the binding (48 passed, none failed).
 
@@ -62,15 +62,64 @@ CI only with the `browsers` label, nightly and on manual runs, because of its le
 
 ## Vectors and the independent reference
 
-- Internal vectors: 1 143 cases, of which 29 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
-  the Node and browser runners run the other 1 114. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
+- Internal vectors: 1 208 cases, of which 31 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
+  the Node and browser runners run the other 1 177. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
   the XChaCha20 draft, Wycheproof, the Public Suffix List test file): 1 634 cases.
 - `tools/xcheck` is a second implementation in JavaScript, written from the design and the vector
-  files only. It matches 1 121 of the 1 143 internal cases and does not cover the 22 OPAQUE cases
+  files only. It matches 1 186 of the 1 208 internal cases and does not cover the 22 OPAQUE cases
   (see the risks below). It also runs a self-test in which every damaged expectation must be detected.
 - Rules the vectors now pin down: the order in which a body or a manifest is written (known keys in
   schema order, then unknown keys as read, at every level), the error codes of a damaged envelope,
   and the write-back of a body with a newer schema.
+
+## Rollback memory, unlock-method changes and other additions
+
+The items below have vectors (`vectors/VERSION` 22) and tests.
+
+- **Rollback memory.** `SyncMemory` is a small record the client stores beside the pinned record: the
+  highest `seq` the server showed, the `seq` of the highest verified checkpoint and the highest `rev` seen
+  for each item (Fase 1 § 8.6, "Lokalt minne"). It refuses a server top, a checkpoint or a row below those
+  values, with `checkpoint_top_seq_below_remembered`, `checkpoint_seq_below_remembered` and
+  `checkpoint_rev_below_remembered`. Floors only go up; every call checks first and changes the record only
+  when the whole call succeeded. `SyncMemory::to_bytes` and `from_bytes` give a fixed storage form; a record that is not in it is
+  `malformed_sync_memory`. `SyncMemory::prune` drops the entries of items that are gone for good, which is the
+  way out of a full record.
+  The record tracks at most 50 000 items (a vault holds at most 10 000, and deleted items keep their entry);
+  a new item beyond that is `too_large`, and nothing is evicted, because dropping an entry would lower a
+  floor without a word. The `vk_epoch` floor is the one in `Pinned` and is not repeated.
+  `verify_checkpoint` takes the memory as a required last argument: `RollbackMemory::Remembered(&mut memory)`
+  or the named `RollbackMemory::NoMemory`. There is no default. The record is advanced only when the
+  checkpoint verified and the memory agreed. A server restored from a backup shows a lower `seq`; that is
+  never accepted on its own. After the user has confirmed, `SyncMemory::accept_older_state` verifies the older
+  checkpoint by itself and then replaces the record with that state. `SyncMemory::accept_rows` does the same
+  comparison for the rows of a `/changes` response.
+- **Server list against the manifest.** `check_server_methods(manifest, server_list)` requires every server
+  method to be in the manifest with the same type, id and generation, and nothing in the manifest to be
+  missing from the server (`method_list_unknown`, `method_list_changed`, `method_list_missing`).
+- **Adding and removing an unlock method.** `manifest_add_method` and `manifest_remove_method` open the
+  current manifest row, make the next manifest one revision up and return it sealed, together with the exact
+  request body. `MethodChange::sign` signs that body and nothing else. Only a passkey wrap is added this way;
+  the last `password` and the last `recovery` method cannot be removed (`input_last_method`). The remove body
+  names the method (`{"method_id":...,"manifest":...}`): the design sends the id only in the URL, which would
+  leave the proof unbound to it. `Manifest::with_method` and `Manifest::without_method` are the same rules on
+  the plain manifest.
+- **PRF salt.** `prf_salt_new` draws 32 random bytes. A passkey wrap with an all-zero salt is refused when it
+  is made (`input_all_zero`) and does not open.
+- **No all-zero keys from outside.** `PrfOutput::from_slice`, `KekDevPin::from_slice` and
+  `ExportWrapKey::from_slice` refuse 32 zero bytes with `input_all_zero`.
+- **Encrypted export of a newer schema.** An item read from a schema above 1 is written to the encrypted
+  export exactly as it was read, so a backup loses nothing; an import reads it back as the same read-only
+  item. The CSV export still refuses such an item.
+- **OPAQUE keys.** The export key and the 3DH session key in the finish results of `opaque-ke` are wiped in
+  place, by a guard that runs on every path out of the call; no copy of either is left in the core.
+- **Rekey.** A new password wrap below the pinned KSF profile is refused before anything is drawn
+  (`kdf_profile_downgrade`).
+
+To change the master password and rotate the keys in one go (the design's recommendation after a leaked
+password), the client composes two calls in this order: first `change_password` (new registration, new
+`KEK_pw`, `kek_generation` plus one) and store the pinned record it returns; then sign in with the new
+password and call `rekey` with that password's key-encryption key. After the first call the account is on
+the new password with the old vault key, a safe state; if the second call fails, repeat it.
 
 ## Property tests and fuzzing
 
@@ -173,6 +222,8 @@ These are the points where the design left a choice, with what was decided.
   only. The JavaScript glue rejects lone surrogates before encoding.
 - Decision: the CBOR decoder is the core's own strict reader over the low-level `minicbor` decoder. No tags are
   allowed in version 1, map keys are text, and floats of 16, 32 and 64 bits are read and kept as they were in unknown fields. A float in a known field is refused.
+  This deliberately replaces the earlier rule that refused 16 and 32 bit floats everywhere: an unknown field
+  has to survive a write-back unchanged.
 - Decision: the Public Suffix List is an embedded snapshot in the core, with private domains, and its age is
   checked (warning at 75 days, failure at 90).
 - Decision: the local `device` wrap uses the generic wrap AAD without a method-specific field and without a key
@@ -192,8 +243,9 @@ These are the points where the design left a choice, with what was decided.
   secrets are in it only when asked for.
 - Decision: a password strength meter and a blocklist are not part of the core; the core enforces length and
   character rules only.
-- Decision: a body with a newer schema is read-only. It is shown and exported, never sealed, and it is written
-  back from the value that was read, never rebuilt from the typed fields. Bodies and manifests are otherwise
+- Decision: a body with a newer schema is read-only. It is shown and exported (the encrypted export writes it as
+  it was read), never sealed as a new item, and it is written back from the value that was read, never rebuilt
+  from the typed fields. Bodies and manifests are otherwise
   written with the known keys in schema order, then the unknown keys as read.
 - Decision: the independent reference does not cover OPAQUE in phase 4A (see the risks).
 - Decision: the project is licensed under AGPL-3.0, and there will be no paid external audit.
@@ -243,8 +295,52 @@ These are the points where the design left a choice, with what was decided.
     without losing its other fields.
   - Server-side address parsing differs from the browser's in the spelling of IPv6 addresses.
   - The PRF output reaches the vault worker as an argument, because the browser produces it on the page.
+  - The client stores one `SyncMemory` per account and server, loads it before every check and stores the
+    changed record after a successful one. A user who clears the site data resets it, which is a residual risk
+    of the design (Fase 1 § 8.6, L4). `verify_checkpoint` inside the creation of an account runs without a
+    memory (`RollbackMemory::NoMemory`). `rekey` takes the memory as an argument, so a client passes its own
+    record and the state a rekey re-seals is checked against it; `NoMemory` is a deliberate choice for a device
+    that has seen nothing of the vault before.
+  - A full `SyncMemory` (50 000 items) takes no new item until the client calls `SyncMemory::prune` with the
+    ids of items that are gone for good, or accepts an older state, or forgets the server.
+  - The top `seq` that a server claims is not authenticated, and `SyncMemory` raises `max_seq` to it. A
+    malicious or faulty server that once claims a huge value makes every later honest state look like a
+    rollback; the recovery is `SyncMemory::accept_older_state`, after the user has confirmed.
+  - The client compares the server's list of unlock methods with the manifest after every unlock
+    (`check_server_methods`) and warns on a difference.
+  - A device that remembers an older `vk_epoch` should check the stored rekey proof against its pinned `pk_a`
+    before it accepts a higher epoch (Fase 1 § 8.6). The core accepts a higher epoch in `unlock_server` without
+    that proof; the design is too vague about which proof is stored and where, and the rule is settled with the
+    server design in phase 2.
+  - The PRF output of a passkey depends on whether user verification happened in the request: the core keeps
+    one PRF seed with and one without it, as `hmac-secret` in CTAP2 does (Fase 1 § 9.3). The same passkey can
+    therefore give two different outputs, and a client that uses it as an unlock method must ask for user
+    verification consistently.
+  - The check that an unlock method is not one of Ferret's own passkeys (the AAGUID and the stored credential
+    ids) is made in the binding, which sees the authenticator's answer; the core exports the AAGUID.
 - **Plain CSV export of a body with a newer schema** is refused (`unsupported`), so no secret is dropped from the file
-  without a word. The JSON export holds such a body whole.
+  without a word. The JSON export and the encrypted export hold such a body whole.
+- **Known and accepted gaps.**
+  - The scan of the compiled WebAssembly is blind to an address that goes through a local and to stores; it is a
+    work list, not a proof.
+  - There is no function that repacks a vault under a new `account_id`. Moving to another server is done with
+    an export and an import.
+  - The accept path of a key-stretching upgrade is untested until a second profile exists.
+  - "No credential" and "user cancelled" give the page the same error, but the core does not control the timing
+    of the two.
+  - An export is written at the lowest with the 64 MiB login floor; a glue bug that passes a weaker constant
+    than `EXPORT_KDF` writes a weaker file. The default is checked in the binding.
+  - A body that is at the depth limit of the decoder (16 levels) needs three more levels inside an export and
+    cannot be exported. Only unknown data from a newer client can be that deep.
+  - `change_password` takes the larger of the wrap's and the manifest's generation, and a server can show an
+    inflated wrap generation (a denial of service the server has anyway).
+  - A rekey starts a new manifest and drops the unknown keys and the unknown method types of the old one; the
+    other flows keep them.
+  - The emergency sheet accepts `http://` for any IPv4 literal, public or not; the client should warn about
+    clear text.
+  - The plain JSON export strips passkey secrets only from a top-level `passkey` map; for a body of a newer
+    schema, the secrets of any other layout are exported unless the user asks for passkeys to be left out by
+    refusing the export.
 - **Tests that are not run on every change.** The 256 MiB export test in the three browsers needs a label on a
   pull request. The twelve fuzz targets run for 60 seconds on a pull request and for 20 minutes each night. The
   timing tests that are decisive are run by hand on a quiet host.

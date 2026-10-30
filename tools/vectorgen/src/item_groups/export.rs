@@ -44,6 +44,9 @@ struct XItem {
     favorite: bool,
     /// An unknown key at the top of the body: `(key, text)`.
     unknown: Option<(&'static str, String)>,
+    /// A body written out by hand (for example of a newer schema): it
+    /// replaces the one made from the fields above.
+    raw: Option<Vec<u8>>,
 }
 
 impl XItem {
@@ -60,6 +63,7 @@ impl XItem {
             notes: None,
             favorite: false,
             unknown: None,
+            raw: None,
         }
     }
 
@@ -70,6 +74,9 @@ impl XItem {
     }
 
     fn cbor(&self) -> Vec<u8> {
+        if let Some(raw) = &self.raw {
+            return raw.clone();
+        }
         let fields: Vec<Vec<u8>> = self
             .fields
             .iter()
@@ -798,6 +805,42 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
         &slow,
         &d,
         std::slice::from_ref(&with_passkey),
+    ));
+
+    // A body of a newer schema is exported as it was read (the backup loses
+    // nothing) and opens again as the same bytes.
+    let mut newer = XItem::new(0x72, "login", "from a newer release");
+    newer.raw = Some(cb::map(&[
+        ("zzz-first", cb::uint(7)),
+        ("schema", cb::uint(2)),
+        ("type", cb::text("login")),
+        ("name", cb::uint(5)),
+        ("fields", cb::text("not a list")),
+        ("urls", cb::array(&[])),
+        (
+            "passkey",
+            cb::array(&[cb::map(&[("priv", cb::bytes(&[0xe3, 0xe3]))])]),
+        ),
+        ("created", cb::uint(1)),
+        ("modified", cb::uint(2)),
+        ("favorite", cb::boolean(false)),
+    ]));
+    let with_newer = [note.clone(), newer];
+    let g = build_items("export/newer", pw_b, SMALL_B, &with_newer)?;
+    cases.push(encrypt_case(
+        "007",
+        "an item of a newer schema is written exactly as it was read",
+        &small,
+        &g,
+        &with_newer,
+        true,
+    ));
+    cases.push(decrypt_case(
+        "008",
+        "open the file of encrypt/007: the newer item is read back unchanged",
+        &small,
+        &g,
+        &with_newer,
     ));
 
     // ---- header

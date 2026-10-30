@@ -299,9 +299,12 @@ pub(crate) fn derive_k_exp(
 
 /// `cbor{ v: 1, items: [ { id, body } ] }`.
 ///
-/// An item that is read-only (a newer `schema`), the reserved manifest id
-/// or a repeated id is refused, as is a list over [`MAX_ITEMS`] or a body
-/// with more than [`MAX_BODY_NODES`] CBOR nodes ([`Error::TooLarge`]).
+/// A body read from a newer `schema` is written exactly as it was read
+/// (`ItemBody::to_value` returns the decoded original), so a backup loses
+/// nothing and an import keeps the item read-only. The reserved manifest id,
+/// a repeated id and any other body that is not schema 1 are refused, as is a
+/// list over [`MAX_ITEMS`] or a body with more than [`MAX_BODY_NODES`] CBOR
+/// nodes ([`Error::TooLarge`]).
 fn encode_items(items: &[ExportItem]) -> Result<Zeroizing<Vec<u8>>, Error> {
     if items.len() > MAX_ITEMS {
         return Err(Error::TooLarge);
@@ -309,7 +312,8 @@ fn encode_items(items: &[ExportItem]) -> Result<Zeroizing<Vec<u8>>, Error> {
     let mut seen = BTreeSet::new();
     let mut list = Vec::with_capacity(items.len());
     for item in items {
-        if item.body.schema != SCHEMA || item.body.is_read_only() {
+        if !item.body.is_kept_verbatim() && (item.body.schema != SCHEMA || item.body.is_read_only())
+        {
             return Err(Error::ReadOnlySchema);
         }
         if item.item_id == ItemId::MANIFEST || !seen.insert(*item.item_id.as_bytes()) {

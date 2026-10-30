@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "486d5c19864b6c9aa1f2453d5df7c01b859788b6b43d6fd7afc41fd19a953ee9",
-    "OPS.md": "970b7af6ecf1f8fa5ffcb9ad3cb6513eb360f905e9e436176cb77715be20ecb8",
-    "VERSION": "5378796307535df3ec8d8b15a2e2dc5641419c3d3060cfe32238c0fa973f7aa3",
+    "ERRORS.md": "e9d04eae08817980b7b884063dc8c08ea2548fe3f2599d7e7e06908599d7f35c",
+    "OPS.md": "8c1bef0c375b6e160c4a93b7bc6f693d8dd4d7153ecca238e12ad736fe58e0a9",
+    "VERSION": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56",
     "external/SOURCE.md": "afe26b63233f4360c3c04c47d5e508fc1324e0313394f015bde26bc0ee91ee6d",
     "external/publicsuffix-test_psl.txt": "8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d",
     "external/rfc4226-hotp.json": "11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198",
@@ -24,9 +24,10 @@
     "internal/cbor-limits.json": "213ba4185cef58fa6bf75660cd6297fe99ffae5c730bb1d8e91b12514eec8520",
     "internal/checkpoint.json": "3b8dd1bb2b7c32cbeadcb1ba37ac838e0cba563ef1641808ab93ebd0e517d061",
     "internal/codes.json": "be636f2b384d4a1164c016df96a2d80905d962b14d660c11a2c475ac34e78afa",
-    "internal/export.json": "9e502bb11b1a4932fceadd924263ce6ad2b73f5e39365f48ac1b5a30d04ead89",
+    "internal/export.json": "eaf77732fe2c8e8ad70df1100f6be90b1634f2b4b111a55a92d8b1dbe05aa5ef",
     "internal/item.json": "b280ab3a029610058c03209c799aa1d72b072b36e52fa7198e0b67af501df8c6",
     "internal/kdf.json": "db80c0a6cf5cdeb360f997b820fc3bfbed9897e58c2f50f616788738e033e893",
+    "internal/methods.json": "d3dce46bd21f12df9ad6721f0bc90115d011f4742aa96b4cb08adf1e3ef5e6a7",
     "internal/opaque.json": "a829b53d257e567166213081e6d11b136a35fef8a78f601bc59b63880f5ae949",
     "internal/origin.json": "ab2c8f1d2606591451087fcdcd064205059d9c327702d021c9294d09f485e3c8",
     "internal/padding.json": "91262790d092e6432d1864eae58ba89ae62eff2087fa7352ec39c286fd6b9858",
@@ -34,14 +35,15 @@
     "internal/proofs.json": "d749b3921949231c2413768e08c83bf26e915a4461d8d3992f9e4e5f6d8b061b",
     "internal/rekey.json": "6f1f2decad96ec5ae373c77a8f3ef7641dfc6e67bde1b6568972594a357e38f6",
     "internal/sheet.json": "26958d0254be02336d2ac3e9909d37375858104c771a2acde9ee63268e44f43a",
+    "internal/sync.json": "30bdfd0097e6495323c4cdb8e5710bb4499e23b2c640952e675cbec26e9f76b7",
     "internal/tlv.json": "61755b252c5b0228b51c978fb0edab9e3a559c37a5448b9bd943c42b11bba286",
     "internal/tomb-tag.json": "775a642f5590a1759e76501e602406b476b0cab6e00b99db5d6204df0d01d18b",
     "internal/totp.json": "4d3a33abc6f22a10db5e6569e8eb361e37c322d1749fded11a8aa0ed344edcb7",
     "internal/unicode.json": "94e5b7a569bc8ce153d186a3b300fe10445fcaa5ec8935ff6c4d628b53a5b398",
-    "internal/unlock.json": "f28e28408120ad98830774151a5074b1fc542846abc1fae4f82ef1e4d90f0aca",
-    "internal/wrap.json": "d02159319dda5c58994e60e3355c8f5009b8aeb67c002a9058834705ecfc3ac0",
+    "internal/unlock.json": "00b50cd1637348e9b443d2dbc1ebc8693a46dc49900145608b8eec043a81cff2",
+    "internal/wrap.json": "f68befa6598004e0f13630474717aba115fa9d863c5790b46d2d6642f69d4867",
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 20
+  "version": 22
 }

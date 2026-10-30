@@ -75,6 +75,8 @@ function sealCase(type, getKek) {
   return ({ input, rng }) => {
     const v = wrapFields(input);
     const kek = getKek(input, v, rng);
+    // the PRF salt is 32 random bytes per registration: all zero is a missing salt (before anything is drawn)
+    if (type === 'prf' && v.prfSalt.every((x) => x === 0)) fail('input_all_zero');
     const nonce = rng.draw(24);
     const r = wrapSeal(type, v, kek, unhex(input.vk), nonce);
     const intermediate = { kek: hex(kek), aad: hex(r.aad) };

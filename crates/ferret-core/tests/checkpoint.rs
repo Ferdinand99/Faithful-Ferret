@@ -248,20 +248,55 @@ fn checkpoint_accepts_consistent_state() {
     let vault = unlocked(0x5a);
     let c = cp(&vault, base());
     let rows = rows_of(&base());
-    verify_checkpoint(&vault, &c, &rows, SEQ).unwrap();
-    verify_checkpoint(&vault, &c, &rows, SEQ + 10).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &rows,
+        SEQ,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &rows,
+        SEQ + 10,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // The order of the server's rows does not matter.
     let mut reversed = rows.clone();
     reversed.reverse();
-    verify_checkpoint(&vault, &c, &reversed, SEQ).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &reversed,
+        SEQ,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // Newer state is fine below the top: a higher revision, a new item.
     let mut newer = rows.clone();
     newer[2] = row_live(0x42, 6, 0xb2);
     newer.push(row_live(0x44, 1, 0xb4));
-    verify_checkpoint(&vault, &c, &newer, SEQ + 1).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &newer,
+        SEQ + 1,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // An empty state.
     let empty = make_checkpoint(&vault, 0, vec![]).unwrap();
-    verify_checkpoint(&vault, &empty, &[], 0).unwrap();
+    verify_checkpoint(
+        &vault,
+        &empty,
+        &[],
+        0,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
 }
 
 // Check 1: the row tags. A row that nobody verified cannot become a
@@ -308,39 +343,75 @@ fn checkpoint_rejects_bad_mac_and_bad_digest() {
     let mut bad_mac = good.clone();
     bad_mac.mac[0] ^= 1;
     assert_eq!(
-        verify_checkpoint(&vault, &bad_mac, &rows, SEQ),
+        verify_checkpoint(
+            &vault,
+            &bad_mac,
+            &rows,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadMac)
     );
     // The seq is covered by the MAC.
     let mut other_seq = good.clone();
     other_seq.seq += 1;
     assert_eq!(
-        verify_checkpoint(&vault, &other_seq, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &other_seq,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadMac)
     );
     // A changed digest field no longer fits the MAC.
     let mut bad_digest_field = good.clone();
     bad_digest_field.digest[0] ^= 1;
     assert_eq!(
-        verify_checkpoint(&vault, &bad_digest_field, &rows, SEQ),
+        verify_checkpoint(
+            &vault,
+            &bad_digest_field,
+            &rows,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadMac)
     );
     // Entries that do not hash to the signed digest.
     let mut bad_entries = good.clone();
     bad_entries.entries[20] ^= 1;
     assert_eq!(
-        verify_checkpoint(&vault, &bad_entries, &rows, SEQ),
+        verify_checkpoint(
+            &vault,
+            &bad_entries,
+            &rows,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadDigest)
     );
     let mut cut = good.clone();
     cut.entries.truncate(cut.entries.len() - ENTRY_LEN);
     assert_eq!(
-        verify_checkpoint(&vault, &cut, &rows, SEQ),
+        verify_checkpoint(
+            &vault,
+            &cut,
+            &rows,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadDigest)
     );
     // Another vault's key.
     assert_eq!(
-        verify_checkpoint(&unlocked(0x5b), &good, &rows, SEQ),
+        verify_checkpoint(
+            &unlocked(0x5b),
+            &good,
+            &rows,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::BadMac)
     );
     // The codes are distinct and stable.
@@ -381,7 +452,13 @@ fn checkpoint_with_authentic_but_malformed_entries_is_refused() {
         ("repeat", repeated),
     ] {
         assert_eq!(
-            verify_checkpoint(&vault, &make(entries), &rows, SEQ),
+            verify_checkpoint(
+                &vault,
+                &make(entries),
+                &rows,
+                SEQ,
+                ferret_core::RollbackMemory::NoMemory
+            ),
             Err(Error::Malformed(MalformedKind::Entries)),
             "{name}"
         );
@@ -397,13 +474,25 @@ fn checkpoint_rejects_hidden_item() {
         let mut rows = rows_of(&base());
         rows.remove(gone);
         assert_eq!(
-            verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+            verify_checkpoint(
+                &vault,
+                &c,
+                &rows,
+                SEQ + 5,
+                ferret_core::RollbackMemory::NoMemory
+            ),
             failure(F::HiddenOrRolledBack),
             "row {gone}"
         );
     }
     assert_eq!(
-        verify_checkpoint(&vault, &c, &[], SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &[],
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::HiddenOrRolledBack)
     );
     assert_eq!(
@@ -419,7 +508,13 @@ fn checkpoint_rejects_lower_rev() {
     let mut rows = rows_of(&base());
     rows[2] = row_live(0x42, 4, 0xa2);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::LowerRev)
     );
 }
@@ -431,7 +526,13 @@ fn checkpoint_rejects_same_rev_different_hash() {
     let mut rows = rows_of(&base());
     rows[2] = row_live(0x42, 5, 0xff);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::SameRevDifferentHash)
     );
 }
@@ -446,15 +547,34 @@ fn checkpoint_deleted_row_must_have_a_higher_rev() {
         rows
     };
     // Higher: the item was deleted after the checkpoint.
-    verify_checkpoint(&vault, &c, &rows_with(row_dead(0x42, 6)), SEQ + 5).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &rows_with(row_dead(0x42, 6)),
+        SEQ + 5,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // The same revision cannot be both live and deleted.
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows_with(row_dead(0x42, 5)), SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows_with(row_dead(0x42, 5)),
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::SameRevDifferentHash)
     );
     // Lower is a roll back.
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows_with(row_dead(0x42, 4)), SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows_with(row_dead(0x42, 4)),
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::LowerRev)
     );
 }
@@ -467,15 +587,36 @@ fn checkpoint_accepts_missing_tombstone() {
     let mut rows = rows_of(&base());
     rows.pop();
     assert_eq!(rows.len(), 3);
-    verify_checkpoint(&vault, &c, &rows, SEQ + 5).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &rows,
+        SEQ + 5,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // The same, with a tombstone row of a higher revision, and with the
     // item live again at a higher revision.
     let mut up = rows_of(&base());
     up[3] = row_dead(0x43, 9);
-    verify_checkpoint(&vault, &c, &up, SEQ + 5).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &up,
+        SEQ + 5,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     let mut revived = rows_of(&base());
     revived[3] = row_live(0x43, 3, 0xcc);
-    verify_checkpoint(&vault, &c, &revived, SEQ + 5).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &revived,
+        SEQ + 5,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -485,19 +626,37 @@ fn checkpoint_rejects_live_row_older_than_tombstone() {
     let mut rows = rows_of(&base());
     rows[3] = row_live(0x43, 1, 0xcc);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::LiveBehindTombstone)
     );
     // A live row at the revision of the tombstone: two stories for one rev.
     rows[3] = row_live(0x43, 2, 0xcc);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::SameRevDifferentHash)
     );
     // A tombstone shown at a lower revision than the checkpoint's.
     rows[3] = row_dead(0x43, 1);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::LowerRev)
     );
 }
@@ -509,30 +668,63 @@ fn checkpoint_top_seq_digest_recomputed() {
     let vault = unlocked(0x5a);
     let c = cp(&vault, base());
     let rows = rows_of(&base());
-    verify_checkpoint(&vault, &c, &rows, SEQ).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &rows,
+        SEQ,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
 
     // A row the checkpoint does not have: every entry still checks out, but
     // at the top the state must be exactly the checkpoint's.
     let mut extra = rows.clone();
     extra.push(row_live(0x44, 1, 0xdd));
     assert_eq!(
-        verify_checkpoint(&vault, &c, &extra, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &extra,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::TopDigestMismatch)
     );
-    verify_checkpoint(&vault, &c, &extra, SEQ + 1).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &extra,
+        SEQ + 1,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
 
     // A higher revision.
     let mut higher = rows.clone();
     higher[2] = row_live(0x42, 6, 0xb2);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &higher, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &higher,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::TopDigestMismatch)
     );
 
     // A tombstone that has been purged is accepted, at the top too.
     let mut no_tomb = rows.clone();
     no_tomb.pop();
-    verify_checkpoint(&vault, &c, &no_tomb, SEQ).unwrap();
+    verify_checkpoint(
+        &vault,
+        &c,
+        &no_tomb,
+        SEQ,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
 
     // A live entry without its row is not, at the top: the state is not the
     // checkpoint's (below the top it is a hidden or rolled back item).
@@ -540,12 +732,24 @@ fn checkpoint_top_seq_digest_recomputed() {
         let mut hidden = rows.clone();
         hidden.remove(gone);
         assert_eq!(
-            verify_checkpoint(&vault, &c, &hidden, SEQ),
+            verify_checkpoint(
+                &vault,
+                &c,
+                &hidden,
+                SEQ,
+                ferret_core::RollbackMemory::NoMemory
+            ),
             failure(F::TopDigestMismatch),
             "row {gone}"
         );
         assert_eq!(
-            verify_checkpoint(&vault, &c, &hidden, SEQ + 1),
+            verify_checkpoint(
+                &vault,
+                &c,
+                &hidden,
+                SEQ + 1,
+                ferret_core::RollbackMemory::NoMemory
+            ),
             failure(F::HiddenOrRolledBack),
             "row {gone}"
         );
@@ -555,7 +759,13 @@ fn checkpoint_top_seq_digest_recomputed() {
     let mut both = no_tomb.clone();
     both.push(row_live(0x44, 1, 0xdd));
     assert_eq!(
-        verify_checkpoint(&vault, &c, &both, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &both,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::TopDigestMismatch)
     );
 
@@ -565,13 +775,25 @@ fn checkpoint_top_seq_digest_recomputed() {
     let mut tomb_up = rows.clone();
     tomb_up[3] = row_dead(0x43, 9);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &tomb_up, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &tomb_up,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::TopDigestMismatch)
     );
     let mut revived = rows.clone();
     revived[3] = row_live(0x43, 3, 0xcc);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &revived, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &revived,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::TopDigestMismatch)
     );
 
@@ -580,7 +802,13 @@ fn checkpoint_top_seq_digest_recomputed() {
     let mut changed = rows.clone();
     changed[2] = row_live(0x42, 5, 0xff);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &changed, SEQ),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &changed,
+            SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::SameRevDifferentHash)
     );
 }
@@ -591,11 +819,17 @@ fn checkpoint_seq_above_top_rejected() {
     let c = cp(&vault, base());
     let rows = rows_of(&base());
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ - 1),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ - 1,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         failure(F::SeqAboveTop)
     );
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, 0),
+        verify_checkpoint(&vault, &c, &rows, 0, ferret_core::RollbackMemory::NoMemory),
         failure(F::SeqAboveTop)
     );
 }
@@ -607,7 +841,13 @@ fn server_rows_with_one_item_twice_are_refused() {
     let mut rows = rows_of(&base());
     rows.push(rows[1]);
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 5),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 5,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         Err(Error::Malformed(MalformedKind::Entries))
     );
 }
@@ -617,9 +857,9 @@ fn rows_not_in_the_checkpoint_are_fine_below_the_top() {
     let vault = unlocked(0x5a);
     let c = make_checkpoint(&vault, 3, vec![live(1, 1, 1)]).unwrap();
     let rows = vec![row_live(1, 1, 1), row_live(2, 7, 2), row_dead(3, 9)];
-    verify_checkpoint(&vault, &c, &rows, 4).unwrap();
+    verify_checkpoint(&vault, &c, &rows, 4, ferret_core::RollbackMemory::NoMemory).unwrap();
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, 3),
+        verify_checkpoint(&vault, &c, &rows, 3, ferret_core::RollbackMemory::NoMemory),
         failure(F::TopDigestMismatch)
     );
 }
@@ -739,7 +979,13 @@ fn checkpoint_vectors_from_file() {
                             .collect()
                     }
                 };
-                verify_checkpoint(&vault, &c, &rows, u64s(&input["top_seq"]))?;
+                verify_checkpoint(
+                    &vault,
+                    &c,
+                    &rows,
+                    u64s(&input["top_seq"]),
+                    ferret_core::RollbackMemory::NoMemory,
+                )?;
                 Ok(Outcome {
                     output: json!({ "ok": true }),
                     intermediate: None,
@@ -779,7 +1025,13 @@ fn a_live_hash_of_32_zero_bytes_is_refused() {
         },
     });
     assert_eq!(
-        verify_checkpoint(&vault, &c, &rows, SEQ + 1),
+        verify_checkpoint(
+            &vault,
+            &c,
+            &rows,
+            SEQ + 1,
+            ferret_core::RollbackMemory::NoMemory
+        ),
         Err(Error::Malformed(MalformedKind::Entries))
     );
 }

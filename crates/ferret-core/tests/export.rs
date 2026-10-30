@@ -998,7 +998,7 @@ fn import_rejects_authentic_bodies_of_the_wrong_shape() {
 #[test]
 fn import_keeps_a_body_with_a_newer_schema_read_only() {
     // A file from a later release may hold a body with schema 2: it is
-    // read, flagged read-only, and cannot be exported again.
+    // read, flagged read-only, and exported again exactly as it was read.
     let file = small_file();
     let mut v = login("future").to_value();
     if let Value::Map(e) = &mut v {
@@ -1018,10 +1018,11 @@ fn import_keeps_a_body_with_a_newer_schema_read_only() {
     let f = reseal_body(&file, &plain);
     let back = import_decrypt_unchecked(&pw(), &f).unwrap();
     assert!(back[0].body.is_read_only());
-    assert_eq!(
-        export_encrypt_unchecked(&mut rng("ro"), &pw(), SMALL, NOW, &back),
-        Err(Error::ReadOnlySchema)
-    );
+    let again = export_encrypt_unchecked(&mut rng("ro"), &pw(), SMALL, NOW, &back).unwrap();
+    let back2 = import_decrypt_unchecked(&pw(), &again).unwrap();
+    assert_eq!(back2, back, "nothing is lost on the way");
+    assert!(back2[0].body.is_read_only());
+    assert_eq!(back2[0].body.to_value(), back[0].body.to_value());
 }
 
 #[test]
@@ -1044,17 +1045,14 @@ fn export_refuses_items_that_cannot_be_written() {
         run(&twice, &mut none),
         Err(Error::Malformed(MalformedKind::ItemBody))
     );
-    // A body that is read-only.
-    let decoded = {
-        let mut v = login("f").to_value();
-        if let Value::Map(e) = &mut v {
-            e[0].1 = Value::uint(2);
-        }
-        ItemBody::from_value(v).unwrap()
-    };
+    // A body that claims a newer schema but was not read from one would be
+    // rebuilt from its typed fields, so it is refused. (A body that was read
+    // from a newer schema is exported as it was read.)
+    let mut by_hand = login("f");
+    by_hand.schema = 2;
     let ro = ExportItem {
         item_id: item_id(5),
-        body: decoded.body,
+        body: by_hand,
     };
     assert_eq!(run(&[ro], &mut none), Err(Error::ReadOnlySchema));
     // More items than a CBOR array may hold.

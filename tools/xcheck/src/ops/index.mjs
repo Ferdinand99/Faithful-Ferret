@@ -8,8 +8,9 @@ import { ops as misc } from './misc.mjs';
 import { ops as account } from './account.mjs';
 import { ops as origin } from './origin.mjs';
 import { ops as passkey } from './passkey.mjs';
+import { ops as methods } from './methods.mjs';
 
-export const registry = { ...basic, ...items, ...checkpoint, ...rekey, ...text, ...exportOps, ...misc, ...account, ...origin, ...passkey };
+export const registry = { ...basic, ...items, ...checkpoint, ...rekey, ...text, ...exportOps, ...misc, ...account, ...origin, ...passkey, ...methods };
 
 // Ops xcheck does not implement, with the reason shown in the report.
 export const NOT_COVERED = {

@@ -899,3 +899,57 @@ fn opaque_production_vectors_from_file() {
     assert!(report.failures.is_empty(), "{:#?}", report.failures);
     assert!(report.passed >= 10, "{} cases", report.passed);
 }
+
+/// The guard that wipes the key arrays of `opaque-ke`'s finish results in
+/// place leaves zeros in the bytes it borrowed.
+#[test]
+fn the_finish_result_keys_are_wiped_in_place() {
+    use ferret_core::testing::opaque::wipe_on_drop_probe;
+    let mut export = [0xA5u8; 64];
+    let mut session = [0x5Au8; 64];
+    wipe_on_drop_probe(&mut export);
+    wipe_on_drop_probe(&mut session);
+    assert!(export.iter().all(|b| *b == 0));
+    assert!(session.iter().all(|b| *b == 0));
+}
+
+/// The production path wipes the keys of the finish results where they sit:
+/// a registration finish wipes the export key, a login finish the export key
+/// and the session key, and each array is zero afterwards. (A test cannot read
+/// the library's fields after the call; the guard counts what it wiped.)
+#[test]
+fn the_finish_calls_wipe_the_keys_of_their_results_in_place() {
+    use ferret_core::testing::opaque::wiped_key_arrays;
+    let pw = input("correct horse battery", None);
+    let start = wiped_key_arrays();
+    let acc = register(
+        Server::new(&mut rng("wipe/server")),
+        &pw,
+        &small(),
+        "wipe/reg",
+    );
+    let after_registration = wiped_key_arrays();
+    assert_eq!(
+        after_registration - start,
+        1,
+        "registration: the export key"
+    );
+
+    let (state, _server, ke2) = login_up_to_ke2(&acc, &pw, "wipe/login");
+    let before = wiped_key_arrays();
+    login_finish_with(
+        &mut rng("wipe/fin"),
+        state,
+        &pw,
+        &ke2,
+        &small(),
+        Some(OPAQUE_CONTEXT),
+        PinState::FirstUse,
+    )
+    .unwrap();
+    assert_eq!(
+        wiped_key_arrays() - before,
+        2,
+        "login: the export key and the session key"
+    );
+}

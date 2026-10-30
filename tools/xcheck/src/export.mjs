@@ -16,9 +16,9 @@ const get = (m, key) => {
 };
 
 // items: [{ id: bytes(16), body: bytes (CBOR) }] -> [{ id, value }] after the body shape check
-// A body of a newer schema is refused by the encrypted export (`read_only_schema`) and by the CSV export
-// (`unsupported`: the columns are those of schema 1 and the rest would be dropped silently); the plain JSON export
-// writes it as it was read.
+// A body of a newer schema is written as it was read by the encrypted export and by the plain JSON export (nothing
+// is lost, and an import keeps the item read-only); the CSV export refuses it (`unsupported`: the columns are those
+// of schema 1 and the rest would be dropped silently).
 export function readItems(items, { allowReadOnly = false, refusal = 'read_only_schema' } = {}) {
   if (items.length > MAX_ITEMS) fail('too_large');
   const seen = new Set();
@@ -50,7 +50,7 @@ const aadBody = (header) => tlvs(label('ferret/v1/export/body'), fBytes(T.header
 
 export function encryptExport({ password, kdf, createdAt, items, draw, unchecked }) {
   if (!unchecked) checkKdfRange(kdf.m_kib, kdf.t, kdf.p);
-  const list = readItems(items);
+  const list = readItems(items, { allowReadOnly: true });
   const salt = draw(16);
   const ek = draw(32);
   const nonceEk = draw(24);

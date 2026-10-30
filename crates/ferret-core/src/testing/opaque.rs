@@ -366,3 +366,18 @@ pub fn rfc_login<R: SecureRng>(
         server_public_key: done.server_public_key,
     })
 }
+
+/// Runs the guard that wipes `opaque-ke`'s key arrays in place and ends its
+/// scope, so a test can see that the borrowed bytes are zero afterwards.
+pub fn wipe_on_drop_probe(bytes: &mut [u8]) {
+    let guard = client::WipeOnDrop(bytes);
+    drop(guard);
+}
+
+/// How many key arrays of `opaque-ke` finish results (the export key of a
+/// registration or login, and the 3DH session key of a login) the current
+/// thread has wiped in place so far. A test reads it before and after a
+/// finish call.
+pub fn wiped_key_arrays() -> usize {
+    client::WIPED_KEY_ARRAYS.with(std::cell::Cell::get)
+}

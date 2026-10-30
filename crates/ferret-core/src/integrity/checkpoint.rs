@@ -44,6 +44,7 @@ use crate::error::{CheckpointFailure, Error, MalformedKind};
 use crate::ids::ItemId;
 use crate::keys::UnlockedVault;
 use crate::prim::{ct::mac_eq, mac::hmac_sha256};
+use crate::sync_memory::RollbackMemory;
 use crate::tlv::{Tlv, tag};
 use sha2::{Digest, Sha256};
 
@@ -318,12 +319,22 @@ fn fail(kind: CheckpointFailure) -> Error {
 /// `rows` with the same `item_id` twice, or a live row whose hash is 32 zero
 /// bytes, are `Malformed(Entries)`.
 ///
+/// `memory` is the client's [`SyncMemory`](crate::SyncMemory): pass
+/// [`RollbackMemory::Remembered`] with the stored record, or
+/// [`RollbackMemory::NoMemory`] where there is none. After the checks above,
+/// a checkpoint below the highest verified one, a top `seq` below the highest
+/// seen, or a row with a lower `rev` than the highest seen for its item is
+/// refused (`checkpoint_seq_below_remembered`,
+/// `checkpoint_top_seq_below_remembered`, `checkpoint_rev_below_remembered`);
+/// when all hold, the record is advanced. On any error it is unchanged.
+///
 /// Spec: Fase 1 § 8.6.
 pub fn verify_checkpoint(
     vault: &UnlockedVault,
     cp: &Checkpoint,
     rows: &[ServerRow],
     server_top_seq: u64,
+    memory: RollbackMemory<'_>,
 ) -> Result<(), Error> {
     // 2. The MAC over (seq, digest), then the digest over the entries.
     let expected_mac = checkpoint_mac(vault, cp.seq, &cp.digest)?;
@@ -380,7 +391,12 @@ pub fn verify_checkpoint(
             }
         }
     }
-    Ok(())
+    // Last, against what this device has seen before. The record changes
+    // only when every check above and these have passed.
+    match memory {
+        RollbackMemory::Remembered(m) => m.accept_verified_checkpoint(cp.seq, rows, server_top_seq),
+        RollbackMemory::NoMemory => Ok(()),
+    }
 }
 
 /// One entry of the checkpoint against the row the server shows for it.

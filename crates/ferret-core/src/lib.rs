@@ -43,6 +43,7 @@ pub mod integrity;
 pub mod item;
 pub mod keys;
 pub mod ksf_profile;
+pub mod methods;
 pub mod opaque;
 pub mod passkey;
 pub mod pinning;
@@ -50,6 +51,7 @@ pub mod prim;
 pub mod rng;
 pub mod secret;
 pub mod sheet;
+pub mod sync_memory;
 #[cfg(feature = "test-support")]
 pub mod testing;
 pub mod text;
@@ -67,7 +69,9 @@ pub use envelope::{
     SealedItem, decrypt_item, decrypt_manifest, encrypt_item, encrypt_manifest, item_tag,
     parse_envelope, verify_item_tag,
 };
-pub use error::{CheckpointFailure, Error, InputError, MalformedKind, PinnedField};
+pub use error::{
+    CheckpointFailure, Error, InputError, MalformedKind, MethodListFailure, PinnedField,
+};
 pub use export::{
     EXPORT_KDF, ExportDraft, ExportHeader, ExportItem, PlainExportOptions, export_begin,
     export_encrypt, export_plain_csv, export_plain_json, export_wrap_key, import_decrypt,
@@ -86,6 +90,10 @@ pub use item::{
 };
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;
+pub use methods::{
+    CurrentManifest, MethodChange, ServerMethod, check_server_methods, manifest_add_method,
+    manifest_remove_method,
+};
 pub use opaque::{
     LoginFinished, LoginState, OPAQUE_CONTEXT, PinState, RegistrationFinished, RegistrationState,
     opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
@@ -106,6 +114,7 @@ pub use sheet::{
     AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, ServerAddress, SetupQr,
     account_id_text, emergency_sheet, parse_server_address, parse_setup_qr, setup_qr_payload,
 };
+pub use sync_memory::{MAX_TRACKED_ITEMS, RollbackMemory, SYNC_MEMORY_VERSION, SyncMemory};
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};
 pub use text::{
@@ -115,4 +124,4 @@ pub use tlv::Tlv;
 pub use totp::{
     TotpAlgorithm, TotpParams, TotpSecret, parse_otpauth, totp_code, totp_seconds_left,
 };
-pub use wrap::{Method, WrapRecord, unwrap_vk, wrap_vk};
+pub use wrap::{Method, WrapRecord, prf_salt_new, unwrap_vk, wrap_vk};

@@ -21,6 +21,8 @@ share the single code `decrypt`, with no cause.
 | `input_forbidden_character` | Input contains a forbidden or unassigned character. |
 | `input_same_as_master_password` | The export password is equal to the master password. |
 | `input_secret_key_mismatch` | The secret key given to an account flow is not the one in the OPAQUE input, or only one of them has a secret key. |
+| `input_all_zero` | A PRF output, a `KEK_dev_pin` or a `K_exp` that was handed to the core is all zero bytes: a broken or wiped buffer, not a key. |
+| `input_last_method` | A request would remove the last `password` or the last `recovery` method of the vault. |
 | `malformed_envelope` | Item or manifest envelope is malformed. |
 | `malformed_cbor` | CBOR is malformed: syntax error, truncated input, bad UTF-8 or a reserved byte. |
 | `malformed_cbor_duplicate_key` | A CBOR map has the same key twice. |
@@ -38,6 +40,7 @@ share the single code `decrypt`, with no cause.
 | `malformed_tlv` | TLV encoding is malformed. |
 | `malformed_entries` | Checkpoint entries are malformed, or a rekey does not start from the checkpoint it names (wrong `seq`). Also returned when two methods would get the same id: account creation with one id for both wraps, and a recovery that gives the new recovery method an id equal to the password wrap's id or to the id of any manifest entry other than the old recovery entry (the colliding recovery id). Also: two methods of one type in a manifest, a wrap whose id the manifest does not list, a rekey with other than two wraps, and a repeated row id. |
 | `malformed_pinned_record` | A value in the pinned record is out of range, or the record would grow without bound. |
+| `malformed_sync_memory` | A stored rollback memory that is not in the form `SyncMemory::to_bytes` writes: another version, a length that does not fit the count, a count above 50 000, entries out of order or repeated, or `checkpoint_seq` above `max_seq`. |
 | `malformed_opaque_message` | An OPAQUE message from the server with the wrong length, or one that holds something that is not a group element or key. A message that parses but does not authenticate is `decrypt`. |
 | `malformed_setup_qr` | The setup QR payload of the emergency sheet is not in the exact format, or a field that goes into it (server address, e-mail) is not allowed. |
 | `malformed_otpauth` | An `otpauth://` address or TOTP setting that is not allowed: wrong scheme or type, an unknown or repeated parameter, bad base32, or digits or period out of range. |
@@ -56,6 +59,12 @@ share the single code `decrypt`, with no cause.
 | `checkpoint_live_behind_tombstone` | A live row is older than a tombstone. |
 | `checkpoint_seq_above_top` | The checkpoint sequence is above the server's top sequence. |
 | `checkpoint_top_digest_mismatch` | At the top sequence the recomputed digest differs. |
+| `checkpoint_top_seq_below_remembered` | The server's highest sequence is below the highest this device has seen. |
+| `checkpoint_seq_below_remembered` | The checkpoint's sequence is below the highest verified checkpoint this device remembers. |
+| `checkpoint_rev_below_remembered` | A row has a lower revision than the highest this device has seen for that item. |
+| `method_list_unknown` | The server lists an unlock method that the manifest does not list, or lists one id twice. |
+| `method_list_changed` | The server lists an unlock method of the manifest with another type or another generation. |
+| `method_list_missing` | The manifest lists an unlock method that the server does not list. |
 | `checksum` | Recovery or secret key checksum error. |
 | `non_canonical` | Recovery or secret key is valid but not in canonical form. |
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |

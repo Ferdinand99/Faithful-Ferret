@@ -173,6 +173,18 @@ secret_types! {
     ExportWrapKey, 32;
 }
 
+/// Refuses a key that is all zero bytes (wiping the buffer first). No real
+/// authenticator, keystore or key derivation returns that; it is a buffer
+/// that was wiped, never filled or reused, and using it as a key would wrap
+/// the vault under a value anyone can guess.
+fn check_not_all_zero<const N: usize>(bytes: &mut [u8; N]) -> Result<(), Error> {
+    if bytes.iter().fold(0u8, |acc, b| acc | b) == 0 {
+        zeroize::Zeroize::zeroize(bytes);
+        return Err(Error::InvalidInput(InputError::AllZero));
+    }
+    Ok(())
+}
+
 /// The exact-length check of the release constructors below.
 fn exact_len<const N: usize>(bytes: &[u8]) -> Result<[u8; N], Error> {
     use core::cmp::Ordering;
@@ -188,12 +200,14 @@ fn exact_len<const N: usize>(bytes: &[u8]) -> Result<[u8; N], Error> {
 impl PrfOutput {
     /// Takes the 32 bytes of a WebAuthn PRF output that an authenticator
     /// returned (the client got them from `getClientExtensionResults`). Any
-    /// other length is `input_too_short` or `input_too_long`.
+    /// other length is `input_too_short` or `input_too_long`, and 32 zero
+    /// bytes are `input_all_zero`.
     ///
     /// This is the one way a PRF output enters the core in a release build,
     /// for the passkey unlock method. The caller wipes its own copy.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
         let mut arr = exact_len::<32>(bytes)?;
+        check_not_all_zero(&mut arr)?;
         Ok(Self::from_array_wiping(&mut arr))
     }
 }
@@ -201,9 +215,11 @@ impl PrfOutput {
 impl KekDevPin {
     /// Takes the 32 bytes that the platform keystore released for the mobile
     /// PIN method (Fase 1 § 7.4). Any other length is `input_too_short` or
-    /// `input_too_long`. The caller wipes its own copy.
+    /// `input_too_long`, and 32 zero bytes are `input_all_zero`. The caller
+    /// wipes its own copy.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
         let mut arr = exact_len::<32>(bytes)?;
+        check_not_all_zero(&mut arr)?;
         Ok(Self::from_array_wiping(&mut arr))
     }
 }
@@ -211,9 +227,11 @@ impl KekDevPin {
 impl ExportWrapKey {
     /// Takes the 32 bytes of a `K_exp` that [`crate::export::export_wrap_key`]
     /// made in another worker. Any other length is `input_too_short` or
-    /// `input_too_long`. The caller wipes its own copy.
+    /// `input_too_long`, and 32 zero bytes are `input_all_zero`. The caller
+    /// wipes its own copy.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
         let mut arr = exact_len::<32>(bytes)?;
+        check_not_all_zero(&mut arr)?;
         Ok(Self::from_array_wiping(&mut arr))
     }
 

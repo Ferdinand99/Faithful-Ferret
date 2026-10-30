@@ -518,11 +518,14 @@ impl Vault {
                 mac: cp.mac,
                 entries: cp.entries,
             };
+            // The rollback memory (`SyncMemory`) is not exposed through this
+            // binding yet: this call checks the checkpoint on its own.
             core(verify_checkpoint(
                 vault,
                 &checkpoint,
                 &server_rows,
                 js_u64(top_seq)?,
+                ferret_core::RollbackMemory::NoMemory,
             ))
         })
     }
