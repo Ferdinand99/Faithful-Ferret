@@ -15,13 +15,13 @@
 //! "ferret/v1/state-seal")`: there is no third secret file. A state lives for
 //! a minute, so a leaked key gives nothing that the holder of
 //! `prelogin_secret` does not already have. The blob is
-//! `version (0x01) ‖ nonce (24) ‖ ciphertext ‖ tag (16)`, 228 bytes. The
+//! `version (0x01) ‖ nonce (24) ‖ ciphertext ‖ tag (16)`, 244 bytes. The
 //! plaintext is
 //!
 //! ```text
 //! expires_at  u64be            8
 //! purpose     u8               1   0 login, 1 re-authentication
-//! binding     flag u8 ‖ 32     33  the session of a re-authentication, else zero
+//! binding     flag u8 ‖ 48     49  session (32) and account (16) of a re-authentication, else zero
 //! credential  16               16
 //! ksf_profile u8               1
 //! ServerLogin                  128
@@ -94,9 +94,12 @@ const TAG_LEN: usize = 16;
 /// the expected MAC of the client (64).
 pub(crate) const SERVER_LOGIN_LEN: usize = 128;
 
-/// `expires_at (8) ‖ purpose (1) ‖ binding (1 + 32) ‖ credential (16) ‖
+/// `expires_at (8) ‖ purpose (1) ‖ binding (1 + 48) ‖ credential (16) ‖
 /// ksf_profile (1) ‖ ServerLogin (128)`.
-const PLAIN_LEN: usize = 8 + 1 + 1 + 32 + 16 + 1 + SERVER_LOGIN_LEN;
+const PLAIN_LEN: usize = 8 + 1 + 1 + BINDING_LEN + 16 + 1 + SERVER_LOGIN_LEN;
+
+/// The session binding (32) and the account (16) of a re-authentication.
+const BINDING_LEN: usize = 32 + 16;
 
 /// `version ‖ nonce ‖ ciphertext ‖ tag`.
 const BLOB_LEN: usize = 1 + NONCE_LEN + PLAIN_LEN + TAG_LEN;
@@ -181,8 +184,9 @@ impl fmt::Debug for SealedState {
 
 /// What a login is for.
 ///
-/// Spec: Fase 1 § 4.6 (a): a re-authentication belongs to one session, and a
-/// proof for it is not accepted from any other.
+/// Spec: Fase 1 § 4.6 (a): a re-authentication belongs to one session and to
+/// the account of that session, and a proof for it is not accepted from any
+/// other session or for any other account.
 ///
 /// There is no `PartialEq`: the binding is a value derived from a session id,
 /// and `open_state` compares the purpose it finds with the one the request
@@ -195,6 +199,10 @@ pub enum LoginPurpose {
     Reauth {
         /// The session the proof is for.
         session: SessionBinding,
+        /// The account that owns the session. The endpoint passes the
+        /// account of the session it has, never a value from the request;
+        /// a login for any other account is refused.
+        account: CredentialId,
     },
 }
 
@@ -207,24 +215,35 @@ impl LoginPurpose {
         }
     }
 
-    /// The binding bytes: the session of a re-authentication, zero for a login.
-    /// The copy is wiped when dropped.
-    fn binding(&self) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(match self {
-            LoginPurpose::Login => [0u8; 32],
-            LoginPurpose::Reauth { session } => session.0,
-        })
+    /// The binding bytes: the session (32) and the account (16) of a
+    /// re-authentication, zero for a login. The copy is wiped when dropped.
+    fn binding(&self) -> Zeroizing<[u8; BINDING_LEN]> {
+        let mut out = Zeroizing::new([0u8; BINDING_LEN]);
+        if let LoginPurpose::Reauth { session, account } = self {
+            let (head, tail) = out.split_at_mut(32);
+            head.copy_from_slice(&session.0);
+            tail.copy_from_slice(account.as_bytes());
+        }
+        out
+    }
+
+    /// The account a re-authentication is for, `None` for a login.
+    pub(crate) fn account(&self) -> Option<&CredentialId> {
+        match self {
+            LoginPurpose::Login => None,
+            LoginPurpose::Reauth { account, .. } => Some(account),
+        }
     }
 
     /// Wipes the session binding, if there is one.
     fn wipe(&mut self) {
-        if let LoginPurpose::Reauth { session } = self {
+        if let LoginPurpose::Reauth { session, .. } = self {
             session.0.zeroize();
         }
     }
 
     /// Whether the two purposes are the same, and for a re-authentication
-    /// the same session. The comparison of the sessions takes the same time
+    /// the same session and account. The comparison takes the same time
     /// wherever they differ.
     fn same_as(&self, other: &LoginPurpose) -> bool {
         let same_kind = self.code() == other.code();
@@ -302,15 +321,23 @@ impl StatePlain {
         let expires_at = u64::from_be_bytes(*take::<8>(&mut rest).ok_or(invalid)?);
         let [code] = *take::<1>(&mut rest).ok_or(invalid)?;
         let [flag] = *take::<1>(&mut rest).ok_or(invalid)?;
-        let mut binding = *take::<32>(&mut rest).ok_or(invalid)?;
+        let mut binding = *take::<BINDING_LEN>(&mut rest).ok_or(invalid)?;
         let credential = CredentialId::from_bytes(*take::<16>(&mut rest).ok_or(invalid)?);
         let [ksf_profile] = *take::<1>(&mut rest).ok_or(invalid)?;
         let login = take::<SERVER_LOGIN_LEN>(&mut rest).ok_or(invalid)?;
         let purpose = match (code, flag) {
-            (PURPOSE_LOGIN, 0) if binding == [0u8; 32] => Some(LoginPurpose::Login),
-            (PURPOSE_REAUTH, 1) => Some(LoginPurpose::Reauth {
-                session: SessionBinding(binding),
-            }),
+            (PURPOSE_LOGIN, 0) if binding == [0u8; BINDING_LEN] => Some(LoginPurpose::Login),
+            (PURPOSE_REAUTH, 1) => {
+                let (session, account) = binding.split_at(32);
+                let mut s = [0u8; 32];
+                let mut a = [0u8; 16];
+                s.copy_from_slice(session);
+                a.copy_from_slice(account);
+                Some(LoginPurpose::Reauth {
+                    session: SessionBinding(s),
+                    account: CredentialId::from_bytes(a),
+                })
+            }
             _ => None,
         };
         binding.zeroize();
@@ -740,6 +767,7 @@ mod tests {
     fn reauth(fill: u8) -> LoginPurpose {
         LoginPurpose::Reauth {
             session: SessionBinding([fill; 32]),
+            account: CredentialId::from_bytes([fill; 16]),
         }
     }
 
@@ -778,8 +806,8 @@ mod tests {
 
     #[test]
     fn sizes_add_up() {
-        assert_eq!(PLAIN_LEN, 187);
-        assert_eq!(BLOB_LEN, 228);
+        assert_eq!(PLAIN_LEN, 203);
+        assert_eq!(BLOB_LEN, 244);
         let state = plain(LoginPurpose::Login);
         assert_eq!(state.encode().len(), PLAIN_LEN);
         assert_eq!(seal(&seal_key(), &id(), &state).as_bytes().len(), BLOB_LEN);
@@ -960,7 +988,7 @@ mod tests {
     fn state_plain_parse_rejects_unknown_purpose_and_inconsistent_flag() {
         let login = plain(LoginPurpose::Login).encode().to_vec();
         let reauth = plain(reauth(0x77)).encode().to_vec();
-        // Offsets: expires_at 0..8, purpose 8, flag 9, binding 10..42.
+        // Offsets: expires_at 0..8, purpose 8, flag 9, binding 10..58.
         assert!(StatePlain::parse(&login).is_ok());
         assert!(StatePlain::parse(&reauth).is_ok());
         for unknown in [2u8, 3, 0x7f, 0x80, 0xff] {
@@ -986,10 +1014,15 @@ mod tests {
         let mut bytes = login.clone();
         bytes[10 + 5] = 1;
         assert!(StatePlain::parse(&bytes).is_err());
-        // A re-authentication may carry any binding.
-        let mut bytes = reauth.clone();
-        bytes[10 + 5] ^= 1;
-        assert!(StatePlain::parse(&bytes).is_ok());
+        let mut bytes = login.clone();
+        bytes[10 + 40] = 1;
+        assert!(StatePlain::parse(&bytes).is_err());
+        // A re-authentication may carry any session and account.
+        for at in [5, 40] {
+            let mut bytes = reauth.clone();
+            bytes[10 + at] ^= 1;
+            assert!(StatePlain::parse(&bytes).is_ok());
+        }
     }
 
     #[test]
@@ -999,13 +1032,14 @@ mod tests {
         expected.extend_from_slice(&1_700_000_060u64.to_be_bytes());
         expected.extend_from_slice(&[1, 1]);
         expected.extend_from_slice(&[0x77; 32]);
+        expected.extend_from_slice(&[0x77; 16]);
         expected.extend_from_slice(&[0x31; 16]);
         expected.push(2);
         expected.extend_from_slice(&login_bytes());
         assert_eq!(state.encode().as_slice(), expected.as_slice());
         let login = plain(LoginPurpose::Login).encode();
         assert_eq!(login.get(8..10), Some(&[0u8, 0][..]));
-        assert_eq!(login.get(10..42), Some(&[0u8; 32][..]));
+        assert_eq!(login.get(10..58), Some(&[0u8; 48][..]));
     }
 
     /// Hand-written bytes for the key, the associated data and the blob. The
@@ -1027,7 +1061,7 @@ mod tests {
         let sealed = seal_state(&key, &mut rng, &id(), &state, NOW).unwrap();
         rng.finish().unwrap();
         let blob = sealed.as_bytes();
-        assert_eq!(blob.len(), 228);
+        assert_eq!(blob.len(), 244);
         assert_eq!(blob.first(), Some(&1));
         assert_eq!(blob.get(1..25), Some(nonce.as_slice()));
 
@@ -1054,7 +1088,7 @@ mod tests {
     /// The blob of `key_and_blob_match_hand_written_bytes` as the cipher made it:
     /// a change to the layout, the associated data or the key derivation changes
     /// these bytes.
-    const PINNED_BLOB: &str = "01a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b76e4601b113792795161aaad60ed40cd956412efbe9df317d45dbcd46565bad7c6f4f4f5a440fc97a713afbdaf047e068875190b27fa1a55452cf3c015223b1e0ddd0dd2d2ed72b595ed20b6d12e75a021a4e4882d4703f673895ebdfa32423abb8b53c225bb592ef6bfdfe83594b3a3c49ae73724afd86e94624425a5a25479c0b3ccc05a72998da8f10b5617de9f37dfd976013b5d3c63533f25744f7395ec4fadece44e1be14f1e6f46a16a9dac4d66f79c74d4ab02bd94e9d61d7734b1e868788cbcb02a671f6de5dd1";
+    const PINNED_BLOB: &str = "01a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b76e4601b113792795161aaad60ed40cd956412efbe9df317d45dbcd46565bad7c6f4f4f5a440fc97a713abd9cb601a62ec117d6f439e7e31214890f33690398cecaccd8275daf4a3f3186651d6277ca92aafed8122480aff7a8255b4f335453db28258c92cb25621f9b6d6e33e9dbaaac39dee3e2fa4d1679d6d4b2caca95f72c9bacbc7537b9286a3f8025918d7963ed4d27f083c5a356a5a342e7d467c9ae346a4e7ef4712e64819664faa6194a54469f8957ddfa00bb49deed11d06db7278e92877f0cd3c03351c953f42bd1ddfc27674bc4ef05eceae7a61c14";
 
     #[test]
     fn derived_keys_depend_on_the_secret() {
@@ -1147,6 +1181,7 @@ mod tests {
                 session[at] ^= 1 << bit;
                 let other = LoginPurpose::Reauth {
                     session: SessionBinding(session),
+                    account: CredentialId::from_bytes([0x77; 16]),
                 };
                 assert_eq!(
                     open_as(&reauth_77, &other).err(),
@@ -1206,9 +1241,12 @@ mod tests {
     #[test]
     fn the_session_binding_is_wiped() {
         let mut state = plain(reauth(0x77));
-        assert_eq!(*state.purpose.binding(), [0x77; 32]);
+        let mut bound = [0x77u8; BINDING_LEN];
+        assert_eq!(*state.purpose.binding(), bound);
         state.purpose.wipe();
-        assert_eq!(*state.purpose.binding(), [0u8; 32]);
+        // The session is wiped; the account is an identifier, not a secret.
+        bound.get_mut(..32).unwrap().fill(0);
+        assert_eq!(*state.purpose.binding(), bound);
         // A login has nothing to wipe.
         let mut login = plain(LoginPurpose::Login);
         login.purpose.wipe();
@@ -1269,8 +1307,19 @@ mod tests {
             other[at] ^= 0x80;
             let other = LoginPurpose::Reauth {
                 session: SessionBinding(other),
+                account: CredentialId::from_bytes([1; 16]),
             };
             assert!(!reauth(1).same_as(&other), "byte {at}");
+        }
+        // The same session for another account is another purpose.
+        for at in 0..16 {
+            let mut account = [1u8; 16];
+            account[at] ^= 0x80;
+            let other = LoginPurpose::Reauth {
+                session: SessionBinding([1; 32]),
+                account: CredentialId::from_bytes(account),
+            };
+            assert!(!reauth(1).same_as(&other), "account byte {at}");
         }
     }
 

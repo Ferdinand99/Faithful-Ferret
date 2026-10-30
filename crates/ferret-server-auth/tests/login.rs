@@ -19,10 +19,9 @@ use ferret_server_auth::testing::{
     FIXTURE_IP, FIXTURE_PASSWORD, LoginFixture, login_start_with_context, put_state, take_state,
 };
 use ferret_server_auth::{
-    AccountLookup, AuthContext, AuthError, DenyReason, ErrorClass, LoginFinishRequest, LoginId,
-    LoginPurpose, LoginStartRequest, Malformed, Outcome, PreloginPolicy, RetryAfter,
-    SessionBinding, Stage, ThrottleCall, ThrottleKey, fake_credential_id, login_start,
-    register_start,
+    AccountLookup, AuthError, DenyReason, ErrorClass, LoginFinishRequest, LoginId, LoginPurpose,
+    LoginStartRequest, Malformed, Outcome, PreloginPolicy, RetryAfter, SessionBinding, Stage,
+    ThrottleCall, ThrottleKey, fake_credential_id, login_start, register_start,
 };
 
 const NOW: u64 = LoginFixture::START;
@@ -61,6 +60,20 @@ fn right_ke3(f: &LoginFixture) -> (LoginId, Vec<u8>) {
 
 fn session(fill: u8) -> SessionBinding {
     SessionBinding([fill; 32])
+}
+
+trait ReauthFor {
+    /// A re-authentication of the session `a` for the account of the fixture.
+    fn reauth(&self, a: SessionBinding) -> LoginPurpose;
+}
+
+impl ReauthFor for LoginFixture {
+    fn reauth(&self, a: SessionBinding) -> LoginPurpose {
+        LoginPurpose::Reauth {
+            session: a,
+            account: self.credential,
+        }
+    }
 }
 
 /// Byte strings that are not a ristretto255 element the protocol accepts.
@@ -102,13 +115,13 @@ fn finish_for_a_reauthentication_returns_that_purpose() {
     let f = LoginFixture::new();
     let (ke1, state) = f.client_start(FIXTURE_PASSWORD, "client");
     let a = session(7);
-    let response = f
-        .start(f.active(), &ke1, LoginPurpose::Reauth { session: a })
-        .unwrap();
+    let response = f.start(f.active(), &ke1, f.reauth(a)).unwrap();
     let ke3 = f
         .client_finish(state, FIXTURE_PASSWORD, &response.ke2, OPAQUE_CONTEXT)
         .unwrap();
-    let verified = f.finish(&response.login_id, &ke3, Some(a)).unwrap();
+    let verified = f
+        .finish(&response.login_id, &ke3, Some((a, f.credential)))
+        .unwrap();
     assert_eq!(verified.credential, f.credential);
     assert!(matches!(verified.purpose, LoginPurpose::Reauth { .. }));
 }
@@ -745,11 +758,14 @@ fn reauth_state_is_bound_to_the_session() {
     let (a, b) = (session(1), session(2));
     // `Reauth{a}` succeeds only for `a`; each failure uses the state up, so
     // every try starts again.
-    for (given, ok) in [(Some(a), true), (Some(b), false), (None, false)] {
+    let account = f.credential;
+    for (given, ok) in [
+        (Some((a, account)), true),
+        (Some((b, account)), false),
+        (None, false),
+    ] {
         let (ke1, state) = f.client_start(FIXTURE_PASSWORD, "client");
-        let response = f
-            .start(f.active(), &ke1, LoginPurpose::Reauth { session: a })
-            .unwrap();
+        let response = f.start(f.active(), &ke1, f.reauth(a)).unwrap();
         let ke3 = f
             .client_finish(state, FIXTURE_PASSWORD, &response.ke2, OPAQUE_CONTEXT)
             .unwrap();
@@ -762,7 +778,7 @@ fn reauth_state_is_bound_to_the_session() {
         assert!(f.store.is_empty());
     }
     // A login is not a re-authentication, whichever session is given.
-    for given in [Some(a), Some(b)] {
+    for given in [Some((a, account)), Some((b, account))] {
         let (response, state) = started(&f, FIXTURE_PASSWORD, "client");
         let ke3 = f
             .client_finish(state, FIXTURE_PASSWORD, &response.ke2, OPAQUE_CONTEXT)
@@ -778,7 +794,7 @@ fn reauth_state_is_bound_to_the_session() {
 fn finish_denials_have_one_public_code() {
     let f = LoginFixture::new();
     let mut errors = Vec::new();
-    // Missing, used, wrong KE3, wrong purpose, wrong session.
+    // Missing, used, wrong KE3, wrong purpose, wrong session, wrong account.
     let never = LoginId::parse(b"11111111111111111111111111111111").unwrap();
     errors.push(f.finish(&never, &[0; KE3_LEN], None).unwrap_err());
     let (response, _) = started(&f, FIXTURE_PASSWORD, "client");
@@ -792,21 +808,29 @@ fn finish_denials_have_one_public_code() {
     );
     let (response, _) = started(&f, FIXTURE_PASSWORD, "client");
     errors.push(
-        f.finish(&response.login_id, &[0; KE3_LEN], Some(session(1)))
-            .unwrap_err(),
+        f.finish(
+            &response.login_id,
+            &[0; KE3_LEN],
+            Some((session(1), f.credential)),
+        )
+        .unwrap_err(),
     );
     let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "client");
-    let response = f
-        .start(
-            f.active(),
-            &ke1,
-            LoginPurpose::Reauth {
-                session: session(1),
-            },
-        )
-        .unwrap();
+    let response = f.start(f.active(), &ke1, f.reauth(session(1))).unwrap();
     errors.push(
-        f.finish(&response.login_id, &[0; KE3_LEN], Some(session(2)))
+        f.finish(
+            &response.login_id,
+            &[0; KE3_LEN],
+            Some((session(2), f.credential)),
+        )
+        .unwrap_err(),
+    );
+    // Another account than the one of the session.
+    let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "client");
+    let response = f.start(f.active(), &ke1, f.reauth(session(1))).unwrap();
+    let other = ferret_server_auth::CredentialId::from_bytes([0x43; 16]);
+    errors.push(
+        f.finish(&response.login_id, &[0; KE3_LEN], Some((session(1), other)))
             .unwrap_err(),
     );
     let reasons: Vec<_> = errors
@@ -816,7 +840,7 @@ fn finish_denials_have_one_public_code() {
             other => panic!("not a denial: {other:?}"),
         })
         .collect();
-    assert_eq!(reasons.len(), 5);
+    assert_eq!(reasons.len(), 6);
     for error in &errors {
         assert_eq!(error.public_code(), "denied");
         assert_eq!(error.http_class(), ErrorClass::Denied);
@@ -873,24 +897,18 @@ fn server_with_another_context_cannot_authenticate() {
 }
 
 #[test]
-fn the_context_refuses_a_policy_with_an_unknown_profile() {
-    let f = LoginFixture::new();
-    let policy = PreloginPolicy::new(&[(200, 1000)], 500).unwrap();
-    let built = AuthContext::new(
-        &f.keys,
-        &f.prelogin,
-        &f.seal,
-        &f.clock,
-        &f.throttle,
-        &policy,
-        &f.profiles,
-    );
+fn a_policy_with_an_unknown_profile_cannot_be_built() {
+    // The server builds its policy when it starts, so a bad one stops the
+    // start and not the first request.
+    let bad = AuthError::Internal(ferret_server_auth::InternalKind::Policy);
+    assert_eq!(PreloginPolicy::new(&[(200, 1000)], 500).unwrap_err(), bad);
     assert_eq!(
-        built.unwrap_err(),
-        AuthError::Internal(ferret_server_auth::InternalKind::Policy)
+        PreloginPolicy::new(&[(1, 500), (2, 500)], 500).unwrap_err(),
+        bad
     );
-    // The policy of the fixture is fine.
-    let _ = f.cx();
+    assert!(PreloginPolicy::new(&[(1, 1000)], 500).is_ok());
+    // Tests may build a longer table.
+    assert!(PreloginPolicy::for_tests(&[(200, 1000)], 500).is_ok());
 }
 
 #[test]
@@ -903,4 +921,149 @@ fn nothing_secret_shows_in_debug() {
     let (login_id, ke3) = right_ke3(&f);
     let verified = f.finish(&login_id, &ke3, None).unwrap();
     assert_eq!(format!("{verified:?}"), "LoginVerified([redacted])");
+}
+
+// ------------------------------------------------------- the account of a session
+
+/// The attack of a caller who holds a session of account A (a stolen cookie),
+/// does not know the password of A, and knows the password of an account M of
+/// their own: they start a re-authentication for the session of A, but log in
+/// as M.
+#[test]
+fn a_reauthentication_for_another_account_is_denied_in_the_session_of_a() {
+    const MALLORY: &str = "mallory's own password";
+    let f = LoginFixture::new();
+    let account_a = f.credential;
+    let account_m = ferret_server_auth::CredentialId::from_bytes([0x4d; 16]);
+    let record_m = f.register(&account_m, MALLORY);
+    let stolen = session(9);
+
+    let attempt =
+        |as_account: ferret_server_auth::CredentialId,
+         record: &ferret_server_auth::StoredRecord,
+         password: &str,
+         finish_for: (SessionBinding, ferret_server_auth::CredentialId)| {
+            let (ke1, state) = f.client_start(password, "mallory");
+            let request = LoginStartRequest {
+                caller: LoginFixture::caller(),
+                name: &f.name,
+                credential: as_account,
+                lookup: AccountLookup::Active {
+                    record,
+                    sk_hint: false,
+                },
+                // The endpoint sets the account of the session it has found: A.
+                purpose: LoginPurpose::Reauth {
+                    session: stolen,
+                    account: account_a,
+                },
+                ke1: &ke1,
+            };
+            let response = login_start(
+                &f.cx(),
+                &f.store,
+                &mut TestRng::new(password.as_bytes()),
+                &request,
+            )
+            .unwrap();
+            let ke3 = f
+                .client_finish(state, password, &response.ke2, OPAQUE_CONTEXT)
+                .unwrap();
+            f.finish(&response.login_id, &ke3, Some(finish_for))
+        };
+
+    // Control: the owner of A re-authenticates with the password of A.
+    let owner = attempt(account_a, &f.record, FIXTURE_PASSWORD, (stolen, account_a)).unwrap();
+    assert_eq!(owner.credential, account_a);
+
+    // The attacker logs in as M, in the session of A: refused, however the
+    // finish is asked.
+    for finish_for in [(stolen, account_a), (stolen, account_m)] {
+        let error = attempt(account_m, &record_m, MALLORY, finish_for).unwrap_err();
+        assert_eq!(error, denied(DenyReason::StateInvalid));
+        assert_eq!(error.public_code(), "denied");
+    }
+    // The same holds for a made-up account: a name that does not exist.
+    let (ke1, _) = f.client_start(MALLORY, "mallory");
+    let request = LoginStartRequest {
+        caller: LoginFixture::caller(),
+        name: &f.name,
+        credential: account_m,
+        lookup: AccountLookup::Unknown,
+        purpose: LoginPurpose::Reauth {
+            session: stolen,
+            account: account_a,
+        },
+        ke1: &ke1,
+    };
+    let response = login_start(&f.cx(), &f.store, &mut TestRng::new(b"unknown"), &request).unwrap();
+    let error = f
+        .finish(&response.login_id, &[1; KE3_LEN], Some((stolen, account_a)))
+        .unwrap_err();
+    assert_eq!(error, denied(DenyReason::StateInvalid));
+    // The throttle was told the address alone failed, not the account of M.
+    let (stage, keys, outcome) = last_record(&f);
+    assert_eq!((stage, outcome), (Stage::LoginFinish, Outcome::Failure));
+    assert_eq!(keys, vec![ThrottleKey::Ip(ip())]);
+}
+
+// ---------------------------------------------------- expiry in the sealed state
+
+/// A store that does not look at the expiry when it hands a state back, as a
+/// broken store might. The check on the sealed state itself must still hold.
+struct ForgetfulStore(ferret_server_auth::InMemoryLoginStateStore);
+
+impl ferret_server_auth::LoginStateStore for ForgetfulStore {
+    fn put(
+        &self,
+        key: ferret_server_auth::StateKey,
+        sealed: ferret_server_auth::SealedState,
+        expires_at: u64,
+        now: u64,
+    ) -> Result<(), ferret_server_auth::StoreError> {
+        self.0.put(key, sealed, expires_at, now)
+    }
+
+    fn take(
+        &self,
+        key: &ferret_server_auth::StateKey,
+        _now: u64,
+    ) -> Result<Option<ferret_server_auth::SealedState>, ferret_server_auth::StoreError> {
+        self.0.take(key, 0)
+    }
+
+    fn purge_expired(&self, now: u64) -> Result<usize, ferret_server_auth::StoreError> {
+        self.0.purge_expired(now)
+    }
+}
+
+#[test]
+fn an_expired_state_is_refused_even_when_the_store_hands_it_back() {
+    use ferret_server_auth::LoginStateStore as _;
+    let f = LoginFixture::new();
+    let store = ForgetfulStore(ferret_server_auth::InMemoryLoginStateStore::new());
+    let (ke1, state) = f.client_start(FIXTURE_PASSWORD, "client");
+    let request = LoginStartRequest {
+        caller: LoginFixture::caller(),
+        name: &f.name,
+        credential: f.credential,
+        lookup: f.active(),
+        purpose: LoginPurpose::Login,
+        ke1: &ke1,
+    };
+    let response = login_start(&f.cx(), &store, &mut TestRng::new(b"forgetful"), &request).unwrap();
+    let ke3 = f
+        .client_finish(state, FIXTURE_PASSWORD, &response.ke2, OPAQUE_CONTEXT)
+        .unwrap();
+    let hex = response.login_id.to_hex();
+    let finish = LoginFinishRequest {
+        caller: LoginFixture::caller(),
+        login_id: hex.as_bytes(),
+        ke3: &ke3,
+        current_session: None,
+    };
+    f.clock.set(NOW + 60);
+    let error = ferret_server_auth::login_finish(&f.cx(), &store, &finish).unwrap_err();
+    assert_eq!(error, denied(DenyReason::StateExpired));
+    let _ = store.purge_expired(NOW);
 }

@@ -91,7 +91,7 @@ use ferret_core::opaque::server_suite::{
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::clock::Clock;
-use crate::ct::{ct_select_bytes, ct_select_u8};
+use crate::ct::{ct_eq, ct_select_bytes, ct_select_u8};
 use crate::error::{AuthError, DenyReason, InternalKind, Malformed};
 use crate::ids::{CredentialId, LoginId, SessionBinding};
 use crate::keys::{PreloginSecret, ServerKeys};
@@ -108,15 +108,14 @@ use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 /// account.
 const ZERO_RECORD: [u8; REGISTRATION_RECORD_LEN] = [0; REGISTRATION_RECORD_LEN];
 
-/// Everything the login functions need from the server, built once at
-/// start-up.
+/// Everything the login functions need from the server: borrows of its keys,
+/// secrets, clock, throttle and rules.
 ///
-/// Make it with [`AuthContext::new`], which checks the pre-login policy
-/// ([`PreloginPolicy::check_known_profiles`]), so a server whose made-up
-/// answers name a profile that no client knows does not start. That is the
-/// start-up path of the policy: load the secrets (`load_or_create`), take the
-/// [`startup_decision`](crate::startup_decision), build the policy from the
-/// shares of the real accounts, then build this context and refuse to serve
+/// Building it costs nothing, so a server may build one for every request.
+/// The start-up check of the pre-login policy is in [`PreloginPolicy::new`],
+/// which refuses a profile that clients do not know: load the secrets
+/// (`load_or_create`), take the [`startup_decision`](crate::startup_decision),
+/// build the policy from the shares of the real accounts, and refuse to serve
 /// on an error.
 ///
 /// The profile rules are kept for the registration entry points, which share
@@ -134,10 +133,7 @@ pub struct AuthContext<'a> {
 
 impl<'a> AuthContext<'a> {
     /// Bundles the server's keys, secrets, clock, throttle and rules.
-    ///
-    /// Fails with `Internal(Policy)` when the pre-login policy names a
-    /// profile that clients do not know.
-    pub fn new(
+    pub const fn new(
         keys: &'a ServerKeys,
         prelogin: &'a PreloginSecret,
         seal: &'a StateSealKey,
@@ -145,9 +141,8 @@ impl<'a> AuthContext<'a> {
         throttle: &'a dyn Throttle,
         policy: &'a PreloginPolicy,
         profiles: &'a ProfileRules,
-    ) -> Result<Self, AuthError> {
-        policy.check_known_profiles()?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             keys,
             prelogin,
             seal,
@@ -155,7 +150,7 @@ impl<'a> AuthContext<'a> {
             throttle,
             policy,
             profiles,
-        })
+        }
     }
 
     /// The OPAQUE keys of the server.
@@ -280,11 +275,17 @@ pub struct LoginFinishRequest<'a> {
     pub login_id: &'a [u8],
     /// `KE3`, exactly 64 bytes.
     pub ke3: &'a [u8],
-    /// The session that the request was made in, for a re-authentication, or
-    /// `None` for an ordinary login. A state made for a login is not accepted
-    /// with a session, and a state made for a session is not accepted without
-    /// that session.
-    pub current_session: Option<SessionBinding>,
+    /// The session that the request was made in and the account that owns
+    /// it, for a re-authentication, or `None` for an ordinary login. A state
+    /// made for a login is not accepted with a session, and a state made for
+    /// a session is not accepted without that session.
+    ///
+    /// The endpoint takes both values from the session it has found, never
+    /// from the request body. The login is refused unless it was for that
+    /// account (`Denied(StateInvalid)`): a caller who holds a session of one
+    /// account and knows the password of another cannot use it to
+    /// re-authenticate.
+    pub current_session: Option<(SessionBinding, CredentialId)>,
 }
 
 impl fmt::Debug for LoginFinishRequest<'_> {
@@ -297,6 +298,11 @@ impl fmt::Debug for LoginFinishRequest<'_> {
 ///
 /// There is no session key here, on purpose: it is wiped inside
 /// [`login_finish`] and Ferret uses none.
+///
+/// A state lives for 60 seconds, so an account that was disabled between
+/// `login_start` and `login_finish` still finishes with `Ok`. The caller must
+/// look the account up again and refuse a disabled one before it issues a
+/// session.
 pub struct LoginVerified {
     /// The account the login was for.
     pub credential: CredentialId,
@@ -471,7 +477,6 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
 
     // The made-up answer and the made-up record are always computed; the
     // real ones are chosen without a branch.
-    step("fake-prelogin");
     let fake = fake_prelogin(cx.prelogin, req.name, cx.policy);
     let fake_record = fake_record_bytes(cx.keys, cx.prelogin, id);
     step("select-record");
@@ -582,7 +587,7 @@ pub fn login_finish<S: LoginStateStore>(
 ) -> Result<LoginVerified, AuthError> {
     let now = cx.clock.now_unix();
     let expected = match req.current_session {
-        Some(session) => LoginPurpose::Reauth { session },
+        Some((session, account)) => LoginPurpose::Reauth { session, account },
         None => LoginPurpose::Login,
     };
 
@@ -594,9 +599,12 @@ pub fn login_finish<S: LoginStateStore>(
         };
 
     step("take");
-    let sealed: Option<SealedState> = store
-        .take(&login_id.store_key(), now)
-        .map_err(AuthError::from)?;
+    let taken = match store.take(&login_id.store_key(), now) {
+        Ok(taken) => taken,
+        // A store that fails is also a request that was admitted and failed.
+        Err(error) => return Err(refuse_without_id(cx, req, now, AuthError::from(error))),
+    };
+    let sealed: Option<SealedState> = taken;
     let Some(sealed) = sealed else {
         let missing = AuthError::Denied(DenyReason::StateMissing);
         return Err(refuse_without_id(cx, req, now, missing));
@@ -606,6 +614,16 @@ pub fn login_finish<S: LoginStateStore>(
         Ok(state) => state,
         Err(error) => return Err(refuse_without_id(cx, req, now, error)),
     };
+
+    // A re-authentication is for the account of the session. A login that was
+    // for another account (a name the caller knows the password of) is
+    // refused, and the account of the state is not used for the throttle.
+    if let Some(account) = expected.account()
+        && !ct_eq(state.credential.as_bytes(), account.as_bytes())
+    {
+        let wrong = AuthError::Denied(DenyReason::StateInvalid);
+        return Err(refuse_without_id(cx, req, now, wrong));
+    }
 
     // The state tells which account this is. A refusal here drops (and
     // wipes) the state; it has already been taken out of the store.
@@ -807,7 +825,6 @@ mod tests {
             &f.policy,
             &f.profiles,
         )
-        .unwrap()
     }
 
     fn start_request<'a>(

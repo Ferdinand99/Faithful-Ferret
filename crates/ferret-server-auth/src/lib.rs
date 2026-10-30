@@ -53,12 +53,14 @@
 //!
 //! # Start-up
 //!
-//! A server builds its [`AuthContext`] once, after it has loaded its secrets
-//! (`load_or_create`) and taken the [`startup_decision`]. [`AuthContext::new`]
-//! checks that the pre-login policy names only key stretching profiles that
-//! clients know ([`PreloginPolicy::check_known_profiles`]); a server must
-//! refuse to serve when it fails, because a made-up answer with a profile no
-//! client accepts would make every unknown name fail while real names work.
+//! A server loads its secrets (`load_or_create`), takes the
+//! [`startup_decision`], builds its [`PreloginPolicy`] from the shares of the
+//! real accounts, and only then serves. [`PreloginPolicy::new`] refuses a
+//! policy that names a key stretching profile that clients do not know, so a
+//! bad policy fails at start-up and never on a request: a made-up answer with
+//! a profile no client accepts would make every unknown name fail while real
+//! names work. [`AuthContext::new`] only bundles borrows and is cheap enough
+//! to build for every request.
 //!
 //! # Features
 //!

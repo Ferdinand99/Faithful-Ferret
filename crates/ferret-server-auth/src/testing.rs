@@ -5,7 +5,8 @@
 //!   pass. The memory store runs it in this crate; the database store of the
 //!   next layer runs the same checks.
 //! * [`state_plain_wipe_probe`] lets a test crate look at the memory of a
-//!   sealed state's content before and after it is dropped.//! * [`LoginFixture`] is a server with one registered account and the pieces
+//!   sealed state's content before and after it is dropped.
+//! * [`LoginFixture`] is a server with one registered account and the pieces
 //!   to run the client of `ferret-core` against it. [`login_start_with_context`]
 //!   runs the first step with another OPAQUE context or other identities than
 //!   Ferret's, to show that such a server cannot authenticate.
@@ -357,6 +358,7 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
         credential: CredentialId::from_bytes([fill; 16]),
         purpose: LoginPurpose::Reauth {
             session: SessionBinding([fill; 32]),
+            account: CredentialId::from_bytes([fill; 16]),
         },
         expires_at: 1,
         ksf_profile: 1,
@@ -428,28 +430,14 @@ impl LoginFixture {
     /// A server and an account `alice@example.com` registered with
     /// [`FIXTURE_PASSWORD`].
     pub fn new() -> Self {
-        use ferret_core::testing::opaque::{TestKsf, register_finish_with};
-        use ferret_core::{TestRng, opaque_register_start};
+        use ferret_core::TestRng;
 
         let keys = crate::ServerKeys::generate(&mut TestRng::new(b"fixture keys")).unwrap();
         let prelogin = crate::PreloginSecret::generate(&mut TestRng::new(b"fixture prelogin"));
         let seal = crate::StateSealKey::derive(&prelogin).unwrap();
         let credential = CredentialId::from_bytes([0x42; 16]);
-        let input = Self::input(FIXTURE_PASSWORD);
-        let mut client = TestRng::new(b"fixture registration");
-        let (request, state) = opaque_register_start(&mut client, &input).unwrap();
-        let response = crate::register_start(&keys, &credential, &request).unwrap();
-        let done =
-            register_finish_with(&mut client, state, &input, &response, &TestKsf::new(SMALL))
-                .unwrap();
         let profiles = crate::ProfileRules::ferret_v1();
-        let record = crate::register_finish(
-            &done.record,
-            1,
-            &profiles,
-            crate::RegistrationKind::NewAccount,
-        )
-        .unwrap();
+        let record = register_account(&keys, &profiles, &credential, FIXTURE_PASSWORD);
         Self {
             keys,
             prelogin,
@@ -464,6 +452,12 @@ impl LoginFixture {
             record,
             starts: AtomicUsize::new(0),
         }
+    }
+
+    /// Registers another account on this server, with its own record, for
+    /// tests of two accounts. The record is not known to the fixture.
+    pub fn register(&self, credential: &CredentialId, password: &str) -> crate::StoredRecord {
+        register_account(&self.keys, &self.profiles, credential, password)
     }
 
     /// The OPAQUE input of a password.
@@ -484,7 +478,6 @@ impl LoginFixture {
             &self.policy,
             &self.profiles,
         )
-        .unwrap()
     }
 
     /// The caller of the fixture.
@@ -563,7 +556,7 @@ impl LoginFixture {
         &self,
         login_id: &LoginId,
         ke3: &[u8],
-        current_session: Option<SessionBinding>,
+        current_session: Option<(SessionBinding, CredentialId)>,
     ) -> Result<crate::LoginVerified, crate::AuthError> {
         crate::login_finish(
             &self.cx(),
@@ -576,6 +569,32 @@ impl LoginFixture {
             },
         )
     }
+}
+
+/// A client registration of `password` under `credential` against the server's
+/// keys, packed as the server stores it (profile 1).
+fn register_account(
+    keys: &crate::ServerKeys,
+    profiles: &crate::ProfileRules,
+    credential: &CredentialId,
+    password: &str,
+) -> crate::StoredRecord {
+    use ferret_core::testing::opaque::{TestKsf, register_finish_with};
+    use ferret_core::{TestRng, opaque_register_start};
+
+    let input = LoginFixture::input(password);
+    let mut client = TestRng::new(b"fixture registration");
+    let (request, state) = opaque_register_start(&mut client, &input).unwrap();
+    let response = crate::register_start(keys, credential, &request).unwrap();
+    let done =
+        register_finish_with(&mut client, state, &input, &response, &TestKsf::new(SMALL)).unwrap();
+    crate::register_finish(
+        &done.record,
+        1,
+        profiles,
+        crate::RegistrationKind::NewAccount,
+    )
+    .unwrap()
 }
 
 impl Default for LoginFixture {

@@ -23,7 +23,7 @@ use ferret_server_auth::testing::{FIXTURE_PASSWORD, LoginFixture};
 use ferret_server_auth::{
     AccountLookup, AuthError, DenyReason, InMemoryLoginStateStore, LoginFinishRequest,
     LoginPurpose, LoginStartRequest, LoginStateStore, Malformed, SealedState, StateKey, StoreError,
-    ThrottleCall, login_finish, login_start,
+    ThrottleCall, ThrottleKey, login_finish, login_start,
 };
 
 /// One effect on the outside of the library.
@@ -88,6 +88,20 @@ impl SecureRng for SeenRng<'_> {
     }
 }
 
+/// The kinds of a list of keys, without the identifiers and addresses in
+/// them: the same kinds in the same order are the same shape.
+fn kinds(keys: &[ThrottleKey]) -> String {
+    keys.iter()
+        .map(|key| match key {
+            ThrottleKey::Ip(_) => "Ip",
+            ThrottleKey::AccountIp(..) => "AccountIp",
+            ThrottleKey::Account(_) => "Account",
+            ThrottleKey::UnknownAddress => "UnknownAddress",
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// The calls to the throttle with the identifiers left out: their number,
 /// order, stage, number of keys and outcome.
 fn throttle_shape(f: &LoginFixture) -> Vec<String> {
@@ -96,14 +110,14 @@ fn throttle_shape(f: &LoginFixture) -> Vec<String> {
         .iter()
         .map(|call| match call {
             ThrottleCall::Admit { stage, keys, now } => {
-                format!("admit {stage:?} {} keys at {now}", keys.len())
+                format!("admit {stage:?} {} at {now}", kinds(keys))
             }
             ThrottleCall::Record {
                 stage,
                 keys,
                 outcome,
                 now,
-            } => format!("record {stage:?} {} keys {outcome:?} at {now}", keys.len()),
+            } => format!("record {stage:?} {} {outcome:?} at {now}", kinds(keys)),
         })
         .collect()
 }
@@ -226,7 +240,13 @@ fn login_finish_has_the_same_outside_effects_for_every_lookup() {
         assert!(store.inner.is_empty());
     }
     assert_eq!(shapes[0].0, [Effect::Take]);
-    assert_eq!(shapes[0].1.len(), 2);
+    assert_eq!(
+        shapes[0].1,
+        [
+            "admit LoginFinish AccountIp+Account at 1700000000",
+            "record LoginFinish AccountIp+Account Failure at 1700000000"
+        ]
+    );
     assert_eq!(shapes[1], shapes[0]);
     assert_eq!(shapes[2], shapes[0]);
 }
@@ -263,8 +283,8 @@ fn the_documented_draws_and_lifetime() {
             Effect::Draw(16),
             Effect::Draw(24),
             Effect::Put {
-                // version 1 + nonce 24 + plaintext 187 + tag 16
-                sealed_len: 228,
+                // version 1 + nonce 24 + plaintext 203 + tag 16
+                sealed_len: 244,
                 lifetime: 60,
             },
         ]
