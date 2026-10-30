@@ -1,5 +1,5 @@
 // Scans the WebAssembly build for instructions whose time can depend on their
-// operands (plan section 10 point 4, U3).
+// operands.
 //
 //   node ct/wasm-scan.mjs <module.wat> ct/wasm-allow.toml [--no-gate]
 //                         [--json totals.json] [--compare before.json]

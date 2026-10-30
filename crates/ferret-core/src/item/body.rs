@@ -1,8 +1,7 @@
 //! The item body: the typed part of the schema, and the unknown part kept
 //! as it was.
 //!
-//! Spec: Fase 1 § 5.2 ("Kropp", "Ukjente felt bevares") and plan Appendix B
-//! (approved as U4).
+//! Spec: Fase 1 § 5.2 ("Kropp", "Ukjente felt bevares").
 //!
 //! ```text
 //! { "schema": 1,

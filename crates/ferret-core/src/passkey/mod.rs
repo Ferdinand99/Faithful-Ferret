@@ -85,7 +85,7 @@ pub const MAX_CREDENTIAL_ID: usize = 1023;
 pub const MAX_USER_HANDLE: usize = 64;
 /// The longest name or display name, in bytes.
 pub const MAX_NAME: usize = 1024;
-/// The length of a credential id made by Ferret (plan U13).
+/// The length of a credential id made by Ferret.
 pub const CREDENTIAL_ID_LEN: usize = 32;
 
 fn bad_options() -> Error {
@@ -211,7 +211,7 @@ impl GetRequest {
     /// (`evalByCredential` needs `allowCredentials` and names only credentials
     /// in it).
     ///
-    /// Spec: Fase 1 § 9.2 ("Grenser"), § 9.5 and plan U20.
+    /// Spec: Fase 1 § 9.2 ("Grenser"), § 9.5.
     pub fn validate(&self) -> Result<(), Error> {
         check_challenge(&self.challenge)?;
         check_id_list(&self.allow)?;
@@ -226,7 +226,7 @@ impl GetRequest {
 }
 
 /// A passkey as Ferret stores it: the fields of the `passkey` member of the
-/// item body (plan Appendix B).
+/// item body.
 ///
 /// There is no `Clone`, no `PartialEq` and the `Debug` shows nothing. The
 /// `signCount` is not a field: it is always 0.
@@ -422,7 +422,7 @@ fn resolve_rp_id(ctx: &CallerContext, requested: Option<&str>) -> Result<RpId, E
 /// `InvalidStateError`). It comes after the presence check, so the user has
 /// consented before the page learns that the credential exists.
 ///
-/// Spec: Fase 1 § 9.1 to § 9.3, § 9.5; plan U13.
+/// Spec: Fase 1 § 9.1 to § 9.3, § 9.5.
 pub fn passkey_create<R: SecureRng>(
     rng: &mut R,
     req: &CreateRequest,

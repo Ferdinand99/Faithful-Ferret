@@ -1,4 +1,4 @@
-//! Property tests for the TLV builder (plan section 9.1).
+//! Property tests for the TLV builder.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

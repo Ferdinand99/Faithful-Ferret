@@ -1,7 +1,7 @@
 //! The export file reader on arbitrary bytes, in two ways: the bytes as a
 //! whole file (the header parser and the checks before Argon2id), and the
 //! bytes sealed as an authentic body under a known key, so that the reader of
-//! the body gets past the AEAD (plan section 9.2).
+//! the body gets past the AEAD.
 //!
 //! Argon2id runs only with tiny parameters: a header with parameters inside
 //! the real floor and ceiling would cost 64 MiB or more per input, so such a

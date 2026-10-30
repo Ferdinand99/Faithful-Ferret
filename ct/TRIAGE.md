@@ -1,6 +1,6 @@
 # Constant-time triage
 
-Plan section 10 point 3. `ct/run.sh analyze` runs the Trail of Bits
+`ct/run.sh analyze` runs the Trail of Bits
 `ct_analyzer` (`--warnings`) on every file in `ct/harness/`, for `x86_64` and
 `arm64` at `O0`, `O2`, `O3` and `Os`: 5 files, 2 architectures, 4 levels, 40
 reports. The analyzer has no data flow analysis. It reports every variable-time
@@ -42,7 +42,7 @@ function that selects.
 First fix: the mask went through `core::hint::black_box`. That worked on the
 compiler at hand, but `black_box` is best effort (its documentation says it
 gives no guarantee for cryptographic purposes), and the first text called it
-"the same barrier `subtle` uses", which it is not. Fix of the review round: the
+"the same barrier `subtle` uses", which it is not. The
 select is now `subtle::ConditionallySelectable` on a `subtle::Choice`. The
 barrier of `subtle` (which the rest of the core already relies on for every
 comparison) is a `#[inline(never)]` function that stores the value on the stack
@@ -69,8 +69,8 @@ with fewer or more functions.
 
 ### F-3. Base32 was not in the analyzed code
 
-`totp.rs` had its own copy of the table-free base32 reading (written for Task
-11), outside `ct/harness/`. It is now `ct/harness/base32.rs`, included by
+`totp.rs` had its own copy of the table-free base32 reading (written separately),
+outside `ct/harness/`. It is now `ct/harness/base32.rs`, included by
 `totp.rs`, analyzed with the rest and timed (`base32_decode`).
 
 ### F-4. `commit_eq` and `mac_eq`
@@ -263,7 +263,7 @@ with its reason, and each is repeated in the report.
   glue (`normalize_otpauth`) and the parser (`parse_otpauth`, percent-decoding)
   read it as text with ordinary string functions. The secret is a JavaScript
   string before it reaches the core, and a JavaScript string can neither be
-  wiped nor read in constant time (Task 12 review). The letters themselves go
+  wiped nor read in constant time. The letters themselves go
   through `base32.rs`. Accepted.
 - **R4. The decrypted item body.** CBOR decoding, the views, the plaintext
   export and the UTF-8 check of `core::str` branch on the structure and on the
@@ -281,7 +281,7 @@ with its reason, and each is repeated in the report.
   cannot set. In WebAssembly the engine decides what a `select` becomes.
   Accepted.
 - **R6. Third-party code.** `argon2` and the RustCrypto crates are not
-  re-verified (plan section 10 point 6). Argon2id has data-dependent memory
+  re-verified. Argon2id has data-dependent memory
   addressing by design: RFC 9106 makes only the first half of the first pass
   data-independent (the first two of four slices); every later slice of every
   later pass, so most of the work at t = 3, is addressed by the data. The WASM scan

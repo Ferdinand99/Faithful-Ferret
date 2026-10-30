@@ -1,4 +1,4 @@
-//! Property tests for the integrity layer (plan section 9.1): tombstones,
+//! Property tests for the integrity layer: tombstones,
 //! item tags, checkpoints and mutation proofs.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

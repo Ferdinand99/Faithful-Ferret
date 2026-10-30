@@ -30,7 +30,7 @@
 //!    one ([`PinnedField::ServerKey`]); the SK bit of the input must equal
 //!    the pinned bit; the profile must not be lower than the pinned one
 //!    ([`Error::KdfProfileDowngrade`]). **The server key comparison is the
-//!    real detection of a changed OPAQUE server key** (plan U19): at login a
+//!    real detection of a changed OPAQUE server key**: at login a
 //!    changed key only shows up as a failed envelope, but a registration
 //!    answers with the key the server holds now. [`PinState::FirstUse`] is
 //!    trust on first use and compares nothing;

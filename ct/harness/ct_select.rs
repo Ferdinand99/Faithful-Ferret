@@ -1,4 +1,4 @@
-// Branch-free selection between two values. Plan section 10 point 2.
+// Branch-free selection between two values.
 //
 // This file is the single source of the selects: `crates/ferret-core/src/prim/ct.rs`
 // includes it with `include!`, and the constant-time analyzer reads the same

@@ -2,8 +2,8 @@
 //! first successful unlock, and the only two ways to unlock with it.
 //!
 //! Spec: Fase 1 § 4.2 ("Pinning og SK-bit"), § 4.3 ("Klienten husker høyeste
-//! `kek_generation` og `vk_epoch` per konto og avviser lavere") and plan
-//! U19 (the OPAQUE server public key is pinned too).
+//! `kek_generation` og `vk_epoch` per konto og avviser lavere"). The OPAQUE server
+//! public key is pinned too.
 //!
 //! # Entry points
 //!
@@ -56,8 +56,8 @@
 //!
 //! `server_public_key` is optional so that a record can exist before the
 //! first login has shown the key. While it is `None`, the next successful
-//! server unlock pins whatever key the server shows, once (TOFU, by design,
-//! plan U19). From then on a different or missing key is a hard error.
+//! server unlock pins whatever key the server shows, once (TOFU, by design).
+//! From then on a different or missing key is a hard error.
 
 use crate::error::{Error, MalformedKind, PinnedField};
 use crate::ids::{AccountId, VaultId};
@@ -70,7 +70,7 @@ use crate::wrap::{Method, WrapRecord, unwrap_vk};
 /// The most generation floors a record holds (password, recovery and passkey
 /// wraps).
 pub const MAX_FLOORS: usize = 64;
-/// The longest server address a record holds, in bytes (plan U17).
+/// The longest server address a record holds, in bytes.
 pub const MAX_URL_LEN: usize = 512;
 /// The longest passkey credential id a record holds, in bytes (WebAuthn
 /// allows 1023).
@@ -170,7 +170,7 @@ impl MethodManifestView {
 ///
 /// Spec: Fase 1 § 4.2: `(server_url, account_id, ksf_profile,
 /// kek_generation_max, vk_epoch_max, sk_bit, pk_a)`, plus the vault and the
-/// OPAQUE server public key (plan U19).
+/// OPAQUE server public key.
 ///
 /// Build it with [`Pinned::first_unlock`] and store it. The fields are public
 /// so that a client can save and load the record; changing them by hand

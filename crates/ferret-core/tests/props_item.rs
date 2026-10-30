@@ -1,4 +1,4 @@
-//! Property tests for the item layer (plan section 9.1): round trips, a
+//! Property tests for the item layer: round trips, a
 //! changed byte anywhere, unknown fields, future schemas, padding, and the
 //! CBOR decoder on arbitrary bytes.
 

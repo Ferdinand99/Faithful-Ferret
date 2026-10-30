@@ -1,5 +1,5 @@
 //! The `otpauth://` parser on arbitrary text: never a panic, and what parses
-//! is inside the allow-list ranges and can make a code (plan section 9.2).
+//! is inside the allow-list ranges and can make a code.
 #![no_main]
 
 use ferret_core::testing::totp::secret_bytes;

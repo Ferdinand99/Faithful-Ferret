@@ -1,5 +1,4 @@
-//! Property tests for password text and the recovery/secret key codes (plan
-//! section 9.1).
+//! Property tests for password text and the recovery/secret key codes.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

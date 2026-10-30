@@ -1,5 +1,4 @@
-//! Origins, RP IDs and the Public Suffix List snapshot (Fase 1 § 9.2, F-12,
-//! plan U11) and `vectors/internal/origin.json`.
+//! Origins, RP IDs and the Public Suffix List snapshot (Fase 1 § 9.2, F-12) and `vectors/internal/origin.json`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

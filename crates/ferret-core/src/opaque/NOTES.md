@@ -1,6 +1,6 @@
 # What was checked in `opaque-ke` 4.0.1 before the client was written
 
-Plan Task 8, step 0. Sources: the published crate `opaque-ke 4.0.1`
+Written before the client. Sources: the published crate `opaque-ke 4.0.1`
 (crates.io, 2025-11-03), `voprf 0.5.0` and RFC 9807 (retrieved 2026-10-29).
 Nothing here is a guess about the library: each point names the file that was
 read.
@@ -55,7 +55,7 @@ bytes; that is only in `cfg(test)` and is not what runs here.)
 
 `opaque-ke`'s own tests that read the RFC vectors are in `src/tests/`, which the
 published crate leaves out (`exclude = ["/src/tests/"]` in its `Cargo.toml`),
-and they use `cfg(test)` hooks. The fall-back of the plan (run the library's
+and they use `cfg(test)` hooks. The fall-back (run the library's
 own tests on pinned source) is therefore not needed and not possible from the
 crate alone.
 

@@ -1,7 +1,6 @@
 //! The encrypted export file (`.ferretexport`) and the plaintext exports.
 //!
-//! Spec: Fase 1 § 6.4 and finding F-27; plan U15 (memory ceiling) and U18
-//! (file layout).
+//! Spec: Fase 1 § 6.4 and finding F-27.
 //!
 //! ```text
 //! header  = cbor{ v: 1, suite: 1, kdf: { salt, m, t, p }, created_at }
@@ -32,7 +31,7 @@
 //! * An export is written with [`EXPORT_KDF`] (256 MiB, 3 passes, 1 lane).
 //!   [`export_encrypt`] and [`import_decrypt`] check the parameters against
 //!   the floor and ceiling of Fase 1 § 4.1 (the ceiling for memory is
-//!   512 MiB, plan U15) **before** Argon2id runs or any memory is reserved,
+//!   512 MiB) **before** Argon2id runs or any memory is reserved,
 //!   so a hostile file cannot make the reader allocate or compute more than
 //!   the ceiling allows. The only way past the bounds is the `test-support`
 //!   feature.
@@ -85,7 +84,7 @@ pub const SALT_LEN: usize = 16;
 pub const EK_WRAP_LEN: usize = 72;
 
 /// The largest body (nonce, ciphertext and tag) that is written or read:
-/// 128 MiB. Plan U18.
+/// 128 MiB.
 pub const MAX_BODY_LEN: usize = 128 * 1024 * 1024;
 
 /// The most items in one export (the array limit of Fase 1 § 5.2).
@@ -421,7 +420,7 @@ pub(crate) fn seal_file<R: SecureRng>(
 /// made, the items are encoded, and the file waits for `K_exp`.
 ///
 /// This is [`export_encrypt`] cut in two so that the slow Argon2id step can
-/// run in another worker (plan U2, U15): [`ExportDraft::salt`] and
+/// run in another worker: [`ExportDraft::salt`] and
 /// [`ExportDraft::kdf`] go to that worker, [`export_wrap_key`] runs there, and
 /// [`ExportDraft::finish`] seals the file with the `K_exp` it sends back. The
 /// draws are the same as in [`export_encrypt`], in the same order: the salt
@@ -602,7 +601,7 @@ fn open_with_key(k_exp: &ExportWrapKey, layout: &Layout<'_>) -> Result<Vec<Expor
 /// length of the file), and returns the header, so that its salt and
 /// parameters can go to the worker that runs [`export_wrap_key`].
 ///
-/// Spec: Fase 1 § 6.4; plan U15.
+/// Spec: Fase 1 § 6.4.
 pub fn import_prepare(file: &[u8]) -> Result<ExportHeader, Error> {
     check_layout(KdfRunner::PRODUCTION, file).map(|l| l.header)
 }

@@ -1,4 +1,4 @@
-// Item body and manifest shapes (plan 4A appendix B) and the padding of Fase 1 section 5.2.
+// Item body and manifest shapes and the padding of Fase 1 section 5.2.
 import { fail, concat } from './util.mjs';
 import { decode, encode } from './cbor.mjs';
 
@@ -131,7 +131,7 @@ export function normalizeBody(value) {
   );
 }
 
-// Manifests follow the same rule (controller ruling, 30.10): known keys first in schema order, at the top
+// Manifests follow the same rule (see "Key order and newer schemas" in OPS.md): known keys first in schema order, at the top
 // level and in each method entry, then unknown keys in the order read.
 export function normalizeManifest(value) {
   return inSchemaOrder(

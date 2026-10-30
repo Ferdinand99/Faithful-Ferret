@@ -1,5 +1,5 @@
 //! The pinned record and its two unlock entry points (Fase 1 § 4.2 and
-//! § 4.3, plan U19).
+//! § 4.3).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

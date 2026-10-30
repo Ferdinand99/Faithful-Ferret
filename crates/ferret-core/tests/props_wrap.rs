@@ -1,4 +1,4 @@
-//! Property tests for the wraps (plan section 9.1): the round trip, a flipped
+//! Property tests for the wraps: the round trip, a flipped
 //! bit anywhere, and a changed AAD field. No Argon2: the KEK is given
 //! directly (the PIN KEKs are covered in `keys.rs`).
 

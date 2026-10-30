@@ -173,7 +173,7 @@ pub(crate) fn tlv() -> Result<Vec<u8>, Error> {
     // The example of Fase 1 § 3.1, written out as literal bytes.
     cases.push(valid_case(
         "tlv/spec/001",
-        "label ferret/v1/wrap then suite 1 (the example of the plan)",
+        "label ferret/v1/wrap then suite 1 (the example of the design)",
         "tlv.build",
         vec![],
         tlv_input(&[Field::Label("ferret/v1/wrap"), Field::U8(0x03, 1)]),

@@ -1,6 +1,6 @@
 # Decisive dudect run on the LANBox
 
-Written by `scripts/lanbox-ct.sh all` (2026-10-30T07:11:22Z). Plan section 10 point 5:
+Written by `scripts/lanbox-ct.sh all` (2026-10-30T07:11:22Z). The limit is
 |t| < 4.5 after 10^6 measurements, a bench over 4.5 measured again with 10^7. Every
 line of the two outputs is below, runs and reruns included.
 

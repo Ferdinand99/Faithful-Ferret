@@ -1,4 +1,4 @@
-//! The server's OPAQUE messages on arbitrary bytes (plan section 9.2): the
+//! The server's OPAQUE messages on arbitrary bytes: the
 //! bytes as `KE2` of a login, and as the `registration_response` of a
 //! registration, each with a client in a fixed state.
 //!

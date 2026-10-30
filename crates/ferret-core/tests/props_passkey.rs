@@ -1,5 +1,4 @@
-//! Property tests for the passkey authenticator and origin rules (plan
-//! section 9.1).
+//! Property tests for the passkey authenticator and origin rules.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

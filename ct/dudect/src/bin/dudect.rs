@@ -2,7 +2,7 @@
 //! `dudect-bencher`. One bench per [`ferret_ct::Target`].
 //!
 //! Each bench takes `FERRET_CT_N` measurements (default 1 000 000, the number
-//! of plan section 10 point 5; the CI smoke job sets fewer) and prints
+//! the design asks for; the CI smoke job sets fewer) and prints
 //! `max t`. `scripts/lanbox-ct.sh` fails a gating bench when `|max t|` is 4.5
 //! or more.
 //!

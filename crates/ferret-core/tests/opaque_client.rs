@@ -1,4 +1,4 @@
-//! The OPAQUE client (Fase 1 § 4.1 and § 4.2, plan Task 8) against
+//! The OPAQUE client (Fase 1 § 4.1 and § 4.2) against
 //! `opaque-ke`'s own server, and its key stretching function.
 //!
 //! Most tests use Argon2id parameters far below the floor through
@@ -109,7 +109,7 @@ fn small() -> TestKsf {
 // ------------------------------------------------------------------ KSF
 
 /// `FerretKsf::hash(x)` is Argon2id v1.3 of `x` with a salt of 16 zero
-/// bytes, profile 1, 64 bytes out (the RFC 9106 implementation of Task 2,
+/// bytes, profile 1, 64 bytes out (the RFC 9106 implementation,
 /// asked for directly). Slow: 64 MiB.
 #[test]
 fn ksf_matches_direct_argon2id() {
@@ -579,7 +579,7 @@ fn a_changed_server_key_at_login_is_decrypt() {
 
 /// Re-registration is where a changed key is seen: the response carries the
 /// server's key, and `RegistrationFinished::server_public_key` differs from
-/// the pinned one. (Task 9 turns that into the U19 warning.)
+/// the pinned one. (The account flows turn that into a warning.)
 #[test]
 fn registration_shows_the_server_key_for_the_caller_to_compare() {
     let pw = input("correct horse battery", None);

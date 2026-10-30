@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks the coverage of the core against the thresholds of plan section 9.3.
+// Checks the coverage of the core against the thresholds in scripts/coverage-thresholds.json.
 //
 //   node scripts/coverage-check.mjs <llvm-cov-export.json> [--markdown]
 //
@@ -131,6 +131,6 @@ if (markdown) {
   }
 }
 if (failed) {
-  console.error('coverage-check: below the thresholds of plan section 9.3');
+  console.error('coverage-check: below the thresholds');
   process.exit(1);
 }

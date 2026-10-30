@@ -1390,7 +1390,7 @@ fn constants_match_the_spec() {
     assert_eq!(hex_encode(&[VERSION]), "01");
 }
 
-// ---------------------------------------------------------- fix round 1
+// ------------------------------------------------------ schema and header checks
 
 #[test]
 fn encrypt_item_requires_schema_1() {

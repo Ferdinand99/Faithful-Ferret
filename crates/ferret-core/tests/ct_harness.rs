@@ -1,4 +1,4 @@
-//! The single-file constant-time code in `ct/harness/` that is new in Task 14:
+//! The single-file constant-time code in `ct/harness/` added with the constant-time checks:
 //! `base32.rs` compiles on its own with `core` only, `ct_select.rs` and
 //! `ct_eq.rs` need `subtle` (the analyzer is given it with `--extern`), and the
 //! core includes the same files that the analyzer reads. (`crockford.rs` and

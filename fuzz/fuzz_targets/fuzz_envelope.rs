@@ -1,4 +1,4 @@
-//! The envelope parser and the opening functions (plan section 9.2), in two
+//! The envelope parser and the opening functions, in two
 //! ways.
 //!
 //! 1. Unkeyed: the bytes as an envelope, and as an envelope plus its tag.

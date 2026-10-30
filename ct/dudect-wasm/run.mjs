@@ -8,7 +8,7 @@
 // not timed), and `ct_run` is timed with `process.hrtime.bigint()`. The
 // statistic is the one of dudect: Welch's t-test on all measurements and on
 // the measurements below 100 cropped percentiles, and the largest |t| counts.
-// Plan section 10 point 5: |t| < 4.5 after 10^6 measurements. Browser timing
+// Limit: |t| < 4.5 after 10^6 measurements. Browser timing
 // is not used (`performance.now` is too coarse there).
 //
 // Controls, as in the native run: `control_null` (the same inputs in both

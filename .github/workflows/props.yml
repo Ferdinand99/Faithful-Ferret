@@ -1,4 +1,4 @@
-# The property tests of the core with 20 000 cases each (plan section 9.1).
+# The property tests of the core with 20 000 cases each.
 # The pull request job (ci.yml, "Tests") runs them at the default 512 cases.
 # A failing case is shrunk and written to proptest-regressions/; those files
 # are uploaded so the case can be committed, and a committed regression is

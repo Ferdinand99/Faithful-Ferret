@@ -57,7 +57,7 @@ pub(crate) struct Normalized {
     /// capacity is reserved up front so that no copy is left behind.
     pub(crate) bytes: Zeroizing<Vec<u8>>,
     /// Length in NFC scalar values of the input: the unit of the minimum
-    /// length (plan U9 a).
+    /// length.
     pub(crate) nfc_len: usize,
 }
 
@@ -79,7 +79,7 @@ pub(crate) struct Normalized {
 /// 4. The length of the NFC form of the input is returned for the caller's
 ///    minimum check.
 ///
-/// Spec: Fase 1 section 3.1 and 4.1 step 1; plan U9 (a).
+/// Spec: Fase 1 section 3.1 and 4.1 step 1 (a).
 pub(crate) fn normalize_password(utf8: &[u8]) -> Result<Normalized, Error> {
     let text = core::str::from_utf8(utf8).map_err(|_| Error::InvalidInput(InputError::NotUtf8))?;
     if !text.chars().all(is_allowed) {

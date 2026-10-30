@@ -1,6 +1,6 @@
 //! Origins and relying party IDs.
 //!
-//! Spec: Fase 1 § 9.2 (F-12) and plan U11. The origin comes from the caller:
+//! Spec: Fase 1 § 9.2 (F-12). The origin comes from the caller:
 //! in the browser extension from `sender.origin` of the calling frame (checked
 //! against `webNavigation.getFrame`), never from the page.
 //!

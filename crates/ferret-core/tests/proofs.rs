@@ -1,4 +1,4 @@
-//! Mutation and recovery proofs (Fase 1 § 4.5 and § 4.6, plan U8) and
+//! Mutation and recovery proofs (Fase 1 § 4.5 and § 4.6) and
 //! `vectors/internal/proofs.json`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

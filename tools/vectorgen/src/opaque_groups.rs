@@ -566,7 +566,7 @@ pub(crate) fn opaque() -> Result<Vec<u8>, Error> {
         format: FORMAT.into(),
         group: "opaque".into(),
         suite: 1,
-        spec: "Fase 1 § 4.1, § 4.2 and plan U1, U19; RFC 9807".into(),
+        spec: "Fase 1 § 4.1, § 4.2; RFC 9807".into(),
         generator: generator(),
         cases,
     })

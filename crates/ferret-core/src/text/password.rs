@@ -1,7 +1,6 @@
 //! The master password and the export password.
 //!
-//! Spec: Fase 1 section 3.1 (F-23), section 4.1 steps 1 and 3, section 6.4;
-//! plan U9.
+//! Spec: Fase 1 section 3.1 (F-23), section 4.1 steps 1 and 3, section 6.4.
 //!
 //! The minimum length (the creation floor) applies only when a password is
 //! created or changed: [`MasterPassword::new`] and [`ExportPassword::new`].
@@ -26,7 +25,7 @@ pub const MIN_LEN_WITH_SECRET_KEY: usize = 12;
 /// Minimum length of a master password without a secret key (E8).
 pub const MIN_LEN_WITHOUT_SECRET_KEY: usize = 15;
 
-/// Minimum length of an export password (plan U9 b).
+/// Minimum length of an export password.
 pub const MIN_LEN_EXPORT: usize = 12;
 
 /// Which minimum length applies to the master password.
@@ -53,7 +52,7 @@ impl MpPolicy {
 /// Spec: Fase 1 section 3.1: NFKD with the Unicode 16.0 tables; reject
 /// control characters (also U+0000) and unassigned characters; at most 1 024
 /// scalar values and 4 096 bytes after NFKD; at least 12 (with SK) or 15
-/// (without SK) characters, counted in NFC scalar values (plan U9 a).
+/// (without SK) characters, counted in NFC scalar values.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct MasterPassword {
     bytes: Zeroizing<Vec<u8>>,
@@ -209,7 +208,7 @@ impl OpaqueInput {
 /// An export password: the same NFKD and character rules as the master
 /// password, at least 12 characters, and not equal to the master password.
 ///
-/// Spec: Fase 1 section 6.4; plan U9 (b).
+/// Spec: Fase 1 section 6.4 (b).
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct ExportPassword(Zeroizing<Vec<u8>>);
 

@@ -22,11 +22,11 @@
 //! `ik_wrap`: its body is sealed with `K_meta`, with the label
 //! `ferret/v1/manifest` and the reserved `item_id` of 16 zero bytes. The
 //! whole envelope is at most 65 536 bytes, and the padded body at most
-//! 61 440 (plan U6).
+//! 61 440.
 //!
 //! The item key (IK) is made when an item is created and kept when it is
 //! edited: the old `ik_wrap` is opened and copied unchanged, and only the
-//! body is sealed again, with a new random nonce and `rev + 1` (plan U7).
+//! body is sealed again, with a new random nonce and `rev + 1`.
 //!
 //! Opening goes in a fixed order, and each step is cheap to tell apart only
 //! when it does not depend on a secret: the structure of the bytes
@@ -55,7 +55,7 @@ pub const VERSION: u8 = 1;
 pub const KIND_ITEM: u8 = 1;
 /// `kind` of the manifest.
 pub const KIND_MANIFEST: u8 = 2;
-/// The largest envelope in bytes (plan U6).
+/// The largest envelope in bytes.
 pub const MAX_ENVELOPE_LEN: usize = 65_536;
 /// Length of `ik_wrap`: `nonce (24) ‖ IK (32) ‖ tag (16)`.
 pub const IK_WRAP_LEN: usize = 72;
@@ -111,7 +111,7 @@ pub struct EnvelopeView<'a> {
 /// * a missing part, or a body whose padded length is not one of the padding
 ///   classes: `Malformed(Envelope)`.
 ///
-/// Spec: Fase 1 § 5.1 and § 5.3, plan U6.
+/// Spec: Fase 1 § 5.1 and § 5.3.
 pub fn parse_envelope(bytes: &[u8]) -> Result<EnvelopeView<'_>, Error> {
     parse_as(bytes, None)
 }
@@ -297,7 +297,7 @@ fn open_ik(
     Ok(ItemKey::from_array_wiping(&mut bytes))
 }
 
-/// The item key of an existing envelope, to be kept (plan U7).
+/// The item key of an existing envelope, to be kept.
 fn existing_key(
     vault: &UnlockedVault,
     item_id: &ItemId,
@@ -388,7 +388,7 @@ pub(crate) fn check_item_id(item_id: &ItemId) -> Result<(), Error> {
 /// `rev` is the revision the item gets with this write (`base_rev + 1`); it
 /// goes into the AAD.
 ///
-/// Spec: Fase 1 § 4.4, § 5.1, § 5.2 and § 5.4; plan U6 and U7.
+/// Spec: Fase 1 § 4.4, § 5.1, § 5.2 and § 5.4.
 pub fn encrypt_item<R: SecureRng>(
     rng: &mut R,
     vault: &UnlockedVault,
@@ -489,8 +489,7 @@ pub fn decrypt_item(
 
 /// Seals the manifest with `K_meta`, with `item_id` = 16 zero bytes.
 ///
-/// Spec: Fase 1 § 5.1 ("For `kind = 2` finnes ingen `ik_wrap`"), § 5.2 and
-/// plan U5.
+/// Spec: Fase 1 § 5.1 ("For `kind = 2` finnes ingen `ik_wrap`"), § 5.2.
 pub fn encrypt_manifest<R: SecureRng>(
     rng: &mut R,
     vault: &UnlockedVault,

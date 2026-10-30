@@ -2,7 +2,7 @@
 //!
 //! `UnlockJob` holds the state of the multi-step OPAQUE protocol and the
 //! flows built on it. It lives in the **vault worker**, the same long-lived
-//! worker as the `Vault` (plan U2: no second stage). Argon2id of the login,
+//! worker as the `Vault`. Argon2id of the login,
 //! the registration, the PIN and the recovery runs here, and what comes out
 //! is a `Vault` object in WASM memory: the vault key and the key encryption
 //! keys never cross into JavaScript.

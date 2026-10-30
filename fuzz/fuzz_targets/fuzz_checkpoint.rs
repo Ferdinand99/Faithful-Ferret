@@ -1,7 +1,7 @@
 //! The checkpoint entries parser and `verify_checkpoint` on arbitrary input:
 //! never a panic, a parsed list writes back to the same bytes, and a
 //! checkpoint that verifies really is consistent with the rows it was checked
-//! against (plan section 9.2).
+//! against.
 #![no_main]
 
 use ferret_core::integrity::{ENTRY_LEN, encode_entries, parse_entries};

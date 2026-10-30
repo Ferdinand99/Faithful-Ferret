@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The constant-time checks of plan section 10, one mode at a time. Run it
+# The constant-time checks of Fase 1 § 14, one mode at a time. Run it
 # inside the builder image (scripts/lanbox-ct.sh does that) or in CI
 # (.github/workflows/ct.yml), never on a developer PC.
 #

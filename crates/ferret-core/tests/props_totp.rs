@@ -1,4 +1,4 @@
-//! Property tests for TOTP and `otpauth://` parsing (plan section 9.1):
+//! Property tests for TOTP and `otpauth://` parsing:
 //! `totp_matches_reference` and `otpauth_allowlist`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

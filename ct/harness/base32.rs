@@ -1,5 +1,5 @@
 // RFC 4648 base32 reading without lookup tables and without data-dependent
-// branches. Spec: Fase 1 section 5.2 (F-31), plan section 10 point 2.
+// branches. Spec: Fase 1 section 5.2 (F-31).
 //
 // This file is the single source of the code: `crates/ferret-core/src/totp.rs`
 // includes it with `include!`, and the constant-time analyzer reads the same

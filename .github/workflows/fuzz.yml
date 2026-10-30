@@ -1,4 +1,4 @@
-# Fuzzing of the parsers and verifiers of the core (plan section 9.2):
+# Fuzzing of the parsers and verifiers of the core:
 # libFuzzer with AddressSanitizer through cargo-fuzz, on the pinned nightly
 # toolchain named in fuzz/NIGHTLY.
 #

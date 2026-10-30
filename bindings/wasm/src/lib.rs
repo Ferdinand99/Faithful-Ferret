@@ -1,5 +1,5 @@
 //! `ferret-core-wasm`: the WebAssembly binding of the Ferret crypto core, made
-//! for a **long-lived crypto worker** (plan Task 12, U2, U15).
+//! for a **long-lived crypto worker**.
 //!
 //! The vault key, the key encryption keys, the item keys, the private keys of
 //! passkeys and every decrypted item stay in WASM memory. JavaScript holds

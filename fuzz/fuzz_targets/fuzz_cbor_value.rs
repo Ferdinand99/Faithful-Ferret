@@ -1,6 +1,6 @@
 //! `cbor::decode` on arbitrary bytes: never a panic, only `malformed_*`
 //! errors, and what decodes writes back and reads again as the same value
-//! within the limits (plan section 9.2).
+//! within the limits.
 #![no_main]
 
 use ferret_core::cbor::{self, MAX_BYTES, MAX_DEPTH, MAX_ITEMS, Value};

@@ -1,6 +1,6 @@
 //! The item body and manifest readers on arbitrary CBOR bytes: never a
 //! panic, and what reads writes back and reads again with the same unknown
-//! fields in the same order (plan section 9.2).
+//! fields in the same order.
 //!
 //! A body of a newer `schema` is read leniently and is read-only: it is never
 //! sealed (`encrypt_item` and the encrypted export refuse it), but it can be
