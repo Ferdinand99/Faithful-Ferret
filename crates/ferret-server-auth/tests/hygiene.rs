@@ -441,3 +441,428 @@ fn proofs_are_verified_in_one_module_only() {
     // The module itself uses both (an import and a call each).
     assert!(found >= 2, "replace.rs no longer verifies proofs");
 }
+
+// ------------------------------------------------------------ comparisons
+
+/// The text of a source file as it is shipped: no test module, and no
+/// comments or string literals.
+fn shipped(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
+    let cut = text.find("#[cfg(test)]\nmod ").unwrap_or(text.len());
+    blank_comments_and_strings(&text[..cut])
+        .into_iter()
+        .collect()
+}
+
+/// The shipped files of `src/` with the name of each, without the test
+/// tooling (`testing.rs` and `testing/`, which are behind a feature and never
+/// part of a release build).
+fn shipped_sources() -> Vec<(String, String)> {
+    sources()
+        .into_iter()
+        .filter(|(path, _)| {
+            !path
+                .components()
+                .any(|c| c.as_os_str().to_string_lossy().starts_with("testing"))
+        })
+        .map(|(path, text)| {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, shipped(&text))
+        })
+        .collect()
+}
+
+/// Whether the line has an `==` or a `!=` operator.
+fn has_equality(line: &str) -> bool {
+    let c: Vec<char> = line.chars().collect();
+    (0..c.len().saturating_sub(1)).any(|i| {
+        let before = i.checked_sub(1).map(|j| c[j]);
+        let after = c.get(i + 2).copied();
+        let equals = c[i] == '='
+            && c[i + 1] == '='
+            && !matches!(before, Some('=' | '!' | '<' | '>'))
+            && after != Some('=');
+        let differs = c[i] == '!' && c[i + 1] == '=' && after != Some('=');
+        equals || differs
+    })
+}
+
+/// Every place in the shipped code that has `==` or `!=`, with the reason it
+/// cannot leak. The compare of a value that may be secret goes through
+/// `ct_eq` (`src/ct.rs`), and those do not show here. A new line with an
+/// operator fails the test until it is read and listed: (file, text of the
+/// line, how many lines have it, why it is not a secret).
+const COMPARISONS: &[(&str, &str, usize, &str)] = &[
+    // Lengths and counts: public.
+    ("ids.rs", "text.len() != Self::HEX_LEN", 1, "a length"),
+    (
+        "keys.rs",
+        "payload.len() != SERVER_SETUP_LEN",
+        1,
+        "a length",
+    ),
+    (
+        "keys.rs",
+        "payload.len() != PRELOGIN_PAYLOAD_LEN",
+        1,
+        "a length",
+    ),
+    (
+        "login.rs",
+        "serialized.len() == SERVER_LOGIN_LEN",
+        1,
+        "a length",
+    ),
+    ("login.rs", "bytes.len() != KE1_LEN", 1, "a length"),
+    ("login.rs", "bytes.len() != KE3_LEN", 1, "a length"),
+    (
+        "record.rs",
+        "bytes.len() != REGISTRATION_RECORD_LEN",
+        1,
+        "a length",
+    ),
+    (
+        "registration.rs",
+        "request.len() != REGISTRATION_REQUEST_LEN",
+        1,
+        "a length",
+    ),
+    (
+        "secret_file.rs",
+        "payload.len() != kind.payload_len()",
+        1,
+        "a length",
+    ),
+    (
+        "secret_file.rs",
+        "declared != kind.payload_len()",
+        1,
+        "a length in the header of a file",
+    ),
+    ("replace.rs", "self.len() == 0", 1, "a count of entries"),
+    ("state.rs", "self.len() == 0", 1, "a count of entries"),
+    (
+        "replace.rs",
+        "self.capacity == 0",
+        1,
+        "a setting of the store",
+    ),
+    (
+        "state.rs",
+        "self.capacity == 0",
+        1,
+        "a setting of the store",
+    ),
+    // Times, numbers and closed sets.
+    ("login.rs", "now == u64::MAX", 1, "the time"),
+    ("replace.rs", "now == u64::MAX", 2, "the time"),
+    (
+        "login.rs",
+        "stored.sk_hint, u8::from(fake.sk_hint)) == 1",
+        1,
+        "the one bit that the branch-free choice of the hint gives; the hint is in the answer to the client",
+    ),
+    (
+        "name.rs",
+        "stable = next == current",
+        1,
+        "the normalisation of a login name has reached a fixed point; a login name is public",
+    ),
+    (
+        "prelogin.rs",
+        "== profiles.len();",
+        1,
+        "numbers of the server's own policy",
+    ),
+    (
+        "prelogin.rs",
+        "total == Some(u32::from(WHOLE))",
+        1,
+        "numbers of the server's own policy",
+    ),
+    (
+        "prelogin.rs",
+        "*profile != 0",
+        1,
+        "numbers of the server's own policy",
+    ),
+    (
+        "secret_file.rs",
+        "error.kind() == io::ErrorKind::NotFound",
+        1,
+        "an error kind",
+    ),
+    (
+        "secret_file.rs",
+        "version != FORMAT_VERSION",
+        1,
+        "a number in the header of a file",
+    ),
+    (
+        "secret_file.rs",
+        "file_kind != kind.code()",
+        1,
+        "a number in the header of a file",
+    ),
+    (
+        "secret_file.rs",
+        "suite != SUITE_RISTRETTO255",
+        1,
+        "a number in the header of a file",
+    ),
+    (
+        "secret_file.rs",
+        "(a.dev() == b.dev()) & (a.ino() == b.ino())",
+        1,
+        "device and inode numbers of two files",
+    ),
+    (
+        "secret_file.rs",
+        "(owner == euid) | (owner == 0)",
+        1,
+        "user numbers",
+    ),
+    ("secret_file.rs", "mode & 0o077 != 0", 1, "permission bits"),
+    (
+        "startup.rs",
+        "loaded.prelogin_origin == FileOrigin::Created",
+        1,
+        "a closed set",
+    ),
+    (
+        "state.rs",
+        "self.code() == other.code()",
+        1,
+        "the purpose byte; the session and account bytes next to it go through ct_eq",
+    ),
+    (
+        "state.rs",
+        "*version != BLOB_VERSION",
+        1,
+        "the version byte of a blob, which is in the clear",
+    ),
+    // Public data compared with public data.
+    (
+        "replace.rs",
+        "key == account.account.pk_r",
+        1,
+        "two public keys (a recovery may not name the key the account already has)",
+    ),
+    (
+        "secret_file.rs",
+        "bytes.get(..seen) != MAGIC.get(..seen)",
+        1,
+        "the first bytes of a file against the public magic of the format",
+    ),
+    (
+        "startup.rs",
+        "stored != actual",
+        1,
+        "two set-up fingerprints at start-up, with the constant-time compare of SetupFingerprint, and no remote caller",
+    ),
+];
+
+#[test]
+fn no_secret_comparison_uses_eq() {
+    let mut used = vec![0usize; COMPARISONS.len()];
+    for (file, code) in shipped_sources() {
+        for line in code.lines().map(str::trim).filter(|l| has_equality(l)) {
+            let hit = COMPARISONS
+                .iter()
+                .position(|(f, text, _, _)| *f == file && line.contains(text));
+            match hit {
+                Some(n) => used[n] += 1,
+                None => panic!(
+                    "{file}: `{line}` compares with == or !=. Compare a value that may be \
+                     secret with ct_eq (src/ct.rs); if nothing here can be secret, list \
+                     the line in COMPARISONS with the reason"
+                ),
+            }
+        }
+    }
+    for (n, (file, text, count, _)) in COMPARISONS.iter().enumerate() {
+        assert_eq!(
+            used[n], *count,
+            "COMPARISONS: {file} `{text}` is on {} lines, listed for {count}",
+            used[n]
+        );
+    }
+}
+
+#[test]
+fn the_comparison_detector_sees_every_operator() {
+    for line in [
+        "if a == b {",
+        "x = a != b;",
+        "a.ct_value() == 1",
+        "if (a == b) & c {",
+        "assert!(a ==b)",
+        "w == [1; 8]",
+    ] {
+        assert!(has_equality(line), "{line}");
+    }
+    for line in [
+        "a <= b",
+        "a >= b",
+        "a => b",
+        "x = y;",
+        "a >>= 1;",
+        "a <<= 1;",
+        "a |= b;",
+        "let f = |x| x;",
+        "if !ready {",
+    ] {
+        assert!(!has_equality(line), "{line}");
+    }
+    // The text is compared without comments and strings, and without the test
+    // module.
+    let code = shipped(
+        "// a == b\nfn f() { let s = \"a == b\"; }\n#[cfg(test)]\nmod tests {\n    fn g() { assert!(a == b); }\n}\n",
+    );
+    assert!(!code.lines().any(has_equality), "{code}");
+}
+
+/// The calls of the constant-time functions, per file: how many times each
+/// is called in shipped code. Each call has a row in `ct/TRIAGE.md` (the part
+/// on the server library) and a timing test in `ct/dudect`; a call that is
+/// added or moved fails here until both have been looked at.
+const CT_CALLS: &[(&str, &str, usize)] = &[
+    ("ct_eq(", "keys.rs", 1),
+    ("ct_eq(", "login.rs", 1),
+    ("ct_eq(", "registration.rs", 1),
+    ("ct_eq(", "secret_file.rs", 1),
+    ("ct_eq(", "state.rs", 2),
+    ("ct_select_bytes(", "login.rs", 2),
+    ("ct_select_bytes(", "prelogin.rs", 1),
+    ("ct_select_u8(", "login.rs", 2),
+    ("ct_select_u32(", "", 0),
+    ("ct_select_u64(", "", 0),
+    ("commit_eq(", "", 0),
+    ("mac_eq(", "", 0),
+];
+
+#[test]
+fn the_constant_time_call_sites_are_the_ones_that_were_checked() {
+    let files = shipped_sources();
+    for (call, _, _) in CT_CALLS {
+        for (file, code) in &files {
+            if file == "ct.rs" {
+                continue;
+            }
+            // `fn ct_eq(` and the like are definitions, not calls.
+            let count = code.matches(call).count() - code.matches(&format!("fn {call}")).count();
+            let expected = CT_CALLS
+                .iter()
+                .filter(|(c, f, _)| c == call && f == file)
+                .map(|(_, _, n)| *n)
+                .sum::<usize>();
+            assert_eq!(
+                count, expected,
+                "{file} calls {call} {count} times, {expected} were checked (ct/TRIAGE.md, ct/dudect)"
+            );
+        }
+    }
+}
+
+/// Types that derive `PartialEq` and hold bytes or text, with why a derived
+/// (early-exit) compare of them cannot leak a secret. A type that holds a
+/// bearer value (a login id, a session) is compared through its SHA-256 store
+/// key, never as it is: the maps of the stores are keyed by the digest.
+const DERIVES_PARTIAL_EQ_ON_BYTES: &[(&str, &str)] = &[
+    (
+        "CredentialId",
+        "an account identifier; it is stored in the clear and sent by the server",
+    ),
+    (
+        "LoginId",
+        "a bearer value: no code compares it; the store is keyed by its SHA-256 digest (StateKey)",
+    ),
+    ("StateKey", "a SHA-256 digest, the key of the state map"),
+    ("ChallengeKey", "a SHA-256 digest, the key of the nonce map"),
+    ("NormalizedLoginName", "a login name, which is public"),
+];
+
+/// The text between the brackets that follow the name of a declaration.
+fn declaration_body(t: &[char], from: usize) -> String {
+    let mut i = from;
+    while i < t.len() && !matches!(t[i], '{' | '(' | ';') {
+        i += 1;
+    }
+    if i >= t.len() || t[i] == ';' {
+        return String::new();
+    }
+    let (open, close) = if t[i] == '{' { ('{', '}') } else { ('(', ')') };
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < t.len() {
+        if t[j] == open {
+            depth += 1;
+        } else if t[j] == close {
+            depth -= 1;
+            if depth == 0 {
+                return t[i..=j].iter().collect();
+            }
+        }
+        j += 1;
+    }
+    String::new()
+}
+
+fn holds_bytes(body: &str) -> bool {
+    body.contains("[u8") || body.contains("Vec<u8>") || body.contains("String")
+}
+
+#[test]
+fn types_with_bytes_derive_partial_eq_only_when_listed() {
+    let mut seen = Vec::new();
+    for (name, code) in shipped_sources() {
+        let t: Vec<char> = code.chars().collect();
+        for i in 0..t.len() {
+            let Some(word) = word_at(&t, i) else { continue };
+            if !matches!(word.as_str(), "struct" | "enum") {
+                continue;
+            }
+            let name_at = skip_ws(&t, i + word.len());
+            let Some(type_name) = word_at(&t, name_at) else {
+                continue;
+            };
+            let derives = attributes_before(&t, i)
+                .iter()
+                .any(|a| a.split(|c: char| !is_ident(c)).any(|w| w == "PartialEq"));
+            if derives && holds_bytes(&declaration_body(&t, name_at + type_name.len())) {
+                assert!(
+                    DERIVES_PARTIAL_EQ_ON_BYTES
+                        .iter()
+                        .any(|(n, _)| *n == type_name),
+                    "{type_name} in {name} derives PartialEq over bytes or text; its == would \
+                     stop at the first difference. Compare with ct_eq in a hand-written \
+                     PartialEq, or list the type in DERIVES_PARTIAL_EQ_ON_BYTES with the reason"
+                );
+                seen.push(type_name);
+            }
+        }
+    }
+    for (name, _) in DERIVES_PARTIAL_EQ_ON_BYTES {
+        assert!(
+            seen.iter().any(|n| n == name),
+            "{name} is listed in DERIVES_PARTIAL_EQ_ON_BYTES but does not derive PartialEq over bytes"
+        );
+    }
+}
+
+/// The WebAssembly scan and the WebAssembly timing tests (`ct/`) read the
+/// binding of the core. The server library and the OPAQUE server suite are
+/// not in it, so those checks have nothing of this crate to scan; this keeps
+/// it that way.
+#[test]
+fn the_server_library_is_not_in_the_webassembly_build() {
+    let root = manifest_dir().join("../..");
+    let binding = std::fs::read_to_string(root.join("bindings/wasm/Cargo.toml")).unwrap();
+    for needle in ["ferret-server-auth", "server-suite", "opaque"] {
+        assert!(
+            !binding.contains(needle),
+            "bindings/wasm/Cargo.toml names {needle}: the constant-time checks of the \
+             WebAssembly build (ct/wasm-allow.toml, ct/dudect-wasm) would have to cover it"
+        );
+    }
+}
