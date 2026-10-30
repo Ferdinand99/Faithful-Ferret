@@ -280,6 +280,11 @@ impl Vault {
                     if open.item_id != id || open.body.is_read_only() {
                         return Err(Fail::Input);
                     }
+                    // A passkey that is there is not replaced silently: the
+                    // old one would be lost for good.
+                    if open.body.passkey.is_some() {
+                        return Err(ferret_core::Error::InvalidState.into());
+                    }
                     (open.body.clone(), Some(open.envelope.clone()))
                 }
                 None => {

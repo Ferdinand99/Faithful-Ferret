@@ -22,7 +22,9 @@
 //! ```
 //!
 //! * `u` is the server address, at most 512 bytes of printable ASCII that
-//!   starts with `http://` or `https://`, percent-encoded: everything except
+//!   starts with `https://` (or `http://` for `localhost` and IP literals),
+//!   with a plain host and no `user@`, `%` or `\` ([`parse_server_address`]),
+//!   percent-encoded: everything except
 //!   `A-Z a-z 0-9 - . _ ~` is `%XX` with **upper-case** hex;
 //! * `a` is the account id, 32 lower-case hex digits;
 //! * `k` is the number of the KSF profile (decimal, no leading zero);
@@ -77,21 +79,116 @@ pub struct SetupQr {
     pub server_public_key: [u8; 32],
 }
 
-/// Checks a server address for the sheet: 1 to 512 bytes of printable ASCII
-/// that starts with `http://` or `https://` and has something after it. Over
-/// 512 bytes is `too_large`, anything else `malformed_setup_qr`.
-fn check_server_url(url: &str) -> Result<(), Error> {
+/// The parts of a server address that matter for where a client connects.
+///
+/// Made by [`parse_server_address`] with the rules of a browser, so that the
+/// host a user is asked to confirm is the host the client talks to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ServerAddress {
+    /// `true` for `https`, `false` for `http`.
+    pub https: bool,
+    /// The host in lower case; an IPv6 literal keeps its brackets.
+    pub host: String,
+    /// The port, when the address has one.
+    pub port: Option<u16>,
+}
+
+fn is_ipv4_literal(host: &str) -> bool {
+    let mut parts = 0usize;
+    for part in host.split('.') {
+        parts = parts.saturating_add(1);
+        if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        if part.parse::<u16>().map_or(true, |n| n > 255) {
+            return false;
+        }
+    }
+    parts == 4
+}
+
+/// Reads a server address for the sheet and for the pinned record.
+///
+/// * 1 to 512 bytes of printable ASCII (over 512 is `too_large`);
+/// * starts with `https://`, or `http://` for `localhost`, an IPv4 literal
+///   or an IPv6 literal (a LAN server);
+/// * the authority (up to the first `/`, `?` or `#`) is a host and an
+///   optional port and nothing else: no `user@`, no `%` escape, no `\` (a
+///   browser reads `\` as `/`, which would move the host), at most the
+///   characters `A-Z a-z 0-9 - . _ ~ : [ ]`. An IPv6 literal is in brackets;
+/// * the port, when there is one, is 1 to 5 digits up to 65535;
+/// * the host is lower-cased in the result. The address itself is kept as it
+///   was written everywhere else.
+///
+/// Anything else is `malformed_setup_qr`.
+///
+/// Spec: Fase 1 § 6.1 (F-21); plan U17.
+pub fn parse_server_address(url: &str) -> Result<ServerAddress, Error> {
     if url.len() > MAX_SETUP_URL_LEN {
         return Err(Error::TooLarge);
     }
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .ok_or_else(bad)?;
-    if rest.is_empty() || !url.bytes().all(|b| b.is_ascii_graphic()) {
+    if !url.bytes().all(|b| b.is_ascii_graphic()) || url.contains('\\') {
         return Err(bad());
     }
-    Ok(())
+    let (https, rest) = match url.strip_prefix("https://") {
+        Some(rest) => (true, rest),
+        None => (false, url.strip_prefix("http://").ok_or_else(bad)?),
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = rest.get(..end).ok_or_else(bad)?;
+    if !authority
+        .bytes()
+        .all(|b| is_unreserved(b) || matches!(b, b':' | b'[' | b']'))
+    {
+        return Err(bad());
+    }
+    let (host, port_text) = if let Some(inner_and_rest) = authority.strip_prefix('[') {
+        let (inner, after) = inner_and_rest.split_once(']').ok_or_else(bad)?;
+        let hex_only = inner
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.'));
+        if inner.is_empty() || !hex_only {
+            return Err(bad());
+        }
+        let port = match after {
+            "" => None,
+            _ => Some(after.strip_prefix(':').ok_or_else(bad)?),
+        };
+        (
+            authority
+                .get(..inner.len().saturating_add(2))
+                .ok_or_else(bad)?,
+            port,
+        )
+    } else {
+        match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        }
+    };
+    if host.is_empty() || (!host.starts_with('[') && host.contains(['[', ']'])) {
+        return Err(bad());
+    }
+    let port = match port_text {
+        None => None,
+        Some(text) => {
+            if text.is_empty() || text.len() > 5 || !text.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(bad());
+            }
+            Some(text.parse::<u16>().map_err(|_| bad())?)
+        }
+    };
+    let host = host.to_ascii_lowercase();
+    let local = host == "localhost" || host.starts_with('[') || is_ipv4_literal(&host);
+    if !https && !local {
+        return Err(bad());
+    }
+    Ok(ServerAddress { https, host, port })
+}
+
+/// Checks a server address for the sheet (see [`parse_server_address`]).
+fn check_server_url(url: &str) -> Result<(), Error> {
+    parse_server_address(url).map(drop)
 }
 
 fn is_unreserved(b: u8) -> bool {

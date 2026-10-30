@@ -46,7 +46,7 @@ use crate::error::{Fail, run};
 use crate::item::normalize_otpauth;
 use ferret_core::{
     AccountId, KsfProfile, MasterPassword, MpPolicy, decode_recovery_key, decode_secret_key,
-    parse_otpauth, parse_setup_qr, setup_qr_payload,
+    parse_otpauth, parse_server_address, parse_setup_qr, setup_qr_payload,
 };
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -59,11 +59,12 @@ use zeroize::Zeroizing;
 struct QrDto {
     server_url: String,
     scheme: String,
-    /// The host and port the address really points at: after any `user@`.
+    /// The host a browser connects to, in lower case (the core refuses an
+    /// address in which it could differ from what is written: `user@`, a
+    /// backslash, a `%` escape). An IPv6 literal keeps its brackets.
     host: String,
-    /// Whether the address has a `user@` part, which can hide the real host
-    /// (`https://good.example@evil.example`).
-    has_userinfo: bool,
+    /// The port, when the address has one.
+    port: Option<u16>,
     #[serde(with = "b16")]
     account_id: [u8; 16],
     ksf_profile: u8,
@@ -95,24 +96,19 @@ pub fn setup_qr_build(
 }
 
 /// Reads the text of a scanned QR code. Returns `{ server_url, scheme, host,
-/// has_userinfo, account_id, ksf_profile, sk_bit, server_public_key }`. Show
-/// `host` to the user and ask them to confirm it before the device talks to
-/// it; pass `server_public_key` to `UnlockJob.recover`.
+/// port, account_id, ksf_profile, sk_bit, server_public_key }`. Show `host`
+/// (and `port`) to the user and ask them to confirm it before the device
+/// talks to it; pass the whole text to `UnlockJob.recover` on a new device,
+/// which compares the address, the account and the server key with it.
 #[wasm_bindgen]
 pub fn setup_qr_parse(payload: &str) -> Result<JsValue, JsValue> {
     run(|| {
         let qr = parse_setup_qr(payload)?;
-        let (scheme, rest) = qr.server_url.split_once("://").ok_or(Fail::Input)?;
-        let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        let authority = rest.get(..end).ok_or(Fail::Input)?;
-        let (has_userinfo, host) = match authority.rsplit_once('@') {
-            Some((_, host)) => (true, host),
-            None => (false, authority),
-        };
+        let address = parse_server_address(&qr.server_url)?;
         to_js(&QrDto {
-            scheme: scheme.to_owned(),
-            host: host.to_owned(),
-            has_userinfo,
+            scheme: if address.https { "https" } else { "http" }.to_owned(),
+            host: address.host,
+            port: address.port,
             server_url: qr.server_url.clone(),
             account_id: *qr.account_id.as_bytes(),
             ksf_profile: qr.ksf_profile.number(),

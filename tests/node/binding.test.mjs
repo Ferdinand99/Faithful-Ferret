@@ -234,6 +234,12 @@ test("edit_keeps_unchanged_secrets_inside_wasm", () => {
   assert.ok(vault.reveal_totp_secret(ah).includes("JBSWY3DPEHPK3PXP"));
   assert.equal(aview.passkey.user_name, "carol");
   assertSignature(attached, vault.passkey_get(ah, GET, CALLER, UV));
+  // A second passkey is not put over the first one: invalid_state.
+  assert.equal(
+    code(() => vault.passkey_create(fill(16, 0x41), 3, "ignored", { ...CREATE, user_name: "dave" }, CALLER, UV, [], NOW + 20, ah)),
+    "invalid_state",
+  );
+  assertSignature(attached, vault.passkey_get(ah, GET, CALLER, UV));
 });
 
 test("passkey_rules_hold_in_the_binding", () => {
@@ -321,28 +327,62 @@ test("recovery_key_and_secret_key_confirmation_at_setup", () => {
   const sk = vault.reveal_secret_key_code();
   assert.match(rk, /^FFR1-/);
   assert.match(sk, /^FFS1-/);
-  vault.verify_recovery_setup(rk, created.wraps[1]);
-  vault.verify_secret_key_entry(sk);
-  // A typo is checksum; another valid key is decrypt.
-  const typo = rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0");
-  assert.equal(code(() => vault.verify_recovery_setup(typo, created.wraps[1])), "checksum");
-  assert.equal(code(() => vault.verify_secret_key_entry(sk.slice(0, -1) + (sk.endsWith("0") ? "1" : "0"))), "checksum");
-  const other = newAccount("confirm-2").vault;
-  assert.equal(code(() => vault.verify_recovery_setup(other.reveal_recovery_code(), created.wraps[1])), "decrypt");
   // The sheet carries the QR payload; the host is for the user to confirm.
   const sheet = vault.reveal_emergency_sheet(URL_, "alice@example.com");
   assert.equal(sheet.access.secret_key_code, sk);
   assert.equal(sheet.recovery_key_code, rk);
   const qr = wasm.setup_qr_parse(sheet.access.qr_payload);
   assert.equal(qr.host, "ferret.example");
-  assert.equal(qr.has_userinfo, false);
+  assert.equal(qr.scheme, "https");
+  assert.equal(qr.port, null);
   assert.equal(qr.sk_bit, true);
   assert.deepEqual(qr.server_public_key, created.server_public_key);
-  assert.equal(wasm.setup_qr_parse(wasm.setup_qr_build("https://good.example@evil.example/", IDS.account_id, 1, false, fill(32, 1))).host, "evil.example");
-  assert.equal(wasm.setup_qr_parse(wasm.setup_qr_build("https://good.example@evil.example/", IDS.account_id, 1, false, fill(32, 1))).has_userinfo, true);
-  // The secrets can be cleared once confirmed.
-  vault.clear_setup_secrets();
+  // A typo is checksum; another valid key is decrypt; neither confirms.
+  const typo = rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0");
+  assert.equal(code(() => vault.verify_recovery_setup(typo, created.wraps[1])), "checksum");
+  assert.equal(code(() => vault.verify_secret_key_entry(sk.slice(0, -1) + (sk.endsWith("0") ? "1" : "0"))), "checksum");
+  const other = newAccount("confirm-2").vault;
+  assert.equal(code(() => vault.verify_recovery_setup(other.reveal_recovery_code(), created.wraps[1])), "decrypt");
+  assert.equal(vault.reveal_recovery_code(), rk, "still there after the failures");
+  // The recovery key typed back is not the end: the secret key is still held.
+  vault.verify_recovery_setup(rk, created.wraps[1]);
+  assert.equal(vault.reveal_secret_key_code(), sk);
+  // When every key the setup holds has been typed back, they are gone.
+  vault.verify_secret_key_entry(sk);
   assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  assert.equal(code(() => vault.reveal_secret_key_code()), "invalid_input");
+  assert.equal(code(() => vault.reveal_emergency_sheet(URL_, "a@example.com")), "invalid_input");
+  // clear_setup_secrets stays for a client that does not ask for the typing.
+  const again = newAccount("confirm-3").vault;
+  again.clear_setup_secrets();
+  assert.equal(code(() => again.reveal_recovery_code()), "invalid_input");
+});
+
+test("the_host_shown_is_the_host_a_browser_connects_to", () => {
+  const key = fill(32, 1);
+  const parse = (url) => wasm.setup_qr_parse(wasm.setup_qr_build(url, IDS.account_id, 1, false, key));
+  const BS = String.fromCharCode(92);
+  // A backslash, user information and a percent escape cannot be written, so
+  // they cannot be confirmed as the wrong host.
+  for (const bad of [
+    `https://evil.example${BS}@good.example/`,
+    "https://good.example@evil.example/",
+    "https://a.example%2F@b.example",
+    "http://vault.example",
+  ]) {
+    assert.equal(code(() => wasm.setup_qr_build(bad, IDS.account_id, 1, false, key)), "malformed_setup_qr", bad);
+  }
+  // And a payload that was made by something else is refused on reading.
+  const good = wasm.setup_qr_build("https://vault.example", IDS.account_id, 1, false, key);
+  for (const host of ["good.example%40evil.example", `evil.example%5C%40good.example`]) {
+    assert.equal(code(() => wasm.setup_qr_parse(good.replace("vault.example", host))), "malformed_setup_qr", host);
+  }
+  const mixed = parse("https://Vault.EXAMPLE:8443/Path");
+  assert.deepEqual([mixed.scheme, mixed.host, mixed.port], ["https", "vault.example", 8443]);
+  assert.equal(mixed.server_url, "https://Vault.EXAMPLE:8443/Path", "the address is kept as written");
+  const lan = parse("http://10.0.3.26:3001");
+  assert.deepEqual([lan.scheme, lan.host, lan.port], ["http", "10.0.3.26", 3001]);
+  assert.equal(parse("https://[2001:DB8::1]:8443/x").host, "[2001:db8::1]");
 });
 
 test("change_password_returns_the_new_pinned_record", () => {
@@ -394,6 +434,8 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   const rk = vault.reveal_recovery_code();
   const sk = vault.reveal_secret_key_code();
   const newRecoveryId = fill(16, 0x73);
+  // The text of a scanned QR code for this account.
+  const qrOf = (key, url = URL_, account = IDS.account_id) => wasm.setup_qr_build(url, account, 1, true, key);
   const recoverWith = (pin, qr, text = rk) => {
     const job = new wasm.UnlockJob();
     const request = job.register_start(enc.encode(PASSWORD_2), { kind: "code", code: sk });
@@ -407,11 +449,16 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   // A different key is a hard error and nothing is returned.
   const wrong = created.server_public_key.slice();
   wrong[0] ^= 1;
-  assert.equal(code(() => recoverWith(firstUse(true), wrong).call()), "pinned_server_key");
+  assert.equal(code(() => recoverWith(firstUse(true), qrOf(wrong)).call()), "pinned_server_key");
+  // So is a QR code for another address (the record would pin that one) or
+  // another account.
+  assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key, "https://other.example")).call()), "pinned_server_url");
+  assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key, URL_, fill(16, 0x99))).call()), "pinned_account_id");
+  assert.equal(code(() => recoverWith(firstUse(true), "not a qr code").call()), "malformed_setup_qr");
   // A typo in the code is checksum, a wrong key decrypt.
-  assert.equal(code(() => recoverWith(firstUse(true), created.server_public_key, rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0")).call()), "checksum");
+  assert.equal(code(() => recoverWith(firstUse(true), qrOf(created.server_public_key), rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0")).call()), "checksum");
   // The right one works, and returns the record to store.
-  const { job, call } = recoverWith(firstUse(true), created.server_public_key);
+  const { job, call } = recoverWith(firstUse(true), qrOf(created.server_public_key));
   const out = call();
   assert.equal(out.sk_bit, true);
   assert.equal(out.password_wrap.kek_generation, 2);
@@ -424,6 +471,7 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   const newRk = out.vault.reveal_recovery_code();
   assert.notEqual(newRk, rk);
   out.vault.verify_recovery_setup(newRk, out.recovery_wrap);
+  assert.equal(code(() => out.vault.reveal_recovery_code()), "invalid_input", "typed back, so gone");
   // The proof is made with the old recovery key, then it is wiped.
   assert.equal(job.recover_sign(fill(32, 2), enc.encode("request")).length, 64);
   job.recover_done();
@@ -439,7 +487,7 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   other.server_public_key = fill(32, 5);
   assert.equal(code(() => recoverWith(pinned(other), null).call()), "pinned_server_key");
   // A QR value that differs is refused on a pinned device too.
-  assert.equal(code(() => recoverWith(pinned(created.pinned), wrong).call()), "pinned_server_key");
+  assert.equal(code(() => recoverWith(pinned(created.pinned), qrOf(wrong)).call()), "pinned_server_key");
 });
 
 test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {

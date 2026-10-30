@@ -103,8 +103,8 @@ pub use secret::{
     KekDevPin, PrfOutput, PrfSeed, RecoveryKey, SecretKey, VaultKey,
 };
 pub use sheet::{
-    AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, SetupQr, account_id_text,
-    emergency_sheet, parse_setup_qr, setup_qr_payload,
+    AccessPage, EmergencySheet, RecoveryPage, SETUP_QR_PREFIX, ServerAddress, SetupQr,
+    account_id_text, emergency_sheet, parse_server_address, parse_setup_qr, setup_qr_payload,
 };
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};

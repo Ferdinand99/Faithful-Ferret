@@ -9,7 +9,7 @@ use common::*;
 use ferret_core::testing::vector::Outcome;
 use ferret_core::{
     AccountId, Error, KsfProfile, MalformedKind, RecoveryKey, SecretKey, SetupQr, emergency_sheet,
-    encode_recovery_key, encode_secret_key, parse_setup_qr, setup_qr_payload,
+    encode_recovery_key, encode_secret_key, parse_server_address, parse_setup_qr, setup_qr_payload,
 };
 use proptest::prelude::*;
 
@@ -155,8 +155,14 @@ proptest! {
         sk in any::<bool>(),
         key in any::<[u8; 32]>(),
     ) {
-        let path = path.replace(' ', "_");
-        let url = format!("{}://{host}/{path}", if https { "https" } else { "http" });
+        // A space is not allowed in an address, a backslash is not either.
+        let path = path.replace([' ', '\\'], "_");
+        // http is for a LAN or local server only.
+        let url = if https {
+            format!("https://{host}/{path}")
+        } else {
+            format!("http://localhost/{path}")
+        };
         let payload = setup_qr_payload(&url, &AccountId::from_bytes(account), KsfProfile::P1, sk, &key).unwrap();
         let qr = parse_setup_qr(&payload).unwrap();
         prop_assert_eq!(&qr.server_url, &url);
@@ -278,3 +284,81 @@ fn sheet_vectors_from_file() {
     assert!(report.failures.is_empty(), "{:#?}", report.failures);
     assert!(report.passed >= 10, "{} cases", report.passed);
 }
+
+#[test]
+fn the_host_is_what_a_browser_connects_to() {
+    let bad_form = Error::Malformed(MalformedKind::SetupQr);
+    // The host a user is asked to confirm must be the host a browser reaches.
+    // A backslash would be read as a slash and move the host; `user@` hides
+    // it; a `%` escape is decoded in a host.
+    for bad in [
+        "https://evil.example~BS~@good.example/",
+        "https://good.example@evil.example/",
+        "https://user:pw@evil.example/",
+        "https://a.example%2F@b.example",
+        "https://a.example%2eevil",
+        "https://a.example/path~BS~x",
+        "https://a.example?x=~BS~y",
+        "http://vault.example",
+        "http://vault.example:3001",
+        "http://localhost.evil.example",
+        "https://a.example:99999",
+        "https://a.example:65536",
+        "https://a.example:",
+        "https://a.example:80x",
+        "https://a.example:80:80",
+        "https://:8443",
+        "https://[::1",
+        "https://[]",
+        "https://[zz::1]",
+        "https://[::1]x",
+        "https://a.example ",
+        "https://a!b.example",
+        "https://a,b.example",
+    ] {
+        let bad = bad.replace("~BS~", BS);
+        assert_eq!(parse_server_address(&bad).err(), Some(bad_form), "{bad:?}");
+        assert_eq!(build(&bad, true).err(), Some(bad_form), "{bad:?}");
+    }
+    // What is fine: the host is lower-cased, the port is read, a LAN server
+    // may be reached over http, an IPv6 literal keeps its brackets.
+    let a = parse_server_address("https://Vault.EXAMPLE:8443/Path?Q=1#F").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (true, "vault.example", Some(8443))
+    );
+    let a = parse_server_address("https://vault.example").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (true, "vault.example", None)
+    );
+    let a = parse_server_address("http://LocalHost:3001").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (false, "localhost", Some(3001))
+    );
+    let a = parse_server_address("http://10.0.3.26:3001").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (false, "10.0.3.26", Some(3001))
+    );
+    let a = parse_server_address("http://[::1]:8080/x").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (false, "[::1]", Some(8080))
+    );
+    let a = parse_server_address("https://[2001:DB8::1]/").unwrap();
+    assert_eq!(
+        (a.https, a.host.as_str(), a.port),
+        (true, "[2001:db8::1]", None)
+    );
+    // A user@ after the path is part of the path, not of the authority.
+    let a = parse_server_address("https://vault.example/a@b").unwrap();
+    assert_eq!(a.host, "vault.example");
+    // The reader applies the same rules to a payload.
+    let payload = build("https://vault.example", true).unwrap();
+    let doctored = payload.replacen("vault.example", "good.example%40evil.example", 1);
+    assert_eq!(parse_setup_qr(&doctored).err(), Some(bad_form));
+}
+
+const BS: &str = "\\";

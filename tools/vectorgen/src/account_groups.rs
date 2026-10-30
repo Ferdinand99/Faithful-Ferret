@@ -889,6 +889,73 @@ pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
         "kdf_profile_unknown",
     )?;
 
+    m.ok(
+        "sheet/build/011",
+        "http is for a local server: localhost with a port",
+        "sheet.qr.build",
+        build("http://localhost:3001", account, 1, false, &key),
+    )?;
+    m.ok(
+        "sheet/build/012",
+        "an IPv6 literal in brackets",
+        "sheet.qr.build",
+        build("https://[2001:db8::1]:8443/x", account, 1, true, &key),
+    )?;
+    m.ok(
+        "sheet/build/013",
+        "the address is written as it is given, a host in capitals included",
+        "sheet.qr.build",
+        build("https://Vault.EXAMPLE:8443/Path", account, 1, true, &key),
+    )?;
+    m.err(
+        "sheet/build/014",
+        "a backslash, which a browser reads as a slash and so moves the host",
+        "sheet.qr.build",
+        build(
+            "https://evil.example\\@good.example/",
+            account,
+            1,
+            true,
+            &key,
+        ),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/015",
+        "user information, which hides the host",
+        "sheet.qr.build",
+        build("https://good.example@evil.example/", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/016",
+        "a percent escape in the host",
+        "sheet.qr.build",
+        build("https://a.example%2F@b.example", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/017",
+        "http to a name that is not localhost",
+        "sheet.qr.build",
+        build("http://vault.example:3001", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/018",
+        "a port above 65535",
+        "sheet.qr.build",
+        build("https://vault.example:65536", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/build/019",
+        "a port and no host",
+        "sheet.qr.build",
+        build("https://:8443", account, 1, true, &key),
+        "malformed_setup_qr",
+    )?;
+
     // ---- parse
     let parse = |p: &str| json!({ "payload": p });
     m.ok(
@@ -1038,6 +1105,28 @@ pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
         "nothing",
         "sheet.qr.parse",
         parse(""),
+        "malformed_setup_qr",
+    )?;
+
+    m.err(
+        "sheet/parse/021",
+        "user information in the address of a well-formed payload",
+        "sheet.qr.parse",
+        good(&|p| p.replacen("vault.example.com", "good.example%40evil.example.com", 1)),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/parse/022",
+        "a backslash in the address of a well-formed payload",
+        "sheet.qr.parse",
+        good(&|p| p.replacen("vault.example.com", "evil.example%5C%40good.example", 1)),
+        "malformed_setup_qr",
+    )?;
+    m.err(
+        "sheet/parse/023",
+        "http to a name that is not localhost",
+        "sheet.qr.parse",
+        good(&|p| p.replacen("https%3A", "http%3A", 1)),
         "malformed_setup_qr",
     )?;
 

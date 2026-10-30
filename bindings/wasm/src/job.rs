@@ -49,7 +49,7 @@ use ferret_core::{
     RegistrationState, RekeyInput, RekeyItem, RekeyTombstone, SecretKey, ServerView, UnlockedVault,
     change_password, create_account, decode_recovery_key, decode_secret_key, encode_recovery_key,
     encode_secret_key, opaque_login_finish, opaque_login_start, opaque_register_finish,
-    opaque_register_start, recover, unwrap_vk,
+    opaque_register_start, parse_setup_qr, recover, unwrap_vk,
 };
 use js_sys::{Object, Reflect};
 use serde::{Deserialize, Serialize};
@@ -646,12 +646,12 @@ impl UnlockJob {
                 server_public_key,
                 pinned: PinnedDto::of(&pinned),
             })?;
-            let setup = Setup {
-                recovery_key: Some(recovery_key),
+            let setup = Setup::new(
+                Some(recovery_key),
                 secret_key,
                 server_public_key,
                 ksf_profile,
-            };
+            );
             outcome_with(Vault::from_unlocked(vault, Some(setup)), dto)
         })
     }
@@ -711,12 +711,15 @@ impl UnlockJob {
     /// * `pin` is always required. With `{ kind: "pinned", record }` (a
     ///   device that knows the account) every pin is checked, the server key
     ///   against the record's.
-    /// * With `{ kind: "first_use", sk_bit }` (a new device)
-    ///   `qr_server_public_key`, the `o` value of the scanned emergency
-    ///   sheet QR (`setup_qr_parse`), is **required** and is compared with
-    ///   the server key of the registration inside this call; a difference is
-    ///   `pinned_server_key` and nothing is returned. (The QR address is only
-    ///   checked for its form; show `setup_qr_parse(...).host` to the user.)
+    /// * With `{ kind: "first_use", sk_bit }` (a new device) `qr`, the text
+    ///   of the scanned emergency sheet QR, is **required**. It is read here
+    ///   (`setup_qr_parse` shows the host to the user first) and this call
+    ///   compares, before anything is returned: the account with `ctx`
+    ///   (`pinned_account_id`), the address with `server_url`
+    ///   (`pinned_server_url`; the record that is returned pins that
+    ///   address) and the server key the registration showed with the `o`
+    ///   value (`pinned_server_key`). A pinned device may pass it too, and
+    ///   then the same comparisons are made.
     ///
     /// Returns `{ vault, password_wrap, recovery_wrap, manifest, pk_r,
     /// registration_record, ksf_profile, server_public_key, sk_bit, pinned }`
@@ -734,7 +737,7 @@ impl UnlockJob {
         manifest: JsValue,
         new_recovery_method_id: Vec<u8>,
         pin: JsValue,
-        qr_server_public_key: Option<Vec<u8>>,
+        qr: Option<String>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let rk_code = Zeroizing::new(rk_code);
@@ -743,19 +746,26 @@ impl UnlockJob {
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
             let row: RowDto = from_js(manifest)?;
             let new_id = MethodId::from_bytes(crate::convert::arr(&new_recovery_method_id)?);
-            let qr = qr_server_public_key
-                .map(|k| crate::convert::arr::<32>(&k))
-                .transpose()?;
+            let qr = qr.map(Zeroizing::new);
+            let qr = qr.as_deref().map(|t| parse_setup_qr(t)).transpose()?;
             let registered = self.registered.take().ok_or(Fail::Input)?;
             let input = self.input.take().ok_or(Fail::Input)?;
             self.secret_key = None;
 
-            // A new device pins the key the emergency sheet states, not the
-            // one the server shows now: the two must be the same.
-            match (&pin, qr) {
+            // A new device pins what the emergency sheet states, not what the
+            // server shows now: the two must be the same.
+            match (&pin, &qr) {
                 (Pin::FirstUse { .. }, None) => return Err(Fail::Input),
-                (_, Some(qr)) if qr != registered.finished.server_public_key => {
-                    return Err(Error::Pinned(PinnedField::ServerKey).into());
+                (_, Some(qr)) => {
+                    if qr.account_id != ctx.account_id {
+                        return Err(Error::Pinned(PinnedField::AccountId).into());
+                    }
+                    if qr.server_url != server_url {
+                        return Err(Error::Pinned(PinnedField::ServerUrl).into());
+                    }
+                    if qr.server_public_key != registered.finished.server_public_key {
+                        return Err(Error::Pinned(PinnedField::ServerKey).into());
+                    }
                 }
                 _ => {}
             }
@@ -780,8 +790,8 @@ impl UnlockJob {
                 pin.state(),
             )?;
             // Defence in depth: the result carries the key again.
-            if let Some(qr) = qr
-                && qr != recovered.server_public_key
+            if let Some(qr) = &qr
+                && qr.server_public_key != recovered.server_public_key
             {
                 return Err(Error::Pinned(PinnedField::ServerKey).into());
             }
@@ -801,12 +811,12 @@ impl UnlockJob {
                 sk_bit: recovered.sk_bit,
                 pinned: PinnedDto::of(&new_record),
             })?;
-            let setup = Setup {
-                recovery_key: Some(copy_recovery_key(&recovered.recovery_key)?),
-                secret_key: None,
-                server_public_key: recovered.server_public_key,
-                ksf_profile: recovered.ksf_profile,
-            };
+            let setup = Setup::new(
+                Some(copy_recovery_key(&recovered.recovery_key)?),
+                None,
+                recovered.server_public_key,
+                recovered.ksf_profile,
+            );
             // The vault object is opened again from the new password wrap,
             // because the result keeps its own vault for the proof.
             let vault = unwrap_vk(&ctx, &password_kek, &recovered.password_wrap)?;
@@ -948,12 +958,12 @@ impl UnlockJob {
             let inner = vault.inner_mut()?;
             inner.pending = Some(PendingRekey {
                 vault: new_vault,
-                setup: Setup {
-                    recovery_key: Some(recovery_key),
+                setup: Setup::new(
+                    Some(recovery_key),
                     secret_key,
-                    server_public_key: done.server_public_key,
-                    ksf_profile: done.profile,
-                },
+                    done.server_public_key,
+                    done.profile,
+                ),
             });
             // The sign-in is used up.
             self.reset();
@@ -1007,4 +1017,18 @@ impl Shaped for RekeyInputDto {
         ("password_method_id", &ANY),
         ("recovery_method_id", &ANY),
     ]);
+}
+
+#[cfg(feature = "test-support")]
+impl UnlockJob {
+    /// The OPAQUE export key held after `login_finish` or `register_finish`,
+    /// for the test that no reply holds it.
+    pub(crate) fn export_key_for_test(&self) -> Option<Vec<u8>> {
+        let key = self
+            .login_done
+            .as_ref()
+            .map(|d| &d.export_key)
+            .or_else(|| self.registered.as_ref().map(|r| &r.finished.export_key))?;
+        Some(ferret_core::testing::keys::export_key_bytes(key).to_vec())
+    }
 }

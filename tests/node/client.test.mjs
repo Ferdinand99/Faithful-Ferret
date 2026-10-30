@@ -192,3 +192,61 @@ test("a_crashing_worker_rejects_what_waits_for_it", async () => {
   assert.equal(e.code, "worker_failed");
   assert.equal(worker.terminated, true);
 });
+
+test("lock_through_the_proxy_ends_the_worker_like_client_lock", async () => {
+  const { client, made } = setup();
+  await client.vault.clear();
+  assert.equal(made.vault.length, 1);
+  await client.vault.lock();
+  assert.equal(made.vault[0].terminated, true, "the worker is ended, not only emptied");
+  const e = await rejection(client.vault.context());
+  assert.equal(e.code, "vault_locked");
+  assert.equal(made.vault.length, 2, "a new worker answered");
+  // The dispatcher's method set holds no internal names of wasm-bindgen.
+  for (const name of ["__destroy_into_raw", "free", "constructor"]) {
+    const bad = await rejection(client.vault[name]());
+    assert.equal(bad.code, "invalid_input", name);
+  }
+});
+
+test("an_internal_error_ends_the_vault_worker", async () => {
+  const made = [];
+  const client = createClient({
+    createVaultWorker: () => {
+      const w = new FakeWorker((request) => ({
+        reply: { id: request.id, ok: false, code: "internal" },
+        transfer: [],
+      }));
+      made.push(w);
+      return w;
+    },
+  });
+  const e = await rejection(client.vault.context());
+  assert.equal(e.code, "internal");
+  assert.equal(made[0].terminated, true, "an instance that aborted is not reused");
+  await rejection(client.vault.context());
+  assert.equal(made.length, 2);
+});
+
+test("u32_arguments_are_checked_before_wasm_bindgen_coerces_them", async () => {
+  const { client } = setup();
+  const bad = [4294967297, 1.9, -1, "3", NaN, Infinity, null, undefined, {}];
+  for (const v of bad) {
+    for (const call of [
+      () => client.vault.item_view(v),
+      () => client.vault.close_item(v),
+      () => client.vault.reveal_item_field(1, v),
+      () => client.vault.import_view(v),
+      () => client.vault.login_finish(new Uint8Array(1), v, { kind: "first_use" }),
+    ]) {
+      const e = await rejection(call());
+      assert.equal(e.code, "invalid_input", String(v));
+    }
+  }
+  // 2^32 - 1 is in range (and is simply not an open item).
+  assert.equal((await rejection(client.vault.item_view(4294967295))).code, "vault_locked");
+  // An optional handle may be left out.
+  const e = await rejection(client.vault.encrypt_item(fill(16, 1), 1, { name: "x" }, undefined, 1));
+  assert.equal(e.code, "vault_locked");
+  assert.equal((await rejection(client.vault.encrypt_item(fill(16, 1), 1, { name: "x" }, 1.5, 1))).code, "invalid_input");
+});

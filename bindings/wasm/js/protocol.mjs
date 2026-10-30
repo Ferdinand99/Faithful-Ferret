@@ -84,6 +84,48 @@ export const TEXT_ARGS = {
   wrap_pin: [0],
 };
 
+/**
+ * The arguments that the Rust side takes as `u32` (handles, indexes, profile
+ * numbers). `wasm-bindgen` coerces a JavaScript value before Rust sees it
+ * (`4294967297` becomes `1`, `1.9` becomes `1`, `"3"` becomes `3`), so they are
+ * checked here: a number that is a whole number from 0 to 2^32 - 1. The second
+ * item says whether the argument may be left out (`undefined` or `null`).
+ */
+export const U32_ARGS = {
+  close_item: [[0, false]],
+  item_view: [[0, false]],
+  reveal_item_field: [[0, false], [1, false]],
+  reveal_item_notes: [[0, false]],
+  reveal_totp_secret: [[0, false]],
+  totp_code: [[0, false]],
+  encrypt_item: [[3, true]],
+  passkey_create: [[8, true]],
+  passkey_get: [[0, false]],
+  import_view: [[0, false]],
+  import_seal: [[0, false]],
+  login_finish: [[1, false]],
+  register_finish: [[1, false]],
+};
+
+/** Throws `invalid_input` unless the `u32` arguments of a call are whole numbers in range. */
+export function assertU32Args(method, args) {
+  for (const [index, optional] of argsOf(U32_ARGS, method)) {
+    const v = args[index];
+    if (optional && (v === undefined || v === null)) continue;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 0xffffffff) {
+      throw new FerretError("invalid_input");
+    }
+  }
+}
+
+/**
+ * The entry of a table for a method name, or nothing. A plain lookup would
+ * find `constructor` and `toString` on the prototype of the table.
+ */
+export function argsOf(table, method) {
+  return typeof method === "string" && Object.hasOwn(table, method) ? table[method] : [];
+}
+
 /** An error with a stable code and no data. */
 export class FerretError extends Error {
   constructor(code) {
@@ -153,7 +195,7 @@ function codeOf(e) {
 }
 
 function wipeSecretArgs(method, args) {
-  for (const i of SECRET_ARGS[method] ?? []) {
+  for (const i of argsOf(SECRET_ARGS, method)) {
     if (args[i] instanceof Uint8Array) args[i].fill(0);
   }
 }
@@ -174,7 +216,11 @@ export function createDispatcher(wasm) {
   const job = new wasm.UnlockJob();
   const vaultMethods = new Set(
     Object.getOwnPropertyNames(wasm.Vault.prototype).filter(
-      (n) => n !== "constructor" && n !== "free" && typeof wasm.Vault.prototype[n] === "function",
+      (n) =>
+        n !== "constructor" &&
+        n !== "free" &&
+        !n.startsWith("__") &&
+        typeof wasm.Vault.prototype[n] === "function",
     ),
   );
 
@@ -216,6 +262,7 @@ export function createDispatcher(wasm) {
       if (request?.target !== "vault" || typeof request.method !== "string") {
         throw new FerretError("invalid_input");
       }
+      assertU32Args(request.method, args);
       const value = call(request.method, args);
       return { reply: { id, ok: true, value }, transfer: transferables(value) };
     } catch (e) {

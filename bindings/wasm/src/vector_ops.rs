@@ -20,6 +20,7 @@
     clippy::arithmetic_side_effects
 )]
 
+use crate::job::UnlockJob;
 use crate::vault::Vault;
 use ferret_core::testing::keys::{
     derived_keys, export_key_bytes, kek_bytes, recovery_seed, unlocked_vault_keys,
@@ -1398,5 +1399,36 @@ pub fn test_memory_bytes() -> f64 {
     #[cfg(not(target_arch = "wasm32"))]
     {
         0.0
+    }
+}
+
+#[wasm_bindgen]
+impl UnlockJob {
+    /// The OPAQUE export key the job holds (64 bytes), or nothing.
+    pub fn test_export_key(&self) -> Option<Vec<u8>> {
+        self.export_key_for_test()
+    }
+}
+
+#[wasm_bindgen]
+impl Vault {
+    /// The item key `IK` of a sealed item (32 bytes).
+    pub fn test_item_key(
+        &self,
+        item_id: Vec<u8>,
+        rev: f64,
+        envelope: Vec<u8>,
+        tag: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let v = &self
+            .inner
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("locked"))?
+            .vault;
+        let id = ItemId::from_bytes(item_id.try_into().unwrap());
+        let tag: [u8; 32] = tag.try_into().unwrap();
+        ferret_core::testing::item::intermediate(v, id, rev as u64, &envelope, &tag)
+            .map(|i| i.ik.to_vec())
+            .map_err(|e| JsValue::from_str(e.code()))
     }
 }

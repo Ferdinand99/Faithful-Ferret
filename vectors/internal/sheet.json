@@ -194,6 +194,168 @@
       "expect_error": "kdf_profile_unknown"
     },
     {
+      "id": "sheet/build/011",
+      "title": "http is for a local server: localhost with a port",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "http://localhost:3001",
+        "sk_bit": false
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=http%3A%2F%2Flocalhost%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/012",
+      "title": "an IPv6 literal in brackets",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://[2001:db8::1]:8443/x",
+        "sk_bit": true
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2F%5B2001%3Adb8%3A%3A1%5D%3A8443%2Fx&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/013",
+      "title": "the address is written as it is given, a host in capitals included",
+      "op": "sheet.qr.build",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://Vault.EXAMPLE:8443/Path",
+        "sk_bit": true
+      },
+      "expect": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2FVault.EXAMPLE%3A8443%2FPath&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sheet/build/014",
+      "title": "a backslash, which a browser reads as a slash and so moves the host",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://evil.example\\@good.example/",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/015",
+      "title": "user information, which hides the host",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://good.example@evil.example/",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/016",
+      "title": "a percent escape in the host",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://a.example%2F@b.example",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/017",
+      "title": "http to a name that is not localhost",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "http://vault.example:3001",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/018",
+      "title": "a port above 65535",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://vault.example:65536",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/build/019",
+      "title": "a port and no host",
+      "op": "sheet.qr.build",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "0123456789abcdef1032547698badcfe",
+        "ksf_profile": 1,
+        "server_public_key": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "server_url": "https://:8443",
+        "sk_bit": true
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
       "id": "sheet/parse/001",
       "title": "reads what the first case builds",
       "op": "sheet.qr.parse",
@@ -464,6 +626,45 @@
       "rng": [],
       "input": {
         "payload": ""
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/021",
+      "title": "user information in the address of a well-formed payload",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fgood.example%40evil.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/022",
+      "title": "a backslash in the address of a well-formed payload",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=https%3A%2F%2Fevil.example%5C%40good.example%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+      },
+      "expect_error": "malformed_setup_qr"
+    },
+    {
+      "id": "sheet/parse/023",
+      "title": "http to a name that is not localhost",
+      "op": "sheet.qr.parse",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "payload": "ferret-setup:v1?u=http%3A%2F%2Fvault.example.com%3A8443%2Fferret&a=0123456789abcdef1032547698badcfe&k=1&s=1&o=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
       },
       "expect_error": "malformed_setup_qr"
     }

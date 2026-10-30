@@ -8,7 +8,14 @@ import { createDispatcher } from "./protocol.mjs";
 const ready = init().then(() => createDispatcher(wasm));
 
 self.onmessage = async (event) => {
-  const dispatch = await ready;
+  let dispatch;
+  try {
+    dispatch = await ready;
+  } catch {
+    // The module did not load: every call gets an answer instead of waiting.
+    self.postMessage({ id: event.data?.id, ok: false, code: "worker_failed" });
+    return;
+  }
   const { reply, transfer } = dispatch(event.data);
   self.postMessage(reply, transfer);
 };

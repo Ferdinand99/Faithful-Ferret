@@ -17,13 +17,20 @@
 //   check: a lone surrogate is `invalid_input`, never a silent U+FFFD (U9).
 // * A failure is a `FerretError` with a stable `code` (see `error.rs`), plus
 //   `worker_failed` when a worker dies and `internal` for anything else.
-// * An out-of-memory in Argon2id (`kdf_out_of_memory`) ends the worker that
-//   reported it: a heap that failed to grow is not reused.
+// * An out-of-memory in Argon2id (`kdf_out_of_memory`) and an `internal` error
+//   (a trap or abort in WASM, or anything that is not a code) end the worker
+//   that reported it: a heap that failed to grow, or an instance that
+//   aborted, is not reused. The vault is gone with it; the next call finds a
+//   locked vault (`vault_locked`).
+// * `ferret.vault.lock()` is the same as `ferret.lock()`: the worker is ended.
+// * The result of `ferret.job.argon2_export_key` is `K_exp`. The caller passes
+//   it on to `export_finish` or `import_open`, which wipe it, or `fill(0)`s it.
 
 import {
   FerretError,
   SECRET_ARGS,
   TEXT_ARGS,
+  argsOf,
   assertWellFormed,
   encodeSecretText,
 } from "./protocol.mjs";
@@ -41,8 +48,8 @@ function defaultWorkers() {
 
 /** Copies the arguments for the worker: strings that are passwords become bytes. */
 function prepare(method, args) {
-  const textArgs = TEXT_ARGS[method] ?? [];
-  const secretArgs = SECRET_ARGS[method] ?? [];
+  const textArgs = argsOf(TEXT_ARGS, method);
+  const secretArgs = argsOf(SECRET_ARGS, method);
   const wipe = [];
   const out = args.map((arg, i) => {
     if (textArgs.includes(i) && typeof arg === "string") {
@@ -82,7 +89,7 @@ class WorkerChannel {
         waiter.resolve(reply.value);
       } else {
         waiter.reject(new FerretError(reply.code));
-        if (reply.code === "kdf_out_of_memory") this.onFatal(this);
+        if (reply.code === "kdf_out_of_memory" || reply.code === "internal") this.onFatal(this);
       }
     };
     const failed = () => this.fail("worker_failed");
@@ -115,6 +122,10 @@ class WorkerChannel {
     try {
       prepared = prepare(method, args);
     } catch (e) {
+      // Nothing is sent; the secrets the caller gave are wiped all the same.
+      for (const i of argsOf(SECRET_ARGS, method)) {
+        if (args[i] instanceof Uint8Array) args[i].fill(0);
+      }
       return Promise.reject(e);
     }
     const { out, transfer, wipe } = prepared;
@@ -143,15 +154,32 @@ export function createClient(options = {}) {
   const onFatal = (channel) => channel.fail("worker_failed");
   const vault = new WorkerChannel("vault", createVaultWorker, onFatal);
 
-  const proxy = (channel) =>
-    new Proxy(
-      {},
-      { get: (_, method) => (typeof method === "string" ? (...args) => channel.call(method, args) : undefined) },
-    );
+  const lock = async () => {
+    if (vault.worker) {
+      try {
+        await vault.call("lock", []);
+      } catch {
+        // The worker is ended either way.
+      }
+    }
+    vault.fail("locked");
+  };
+
+  const vaultProxy = new Proxy(
+    {},
+    {
+      get: (_, method) => {
+        if (typeof method !== "string") return undefined;
+        // Locking must end the worker, never only drop the vault in it.
+        if (method === "lock") return lock;
+        return (...args) => vault.call(method, args);
+      },
+    },
+  );
 
   return {
     /** Every method of the `Vault`, the `UnlockJob` and the stateless functions. */
-    vault: proxy(vault),
+    vault: vaultProxy,
 
     /** The job worker: one call per worker, ended afterwards. */
     job: new Proxy(
@@ -175,15 +203,6 @@ export function createClient(options = {}) {
      * Locks: the vault is wiped, the vault worker is ended (which frees its
      * heap) and a new one starts with the next call.
      */
-    async lock() {
-      if (vault.worker) {
-        try {
-          await vault.call("lock", []);
-        } catch {
-          // The worker is ended either way.
-        }
-      }
-      vault.fail("locked");
-    },
+    lock,
   };
 }

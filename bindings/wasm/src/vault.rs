@@ -45,13 +45,41 @@ pub(crate) struct OpenItem {
 }
 
 /// Secrets of an account setup, kept so the user can be shown the recovery
-/// key and the secret key once and be asked to type them back. They go with
+/// key and the secret key and be asked to type them back. They go as soon as
+/// every key the setup holds has been typed back correctly
+/// (`verify_recovery_setup`, `verify_secret_key_entry`), with
 /// [`Vault::clear_setup_secrets`] and with `lock()`.
 pub(crate) struct Setup {
     pub(crate) recovery_key: Option<RecoveryKey>,
     pub(crate) secret_key: Option<SecretKey>,
     pub(crate) server_public_key: [u8; 32],
     pub(crate) ksf_profile: KsfProfile,
+    rk_confirmed: bool,
+    sk_confirmed: bool,
+}
+
+impl Setup {
+    pub(crate) fn new(
+        recovery_key: Option<RecoveryKey>,
+        secret_key: Option<SecretKey>,
+        server_public_key: [u8; 32],
+        ksf_profile: KsfProfile,
+    ) -> Self {
+        Self {
+            recovery_key,
+            secret_key,
+            server_public_key,
+            ksf_profile,
+            rk_confirmed: false,
+            sk_confirmed: false,
+        }
+    }
+
+    /// Whether every key this setup holds has been confirmed.
+    fn confirmed(&self) -> bool {
+        (self.recovery_key.is_none() || self.rk_confirmed)
+            && (self.secret_key.is_none() || self.sk_confirmed)
+    }
 }
 
 /// A rekey that is made but not yet in force: the old vault still signs the
@@ -117,6 +145,23 @@ impl Vault {
 
     pub(crate) fn inner_mut(&mut self) -> Res<&mut Inner> {
         self.inner.as_deref_mut().ok_or(Fail::Locked)
+    }
+
+    /// Marks the recovery key (`recovery`) or the secret key as typed back,
+    /// and drops the setup secrets once all of them are.
+    fn setup_confirmed(&mut self, recovery: bool) {
+        if let Some(inner) = self.inner.as_deref_mut()
+            && let Some(setup) = inner.setup.as_mut()
+        {
+            if recovery {
+                setup.rk_confirmed = true;
+            } else {
+                setup.sk_confirmed = true;
+            }
+            if setup.confirmed() {
+                inner.setup = None;
+            }
+        }
     }
 
     pub(crate) fn unlocked(&self) -> Res<&UnlockedVault> {
@@ -563,7 +608,8 @@ impl Vault {
     // ------------------------------------------------ setup and secrets
 
     /// The recovery key as `FFR1-...`, to be shown once after the setup, a
-    /// recovery or a rekey. Available until `clear_setup_secrets` or `lock`.
+    /// recovery or a rekey. Available until the key has been typed back
+    /// (`verify_recovery_setup`), `clear_setup_secrets` or `lock`.
     pub fn reveal_recovery_code(&self) -> Result<String, JsValue> {
         run(|| {
             let setup = self.inner()?.setup.as_ref().ok_or(Fail::Input)?;
@@ -619,26 +665,35 @@ impl Vault {
     /// typed, **opens the recovery wrap with it** and compares the vault key
     /// it holds with this vault's. A typo is `checksum`, a wrong key
     /// `decrypt`.
-    pub fn verify_recovery_setup(&self, entered: &str, rk_wrap: JsValue) -> Result<(), JsValue> {
+    pub fn verify_recovery_setup(
+        &mut self,
+        entered: &str,
+        rk_wrap: JsValue,
+    ) -> Result<(), JsValue> {
         run(|| {
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
-            core(verify_recovery_setup(entered, &rec, self.unlocked()?))
+            core(verify_recovery_setup(entered, &rec, self.unlocked()?))?;
+            self.setup_confirmed(true);
+            Ok(())
         })
     }
 
     /// The confirmation of the secret key at setup: reads what the user typed
     /// and compares it with the secret key of this setup. A typo is
     /// `checksum`, another valid key `decrypt`.
-    pub fn verify_secret_key_entry(&self, entered: &str) -> Result<(), JsValue> {
+    pub fn verify_secret_key_entry(&mut self, entered: &str) -> Result<(), JsValue> {
         run(|| {
             let setup = self.inner()?.setup.as_ref().ok_or(Fail::Input)?;
             let sk = setup.secret_key.as_ref().ok_or(Fail::Input)?;
-            core(verify_secret_key_entry(entered, sk))
+            core(verify_secret_key_entry(entered, sk))?;
+            self.setup_confirmed(false);
+            Ok(())
         })
     }
 
-    /// Wipes the recovery key and the secret key that a setup kept, once the
-    /// user has confirmed them.
+    /// Wipes the recovery key and the secret key that a setup kept. They also
+    /// go by themselves when the user has typed back every key the setup
+    /// holds.
     pub fn clear_setup_secrets(&mut self) -> Result<(), JsValue> {
         run(|| {
             self.inner_mut()?.setup = None;
