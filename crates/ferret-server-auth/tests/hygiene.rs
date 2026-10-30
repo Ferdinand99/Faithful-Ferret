@@ -41,8 +41,9 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "ManualClock",
     "Stage",
     "Outcome",
-    // Secret files and start-up: names, switches and public values. The
-    // fingerprint is made of public keys only. None holds file content.
+    // Secret files and start-up: names and switches. The fingerprint is a
+    // one-way hash of the set-up, safe to store and to print. None holds file
+    // content.
     "FileKind",
     "SecretFileError",
     "SetupFingerprint",

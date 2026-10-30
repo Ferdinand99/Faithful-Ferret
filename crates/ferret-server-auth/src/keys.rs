@@ -36,6 +36,7 @@ use ferret_core::opaque::server_suite::{FerretSuite, Rng06, SERVER_SETUP_LEN};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::ct::ct_eq;
 use crate::secret_file::{
     FileKind, OPAQUE_SETUP_FILE, PRELOGIN_PAYLOAD_LEN, PRELOGIN_SECRET_FILE, SecretFileError,
     read_secret_file, write_new_secret_file,
@@ -53,15 +54,47 @@ const SETUP_FINGERPRINT_LABEL: &[u8] = b"ferret/v1/setup-fp";
 /// answer to its seed.
 pub struct ServerKeys {
     setup: ServerSetup<FerretSuite>,
+    /// The server's public key and the dummy public key, read once when the
+    /// set-up is built, so a layout that did not fit would be an error then
+    /// and never a zero key later.
+    public_key: [u8; 32],
+    dummy_public_key: [u8; 32],
 }
 
 impl ServerKeys {
     /// Makes a new set-up. Draws 3 times 64 bytes from `rng`, in the order
     /// key pair, OPRF seed, dummy key pair (`ServerSetup::new`).
-    pub fn generate<R: SecureRng>(rng: &mut R) -> Self {
-        Self {
-            setup: ServerSetup::<FerretSuite>::new(&mut Rng06(rng)),
-        }
+    ///
+    /// The result is an error only if the serialized set-up does not have the
+    /// layout this code expects; that cannot happen with the pinned library,
+    /// and is reported rather than papered over.
+    pub fn generate<R: SecureRng>(rng: &mut R) -> Result<Self, SecretFileError> {
+        Self::from_setup(ServerSetup::<FerretSuite>::new(&mut Rng06(rng)))
+    }
+
+    /// Wraps a set-up and reads its two public keys.
+    fn from_setup(setup: ServerSetup<FerretSuite>) -> Result<Self, SecretFileError> {
+        let mut serialized = setup.keypair().public().serialize();
+        let public_key = array32(&serialized);
+        serialized.as_mut_slice().zeroize();
+        // Seed 64, private key 32, then the dummy key.
+        let payload = Self::serialize(&setup);
+        let dummy_public_key = payload
+            .get(96..)
+            .ok_or(SecretFileError::PayloadInvalid)
+            .and_then(array32);
+        Ok(Self {
+            setup,
+            public_key: public_key?,
+            dummy_public_key: dummy_public_key?,
+        })
+    }
+
+    fn serialize(setup: &ServerSetup<FerretSuite>) -> Zeroizing<Vec<u8>> {
+        let mut serialized = setup.serialize();
+        let out = Zeroizing::new(serialized.to_vec());
+        serialized.as_mut_slice().zeroize();
+        out
     }
 
     /// Reads the 128-byte payload of an `opaque_setup` file: OPRF seed 64,
@@ -76,45 +109,37 @@ impl ServerKeys {
         }
         let setup = ServerSetup::<FerretSuite>::deserialize(payload)
             .map_err(|_| SecretFileError::PayloadInvalid)?;
-        Ok(Self { setup })
+        Self::from_setup(setup)
     }
 
     /// The 128-byte payload for the file. It holds the secrets: it is wiped
     /// when dropped.
     pub fn payload(&self) -> Zeroizing<Vec<u8>> {
-        let mut serialized = self.setup.serialize();
-        let out = Zeroizing::new(serialized.to_vec());
-        serialized.as_mut_slice().zeroize();
-        out
+        Self::serialize(&self.setup)
     }
 
     /// The server's public key, which every client pins.
-    pub fn public_key(&self) -> [u8; 32] {
-        let mut serialized = self.setup.keypair().public().serialize();
-        let out = array32(&serialized);
-        serialized.as_mut_slice().zeroize();
-        out
+    pub const fn public_key(&self) -> [u8; 32] {
+        self.public_key
     }
 
     /// The public dummy key that stands in for the client key of a made-up
     /// record.
-    pub fn dummy_public_key(&self) -> [u8; 32] {
-        let payload = self.payload();
-        // Seed 64, private key 32, then the dummy key.
-        payload.get(96..).map(array32).unwrap_or([0; 32])
+    pub const fn dummy_public_key(&self) -> [u8; 32] {
+        self.dummy_public_key
     }
 
-    /// A fingerprint of the key pair, for the database to remember.
+    /// A fingerprint of the whole set-up, for the database to remember.
     ///
-    /// `SHA-256("ferret/v1/setup-fp" ‖ public key ‖ dummy public key)`. It is
-    /// made of public values only, so it can be stored and logged. It changes
-    /// when the key pair or the dummy key changes; it does **not** cover the
-    /// OPRF seed, which no public value can stand for.
+    /// `SHA-256("ferret/v1/setup-fp" ‖ payload)` over the 128-byte payload:
+    /// the OPRF seed, the private key and the dummy key. A swap of any one of
+    /// them changes it. It is a one-way hash of 128 random bytes, so it can be
+    /// stored and logged; it is not a public key.
     pub fn fingerprint(&self) -> SetupFingerprint {
+        let payload = self.payload();
         let mut hash = Sha256::new();
         hash.update(SETUP_FINGERPRINT_LABEL);
-        hash.update(self.public_key());
-        hash.update(self.dummy_public_key());
+        hash.update(payload.as_slice());
         SetupFingerprint(hash.finalize().into())
     }
 
@@ -132,14 +157,10 @@ impl fmt::Debug for ServerKeys {
     }
 }
 
-/// Copies up to 32 bytes into an array. A shorter input leaves the rest zero;
-/// the callers pass exactly 32.
-fn array32(bytes: &[u8]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (slot, byte) in out.iter_mut().zip(bytes) {
-        *slot = *byte;
-    }
-    out
+/// Exactly 32 bytes as an array; any other length is an error, never a
+/// padded or cut key.
+fn array32(bytes: &[u8]) -> Result<[u8; 32], SecretFileError> {
+    <[u8; 32]>::try_from(bytes).map_err(|_| SecretFileError::PayloadInvalid)
 }
 
 /// The 32-byte secret behind the made-up pre-login answers.
@@ -188,10 +209,19 @@ impl fmt::Debug for PreloginSecret {
     }
 }
 
-/// A fingerprint of the server's key pair: see [`ServerKeys::fingerprint`].
-/// Public; the next layer keeps it in its database.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A fingerprint of the server's set-up: see [`ServerKeys::fingerprint`]. The
+/// next layer keeps it in its database. It is a hash of secrets, so two
+/// fingerprints are compared in constant time.
+#[derive(Debug, Clone, Copy)]
 pub struct SetupFingerprint(pub [u8; 32]);
+
+impl PartialEq for SetupFingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        ct_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for SetupFingerprint {}
 
 /// Whether a missing secret file may be created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,9 +233,18 @@ pub enum CreatePolicy {
 }
 
 impl CreatePolicy {
-    /// `MustExist` once the database has accounts, `CreateIfMissing` before.
-    pub const fn for_database(accounts_with_records: bool) -> Self {
-        if accounts_with_records {
+    /// `MustExist` as soon as the database shows that this server has run
+    /// before (it has accounts, or it remembers a fingerprint), and
+    /// `CreateIfMissing` only for a database with neither.
+    ///
+    /// Call [`startup_decision`](crate::startup_decision) on the result: a
+    /// start that is refused then leaves no new file behind, because a
+    /// missing file was never created.
+    pub const fn for_database(
+        accounts_with_records: bool,
+        stored: Option<SetupFingerprint>,
+    ) -> Self {
+        if accounts_with_records | stored.is_some() {
             CreatePolicy::MustExist
         } else {
             CreatePolicy::CreateIfMissing
@@ -269,7 +308,7 @@ fn load_one<T>(
     kind: FileKind,
     policy: CreatePolicy,
     from_payload: impl Fn(&[u8]) -> Result<T, SecretFileError>,
-    make: impl FnOnce() -> (T, Zeroizing<Vec<u8>>),
+    make: impl FnOnce() -> Result<(T, Zeroizing<Vec<u8>>), SecretFileError>,
 ) -> Result<(T, FileOrigin), SecretFileError> {
     let path = dir.join(name);
     match read_settled(&path, kind) {
@@ -277,7 +316,7 @@ fn load_one<T>(
         Err(SecretFileError::Missing) if matches!(policy, CreatePolicy::CreateIfMissing) => {}
         Err(error) => return Err(error),
     }
-    let (value, payload) = make();
+    let (value, payload) = make()?;
     match write_new_secret_file(&path, kind, &payload) {
         Ok(()) => Ok((value, FileOrigin::Created)),
         Err(SecretFileError::AlreadyExists) => {
@@ -294,7 +333,8 @@ fn load_one<T>(
 /// A file that is there but wrong (bad permissions, damaged, unknown
 /// version) is an error under every policy: it is never replaced. With
 /// [`CreatePolicy::MustExist`] a missing file is [`SecretFileError::Missing`]
-/// and nothing is written. The directory must exist.
+/// and nothing is written. Use [`CreatePolicy::for_database`] to choose the
+/// policy, so a server that has run before never makes a new file. The directory must exist.
 ///
 /// Hand the result to [`startup_decision`](crate::startup_decision) before
 /// the server accepts a request.
@@ -310,9 +350,9 @@ pub fn load_or_create<R: SecureRng>(
         policy,
         ServerKeys::from_payload,
         || {
-            let keys = ServerKeys::generate(rng);
+            let keys = ServerKeys::generate(rng)?;
             let payload = keys.payload();
-            (keys, payload)
+            Ok((keys, payload))
         },
     )?;
     let (prelogin, prelogin_origin) = load_one(
@@ -324,7 +364,7 @@ pub fn load_or_create<R: SecureRng>(
         || {
             let secret = PreloginSecret::generate(rng);
             let payload = secret.payload();
-            (secret, payload)
+            Ok((secret, payload))
         },
     )?;
     Ok(LoadedSecrets {
@@ -392,7 +432,7 @@ mod tests {
 
     #[test]
     fn restored_keys_answer_like_the_original() {
-        let original = ServerKeys::generate(&mut TestRng::new(b"restore"));
+        let original = ServerKeys::generate(&mut TestRng::new(b"restore")).unwrap();
         let restored = ServerKeys::from_payload(&original.payload()).unwrap();
         let mut client = TestRng::new(b"restore-client");
         let request = ClientRegistration::<FerretSuite>::start(&mut Rng06(&mut client), b"pw")
@@ -409,7 +449,7 @@ mod tests {
         assert_eq!(first, answer(&restored, &request));
         assert_eq!(first.get(32..), Some(&original.public_key()[..]));
         // Other keys answer differently.
-        let other = ServerKeys::generate(&mut TestRng::new(b"another"));
+        let other = ServerKeys::generate(&mut TestRng::new(b"another")).unwrap();
         assert_ne!(first, answer(&other, &request));
     }
 }

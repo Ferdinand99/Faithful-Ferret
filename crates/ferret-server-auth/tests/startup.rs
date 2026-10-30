@@ -78,20 +78,24 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn setup_file(seed: &str) -> Vec<u8> {
-    let keys = ServerKeys::generate(&mut rng(seed));
-    encode_secret_file(FileKind::OpaqueSetup, &keys.payload()).unwrap()
+    let keys = ServerKeys::generate(&mut rng(seed)).unwrap();
+    encode_secret_file(FileKind::OpaqueSetup, &keys.payload())
+        .unwrap()
+        .to_vec()
 }
 
 fn prelogin_file(seed: &str) -> Vec<u8> {
     let secret = PreloginSecret::generate(&mut rng(seed));
-    encode_secret_file(FileKind::PreloginSecret, &secret.payload()).unwrap()
+    encode_secret_file(FileKind::PreloginSecret, &secret.payload())
+        .unwrap()
+        .to_vec()
 }
 
 /// Secrets as a first start finds them, with the given origins.
 fn secrets(seed: &str, setup: FileOrigin, prelogin: FileOrigin) -> LoadedSecrets {
     let mut r = rng(seed);
     LoadedSecrets {
-        keys: ServerKeys::generate(&mut r),
+        keys: ServerKeys::generate(&mut r).unwrap(),
         prelogin: PreloginSecret::generate(&mut r),
         setup_origin: setup,
         prelogin_origin: prelogin,
@@ -102,7 +106,7 @@ fn secrets(seed: &str, setup: FileOrigin, prelogin: FileOrigin) -> LoadedSecrets
 
 #[test]
 fn file_roundtrip_opaque_setup_is_169_bytes() {
-    let keys = ServerKeys::generate(&mut rng("roundtrip"));
+    let keys = ServerKeys::generate(&mut rng("roundtrip")).unwrap();
     let payload = keys.payload();
     assert_eq!(payload.len(), 128);
     let file = encode_secret_file(FileKind::OpaqueSetup, &payload).unwrap();
@@ -331,8 +335,8 @@ fn write_then_read_returns_the_payload() {
 fn write_new_never_overwrites() {
     let dir = TempDir::new();
     let path = dir.path().join("opaque_setup");
-    let first = ServerKeys::generate(&mut rng("first")).payload();
-    let second = ServerKeys::generate(&mut rng("second")).payload();
+    let first = ServerKeys::generate(&mut rng("first")).unwrap().payload();
+    let second = ServerKeys::generate(&mut rng("second")).unwrap().payload();
     write_new_secret_file(&path, FileKind::OpaqueSetup, &first).unwrap();
     let before = std::fs::read(&path).unwrap();
     assert_eq!(
@@ -410,7 +414,7 @@ fn the_loader_reads_at_most_4_kib() {
 fn failed_write_leaves_no_file() {
     let dir = TempDir::new();
     let missing_parent = dir.path().join("no-such-dir").join("opaque_setup");
-    let payload = ServerKeys::generate(&mut rng("failed")).payload();
+    let payload = ServerKeys::generate(&mut rng("failed")).unwrap().payload();
     assert!(matches!(
         write_new_secret_file(&missing_parent, FileKind::OpaqueSetup, &payload),
         Err(SecretFileError::Io(_))
@@ -537,12 +541,74 @@ mod unix {
         let target = dir.path().join("target");
         let link = dir.path().join("opaque_setup");
         symlink(&target, &link).unwrap();
-        let payload = ServerKeys::generate(&mut rng("link")).payload();
+        let payload = ServerKeys::generate(&mut rng("link")).unwrap().payload();
         assert_eq!(
             write_new_secret_file(&link, FileKind::OpaqueSetup, &payload),
             Err(SecretFileError::AlreadyExists)
         );
         assert!(!target.exists());
+    }
+
+    /// Gives the file to another user. Only the superuser can; anyone else
+    /// has nothing to test.
+    fn give_away(path: &Path, uid: u32) -> bool {
+        match std::os::unix::fs::chown(path, Some(uid), None) {
+            Ok(()) => true,
+            Err(_) => {
+                eprintln!("skipped: this user cannot give a file to another user");
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn loader_refuses_a_file_of_another_owner() {
+        let dir = TempDir::new();
+        let path = dir.path().join("prelogin_secret");
+        write_new_secret_file(&path, FileKind::PreloginSecret, &[5u8; 32]).unwrap();
+        // The file is ours, mode 0600: fine.
+        assert!(read_secret_file(&path, FileKind::PreloginSecret).is_ok());
+        if !give_away(&path, 54321) {
+            return;
+        }
+        assert_eq!(mode_of(&path), 0o600);
+        assert_eq!(
+            read_secret_file(&path, FileKind::PreloginSecret).map(drop),
+            Err(SecretFileError::WrongOwner)
+        );
+        // Root owns it: accepted, whoever the server runs as.
+        assert!(give_away(&path, 0));
+        assert!(read_secret_file(&path, FileKind::PreloginSecret).is_ok());
+    }
+
+    #[test]
+    fn a_file_planted_by_another_user_is_never_adopted() {
+        // The first start: someone who can write the directory puts valid
+        // files of their own in place first.
+        let dir = TempDir::new();
+        let planted = load_or_create(
+            dir.path(),
+            CreatePolicy::CreateIfMissing,
+            &mut rng("attacker"),
+        )
+        .unwrap();
+        if !give_away(&dir.path().join(OPAQUE_SETUP_FILE), 54321) {
+            return;
+        }
+        assert!(give_away(&dir.path().join(PRELOGIN_SECRET_FILE), 54321));
+        let before = std::fs::read(dir.path().join(OPAQUE_SETUP_FILE)).unwrap();
+        for policy in [CreatePolicy::CreateIfMissing, CreatePolicy::MustExist] {
+            assert_eq!(
+                load_or_create(dir.path(), policy, &mut rng("server")).map(drop),
+                Err(SecretFileError::WrongOwner)
+            );
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join(OPAQUE_SETUP_FILE)).unwrap(),
+            before
+        );
+        assert_eq!(dir.names(), ["opaque_setup", "prelogin_secret"]);
+        drop(planted);
     }
 
     #[test]
@@ -572,14 +638,14 @@ fn generate_is_replayable_with_replay_rng() {
             .collect()
     };
     let mut replay = ReplayRng::new(draws.clone());
-    let keys = ServerKeys::generate(&mut replay);
+    let keys = ServerKeys::generate(&mut replay).unwrap();
     replay.finish().unwrap();
     // The draws are the ones `ServerSetup::new` makes, in its order.
     let mut again = ReplayRng::new(draws.clone());
     let library = ServerSetup::<FerretSuite>::new(&mut Rng06(&mut again));
     assert_eq!(&keys.payload()[..], library.serialize().as_slice());
     // And the same draws give the same keys.
-    let twin = ServerKeys::generate(&mut ReplayRng::new(draws));
+    let twin = ServerKeys::generate(&mut ReplayRng::new(draws)).unwrap();
     assert_eq!(&keys.payload()[..], &twin.payload()[..]);
     assert_eq!(keys.fingerprint(), twin.fingerprint());
 
@@ -592,7 +658,7 @@ fn generate_is_replayable_with_replay_rng() {
 
 #[test]
 fn keys_round_trip_through_their_payload() {
-    let keys = ServerKeys::generate(&mut rng("payload"));
+    let keys = ServerKeys::generate(&mut rng("payload")).unwrap();
     let payload = keys.payload();
     let back = ServerKeys::from_payload(&payload).unwrap();
     assert_eq!(&back.payload()[..], &payload[..]);
@@ -605,7 +671,9 @@ fn keys_round_trip_through_their_payload() {
 
 #[test]
 fn from_payload_refuses_what_is_not_a_set_up() {
-    let payload = ServerKeys::generate(&mut rng("bad-payload")).payload();
+    let payload = ServerKeys::generate(&mut rng("bad-payload"))
+        .unwrap()
+        .payload();
     // The library's parser would ignore a tail; this must not.
     let mut longer = payload.to_vec();
     longer.push(0);
@@ -646,7 +714,7 @@ fn from_payload_refuses_what_is_not_a_set_up() {
 #[test]
 fn secrets_never_appear_in_debug_output() {
     let mut r = rng("debug");
-    let keys = ServerKeys::generate(&mut r);
+    let keys = ServerKeys::generate(&mut r).unwrap();
     let prelogin = PreloginSecret::generate(&mut r);
     let loaded = LoadedSecrets {
         keys: ServerKeys::from_payload(&keys.payload()).unwrap(),
@@ -684,15 +752,16 @@ fn secrets_never_appear_in_debug_output() {
     }
 }
 
-/// The public values of a fixed, synthetic set-up. A change here means the
-/// draws of `ServerSetup::new` or the labels changed.
+/// The keys and the fingerprint of a fixed, synthetic set-up. A change here
+/// means the draws of `ServerSetup::new` or the label changed.
 #[test]
-fn fingerprint_is_public_values_only() {
-    let keys = ServerKeys::generate(&mut rng("fingerprint-vector"));
+fn fingerprint_is_a_hash_of_label_and_the_whole_payload() {
+    let keys = ServerKeys::generate(&mut rng("fingerprint-vector")).unwrap();
+    let payload = keys.payload();
+    assert_eq!(payload.len(), 128);
     let mut hash = Sha256::new();
     hash.update(b"ferret/v1/setup-fp");
-    hash.update(keys.public_key());
-    hash.update(keys.dummy_public_key());
+    hash.update(&payload[..]);
     let expected: [u8; 32] = hash.finalize().into();
     assert_eq!(keys.fingerprint(), SetupFingerprint(expected));
 
@@ -706,22 +775,22 @@ fn fingerprint_is_public_values_only() {
     );
     assert_eq!(
         hex(&keys.fingerprint().0),
-        "aa9abb840db2232410be8d7baa784e9f1a16a8af4e0ea9a6c042d3005858fb92"
+        "10cbcf4d7a9e212ff62562b87f3e73425bd87c1737da445302aec2bdb21448db"
     );
 }
 
 #[test]
-fn fingerprint_changes_with_keypair_only() {
-    let keys = ServerKeys::generate(&mut rng("fp-base"));
+fn fingerprint_changes_with_the_seed_the_key_or_the_dummy() {
+    let keys = ServerKeys::generate(&mut rng("fp-base")).unwrap();
     let base = keys.payload().to_vec();
 
-    // A different OPRF seed: same key pair, same fingerprint.
+    // A different OPRF seed, same key pair and dummy key.
     let mut other_seed = base.clone();
     other_seed[..64].fill(0x42);
     let with_seed = ServerKeys::from_payload(&other_seed).unwrap();
-    assert_ne!(&with_seed.payload()[..], &base[..]);
     assert_eq!(with_seed.public_key(), keys.public_key());
-    assert_eq!(with_seed.fingerprint(), keys.fingerprint());
+    assert_eq!(with_seed.dummy_public_key(), keys.dummy_public_key());
+    assert_ne!(with_seed.fingerprint(), keys.fingerprint());
 
     // A different private key (the scalar 2): another public key.
     let mut other_key = base.clone();
@@ -732,12 +801,38 @@ fn fingerprint_changes_with_keypair_only() {
     assert_ne!(with_key.fingerprint(), keys.fingerprint());
 
     // A different dummy key.
-    let other_dummy = ServerKeys::generate(&mut rng("fp-other")).payload();
-    let mut swapped = base;
+    let other_dummy = ServerKeys::generate(&mut rng("fp-other"))
+        .unwrap()
+        .payload();
+    let mut swapped = base.clone();
     swapped[96..].copy_from_slice(&other_dummy[96..]);
     let with_dummy = ServerKeys::from_payload(&swapped).unwrap();
     assert_eq!(with_dummy.public_key(), keys.public_key());
     assert_ne!(with_dummy.fingerprint(), keys.fingerprint());
+
+    // The same payload gives the same fingerprint, and a single bit of the
+    // seed already changes it.
+    assert_eq!(
+        ServerKeys::from_payload(&base).unwrap().fingerprint(),
+        keys.fingerprint()
+    );
+    let mut one_bit = base;
+    one_bit[63] ^= 1;
+    assert_ne!(
+        ServerKeys::from_payload(&one_bit).unwrap().fingerprint(),
+        keys.fingerprint()
+    );
+}
+
+#[test]
+fn fingerprints_compare_by_value() {
+    let a = SetupFingerprint([7; 32]);
+    assert_eq!(a, SetupFingerprint([7; 32]));
+    for at in 0..32 {
+        let mut other = [7u8; 32];
+        other[at] ^= 0x80;
+        assert_ne!(a, SetupFingerprint(other));
+    }
 }
 
 // ------------------------------------------------- loading and creating
@@ -755,7 +850,7 @@ fn must_exist_never_creates() {
     write_new_secret_file(
         &dir.path().join(OPAQUE_SETUP_FILE),
         FileKind::OpaqueSetup,
-        &ServerKeys::generate(&mut rng("one")).payload(),
+        &ServerKeys::generate(&mut rng("one")).unwrap().payload(),
     )
     .unwrap();
     assert_eq!(
@@ -767,14 +862,50 @@ fn must_exist_never_creates() {
 
 #[test]
 fn create_policy_follows_the_database() {
+    let remembered = Some(SetupFingerprint([1; 32]));
+    // Only a database with no accounts and no fingerprint may create files.
     assert!(matches!(
-        CreatePolicy::for_database(false),
+        CreatePolicy::for_database(false, None),
         CreatePolicy::CreateIfMissing
     ));
-    assert!(matches!(
-        CreatePolicy::for_database(true),
-        CreatePolicy::MustExist
-    ));
+    for (accounts, stored) in [(true, None), (false, remembered), (true, remembered)] {
+        assert!(
+            matches!(
+                CreatePolicy::for_database(accounts, stored),
+                CreatePolicy::MustExist
+            ),
+            "accounts {accounts}, stored {stored:?}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_start_leaves_no_new_file_behind() {
+    let fingerprint = Some(SetupFingerprint([9; 32]));
+    // (files that are left, accounts, stored fingerprint)
+    let cases: [(&[&str], bool, Option<SetupFingerprint>); 5] = [
+        (&[], true, None),
+        (&[], false, fingerprint),
+        (&[OPAQUE_SETUP_FILE], true, fingerprint),
+        (&[PRELOGIN_SECRET_FILE], true, fingerprint),
+        (&[PRELOGIN_SECRET_FILE], false, fingerprint),
+    ];
+    for (keep, accounts, stored) in cases {
+        let dir = TempDir::new();
+        load_or_create(dir.path(), CreatePolicy::CreateIfMissing, &mut rng("lose")).unwrap();
+        for name in [OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE] {
+            if !keep.contains(&name) {
+                std::fs::remove_file(dir.path().join(name)).unwrap();
+            }
+        }
+        let before = dir.names();
+        let policy = CreatePolicy::for_database(accounts, stored);
+        assert!(matches!(
+            load_or_create(dir.path(), policy, &mut rng("new")),
+            Err(SecretFileError::Missing)
+        ));
+        assert_eq!(dir.names(), before, "{keep:?}, accounts {accounts}");
+    }
 }
 
 #[test]
@@ -856,7 +987,10 @@ fn a_damaged_file_is_an_error_and_is_never_replaced() {
 #[test]
 fn a_file_with_a_valid_checksum_and_a_bad_key_is_refused() {
     let dir = TempDir::new();
-    let mut payload = ServerKeys::generate(&mut rng("bad-key")).payload().to_vec();
+    let mut payload = ServerKeys::generate(&mut rng("bad-key"))
+        .unwrap()
+        .payload()
+        .to_vec();
     payload[64..96].fill(0);
     let file = encode_secret_file(FileKind::OpaqueSetup, &payload).unwrap();
     let path = dir.path().join(OPAQUE_SETUP_FILE);
@@ -1031,7 +1165,7 @@ fn a_first_start_then_a_restart_end_to_end() {
     let dir = TempDir::new();
     let first = load_or_create(
         dir.path(),
-        CreatePolicy::for_database(false),
+        CreatePolicy::for_database(false, None),
         &mut rng("e2e"),
     )
     .unwrap();
@@ -1042,7 +1176,7 @@ fn a_first_start_then_a_restart_end_to_end() {
     // Later: accounts exist, the files are still there.
     let again = load_or_create(
         dir.path(),
-        CreatePolicy::for_database(true),
+        CreatePolicy::for_database(true, Some(fingerprint)),
         &mut rng("n/a"),
     )
     .unwrap();
@@ -1055,7 +1189,7 @@ fn a_first_start_then_a_restart_end_to_end() {
     assert_eq!(
         load_or_create(
             dir.path(),
-            CreatePolicy::for_database(true),
+            CreatePolicy::for_database(true, Some(fingerprint)),
             &mut rng("n/a")
         )
         .map(drop),

@@ -145,6 +145,9 @@ pub enum SecretFileError {
         /// The permission bits of the file (`0o640` and so on).
         mode: u32,
     },
+    /// On Unix: the file belongs to a user other than the one the server runs
+    /// as (and other than root).
+    WrongOwner,
     /// The file does not start with `FSEC`.
     BadMagic,
     /// A format version this code does not know.
@@ -177,6 +180,7 @@ impl fmt::Display for SecretFileError {
             SecretFileError::PermissionsTooOpen { .. } => {
                 "secret file is accessible to group or others"
             }
+            SecretFileError::WrongOwner => "secret file belongs to another user",
             SecretFileError::BadMagic => "secret file has the wrong magic",
             SecretFileError::UnsupportedVersion(_) => "secret file has an unknown version",
             SecretFileError::WrongKind => "secret file is of another kind",
@@ -213,21 +217,25 @@ fn io_error(error: &io::Error) -> SecretFileError {
 ///
 /// The payload must have the length of its kind (128 bytes for
 /// [`FileKind::OpaqueSetup`], 32 for [`FileKind::PreloginSecret`]), else
-/// [`SecretFileError::BadLength`]. The result holds the secret: wipe it
-/// after use.
-pub fn encode_secret_file(kind: FileKind, payload: &[u8]) -> Result<Vec<u8>, SecretFileError> {
+/// [`SecretFileError::BadLength`]. The result holds the secret and is wiped
+/// when dropped.
+pub fn encode_secret_file(
+    kind: FileKind,
+    payload: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, SecretFileError> {
     if payload.len() != kind.payload_len() {
         return Err(SecretFileError::BadLength);
     }
     let length = u16::try_from(payload.len()).map_err(|_| SecretFileError::BadLength)?;
-    let mut out = Vec::with_capacity(kind.file_len());
+    // The capacity is the final length, so the vector never moves.
+    let mut out = Zeroizing::new(Vec::with_capacity(kind.file_len()));
     out.extend_from_slice(&MAGIC);
     out.push(FORMAT_VERSION);
     out.push(kind.code());
     out.push(SUITE_RISTRETTO255);
     out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(payload);
-    let checksum = Sha256::digest(&out);
+    let checksum = Sha256::digest(out.as_slice());
     out.extend_from_slice(&checksum);
     Ok(out)
 }
@@ -296,6 +304,61 @@ fn same_file(_a: &std::fs::Metadata, _b: &std::fs::Metadata) -> bool {
     true
 }
 
+/// Whether the owner of a secret file is acceptable: the user the server runs
+/// as, or root.
+#[cfg(unix)]
+fn owner_allowed(owner: u32, euid: u32) -> bool {
+    (owner == euid) | (owner == 0)
+}
+
+/// The effective user id of this process, found without unsafe code and
+/// without a new dependency.
+///
+/// * On Linux it is the owner of `/proc/self`. (A process that is not
+///   dumpable has `/proc/self` owned by root, so its own files are then
+///   refused unless root owns them: the check fails closed.)
+/// * Where that is not available, and everywhere else, the owner of a probe
+///   file that is created next to the secret file with `create_new`, looked at
+///   with `fstat` and deleted again. That needs a directory the process can
+///   write to.
+#[cfg(unix)]
+fn effective_uid(secret_path: &Path) -> io::Result<u32> {
+    #[cfg(target_os = "linux")]
+    let from_proc =
+        std::fs::metadata("/proc/self").map(|m| std::os::unix::fs::MetadataExt::uid(&m));
+    #[cfg(not(target_os = "linux"))]
+    let from_proc: io::Result<u32> = Err(io::ErrorKind::Unsupported.into());
+    from_proc.or_else(|_| probe_uid(secret_path))
+}
+
+/// The owner of a file that this process creates next to `secret_path`.
+#[cfg(unix)]
+fn probe_uid(secret_path: &Path) -> io::Result<u32> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dir = secret_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let probe = dir.join(format!(
+        ".ferret-owner-probe-{}-{nanos}",
+        std::process::id()
+    ));
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&probe)?;
+    let uid = file.metadata().map(|m| m.uid());
+    drop(file);
+    let removed = std::fs::remove_file(&probe);
+    let uid = uid?;
+    removed.map(|()| uid)
+}
+
 /// Whether this platform lets the loader check and set file permissions.
 ///
 /// `true` on Unix. On other platforms the loader cannot tell who may read a
@@ -309,8 +372,10 @@ pub const fn permissions_enforced() -> bool {
 /// The path is looked at once without following a link, the file is opened,
 /// and every further check is made on the open handle. A symbolic link and
 /// anything that is not a regular file is refused. On Unix a file with a
-/// group or other permission bit is refused before a byte of it is read. At
-/// most 4 KiB is read.
+/// group or other permission bit is refused before a byte of it is read, and
+/// so is a file whose owner is neither the user the server runs as nor root
+/// (anyone who can write the directory could otherwise put a file of their
+/// own in place before the first start). At most 4 KiB is read.
 pub fn read_secret_file(
     path: &Path,
     kind: FileKind,
@@ -338,6 +403,11 @@ pub fn read_secret_file(
                 mode: mode & 0o7777,
             });
         }
+        // The owner of the open file, not of the path.
+        let euid = effective_uid(path).map_err(|e| io_error(&e))?;
+        if !owner_allowed(std::os::unix::fs::MetadataExt::uid(&meta), euid) {
+            return Err(SecretFileError::WrongOwner);
+        }
     }
     // One byte more than the largest file, so that a bigger one is seen. The
     // buffer is allocated once, so no copy of the secret is left behind by a
@@ -364,7 +434,7 @@ pub fn write_new_secret_file(
     kind: FileKind,
     payload: &[u8],
 ) -> Result<(), SecretFileError> {
-    let bytes = Zeroizing::new(encode_secret_file(kind, payload)?);
+    let bytes = encode_secret_file(kind, payload)?;
     create_and_fill(path, &bytes, |file, data| file.write_all(data))
 }
 
@@ -442,6 +512,64 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn only_the_server_user_and_root_may_own_a_secret_file() {
+        // A server that runs as an ordinary user (1000) ...
+        assert!(owner_allowed(1000, 1000));
+        assert!(owner_allowed(0, 1000));
+        assert!(!owner_allowed(1001, 1000));
+        assert!(!owner_allowed(65534, 1000));
+        // ... and one that runs as root.
+        assert!(owner_allowed(0, 0));
+        assert!(!owner_allowed(1000, 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_effective_uid_is_the_owner_of_a_file_we_create() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = std::env::temp_dir().join(format!("ferret-uid-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("opaque_setup");
+        let own = std::fs::File::create(dir.join("own")).unwrap();
+        let expected = own.metadata().unwrap().uid();
+        // The way that is used first (the owner of /proc/self on Linux) ...
+        assert_eq!(effective_uid(&path).unwrap(), expected);
+        // ... and the probe file, which is the way on other systems.
+        assert_eq!(probe_uid(&path).unwrap(), expected);
+        // The probe leaves nothing behind.
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("own")]);
+        // No directory to write to, no answer.
+        assert!(probe_uid(&dir.join("none").join("opaque_setup")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_file_tells_two_files_apart() {
+        let dir = std::env::temp_dir().join(format!("ferret-same-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        let (ma, mb) = (
+            std::fs::metadata(&a).unwrap(),
+            std::fs::metadata(&b).unwrap(),
+        );
+        assert!(same_file(&ma, &std::fs::metadata(&a).unwrap()));
+        assert!(!same_file(&ma, &mb));
+        // A second name for the same inode is the same file.
+        let link = dir.join("link");
+        std::fs::hard_link(&a, &link).unwrap();
+        assert!(same_file(&ma, &std::fs::metadata(&link).unwrap()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn io_errors_keep_only_their_kind() {
         assert_eq!(
@@ -464,6 +592,7 @@ mod tests {
             SecretFileError::AlreadyExists,
             SecretFileError::BadChecksum,
             SecretFileError::PermissionsTooOpen { mode: 0o640 },
+            SecretFileError::WrongOwner,
         ];
         for error in all {
             assert_eq!(

@@ -10,7 +10,13 @@
 //!
 //! The function reads nothing and writes nothing. The caller reads the stored
 //! fingerprint and whether accounts exist, and stores the fingerprint when
-//! the decision asks for it. The fingerprint is public.
+//! the decision asks for it. The fingerprint is a one-way hash of the whole
+//! set-up (see [`ServerKeys::fingerprint`](crate::ServerKeys::fingerprint)):
+//! safe to store and to log, but not a public key.
+//!
+//! Choose the policy of the load with
+//! [`CreatePolicy::for_database`](crate::CreatePolicy::for_database) first:
+//! then a start that is refused has not made any new file.
 
 use crate::keys::{FileOrigin, LoadedSecrets, SetupFingerprint};
 
