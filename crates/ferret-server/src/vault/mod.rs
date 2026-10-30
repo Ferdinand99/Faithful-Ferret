@@ -29,14 +29,37 @@ pub mod rekey;
 pub mod store;
 
 use axum::Router;
+use axum::extract::FromRef;
+use axum::http::{HeaderValue, header};
+use axum::middleware::map_response;
+use axum::response::Response;
+
+use crate::http::extract::SessionAuth;
+use crate::state::VaultDb;
+
+/// Marks every answer of the vault API `Cache-Control: no-store`: ciphertext
+/// and wraps are not for a browser or proxy cache, and neither are the errors.
+async fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
 
 /// The vault API routes of the vault listener.
+///
+/// The state needs only the database handle and the session handle that the
+/// `VaultSession` extractor reads (`SessionAuth: FromRef<S>` is the bound a
+/// route needs to take that extractor; nothing here calls it).
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
+    VaultDb: FromRef<S>,
+    SessionAuth: FromRef<S>,
 {
     Router::new()
         .merge(methods::routes())
         .merge(changes::routes())
         .merge(items::routes())
+        .layer(map_response(no_store))
 }

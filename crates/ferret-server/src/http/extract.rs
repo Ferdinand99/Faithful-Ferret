@@ -52,6 +52,9 @@ pub struct VaultSession {
     pub sid: SidHash,
     pub user_id: i64,
     pub issued_at: i64,
+    /// The time the request was checked at (Unix seconds, from the clock of the
+    /// state), so a vault route needs no clock of its own.
+    pub now: i64,
     pub device: DeviceId,
     pub account: AccountId,
     pub vault: VaultId,
@@ -68,6 +71,7 @@ pub struct AdminSession {
 /// A session that passed every check.
 struct Verified {
     sid: SidHash,
+    now: i64,
     user_id: i64,
     issued_at: i64,
     device: DeviceId,
@@ -173,6 +177,7 @@ impl SessionAuth {
 
                 Ok(Some(Verified {
                     sid,
+                    now,
                     user_id: row.user_id,
                     issued_at: row.issued_at,
                     device: row.device,
@@ -199,6 +204,7 @@ where
         let (account, vault, vk_epoch) = verified.account.ok_or_else(ApiError::unauthorized)?;
         Ok(VaultSession {
             sid: verified.sid,
+            now: verified.now,
             user_id: verified.user_id,
             issued_at: verified.issued_at,
             device: verified.device,
