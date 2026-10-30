@@ -5,7 +5,16 @@
 //! holds nothing but a session must not be able to do that: it could lock the
 //! user out. So each of these requests carries a proof signed by the client
 //! (Spec: Fase 1 § 4.6), and [`authorize_replacement`] is the one place that
-//! checks it.
+//! checks it. The other signed requests (adding or removing an unlock method,
+//! replacing the recovery wrap, a rekey) go through [`authorize_signed`],
+//! which is the same check without the record.
+//!
+//! Nothing outside this module verifies a proof. The functions of
+//! `ferret-core` that do (`verify_auth_proof`, `verify_recovery_proof`) are
+//! called from here only, after the nonce is used up, and a test keeps it so.
+//! An endpoint that calls them itself has no single-use nonce, no binding to
+//! the session and no throttle: its proofs can be replayed for the life of the
+//! epoch.
 //!
 //! # The nonce
 //!
@@ -37,26 +46,57 @@
 //!    id, the `vk_epoch` **the server holds**, the nonce and the exact body
 //!    bytes ([`DenyReason::ProofInvalid`]).
 //! 6. Only now is the body read. The caller's parser gets the proven bytes and
-//!    nothing else, and returns the record and the profile claimed.
-//! 7. The record is checked ([`ValidatedRecord::parse`]), and the profile is
-//!    checked against the one **stored for the account** (never against
-//!    anything in the request): a profile that is unknown or lower than the
-//!    stored one is [`AuthError::ProfileRejected`].
-//!
-//! Nothing is written. The function returns a [`ReplacePermit`]; the endpoint
-//! then replaces the record, the wraps and the manifest in one transaction.
+//!    nothing else, and returns the record, the profile claimed and, for a
+//!    recovery, the new `pk_r`.
+//! 7. The record is checked ([`ValidatedRecord::parse`]), a recovery must
+//!    carry a new `pk_r` and a password change must not
+//!    ([`Malformed::RecoveryKey`]), and the profile is checked against the one
+//!    **stored for the account** (never against anything in the request): a
+//!    profile that is unknown or lower than the stored one is
+//!    [`AuthError::ProfileRejected`].
 //!
 //! A refusal at step 3 or later is reported to the throttle as a failure, and
 //! the result is reported as a success only when a permit is given.
 //!
+//! # Writing the result
+//!
+//! The library writes nothing. A permit is the right to write, and the
+//! endpoint has to write it correctly:
+//!
+//! * **One transaction.** A [`ReplacePermit`] for a password change is
+//!   written together with the new wraps and the manifest. A permit for a
+//!   recovery is written together with the new `pk_r` (`new_pk_r`), the new
+//!   password wrap, the new recovery wrap and the manifest. A recovery that
+//!   leaves the old `pk_r` in place leaves the old recovery key able to
+//!   sign.
+//! * **Against the snapshot that was checked.** Every check was made against
+//!   the [`AccountAuthState`] that the endpoint read before the call, and the
+//!   permit carries what that was ([`WriteBasis`], `stored_ksf_profile`). The
+//!   endpoint must either read the state and write inside one transaction
+//!   that holds the account row (SQLite `BEGIN IMMEDIATE`), or write with a
+//!   condition such as `WHERE account_id = ? AND row_version = ? AND vk_epoch
+//!   = ? AND ksf_profile = ?` and treat zero changed rows as a refusal, never
+//!   as a success. Without that, two requests that were both checked against
+//!   profile 1 can both commit, and the second one undoes an upgrade; a
+//!   password change signed for epoch *n* can commit after a rekey to
+//!   *n + 1*; a recovery and a password change can interleave.
+//!   `testing::TestAccountStore` shows the write.
+//! * **Other sessions.** After a password change (unless the user opted out),
+//!   a recovery and a rekey, the other sessions and the device tokens of the
+//!   account are revoked (Spec: Fase 1 § 4.6). `session_effect` says only what
+//!   happens to the session that made the request.
+//!
 //! # Other signed requests
 //!
-//! The proofs of the other sensitive requests (adding or removing an unlock
-//! method, replacing the recovery wrap, a rekey) use the same challenge and
-//! the same proof. The body of `DELETE /api/vault/unlock-methods/{method_id}`
-//! is `{method_id, manifest}`; the library does not see the URL, so the
-//! endpoint must check that the `method_id` in the proven body is the one in
-//! the URL before it removes anything.
+//! [`authorize_signed`] takes the operation (`UnlockMethodAdd`,
+//! `UnlockMethodRemove`, `UnlockMethodRecoveryPut` or `Rekey`) and does the
+//! scope check, the throttle, the single-use nonce and the proof for exactly
+//! that operation. It returns a [`SignedPermit`] that carries the same
+//! [`WriteBasis`]. The endpoint parses the body after that call, from the
+//! same bytes. The body of `DELETE /api/vault/unlock-methods/{method_id}` is
+//! `{method_id, manifest}`; the library does not see the URL, so the endpoint
+//! must check that the `method_id` in the proven body is the one in the URL
+//! before it removes anything.
 //!
 //! Spec: Fase 1 § 4.6 and § 6.3.
 
@@ -65,7 +105,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, MutexGuard};
 
 use ferret_core::{
-    AccountId, AuthOp, AuthPublicKey, RecoveryPublicKey, SecureRng, verify_auth_proof,
+    AccountId, AuthPublicKey, MutationOp, RecoveryPublicKey, SecureRng, verify_auth_proof,
     verify_recovery_proof,
 };
 use sha2::{Digest, Sha256};
@@ -78,7 +118,7 @@ use crate::prelogin::step;
 use crate::record::{RegistrationKind, StoredRecord, ValidatedRecord};
 use crate::scope::{Capability, ScopeEffect, SessionScope, authorize};
 use crate::state::StoreError;
-use crate::throttle::{Caller, Outcome, Stage, admit};
+use crate::throttle::{Admission, Caller, Outcome, Stage, admit};
 
 /// Length of a nonce, in bytes.
 const NONCE_LEN: usize = 32;
@@ -96,7 +136,12 @@ const fn clock_failed() -> AuthError {
 /// The store never sees the nonce, so a dump of it holds nothing a client
 /// could present, and the key of a nonce differs for every session.
 ///
-/// Spec: Fase 1 § 4.6 ("Nonce er engangs og knyttet til økten").
+/// Keys are compared with the derived equality and hashed in a `HashMap`, not
+/// compared in constant time: a key is a hash of a nonce that the caller
+/// cannot invert, so a timing difference would show a prefix of that hash and
+/// nothing a client could use.
+///
+/// Spec: Fase 1 § 4.6 (the nonce is single-use and bound to the session).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChallengeKey([u8; 32]);
 
@@ -341,18 +386,19 @@ impl fmt::Debug for Challenge {
 /// Gives the session a nonce for a signed request.
 ///
 /// The scope must allow [`Capability::Challenge`]. The throttle is asked
-/// before the nonce is drawn (`Stage::Challenge`, by address alone). The
-/// function draws 32 bytes, stores `SHA-256(session ‖ nonce)` until
+/// before the nonce is drawn (`Stage::Challenge`, by address and account).
+/// The function draws 32 bytes, stores `SHA-256(session ‖ nonce)` until
 /// [`CHALLENGE_TTL_SECS`] seconds from now, and answers.
 ///
-/// `session` is the binding of the session the request came in, taken from
-/// the session the endpoint has found and never from the request.
+/// `session` and `account` are the binding and the account of the session the
+/// request came in, taken from the session the endpoint has found and never
+/// from the request.
 ///
 /// Errors: [`AuthError::Denied`] with `ScopeForbids`,
 /// [`AuthError::Throttled`], and [`AuthError::Internal`] for a clock that
 /// failed or a store that could not keep the key.
 ///
-/// Spec: Fase 1 § 4.6 ("Signaturen", step 1).
+/// Spec: Fase 1 § 4.6 (the signature, step 1).
 pub fn issue_challenge<R: SecureRng, S: ChallengeStore>(
     cx: &AuthContext<'_>,
     store: &S,
@@ -360,6 +406,7 @@ pub fn issue_challenge<R: SecureRng, S: ChallengeStore>(
     caller: &Caller,
     scope: SessionScope,
     session: &SessionBinding,
+    account: &AccountId,
 ) -> Result<Challenge, AuthError> {
     step("scope");
     authorize(scope, Capability::Challenge)?;
@@ -370,7 +417,8 @@ pub fn issue_challenge<R: SecureRng, S: ChallengeStore>(
         return Err(clock_failed());
     }
     step("admit");
-    let ticket = admit(cx.throttle(), Stage::Challenge, caller, None, now)?;
+    let id = CredentialId::from(account);
+    let ticket = admit(cx.throttle(), Stage::Challenge, caller, Some(&id), now)?;
     let issued = issue_admitted(store, rng, session, now);
     let outcome = if issued.is_ok() {
         Outcome::Success
@@ -403,6 +451,279 @@ fn issue_admitted<R: SecureRng, S: ChallengeStore>(
     })
 }
 
+// ---------------------------------------------------------- signed requests
+
+/// What the server holds for the account that signs a request. Every value
+/// comes from the stored row, never from the request.
+#[derive(Clone, Copy)]
+pub struct SignedAccount {
+    /// The account.
+    pub account_id: AccountId,
+    /// `pk_a`, the key that checks every proof but a recovery.
+    pub pk_a: AuthPublicKey,
+    /// `pk_r`, the key that checks a recovery.
+    pub pk_r: RecoveryPublicKey,
+    /// The epoch of the vault key now. The proof must have been made for it.
+    pub vk_epoch: u64,
+    /// A number the server raises with every write to the keys, wraps and
+    /// record of the account. It is carried into the permit
+    /// ([`WriteBasis`]), so the write can refuse a permit that was made
+    /// against a row that has changed since.
+    pub row_version: u64,
+}
+
+impl fmt::Debug for SignedAccount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SignedAccount([redacted])")
+    }
+}
+
+/// The state of the account that a permit was checked against.
+///
+/// Every check of the library is made against a snapshot that the endpoint
+/// read before the call. The permit says which snapshot, so the write can
+/// make sure that it is still the current one (see the module documentation,
+/// "Writing the result").
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct WriteBasis {
+    /// The account.
+    pub account_id: AccountId,
+    /// The vault key epoch the proof was checked for.
+    pub vk_epoch: u64,
+    /// The `pk_a` the proof was checked against, or would have been.
+    pub pk_a: AuthPublicKey,
+    /// The `pk_r` the proof was checked against, or would have been.
+    pub pk_r: RecoveryPublicKey,
+    /// The row version of the snapshot.
+    pub row_version: u64,
+}
+
+impl WriteBasis {
+    fn of(account: &SignedAccount) -> Self {
+        Self {
+            account_id: account.account_id,
+            vk_epoch: account.vk_epoch,
+            pk_a: account.pk_a,
+            pk_r: account.pk_r,
+            row_version: account.row_version,
+        }
+    }
+}
+
+impl fmt::Debug for WriteBasis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("WriteBasis([redacted])")
+    }
+}
+
+/// What the scope of the session must allow for an operation, or `None` for
+/// an operation the library does not know.
+const fn capability_of(op: MutationOp) -> Option<Capability> {
+    match op {
+        MutationOp::UnlockMethodAdd
+        | MutationOp::UnlockMethodRemove
+        | MutationOp::UnlockMethodRecoveryPut => Some(Capability::UnlockMethodsWrite),
+        MutationOp::UnlockMethodPasswordPut => Some(Capability::PasswordPut),
+        MutationOp::Recover => Some(Capability::Recover),
+        MutationOp::Rekey => Some(Capability::Rekey),
+        _ => None,
+    }
+}
+
+/// The scope, the clock and the throttle: everything that comes before the
+/// nonce. Gives the time and the ticket to report the outcome with.
+fn begin<'a>(
+    cx: &AuthContext<'a>,
+    caller: &Caller,
+    scope: SessionScope,
+    capability: Capability,
+    account_id: &AccountId,
+) -> Result<(u64, Admission<'a>), AuthError> {
+    step("scope");
+    authorize(scope, capability)?;
+    let now = cx.clock().now_unix();
+    if now == u64::MAX {
+        return Err(clock_failed());
+    }
+    // The account is known (the session belongs to it), so the limiter sees
+    // it. Nothing but pure computation has happened so far.
+    step("admit");
+    let id = CredentialId::from(account_id);
+    let ticket = admit(cx.throttle(), Stage::Replace, caller, Some(&id), now)?;
+    Ok((now, ticket))
+}
+
+/// The nonce and the proof: exact lengths, the nonce used up, and the proof
+/// verified with the types of `ferret-core`.
+///
+/// This is the one place in the crate that verifies a proof. It is private
+/// on purpose: a proof checked without it has no single-use nonce and no
+/// binding to the session.
+fn consume_and_verify<S: ChallengeStore>(
+    store: &S,
+    account: &SignedAccount,
+    op: MutationOp,
+    session: &SessionBinding,
+    (nonce, proof, body): (&[u8], &[u8], &[u8]),
+    now: u64,
+) -> Result<(), AuthError> {
+    // Exact lengths first: they depend on the client's bytes alone.
+    step("lengths");
+    let nonce: &[u8; NONCE_LEN] = nonce
+        .try_into()
+        .map_err(|_| AuthError::Malformed(Malformed::Nonce))?;
+    let proof: &[u8; PROOF_LEN] = proof
+        .try_into()
+        .map_err(|_| AuthError::Malformed(Malformed::Proof))?;
+
+    // The nonce is used up before the signature is looked at, so a wrong
+    // signature burns it.
+    step("consume");
+    let key = ChallengeKey::new(session, nonce);
+    match store.consume(&key, now).map_err(AuthError::from)? {
+        ConsumeOutcome::Consumed => {}
+        ConsumeOutcome::Unknown => return Err(AuthError::Denied(DenyReason::NonceUnknown)),
+        ConsumeOutcome::Expired => return Err(AuthError::Denied(DenyReason::NonceExpired)),
+    }
+
+    // The epoch is the server's own: a client cannot pick the one it signed.
+    step("verify");
+    let verified = match (op.auth(), op) {
+        (Some(auth), _) => verify_auth_proof(
+            &account.pk_a,
+            auth,
+            &account.account_id,
+            nonce,
+            account.vk_epoch,
+            body,
+            proof,
+        ),
+        (None, MutationOp::Recover) => verify_recovery_proof(
+            &account.pk_r,
+            &account.account_id,
+            nonce,
+            account.vk_epoch,
+            body,
+            proof,
+        ),
+        // An operation the library does not know cannot be verified.
+        (None, _) => return Err(AuthError::Denied(DenyReason::ProofInvalid)),
+    };
+    verified.map_err(|_| AuthError::Denied(DenyReason::ProofInvalid))
+}
+
+/// A signed request that changes the keys, wraps or manifest of an account
+/// but does not replace the OPAQUE record.
+#[derive(Clone, Copy)]
+pub struct SignedRequest<'a> {
+    /// Who is calling.
+    pub caller: Caller,
+    /// The operation the proof is for: `UnlockMethodAdd`,
+    /// `UnlockMethodRemove`, `UnlockMethodRecoveryPut` or `Rekey`. The
+    /// operations that replace the record, `UnlockMethodPasswordPut` and
+    /// `Recover`, go through [`authorize_replacement`].
+    pub op: MutationOp,
+    /// The scope of the session the request came in. The endpoint takes it
+    /// from the session, never from the request.
+    pub scope: SessionScope,
+    /// The binding of that session. The nonce must have been issued to it.
+    pub session: SessionBinding,
+    /// The nonce of the proof (`Ferret-Nonce`), exactly 32 bytes.
+    pub nonce: &'a [u8],
+    /// The proof (`Ferret-Proof`), exactly 64 bytes.
+    pub proof: &'a [u8],
+    /// The body of the request, byte for byte as it was received.
+    pub body: &'a [u8],
+}
+
+impl fmt::Debug for SignedRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SignedRequest([redacted])")
+    }
+}
+
+/// The right to carry out a signed request. Nothing has been written.
+pub struct SignedPermit {
+    /// The account that signed.
+    pub account_id: AccountId,
+    /// The operation the proof was for.
+    pub op: MutationOp,
+    /// `SHA-256` of the body the proof covers.
+    pub body_sha256: [u8; 32],
+    /// What a successful request does to the session that made it.
+    pub session_effect: ScopeEffect,
+    /// The snapshot of the account that the proof was checked against.
+    pub basis: WriteBasis,
+}
+
+impl fmt::Debug for SignedPermit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SignedPermit([redacted])")
+    }
+}
+
+/// Checks the proof of a request that adds or removes an unlock method,
+/// replaces the recovery wrap, or commits a rekey, and gives the permit to
+/// carry it out.
+///
+/// The order is the one of [`authorize_replacement`] without the record:
+/// scope, clock, throttle (`Stage::Replace`), exact lengths, the nonce used
+/// up, the proof verified for exactly this operation, over the account id,
+/// the `vk_epoch` the server holds and the exact body. The library does not
+/// read the body. The endpoint parses it after this call, from the same
+/// bytes.
+///
+/// For `unlock-method.remove` the body is `{method_id, manifest}`, and the
+/// endpoint must compare the `method_id` in it with the one in the URL before
+/// it removes anything; the library does not see the URL.
+///
+/// An operation that replaces the record (`UnlockMethodPasswordPut`,
+/// `Recover`) is refused with `Internal(Policy)`: it would skip the checks of
+/// the record and the profile. An operation the library does not know is
+/// refused with `ScopeForbids`.
+///
+/// Errors: as for [`authorize_replacement`], without the errors of the
+/// record and the profile.
+///
+/// Spec: Fase 1 § 4.6.
+pub fn authorize_signed<S: ChallengeStore>(
+    cx: &AuthContext<'_>,
+    store: &S,
+    account: &SignedAccount,
+    req: &SignedRequest<'_>,
+) -> Result<SignedPermit, AuthError> {
+    if matches!(
+        req.op,
+        MutationOp::UnlockMethodPasswordPut | MutationOp::Recover
+    ) {
+        return Err(AuthError::Internal(InternalKind::Policy));
+    }
+    let capability = capability_of(req.op).ok_or(AuthError::Denied(DenyReason::ScopeForbids))?;
+    let (now, ticket) = begin(cx, &req.caller, req.scope, capability, &account.account_id)?;
+    let checked = consume_and_verify(
+        store,
+        account,
+        req.op,
+        &req.session,
+        (req.nonce, req.proof, req.body),
+        now,
+    );
+    let outcome = if checked.is_ok() {
+        Outcome::Success
+    } else {
+        Outcome::Failure
+    };
+    ticket.finish(outcome, now);
+    checked?;
+    Ok(SignedPermit {
+        account_id: account.account_id,
+        op: req.op,
+        body_sha256: Sha256::digest(req.body).into(),
+        session_effect: req.scope.effect_of(capability),
+        basis: WriteBasis::of(account),
+    })
+}
+
 // ------------------------------------------------------------ replacement
 
 /// Which request replaces the record.
@@ -413,6 +734,7 @@ pub enum ReplaceKind {
     /// for `unlock-method.password.put`.
     PasswordPut,
     /// A recovery. Signed by `sk_r` with the label `ferret/v1/recovery-req`.
+    /// It brings a new `pk_r`.
     Recover,
 }
 
@@ -424,20 +746,22 @@ impl ReplaceKind {
             ReplaceKind::Recover => Capability::Recover,
         }
     }
+
+    /// The operation the proof is for.
+    const fn op(self) -> MutationOp {
+        match self {
+            ReplaceKind::PasswordPut => MutationOp::UnlockMethodPasswordPut,
+            ReplaceKind::Recover => MutationOp::Recover,
+        }
+    }
 }
 
 /// What the server holds for the account whose record is replaced. Every
 /// value comes from the stored row, never from the request.
 #[derive(Clone, Copy)]
 pub struct AccountAuthState<'a> {
-    /// The account.
-    pub account_id: AccountId,
-    /// `pk_a`, the key that checks a password change.
-    pub pk_a: AuthPublicKey,
-    /// `pk_r`, the key that checks a recovery.
-    pub pk_r: RecoveryPublicKey,
-    /// The epoch of the vault key now. The proof must have been made for it.
-    pub vk_epoch: u64,
+    /// The keys, the epoch and the row version.
+    pub account: SignedAccount,
     /// The record stored now, whose profile a new one may not undercut.
     pub current: &'a StoredRecord,
 }
@@ -448,12 +772,18 @@ impl fmt::Debug for AccountAuthState<'_> {
     }
 }
 
-/// The record and the profile a body carries.
+/// The record, the profile and, for a recovery, the new `pk_r` that a body
+/// carries.
 pub struct ReplaceFields<'b> {
     /// The 192 bytes of the new OPAQUE record.
     pub record: &'b [u8],
     /// The profile number the client claims for it.
     pub ksf_profile: u32,
+    /// The new `pk_r` of a recovery: present for [`ReplaceKind::Recover`] and
+    /// absent for [`ReplaceKind::PasswordPut`]. Anything else is
+    /// [`Malformed::RecoveryKey`]. A recovery that did not bring a new key
+    /// would leave the old recovery key valid.
+    pub pk_r_new: Option<RecoveryPublicKey>,
 }
 
 impl fmt::Debug for ReplaceFields<'_> {
@@ -489,6 +819,11 @@ impl fmt::Debug for ReplaceRequest<'_> {
 }
 
 /// The right to replace a record. Nothing has been written.
+///
+/// The endpoint writes the record, the wraps, the manifest and, for a
+/// recovery, the new `pk_r` in one transaction, and only if the account still
+/// is what the permit was checked against. See the module documentation,
+/// "Writing the result".
 pub struct ReplacePermit {
     /// The account whose record is replaced.
     pub account_id: AccountId,
@@ -496,12 +831,20 @@ pub struct ReplacePermit {
     pub kind: ReplaceKind,
     /// The new record, with the profile that was checked.
     pub new: StoredRecord,
+    /// The new `pk_r`: `Some` for a recovery, `None` for a password change.
+    /// It replaces the stored `pk_r` in the same transaction as the record.
+    pub new_pk_r: Option<RecoveryPublicKey>,
     /// `SHA-256` of the body the proof covers.
     pub body_sha256: [u8; 32],
     /// What a successful replacement does to the session that made the
     /// request. A recovery in a session opened after an account reset ends
     /// that session ([`ScopeEffect::EndSession`]).
     pub session_effect: ScopeEffect,
+    /// The profile stored for the account when the new one was checked. The
+    /// write must still find this one.
+    pub stored_ksf_profile: u8,
+    /// The snapshot of the account that the proof was checked against.
+    pub basis: WriteBasis,
 }
 
 impl fmt::Debug for ReplacePermit {
@@ -515,10 +858,11 @@ impl fmt::Debug for ReplacePermit {
 /// order of the checks.
 ///
 /// `parse` gets the body, which is the exact bytes that the proof covers, and
-/// is the only place the new record and the profile can come from. It is
-/// called after the proof has verified and not before. The endpoint's parser
-/// decides what the body looks like (JSON) and reports a body that does not
-/// parse as it sees fit; it must not return fields that are not in the bytes.
+/// is the only place the new record, the profile and the new `pk_r` can come
+/// from. It is called after the proof has verified and not before. The
+/// endpoint's parser decides what the body looks like (JSON) and reports a
+/// body that does not parse as it sees fit; it must not return fields that
+/// are not in the bytes.
 ///
 /// The profile is compared with `account.current`, the profile stored for the
 /// account, with [`RegistrationKind::Existing`]. A profile that is unknown or
@@ -527,9 +871,10 @@ impl fmt::Debug for ReplacePermit {
 ///
 /// Errors: [`AuthError::Denied`] with `ScopeForbids`, `NonceUnknown`,
 /// `NonceExpired` or `ProofInvalid`; [`AuthError::Malformed`] for a nonce or a
-/// proof of the wrong length and for a record that is not well formed;
-/// [`AuthError::ProfileRejected`]; [`AuthError::Throttled`];
-/// [`AuthError::Internal`]; and whatever `parse` returns.
+/// proof of the wrong length, for a record that is not well formed and for a
+/// new `pk_r` that is missing or not wanted; [`AuthError::ProfileRejected`];
+/// [`AuthError::Throttled`]; [`AuthError::Internal`]; and whatever `parse`
+/// returns.
 ///
 /// Spec: Fase 1 § 4.6 and § 6.3 (step 4).
 pub fn authorize_replacement<S, P>(
@@ -543,18 +888,13 @@ where
     S: ChallengeStore,
     P: for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError>,
 {
-    step("scope");
-    authorize(req.scope, req.kind.capability())?;
-    let now = cx.clock().now_unix();
-    if now == u64::MAX {
-        return Err(clock_failed());
-    }
-
-    // The account is known (the session belongs to it), so the limiter sees
-    // it. Nothing but pure computation has happened so far.
-    step("admit");
-    let id = CredentialId::from(&account.account_id);
-    let ticket = admit(cx.throttle(), Stage::Replace, &req.caller, Some(&id), now)?;
+    let (now, ticket) = begin(
+        cx,
+        &req.caller,
+        req.scope,
+        req.kind.capability(),
+        &account.account.account_id,
+    )?;
     let permit = authorize_admitted(cx, store, account, req, parse, now);
     let outcome = if permit.is_ok() {
         Outcome::Success
@@ -578,55 +918,31 @@ where
     S: ChallengeStore,
     P: for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError>,
 {
-    // Exact lengths first: they depend on the client's bytes alone.
-    step("lengths");
-    let nonce: &[u8; NONCE_LEN] = req
-        .nonce
-        .try_into()
-        .map_err(|_| AuthError::Malformed(Malformed::Nonce))?;
-    let proof: &[u8; PROOF_LEN] = req
-        .proof
-        .try_into()
-        .map_err(|_| AuthError::Malformed(Malformed::Proof))?;
-
-    // The nonce is used up before the signature is looked at, so a wrong
-    // signature burns it.
-    step("consume");
-    let key = ChallengeKey::new(&req.session, nonce);
-    match store.consume(&key, now).map_err(AuthError::from)? {
-        ConsumeOutcome::Consumed => {}
-        ConsumeOutcome::Unknown => return Err(AuthError::Denied(DenyReason::NonceUnknown)),
-        ConsumeOutcome::Expired => return Err(AuthError::Denied(DenyReason::NonceExpired)),
-    }
-
-    // The epoch is the server's own: a client cannot pick the one it signed.
-    step("verify");
-    let verified = match req.kind {
-        ReplaceKind::PasswordPut => verify_auth_proof(
-            &account.pk_a,
-            AuthOp::UnlockMethodPasswordPut,
-            &account.account_id,
-            nonce,
-            account.vk_epoch,
-            req.body,
-            proof,
-        ),
-        ReplaceKind::Recover => verify_recovery_proof(
-            &account.pk_r,
-            &account.account_id,
-            nonce,
-            account.vk_epoch,
-            req.body,
-            proof,
-        ),
-    };
-    verified.map_err(|_| AuthError::Denied(DenyReason::ProofInvalid))?;
+    consume_and_verify(
+        store,
+        &account.account,
+        req.kind.op(),
+        &req.session,
+        (req.nonce, req.proof, req.body),
+        now,
+    )?;
 
     // Only the bytes the proof covers are read.
     step("parse-body");
     let fields = parse(req.body)?;
     step("validate-record");
     let record = ValidatedRecord::parse(fields.record)?;
+    // A recovery brings a new `pk_r` and a password change does not. These
+    // depend on the client's bytes alone, so they come before the checks that
+    // depend on what is stored.
+    step("new-key");
+    let new_pk_r = match (req.kind, fields.pk_r_new) {
+        (ReplaceKind::Recover, Some(key)) => Some(key),
+        (ReplaceKind::PasswordPut, None) => None,
+        (ReplaceKind::Recover, None) | (ReplaceKind::PasswordPut, Some(_)) => {
+            return Err(AuthError::Malformed(Malformed::RecoveryKey));
+        }
+    };
     step("profile");
     let ksf_profile = cx.profiles().accept(
         fields.ksf_profile,
@@ -634,14 +950,17 @@ where
     )?;
 
     Ok(ReplacePermit {
-        account_id: account.account_id,
+        account_id: account.account.account_id,
         kind: req.kind,
         new: StoredRecord {
             record,
             ksf_profile,
         },
+        new_pk_r,
         body_sha256: Sha256::digest(req.body).into(),
         session_effect: req.scope.effect_of(req.kind.capability()),
+        stored_ksf_profile: account.current.ksf_profile,
+        basis: WriteBasis::of(&account.account),
     })
 }
 
@@ -661,6 +980,10 @@ mod tests {
 
     fn session(fill: u8) -> SessionBinding {
         SessionBinding([fill; 32])
+    }
+
+    fn account() -> AccountId {
+        AccountId::from_bytes([0x11; 16])
     }
 
     fn key(n: u8) -> ChallengeKey {
@@ -864,6 +1187,7 @@ mod tests {
             &caller,
             SessionScope::Full,
             &session(1),
+            &account(),
         )
         .unwrap();
         assert_eq!(challenge.expires_in, 300);
@@ -880,6 +1204,7 @@ mod tests {
             &caller,
             SessionScope::Full,
             &session(1),
+            &account(),
         )
         .unwrap_err();
         assert_eq!(
@@ -917,6 +1242,7 @@ mod tests {
                 &LoginFixture::caller(),
                 scope,
                 &session(1),
+                &account(),
             )
             .unwrap_err();
             assert_eq!(error, AuthError::Denied(DenyReason::ScopeForbids));
@@ -931,6 +1257,7 @@ mod tests {
             &LoginFixture::caller(),
             SessionScope::AccountReset,
             &session(1),
+            &account(),
         )
         .unwrap();
     }
@@ -954,6 +1281,7 @@ mod tests {
             &LoginFixture::caller(),
             SessionScope::Full,
             &session(1),
+            &account(),
         )
         .unwrap_err();
         assert_eq!(error, AuthError::Internal(InternalKind::Clock));
@@ -969,6 +1297,7 @@ mod tests {
             &LoginFixture::caller(),
             SessionScope::Full,
             &session(1),
+            &account(),
         )
         .unwrap_err();
         assert_eq!(error, AuthError::Internal(InternalKind::Clock));
@@ -1003,6 +1332,7 @@ mod tests {
             &LoginFixture::caller(),
             SessionScope::Full,
             &session(1),
+            &account(),
         )
         .unwrap_err();
         assert_eq!(error, AuthError::Internal(InternalKind::Storage));

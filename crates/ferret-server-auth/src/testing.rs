@@ -875,3 +875,130 @@ pub fn challenge_concurrent_put_respects_capacity<S: crate::ChallengeStore>(
         assert_eq!(held, LIMIT, "round {round}");
     }
 }
+
+// ------------------------------------------------------------- account row
+
+/// The auth state of one account as a test server keeps it: what
+/// [`SignedAccount`](crate::SignedAccount) carries and the stored record.
+#[derive(Clone)]
+pub struct AccountRow {
+    /// The keys, the epoch and the row version.
+    pub account: crate::SignedAccount,
+    /// The record stored now.
+    pub record: crate::StoredRecord,
+}
+
+impl AccountRow {
+    /// The state to hand to `authorize_replacement`.
+    pub fn state(&self) -> crate::AccountAuthState<'_> {
+        crate::AccountAuthState {
+            account: self.account,
+            current: &self.record,
+        }
+    }
+}
+
+impl core::fmt::Debug for AccountRow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AccountRow([redacted])")
+    }
+}
+
+/// Why a write was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteRefused {
+    /// The account is no longer what the permit was checked against.
+    Stale,
+}
+
+/// One account row with the write an endpoint has to make: it applies a
+/// permit only if the row still is what the permit was checked against, and
+/// then changes the record, the recovery key and the row version together,
+/// under one lock. A real endpoint does the same in one SQL transaction.
+pub struct TestAccountStore {
+    row: Mutex<AccountRow>,
+}
+
+impl TestAccountStore {
+    /// A store holding `account` with `record`.
+    pub fn new(account: crate::SignedAccount, record: crate::StoredRecord) -> Self {
+        Self {
+            row: Mutex::new(AccountRow { account, record }),
+        }
+    }
+
+    /// A copy of the row now.
+    pub fn read(&self) -> AccountRow {
+        self.row.lock().unwrap().clone()
+    }
+
+    /// Applies a permit for a replacement: the record, and for a recovery the
+    /// new `pk_r`, are written and the row version is raised; or nothing is
+    /// written and the permit is refused as stale.
+    pub fn apply_replacement(&self, permit: &crate::ReplacePermit) -> Result<(), WriteRefused> {
+        let mut row = self.row.lock().unwrap();
+        if !Self::is_current(&row, &permit.basis)
+            || row.record.ksf_profile != permit.stored_ksf_profile
+        {
+            return Err(WriteRefused::Stale);
+        }
+        row.record = permit.new.clone();
+        if let Some(key) = permit.new_pk_r {
+            row.account.pk_r = key;
+        }
+        row.account.row_version += 1;
+        Ok(())
+    }
+
+    /// Applies a permit for another signed request: only the row version is
+    /// raised, since the wraps are not part of this row.
+    pub fn apply_signed(&self, permit: &crate::SignedPermit) -> Result<(), WriteRefused> {
+        let mut row = self.row.lock().unwrap();
+        if !Self::is_current(&row, &permit.basis) {
+            return Err(WriteRefused::Stale);
+        }
+        row.account.row_version += 1;
+        Ok(())
+    }
+
+    /// A rekey that was committed by another request: a new epoch and a new
+    /// `pk_a`.
+    pub fn rekey(&self, vk_epoch: u64, pk_a: ferret_core::AuthPublicKey) {
+        let mut row = self.row.lock().unwrap();
+        row.account.vk_epoch = vk_epoch;
+        row.account.pk_a = pk_a;
+        row.account.row_version += 1;
+    }
+
+    fn is_current(row: &AccountRow, basis: &crate::WriteBasis) -> bool {
+        let now = &row.account;
+        now.account_id == basis.account_id
+            && now.vk_epoch == basis.vk_epoch
+            && now.pk_a == basis.pk_a
+            && now.pk_r == basis.pk_r
+            && now.row_version == basis.row_version
+    }
+}
+
+impl core::fmt::Debug for TestAccountStore {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("TestAccountStore([redacted])")
+    }
+}
+
+/// Puts the nonce `nonce` in `store` as if `issue_challenge` had issued it to
+/// `session` at `now`, so a test can use a nonce that is fixed in a vector.
+pub fn put_nonce<S: crate::ChallengeStore>(
+    store: &S,
+    session: &SessionBinding,
+    nonce: &[u8; 32],
+    now: u64,
+) {
+    store
+        .put(
+            crate::ChallengeKey::new(session, nonce),
+            now + crate::CHALLENGE_TTL_SECS,
+            now,
+        )
+        .unwrap();
+}

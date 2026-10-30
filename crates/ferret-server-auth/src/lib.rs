@@ -138,7 +138,8 @@ pub use registration::{register_finish, register_start};
 pub use replace::{
     AccountAuthState, Challenge, ChallengeKey, ChallengeStore, ConsumeOutcome,
     InMemoryChallengeStore, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest,
-    authorize_replacement, issue_challenge,
+    SignedAccount, SignedPermit, SignedRequest, WriteBasis, authorize_replacement,
+    authorize_signed, issue_challenge,
 };
 pub use scope::{Capability, ScopeEffect, SessionScope, authorize};
 pub use secret_file::{

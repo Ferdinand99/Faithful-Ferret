@@ -88,7 +88,7 @@ pub enum Stage {
     LoginFinish,
     /// A request for a nonce for a signed call.
     Challenge,
-    /// A signed call that replaces the OPAQUE record.
+    /// A signed call that changes the keys, wraps or record of an account.
     Replace,
 }
 

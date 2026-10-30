@@ -2,9 +2,11 @@
 //! the client of `ferret-core` making the account, the password change, the
 //! recovery and the proofs.
 //!
-//! The body of a request in these tests is `profile (4 bytes, big endian) ‖
-//! record`. The library does not read bodies, so the format belongs to the
-//! test's parser, the way the JSON of an endpoint belongs to the endpoint.
+//! The body of a password change in these tests is `profile (4 bytes, big
+//! endian) ‖ record`, and the body of a recovery is `profile ‖ pk_r_new (32
+//! bytes) ‖ record`. The library does not read bodies, so the format belongs
+//! to the test's parser, the way the JSON of an endpoint belongs to the
+//! endpoint.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -15,26 +17,27 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use ferret_core::testing::opaque::{TestKsf, login_finish_with, register_finish_with};
 use ferret_core::{
     AccountId, AuthOp, AuthPublicKey, KsfProfile, ManifestRow, MasterPassword, MethodId, MpPolicy,
-    NewAccount, NewAccountIds, NewPassword, OpaqueInput, PasswordChange, PinState, Recovered,
-    RecoveryInput, RecoveryPublicKey, RegistrationFinished, TestRng, VaultId, auth_sign,
+    MutationOp, NewAccount, NewAccountIds, NewPassword, OpaqueInput, PasswordChange, PinState,
+    Recovered, RecoveryInput, RecoveryPublicKey, RegistrationFinished, TestRng, VaultId, auth_sign,
     change_password, create_account, encode_recovery_key, opaque_login_start,
     opaque_register_start, recover, recovery_sign,
 };
-use ferret_server_auth::testing::{LoginFixture, SMALL};
+use ferret_server_auth::testing::{LoginFixture, SMALL, TestAccountStore, WriteRefused};
 use ferret_server_auth::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, ChallengeKey, ChallengeStore,
-    ConsumeOutcome, CredentialId, DenyReason, InMemoryChallengeStore, LoginFinishRequest,
-    LoginPurpose, LoginStartRequest, Malformed, Outcome, ProfileRules, RegistrationKind,
-    ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, ScopeEffect, SessionBinding,
-    SessionScope, Stage, StoreError, StoredRecord, ThrottleCall, ThrottleKey,
-    authorize_replacement, issue_challenge, login_finish, login_start, register_finish,
-    register_start,
+    ConsumeOutcome, CredentialId, DenyReason, InMemoryChallengeStore, InternalKind,
+    LoginFinishRequest, LoginPurpose, LoginStartRequest, Malformed, Outcome, ProfileRules,
+    RegistrationKind, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, RetryAfter,
+    ScopeEffect, SessionBinding, SessionScope, SignedAccount, SignedPermit, SignedRequest, Stage,
+    StoreError, StoredRecord, ThrottleCall, ThrottleKey, WriteBasis, authorize_replacement,
+    authorize_signed, issue_challenge, login_finish, login_start, register_finish, register_start,
 };
 use sha2::{Digest, Sha256};
 
 const URL: &str = "https://ferret.example";
 const PASSWORD: &str = "correct horse battery staple";
 const PASSWORD_2: &str = "tr0ub4dor and three more words";
+const PASSWORD_3: &str = "a third phrase of several words";
 
 fn session(fill: u8) -> SessionBinding {
     SessionBinding([fill; 32])
@@ -60,25 +63,62 @@ fn body_of(profile: u32, record: &[u8]) -> Vec<u8> {
     body
 }
 
-/// The parser of the test's endpoint. A body too short for a profile is not
-/// well formed.
-fn parse(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
-    let (profile, record) = body
-        .split_first_chunk::<4>()
-        .ok_or(AuthError::Malformed(Malformed::RegistrationRecord))?;
+/// The body of a recovery: the profile, the new `pk_r`, then the record.
+fn recover_body_of(profile: u32, pk_r: &[u8; 32], record: &[u8]) -> Vec<u8> {
+    let mut body = profile.to_be_bytes().to_vec();
+    body.extend_from_slice(pk_r);
+    body.extend_from_slice(record);
+    body
+}
+
+/// The body of a recovery made by `rec`.
+fn rbody(rec: &Recovered, profile: u32) -> Vec<u8> {
+    recover_body_of(profile, &rec.pk_r, &rec.registration_record)
+}
+
+type Parser = fn(&[u8]) -> Result<ReplaceFields<'_>, AuthError>;
+
+fn too_short() -> AuthError {
+    AuthError::Malformed(Malformed::RegistrationRecord)
+}
+
+/// The parser of the test's endpoint for a password change. A body too short
+/// for a profile is not well formed.
+fn parse_put(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+    let (profile, record) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
     Ok(ReplaceFields {
         record,
         ksf_profile: u32::from_be_bytes(*profile),
+        pk_r_new: None,
     })
+}
+
+/// The parser of the test's endpoint for a recovery.
+fn parse_recover(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+    let (profile, rest) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
+    let (key, record) = rest.split_first_chunk::<32>().ok_or_else(too_short)?;
+    Ok(ReplaceFields {
+        record,
+        ksf_profile: u32::from_be_bytes(*profile),
+        pk_r_new: Some(RecoveryPublicKey::new(*key)),
+    })
+}
+
+fn parse_for(kind: ReplaceKind) -> Parser {
+    match kind {
+        ReplaceKind::PasswordPut => parse_put,
+        ReplaceKind::Recover => parse_recover,
+    }
 }
 
 /// A parser that remembers every body it was given.
 fn spy(
     seen: &Mutex<Vec<Vec<u8>>>,
+    kind: ReplaceKind,
 ) -> impl for<'b> FnOnce(&'b [u8]) -> Result<ReplaceFields<'b>, AuthError> + '_ {
     move |body| {
         seen.lock().unwrap().push(body.to_vec());
-        parse(body)
+        parse_for(kind)(body)
     }
 }
 
@@ -115,6 +155,7 @@ struct World {
     nonces: InMemoryChallengeStore,
     account: NewAccount,
     stored: StoredRecord,
+    row: TestAccountStore,
     seeds: AtomicU32,
 }
 
@@ -151,12 +192,23 @@ impl World {
             RegistrationKind::NewAccount,
         )
         .unwrap();
+        let row = TestAccountStore::new(
+            SignedAccount {
+                account_id: account_id(),
+                pk_a: AuthPublicKey::new(account.pk_a),
+                pk_r: RecoveryPublicKey::new(account.pk_r),
+                vk_epoch: 1,
+                row_version: 1,
+            },
+            stored.clone(),
+        );
         Self {
             f,
             profiles,
             nonces: InMemoryChallengeStore::new(),
             account,
             stored,
+            row,
             seeds: world_seed,
         }
     }
@@ -174,12 +226,9 @@ impl World {
     }
 
     /// What the server holds for the account now.
-    fn state<'a>(&'a self, current: &'a StoredRecord) -> AccountAuthState<'a> {
+    fn state<'a>(&self, current: &'a StoredRecord) -> AccountAuthState<'a> {
         AccountAuthState {
-            account_id: account_id(),
-            pk_a: AuthPublicKey::new(self.account.pk_a),
-            pk_r: RecoveryPublicKey::new(self.account.pk_r),
-            vk_epoch: 1,
+            account: self.row.read().account,
             current,
         }
     }
@@ -198,6 +247,7 @@ impl World {
             &LoginFixture::caller(),
             SessionScope::Full,
             session,
+            &account_id(),
         )
         .unwrap()
         .nonce
@@ -290,6 +340,18 @@ impl World {
         }
     }
 
+    /// The request checked against the row as the store holds it now.
+    fn run_live(&self, req: &Req) -> Result<ReplacePermit, AuthError> {
+        let row = self.row.read();
+        authorize_replacement(
+            &self.cx(),
+            &self.nonces,
+            &row.state(),
+            &req.as_request(),
+            parse_for(req.kind),
+        )
+    }
+
     fn run(&self, req: &Req) -> Result<ReplacePermit, AuthError> {
         self.run_as(&self.stored, req)
     }
@@ -300,7 +362,7 @@ impl World {
             &self.nonces,
             &self.state(current),
             &req.as_request(),
-            parse,
+            parse_for(req.kind),
         )
     }
 
@@ -423,7 +485,7 @@ fn password_put_with_valid_proof_is_permitted() {
 fn recover_with_valid_proof_is_permitted() {
     let w = World::new();
     let rec = w.recovered(PASSWORD_2);
-    let body = body_of(1, &rec.registration_record);
+    let body = rbody(&rec, 1);
     let req = w.recover_req(&rec, s1(), body);
     let permit = w.run(&req).unwrap();
     assert_eq!(permit.kind, ReplaceKind::Recover);
@@ -440,13 +502,17 @@ fn recover_with_valid_proof_is_permitted() {
 fn a_recovery_in_a_full_session_keeps_the_session() {
     let w = World::new();
     let rec = w.recovered(PASSWORD_2);
-    let mut req = w.recover_req(&rec, s1(), body_of(1, &rec.registration_record));
+    let mut req = w.recover_req(&rec, s1(), rbody(&rec, 1));
     req.scope = SessionScope::Full;
     assert_eq!(w.run(&req).unwrap().session_effect, ScopeEffect::Keep);
 }
 
 #[test]
 fn a_ksf_upgrade_is_a_password_put_with_a_higher_profile() {
+    // This checks the rule of the server. The server cannot see which profile
+    // the record was really made with, so a client that claims a profile it did
+    // not use locks its own account out until it recovers; that is a property of
+    // the design and not something the library can prevent.
     let w = World::new();
     let change = w.change(PASSWORD);
     let req = w.put_req(&change, s1(), body_of(2, &change.registration_record));
@@ -512,7 +578,7 @@ fn proof_over_another_body_is_denied() {
 fn proof_for_another_account_epoch_or_nonce_is_denied() {
     let w = World::new();
     let rec = w.recovered(PASSWORD_2);
-    let body = body_of(1, &rec.registration_record);
+    let body = rbody(&rec, 1);
     let rk = &w.account.recovery_key;
     let other_account = AccountId::from_bytes([0x12; 16]);
 
@@ -586,18 +652,18 @@ fn recover_signed_by_sk_a_is_denied_and_password_put_signed_by_sk_r_is_denied() 
 }
 
 #[test]
-fn a_recovery_proof_made_with_the_old_recovery_key_is_denied_after_the_recovery() {
+fn a_recovery_proof_made_with_the_old_recovery_key_is_denied_after_the_permit_is_applied() {
     let w = World::new();
     let rec = w.recovered(PASSWORD_2);
-    let body = body_of(1, &rec.registration_record);
-    let permit = w.run(&w.recover_req(&rec, s1(), body.clone())).unwrap();
+    let permit = w.run(&w.recover_req(&rec, s1(), rbody(&rec, 1))).unwrap();
+    // The permit carries the new `pk_r` that the body brought.
+    assert_eq!(permit.new_pk_r, Some(RecoveryPublicKey::new(rec.pk_r)));
+    w.row.apply_replacement(&permit).unwrap();
 
-    // The server now holds the new `pk_r` and the new record.
-    let after = AccountAuthState {
-        pk_r: RecoveryPublicKey::new(rec.pk_r),
-        ..w.state(&permit.new)
-    };
+    // The state is read back from the store that applied the permit; the test
+    // builds nothing by hand.
     let attempt = |rk: &ferret_core::RecoveryKey| {
+        let body = rbody(&rec, 1);
         let nonce = w.challenge(&s1());
         let proof = recovery_sign(rk, &account_id(), 1, &nonce, &body).unwrap();
         let req = Req {
@@ -606,9 +672,16 @@ fn a_recovery_proof_made_with_the_old_recovery_key_is_denied_after_the_recovery(
             session: s1(),
             nonce,
             proof,
-            body: body.clone(),
+            body,
         };
-        authorize_replacement(&w.cx(), &w.nonces, &after, &req.as_request(), parse)
+        let row = w.row.read();
+        authorize_replacement(
+            &w.cx(),
+            &w.nonces,
+            &row.state(),
+            &req.as_request(),
+            parse_recover,
+        )
     };
     // The old recovery key is no longer enough, even with a live nonce.
     assert_eq!(
@@ -623,7 +696,7 @@ fn a_recovery_proof_made_with_the_old_recovery_key_is_denied_after_the_recovery(
 fn vk_epoch_comes_from_the_server() {
     let w = World::new();
     let rec = w.recovered(PASSWORD_2);
-    let body = body_of(1, &rec.registration_record);
+    let body = rbody(&rec, 1);
     let rk = &w.account.recovery_key;
     // A proof that is valid for epoch 7.
     let signed = |nonce: &[u8; 32]| recovery_sign(rk, &account_id(), 7, nonce, &body).unwrap();
@@ -645,11 +718,21 @@ fn vk_epoch_comes_from_the_server() {
     );
     // The same signature is accepted once the server's epoch is 7.
     let at_seven = AccountAuthState {
-        vk_epoch: 7,
-        ..w.state(&w.stored)
+        account: SignedAccount {
+            vk_epoch: 7,
+            ..w.state(&w.stored).account
+        },
+        current: &w.stored,
     };
     let req = make();
-    authorize_replacement(&w.cx(), &w.nonces, &at_seven, &req.as_request(), parse).unwrap();
+    authorize_replacement(
+        &w.cx(),
+        &w.nonces,
+        &at_seven,
+        &req.as_request(),
+        parse_for(req.kind),
+    )
+    .unwrap();
 }
 
 // ---------------------------------------------------------------- the nonce
@@ -676,7 +759,13 @@ fn simultaneous_requests_with_one_nonce_give_one_permit() {
         for _ in 0..16 {
             scope.spawn(|| {
                 barrier.wait();
-                match authorize_replacement(&cx, &w.nonces, &state, &req.as_request(), parse) {
+                match authorize_replacement(
+                    &cx,
+                    &w.nonces,
+                    &state,
+                    &req.as_request(),
+                    parse_for(req.kind),
+                ) {
                     Ok(_) => {
                         permits.fetch_add(1, Ordering::SeqCst);
                     }
@@ -766,8 +855,14 @@ fn nonce_and_proof_must_have_the_exact_length() {
             nonce: &nonce,
             ..req.as_request()
         };
-        let error = authorize_replacement(&w.cx(), &w.nonces, &w.state(&w.stored), &request, parse)
-            .unwrap_err();
+        let error = authorize_replacement(
+            &w.cx(),
+            &w.nonces,
+            &w.state(&w.stored),
+            &request,
+            parse_for(req.kind),
+        )
+        .unwrap_err();
         assert_eq!(error, AuthError::Malformed(Malformed::Nonce), "nonce {len}");
     }
     for len in [0usize, 1, 63, 65, 128] {
@@ -776,8 +871,14 @@ fn nonce_and_proof_must_have_the_exact_length() {
             proof: &proof,
             ..req.as_request()
         };
-        let error = authorize_replacement(&w.cx(), &w.nonces, &w.state(&w.stored), &request, parse)
-            .unwrap_err();
+        let error = authorize_replacement(
+            &w.cx(),
+            &w.nonces,
+            &w.state(&w.stored),
+            &request,
+            parse_for(req.kind),
+        )
+        .unwrap_err();
         assert_eq!(error, AuthError::Malformed(Malformed::Proof), "proof {len}");
     }
     // A request that is malformed does not use the nonce up.
@@ -808,7 +909,7 @@ fn downgrade_is_rejected_even_with_a_valid_proof() {
     assert_eq!(w.run(&up).unwrap().new.ksf_profile, 2);
     // A recovery may not go down either: the stored profile is what counts.
     let rec = w.recovered(PASSWORD_2);
-    let req = w.recover_req(&rec, s1(), body_of(1, &rec.registration_record));
+    let req = w.recover_req(&rec, s1(), rbody(&rec, 1));
     assert_eq!(
         w.run_as(&on_two, &req).unwrap_err(),
         AuthError::ProfileRejected
@@ -847,7 +948,7 @@ fn record_is_only_taken_from_the_proven_bytes() {
         &w.nonces,
         &w.state(&w.stored),
         &req.as_request(),
-        spy(&seen),
+        spy(&seen, req.kind),
     )
     .unwrap();
     assert_eq!(*seen.lock().unwrap(), vec![body.clone()]);
@@ -862,7 +963,7 @@ fn record_is_only_taken_from_the_proven_bytes() {
         &w.nonces,
         &w.state(&w.stored),
         &req.as_request(),
-        spy(&seen),
+        spy(&seen, req.kind),
     )
     .unwrap_err();
     assert_eq!(error, denied(DenyReason::ProofInvalid));
@@ -968,7 +1069,7 @@ fn unproven_requests_never_call_the_parser() {
             &w.nonces,
             &w.state(&w.stored),
             &req.as_request(),
-            spy(&seen),
+            spy(&seen, req.kind),
         )
         .unwrap_err();
         assert_eq!(error, expected, "{name}");
@@ -988,7 +1089,7 @@ fn unproven_requests_never_call_the_parser() {
             &w.nonces,
             &w.state(&w.stored),
             &request,
-            spy(&seen),
+            spy(&seen, req.kind),
         )
         .unwrap_err();
     }
@@ -998,7 +1099,7 @@ fn unproven_requests_never_call_the_parser() {
         &w.nonces,
         &w.state(&w.stored),
         &req.as_request(),
-        spy(&seen),
+        spy(&seen, req.kind),
     )
     .unwrap_err();
     w.f.clock.set(LoginFixture::START);
@@ -1011,7 +1112,7 @@ fn unproven_requests_never_call_the_parser() {
         &w.nonces,
         &w.state(&w.stored),
         &req.as_request(),
-        spy(&seen),
+        spy(&seen, req.kind),
     )
     .unwrap();
     assert_eq!(seen.lock().unwrap().len(), 1);
@@ -1055,8 +1156,7 @@ fn throttled_replace_does_no_work() {
     let change = w.change(PASSWORD_2);
     let req = w.put_req(&change, s1(), body_of(1, &change.registration_record));
     let before = w.nonces.len();
-    w.f.throttle
-        .refuse_with(Some(ferret_server_auth::throttle::RetryAfter::new(9)));
+    w.f.throttle.refuse_with(Some(RetryAfter::new(9)));
     w.f.throttle.clear();
     let seen = Mutex::new(Vec::new());
     let error = authorize_replacement(
@@ -1064,7 +1164,7 @@ fn throttled_replace_does_no_work() {
         &w.nonces,
         &w.state(&w.stored),
         &req.as_request(),
-        spy(&seen),
+        spy(&seen, req.kind),
     )
     .unwrap_err();
     assert_eq!(
@@ -1110,12 +1210,7 @@ struct LoggingThrottle<'a> {
 }
 
 impl ferret_server_auth::Throttle for LoggingThrottle<'_> {
-    fn admit(
-        &self,
-        _: Stage,
-        _: &[ThrottleKey],
-        _: u64,
-    ) -> Result<(), ferret_server_auth::throttle::RetryAfter> {
+    fn admit(&self, _: Stage, _: &[ThrottleKey], _: u64) -> Result<(), RetryAfter> {
         self.log.lock().unwrap().push("admit");
         Ok(())
     }
@@ -1146,7 +1241,14 @@ fn admit_is_the_first_effect_of_every_entry_point() {
         &w.profiles,
     );
 
-    authorize_replacement(&cx, &store, &w.state(&w.stored), &req.as_request(), parse).unwrap();
+    authorize_replacement(
+        &cx,
+        &store,
+        &w.state(&w.stored),
+        &req.as_request(),
+        parse_for(req.kind),
+    )
+    .unwrap();
     assert_eq!(*log.lock().unwrap(), ["admit", "consume", "record"]);
     log.lock().unwrap().clear();
 
@@ -1157,6 +1259,7 @@ fn admit_is_the_first_effect_of_every_entry_point() {
         &LoginFixture::caller(),
         SessionScope::Full,
         &s1(),
+        &account_id(),
     )
     .unwrap();
     assert_eq!(*log.lock().unwrap(), ["admit", "put", "record"]);
@@ -1170,7 +1273,7 @@ fn the_scope_of_the_session_decides_before_anything_else() {
     let change = w.change(PASSWORD_2);
     let rec = w.recovered(PASSWORD_2);
     let put_body = body_of(1, &change.registration_record);
-    let rec_body = body_of(1, &rec.registration_record);
+    let rec_body = rbody(&rec, 1);
     for scope in [
         SessionScope::Pending2fa,
         SessionScope::Unverified,
@@ -1212,6 +1315,7 @@ fn only_sessions_that_may_recover_or_sign_get_a_nonce() {
             &LoginFixture::caller(),
             scope,
             &s1(),
+            &account_id(),
         );
         assert_eq!(result.is_ok(), allowed, "{scope:?}");
         if !allowed {
@@ -1259,6 +1363,7 @@ fn issue_challenge_binds_to_the_session_hash() {
         &LoginFixture::caller(),
         SessionScope::Full,
         &session,
+        &account_id(),
     )
     .unwrap();
     assert_eq!(challenge.expires_in, 300);
@@ -1308,10 +1413,463 @@ fn debug_never_shows_content() {
         permit,
         req.as_request(),
         w.state(&w.stored),
-        parse(&req.body).unwrap(),
+        parse_put(&req.body).unwrap(),
     );
     assert_eq!(
         shown,
         "ReplacePermit([redacted]) ReplaceRequest([redacted]) AccountAuthState([redacted]) ReplaceFields([redacted])"
     );
+}
+
+// ------------------------------------------------------ the new recovery key
+
+#[test]
+fn a_recovery_must_bring_a_new_pk_r_and_a_password_change_must_not() {
+    let w = World::new();
+    let rec = w.recovered(PASSWORD_2);
+    let row = w.row.read();
+
+    // A recovery whose body has no key: the proof is valid, the body is not.
+    let body = body_of(1, &rec.registration_record);
+    let req = w.recover_req(&rec, s1(), body);
+    let error = authorize_replacement(
+        &w.cx(),
+        &w.nonces,
+        &row.state(),
+        &req.as_request(),
+        parse_put,
+    )
+    .unwrap_err();
+    assert_eq!(error, AuthError::Malformed(Malformed::RecoveryKey));
+
+    // A password change whose body brings a key that nothing would use.
+    let change = w.change(PASSWORD_2);
+    let body = recover_body_of(1, &[7; 32], &change.registration_record);
+    let req = w.put_req(&change, s1(), body);
+    let error = authorize_replacement(
+        &w.cx(),
+        &w.nonces,
+        &row.state(),
+        &req.as_request(),
+        parse_recover,
+    )
+    .unwrap_err();
+    assert_eq!(error, AuthError::Malformed(Malformed::RecoveryKey));
+
+    // The right shapes carry the key into the permit, or no key.
+    let req = w.recover_req(&rec, s1(), rbody(&rec, 1));
+    let permit = w.run(&req).unwrap();
+    assert_eq!(permit.new_pk_r, Some(RecoveryPublicKey::new(rec.pk_r)));
+    let req = w.put_req(&change, s1(), body_of(1, &change.registration_record));
+    assert_eq!(w.run(&req).unwrap().new_pk_r, None);
+}
+
+// ----------------------------------------------------------- the write basis
+
+#[test]
+fn the_permit_carries_what_it_was_checked_against() {
+    let w = World::new();
+    let change = w.change(PASSWORD_2);
+    let req = w.put_req(&change, s1(), body_of(2, &change.registration_record));
+    let permit = w.run(&req).unwrap();
+    let row = w.row.read().account;
+    assert_eq!(
+        permit.basis,
+        WriteBasis {
+            account_id: row.account_id,
+            vk_epoch: 1,
+            pk_a: row.pk_a,
+            pk_r: row.pk_r,
+            row_version: 1,
+        }
+    );
+    assert_eq!(permit.stored_ksf_profile, 1);
+}
+
+#[test]
+fn two_permits_from_one_snapshot_cannot_both_be_written() {
+    let w = World::new();
+    let change = w.change(PASSWORD_2);
+    let record = &change.registration_record;
+    // Both requests are valid against the snapshot: profile 2 is an upgrade
+    // and profile 1 is the stored profile.
+    let up = w
+        .run_live(&w.put_req(&change, s1(), body_of(2, record)))
+        .unwrap();
+    let same = w
+        .run_live(&w.put_req(&change, s1(), body_of(1, record)))
+        .unwrap();
+    w.row.apply_replacement(&up).unwrap();
+    assert_eq!(w.row.read().record.ksf_profile, 2);
+
+    // The second one was checked against profile 1, which is no longer what
+    // is stored. Writing it would undo the upgrade.
+    assert_eq!(w.row.apply_replacement(&same), Err(WriteRefused::Stale));
+    assert_eq!(w.row.read().record.ksf_profile, 2);
+
+    // A request made now is checked against profile 2 and refused.
+    let down = w.put_req(&change, s1(), body_of(1, record));
+    assert_eq!(w.run_live(&down).unwrap_err(), AuthError::ProfileRejected);
+}
+
+#[test]
+fn a_password_change_racing_a_recovery_is_refused_whichever_is_written_second() {
+    for recovery_first in [true, false] {
+        let w = World::new();
+        let change = w.change(PASSWORD_2);
+        let rec = w.recovered(PASSWORD_3);
+        let put = w
+            .run_live(&w.put_req(&change, s1(), body_of(1, &change.registration_record)))
+            .unwrap();
+        let recovery = w
+            .run_live(&w.recover_req(&rec, s1(), rbody(&rec, 1)))
+            .unwrap();
+        let (first, second) = if recovery_first {
+            (&recovery, &put)
+        } else {
+            (&put, &recovery)
+        };
+        w.row.apply_replacement(first).unwrap();
+        assert_eq!(w.row.apply_replacement(second), Err(WriteRefused::Stale));
+    }
+}
+
+#[test]
+fn a_permit_for_an_old_epoch_is_refused_after_a_rekey() {
+    let w = World::new();
+    let change = w.change(PASSWORD_2);
+    let permit = w
+        .run_live(&w.put_req(&change, s1(), body_of(1, &change.registration_record)))
+        .unwrap();
+    // Another request committed a rekey: a new epoch and a new `pk_a`.
+    w.row.rekey(2, AuthPublicKey::new([9; 32]));
+    assert_eq!(w.row.apply_replacement(&permit), Err(WriteRefused::Stale));
+    assert_eq!(w.row.read().record.ksf_profile, 1);
+}
+
+// ------------------------------------------------- other signed requests
+
+/// A signed request for one of the operations that do not replace the record,
+/// with its own valid proof.
+struct SReq {
+    op: MutationOp,
+    scope: SessionScope,
+    session: SessionBinding,
+    nonce: [u8; 32],
+    proof: [u8; 64],
+    body: Vec<u8>,
+}
+
+impl SReq {
+    fn as_request(&self) -> SignedRequest<'_> {
+        SignedRequest {
+            caller: LoginFixture::caller(),
+            op: self.op,
+            scope: self.scope,
+            session: self.session,
+            nonce: &self.nonce,
+            proof: &self.proof,
+            body: &self.body,
+        }
+    }
+}
+
+/// The four operations `authorize_signed` serves, with a body for each. The
+/// removal names the method, like the real one.
+fn signed_ops() -> [(AuthOp, Vec<u8>); 4] {
+    [
+        (
+            AuthOp::UnlockMethodAdd,
+            br#"{"method_id":"a","wrap":1}"#.to_vec(),
+        ),
+        (
+            AuthOp::UnlockMethodRemove,
+            br#"{"method_id":"a","manifest":1}"#.to_vec(),
+        ),
+        (
+            AuthOp::UnlockMethodRecoveryPut,
+            br#"{"wrap":2,"pk_r":3}"#.to_vec(),
+        ),
+        (AuthOp::Rekey, br#"{"items":[]}"#.to_vec()),
+    ]
+}
+
+impl World {
+    fn signed_req(&self, op: AuthOp, session: SessionBinding, body: Vec<u8>) -> SReq {
+        let nonce = self.challenge(&session);
+        let proof = auth_sign(&self.account.vault, op, &nonce, &body).unwrap();
+        SReq {
+            op: op.op(),
+            scope: SessionScope::Full,
+            session,
+            nonce,
+            proof,
+            body,
+        }
+    }
+
+    fn run_signed(&self, req: &SReq) -> Result<SignedPermit, AuthError> {
+        authorize_signed(
+            &self.cx(),
+            &self.nonces,
+            &self.row.read().account,
+            &req.as_request(),
+        )
+    }
+}
+
+fn policy_error() -> AuthError {
+    AuthError::Internal(InternalKind::Policy)
+}
+
+#[test]
+fn signed_operations_are_permitted_with_their_own_proof() {
+    let w = World::new();
+    for (op, body) in signed_ops() {
+        let req = w.signed_req(op, s1(), body.clone());
+        w.f.throttle.clear();
+        let permit = w.run_signed(&req).unwrap();
+        assert_eq!(permit.op, op.op());
+        assert_eq!(permit.account_id, account_id());
+        let hash: [u8; 32] = Sha256::digest(&body).into();
+        assert_eq!(permit.body_sha256, hash);
+        assert_eq!(permit.session_effect, ScopeEffect::Keep);
+        assert_eq!(permit.basis.vk_epoch, 1);
+        let calls = w.f.throttle.calls();
+        assert!(matches!(
+            calls.as_slice(),
+            [
+                ThrottleCall::Admit {
+                    stage: Stage::Replace,
+                    ..
+                },
+                ThrottleCall::Record {
+                    stage: Stage::Replace,
+                    outcome: Outcome::Success,
+                    ..
+                }
+            ]
+        ));
+    }
+}
+
+#[test]
+fn a_replayed_signed_request_is_refused() {
+    let w = World::new();
+    for (op, body) in signed_ops() {
+        let req = w.signed_req(op, s1(), body);
+        w.run_signed(&req).unwrap();
+        assert_eq!(
+            w.run_signed(&req).unwrap_err(),
+            denied(DenyReason::NonceUnknown),
+            "{op:?}"
+        );
+    }
+}
+
+#[test]
+fn a_signed_request_from_another_session_is_refused() {
+    let w = World::new();
+    for (op, body) in signed_ops() {
+        let mut req = w.signed_req(op, s1(), body);
+        let issued_to = req.session;
+        req.session = session(0xB2);
+        assert_eq!(
+            w.run_signed(&req).unwrap_err(),
+            denied(DenyReason::NonceUnknown),
+            "{op:?}"
+        );
+        // The attempt in another session did not use the nonce up.
+        req.session = issued_to;
+        assert!(w.run_signed(&req).is_ok(), "{op:?}");
+    }
+}
+
+#[test]
+fn a_proof_for_another_operation_is_refused_for_every_pair() {
+    let w = World::new();
+    let ops = signed_ops();
+    for (signed_for, body) in &ops {
+        for (offered_as, _) in &ops {
+            if signed_for == offered_as {
+                continue;
+            }
+            let mut req = w.signed_req(*signed_for, s1(), body.clone());
+            req.op = offered_as.op();
+            assert_eq!(
+                w.run_signed(&req).unwrap_err(),
+                denied(DenyReason::ProofInvalid),
+                "{signed_for:?} offered as {offered_as:?}"
+            );
+        }
+    }
+    // A proof of the recovery key does not do for any of them.
+    for (op, body) in &ops {
+        let nonce = w.challenge(&s1());
+        let proof = recovery_sign(&w.account.recovery_key, &account_id(), 1, &nonce, body).unwrap();
+        let req = SReq {
+            op: op.op(),
+            scope: SessionScope::Full,
+            session: s1(),
+            nonce,
+            proof,
+            body: body.clone(),
+        };
+        assert_eq!(
+            w.run_signed(&req).unwrap_err(),
+            denied(DenyReason::ProofInvalid)
+        );
+    }
+}
+
+#[test]
+fn a_signed_request_over_another_body_or_with_an_old_nonce_is_refused() {
+    let w = World::new();
+    for (op, body) in signed_ops() {
+        let mut req = w.signed_req(op, s1(), body.clone());
+        flip(&mut req.body, 3);
+        assert_eq!(
+            w.run_signed(&req).unwrap_err(),
+            denied(DenyReason::ProofInvalid)
+        );
+        // The failed attempt burned the nonce.
+        req.body = body;
+        assert_eq!(
+            w.run_signed(&req).unwrap_err(),
+            denied(DenyReason::NonceUnknown)
+        );
+    }
+    // 299 and 300 seconds.
+    let (op, body) = signed_ops()[0].clone();
+    let fresh = w.signed_req(op, s1(), body.clone());
+    let late = w.signed_req(op, s1(), body);
+    w.f.clock.set(LoginFixture::START + 299);
+    assert!(w.run_signed(&fresh).is_ok());
+    w.f.clock.set(LoginFixture::START + 300);
+    assert_eq!(
+        w.run_signed(&late).unwrap_err(),
+        denied(DenyReason::NonceExpired)
+    );
+}
+
+#[test]
+fn signed_requests_check_the_scope_the_lengths_and_the_epoch() {
+    let w = World::new();
+    for (op, body) in signed_ops() {
+        // A reset session may recover and nothing else.
+        for scope in [
+            SessionScope::AccountReset,
+            SessionScope::Pending2fa,
+            SessionScope::Unverified,
+        ] {
+            let mut req = w.signed_req(op, s1(), body.clone());
+            req.scope = scope;
+            w.f.throttle.clear();
+            assert_eq!(
+                w.run_signed(&req).unwrap_err(),
+                denied(DenyReason::ScopeForbids)
+            );
+            assert!(w.f.throttle.calls().is_empty());
+            // The refusal did not use the nonce up.
+            req.scope = SessionScope::Full;
+            assert!(w.run_signed(&req).is_ok());
+        }
+        // Lengths.
+        let req = w.signed_req(op, s1(), body.clone());
+        let short = [0u8; 31];
+        let account = w.row.read().account;
+        let request = SignedRequest {
+            nonce: &short,
+            ..req.as_request()
+        };
+        assert_eq!(
+            authorize_signed(&w.cx(), &w.nonces, &account, &request).unwrap_err(),
+            AuthError::Malformed(Malformed::Nonce)
+        );
+        let request = SignedRequest {
+            proof: &short,
+            ..req.as_request()
+        };
+        assert_eq!(
+            authorize_signed(&w.cx(), &w.nonces, &account, &request).unwrap_err(),
+            AuthError::Malformed(Malformed::Proof)
+        );
+        // The epoch is the server's: the proof was made for epoch 1.
+        let account = SignedAccount {
+            vk_epoch: 2,
+            ..account
+        };
+        assert_eq!(
+            authorize_signed(&w.cx(), &w.nonces, &account, &req.as_request()).unwrap_err(),
+            denied(DenyReason::ProofInvalid)
+        );
+    }
+}
+
+#[test]
+fn a_signed_request_that_would_replace_the_record_is_refused_without_a_trace() {
+    let w = World::new();
+    let (op, body) = signed_ops()[0].clone();
+    let mut req = w.signed_req(op, s1(), body);
+    w.f.throttle.clear();
+    let before = w.nonces.len();
+    for other in [MutationOp::UnlockMethodPasswordPut, MutationOp::Recover] {
+        req.op = other;
+        assert_eq!(w.run_signed(&req).unwrap_err(), policy_error());
+    }
+    assert!(w.f.throttle.calls().is_empty());
+    assert_eq!(w.nonces.len(), before);
+}
+
+#[test]
+fn a_throttled_signed_request_does_no_work() {
+    let w = World::new();
+    let (op, body) = signed_ops()[3].clone();
+    let req = w.signed_req(op, s1(), body);
+    w.f.throttle.refuse_with(Some(RetryAfter::new(4)));
+    w.f.throttle.clear();
+    let before = w.nonces.len();
+    assert_eq!(
+        w.run_signed(&req).unwrap_err(),
+        AuthError::Throttled {
+            retry_after_secs: 4
+        }
+    );
+    assert_eq!(w.f.throttle.calls().len(), 1);
+    assert_eq!(w.nonces.len(), before);
+    w.f.throttle.refuse_with(None);
+    assert!(w.run_signed(&req).is_ok());
+}
+
+#[test]
+fn admit_is_the_first_effect_of_authorize_signed() {
+    let w = World::new();
+    let (op, body) = signed_ops()[1].clone();
+    let req = w.signed_req(op, s1(), body);
+    let log = Mutex::new(Vec::new());
+    let throttle = LoggingThrottle { log: &log };
+    let store = LoggingStore {
+        log: &log,
+        inner: &w.nonces,
+    };
+    let cx = AuthContext::new(
+        &w.f.keys,
+        &w.f.prelogin,
+        &w.f.seal,
+        &w.f.clock,
+        &throttle,
+        &w.f.policy,
+        &w.profiles,
+    );
+    authorize_signed(&cx, &store, &w.row.read().account, &req.as_request()).unwrap();
+    assert_eq!(*log.lock().unwrap(), ["admit", "consume", "record"]);
+}
+
+#[test]
+fn a_stale_signed_permit_is_refused_by_the_write() {
+    let w = World::new();
+    let (op, body) = signed_ops()[0].clone();
+    let permit = w.run_signed(&w.signed_req(op, s1(), body)).unwrap();
+    w.row.rekey(2, AuthPublicKey::new([9; 32]));
+    assert_eq!(w.row.apply_signed(&permit), Err(WriteRefused::Stale));
 }
