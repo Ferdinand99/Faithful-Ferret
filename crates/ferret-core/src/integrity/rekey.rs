@@ -159,6 +159,37 @@ pub struct RekeyBundle {
     pub checkpoint: Checkpoint,
 }
 
+impl RekeyBundle {
+    /// The pinned record after the server has accepted this rekey: the epoch
+    /// and `pk_a` are the new vault's, the password and recovery floors are
+    /// the new wraps' generations, and the KSF profile is that of the new
+    /// password wrap. `old` must be for this account and vault.
+    pub fn pinned(&self, old: &Pinned) -> Result<Pinned, Error> {
+        old.validate()?;
+        let ctx = self.vault.context();
+        if old.account_id != ctx.account_id {
+            return Err(Error::Pinned(PinnedField::AccountId));
+        }
+        if old.vault_id != ctx.vault_id {
+            return Err(Error::Pinned(PinnedField::VaultId));
+        }
+        let [password, recovery] = self.wraps.as_slice() else {
+            return Err(malformed());
+        };
+        let Method::Password { ksf } = &password.method else {
+            return Err(Error::Unsupported);
+        };
+        old.after_flow(
+            ksf.number(),
+            &[
+                (MethodKey::Password, password.kek_generation),
+                (MethodKey::Recovery, recovery.kek_generation),
+            ],
+            Some((self.vk_epoch, self.pk_a)),
+        )
+    }
+}
+
 fn malformed() -> Error {
     Error::Malformed(MalformedKind::Entries)
 }

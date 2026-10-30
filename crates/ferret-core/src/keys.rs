@@ -152,6 +152,15 @@ impl UnlockedVault {
         ct_eq(self.vk.expose(), other.vk.expose())
     }
 
+    /// Address and length of the vault key bytes inside this value, so a test
+    /// in another crate (the WASM binding) can read the memory back after the
+    /// vault is dropped and check that it was wiped. Behind `test-support`;
+    /// never part of a release.
+    #[cfg(feature = "test-support")]
+    pub fn test_vk_buffer(&self) -> (*const u8, usize) {
+        (self.vk.expose().as_ptr(), VaultKey::LEN)
+    }
+
     /// The vault key.
     pub(crate) fn vault_key(&self) -> &VaultKey {
         &self.vk

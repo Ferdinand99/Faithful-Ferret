@@ -435,6 +435,28 @@ impl PasswordChange {
     }
 }
 
+impl PasswordChange {
+    /// The pinned record after the server has accepted this change: the
+    /// password floor is the new wrap's generation and the KSF profile is the
+    /// new one. `old` is the record the change was made with; a record for
+    /// another vault key (`pk_a`) is `pinned_auth_key`.
+    ///
+    /// The client stores it when the request succeeded. Without it the next
+    /// unlock would still pass for the old generation until the first
+    /// successful password unlock raised it.
+    pub fn pinned(&self, old: &Pinned) -> Result<Pinned, Error> {
+        old.validate()?;
+        if old.pk_a != self.pk_a {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
+        old.after_flow(
+            self.ksf_profile.number(),
+            &[(MethodKey::Password, self.wrap.kek_generation)],
+            None,
+        )
+    }
+}
+
 /// Checks that the pinned record is this vault's, at this epoch.
 fn check_pinned_vault(pinned: &Pinned, vault: &UnlockedVault) -> Result<(), Error> {
     pinned.validate()?;
@@ -596,6 +618,64 @@ impl Recovered {
             nonce,
             body,
         )
+    }
+}
+
+impl Recovered {
+    /// The pinned record after the server has accepted this recovery.
+    ///
+    /// * With `old` (a device that holds a record): the password and
+    ///   recovery floors are the new wraps' generations, the KSF profile is
+    ///   the new one. `old` must be for this account and vault, at this
+    ///   epoch or an earlier one; `server_url` is ignored.
+    /// * Without it (a new device, trust on first use): a new record with
+    ///   both wraps at their generations, the SK bit of the new input and the
+    ///   OPAQUE server key the registration showed. Compare
+    ///   [`Recovered::server_public_key`] with the key on the emergency
+    ///   sheet before you store this record.
+    pub fn pinned(&self, server_url: &str, old: Option<&Pinned>) -> Result<Pinned, Error> {
+        let ctx = self.vault.context();
+        let pk_a = self.vault.auth_public_key();
+        let generations = (
+            self.password_wrap.kek_generation,
+            self.recovery_wrap.kek_generation,
+        );
+        match old {
+            None => {
+                if server_url.len() > crate::pinning::MAX_URL_LEN {
+                    return Err(pinned_record_error());
+                }
+                Pinned::for_new_account(
+                    server_url,
+                    ctx,
+                    self.ksf_profile,
+                    self.sk_bit,
+                    pk_a,
+                    self.server_public_key,
+                    generations,
+                )
+            }
+            Some(old) => {
+                old.validate()?;
+                if old.account_id != ctx.account_id {
+                    return Err(Error::Pinned(PinnedField::AccountId));
+                }
+                if old.vault_id != ctx.vault_id {
+                    return Err(Error::Pinned(PinnedField::VaultId));
+                }
+                if ctx.vk_epoch == old.vk_epoch_max && pk_a != old.pk_a {
+                    return Err(Error::Pinned(PinnedField::AuthKey));
+                }
+                old.after_flow(
+                    self.ksf_profile.number(),
+                    &[
+                        (MethodKey::Password, generations.0),
+                        (MethodKey::Recovery, generations.1),
+                    ],
+                    Some((ctx.vk_epoch, pk_a)),
+                )
+            }
+        }
     }
 }
 

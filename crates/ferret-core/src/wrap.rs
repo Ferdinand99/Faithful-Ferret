@@ -218,6 +218,32 @@ pub fn wrap_vk<R: SecureRng>(
     })
 }
 
+impl UnlockedVault {
+    /// Wraps this vault's key for another unlock method (a PIN, a passkey):
+    /// [`wrap_vk`] with the vault's own context and key, so a binding never
+    /// needs the vault key itself. Draws the 24-byte nonce.
+    ///
+    /// Spec: Fase 1 § 4.3 and § 7.2.
+    pub fn wrap_for_method<R: SecureRng>(
+        &self,
+        rng: &mut R,
+        kek: &Kek,
+        method_id: MethodId,
+        kek_generation: u64,
+        method: Method,
+    ) -> Result<WrapRecord, Error> {
+        wrap_vk(
+            rng,
+            self.context(),
+            self.vault_key(),
+            kek,
+            method_id,
+            kek_generation,
+            method,
+        )
+    }
+}
+
 /// Opens a wrap and derives everything from the vault key it holds.
 ///
 /// For `password` and `pin` the commitment is compared first, in constant

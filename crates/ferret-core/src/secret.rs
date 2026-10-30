@@ -5,6 +5,7 @@
 //! `Serialize` or `PartialEq`. Equality is only available through
 //! [`subtle::ConstantTimeEq`]. Raw bytes are reachable only inside the crate.
 
+use crate::error::{Error, InputError};
 use crate::rng::SecureRng;
 
 /// Defines a secret key type of `$len` bytes.
@@ -138,6 +139,67 @@ secret_type!(
     ExportContentKey,
     32
 );
+secret_type!(
+    /// `K_exp`, the key that wraps the content key of an export file
+    /// (Fase 1 § 6.4). It is the result of the slow Argon2id step, so a
+    /// binding can run that step in a short-lived worker and hand this key
+    /// to the worker that holds the vault. It is not a vault key.
+    ExportWrapKey,
+    32
+);
+
+/// The exact-length check of the release constructors below.
+fn exact_len<const N: usize>(bytes: &[u8]) -> Result<[u8; N], Error> {
+    use core::cmp::Ordering;
+    match bytes.len().cmp(&N) {
+        Ordering::Less => Err(Error::InvalidInput(InputError::TooShort)),
+        Ordering::Greater => Err(Error::InvalidInput(InputError::TooLong)),
+        Ordering::Equal => bytes
+            .try_into()
+            .map_err(|_| Error::InvalidInput(InputError::TooShort)),
+    }
+}
+
+impl PrfOutput {
+    /// Takes the 32 bytes of a WebAuthn PRF output that an authenticator
+    /// returned (the client got them from `getClientExtensionResults`). Any
+    /// other length is `input_too_short` or `input_too_long`.
+    ///
+    /// This is the one way a PRF output enters the core in a release build,
+    /// for the passkey unlock method. The caller wipes its own copy.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
+        let mut arr = exact_len::<32>(bytes)?;
+        Ok(Self::from_array_wiping(&mut arr))
+    }
+}
+
+impl KekDevPin {
+    /// Takes the 32 bytes that the platform keystore released for the mobile
+    /// PIN method (Fase 1 § 7.4). Any other length is `input_too_short` or
+    /// `input_too_long`. The caller wipes its own copy.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
+        let mut arr = exact_len::<32>(bytes)?;
+        Ok(Self::from_array_wiping(&mut arr))
+    }
+}
+
+impl ExportWrapKey {
+    /// Takes the 32 bytes of a `K_exp` that [`crate::export::export_wrap_key`]
+    /// made in another worker. Any other length is `input_too_short` or
+    /// `input_too_long`. The caller wipes its own copy.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
+        let mut arr = exact_len::<32>(bytes)?;
+        Ok(Self::from_array_wiping(&mut arr))
+    }
+
+    /// The 32 bytes, for the one hand-over between the worker that ran
+    /// Argon2id and the worker that holds the vault. `K_exp` only opens the
+    /// wrapped content key of the one export file it was made for; it is not
+    /// a vault key. The caller wipes the copy after it has sent it.
+    pub fn to_bytes(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        zeroize::Zeroizing::new(*self.expose())
+    }
+}
 
 impl VaultKey {
     /// A fresh random vault key.
