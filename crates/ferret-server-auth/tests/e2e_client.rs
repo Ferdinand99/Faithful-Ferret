@@ -22,9 +22,9 @@ use ferret_core::{
 use ferret_server_auth::testing::WriteRefused;
 use ferret_server_auth::{
     AuthError, Capability, CredentialId, DenyReason, ErrorClass, InternalKind, LoginPurpose,
-    Malformed, Outcome, ProfileRules, RegistrationKind, RetryAfter, ScopeEffect, SessionBinding,
-    SessionScope, SignedRequest, Stage, authorize, authorize_signed, fake_prelogin,
-    normalize_login_name, register_finish,
+    Malformed, Outcome, ProfileRules, RegistrationAuthority, RegistrationKind, RetryAfter,
+    ScopeEffect, SessionBinding, SessionScope, SignedRequest, Stage, authorize, authorize_signed,
+    fake_prelogin, normalize_login_name, register_finish,
 };
 use support::{
     Ksf, LoginFailure, PASSWORD, PASSWORD_2, PROFILE_2_PARAMS, Server, Target, URL, caller,
@@ -569,6 +569,19 @@ fn reauth_login_is_bound_to_its_session() {
         ),
         Err(LoginFailure::Finish(e)) if e == denied(DenyReason::StateInvalid)
     ));
+    // What an endpoint can actually build: the purpose names the account of
+    // the session (Alice), the name and the password are Mallory's. The state
+    // belongs to Mallory's account and is refused at the finish.
+    assert!(matches!(
+        s.login(
+            &Target::Active(&m),
+            PASSWORD_2,
+            Ksf::Small,
+            reauth(&a.credential, mine),
+            Some((mine, a.credential)),
+        ),
+        Err(LoginFailure::Finish(e)) if e == denied(DenyReason::StateInvalid)
+    ));
 }
 
 // ------------------------------------------------------- pins and the claimed profile
@@ -913,10 +926,12 @@ fn a_refusing_throttle_stops_every_entry_point_before_any_work() {
     );
     assert_eq!(
         s.register_response(
-            SessionScope::Full,
-            Some(a.credential),
+            RegistrationAuthority::Session {
+                scope: SessionScope::Full,
+                account: a.credential,
+            },
             &a.credential,
-            &[0; 32]
+            &[0; 32],
         )
         .unwrap_err(),
         throttled
@@ -1013,12 +1028,16 @@ fn registration_is_throttled_and_tied_to_the_session() {
     let request = ferret_core::opaque_register_start(&mut TestRng::new(b"req"), &input)
         .unwrap()
         .0;
+    let in_session = |scope: SessionScope, account: &CredentialId| RegistrationAuthority::Session {
+        scope,
+        account: *account,
+    };
     s.throttle.clear();
 
-    // A full session registers, through the throttle.
+    // A full session registers for its own account, through the throttle.
     let full = SessionScope::Full;
     assert!(
-        s.register_response(full, Some(a.credential), &a.credential, &request)
+        s.register_response(in_session(full, &a.credential), &a.credential, &request)
             .is_ok()
     );
     assert_eq!(
@@ -1029,29 +1048,33 @@ fn registration_is_throttled_and_tied_to_the_session() {
         ]
     );
 
-    // A reset session registers for its own account and no other.
+    // So does a reset session.
     s.throttle.clear();
     let reset = SessionScope::AccountReset;
     assert!(
-        s.register_response(reset, Some(a.credential), &a.credential, &request)
+        s.register_response(in_session(reset, &a.credential), &a.credential, &request)
             .is_ok()
     );
+
+    // No session, of whatever scope, registers for another account.
     let other = s.create_account(0x31, "mallory@example.com", PASSWORD_2, Ksf::Small);
     s.throttle.clear();
-    assert_eq!(
-        s.register_response(reset, Some(a.credential), &other.credential, &request)
+    for scope in [full, reset] {
+        assert_eq!(
+            s.register_response(
+                in_session(scope, &a.credential),
+                &other.credential,
+                &request
+            )
             .unwrap_err(),
-        denied(DenyReason::ScopeForbids)
-    );
-    assert_eq!(
-        s.register_response(reset, None, &a.credential, &request)
-            .unwrap_err(),
-        denied(DenyReason::ScopeForbids)
-    );
+            denied(DenyReason::ScopeForbids),
+            "{scope:?}"
+        );
+    }
     // Scopes that may not register are refused before the throttle.
     for scope in [SessionScope::Pending2fa, SessionScope::Unverified] {
         assert_eq!(
-            s.register_response(scope, Some(a.credential), &a.credential, &request)
+            s.register_response(in_session(scope, &a.credential), &a.credential, &request)
                 .unwrap_err(),
             denied(DenyReason::ScopeForbids),
             "{scope:?}"
@@ -1060,14 +1083,44 @@ fn registration_is_throttled_and_tied_to_the_session() {
     assert_eq!(
         s.stages().len(),
         0,
-        "a refused scope reaches no throttle: {:?}",
+        "a refused scope or account reaches no throttle: {:?}",
         s.stages()
     );
 
     // A refusing throttle stops it before the request is read.
     s.throttle.refuse_with(Some(RetryAfter::new(30)));
     assert_eq!(
-        s.register_response(full, Some(a.credential), &a.credential, &[1, 2, 3])
+        s.register_response(in_session(full, &a.credential), &a.credential, &[1, 2, 3])
+            .unwrap_err(),
+        AuthError::Throttled {
+            retry_after_secs: 30
+        }
+    );
+}
+
+#[test]
+fn a_new_account_registers_by_invitation_through_the_throttle() {
+    let s = Server::new();
+    let id = CredentialId::from_bytes([0x44; 16]);
+    let input = new_input(PASSWORD);
+    let request = ferret_core::opaque_register_start(&mut TestRng::new(b"req"), &input)
+        .unwrap()
+        .0;
+    s.throttle.clear();
+    assert!(
+        s.register_response(RegistrationAuthority::NewAccount, &id, &request)
+            .is_ok()
+    );
+    assert_eq!(
+        s.stages(),
+        [
+            (Stage::RegisterStart, None),
+            (Stage::RegisterStart, Some(Outcome::Success)),
+        ]
+    );
+    s.throttle.refuse_with(Some(RetryAfter::new(30)));
+    assert_eq!(
+        s.register_response(RegistrationAuthority::NewAccount, &id, &request)
             .unwrap_err(),
         AuthError::Throttled {
             retry_after_secs: 30

@@ -3,8 +3,8 @@
 //!
 //! Who may register or change a password (an invitation, a valid session, an
 //! account reset) is for the endpoint to decide, except for what the session
-//! scope says: [`register_start`] checks the scope and, in a reset session,
-//! the account, and asks the throttle itself.
+//! authority says: [`register_start`] checks the scope and the account of a
+//! session, and asks the throttle itself.
 //!
 //! # The credential identifier
 //!
@@ -27,22 +27,53 @@ use crate::record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecor
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 
+/// On whose authority a registration starts.
+///
+/// There are two honest ways to get here, and the library asks the endpoint
+/// to say which, so that neither has to pretend to be the other.
+#[derive(Clone, Copy)]
+pub enum RegistrationAuthority {
+    /// A new account, by invitation, with no session. The endpoint has
+    /// already checked the invitation and has assigned the credential id
+    /// itself: a fresh id that no account row has. The id must never come
+    /// from the request, or the caller could ask for an answer under the key
+    /// of an existing account.
+    NewAccount,
+    /// A registration inside a session, to change a password, upgrade the
+    /// key stretching profile or recover. The session may register for its
+    /// own account only, whatever its scope.
+    Session {
+        /// The scope of the session, as the endpoint stored it. It must
+        /// allow [`Capability::OpaqueRegisterStart`].
+        scope: SessionScope,
+        /// The account that owns the session, taken from the session the
+        /// endpoint has found and never from the request.
+        account: CredentialId,
+    },
+}
+
+impl fmt::Debug for RegistrationAuthority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegistrationAuthority::NewAccount => f.write_str("RegistrationAuthority::NewAccount"),
+            RegistrationAuthority::Session { scope, .. } => {
+                write!(f, "RegistrationAuthority::Session({scope:?}, ..)")
+            }
+        }
+    }
+}
+
 /// The first message of a registration, with what the library needs to decide
 /// whether to answer it.
 #[derive(Clone, Copy)]
 pub struct RegisterStartRequest<'a> {
     /// Who is calling.
     pub caller: Caller,
-    /// The scope of the session the request was made in, as the endpoint
-    /// stored it. It must allow [`Capability::OpaqueRegisterStart`].
-    pub scope: SessionScope,
-    /// The account that owns the session, taken from the session the
-    /// endpoint has found and never from the request body. A session in the
-    /// scope [`SessionScope::AccountReset`] may register for this account
-    /// only, and `None` is refused for that scope. Other scopes do not read
-    /// it.
-    pub session_account: Option<CredentialId>,
+    /// On whose authority the registration starts.
+    pub authority: RegistrationAuthority,
     /// The credential id to register under (the account id, Fase 1 § 4.2).
+    /// For a [`RegistrationAuthority::Session`] it must be the session's own
+    /// account.
     pub credential: CredentialId,
     /// The `registration_request`, exactly 32 bytes.
     pub request: &'a [u8],
@@ -59,12 +90,18 @@ impl fmt::Debug for RegisterStartRequest<'_> {
 ///
 /// # Order of the steps
 ///
-/// 1. The scope of the session must allow [`Capability::OpaqueRegisterStart`],
-///    and a session in the scope [`SessionScope::AccountReset`] may use its
-///    own credential id only. Both refusals are `Denied(ScopeForbids)` (403),
-///    so a reset session that asks for another account gets the answer of a
-///    session that may not do this. Nothing has been done yet and the
-///    throttle has not been asked, so such a refusal costs no budget.
+/// 1. For a [`RegistrationAuthority::Session`], the scope of the session must
+///    allow [`Capability::OpaqueRegisterStart`], and the credential id must be
+///    the session's own account, compared in constant time, **whatever the
+///    scope**: a session never gets an answer under the key of another
+///    account, which would let it test password guesses offline and use up
+///    that account's registration budget. Both refusals are
+///    `Denied(ScopeForbids)` (403). A [`RegistrationAuthority::NewAccount`]
+///    has no session; the endpoint has checked the invitation and assigned
+///    the id. Nothing has been done yet and the throttle has not been asked,
+///    so a refusal here costs no budget. It is not counted either: an
+///    endpoint that wants to see sessions probing other accounts must log
+///    `ScopeForbids` itself.
 /// 2. The throttle is asked (`Stage::RegisterStart`) before any other work,
 ///    and the outcome is reported once. Only `admit` and `finish` of the
 ///    crate's throttle module are used; the library never calls
@@ -84,13 +121,10 @@ pub fn register_start(
     now: u64,
     req: &RegisterStartRequest<'_>,
 ) -> Result<Vec<u8>, AuthError> {
-    authorize(req.scope, Capability::OpaqueRegisterStart)?;
-    if req.scope == SessionScope::AccountReset {
-        // The session's own account only. A missing account is refused too:
-        // the check fails closed.
-        match req.session_account {
-            Some(own) if ct_eq(own.as_bytes(), req.credential.as_bytes()) => {}
-            _ => return Err(AuthError::Denied(DenyReason::ScopeForbids)),
+    if let RegistrationAuthority::Session { scope, account } = req.authority {
+        authorize(scope, Capability::OpaqueRegisterStart)?;
+        if !ct_eq(account.as_bytes(), req.credential.as_bytes()) {
+            return Err(AuthError::Denied(DenyReason::ScopeForbids));
         }
     }
     let ticket = admit(

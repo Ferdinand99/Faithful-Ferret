@@ -1005,7 +1005,7 @@ pub fn put_nonce<S: crate::ChallengeStore>(
         .unwrap();
 }
 
-/// `register_start` for a session that may register and a throttle that
+/// `register_start` for a new account, with a throttle that
 /// admits everything, for tests that are about something else than the
 /// throttle or the scope.
 pub fn register_start_open(
@@ -1019,8 +1019,7 @@ pub fn register_start_open(
         0,
         &crate::RegisterStartRequest {
             caller: crate::Caller { ip: None },
-            scope: crate::SessionScope::Full,
-            session_account: None,
+            authority: crate::RegistrationAuthority::NewAccount,
             credential: *credential,
             request,
         },

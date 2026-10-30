@@ -21,9 +21,9 @@ use ferret_core::{
 use ferret_server_auth::testing::register_start_open;
 use ferret_server_auth::{
     AuthError, Caller, Capability, CredentialId, DenyReason, Malformed, Outcome, ProfileRules,
-    RecordingThrottle, RegisterStartRequest, RegistrationKind, RetryAfter, ServerKeys,
-    SessionScope, Stage, StoredRecord, ThrottleCall, ThrottleKey, ValidatedRecord, register_finish,
-    register_start,
+    RecordingThrottle, RegisterStartRequest, RegistrationAuthority, RegistrationKind, RetryAfter,
+    ServerKeys, SessionScope, Stage, StoredRecord, ThrottleCall, ThrottleKey, ValidatedRecord,
+    register_finish, register_start,
 };
 
 /// A few KiB: far below the floor, so that the tests run in milliseconds.
@@ -543,6 +543,12 @@ fn debug_output_shows_no_record_bytes() {
 
 const NOW: u64 = 1_700_000_000;
 const FORBIDDEN: AuthError = AuthError::Denied(DenyReason::ScopeForbids);
+const ALL_SCOPES: [SessionScope; 4] = [
+    SessionScope::Full,
+    SessionScope::Pending2fa,
+    SessionScope::AccountReset,
+    SessionScope::Unverified,
+];
 
 fn caller() -> Caller {
     Caller {
@@ -550,19 +556,21 @@ fn caller() -> Caller {
     }
 }
 
-fn start_request<'a>(
-    scope: SessionScope,
-    session_account: Option<CredentialId>,
+fn start_request(
+    authority: RegistrationAuthority,
     credential: CredentialId,
-    request: &'a [u8],
-) -> RegisterStartRequest<'a> {
+    request: &[u8],
+) -> RegisterStartRequest<'_> {
     RegisterStartRequest {
         caller: caller(),
-        scope,
-        session_account,
+        authority,
         credential,
         request,
     }
+}
+
+fn session(scope: SessionScope, account: CredentialId) -> RegistrationAuthority {
+    RegistrationAuthority::Session { scope, account }
 }
 
 #[test]
@@ -573,33 +581,40 @@ fn register_start_asks_the_throttle_before_any_work() {
 
     // A refusing throttle stops the request before the request is looked at:
     // a request that is not even well formed is answered with the wait, and
-    // the throttle sees one admit and nothing else.
-    for request in [good.as_slice(), &[1u8; 5][..], &[][..]] {
-        let throttle = RecordingThrottle::refusing(wait);
-        let req = start_request(SessionScope::Full, None, id(1), request);
-        let error = register_start(&keys, &throttle, NOW, &req).unwrap_err();
-        assert_eq!(
-            error,
-            AuthError::Throttled {
-                retry_after_secs: 42
+    // the throttle sees one admit and nothing else. This holds for a new
+    // account and for a session.
+    for authority in [
+        RegistrationAuthority::NewAccount,
+        session(SessionScope::Full, id(1)),
+        session(SessionScope::AccountReset, id(1)),
+    ] {
+        for request in [good.as_slice(), &[1u8; 5][..], &[][..]] {
+            let throttle = RecordingThrottle::refusing(wait);
+            let req = start_request(authority, id(1), request);
+            let error = register_start(&keys, &throttle, NOW, &req).unwrap_err();
+            assert_eq!(
+                error,
+                AuthError::Throttled {
+                    retry_after_secs: 42
+                }
+            );
+            let calls = throttle.calls();
+            assert_eq!(calls.len(), 1, "{calls:?}");
+            match &calls[0] {
+                ThrottleCall::Admit { stage, keys, now } => {
+                    assert_eq!(*stage, Stage::RegisterStart);
+                    assert_eq!(*now, NOW);
+                    // The keys of the stage: the address and the account.
+                    assert_eq!(
+                        keys,
+                        &[
+                            ThrottleKey::Ip("192.0.2.7".parse().unwrap()),
+                            ThrottleKey::Account(id(1)),
+                        ]
+                    );
+                }
+                other @ ThrottleCall::Record { .. } => panic!("{other:?}"),
             }
-        );
-        let calls = throttle.calls();
-        assert_eq!(calls.len(), 1, "{calls:?}");
-        match &calls[0] {
-            ThrottleCall::Admit { stage, keys, now } => {
-                assert_eq!(*stage, Stage::RegisterStart);
-                assert_eq!(*now, NOW);
-                // The keys of the stage: the address and the account.
-                assert_eq!(
-                    keys,
-                    &[
-                        ThrottleKey::Ip("192.0.2.7".parse().unwrap()),
-                        ThrottleKey::Account(id(1)),
-                    ]
-                );
-            }
-            other @ ThrottleCall::Record { .. } => panic!("{other:?}"),
         }
     }
 }
@@ -609,20 +624,24 @@ fn register_start_reports_its_outcome_once() {
     let keys = keys();
     let good = request_for("correct horse", "client");
 
-    let throttle = RecordingThrottle::new();
-    let req = start_request(SessionScope::Full, None, id(1), &good);
-    register_start(&keys, &throttle, NOW, &req).unwrap();
-    let outcomes = recorded(&throttle);
-    assert_eq!(outcomes, [None, Some(Outcome::Success)]);
+    for authority in [
+        RegistrationAuthority::NewAccount,
+        session(SessionScope::Full, id(1)),
+    ] {
+        let throttle = RecordingThrottle::new();
+        let req = start_request(authority, id(1), &good);
+        register_start(&keys, &throttle, NOW, &req).unwrap();
+        assert_eq!(recorded(&throttle), [None, Some(Outcome::Success)]);
 
-    // A request that is admitted and then found malformed is a failure.
-    let throttle = RecordingThrottle::new();
-    let req = start_request(SessionScope::Full, None, id(1), &good[..31]);
-    assert_eq!(
-        register_start(&keys, &throttle, NOW, &req).unwrap_err(),
-        BAD_REQUEST
-    );
-    assert_eq!(recorded(&throttle), [None, Some(Outcome::Failure)]);
+        // A request that is admitted and then found malformed is a failure.
+        let throttle = RecordingThrottle::new();
+        let req = start_request(authority, id(1), &good[..31]);
+        assert_eq!(
+            register_start(&keys, &throttle, NOW, &req).unwrap_err(),
+            BAD_REQUEST
+        );
+        assert_eq!(recorded(&throttle), [None, Some(Outcome::Failure)]);
+    }
 }
 
 /// The calls in order: `None` for an admit, the outcome for a record.
@@ -644,18 +663,13 @@ fn recorded(throttle: &RecordingThrottle) -> Vec<Option<Outcome>> {
 }
 
 #[test]
-fn register_start_needs_a_scope_that_allows_it() {
+fn a_session_needs_a_scope_that_allows_registration() {
     let keys = keys();
     let request = request_for("correct horse", "client");
-    for scope in [
-        SessionScope::Full,
-        SessionScope::Pending2fa,
-        SessionScope::AccountReset,
-        SessionScope::Unverified,
-    ] {
+    for scope in ALL_SCOPES {
         let throttle = RecordingThrottle::new();
         // The session's own account, so only the scope can refuse.
-        let req = start_request(scope, Some(id(1)), id(1), &request);
+        let req = start_request(session(scope, id(1)), id(1), &request);
         let result = register_start(&keys, &throttle, NOW, &req);
         if scope.allows(Capability::OpaqueRegisterStart) {
             assert_eq!(
@@ -672,73 +686,75 @@ fn register_start_needs_a_scope_that_allows_it() {
 }
 
 #[test]
-fn a_reset_session_may_register_for_its_own_account_only() {
+fn a_session_may_register_for_its_own_account_only() {
     let keys = keys();
     let request = request_for("correct horse", "client");
     let own = id(1);
-    let other = id(2);
 
-    let throttle = RecordingThrottle::new();
-    let req = start_request(SessionScope::AccountReset, Some(own), own, &request);
-    let response = register_start(&keys, &throttle, NOW, &req).unwrap();
-    assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN);
+    // The same rule for every scope that may register at all: nothing is
+    // answered, and nothing is recorded for the account that was asked about.
+    for scope in [SessionScope::Full, SessionScope::AccountReset] {
+        let throttle = RecordingThrottle::new();
+        let req = start_request(session(scope, own), own, &request);
+        let response = register_start(&keys, &throttle, NOW, &req).unwrap();
+        assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN, "{scope:?}");
 
-    // Another account, or no account for the session: refused, and the
-    // throttle is not asked.
-    let throttle = RecordingThrottle::new();
-    for session_account in [Some(own), None, Some(other)] {
-        let credential = if session_account == Some(other) {
-            own
-        } else {
-            other
-        };
-        let req = start_request(
-            SessionScope::AccountReset,
-            session_account,
-            credential,
-            &request,
-        );
-        assert_eq!(
-            register_start(&keys, &throttle, NOW, &req).unwrap_err(),
-            FORBIDDEN,
-            "{session_account:?}"
-        );
-    }
-    assert!(throttle.calls().is_empty());
-
-    // Every other id differing in one byte is refused, too.
-    for byte in 0..16 {
-        let mut near = *own.as_bytes();
-        near[byte] ^= 1;
-        let req = start_request(
-            SessionScope::AccountReset,
-            Some(own),
-            CredentialId::from_bytes(near),
-            &request,
-        );
-        assert_eq!(
-            register_start(&keys, &throttle, NOW, &req).unwrap_err(),
-            FORBIDDEN
+        let throttle = RecordingThrottle::new();
+        let mut others = vec![id(2), id(0xff)];
+        // Every id that differs from the session's in a single byte.
+        for byte in 0..16 {
+            let mut near = *own.as_bytes();
+            near[byte] ^= 1;
+            others.push(CredentialId::from_bytes(near));
+        }
+        for other in others {
+            let req = start_request(session(scope, own), other, &request);
+            assert_eq!(
+                register_start(&keys, &throttle, NOW, &req).unwrap_err(),
+                FORBIDDEN,
+                "{scope:?}"
+            );
+        }
+        assert!(
+            throttle.calls().is_empty(),
+            "{scope:?}: nothing is recorded for the account asked about"
         );
     }
 }
 
 #[test]
-fn a_full_session_is_not_tied_to_one_account_by_the_library() {
-    // The endpoint decides which account a full session may change; the
-    // answer for another id is an ordinary one (it is made from the keys, the
-    // id and the request, and finishing it needs a signed request).
+fn a_new_account_registration_is_throttled_like_the_others() {
+    // An invitation has no session: the endpoint assigned the id. The call
+    // goes through the same admit, with the address and the new account as
+    // keys, and reports once.
     let keys = keys();
     let request = request_for("correct horse", "client");
-    let req = start_request(SessionScope::Full, Some(id(1)), id(2), &request);
     let throttle = RecordingThrottle::new();
+    let req = start_request(RegistrationAuthority::NewAccount, id(9), &request);
     let response = register_start(&keys, &throttle, NOW, &req).unwrap();
+    assert_eq!(response.len(), REGISTRATION_RESPONSE_LEN);
+    let calls = throttle.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    match &calls[0] {
+        ThrottleCall::Admit { stage, keys, .. } => {
+            assert_eq!(*stage, Stage::RegisterStart);
+            assert_eq!(
+                keys,
+                &[
+                    ThrottleKey::Ip("192.0.2.7".parse().unwrap()),
+                    ThrottleKey::Account(id(9)),
+                ]
+            );
+        }
+        other @ ThrottleCall::Record { .. } => panic!("{other:?}"),
+    }
+    assert_eq!(recorded(&throttle), [None, Some(Outcome::Success)]);
+    // The answer is the one a session of that account would get.
     assert_eq!(
         response,
-        register_start_open(&keys, &id(2), &request).unwrap()
+        register_start_open(&keys, &id(9), &request).unwrap()
     );
 }
-
 #[test]
 fn a_recovery_may_set_a_lower_profile_than_the_stored_one() {
     // The rules of the tests: profiles 1 and 2, with 1 as the lowest.

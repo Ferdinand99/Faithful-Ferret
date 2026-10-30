@@ -36,9 +36,9 @@ use ferret_server_auth::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId,
     InMemoryChallengeStore, InMemoryLoginStateStore, LoginFinishRequest, LoginId, LoginPurpose,
     LoginStartRequest, LoginStartResponse, LoginVerified, ManualClock, Outcome, PreloginPolicy,
-    PreloginSecret, ProfileRules, RecordingThrottle, RegisterStartRequest, RegistrationKind,
-    ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, ServerKeys, SessionBinding,
-    SessionScope, SignedAccount, Stage, StateSealKey, StoredRecord, ThrottleCall,
+    PreloginSecret, ProfileRules, RecordingThrottle, RegisterStartRequest, RegistrationAuthority,
+    RegistrationKind, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, ServerKeys,
+    SessionBinding, SessionScope, SignedAccount, Stage, StateSealKey, StoredRecord, ThrottleCall,
     authorize_replacement, issue_challenge, login_finish, login_start, normalize_login_name,
     register_finish, register_start, resolve_credential,
 };
@@ -211,8 +211,7 @@ impl Server {
     /// the scope of the session and the account that owns it.
     pub fn register_response(
         &self,
-        scope: SessionScope,
-        session_account: Option<CredentialId>,
+        authority: RegistrationAuthority,
         credential: &CredentialId,
         request: &[u8],
     ) -> Result<Vec<u8>, AuthError> {
@@ -222,8 +221,7 @@ impl Server {
             self.clock.now_unix(),
             &RegisterStartRequest {
                 caller: caller(),
-                scope,
-                session_account,
+                authority,
                 credential: *credential,
                 request,
             },
@@ -242,7 +240,10 @@ impl Server {
         seed: &str,
     ) -> RegistrationFinished {
         self.client_register_in(
-            (SessionScope::Full, Some(*credential)),
+            RegistrationAuthority::Session {
+                scope: SessionScope::Full,
+                account: *credential,
+            },
             credential,
             input,
             ksf,
@@ -250,11 +251,28 @@ impl Server {
         )
     }
 
-    /// [`Server::client_register`] in a session with the given scope and
-    /// owner.
+    /// A new account registers by invitation: no session, and the id is the
+    /// fresh one the server assigned.
+    pub fn client_register_new(
+        &self,
+        credential: &CredentialId,
+        input: &OpaqueInput,
+        ksf: Ksf,
+        seed: &str,
+    ) -> RegistrationFinished {
+        self.client_register_in(
+            RegistrationAuthority::NewAccount,
+            credential,
+            input,
+            ksf,
+            seed,
+        )
+    }
+
+    /// [`Server::client_register`] with the authority given.
     pub fn client_register_in(
         &self,
-        (scope, session_account): (SessionScope, Option<CredentialId>),
+        authority: RegistrationAuthority,
         credential: &CredentialId,
         input: &OpaqueInput,
         ksf: Ksf,
@@ -263,7 +281,7 @@ impl Server {
         let mut rng = TestRng::new(format!("client register {seed}").as_bytes());
         let (request, state) = opaque_register_start(&mut rng, input).unwrap();
         let response = self
-            .register_response(scope, session_account, credential, &request)
+            .register_response(authority, credential, &request)
             .unwrap();
         match ksf.test() {
             Some(test) => register_finish_with(&mut rng, state, input, &response, &test).unwrap(),
@@ -280,7 +298,7 @@ impl Server {
         let account_id = AccountId::from_bytes([tag; 16]);
         let credential = CredentialId::from(&account_id);
         let input = new_input(password);
-        let registration = self.client_register(&credential, &input, ksf, "account");
+        let registration = self.client_register_new(&credential, &input, ksf, "account");
         let registration_export = export_key_bytes(&registration.export_key);
         let new = create_account(
             &mut TestRng::new(format!("account {tag}").as_bytes()),
@@ -496,7 +514,10 @@ impl Server {
     pub fn recovered(&self, account: &Account, text: &str, ksf: Ksf, seed: &str) -> Recovered {
         let input = new_input(text);
         let registration = self.client_register_in(
-            (SessionScope::AccountReset, Some(account.credential)),
+            RegistrationAuthority::Session {
+                scope: SessionScope::AccountReset,
+                account: account.credential,
+            },
             &account.credential,
             &input,
             ksf,

@@ -170,6 +170,12 @@ impl ProfileRules {
     /// recovered). The claim is refused with [`AuthError::ProfileRejected`]
     /// when it is not a number the table knows or is below the minimum. The
     /// stored profile is not read, so the answer does not depend on it.
+    ///
+    /// A recovery that lowers a profile that was really in use has a client
+    /// side cost: a device that pinned the higher profile refuses the lower
+    /// one (the pin only goes up) until it is pinned again. In the lock-out
+    /// case this does not happen, because the record never opened and no
+    /// device pinned the claimed profile.
     pub fn accept_recovery(&self, claimed: u32) -> Result<u8, AuthError> {
         self.accept(claimed, RegistrationKind::NewAccount)
     }
