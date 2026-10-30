@@ -368,7 +368,9 @@ fn profile_rules_refuse_unknown_profiles() {
     // fit a byte.
     for claimed in [0u32, 2, 3, 255, 256, 257, 65_537, u32::MAX] {
         assert_eq!(
-            rules.accept(claimed, RegistrationKind::NewAccount).unwrap_err(),
+            rules
+                .accept(claimed, RegistrationKind::NewAccount)
+                .unwrap_err(),
             AuthError::ProfileRejected,
             "{claimed}"
         );
@@ -376,7 +378,9 @@ fn profile_rules_refuse_unknown_profiles() {
     assert_eq!(rules.accept(1, RegistrationKind::NewAccount), Ok(1));
     // A number that wraps to a known one in a byte is still unknown.
     assert_eq!(
-        rules.accept(1 + 256, RegistrationKind::NewAccount).unwrap_err(),
+        rules
+            .accept(1 + 256, RegistrationKind::NewAccount)
+            .unwrap_err(),
         AuthError::ProfileRejected
     );
 }
@@ -386,7 +390,11 @@ fn profile_rules_match_the_table_of_the_client() {
     let rules = ProfileRules::ferret_v1();
     for n in 0..=300u32 {
         let known = KsfProfile::from_wire(n).is_ok();
-        assert_eq!(rules.accept(n, RegistrationKind::NewAccount).is_ok(), known, "{n}");
+        assert_eq!(
+            rules.accept(n, RegistrationKind::NewAccount).is_ok(),
+            known,
+            "{n}"
+        );
     }
 }
 
