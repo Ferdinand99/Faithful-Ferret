@@ -24,12 +24,16 @@ pub mod throttle;
 pub mod tokens;
 
 use axum::Router;
+use axum::extract::FromRef;
+
+use crate::state::FerretState;
 
 /// The routes of the vault listener: registration, sign-in, sign-out, the
 /// session info and the start of a hand-over.
 pub fn routes_vault<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
+    FerretState: FromRef<S>,
 {
     Router::new()
         .merge(register::routes())

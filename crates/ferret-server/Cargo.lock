@@ -1083,6 +1083,7 @@ dependencies = [
  "base64 0.23.1",
  "clap",
  "deadpool-sqlite",
+ "ed25519-dalek",
  "ferret-core",
  "ferret-server-auth",
  "futures-util",

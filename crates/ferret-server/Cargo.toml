@@ -47,6 +47,9 @@ axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 deadpool-sqlite = "0.14.0"
+# Only to tell a real Ed25519 public key from 32 arbitrary bytes at registration
+# (same version as ferret-core, which does the signing and verifying).
+ed25519-dalek = { version = "3.0.0", default-features = false }
 futures-util = "0.3.34"
 # Trusted proxy addresses and networks (FERRET_TRUSTED_PROXIES).
 ipnet = "2.11.0"
