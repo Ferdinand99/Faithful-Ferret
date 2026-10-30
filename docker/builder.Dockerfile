@@ -1,12 +1,18 @@
 # Builder image for the Ferret core. Built on the LANBox Docker host by
 # scripts/lanbox.sh and tagged ferret-core-builder:<hash of this file>.
 # Every tool is pinned. Nothing here ships in a release.
-FROM rust:1.99-bookworm
+#
+# The base image and the uv image are pinned by digest, not only by tag, so a
+# rebuilt tag upstream cannot change the builder. To move to a newer one, look
+# up the digest of the new tag (docker buildx imagetools inspect <image>),
+# change the tag and the digest together and run the checks.
+FROM rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b
 
 LABEL owner=ferret-core
 
 ARG CARGO_DENY_VERSION=0.20.2
 ARG CARGO_VET_VERSION=0.10.3
+ARG CARGO_CYCLONEDX_VERSION=0.5.9
 ARG CARGO_FUZZ_VERSION=0.13.2
 ARG CARGO_LLVM_COV_VERSION=0.9.1
 ARG WASM_PACK_VERSION=0.15.0
@@ -44,8 +50,8 @@ RUN curl -fsSL -o /tmp/binaryen.tar.gz "https://github.com/WebAssembly/binaryen/
  && tar -xz -C /usr/local --strip-components=1 -f /tmp/binaryen.tar.gz \
  && rm /tmp/binaryen.tar.gz
 
-# uv, for the constant-time analyzer (pinned image tag).
-COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
+# uv, for the constant-time analyzer (pinned image tag and digest).
+COPY --from=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 /uv /usr/local/bin/uv
 
 # Cargo tools, compiled from the crates.io sources with their lock files.
 # Two layers so the checks needed first are cached on their own.
@@ -74,5 +80,9 @@ ARG CT_ANALYZER_SCRIPTS_SHA256=d64df7dd7010c0355ec652df6e72fc1892f17173cb57fedba
 ARG RUSTC_EXPECTED="rustc 1.99.1 (58cf8f9c3 2026-10-13)"
 RUN test "$(rustc --version)" = "${RUSTC_EXPECTED}"
 RUN apt-get update  && apt-get install -y --no-install-recommends python3=3.11.2-1+b1  && rm -rf /var/lib/apt/lists/*  && rustup target add --toolchain 1.99 aarch64-unknown-linux-gnu  && mkdir -p /opt/ct-analyzer/ct_analyzer  && base="https://raw.githubusercontent.com/trailofbits/skills/${CT_ANALYZER_COMMIT}/plugins/constant-time-analysis/ct_analyzer"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/__init__.py "$base/__init__.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/analyzer.py "$base/analyzer.py"  && curl -fsSL -o /opt/ct-analyzer/ct_analyzer/script_analyzers.py "$base/script_analyzers.py"  && echo "${CT_ANALYZER_INIT_SHA256}  /opt/ct-analyzer/ct_analyzer/__init__.py" | sha256sum -c -  && echo "${CT_ANALYZER_MAIN_SHA256}  /opt/ct-analyzer/ct_analyzer/analyzer.py" | sha256sum -c -  && echo "${CT_ANALYZER_SCRIPTS_SHA256}  /opt/ct-analyzer/ct_analyzer/script_analyzers.py" | sha256sum -c -
+
+# The SBOM generator of the release (a CycloneDX file of the release graph).
+RUN cargo install --locked --root /usr/local "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}" \
+ && rm -rf /usr/local/cargo/registry /usr/local/cargo/git
 
 WORKDIR /src

@@ -18,17 +18,16 @@ ignore = [
 ]
 
 [licenses]
+# Only the licenses that the dependency graph really uses. `cargo deny` warns about
+# an entry that nothing matches (license-not-encountered), and an entry is
+# added only together with the dependency that needs it.
 allow = [
   "MIT",
   "Apache-2.0",
   "BSD-3-Clause",
-  "BSD-2-Clause",
-  "ISC",
   "Unicode-3.0",
-  "CC0-1.0",
   "Zlib",
   "AGPL-3.0-only",
-  "AGPL-3.0-or-later",
   # minicbor (CBOR for item bodies): permissive (Blue Oak Model License).
   "BlueOak-1.0.0",
 ]
