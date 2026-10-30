@@ -27,10 +27,9 @@ Out of scope here: the server, the web vault, the browser extension and the mobi
 They are not written yet; this package covers phase 4A only.
 
 The code cites the design document with references such as "Spec: Fase 1 § 4.3". That
-document is written in Norwegian and is not in this repository yet. Until it is
-published, this page and the doc comments at the top of each module are the description of
-the constructions. A reference to a section number is still useful for matching code to
-the design later.
+document is written in Norwegian and is published as
+[`docs/design/fase-1-sikkerhetsdesign.md`](design/fase-1-sikkerhetsdesign.md). This page and
+the doc comments at the top of each module describe the same constructions in English.
 
 ## What the core does
 
