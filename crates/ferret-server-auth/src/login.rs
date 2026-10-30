@@ -25,16 +25,19 @@
 //!
 //! `login_start`:
 //!
-//! 1. refuse to start when the clock reads `u64::MAX` (a clock that failed);
-//! 2. resolve the credential id and ask the throttle (`Stage::LoginStart`)
+//! 1. for a [`LoginPurpose::Reauth`] login, check that the scope of the
+//!    session allows [`Capability::ReauthLogin`] (`Denied(ScopeForbids)`, 403);
+//!    an ordinary login has no session and skips this;
+//! 2. refuse to start when the clock reads `u64::MAX` (a clock that failed);
+//! 3. resolve the credential id and ask the throttle (`Stage::LoginStart`)
 //!    before any other work;
-//! 3. check the length of KE1 (exactly 96 bytes) and parse it
+//! 4. check the length of KE1 (exactly 96 bytes) and parse it
 //!    ([`Malformed::Ke1`] depends on the client's bytes alone);
-//! 4. compute the made-up pre-login answer and the made-up record, and
+//! 5. compute the made-up pre-login answer and the made-up record, and
 //!    select the real or the made-up ones;
-//! 5. parse the chosen record once and run `ServerLogin::start` with the
+//! 6. parse the chosen record once and run `ServerLogin::start` with the
 //!    context `ferret/v1/opaque` and no identities;
-//! 6. seal the 128-byte state, put it in the store for
+//! 7. seal the 128-byte state, put it in the store for
 //!    [`STATE_TTL_SECS`](crate::STATE_TTL_SECS) seconds, and answer.
 //!
 //! `login_finish`:
@@ -98,6 +101,7 @@ use crate::keys::{PreloginSecret, ServerKeys};
 use crate::name::NormalizedLoginName;
 use crate::prelogin::{PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step};
 use crate::record::{ProfileRules, StoredRecord};
+use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
     LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, SealedState, StatePlain, StateSealKey,
     open_state, seal_state,
@@ -237,6 +241,13 @@ pub struct LoginStartRequest<'a> {
     pub lookup: AccountLookup<'a>,
     /// What the login is for.
     pub purpose: LoginPurpose,
+    /// The scope of the session the request was made in. Read only for a
+    /// [`LoginPurpose::Reauth`] login, which needs [`Capability::ReauthLogin`]:
+    /// `None` is refused there, like a session without a scope. Pass `None`
+    /// for an ordinary login, which has no session. The check depends on the
+    /// purpose and the scope alone, never on the name, so it tells nothing
+    /// about which names exist.
+    pub session_scope: Option<SessionScope>,
     /// `KE1`, exactly 96 bytes.
     pub ke1: &'a [u8],
 }
@@ -371,8 +382,9 @@ const fn clock_failed() -> AuthError {
 /// known account, an unknown name and a disabled account run the same steps
 /// in the same order; see the module documentation.
 ///
-/// Errors: [`AuthError::Throttled`] from the limiter,
-/// [`Malformed::Ke1`] for a KE1 that is not exactly 96 bytes or not a valid
+/// Errors: [`DenyReason::ScopeForbids`] when a re-authentication is asked for
+/// from a session whose scope does not allow it, [`AuthError::Throttled`]
+/// from the limiter, [`Malformed::Ke1`] for a KE1 that is not exactly 96 bytes or not a valid
 /// message, and [`AuthError::Internal`] for a clock that failed or a store
 /// that could not keep the state.
 ///
@@ -394,6 +406,14 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     req: &LoginStartRequest<'_>,
     params: &Params<'_>,
 ) -> Result<LoginStartResponse, AuthError> {
+    // A re-authentication needs a session that may re-authenticate. Pure
+    // check on the purpose and the scope, before any other work.
+    if matches!(req.purpose, LoginPurpose::Reauth { .. }) {
+        authorize(
+            req.session_scope.unwrap_or(SessionScope::Unverified),
+            Capability::ReauthLogin,
+        )?;
+    }
     let now = cx.clock.now_unix();
     // A clock that failed reads `u64::MAX`; a state made then would become
     // valid again once the clock is repaired.
@@ -578,6 +598,13 @@ fn parse_ke3(bytes: &[u8]) -> Result<CredentialFinalization<FerretSuite>, AuthEr
 /// Every refusal of the proof is [`AuthError::Denied`] with a reason of its
 /// own and the one public code `denied`; a missing, used, expired, foreign
 /// or wrongly bound state and a wrong KE3 cannot be told apart by a client.
+///
+/// An expired state is reported as [`DenyReason::StateMissing`], not as an
+/// expiry: the store drops a state at its expiry time (`now >= expires_at`)
+/// before the library opens it, so by then there is nothing to find. The
+/// expiry check inside the sealed state is a second line behind the store
+/// and can only be reached by a store that returns a stale state. The public
+/// answer is the same either way.
 ///
 /// Spec: Fase 1 § 4.2 ("Innlogging", steps 3 and 4).
 pub fn login_finish<S: LoginStateStore>(
@@ -838,6 +865,7 @@ mod tests {
             credential: f.credential,
             lookup,
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1,
         }
     }

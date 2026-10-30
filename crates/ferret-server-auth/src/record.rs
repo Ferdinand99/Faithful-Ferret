@@ -105,8 +105,9 @@ impl fmt::Debug for RegistrationKind {
 /// Built from the table of the client itself, so the two cannot disagree on
 /// which numbers exist.
 ///
-/// Spec: Fase 1 § 4.2 (table "KSF-profiler"); the server never accepts a
-/// profile lower than the one stored.
+/// Spec: Fase 1 § 4.2 (table "KSF-profiler"). A password change or an upgrade
+/// never gets a profile lower than the one stored. A recovery is the one
+/// exception, see [`ProfileRules::accept_recovery`].
 #[derive(Clone)]
 pub struct ProfileRules {
     known: Vec<u8>,
@@ -156,6 +157,27 @@ impl ProfileRules {
             RegistrationKind::Existing(stored) if claimed < stored => Err(rejected),
             RegistrationKind::Existing(_) | RegistrationKind::NewAccount => Ok(claimed),
         }
+    }
+
+    /// Checks the profile a recovery claims and returns it as a stored
+    /// number.
+    ///
+    /// A recovery needs the holder of the recovery key, who can replace the
+    /// whole record anyway. It may therefore set any profile the rules
+    /// accept, one lower than the stored profile included: that is how a
+    /// wrongly claimed higher profile is undone (a client that claimed a
+    /// profile it did not use cannot unlock its account until it is
+    /// recovered). The claim is refused with [`AuthError::ProfileRejected`]
+    /// when it is not a number the table knows or is below the minimum. The
+    /// stored profile is not read, so the answer does not depend on it.
+    ///
+    /// A recovery that lowers a profile that was really in use has a client
+    /// side cost: a device that pinned the higher profile refuses the lower
+    /// one (the pin only goes up) until it is pinned again. In the lock-out
+    /// case this does not happen, because the record never opened and no
+    /// device pinned the claimed profile.
+    pub fn accept_recovery(&self, claimed: u32) -> Result<u8, AuthError> {
+        self.accept(claimed, RegistrationKind::NewAccount)
     }
 }
 

@@ -542,6 +542,8 @@ impl LoginFixture {
             credential: self.credential,
             lookup,
             purpose,
+            session_scope: matches!(purpose, LoginPurpose::Reauth { .. })
+                .then_some(crate::SessionScope::Full),
             ke1,
         };
         let n = self.starts.fetch_add(1, Ordering::Relaxed);
@@ -587,7 +589,7 @@ fn register_account(
     let input = LoginFixture::input(password);
     let mut client = TestRng::new(b"fixture registration");
     let (request, state) = opaque_register_start(&mut client, &input).unwrap();
-    let response = crate::register_start(keys, credential, &request).unwrap();
+    let response = register_start_open(keys, credential, &request).unwrap();
     let done =
         register_finish_with(&mut client, state, &input, &response, &TestKsf::new(SMALL)).unwrap();
     crate::register_finish(
@@ -1001,4 +1003,25 @@ pub fn put_nonce<S: crate::ChallengeStore>(
             now,
         )
         .unwrap();
+}
+
+/// `register_start` for a new account, with a throttle that
+/// admits everything, for tests that are about something else than the
+/// throttle or the scope.
+pub fn register_start_open(
+    keys: &crate::ServerKeys,
+    credential: &CredentialId,
+    request: &[u8],
+) -> Result<Vec<u8>, crate::AuthError> {
+    crate::register_start(
+        keys,
+        &crate::NoThrottle,
+        0,
+        &crate::RegisterStartRequest {
+            caller: crate::Caller { ip: None },
+            authority: crate::RegistrationAuthority::NewAccount,
+            credential: *credential,
+            request,
+        },
+    )
 }
