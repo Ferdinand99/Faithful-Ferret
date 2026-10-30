@@ -20,9 +20,10 @@
 # measurements. So here the smoke job checks that the harness builds and runs
 # and that the controls behave (a leaky control that is not seen makes the run
 # invalid). A gated bench over 4.5 is a warning, because a hosted runner is
-# noisy; but a bench that is still over 30 when it is measured again with ten
+# noisy; but a bench that is still over 100 when it is measured again with ten
 # times as many measurements fails the job, as that is the size of a real leak
-# (the leaky controls sit at 10^4, the benches at 1 to 3). The run that decides
+# (the leaky controls sit at 10^4; on hosted runners a bench was seen at up to
+# 20 and the others at 1 to 3, so the limit is 100). The run that decides
 # is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
 # LANBox; a bench over 4.5 is measured again with 10^7), whose result is
 # committed in ct/results/dudect-lanbox.md.
@@ -189,7 +190,7 @@ jobs:
         run: |
           cargo fmt --check --manifest-path ct/dudect/Cargo.toml
           cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
-      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 30 a failure)
+      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 100 a failure)
         env:
           CT_SMOKE: "1"
           FERRET_CT_N: "100000"

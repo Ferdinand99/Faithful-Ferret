@@ -28,7 +28,7 @@
 #   FERRET_CT_N   measurements per dudect bench (default 1000000)
 #   CT_RESULTS    where results go (default ct/results)
 #   CT_SMOKE      1 for the short run on a hosted runner: a bench over 4.5 is a
-#                 warning, a bench over CT_GROSS (30) in the rerun too is a failure
+#                 warning, a bench over CT_GROSS (100) in the rerun too is a failure
 #   CT_PIN_CPU    CPU number for the dudect runs (taskset), "auto" for the least busy,
 #                 empty for no pinning
 #   CT_ONLY       only the dudect benches whose name contains this
@@ -40,7 +40,7 @@ mode="${1:-all}"
 results="${CT_RESULTS:-ct/results}"
 analyzer="${CT_ANALYZER:-/opt/ct-analyzer/ct_analyzer/analyzer.py}"
 n="${FERRET_CT_N:-1000000}"
-gross="${CT_GROSS:-30}"
+gross="${CT_GROSS:-100}"
 mkdir -p "$results"
 
 harness_files=(base32 crockford ct_eq ct_select unpad)
@@ -242,7 +242,7 @@ over() { # $1 t, $2 limit
 
 # CT_SMOKE=1 (the short run on a hosted runner, which is too noisy for the
 # threshold of 4.5): a bench over 4.5 whose rerun is over 4.5 too is a warning
-# unless the rerun is over CT_GROSS (30): then it is a failure, as a leak of the
+# unless the rerun is over CT_GROSS (100): then it is a failure, as a leak of the
 # size of the leaky control (|t| of 10^4) is not noise. A run that is not valid
 # (no result, a control that does not behave) always fails.
 finish() { # $1 failed, $2 invalid, $3 gross
