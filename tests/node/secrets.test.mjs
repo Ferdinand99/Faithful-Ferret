@@ -387,7 +387,7 @@ test("no_reply_holds_key_material", () => {
 
   const prfOutput = fill(32, 0x33);
   addSecret("PRF output", prfOutput);
-  const prfWrap = call("wrap_prf", () => vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), []));
+  const prfWrap = call("wrap_prf", () => vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys"));
   addSecret("KEK_prf", fromHex(op("kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek));
   call("unlock_prf", () => new wasm.UnlockJob().unlock_prf(URL_, CTX, prfOutput.slice(), prfWrap, pinned(created.pinned, { server_public_key: created.pinned.server_public_key })));
   // ---- the methods and the rollback memory (all public values)
@@ -487,7 +487,7 @@ test("no_reply_holds_key_material", () => {
   // replies that are walked. What is checked is the gate.
   const refuse = (token) => {
     try {
-      vault.reveal_plain_export(rows, "json", true, token);
+      vault.reveal_plain_export(rows, "json", true, token, NOW);
     } catch (e) {
       return e.code;
     }
@@ -497,14 +497,14 @@ test("no_reply_holds_key_material", () => {
   const grantJob = new wasm.UnlockJob();
   const g1 = grantJob.login_start(enc.encode(PASSWORD), skCode);
   grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g1), 1, pinned(plan.pinned));
-  const token = call("reauth_grant", () => grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password")));
+  const token = call("reauth_grant", () => grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"), NOW));
   assert.equal(token.length, 32);
   assert.equal(refuse(fill(32, 1)), "reauth_required", "a wrong token");
   assert.equal(refuse(token.slice()), "reauth_required", "and the failed attempt used the grant up");
   const g2 = grantJob.login_start(enc.encode(PASSWORD), skCode);
   grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g2), 1, pinned(plan.pinned));
-  const token2 = grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"));
-  const plain = vault.reveal_plain_export(rows, "json", true, token2.slice());
+  const token2 = grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"), NOW);
+  const plain = vault.reveal_plain_export(rows, "json", true, token2.slice(), NOW);
   assert.ok(plain.includes("hunter2-secret") && plain.includes("example.com"));
   assert.equal(refuse(token2), "reauth_required", "one use");
 

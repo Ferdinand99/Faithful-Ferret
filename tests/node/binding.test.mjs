@@ -373,20 +373,21 @@ test("a_passkey_of_the_vault_cannot_become_an_unlock_method", () => {
   const ferret = wasm.ferret_aaguid();
   assert.equal(ferret.length, 16);
   // Ferret's own authenticator.
-  assert.equal(code(() => wrap(fill(24, 0x44), ferret, [])), "invalid_state");
+  assert.equal(code(() => wrap(fill(24, 0x44), ferret, "no_stored_passkeys")), "invalid_state");
   // A credential id of an open passkey, whatever the AAGUID says.
-  assert.equal(code(() => wrap(credId, fill(16, 0xaa), [])), "invalid_state");
+  assert.equal(code(() => wrap(credId, fill(16, 0xaa), "no_stored_passkeys")), "invalid_state");
   // A credential id that only the list knows (an item that is not open).
   assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [fill(24, 0x44)])), "invalid_state");
   assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [new Uint8Array([1]), fill(24, 0x44)])), "invalid_state");
   // The list and the AAGUID are required, and typed.
   assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), undefined)), "invalid_input");
   assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), "none")), "invalid_input");
-  assert.equal(code(() => wrap(fill(24, 0x44), fill(15, 0xaa), [])), "invalid_input");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(16, 0xaa), [])), "invalid_input", "an empty list is not the marker for none");
+  assert.equal(code(() => wrap(fill(24, 0x44), fill(15, 0xaa), "no_stored_passkeys")), "invalid_input");
   // Another authenticator, a credential the vault does not hold: fine. So is
   // the all-zero AAGUID that platform authenticators report.
   assert.equal(wrap(fill(24, 0x44), fill(16, 0xaa), [fill(24, 0x45)]).method.type, "prf");
-  assert.equal(wrap(fill(24, 0x46), new Uint8Array(16), []).method.type, "prf");
+  assert.equal(wrap(fill(24, 0x46), new Uint8Array(16), "no_stored_passkeys").method.type, "prf");
 });
 
 test("item_handles_of_an_earlier_session_do_not_name_another_item", () => {
@@ -722,7 +723,7 @@ test("pin_and_passkey_unlock_go_through_the_same_checks", () => {
   assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, fill(32, 1))), "decrypt", "the mobile variant is another key");
   // Passkey (PRF): the 32 bytes the authenticator gave.
   const prf = fill(32, 0x33);
-  const prfWrap = vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prf.slice(), fill(16, 0x76), 1, fill(16, 0xaa), []);
+  const prfWrap = vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prf.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   assert.equal(prfWrap.wrap.length, 72);
   const withKey = pinned(created.pinned, { server_public_key: created.pinned.server_public_key });
   const viaPrf = new wasm.UnlockJob().unlock_prf(URL_, CTX, prf.slice(), prfWrap, withKey);
@@ -843,29 +844,29 @@ test("a_plaintext_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
   assert.equal(token.length, 32);
   // No token, a short one, a zero one, a wrong one: reauth_required, and each
   // attempt uses up the grant.
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, new Uint8Array(0))), "reauth_required");
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, token.slice())), "reauth_required", "used up by the failed attempt");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, new Uint8Array(0), NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, token.slice(), NOW)), "reauth_required", "used up by the failed attempt");
   const second = reauthToken(account);
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, fill(32, 7))), "reauth_required");
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, second.slice())), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, fill(32, 7), NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, second.slice(), NOW)), "reauth_required");
   // A format mistake is invalid_input and leaves the token valid.
   const third = reauthToken(account);
-  assert.equal(code(() => vault.reveal_plain_export(rows, "xml", false, third.slice())), "invalid_input");
-  const json = vault.reveal_plain_export(rows, "json", false, third.slice());
+  assert.equal(code(() => vault.reveal_plain_export(rows, "xml", false, third.slice(), NOW)), "invalid_input");
+  const json = vault.reveal_plain_export(rows, "json", false, third.slice(), NOW);
   assert.ok(json.includes("hunter2-secret"));
   // One use only.
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, third.slice())), "reauth_required");
-  const csv = vault.reveal_plain_export(rows, "csv", false, reauthToken(account));
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, third.slice(), NOW)), "reauth_required");
+  const csv = vault.reveal_plain_export(rows, "csv", false, reauthToken(account), NOW);
   assert.ok(csv.startsWith("id,type,name"));
   // A new token replaces the one before it.
   const old = reauthToken(account);
   const newer = reauthToken(account);
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, old)), "reauth_required");
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, newer)), "reauth_required", "the failed attempt used it up");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, old, NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, newer, NOW)), "reauth_required", "the failed attempt used it up");
   // Locking drops the grant.
   const kept = reauthToken(account);
   vault.lock();
-  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, kept)), "vault_locked");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, kept, NOW)), "vault_locked");
 });
 
 test("reauth_grant_needs_a_fresh_sign_in_for_this_vault", () => {
@@ -873,21 +874,21 @@ test("reauth_grant_needs_a_fresh_sign_in_for_this_vault", () => {
   const other = newAccount("grant-other", { password: PASSWORD_2 });
   const { vault, server, created, record } = account;
   // No sign-in at all.
-  assert.equal(code(() => new wasm.UnlockJob().reauth_grant(vault, created.wraps[0])), "invalid_input");
+  assert.equal(code(() => new wasm.UnlockJob().reauth_grant(vault, created.wraps[0], NOW)), "invalid_input");
   // A sign-in to another account does not open this vault's password wrap.
   const job = new wasm.UnlockJob();
   const ke1 = job.login_start(enc.encode(PASSWORD_2), other.vault.reveal_secret_key_code());
   const ke2 = other.server.login_start(other.record, IDS.account_id, ke1);
   job.login_finish(ke2, 1, pinned(other.created.pinned));
-  assert.equal(code(() => job.reauth_grant(vault, created.wraps[0])), "decrypt");
+  assert.equal(code(() => job.reauth_grant(vault, created.wraps[0], NOW)), "decrypt");
   // The recovery wrap is not a password wrap.
   const job2 = new wasm.UnlockJob();
   const k1 = job2.login_start(enc.encode(PASSWORD), vault.reveal_secret_key_code());
   job2.login_finish(server.login_start(record, IDS.account_id, k1), 1, pinned(created.pinned));
-  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[1])), "invalid_input");
+  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[1], NOW)), "invalid_input");
   // The sign-in is used up by a grant.
-  assert.equal(job2.reauth_grant(vault, created.wraps[0]).length, 32);
-  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[0])), "invalid_input");
+  assert.equal(job2.reauth_grant(vault, created.wraps[0], NOW).length, 32);
+  assert.equal(code(() => job2.reauth_grant(vault, created.wraps[0], NOW)), "invalid_input");
 });
 
 // ------------------------------------------------------------ the memory
@@ -1017,7 +1018,7 @@ test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
 
   // Add a passkey method: a new manifest row and the body that is signed.
   const salt = wasm.prf_salt_new();
-  const wrap = vault.wrap_prf(fill(24, 0x44), salt, fill(32, 0x33), fill(16, 0x76), 1, fill(16, 0xaa), []);
+  const wrap = vault.wrap_prf(fill(24, 0x44), salt, fill(32, 0x33), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   const add = vault.manifest_add_method(created.manifest, wrap);
   assert.equal(add.op, "unlock-method.add");
   assert.equal(add.sealed.rev, created.manifest.rev + 1);
@@ -1051,7 +1052,7 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.ok(a.some((x) => x !== 0));
   assert.notDeepEqual(a, b);
   const { vault, created } = newAccount("zero-keys");
-  const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), []);
+  const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   assert.equal(code(() => wrap(new Uint8Array(32), fill(32, 0x33))), "input_all_zero", "a salt of zeros");
   assert.equal(code(() => wrap(a, new Uint8Array(32))), "input_all_zero", "a PRF output of zeros");
   assert.equal(code(() => wrap(fill(31, 5), fill(32, 0x33))), "invalid_input", "a salt of another length");
@@ -1062,4 +1063,35 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW);
   assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");
   assert.ok(vault.export_finish(fill(32, 7)).length > 100, "the draft was kept");
+});
+
+test("the_token_is_good_for_five_minutes_and_the_clock_cannot_go_back", () => {
+  const account = newAccount("plain-ttl");
+  const { vault } = account;
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  const reveal = (token, now) => vault.reveal_plain_export(rows, "json", false, token, now);
+  // Exactly five minutes after the grant is still inside.
+  assert.ok(reveal(reauthToken(account), NOW + 300_000).includes("hunter2-secret"));
+  // One millisecond more is not, and the attempt uses the token up.
+  const late = reauthToken(account);
+  assert.equal(code(() => reveal(late.slice(), NOW + 300_001)), "reauth_required");
+  assert.equal(code(() => reveal(late.slice(), NOW)), "reauth_required", "used up by the late attempt");
+  // A clock earlier than the time of the grant is refused, not wrapped around.
+  const early = reauthToken(account);
+  assert.equal(code(() => reveal(early.slice(), NOW - 1)), "reauth_required");
+  assert.equal(code(() => reveal(early.slice(), NOW)), "reauth_required");
+  // The grant time is the one given to reauth_grant, not the export's.
+  const sameTime = reauthToken(account);
+  assert.ok(reveal(sameTime, NOW).length > 0);
+  // The clock has to be a time; a mistake there keeps the token.
+  const kept = reauthToken(account);
+  assert.equal(code(() => reveal(kept.slice(), NaN)), "invalid_input");
+  assert.equal(code(() => reveal(kept.slice(), -5)), "invalid_input");
+  assert.ok(reveal(kept, NOW + 1).length > 0);
+  // No token at all is reauth_required (not a type error), and uses the grant up.
+  const unused = reauthToken(account);
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, undefined, NOW)), "reauth_required");
+  assert.equal(code(() => reveal(unused, NOW)), "reauth_required");
+  assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, null, NOW)), "reauth_required");
 });

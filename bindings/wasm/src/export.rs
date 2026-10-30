@@ -27,13 +27,14 @@ use crate::convert::{
 };
 use crate::error::{Fail, Res, run};
 use crate::item::ViewDto;
-use crate::vault::Vault;
+use crate::vault::{GRANT_TTL_MS, Vault};
 use ferret_core::{
     EXPORT_KDF, ExportItem, ExportPassword, ExportWrapKey, ItemId, MasterPassword, OsRng,
     PlainExportOptions, decrypt_item, encrypt_item, export_begin, export_plain_csv,
     export_plain_json, export_wrap_key, import_decrypt_with_key, import_prepare,
 };
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 
@@ -199,24 +200,37 @@ impl Vault {
     ///
     /// It needs `token`, the one-time token of `UnlockJob.reauth_grant`, which
     /// only a fresh sign-in with the master password in this session makes
-    /// (the same way a rekey needs one). The token is used up by the first
-    /// attempt whether it matched or not; a missing, wrong or used token is
-    /// `reauth_required`. A format other than `"json"` and `"csv"` is
-    /// `invalid_input` and leaves the token valid.
+    /// (the same way a rekey needs one). `now_ms` is the caller's clock in
+    /// unix milliseconds. The token is used up by the first attempt whether
+    /// it matched or not. A missing, wrong, used or replaced token, a token
+    /// that is more than five minutes old, and a `now_ms` earlier than the
+    /// time of the grant (the clock cannot go backwards) are
+    /// `reauth_required`. A format other than `"json"` and `"csv"` and a
+    /// `now_ms` that is not a time are `invalid_input` and leave the token
+    /// valid.
     pub fn reveal_plain_export(
         &mut self,
         rows: JsValue,
         format: &str,
         include_passkeys: bool,
-        token: Vec<u8>,
+        token: Option<Vec<u8>>,
+        now_ms: f64,
     ) -> Result<String, JsValue> {
         run(|| {
-            let token = Zeroizing::new(token);
+            let token = Zeroizing::new(token.unwrap_or_default());
+            let now = js_time(now_ms)?;
             if format != "json" && format != "csv" {
                 return Err(Fail::Input);
             }
             let grant = self.inner_mut()?.grant.take();
-            let granted = grant.is_some_and(|g| same_token(&g.0, &token));
+            let granted = grant.is_some_and(|g| {
+                // Both checks always run; the token comparison is constant time.
+                let same = same_token(&g.token, &token);
+                let fresh = now
+                    .checked_sub(g.granted_ms)
+                    .is_some_and(|age| age <= GRANT_TTL_MS);
+                same & fresh
+            });
             if !granted {
                 return Err(Fail::Reauth);
             }
@@ -296,13 +310,9 @@ impl Vault {
 }
 
 /// Whether `given` is the 32-byte token `made`, compared in constant time
-/// (a different length is a mismatch).
+/// (a different length is a mismatch; the length is not secret).
 pub(crate) fn same_token(made: &[u8; 32], given: &[u8]) -> bool {
-    let mut diff = u8::from(given.len() != made.len());
-    for (i, byte) in made.iter().enumerate() {
-        diff |= byte ^ given.get(i).copied().unwrap_or(0);
-    }
-    diff == 0
+    given.len() == made.len() && bool::from(made.as_slice().ct_eq(given))
 }
 
 impl Vault {

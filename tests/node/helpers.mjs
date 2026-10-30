@@ -106,5 +106,5 @@ export function reauthToken(account, password = PASSWORD) {
   const ke1 = job.login_start(enc.encode(password), vault.reveal_secret_key_code());
   const ke2 = server.login_start(record, IDS.account_id, ke1);
   job.login_finish(ke2, 1, pinned(created.pinned));
-  return job.reauth_grant(vault, created.wraps[0]);
+  return job.reauth_grant(vault, created.wraps[0], NOW);
 }

@@ -2,6 +2,7 @@
 // and the WASM build, with fake workers (no `Worker` in Node).
 // Run: node --test tests/node/
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { createClient } from "../../bindings/wasm/js/client.mjs";
 import { createDispatcher, createJobDispatcher } from "../../bindings/wasm/js/protocol.mjs";
@@ -315,12 +316,12 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
   const zero = () => new Uint8Array(32);
   const salt = fill(32, 5);
   for (const [name, args] of [
-    ["wrap_prf", [fill(24, 1), salt, zero(), fill(16, 2), 1, fill(16, 3), []]],
+    ["wrap_prf", [fill(24, 1), salt, zero(), fill(16, 2), 1, fill(16, 3), "no_stored_passkeys"]],
     ["wrap_pin", [enc.encode("123456"), fill(16, 2), zero()]],
     ["unlock_prf", ["https://x", {}, zero(), {}, {}]],
     ["pin_unlock", [enc.encode("123456"), {}, {}, zero()]],
     ["import_open", [fill(100, 1), zero()]],
-    ["reveal_plain_export", [[], "json", false, zero()]],
+    ["reveal_plain_export", [[], "json", false, zero(), 1_700_000_000_000]],
   ]) {
     assert.equal((await rejection(client.vault[name](...args))).code, "input_all_zero", name);
   }
@@ -348,7 +349,7 @@ test("key_arguments_must_be_uint8arrays", async () => {
     for (const call of [
       () => client.vault.export_finish(v),
       () => client.vault.import_open(fill(40, 1), v),
-      () => client.vault.wrap_prf(fill(24, 1), fill(32, 5), v, fill(16, 2), 1, fill(16, 3), []),
+      () => client.vault.wrap_prf(fill(24, 1), fill(32, 5), v, fill(16, 2), 1, fill(16, 3), "no_stored_passkeys"),
     ]) {
       assert.equal((await rejection(call())).code, "invalid_input", String(v));
     }
@@ -372,7 +373,7 @@ test("the_dispatcher_checks_the_arguments_as_well", () => {
   assert.equal(send("export_finish", [new Uint8Array(32)]).code, "input_all_zero");
   assert.equal(send("export_finish", ["x".repeat(32)]).code, "invalid_input");
   assert.equal(send("totp_code", [1, null]).code, "invalid_input");
-  assert.equal(send("wrap_prf", [fill(24, 1), fill(32, 5), new Uint8Array(32), fill(16, 2), 1, fill(16, 3), []]).code, "input_all_zero");
+  assert.equal(send("wrap_prf", [fill(24, 1), fill(32, 5), new Uint8Array(32), fill(16, 2), 1, fill(16, 3), "no_stored_passkeys"]).code, "input_all_zero");
   // A valid shape gets to the vault check.
   assert.equal(send("export_finish", [fill(32, 3)]).code, "vault_locked");
   const job = createJobDispatcher(wasm);
@@ -415,7 +416,7 @@ test("f64_arguments_are_checked_for_type_and_unit", async () => {
   assert.equal((await rejection(client.vault.totp_code(1, 59))).code, "vault_locked");
   assert.equal((await rejection(client.vault.passkey_create(id, 1, "n", {}, {}, {}, "no_existing", 1.7e12, undefined))).code, "vault_locked");
   assert.equal((await rejection(client.vault.passkey_create(id, 1, "n", {}, {}, {}, "no_existing", "now", undefined))).code, "invalid_input");
-  assert.equal((await rejection(client.vault.wrap_prf(id, fill(32, 5), fill(32, 9), id, "1", fill(16, 3), []))).code, "invalid_input");
+  assert.equal((await rejection(client.vault.wrap_prf(id, fill(32, 5), fill(32, 9), id, "1", fill(16, 3), "no_stored_passkeys"))).code, "invalid_input");
 });
 
 // ------------------------------------------------------------- error mapping
@@ -479,21 +480,21 @@ test("a_plaintext_export_through_the_client_needs_a_fresh_sign_in", async () => 
   const rows = [{ item_id: id, rev: sealed.rev, envelope: sealed.envelope, tag: sealed.tag }];
 
   // Without a token, and with one that was made up: reauth_required.
-  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, fill(32, 7)))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, fill(32, 7), 1_700_000_000_000))).code, "reauth_required");
 
   // A fresh sign-in with the master password makes the token.
   const ke1 = await client.vault.login_start(enc.encode(PASSWORD), sk);
   const ke2 = server.login_start(registration.record, IDS.account_id, ke1);
   await client.vault.login_finish(ke2, 1, { kind: "pinned", record: created.pinned });
-  const token = await client.vault.reauth_grant(created.wraps[0]);
+  const token = await client.vault.reauth_grant(created.wraps[0], 1_700_000_000_000);
   assert.equal(token.length, 32);
   const copy = token.slice();
-  const json = await client.vault.reveal_plain_export(rows, "json", false, token);
+  const json = await client.vault.reveal_plain_export(rows, "json", false, token, 1_700_000_100_000);
   assert.ok(json.includes("plain note text"));
   assert.ok(token.every((b) => b === 0), "the token is wiped on the page once it is sent");
   // One use: the same token again (a retry with the wiped array, or a copy).
-  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, token))).code, "input_all_zero");
-  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, copy))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, token, 1_700_000_100_000))).code, "input_all_zero");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, copy, 1_700_000_100_000))).code, "reauth_required");
   await client.lock();
 });
 
@@ -513,4 +514,104 @@ test("the_rollback_memory_is_a_required_argument", async () => {
   const copy = memory.slice();
   await client.vault.verify_checkpoint(checkpoint, [], 1, memory);
   assert.deepEqual(memory, copy);
+});
+
+// -------------------------------------------------------------- fix round
+
+test("a_missing_token_is_reauth_required_and_an_old_one_expires", async () => {
+  const { client } = setup();
+  const server = new wasm.TestServer(enc.encode("client-ttl"));
+  const request = await client.vault.register_start(enc.encode(PASSWORD), { kind: "generate" });
+  const registration = await client.vault.register_finish(server.register_response(IDS.account_id, request), 1);
+  const created = await client.vault.create_account(URL_, IDS);
+  const sk = await client.vault.reveal_secret_key_code();
+  const id = fill(16, 3);
+  const sealed = await client.vault.encrypt_item(id, 1, { item_type: "note", name: "n", notes: "plain note text" }, undefined, 1_700_000_000_000);
+  const rows = [{ item_id: id, rev: sealed.rev, envelope: sealed.envelope, tag: sealed.tag }];
+  const NOW = 1_700_000_000_000;
+  const grant = async () => {
+    const ke1 = await client.vault.login_start(enc.encode(PASSWORD), sk);
+    await client.vault.login_finish(server.login_start(registration.record, IDS.account_id, ke1), 1, { kind: "pinned", record: created.pinned });
+    return client.vault.reauth_grant(created.wraps[0], NOW);
+  };
+  // No token: reauth_required, as the header says; the time is still required.
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, undefined, NOW))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, undefined))).code, "invalid_input");
+  // Five minutes and no more.
+  assert.ok((await client.vault.reveal_plain_export(rows, "json", false, await grant(), NOW + 300_000)).includes("plain note text"));
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, await grant(), NOW + 300_001))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.reveal_plain_export(rows, "json", false, await grant(), NOW - 1))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.reauth_grant(created.wraps[0], "now"))).code, "invalid_input");
+});
+
+test("the_rollback_memory_comes_back_as_newSyncMemory", async () => {
+  const { client } = setup();
+  const server = new wasm.TestServer(enc.encode("client-memory"));
+  const request = await client.vault.register_start(enc.encode(PASSWORD), { kind: "generate" });
+  await client.vault.register_finish(server.register_response(IDS.account_id, request), 1);
+  const created = await client.vault.create_account(URL_, IDS);
+  const empty = await client.vault.sync_memory_new();
+  const sha = (b) => new Uint8Array(createHash("sha256").update(Buffer.from(b)).digest());
+  const entry = { item_id: new Uint8Array(16), rev: created.manifest.rev, hash: sha(created.manifest.envelope) };
+  const checkpoint = await client.vault.make_checkpoint(5, [entry]);
+  const rows = [{ item_id: new Uint8Array(16), rev: created.manifest.rev, state: "live", envelope: created.manifest.envelope, tag: created.manifest.tag }];
+  const verified = await client.vault.verify_checkpoint(checkpoint, rows, 5, empty);
+  assert.deepEqual(Object.keys(verified), ["newSyncMemory"]);
+  assert.ok(verified.newSyncMemory instanceof Uint8Array && verified.newSyncMemory.length > empty.length);
+  // The state the memory now holds cannot be shown again at a lower seq.
+  const lower = await client.vault.make_checkpoint(4, [entry]);
+  assert.equal((await rejection(client.vault.verify_checkpoint(lower, rows, 5, verified.newSyncMemory))).code, "checkpoint_seq_below_remembered");
+  const older = await client.vault.accept_older_state(lower, rows, 5);
+  assert.deepEqual(Object.keys(older), ["newSyncMemory"]);
+  const pruned = await client.vault.sync_memory_prune(verified.newSyncMemory, [new Uint8Array(16)]);
+  assert.deepEqual(Object.keys(pruned).sort(), ["dropped", "newSyncMemory"]);
+  assert.equal(pruned.dropped, 1);
+  // sync_memory_new is the starting point and stays plain bytes.
+  assert.ok(empty instanceof Uint8Array);
+});
+
+test("lock_also_ends_the_job_workers", async () => {
+  const jobs = [];
+  const client = createClient({
+    createVaultWorker: () => new FakeWorker(() => ({ reply: { ok: true }, transfer: [] })),
+    createJobWorker: () => {
+      const w = new FakeWorker(() => ({ reply: { ok: true }, transfer: [] }));
+      w.postMessage = function (message, transfer = []) {
+        this.received.push(structuredClone(message, { transfer }));
+      };
+      jobs.push(w);
+      return w;
+    },
+  });
+  const kdf = { m_kib: 65536, t: 3, p: 1 };
+  const running = [
+    client.job.argon2_export_key(enc.encode("export password for tests"), fill(16, 5), kdf, "open", null),
+    client.job.argon2_export_key(enc.encode("another export password!"), fill(16, 6), kdf, "open", null),
+  ];
+  await client.lock();
+  assert.equal(jobs.length, 2);
+  assert.ok(jobs.every((w) => w.terminated), "both job workers were ended");
+  for (const call of running) assert.equal((await rejection(call)).code, "locked");
+});
+
+test("a_key_of_another_length_keeps_the_code_of_the_core", async () => {
+  const { client, made } = echoClient();
+  // The length is checked first by the core; zeros only count in a key-sized array.
+  for (const length of [0, 1, 16, 31, 33, 64]) {
+    await client.vault.export_finish(new Uint8Array(length));
+  }
+  assert.equal(made[0].received.length, 6, "the core judges these, with its own codes");
+  assert.equal((await rejection(client.vault.export_finish(new Uint8Array(32)))).code, "input_all_zero");
+  // The dispatcher lets the same arrays through to the vault (here locked).
+  const dispatch = createDispatcher(wasm);
+  const send = (key) => dispatch({ id: 1, target: "vault", method: "export_finish", args: [key] }).reply;
+  assert.equal(send(new Uint8Array(0)).code, "vault_locked");
+});
+
+test("wrap_prf_needs_the_marker_for_no_stored_passkeys", async () => {
+  const { client, made } = echoClient();
+  const { NO_STORED_PASSKEYS } = await import("../../bindings/wasm/js/client.mjs");
+  assert.equal(NO_STORED_PASSKEYS, "no_stored_passkeys");
+  await client.vault.wrap_prf(fill(24, 1), fill(32, 5), fill(32, 9), fill(16, 2), 1, fill(16, 3), NO_STORED_PASSKEYS);
+  assert.equal(made[0].received.length, 1);
 });

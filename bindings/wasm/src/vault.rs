@@ -102,11 +102,18 @@ pub(crate) struct PendingPasskey {
     pub(crate) attach_to: Option<(u32, Vec<u8>)>,
 }
 
+/// How long a re-authentication token is good for, in milliseconds.
+pub(crate) const GRANT_TTL_MS: u64 = 300_000;
+
 /// A one-time permission for a plaintext export. Only a fresh sign-in with
 /// the master password makes one (`UnlockJob.reauth_grant`); the vault keeps
-/// it until the export consumes it, a new one replaces it, or the vault is
-/// locked or rekeyed.
-pub(crate) struct ReauthGrant(pub(crate) Zeroizing<[u8; 32]>);
+/// it until the export consumes it, a new one replaces it, it is
+/// [`GRANT_TTL_MS`] old, or the vault is locked or rekeyed.
+pub(crate) struct ReauthGrant {
+    pub(crate) token: Zeroizing<[u8; 32]>,
+    /// The caller's clock when the token was made (unix milliseconds).
+    pub(crate) granted_ms: u64,
+}
 
 /// Everything an unlocked vault holds.
 pub(crate) struct Inner {
@@ -308,6 +315,22 @@ fn server_rows_of(vault: &UnlockedVault, list: Vec<ServerRowDto>) -> Res<Vec<Ser
         });
     }
     Ok(server_rows)
+}
+
+/// The value of `stored_credential_ids` that says the vault has no passkey
+/// items. An empty array is refused instead, so that "none" is a decision.
+const NO_STORED_PASSKEYS: &str = "no_stored_passkeys";
+
+/// The credential ids the caller lists as stored, or none when it says so.
+fn stored_list(v: JsValue) -> Res<Vec<ByteBuf>> {
+    if v.as_string().as_deref() == Some(NO_STORED_PASSKEYS) {
+        return Ok(Vec::new());
+    }
+    let list: Vec<ByteBuf> = from_js_list(v)?;
+    if list.is_empty() {
+        return Err(Fail::Input);
+    }
+    Ok(list)
 }
 
 fn auth_op(name: &str) -> Res<AuthOp> {
@@ -684,8 +707,15 @@ impl Vault {
     ///   in `stored_credential_ids`.
     ///
     /// `stored_credential_ids` is required: pass the `cred_id` of every
-    /// passkey item of the vault (from `item_view`), as an array of
-    /// `Uint8Array`. The binding cannot see items that are not open.
+    /// passkey item of the vault (from `item_view`), as a non-empty array of
+    /// `Uint8Array`, or the marker `"no_stored_passkeys"`
+    /// (`NO_STORED_PASSKEYS` in the client) when there are none. An empty
+    /// array is `invalid_input`. The binding cannot see items that are not
+    /// open.
+    ///
+    /// `aaguid` is the 16 bytes at offset 37 of the authenticator data that
+    /// the client parsed from the registration. It is the client's claim; the
+    /// binding cannot see the attestation.
     #[allow(clippy::too_many_arguments)]
     pub fn wrap_prf(
         &self,
@@ -701,7 +731,7 @@ impl Vault {
             let prf_output = Zeroizing::new(prf_output);
             let vault = self.unlocked()?;
             let aaguid: [u8; 16] = arr(&aaguid)?;
-            let stored: Vec<ByteBuf> = from_js_list(stored_credential_ids)?;
+            let stored = stored_list(stored_credential_ids)?;
             if aaguid == ferret_core::passkey::AAGUID
                 || stored.iter().any(|s| s.0 == credential_id)
                 || self.inner()?.items.values().any(|i| {

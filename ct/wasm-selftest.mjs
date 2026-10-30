@@ -100,10 +100,14 @@ const entryOf = (norm, ins, max, reason) =>
 const UNWRAP = "ferret_core::wrap::unwrap_vk";
 const PASSKEY = "ferret_core_wasm::vault::Vault>::passkey_create";
 const PUSH_HEX = "ferret_core::sheet::push_hex";
+const METHODS_HEX = "ferret_core::methods::hex";
+const MEMORY_RECORD = "ferret_core::sync_memory::SyncMemory>::record";
 const EXISTING = [
   entryOf(UNWRAP, "br_table", 1, "written by a person"),
   entryOf(PASSKEY, "i32.load(indexed)", 1, "written by a person"),
   entryOf(PUSH_HEX, "i32.load(static-table)", 2, "written by a person"),
+  entryOf(METHODS_HEX, "i32.load(indexed)", 1, "written by a person"),
+  entryOf(MEMORY_RECORD, "i64.load(indexed)", 1, "written by a person"),
 ].join("\n");
 
 // The generator of the allow list does not bless a new hit in a function that
@@ -119,7 +123,9 @@ const generate = (hits, extra = []) => {
 const unwrap = (count) => ({ norm: UNWRAP, ins: "br_table", count });
 const passkey = (count) => ({ norm: PASSKEY, ins: "i32.load(indexed)", count });
 const pushHex = (count) => ({ norm: PUSH_HEX, ins: "i32.load(static-table)", count });
-const baseHits = [unwrap(1), passkey(1), pushHex(2)];
+const methodsHex = (count) => ({ norm: METHODS_HEX, ins: "i32.load(indexed)", count });
+const memoryRecord = (count) => ({ norm: MEMORY_RECORD, ins: "i64.load(indexed)", count });
+const baseHits = [unwrap(1), passkey(1), pushHex(2), methodsHex(1), memoryRecord(1)];
 const withChange = (change) => baseHits.map((h) => change.find((c) => c.norm === h.norm && c.ins === h.ins) ?? h);
 
 const same = generate(baseHits);
@@ -142,6 +148,23 @@ const newBinding = generate([...baseHits, { norm: "ferret_core_wasm::vault::Vaul
 check(newBinding.status === 3, "the generator refuses a new entry in a named function of the binding");
 const raisedSheet = generate(withChange([pushHex(5)]));
 check(raisedSheet.status === 3, "the generator refuses a higher max in sheet");
+// The unlock-method and rollback-memory modules are guarded as well.
+const raisedMethods = generate(withChange([methodsHex(2)]));
+check(
+  raisedMethods.status === 3 && /methods::hex/.test(raisedMethods.err) && /max 1 -> 2/.test(raisedMethods.err),
+  "the generator refuses a higher max in the unlock-method module",
+);
+const raisedMemory = generate(withChange([memoryRecord(4)]));
+check(
+  raisedMemory.status === 3 && /sync_memory/.test(raisedMemory.err) && /max 1 -> 4/.test(raisedMemory.err),
+  "the generator refuses a higher max in the rollback-memory module",
+);
+const newMemory = generate([...baseHits, { norm: "ferret_core::sync_memory::SyncMemory>::from_bytes", ins: "i32.rem_u", count: 1 }]);
+check(newMemory.status === 3 && /new entry/.test(newMemory.err), "the generator refuses a new entry in the rollback-memory module");
+const newMethods = generate([...baseHits, { norm: "ferret_core::methods::manifest_add_method", ins: "br_table", count: 1 }]);
+check(newMethods.status === 3 && /new entry/.test(newMethods.err), "the generator refuses a new entry in the unlock-method module");
+const approvedMemory = generate(withChange([memoryRecord(2)]), ["--approve", `${MEMORY_RECORD}=I read the code of record and the second load walks the rows the same way`]);
+check(approvedMemory.status === 0 && /APPROVED: I read the code of record/.test(approvedMemory.out), "--approve lets a raise in the rollback-memory module through");
 const other = generate([...baseHits, { norm: "ferret_core::cbor::decode::item", ins: "br_table", count: 3 }]);
 check(other.status === 0 && /decode::item/.test(other.out), "a new entry outside the key-handling modules is generated");
 
@@ -164,6 +187,15 @@ const approvedRaise = baseline(
 check(approvedRaise.status === 0, "the same raise with an APPROVED reason passes");
 const newKey = baseline(EXISTING + "\n" + entryOf("ferret_core::codes::decode_secret_key", "br_table", 1, "plausible"));
 check(newKey.status === 1 && /new entry/.test(newKey.out), "a new entry in a key-handling function without APPROVED fails");
+const handRaisedMemory = baseline(
+  EXISTING.replace(
+    entryOf(MEMORY_RECORD, "i64.load(indexed)", 1, "written by a person"),
+    entryOf(MEMORY_RECORD, "i64.load(indexed)", 2, "written by a person"),
+  ),
+);
+check(handRaisedMemory.status === 1 && /sync_memory.*max 1 -> 2/.test(handRaisedMemory.out), "a hand-raised max in the rollback-memory module fails against the base");
+const newMethodsEntry = baseline(EXISTING + "\n" + entryOf("ferret_core::methods::manifest_add_method", "br_table", 1, "plausible"));
+check(newMethodsEntry.status === 1 && /new entry/.test(newMethodsEntry.out), "a new entry in the unlock-method module without APPROVED fails");
 const newOutside = baseline(EXISTING + "\n" + entryOf("ferret_core::cbor::decode::item", "br_table", 9, "plausible"));
 check(newOutside.status === 0, "a new entry outside the key-handling modules passes");
 

@@ -176,7 +176,8 @@ test("u32_args_table_matches_the_rust_signatures", async () => {
         } else current += ch;
       }
       if (current.trim()) params.push(current.trim());
-      const args = params.filter((p) => !/^&?(mut )?self\b/.test(p));
+      // `self`, and the Vault that the dispatcher puts first (the client does not pass it).
+      const args = params.filter((p) => !/^(&?(mut )?self\b|vault: &(mut )?Vault)/.test(p));
       args.forEach((p, index) => {
         const type = p.split(":").slice(1).join(":").trim();
         if (type === "u32" || type === "Option<u32>") {
@@ -238,7 +239,7 @@ test("f64_args_table_matches_the_rust_signatures", async () => {
       }
       if (current.trim()) params.push(current.trim());
       params
-        .filter((p) => !/^&?(mut )?self\b/.test(p))
+        .filter((p) => !/^(&?(mut )?self\b|vault: &(mut )?Vault)/.test(p))
         .forEach((p, index) => {
           if (p.split(":").slice(1).join(":").trim() === "f64") (found[m[1]] ??= []).push(index);
         });
@@ -255,10 +256,10 @@ test("f64_args_table_matches_the_rust_signatures", async () => {
 
 test("the_plain_export_and_the_passkey_wrap_take_their_new_arguments", () => {
   // The .d.ts of the release names the token and the AAGUID arguments.
-  assert.match(dts, /reveal_plain_export\(rows: any, format: string, include_passkeys: boolean, token: Uint8Array\): string/);
+  assert.match(dts, /reveal_plain_export\(rows: any, format: string, include_passkeys: boolean, token: Uint8Array \| null \| undefined, now_ms: number\): string/);
   assert.match(dts, /wrap_prf\([^)]*aaguid: Uint8Array, stored_credential_ids: any\)/);
   assert.match(dts, /passkey_create_confirm\(pending: number\)/);
   assert.match(dts, /passkey_create_abort\(pending: number\)/);
-  assert.match(dts, /reauth_grant\(vault: Vault, pw_wrap: any\): Uint8Array/);
+  assert.match(dts, /reauth_grant\(vault: Vault, pw_wrap: any, now_ms: number\): Uint8Array/);
   assert.match(dts, /export function ferret_aaguid\(\): Uint8Array/);
 });

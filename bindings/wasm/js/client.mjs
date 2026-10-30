@@ -10,12 +10,13 @@
 //   (short-lived; Argon2id of an export or an import file only). The job
 //   worker is ended after every call, so its large heap is freed.
 // * `lock()` ends the vault worker at once and starts a new one on the next
-//   call: that is what wipes and frees the heap, which stays at its
-//   high-water mark until then. It never waits for the worker, so it works
-//   while a long Argon2id or an import is running. Every call that is waiting
-//   is rejected with `locked`. Nothing is asked of the worker first: ending
-//   it releases all of its memory, and a wipe that has to wait behind a
-//   running call would be exactly the delay a lock must not have.
+//   call: that releases the heap, which stays at its high-water mark until
+//   then. It never waits for the worker, so it works while a long Argon2id or
+//   an import is running. Every call that is waiting is rejected with
+//   `locked`, and the job workers that are running are ended with it. Nothing
+//   is asked of the worker first: a wipe that has to wait behind a running
+//   call would be exactly the delay a lock must not have. Ending a worker
+//   releases its memory to the browser; it does not overwrite it by hand.
 // * A secret `Uint8Array` argument is copied for the worker, handed over with
 //   `transfer`, and `fill(0)`-ed on this side; the worker wipes its copy after
 //   the call. **A secret array can therefore be used once.** The array that
@@ -59,16 +60,25 @@
 //   salt gives different outputs with and without it.
 //
 // Plaintext export: `reveal_plain_export(rows, format, include_passkeys,
-// token)` needs a one-time token from `ferret.vault.reauth_grant(wrap)` made
-// right after a fresh `login_start`/`login_finish` with the master password
-// (the same fresh sign-in a rekey needs). Without one it is `reauth_required`.
+// token, now_ms)` needs a one-time token from
+// `ferret.vault.reauth_grant(wrap, now_ms)` made right after a fresh
+// `login_start`/`login_finish` with the master password (the same fresh
+// sign-in a rekey needs). `now_ms` is the caller's clock in milliseconds. The
+// token is good for 5 minutes from the grant and for one attempt: a missing,
+// wrong, used, replaced or expired token is `reauth_required`, and so is a
+// `now_ms` that is earlier than the time of the grant (the time cannot go
+// backwards).
 //
 // Registering a passkey as an unlock method: `wrap_prf(credential_id, salt,
 // prf_output, method_id, generation, aaguid, stored_credential_ids)` takes the
 // AAGUID of the registration and the `cred_id` of every passkey item in the
 // vault, and refuses (`invalid_state`) Ferret's own authenticator
 // (`FERRET_AAGUID`) and any credential that Ferret stores: such a method could
-// never open the vault it lives in.
+// never open the vault it lives in. The AAGUID is the 16 bytes at offset 37 of
+// the authenticator data that the client parsed from the registration (it is
+// the client's claim: the binding cannot see the attestation). Say there are no
+// stored passkeys with `NO_STORED_PASSKEYS` (exported here); an empty array is
+// `invalid_input`, like `existing` of `passkey_create`.
 //
 // Error codes at the two layers: the core's codes are in `vectors/ERRORS.md`.
 // The client adds `invalid_input` for a call whose arguments have the wrong
@@ -83,9 +93,15 @@
 // Rollback memory (`SyncMemory`): the client keeps it as bytes, in its own
 // storage. `sync_memory_new()` makes an empty record for a device that has
 // seen nothing of this vault. `vault.verify_checkpoint(checkpoint, rows,
-// top_seq, memory)` and `job.rekey(input, pinned, memory)` take the stored
-// bytes as a required argument and return the updated ones (`rekey` in the
-// field `sync_memory` of its plan); store them in place of the old ones. A
+// top_seq, memory)` and `vault.rekey(input, pinned, memory)` take the stored
+// bytes as a required argument. The client returns the updated bytes as the
+// field `newSyncMemory` (`verify_checkpoint` returns `{ newSyncMemory }`,
+// `rekey` its plan with the field added): **store it, in place of the old
+// bytes, before using the result** (before the rekey is uploaded, before the
+// verified state is acted on). A caller that ignores it keeps the old floors
+// and gets no progress; the memory is only as good as the storage it is kept
+// in, and `sync_memory_new()` always starts from none. `accept_older_state`
+// and `sync_memory_prune` return `newSyncMemory` as well. A
 // checkpoint, a top seq or a row below what the device has seen is
 // `checkpoint_seq_below_remembered`, `checkpoint_top_seq_below_remembered` or
 // `checkpoint_rev_below_remembered`, and the memory is left as it was. Only
@@ -112,7 +128,7 @@ import {
   encodeSecretText,
 } from "./protocol.mjs";
 
-export { FERRET_AAGUID, FerretError, NO_EXISTING } from "./protocol.mjs";
+export { FERRET_AAGUID, FerretError, NO_EXISTING, NO_STORED_PASSKEYS } from "./protocol.mjs";
 
 function defaultWorkers() {
   return {
@@ -226,6 +242,30 @@ class WorkerChannel {
 }
 
 /**
+ * The calls that return the rollback memory give it as `newSyncMemory`: the
+ * caller must store it, in place of the bytes it passed in, before it uses
+ * the result (before it uploads a rekey, or acts on a verified state). A
+ * caller that keeps the old bytes only loses the progress of the floors; it
+ * does not get a lower floor, but a fresh `sync_memory_new()` always starts
+ * from none, so the memory is only as good as the storage it is kept in.
+ */
+function shapeResult(method, value) {
+  switch (method) {
+    case "verify_checkpoint":
+    case "accept_older_state":
+      return { newSyncMemory: value };
+    case "sync_memory_prune":
+      return { newSyncMemory: value.sync_memory, dropped: value.dropped };
+    case "rekey": {
+      const { sync_memory: newSyncMemory, ...plan } = value;
+      return { ...plan, newSyncMemory };
+    }
+    default:
+      return value;
+  }
+}
+
+/**
  * Creates the client. `createVaultWorker` and `createJobWorker` make a worker
  * (anything with `postMessage`, `terminate` and `onmessage`); the defaults make
  * the module workers next to this file.
@@ -235,13 +275,21 @@ export function createClient(options = {}) {
   const onFatal = (channel) => channel.fail("worker_failed");
   const vault = new WorkerChannel("vault", createVaultWorker, onFatal);
 
+  // The job workers that are running (one per call).
+  const jobChannels = new Set();
+
   // Ends the worker first and does not wait for it: a call that is still
   // running (a sign-in with Argon2id at 512 MiB, an import) is cut off, and so
-  // is a worker that is stuck or still loading. Terminating frees all of its
-  // memory, so there is nothing left to wipe by hand. The calls that were
-  // waiting are rejected with `locked`.
+  // is a worker that is stuck or still loading. The job workers that are
+  // running are ended too, so an export key that is being made is not
+  // returned after the lock. Terminating releases the memory of the workers
+  // to the browser; it does not overwrite it, which the browser and the
+  // operating system do when they hand the pages to someone else. The calls
+  // that were waiting are rejected with `locked`.
   const lock = () => {
     vault.fail("locked");
+    for (const channel of [...jobChannels]) channel.fail("locked");
+    jobChannels.clear();
     return Promise.resolve();
   };
 
@@ -252,7 +300,7 @@ export function createClient(options = {}) {
         if (typeof method !== "string") return undefined;
         // Locking must end the worker, never only drop the vault in it.
         if (method === "lock") return lock;
-        return (...args) => vault.call(method, args);
+        return (...args) => vault.call(method, args).then((value) => shapeResult(method, value));
       },
     },
   );
@@ -269,9 +317,11 @@ export function createClient(options = {}) {
           typeof method === "string"
             ? async (...args) => {
                 const channel = new WorkerChannel("job", createJobWorker, (c) => c.fail("worker_failed"));
+                jobChannels.add(channel);
                 try {
                   return await channel.call(method, args);
                 } finally {
+                  jobChannels.delete(channel);
                   channel.end();
                 }
               }

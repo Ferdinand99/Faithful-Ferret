@@ -74,6 +74,12 @@ export const FERRET_AAGUID = Object.freeze([
  */
 export const NO_EXISTING = "no_existing";
 
+/**
+ * The value of `stored_credential_ids` in `wrap_prf` that says "the vault has
+ * no passkey items". An empty array is refused instead, as for `existing`.
+ */
+export const NO_STORED_PASSKEYS = "no_stored_passkeys";
+
 /** The only function of the job worker. */
 export const JOB_WORKER_FUNCTIONS = new Set(["argon2_export_key"]);
 
@@ -122,7 +128,7 @@ export const BYTES_ARGS = {
   import_open: [[1, false, true]],
   argon2_export_key: [[0, false, false], [4, true, false]],
   check_master_password: [[0, false, false]],
-  reveal_plain_export: [[3, false, true]],
+  reveal_plain_export: [[3, true, true]],
   // The rollback memory is public data (item ids and revision numbers), so it
   // is typed but neither wiped nor refused when it looks empty.
   verify_checkpoint: [[3, false, false]],
@@ -177,6 +183,9 @@ export function assertU32Args(method, args) {
   }
 }
 
+/** The length of every key in `BYTES_ARGS`. */
+const KEY_LENGTH = 32;
+
 /** The largest integer a JavaScript number holds exactly (2^53). */
 const MAX_SAFE = 9_007_199_254_740_992;
 /** Plausible ceilings of a time: seconds and milliseconds since 1970 (year ~3300). */
@@ -208,6 +217,8 @@ export const F64_ARGS = {
   totp_code: [[1, "seconds"]],
   wrap_prf: [[4, "u64"]],
   passkey_create: [[1, "u64"], [7, "millis"]],
+  reveal_plain_export: [[4, "millis"]],
+  reauth_grant: [[1, "millis"]],
   export_begin: [[1, "millis"]],
   import_seal: [[2, "u64"]],
 };
@@ -237,9 +248,10 @@ export function assertBytesArgs(method, args) {
     const v = args[index];
     if (optional && (v === undefined || v === null)) continue;
     if (!(v instanceof Uint8Array)) throw new FerretError("invalid_input");
-    // An empty array is left to the core (`input_too_short`); an array of
-    // zeros has the same code as the core gives for it.
-    if (rejectZero && v.length > 0 && v.every((b) => b === 0)) throw new FerretError("input_all_zero");
+    // A key is 32 bytes. Another length keeps the code the core gives for it
+    // (`input_too_short`, `input_too_long`): the length is checked first, the
+    // zeros only in an array of the right length.
+    if (rejectZero && v.length === KEY_LENGTH && v.every((b) => b === 0)) throw new FerretError("input_all_zero");
   }
 }
 

@@ -29,6 +29,7 @@ wasm-bindgen = "=0.2.129"
 js-sys = "=0.3.106"
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde-wasm-bindgen = "=0.6.5"
+subtle = { version = "=2.6.1", default-features = false }
 zeroize = { version = "=1.9.1", default-features = false, features = ["alloc", "derive"] }
 # Only behind `test-support`:
 serde_json = { version = "=1.0.154", optional = true }

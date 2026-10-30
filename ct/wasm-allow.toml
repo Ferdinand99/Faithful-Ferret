@@ -454,7 +454,7 @@ reason = "The load of the byte at `base + index` in the scan of the padding; the
 function = "^ferret_core::methods::hex$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "Lower-case hexadecimal output, with a table of the 16 digits, of the values in the body of an unlock-method request (method id, wrap ciphertext, credential id, PRF salt, and the ciphertext and tag of the manifest row): all public, so the nibble that indexes the table is public."
+reason = "APPROVED: The load reads the byte at base plus the loop counter while hex() writes its two digits; the digits come from char::from_digit by arithmetic, so no byte value is an address. The values written are the method id, the wrap ciphertext, the credential id, the PRF salt and the ciphertext and tag of the manifest row, which are all public (the server stores them)."
 
 [[allow]]
 function = "^ferret_core::passkey::client_data::client_data_json$"
@@ -640,13 +640,13 @@ reason = "Building the setup QR text: the same hexadecimal table, inlined from p
 function = "^ferret_core::sync_memory::SyncMemory>::from_bytes$"
 instruction = "i32\\.rem_u"
 max = 1
-reason = "Reading the stored rollback memory: the count of entries is divided into the length to check that they fit. Both are public lengths of a record that holds item ids and revision numbers only."
+reason = "APPROVED: The remainder is the length of the stored record divided by the 24-byte size of one entry (item id and revision), taken by as_chunks. It is a public length of a record that holds item ids and revision numbers only, which the server shows as well; no key material is read."
 
 [[allow]]
 function = "^ferret_core::sync_memory::SyncMemory>::record$"
 instruction = "i64\\.load\\(indexed\\)"
 max = 1
-reason = "Recording the rows the server showed in the rollback memory: the loads walk the rows at `base + index`, the index being the loop counter; the values are item ids and revision numbers, which the server holds too."
+reason = "APPROVED: The 64-bit load is the revision read from a BTreeMap node while rows are merged in: the node search compares public item ids and the address follows that position, and the value is a public revision number. The rows are the ones the server shows; no key material is read."
 
 [[allow]]
 function = "^ferret_core::text::password::MasterPassword>::opaque_input$"
@@ -832,7 +832,7 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 function = "^vault_manifest_add_method externref shim multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
-reason = "APPROVED: The indexed load is the insertion of the new entry into the list of 56-byte manifest entries (Manifest::with_method, inlined), at a position given by a public loop counter. The values are method types, ids and generations of the manifest, which the server lists too; no key bytes."
+reason = "APPROVED: The indexed load is in Manifest::with_method (inlined into the shim): the scan of the list of 56-byte manifest entries for a method id that is already there, and the copy of that list, at a position given by a public loop counter. The values are method types, ids and generations of the manifest, which the server lists too; no key bytes."
 
 [[allow]]
 function = "^vault_passkey_get externref shim multivalue shim$"
@@ -875,12 +875,6 @@ function = "^vault_reveal_plain_export externref shim multivalue shim$"
 instruction = "i32\\.div_u"
 max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
-
-[[allow]]
-function = "^vault_reveal_plain_export externref shim multivalue shim$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 2
-reason = "APPROVED: Both indexed loads are in the loop of export_plain_csv (inlined into the export shim) that reads the number of custom fields of each item, to size the header row. The address is the item at the public loop position (a fixed stride of 304 bytes); the value read is a field count, which is the structure of the file the user asked for in the clear, not a key. The token comparison of this export is same_token, which has no division, no table and no branch on a byte value."
 
 [[allow]]
 function = "^vault_seed_pinned externref shim multivalue shim$"

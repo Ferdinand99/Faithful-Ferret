@@ -529,7 +529,7 @@ async function leakRun() {
   anchorWrap("KEK_pin", pinWrap, kekPin, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
   add("PRF output", hex(prfOutput));
-  const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), []);
+  const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   const kekPrf = op(wasm, "kek_from_prf", "kdf.kek.prf", { credential_id: hex(fill(24, 0x44)), prf_output: hex(prfOutput) }).kek;
   add("KEK_prf", kekPrf);
   anchorWrap("KEK_prf", prfWrap, kekPrf, vk1, 1);

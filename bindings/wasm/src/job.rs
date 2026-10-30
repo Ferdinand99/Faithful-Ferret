@@ -1091,14 +1091,18 @@ impl UnlockJob {
     /// sign-in to another account (or with a wrong password, which already
     /// failed at `login_finish`) gives no token. The sign-in is used up.
     ///
-    /// Returns 32 bytes. The vault keeps a copy until the export uses it, a
-    /// new token replaces it, or the vault is locked or rekeyed.
+    /// `now_ms` is the caller's clock in unix milliseconds. Returns 32 bytes.
+    /// The vault keeps a copy until the export uses it, a new token replaces
+    /// it, five minutes have passed (by the clock the export is given), or
+    /// the vault is locked or rekeyed.
     pub fn reauth_grant(
         &mut self,
         vault: &mut Vault,
         pw_wrap: JsValue,
+        now_ms: f64,
     ) -> Result<Vec<u8>, JsValue> {
         run(|| {
+            let now = crate::convert::js_time(now_ms)?;
             let rec = from_js::<WrapDto>(pw_wrap)?.core()?;
             if !matches!(rec.method, Method::Password { .. }) {
                 return Err(Fail::Input);
@@ -1114,7 +1118,10 @@ impl UnlockJob {
             let mut token = Zeroizing::new([0u8; 32]);
             ferret_core::SecureRng::fill(&mut OsRng, &mut *token);
             let out = token.to_vec();
-            vault.inner_mut()?.grant = Some(ReauthGrant(token));
+            vault.inner_mut()?.grant = Some(ReauthGrant {
+                token,
+                granted_ms: now,
+            });
             self.reset();
             Ok(out)
         })
