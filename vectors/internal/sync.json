@@ -1,0 +1,1076 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "sync",
+  "suite": 1,
+  "spec": "Fase 1 § 8.6",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "0.1.0",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "sync/memory/decode_empty",
+      "title": "an empty record reads back as it is",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "010000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "checkpoint_seq": "0",
+        "max_seq": "0",
+        "memory": "010000000000000000000000000000000000000000",
+        "tracked": 0
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/decode_three",
+      "title": "a record with three items, max_seq 77 and checkpoint_seq 40",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "01000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005"
+      },
+      "expect": {
+        "checkpoint_seq": "40",
+        "max_seq": "77",
+        "memory": "01000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005",
+        "tracked": 3
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/rows_first",
+      "title": "no record yet: the rows and the top seq become the floors",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": null,
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "40"
+      },
+      "expect": {
+        "checkpoint_seq": "0",
+        "max_seq": "40",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/rows_raise",
+      "title": "higher revisions and a new item raise the floors",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "50"
+      },
+      "expect": {
+        "checkpoint_seq": "0",
+        "max_seq": "50",
+        "memory": "0100000000000000320000000000000000000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "tracked": 5
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/rows_same",
+      "title": "the same revisions at the same top are accepted and change nothing",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "40"
+      },
+      "expect": {
+        "checkpoint_seq": "0",
+        "max_seq": "40",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/rows_tombstone_counts",
+      "title": "a deleted row also records its revision",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "41"
+      },
+      "expect": {
+        "checkpoint_seq": "0",
+        "max_seq": "41",
+        "memory": "0100000000000000290000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/checkpoint_first",
+      "title": "no record yet: a checkpoint that verifies sets all three floors",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca7b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": null,
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "40",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "checkpoint_seq": "40",
+        "max_seq": "40",
+        "memory": "0100000000000000280000000000000028000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/checkpoint_newer",
+      "title": "a newer checkpoint and the matching rows raise the floors",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "ed45c3314664d30de4713a3a5c781a25f60cbdff8d504b3f6f23366de239b55a",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000004836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d042434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000004445464748494a4b4c4d4e4f505152530000000000000001764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+          "mac": "74ecdd8130e2ca8dc09174408cc78ffeaeeb318d12da456b5525fd986612badb",
+          "seq": "50"
+        },
+        "memory": "0100000000000000280000000000000028000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "50",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "checkpoint_seq": "50",
+        "max_seq": "50",
+        "memory": "0100000000000000320000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "tracked": 5
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/checkpoint_same",
+      "title": "the checkpoint the device already holds, with a higher top, is accepted",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca7b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": "0100000000000000280000000000000028000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "45",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "checkpoint_seq": "40",
+        "max_seq": "45",
+        "memory": "01000000000000002d0000000000000028000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/checkpoint_rows_ahead",
+      "title": "newer rows than the checkpoint show: only max_seq and the revisions rise",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca7b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": "0100000000000000280000000000000028000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "50",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "checkpoint_seq": "40",
+        "max_seq": "50",
+        "memory": "0100000000000000320000000000000028000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "tracked": 5
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory/older_state",
+      "title": "after the user confirms, the record becomes the older, verified state",
+      "op": "sync.memory",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "accept_older_state",
+        "checkpoint": {
+          "digest": "7a47714f87464001d2f8f462bd2d854af142b8d3772543382bb9099cdadfec8e",
+          "entries": "000000000000000000000000000000000000000000000003e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f4142434445464748494a4b4c4d4e4f500000000000000002fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e42434445464748494a4b4c4d4e4f50510000000000000004caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737434445464748494a4b4c4d4e4f50515200000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "c4218ef533c5fd0a2267868b320cb0156c508b88f07701e62746dc6423f204bb",
+          "seq": "30"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          },
+          {
+            "hash": "caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "1",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "30",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "checkpoint_seq": "30",
+        "max_seq": "30",
+        "memory": "01000000000000001e000000000000001e000000040000000000000000000000000000000000000000000000034142434445464748494a4b4c4d4e4f50000000000000000242434445464748494a4b4c4d4e4f50510000000000000004434445464748494a4b4c4d4e4f5051520000000000000001",
+        "tracked": 4
+      },
+      "expect_error": null
+    },
+    {
+      "id": "sync/memory_invalid/decode_version",
+      "title": "another version byte",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "02000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_truncated",
+      "title": "a record shorter than its header",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "01000000000000004d0000000000000028000000"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_extra_byte",
+      "title": "a byte more than the count says",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "01000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f5051000000000000000500"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_count_over_cap",
+      "title": "a count above the 50 000 items the record may track",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "01000000000000000500000000000000050000c351"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_unsorted",
+      "title": "entries not in ascending order of item_id",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "01000000000000000900000000000000000000000242434445464748494a4b4c4d4e4f505100000000000000014142434445464748494a4b4c4d4e4f500000000000000001"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_repeated_item",
+      "title": "the same item_id twice",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "0100000000000000090000000000000000000000024142434445464748494a4b4c4d4e4f5000000000000000014142434445464748494a4b4c4d4e4f500000000000000002"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/decode_checkpoint_above_max",
+      "title": "checkpoint_seq above max_seq",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "decode",
+        "memory": "010000000000000005000000000000000600000000"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "sync/memory_invalid/rows_lower_rev",
+      "title": "a row below the highest revision seen for its item",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          }
+        ],
+        "top_seq": "41"
+      },
+      "expect_error": "checkpoint_rev_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/rows_live_behind_tombstone",
+      "title": "a live row older than the deletion the device has seen",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000290000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "3",
+            "state": "live"
+          }
+        ],
+        "top_seq": "42"
+      },
+      "expect_error": "checkpoint_rev_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/rows_top_below",
+      "title": "the server's top seq is below the highest seen",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "010000000000000032000000000000000000000000",
+        "rows": [],
+        "top_seq": "49"
+      },
+      "expect_error": "checkpoint_top_seq_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/rows_one_bad_row_refuses_all",
+      "title": "one row below its floor refuses the whole set",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "action": "accept_rows",
+        "memory": "0100000000000000280000000000000000000000040000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f5051520000000000000002",
+        "rows": [
+          {
+            "hash": "02fa297aa44a0411a262c8e56eee7cb19b067ffeb35e9408accf3b926bc78e1e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "6",
+            "state": "live"
+          },
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          }
+        ],
+        "top_seq": "45"
+      },
+      "expect_error": "checkpoint_rev_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/checkpoint_older",
+      "title": "a valid checkpoint below the highest verified one",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca7b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "60",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_seq_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/checkpoint_whole_vault_rolled_back",
+      "title": "an older, consistent checkpoint with its matching older rows",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "7a47714f87464001d2f8f462bd2d854af142b8d3772543382bb9099cdadfec8e",
+          "entries": "000000000000000000000000000000000000000000000003e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f4142434445464748494a4b4c4d4e4f500000000000000002fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e42434445464748494a4b4c4d4e4f50510000000000000004caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737434445464748494a4b4c4d4e4f50515200000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "c4218ef533c5fd0a2267868b320cb0156c508b88f07701e62746dc6423f204bb",
+          "seq": "30"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          },
+          {
+            "hash": "caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "1",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "30",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_seq_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/checkpoint_top_below",
+      "title": "the checkpoint is not older, but the server's top is below the highest seen",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "ed45c3314664d30de4713a3a5c781a25f60cbdff8d504b3f6f23366de239b55a",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000004836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d042434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f505152000000000000000200000000000000000000000000000000000000000000000000000000000000004445464748494a4b4c4d4e4f505152530000000000000001764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+          "mac": "74ecdd8130e2ca8dc09174408cc78ffeaeeb318d12da456b5525fd986612badb",
+          "seq": "50"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "50",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_top_seq_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/checkpoint_rev_below",
+      "title": "a row below the revision the device has seen, though the checkpoint accepts it",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca7b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": "0100000000000000320000000000000028000000014142434445464748494a4b4c4d4e4f500000000000000007",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "50",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_rev_below_remembered"
+    },
+    {
+      "id": "sync/memory_invalid/checkpoint_bad_mac_first",
+      "title": "the checkpoint's own checks run before the memory is consulted",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "verify_checkpoint",
+        "checkpoint": {
+          "digest": "fa53099564e456bc139d458d789efbc5a870cb618befa26e152241c529b6f5c9",
+          "entries": "00000000000000000000000000000000000000000000000408ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b4142434445464748494a4b4c4d4e4f500000000000000003a94e8c45ddd9bf95b72c4020dd8b7ea7fe53b65c588918d050bac4b545f88daf42434445464748494a4b4c4d4e4f5051000000000000000550507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e434445464748494a4b4c4d4e4f50515200000000000000020000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "f0cb2ca6b82964c3b111a554febe53058dc8c6cabfca12da05b8fbc20e6fa6ad",
+          "seq": "40"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "08ff8beb941802e5d555bcd225f5d9f5e0554895f9d5eed05cccb3437f63554b",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "836809eea14272cdada8c2012016b0983593395ade4361b522789468b05085d0",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "hash": "50507b1ac0587aa2820540c5593f231b5df76a5cd9ae928fe46a7a1ddc23135e",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "5",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "2",
+            "state": "deleted"
+          },
+          {
+            "hash": "764380430e1d0d113f98c27bcd3c630c51c59dec5d13146d3f80a0fb1e6938b6",
+            "item_id": "4445464748494a4b4c4d4e4f50515253",
+            "rev": "1",
+            "state": "live"
+          }
+        ],
+        "top_seq": "60",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_bad_mac"
+    },
+    {
+      "id": "sync/memory_invalid/older_state_bad_mac",
+      "title": "the older state must verify by itself",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "accept_older_state",
+        "checkpoint": {
+          "digest": "7a47714f87464001d2f8f462bd2d854af142b8d3772543382bb9099cdadfec8e",
+          "entries": "000000000000000000000000000000000000000000000003e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f4142434445464748494a4b4c4d4e4f500000000000000002fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e42434445464748494a4b4c4d4e4f50510000000000000004caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737434445464748494a4b4c4d4e4f50515200000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "c5218ef533c5fd0a2267868b320cb0156c508b88f07701e62746dc6423f204bb",
+          "seq": "30"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f",
+            "item_id": "00000000000000000000000000000000",
+            "rev": "3",
+            "state": "live"
+          },
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          },
+          {
+            "hash": "caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "1",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "30",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_bad_mac"
+    },
+    {
+      "id": "sync/memory_invalid/older_state_hidden_item",
+      "title": "an older state that hides an item is still refused",
+      "op": "sync.memory",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "action": "accept_older_state",
+        "checkpoint": {
+          "digest": "7a47714f87464001d2f8f462bd2d854af142b8d3772543382bb9099cdadfec8e",
+          "entries": "000000000000000000000000000000000000000000000003e4338d5c7ba146b7548f5d9d1fd4fc80635dd1be437505c96a38f9255e5c425f4142434445464748494a4b4c4d4e4f500000000000000002fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e42434445464748494a4b4c4d4e4f50510000000000000004caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737434445464748494a4b4c4d4e4f50515200000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "mac": "c4218ef533c5fd0a2267868b320cb0156c508b88f07701e62746dc6423f204bb",
+          "seq": "30"
+        },
+        "memory": "01000000000000003c0000000000000032000000050000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000442434445464748494a4b4c4d4e4f50510000000000000005434445464748494a4b4c4d4e4f50515200000000000000024445464748494a4b4c4d4e4f505152530000000000000001",
+        "rows": [
+          {
+            "hash": "fe2ebfa71b2e8fc69879fc18b5ec78fc95adb4f85aafa3c9777c7c7eccc7743e",
+            "item_id": "4142434445464748494a4b4c4d4e4f50",
+            "rev": "2",
+            "state": "live"
+          },
+          {
+            "hash": "caf43f6f36dbd2adc6bde41744e899e503844da3e4e8140e10317977fa293737",
+            "item_id": "42434445464748494a4b4c4d4e4f5051",
+            "rev": "4",
+            "state": "live"
+          },
+          {
+            "item_id": "434445464748494a4b4c4d4e4f505152",
+            "rev": "1",
+            "state": "deleted"
+          }
+        ],
+        "top_seq": "31",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "vk_epoch": "1"
+      },
+      "expect_error": "checkpoint_hidden_or_rolled_back"
+    }
+  ]
+}

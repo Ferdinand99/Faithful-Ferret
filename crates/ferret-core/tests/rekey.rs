@@ -813,12 +813,33 @@ fn rekey_new_checkpoint_verifies_under_new_k_head() {
     );
     assert_eq!(b.checkpoint.seq, BASE_SEQ);
     assert_eq!(b.checkpoint.entries.len(), 56 * (4 + 2 + 1));
-    verify_checkpoint(&b.vault, &b.checkpoint, &rows, BASE_SEQ).unwrap();
+    verify_checkpoint(
+        &b.vault,
+        &b.checkpoint,
+        &rows,
+        BASE_SEQ,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // After the rekey the server's seq is higher; the checkpoint still holds.
-    verify_checkpoint(&b.vault, &b.checkpoint, &rows, BASE_SEQ + 20).unwrap();
+    verify_checkpoint(
+        &b.vault,
+        &b.checkpoint,
+        &rows,
+        BASE_SEQ + 20,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // It is signed with the new K_head only.
     assert_eq!(
-        verify_checkpoint(&f.old, &b.checkpoint, &rows, BASE_SEQ).err(),
+        verify_checkpoint(
+            &f.old,
+            &b.checkpoint,
+            &rows,
+            BASE_SEQ,
+            ferret_core::RollbackMemory::NoMemory
+        )
+        .err(),
         Some(Error::Checkpoint(CheckpointFailure::BadMac))
     );
     // The old rows (the old state) are not what this checkpoint describes.
@@ -827,7 +848,16 @@ fn rekey_new_checkpoint_verifies_under_new_k_head() {
         .iter()
         .map(|(id, s)| ServerRow::live(&f.old, *id, s.rev, &s.envelope, &s.tag).unwrap())
         .collect();
-    assert!(verify_checkpoint(&b.vault, &b.checkpoint, &old_rows, BASE_SEQ + 1).is_err());
+    assert!(
+        verify_checkpoint(
+            &b.vault,
+            &b.checkpoint,
+            &old_rows,
+            BASE_SEQ + 1,
+            ferret_core::RollbackMemory::NoMemory
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -1092,4 +1122,19 @@ fn the_pinned_record_after_a_rekey_is_refused_for_a_bundle_that_does_not_fit() {
     b.wraps.push(recovery);
     b.wraps[0].method = Method::Recovery;
     assert_eq!(b.pinned(&old).err(), Some(Error::Unsupported));
+}
+
+#[test]
+fn rekey_refuses_a_password_wrap_below_the_pinned_profile() {
+    // The new wrap would lock this device out at its next unlock
+    // (`kdf_profile_downgrade`), so nothing is drawn and nothing is made.
+    let f = fixture();
+    let mut draws = ReplayRng::new(vec![]);
+    let mut i = inputs(&f);
+    i.pinned.ksf_profile = 2;
+    assert_eq!(
+        rekey_full(&f, &i, &mut draws, |_, _| {}).err(),
+        Some(Error::KdfProfileDowngrade)
+    );
+    assert_eq!(draws.remaining(), 0);
 }

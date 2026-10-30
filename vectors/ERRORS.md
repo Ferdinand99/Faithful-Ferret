@@ -21,6 +21,8 @@ share the single code `decrypt`, with no cause.
 | `input_forbidden_character` | Input contains a forbidden or unassigned character. |
 | `input_same_as_master_password` | The export password is equal to the master password. |
 | `input_secret_key_mismatch` | The secret key given to an account flow is not the one in the OPAQUE input, or only one of them has a secret key. |
+| `input_all_zero` | A PRF output, a `KEK_dev_pin` or a `K_exp` that was handed to the core is all zero bytes: a broken or wiped buffer, not a key. |
+| `input_last_method` | A request would remove the last `password` or the last `recovery` method of the vault. |
 | `malformed_envelope` | Item or manifest envelope is malformed. |
 | `malformed_cbor` | CBOR is malformed: syntax error, truncated input, bad UTF-8 or a reserved byte. |
 | `malformed_cbor_duplicate_key` | A CBOR map has the same key twice. |
@@ -56,6 +58,12 @@ share the single code `decrypt`, with no cause.
 | `checkpoint_live_behind_tombstone` | A live row is older than a tombstone. |
 | `checkpoint_seq_above_top` | The checkpoint sequence is above the server's top sequence. |
 | `checkpoint_top_digest_mismatch` | At the top sequence the recomputed digest differs. |
+| `checkpoint_top_seq_below_remembered` | The server's highest sequence is below the highest this device has seen. |
+| `checkpoint_seq_below_remembered` | The checkpoint's sequence is below the highest verified checkpoint this device remembers. |
+| `checkpoint_rev_below_remembered` | A row has a lower revision than the highest this device has seen for that item. |
+| `method_list_unknown` | The server lists an unlock method that the manifest does not list, or lists one id twice. |
+| `method_list_changed` | The server lists an unlock method of the manifest with another type or another generation. |
+| `method_list_missing` | The manifest lists an unlock method that the server does not list. |
 | `checksum` | Recovery or secret key checksum error. |
 | `non_canonical` | Recovery or secret key is valid but not in canonical form. |
 | `not_allowed` | Passkey: user verification missing, cancelled or no match (one value). |

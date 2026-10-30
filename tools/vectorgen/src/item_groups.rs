@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 
 pub(crate) mod export;
 pub(crate) mod integrity;
+pub(crate) mod methods;
+pub(crate) mod sync;
 
 // ------------------------------------------------------------ hand-made CBOR
 

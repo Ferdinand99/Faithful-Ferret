@@ -184,10 +184,10 @@ proptest! {
         let cp = make_checkpoint(&vault, seq, entries.clone()).unwrap();
         let good = rows(&entries);
         // The state itself passes, at the top and above it.
-        prop_assert!(verify_checkpoint(&vault, &cp, &good, seq).is_ok());
-        prop_assert!(verify_checkpoint(&vault, &cp, &good, seq + 1).is_ok());
+        prop_assert!(verify_checkpoint(&vault, &cp, &good, seq, ferret_core::RollbackMemory::NoMemory).is_ok());
+        prop_assert!(verify_checkpoint(&vault, &cp, &good, seq + 1, ferret_core::RollbackMemory::NoMemory).is_ok());
         prop_assert_eq!(
-            verify_checkpoint(&vault, &cp, &good, seq - 1),
+            verify_checkpoint(&vault, &cp, &good, seq - 1, ferret_core::RollbackMemory::NoMemory),
             Err(Error::Checkpoint(CheckpointFailure::SeqAboveTop))
         );
         let live: Vec<usize> = entries
@@ -204,7 +204,7 @@ proptest! {
         let mut hidden = good.clone();
         hidden.remove(i);
         prop_assert_eq!(
-            verify_checkpoint(&vault, &cp, &hidden, seq + 1),
+            verify_checkpoint(&vault, &cp, &hidden, seq + 1, ferret_core::RollbackMemory::NoMemory),
             Err(Error::Checkpoint(CheckpointFailure::HiddenOrRolledBack))
         );
         // A lower revision.
@@ -212,7 +212,7 @@ proptest! {
             let mut older = good.clone();
             older[i].rev -= 1;
             prop_assert_eq!(
-                verify_checkpoint(&vault, &cp, &older, seq + 1),
+                verify_checkpoint(&vault, &cp, &older, seq + 1, ferret_core::RollbackMemory::NoMemory),
                 Err(Error::Checkpoint(CheckpointFailure::LowerRev))
             );
         }
@@ -221,7 +221,7 @@ proptest! {
             let mut swapped = good.clone();
             swapped[i].state = RowState::Live { blob_sha256: other_hash };
             prop_assert_eq!(
-                verify_checkpoint(&vault, &cp, &swapped, seq + 1),
+                verify_checkpoint(&vault, &cp, &swapped, seq + 1, ferret_core::RollbackMemory::NoMemory),
                 Err(Error::Checkpoint(CheckpointFailure::SameRevDifferentHash))
             );
         }
@@ -229,9 +229,9 @@ proptest! {
         // the top is not.
         let mut newer = good.clone();
         newer[i].rev += 1;
-        prop_assert!(verify_checkpoint(&vault, &cp, &newer, seq + 1).is_ok());
+        prop_assert!(verify_checkpoint(&vault, &cp, &newer, seq + 1, ferret_core::RollbackMemory::NoMemory).is_ok());
         prop_assert_eq!(
-            verify_checkpoint(&vault, &cp, &newer, seq),
+            verify_checkpoint(&vault, &cp, &newer, seq, ferret_core::RollbackMemory::NoMemory),
             Err(Error::Checkpoint(CheckpointFailure::TopDigestMismatch))
         );
     }

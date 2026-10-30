@@ -480,6 +480,13 @@ impl ItemBody {
         self.schema > SCHEMA || self.from_future_schema
     }
 
+    /// Whether `to_value` returns the value this body was decoded from, as it
+    /// was: true for a body read from a schema above 1. Such a body is
+    /// read-only but can be exported without loss.
+    pub(crate) fn is_kept_verbatim(&self) -> bool {
+        self.from_future_schema && self.original.is_some()
+    }
+
     /// Reads a body from CBOR bytes.
     ///
     /// Fails with `Malformed(..)` if the bytes break the CBOR rules or, for

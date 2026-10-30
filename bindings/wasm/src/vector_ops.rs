@@ -34,19 +34,21 @@ use ferret_core::testing::text::{
 use ferret_core::testing::{ReplayRng, TestRng, hex_decode, hex_encode};
 use ferret_core::{
     AccountId, AuthOp, AuthPublicKey, CallerContext, Checkpoint, CheckpointEntry, CreateRequest,
-    Error, ExistingCredential, ExportItem, ExportKey, ExportPassword, GetRequest, ItemBody, ItemId,
-    KdfParams, Kek, KekDevPin, KsfProfile, Manifest, MasterPassword, Method, MethodId, MethodKey,
-    MpPolicy, MutationOp, PasskeyRecord, Pin, PinState, Pinned, PlainExportOptions, PrfOutput,
-    RecoveryKey, RecoveryPublicKey, RekeyInput, RekeyItem, RekeyTombstone, RowState, SecretKey,
-    ServerRow, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome, VaultContext, VaultId,
-    VaultKey, WrapRecord, auth_sign, canonical_origin, decode_recovery_key, decode_secret_key,
-    decrypt_item, decrypt_manifest, encode_recovery_key, encode_secret_key, encrypt_item,
-    encrypt_manifest, export_encrypt, export_plain_csv, export_plain_json, import_decrypt,
-    item_tag, make_checkpoint, make_tombstone, opaque_login_finish, opaque_login_start,
-    opaque_register_finish, opaque_register_start, parse_export_header, parse_otpauth,
-    passkey_create, passkey_get, prf_output, recovery_public_key, recovery_sign, totp_code,
-    totp_seconds_left, unwrap_vk, validate_rp_id, verify_auth_proof, verify_checkpoint,
-    verify_item_tag, verify_recovery_proof, verify_tombstone, wrap_vk,
+    CurrentManifest, Error, ExistingCredential, ExportItem, ExportKey, ExportPassword, GetRequest,
+    ItemBody, ItemId, KdfParams, Kek, KekDevPin, KsfProfile, Manifest, ManifestEntry,
+    MasterPassword, Method, MethodId, MethodKey, MpPolicy, MutationOp, PasskeyRecord, Pin,
+    PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey, RecoveryPublicKey, RekeyInput,
+    RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey, ServerMethod, ServerRow,
+    SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome, VaultContext, VaultId,
+    VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods, decode_recovery_key,
+    decode_secret_key, decrypt_item, decrypt_manifest, encode_recovery_key, encode_secret_key,
+    encrypt_item, encrypt_manifest, export_encrypt, export_plain_csv, export_plain_json,
+    import_decrypt, item_tag, make_checkpoint, make_tombstone, manifest_add_method,
+    manifest_remove_method, opaque_login_finish, opaque_login_start, opaque_register_finish,
+    opaque_register_start, parse_export_header, parse_otpauth, passkey_create, passkey_get,
+    prf_output, prf_salt_new, recovery_public_key, recovery_sign, totp_code, totp_seconds_left,
+    unwrap_vk, validate_rp_id, verify_auth_proof, verify_checkpoint, verify_item_tag,
+    verify_recovery_proof, verify_tombstone, wrap_vk,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -529,6 +531,149 @@ fn rows_of(entries: &[CheckpointEntry]) -> Vec<ServerRow> {
         .collect()
 }
 
+fn checkpoint_of(given: &Value) -> Checkpoint {
+    Checkpoint {
+        seq: u64s(&given["seq"]),
+        digest: hn(&given["digest"]),
+        mac: hn(&given["mac"]),
+        entries: hx(&given["entries"]),
+    }
+}
+
+/// The memory of the `sync.memory` op: a new record for `null`, otherwise
+/// the stored bytes.
+fn sync_memory_of(v: &Value) -> Result<SyncMemory, Error> {
+    match v {
+        Value::Null => Ok(SyncMemory::new()),
+        stored => SyncMemory::from_bytes(&hx(stored)),
+    }
+}
+
+fn sync_ops(i: &Value) -> Result<Value, Error> {
+    let mut memory = sync_memory_of(&i["memory"])?;
+    let action = i["action"].as_str().unwrap();
+    if action != "decode" {
+        let rows: Vec<ServerRow> = i["rows"].as_array().unwrap().iter().map(row_of).collect();
+        let top = u64s(&i["top_seq"]);
+        match action {
+            "accept_rows" => memory.accept_rows(&rows, top)?,
+            "verify_checkpoint" => {
+                let vault = vault_of(i);
+                let c = checkpoint_of(&i["checkpoint"]);
+                verify_checkpoint(
+                    &vault,
+                    &c,
+                    &rows,
+                    top,
+                    RollbackMemory::Remembered(&mut memory),
+                )?;
+            }
+            "accept_older_state" => {
+                let vault = vault_of(i);
+                let c = checkpoint_of(&i["checkpoint"]);
+                memory.accept_older_state(&vault, &c, &rows, top)?;
+            }
+            _ => return Err(Error::Unsupported),
+        }
+    }
+    Ok(json!({
+        "memory": he(&memory.to_bytes()),
+        "max_seq": memory.max_seq().to_string(),
+        "checkpoint_seq": memory.checkpoint_seq().to_string(),
+        "tracked": memory.tracked(),
+    }))
+}
+
+fn manifest_entry_of(v: &Value) -> ManifestEntry {
+    let ty = v["type"].as_u64().unwrap() as u8;
+    let id = MethodId::from_bytes(hn(&v["id"]));
+    let generation = u64s(&v["generation"]);
+    match v.get("credential_id") {
+        Some(c) => ManifestEntry::passkey(id, generation, hx(c)),
+        None => ManifestEntry::new(ty, id, generation),
+    }
+}
+
+fn manifest_row_json(s: &ferret_core::SealedItem) -> Value {
+    json!({ "rev": s.rev.to_string(), "envelope": he(&s.envelope), "tag": he(&s.tag) })
+}
+
+fn methods_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Error> {
+    if method == "prf_salt_new" {
+        return Ok(json!({ "salt": he(&prf_salt_new(rng)) }));
+    }
+    if method == "methods_check_server" {
+        let m = &i["manifest"];
+        let manifest = Manifest::new(
+            u64s(&m["vk_epoch"]),
+            m["methods"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(manifest_entry_of)
+                .collect(),
+        );
+        let server: Vec<ServerMethod> = i["server"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| ServerMethod {
+                method_type: s["method_type"].as_u64().unwrap() as u8,
+                method_id: MethodId::from_bytes(hn(&s["method_id"])),
+                kek_generation: u64s(&s["kek_generation"]),
+            })
+            .collect();
+        check_server_methods(&manifest, &server)?;
+        return Ok(json!({ "ok": true }));
+    }
+    let vault = vault_of(i);
+    let (rev, envelope, tag): (u64, Vec<u8>, [u8; 32]) = (
+        u64s(&i["current"]["rev"]),
+        hx(&i["current"]["envelope"]),
+        hn(&i["current"]["tag"]),
+    );
+    let current = CurrentManifest {
+        rev,
+        envelope: &envelope,
+        tag: &tag,
+    };
+    let change = if method == "methods_add" {
+        let w = &i["wrap"];
+        let method = match w["method_type"].as_u64().unwrap() {
+            3 => Method::Prf {
+                credential_id: hx(&w["credential_id"]),
+                prf_salt: hn(&w["prf_salt"]),
+            },
+            _ => Method::Recovery,
+        };
+        let wrap = WrapRecord {
+            method_id: MethodId::from_bytes(hn(&w["method_id"])),
+            kek_generation: u64s(&w["kek_generation"]),
+            method,
+            wrap: hx(&w["wrap"]),
+        };
+        manifest_add_method(rng, &vault, &current, wrap)?
+    } else {
+        manifest_remove_method(
+            rng,
+            &vault,
+            &current,
+            &MethodId::from_bytes(hn(&i["method_id"])),
+        )?
+    };
+    let mut out = json!({
+        "manifest": he(&change.manifest.to_cbor()?),
+        "sealed": manifest_row_json(&change.sealed),
+        "body": he(&change.body),
+    });
+    if let Some(sign) = i.get("sign") {
+        out["op"] = json!(change.op.name());
+        out["pk_a"] = json!(he(&change.pk_a));
+        out["proof"] = json!(he(&change.sign(&vault, &hn(&sign["nonce"]))?));
+    }
+    Ok(out)
+}
+
 fn integrity_ops(method: &str, i: &Value) -> Result<Value, Error> {
     Ok(match method {
         "checkpoint_make" => {
@@ -586,7 +731,13 @@ fn integrity_ops(method: &str, i: &Value) -> Result<Value, Error> {
                         .collect()
                 }
             };
-            verify_checkpoint(&vault, &c, &rows, u64s(&i["top_seq"]))?;
+            verify_checkpoint(
+                &vault,
+                &c,
+                &rows,
+                u64s(&i["top_seq"]),
+                ferret_core::RollbackMemory::NoMemory,
+            )?;
             json!({ "ok": true })
         }
         "proof_auth_sign" => {
@@ -1091,6 +1242,10 @@ fn dispatch(
         | "proof_auth_sign"
         | "proof_recovery_sign"
         | "proof_verify" => integrity_ops(method, i),
+        "sync_memory" => sync_ops(i),
+        "methods_check_server" | "methods_add" | "methods_remove" | "prf_salt_new" => {
+            methods_ops(method, i, rng)
+        }
         "vault_rekey" => rekey_run(i, rng),
         "export_encrypt" | "export_decrypt" | "export_header" | "export_plain_json"
         | "export_plain_csv" => export_ops(method, op, i, rng),

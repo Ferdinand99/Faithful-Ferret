@@ -163,7 +163,8 @@ export function parseManifest(bytes) {
     const id = need(m, 'id', isBytes, 'bytes');
     const g = need(m, 'g', uint, 'unsigned');
     const c = opt(m, 'c', isBytes, 'bytes');
-    if (t.v > 255n || t.v < 1n || t.v > 5n) bad('method type out of range');
+    // a type this version does not know is kept as it is (Fase 1 section 13), so the range is that of one byte
+    if (t.v > 255n || t.v < 1n) bad('method type out of range');
     if (id.v.length !== 16) bad('method id is not 16 bytes');
     list.push({ t: Number(t.v), id: id.v, g: g.v, c: c ? c.v : undefined });
   }

@@ -278,9 +278,25 @@ fn create_account_first_checkpoint_covers_the_manifest() {
         &a.manifest.tag,
     )
     .unwrap();
-    verify_checkpoint(&a.vault, &a.checkpoint, &[manifest_row], 1).unwrap();
+    verify_checkpoint(
+        &a.vault,
+        &a.checkpoint,
+        &[manifest_row],
+        1,
+        ferret_core::RollbackMemory::NoMemory,
+    )
+    .unwrap();
     // A server that hides the manifest is found at the top.
-    assert!(verify_checkpoint(&a.vault, &a.checkpoint, &[], 1).is_err());
+    assert!(
+        verify_checkpoint(
+            &a.vault,
+            &a.checkpoint,
+            &[],
+            1,
+            ferret_core::RollbackMemory::NoMemory
+        )
+        .is_err()
+    );
 }
 
 #[test]

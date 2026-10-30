@@ -140,7 +140,10 @@ each has a reason.
 - **Wiping is best effort.** Zeroisation is checked for the registered secret types and for the
   Argon2 memory. `UnlockedVault`, the password types, the TOTP secret and the item body types
   are not in that registry. Copies made by the host (garbage collection, swap) are out of
-  reach.
+  reach. Inside the core, a key that is moved by value (`UnlockedVault::from_vault_key`,
+  `open_vault_key`, the derivation helpers, the AEAD key schedule) can leave a copy in a
+  stack frame that the wipe helpers cannot reach; the finish results of `opaque-ke` are the
+  exception and are wiped in place.
 - **OPAQUE is checked only against the Rust implementation.** RFC 9807 and RFC 9497 vectors run
   in Rust, but the independent JavaScript reference does not implement OPAQUE, so the Ferret
   parameters (context, zero salt, 64-byte output, the input `password | 0x00 | secret key`)

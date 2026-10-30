@@ -19,7 +19,7 @@ use ferret_core::testing::prim::{ed25519_public_key, ed25519_sign};
 
 // ---------------------------------------------------------------- helpers
 
-fn rev_s(rev: u64) -> Value {
+pub(super) fn rev_s(rev: u64) -> Value {
     json!(rev.to_string())
 }
 
@@ -578,10 +578,10 @@ pub(crate) fn tomb_tag() -> Result<Vec<u8>, Error> {
 // ------------------------------------------------------------- checkpoints
 
 #[derive(Clone, Copy)]
-struct Ent {
-    id: [u8; 16],
-    rev: u64,
-    hash: Option<[u8; 32]>,
+pub(super) struct Ent {
+    pub(super) id: [u8; 16],
+    pub(super) rev: u64,
+    pub(super) hash: Option<[u8; 32]>,
 }
 
 impl Ent {
@@ -597,7 +597,7 @@ impl Ent {
 /// The `entries` bytes: sorted ascending by the raw bytes of `item_id`,
 /// `item_id ‖ u64be(rev) ‖ h` each. Written out here, not taken from the
 /// core.
-fn entries_bytes(list: &[Ent]) -> Vec<u8> {
+pub(super) fn entries_bytes(list: &[Ent]) -> Vec<u8> {
     let mut sorted = list.to_vec();
     sorted.sort_by_key(|e| e.id);
     let mut out = Vec::new();
@@ -617,14 +617,14 @@ fn cp_message(seq: u64, digest: &[u8; 32]) -> Vec<u8> {
     ])
 }
 
-struct Cp {
-    seq: u64,
-    entries: Vec<u8>,
-    digest: [u8; 32],
-    mac: [u8; 32],
+pub(super) struct Cp {
+    pub(super) seq: u64,
+    pub(super) entries: Vec<u8>,
+    pub(super) digest: [u8; 32],
+    pub(super) mac: [u8; 32],
 }
 
-fn make_cp(k_head: &[u8; 32], seq: u64, entries: Vec<u8>) -> Result<Cp, Error> {
+pub(super) fn make_cp(k_head: &[u8; 32], seq: u64, entries: Vec<u8>) -> Result<Cp, Error> {
     let digest = sha_raw(&[&entries]);
     let mac = hmac(k_head, &cp_message(seq, &digest))?;
     Ok(Cp {
@@ -663,15 +663,15 @@ fn generated(count: u32) -> Vec<Ent> {
 }
 
 #[derive(Clone, Copy)]
-struct Row {
-    id: [u8; 16],
-    rev: u64,
+pub(super) struct Row {
+    pub(super) id: [u8; 16],
+    pub(super) rev: u64,
     /// `None`: deleted.
-    hash: Option<[u8; 32]>,
+    pub(super) hash: Option<[u8; 32]>,
 }
 
 impl Row {
-    fn json(&self) -> Value {
+    pub(super) fn json(&self) -> Value {
         match &self.hash {
             Some(x) => json!({
                 "item_id": h(&self.id), "rev": rev_s(self.rev), "state": "live", "hash": h(x),
@@ -693,11 +693,11 @@ impl From<Ent> for Row {
     }
 }
 
-fn blob(tag: &str) -> [u8; 32] {
+pub(super) fn blob(tag: &str) -> [u8; 32] {
     sha_raw(&[b"ferret/checkpoint-vector/blob/", tag.as_bytes()])
 }
 
-fn cp_json(cp: &Cp) -> Value {
+pub(super) fn cp_json(cp: &Cp) -> Value {
     json!({
         "seq": cp.seq.to_string(),
         "digest": h(&cp.digest),

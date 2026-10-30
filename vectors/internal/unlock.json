@@ -362,6 +362,30 @@
       "expect_error": null
     },
     {
+      "id": "unlock/prf_zero_salt/001",
+      "title": "a passkey wrap with an all-zero PRF salt in the record",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "569a9f5b97fd23383c039007f2bdafdb362ed9d182d7b0094371af6a94a2d9ad",
+        "kek_generation": "1",
+        "method": {
+          "credential_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+          "prf_salt": "0000000000000000000000000000000000000000000000000000000000000000",
+          "type": "prf"
+        },
+        "method_id": "75767778797a7b7c7d7e7f8081828384",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "fab883799183f5cf6dee2ecdd22eb78b9ea3e6d257f9c0d41caae1765b7f6155606880104d447479e0ec0c93d13f75f73db5634b51a2b0899071a1e269b4240c756b4ffff3a6776c"
+      },
+      "expect_error": "decrypt"
+    },
+    {
       "id": "unlock/aad_account_password/001",
       "title": "password: another account",
       "op": "wrap.open",

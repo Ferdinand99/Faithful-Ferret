@@ -66,6 +66,8 @@ const GROUPS: &[Group] = &[
     ),
     ("internal/proofs.json", item_groups::integrity::proofs),
     ("internal/rekey.json", item_groups::integrity::rekey),
+    ("internal/methods.json", item_groups::methods::methods),
+    ("internal/sync.json", item_groups::sync::sync),
     ("internal/export.json", item_groups::export::export),
     ("internal/opaque.json", opaque_groups::opaque),
     ("internal/totp.json", totp_groups::totp),

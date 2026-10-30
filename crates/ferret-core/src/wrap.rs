@@ -15,7 +15,7 @@
 //! [`unwrap_vk`] compares it in constant time **before** the AEAD is opened.
 //! Every failure of [`unwrap_vk`] is the single [`Error::Decrypt`].
 
-use crate::error::Error;
+use crate::error::{Error, InputError};
 use crate::ids::MethodId;
 use crate::keys::{UnlockedVault, VaultContext};
 use crate::ksf_profile::KsfProfile;
@@ -169,10 +169,16 @@ pub(crate) fn wrap_aad(
         Method::Prf {
             credential_id,
             prf_salt,
-        } => aad
-            .bytes(tag::CREDENTIAL_ID, credential_id)?
-            .bytes(tag::PRF_SALT, prf_salt)?
-            .finish(),
+        } => {
+            // The salt is public and random per registration (Fase 1 § 7.2,
+            // F-11); all zero is a missing salt, never a random one.
+            if prf_salt.iter().all(|b| *b == 0) {
+                return Err(Error::InvalidInput(InputError::AllZero));
+            }
+            aad.bytes(tag::CREDENTIAL_ID, credential_id)?
+                .bytes(tag::PRF_SALT, prf_salt)?
+                .finish()
+        }
         Method::Recovery | Method::Device => aad.finish(),
         // Handled above; kept explicit so a new method cannot fall through.
         Method::Pin { .. } => Err(Error::Unsupported),
@@ -190,10 +196,24 @@ pub(crate) fn commit_of(kek: &Kek) -> Result<[u8; COMMIT_LEN], Error> {
     Ok(out)
 }
 
+/// A fresh PRF salt for one passkey registration: 32 random bytes from
+/// `rng` (one draw). Every registration needs its own; the salt is public
+/// and stored with the wrap. A salt that is all zero is refused by
+/// [`wrap_vk`] and by the unlock.
+///
+/// Spec: Fase 1 § 7.2 (F-11: the PRF salt is 32 random bytes per
+/// registration).
+pub fn prf_salt_new<R: SecureRng>(rng: &mut R) -> [u8; 32] {
+    let mut salt = [0u8; 32];
+    rng.fill(&mut salt);
+    salt
+}
+
 /// Wraps `vk` under `kek` for one unlock method.
 ///
 /// Draws the 24-byte nonce from `rng` in one call (the only draw). The
 /// result is 104 bytes for `password` and `pin`, 72 bytes for the others.
+/// A `prf` method with an all-zero salt is `input_all_zero`.
 ///
 /// Spec: Fase 1 § 4.3, § 5.4 and § 7.2.
 pub fn wrap_vk<R: SecureRng>(

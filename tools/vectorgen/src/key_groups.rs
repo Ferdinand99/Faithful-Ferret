@@ -668,7 +668,23 @@ fn sealed_wraps() -> Result<Vec<Sealed>, Error> {
 }
 
 pub(crate) fn wrap() -> Result<Vec<u8>, Error> {
-    let cases = sealed_wraps()?.into_iter().map(|s| s.case).collect();
+    let sealed = sealed_wraps()?;
+    let mut cases: Vec<Case> = sealed.iter().map(|s| s.case.clone()).collect();
+    // The PRF salt is 32 random bytes per registration: all zero is refused.
+    let prf = sealed
+        .iter()
+        .find(|s| s.case.id == "wrap/prf/valid/001")
+        .ok_or("missing wrap/prf/valid/001")?;
+    let mut input = prf.case.input.clone();
+    input["prf_salt"] = h(&[0u8; 32]);
+    cases.push(invalid_case(
+        "wrap/prf/invalid/001",
+        "a passkey wrap with an all-zero PRF salt is refused",
+        "wrap.seal.prf",
+        vec![],
+        input,
+        "input_all_zero",
+    ));
     render(&VectorFile {
         format: FORMAT.into(),
         group: "wrap".into(),
@@ -744,6 +760,17 @@ pub(crate) fn unlock() -> Result<Vec<u8>, Error> {
             "decrypt",
         ));
     };
+
+    // A passkey wrap whose record has an all-zero PRF salt does not open.
+    let mut zero_salt = prf.w.clone();
+    if let M::Prf(cred, _) = &prf.w.m {
+        zero_salt.m = M::Prf(cred.clone(), [0; 32]);
+    }
+    bad(
+        "prf_zero_salt",
+        "a passkey wrap with an all-zero PRF salt in the record",
+        open_input(&zero_salt, &prf.kek, &prf.wrap),
+    );
 
     // One AAD field changed at a time (the wrap itself is untouched).
     for (name, s) in [

@@ -25,6 +25,13 @@ pub enum InputError {
     /// The secret key handed to an account flow is not the one in the OPAQUE
     /// input (or one is there and the other is not).
     SecretKeyMismatch,
+    /// A key that came from outside the core is all zero bytes: no real
+    /// authenticator, keystore or KDF returns that, so it is a broken or
+    /// wiped buffer, never a key.
+    AllZero,
+    /// A request would remove the last `password` or the last `recovery`
+    /// method of the vault (Fase 1 § 4.3: at least one of each must stay).
+    LastMethod,
 }
 
 /// Which structure was malformed.
@@ -114,6 +121,29 @@ pub enum CheckpointFailure {
     SeqAboveTop,
     /// At the top `seq` the recomputed digest differs.
     TopDigestMismatch,
+    /// The server's highest `seq` is below the highest this device has seen
+    /// (Fase 1 § 8.6, "Lokalt minne").
+    RememberedTopSeq,
+    /// The checkpoint's `seq` is below the highest verified checkpoint this
+    /// device remembers.
+    RememberedCheckpointSeq,
+    /// A row has a lower `rev` than the highest this device has seen for the
+    /// item.
+    RememberedRev,
+}
+
+/// Why the server's list of unlock methods does not match the manifest.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodListFailure {
+    /// The server lists a method that the manifest does not (or lists one
+    /// id twice).
+    Unknown,
+    /// The server lists a method of the manifest with another type or
+    /// another `kek_generation`.
+    Changed,
+    /// The manifest lists a method that the server does not.
+    Missing,
 }
 
 /// Which pinned value a server or record contradicted. Spec: Fase 1 § 4.2
@@ -168,6 +198,8 @@ pub enum Error {
     TombstoneInvalid,
     /// Checkpoint verification failed.
     Checkpoint(CheckpointFailure),
+    /// The server's list of unlock methods does not match the manifest.
+    MethodList(MethodListFailure),
     /// Recovery or secret key checksum error.
     Checksum,
     /// Recovery or secret key is valid but not in canonical form.
@@ -199,6 +231,8 @@ impl Error {
         Error::InvalidInput(InputError::ForbiddenCharacter),
         Error::InvalidInput(InputError::SameAsMasterPassword),
         Error::InvalidInput(InputError::SecretKeyMismatch),
+        Error::InvalidInput(InputError::AllZero),
+        Error::InvalidInput(InputError::LastMethod),
         Error::Malformed(MalformedKind::Envelope),
         Error::Malformed(MalformedKind::Cbor),
         Error::Malformed(MalformedKind::CborDuplicateKey),
@@ -234,6 +268,12 @@ impl Error {
         Error::Checkpoint(CheckpointFailure::LiveBehindTombstone),
         Error::Checkpoint(CheckpointFailure::SeqAboveTop),
         Error::Checkpoint(CheckpointFailure::TopDigestMismatch),
+        Error::Checkpoint(CheckpointFailure::RememberedTopSeq),
+        Error::Checkpoint(CheckpointFailure::RememberedCheckpointSeq),
+        Error::Checkpoint(CheckpointFailure::RememberedRev),
+        Error::MethodList(MethodListFailure::Unknown),
+        Error::MethodList(MethodListFailure::Changed),
+        Error::MethodList(MethodListFailure::Missing),
         Error::Checksum,
         Error::NonCanonical,
         Error::NotAllowed,
@@ -264,6 +304,8 @@ impl Error {
                 InputError::ForbiddenCharacter => "input_forbidden_character",
                 InputError::SameAsMasterPassword => "input_same_as_master_password",
                 InputError::SecretKeyMismatch => "input_secret_key_mismatch",
+                InputError::AllZero => "input_all_zero",
+                InputError::LastMethod => "input_last_method",
             },
             Error::Malformed(kind) => match kind {
                 MalformedKind::Envelope => "malformed_envelope",
@@ -303,6 +345,14 @@ impl Error {
                 CheckpointFailure::LiveBehindTombstone => "checkpoint_live_behind_tombstone",
                 CheckpointFailure::SeqAboveTop => "checkpoint_seq_above_top",
                 CheckpointFailure::TopDigestMismatch => "checkpoint_top_digest_mismatch",
+                CheckpointFailure::RememberedTopSeq => "checkpoint_top_seq_below_remembered",
+                CheckpointFailure::RememberedCheckpointSeq => "checkpoint_seq_below_remembered",
+                CheckpointFailure::RememberedRev => "checkpoint_rev_below_remembered",
+            },
+            Error::MethodList(kind) => match kind {
+                MethodListFailure::Unknown => "method_list_unknown",
+                MethodListFailure::Changed => "method_list_changed",
+                MethodListFailure::Missing => "method_list_missing",
             },
             Error::Checksum => "checksum",
             Error::NonCanonical => "non_canonical",

@@ -366,3 +366,10 @@ pub fn rfc_login<R: SecureRng>(
         server_public_key: done.server_public_key,
     })
 }
+
+/// Runs the guard that wipes `opaque-ke`'s key arrays in place and ends its
+/// scope, so a test can see that the borrowed bytes are zero afterwards.
+pub fn wipe_on_drop_probe(bytes: &mut [u8]) {
+    let guard = client::WipeOnDrop(bytes);
+    drop(guard);
+}
