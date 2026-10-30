@@ -326,7 +326,10 @@ impl StatePlain {
         let [ksf_profile] = *take::<1>(&mut rest).ok_or(invalid)?;
         let login = take::<SERVER_LOGIN_LEN>(&mut rest).ok_or(invalid)?;
         let purpose = match (code, flag) {
-            (PURPOSE_LOGIN, 0) if binding == [0u8; BINDING_LEN] => Some(LoginPurpose::Login),
+            // The binding holds the session of a re-authentication in the
+            // other case: even in a plaintext that the AEAD has accepted it
+            // is not compared with a plain `==`.
+            (PURPOSE_LOGIN, 0) if ct_eq(&binding, &[0u8; BINDING_LEN]) => Some(LoginPurpose::Login),
             (PURPOSE_REAUTH, 1) => {
                 let (session, account) = binding.split_at(32);
                 let mut s = [0u8; 32];
