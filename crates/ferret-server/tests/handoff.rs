@@ -983,7 +983,10 @@ async fn a_session_keeps_only_its_newest_waiting_codes() {
     }
     assert_eq!(count(&app, "ferret_handoffs").await, 8);
     // The oldest two were pushed out; the newest works.
+    let verifier = app.jar(Which::Admin);
     assert_eq!(redeem(&app, &codes[0]).await.json(), invalid());
+    // (The refused redeem took the verifier out of the browser; put it back.)
+    app.set_jar(Which::Admin, verifier);
     assert_eq!(redeem(&app, &codes[9]).await.status, StatusCode::OK);
 }
 
@@ -1348,4 +1351,92 @@ async fn code_never_appears_in_a_request_line_a_referer_or_the_log() {
     for secret in &secrets {
         assert!(!log.contains(secret.as_str()), "the log holds {secret}");
     }
+}
+
+#[tokio::test]
+async fn a_refused_redeem_removes_the_verifier() {
+    let (app, _user, _vault) = signed_in().await;
+    let remove_cookie = |res: &support::Res| {
+        let cookie = set_cookie(res, HANDOFF_COOKIE).expect("the verifier is removed");
+        assert!(
+            cookie.starts_with(&format!("{HANDOFF_COOKIE}=;")) || cookie.contains("Max-Age=0"),
+            "{cookie}"
+        );
+        assert!(
+            cookie.contains("Secure") && cookie.contains("HttpOnly"),
+            "{cookie}"
+        );
+    };
+
+    // A wrong code, a code of the wrong shape, a wrong verifier: each one
+    // takes the verifier out of the browser.
+    let begun = begin(&app, "next=%2F").await;
+    assert!(app.jar(Which::Admin).get(HANDOFF_COOKIE).is_some());
+    let res = redeem(&app, &URL_SAFE_NO_PAD.encode([5u8; 32])).await;
+    assert_eq!(res.json(), invalid());
+    remove_cookie(&res);
+    assert!(app.jar(Which::Admin).get(HANDOFF_COOKIE).is_none());
+
+    begin(&app, "next=%2F").await;
+    let res = redeem(&app, "short").await;
+    assert_eq!(res.json(), invalid());
+    remove_cookie(&res);
+    assert!(app.jar(Which::Admin).get(HANDOFF_COOKIE).is_none());
+
+    // The code of the first begin with the verifier of another begin.
+    let code = code_of(&mint(&app, "login", "/", &begun.challenge).await);
+    begin(&app, "next=%2F").await;
+    let res = redeem(&app, &code).await;
+    assert_eq!(res.json(), invalid());
+    remove_cookie(&res);
+    assert!(app.jar(Which::Admin).get(HANDOFF_COOKIE).is_none());
+    assert!(app.jar(Which::Admin).get(SID_COOKIE).is_none());
+}
+
+#[tokio::test]
+async fn an_error_reading_the_presented_admin_session_is_an_error_and_uses_nothing_up() {
+    let app = TestApp::new().await;
+    // User 2 has an admin session in this browser; user 1 hands over.
+    let (_second, _vault2) = admin_user(&app, 2).await;
+    let first = seed(&app, 1).await;
+    vault_session(&app, first.user_id, 1).await;
+    let begun = begin(&app, "next=%2F").await;
+    let code = code_of(&mint(&app, "login", "/", &begun.challenge).await);
+
+    // Break the read of session rows, so that finding out who is signed in on
+    // the admin origin fails with a database error and not with "nobody".
+    db(&app, |c| {
+        c.execute_batch("ALTER TABLE ferret_sessions RENAME COLUMN last_seen TO last_seen_x")
+    })
+    .await;
+    let res = redeem(&app, &code).await;
+    assert_eq!(
+        res.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        res.text()
+    );
+    assert_eq!(res.json(), json!({ "error": "internal" }));
+    assert!(set_cookie(&res, SID_COOKIE).is_none());
+    // Nothing was used up: the code is still there.
+    assert_eq!(count(&app, "ferret_handoffs").await, 1);
+
+    // With the table whole again, the rule that another user's admin session is
+    // never replaced still holds.
+    db(&app, |c| {
+        c.execute_batch("ALTER TABLE ferret_sessions RENAME COLUMN last_seen_x TO last_seen")
+    })
+    .await;
+    let res = redeem(&app, &code).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(res.json(), invalid());
+    let first_admin_rows = db(&app, move |c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM ferret_sessions WHERE origin = 'admin' AND user_id = ?1",
+            [first.user_id],
+            |r| r.get::<_, i64>(0),
+        )
+    })
+    .await;
+    assert_eq!(first_admin_rows, 0);
 }

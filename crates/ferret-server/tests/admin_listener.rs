@@ -203,11 +203,37 @@ async fn the_redirect_stubs_start_the_handoff_and_keep_nothing_unclean() {
         assert_eq!(res.header("location"), expected, "{path}");
     }
     // The kit's setup link, with a setup token, goes to the vault origin's
-    // setup page with the query; nothing is signed in by it.
+    // setup page with the token in the fragment; nothing is signed in by it.
     let res = get(&app, "/vault/setup?token=abc").await;
     assert_eq!(
         res.header("location"),
-        format!("{VAULT_URL}/vault/setup?token=abc")
+        format!("{VAULT_URL}/vault/setup#token=abc")
+    );
+    // Only the token goes along, and only a well formed one: not another
+    // parameter (a challenge, a next), not a token with odd characters.
+    for (query, expected) in [
+        (
+            "token=0a1b2c&handoff=1&challenge=xyz&next=%2Fx",
+            "/vault/setup#token=0a1b2c",
+        ),
+        ("other=1", "/vault/setup"),
+        ("token=", "/vault/setup"),
+        ("token=a%20b", "/vault/setup"),
+        ("token=a%23b%26c", "/vault/setup"),
+        ("token=%3Cscript%3E", "/vault/setup"),
+        ("token=a/b", "/vault/setup"),
+    ] {
+        let res = get(&app, &format!("/vault/setup?{query}")).await;
+        assert_eq!(
+            res.header("location"),
+            format!("{VAULT_URL}{expected}"),
+            "{query}"
+        );
+    }
+    let long = format!("/vault/setup?token={}", "a".repeat(129));
+    assert_eq!(
+        get(&app, &long).await.header("location"),
+        format!("{VAULT_URL}/vault/setup")
     );
     let res = get(&app, "/vault/setup").await;
     assert_eq!(res.header("location"), format!("{VAULT_URL}/vault/setup"));

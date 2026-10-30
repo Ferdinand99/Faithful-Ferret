@@ -6,8 +6,8 @@
 //! * `/vault/reauth`: a fresh check of the password for the open admin session
 //!   (`reauth`).
 //! * `/vault/setup`: the first administrator is made on the vault origin, so
-//!   this goes straight there and keeps the query (the setup token a start-up
-//!   message links with). Nothing is signed in by it.
+//!   this goes straight there and keeps only the setup token (a start-up
+//!   message links with it), moved into the fragment. Nothing is signed in by it.
 //!
 //! `next`, where the browser should end up on the admin origin, is cleaned
 //! with `auth::handoff::sanitize_next` here and again by `begin`.
@@ -47,9 +47,25 @@ async fn reauth(RawQuery(query): RawQuery) -> Redirect {
     Redirect::to(&begin_location(query.as_deref(), true))
 }
 
+/// The setup token of a query, if it is well formed: 1 to 128 characters of
+/// letters, digits and `.`, `_`, `~`, `-` (what a token made by the kit or typed
+/// by an operator looks like). Anything else is no token.
+pub fn setup_token(raw: Option<&str>) -> Option<String> {
+    let token = query_param(raw, "token")?;
+    let well_formed = (1..=128).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'-'));
+    well_formed.then_some(token)
+}
+
+/// Sends the browser to the vault origin's setup page. Only the setup token
+/// goes along, and in the fragment, so it is not in the vault origin's request
+/// line or logs; the page reads it, removes it from the address and sends it in
+/// its request body. Every other parameter is dropped.
 async fn setup(State(origins): State<Origins>, RawQuery(query): RawQuery) -> Redirect {
-    let target = match query.filter(|q| !q.is_empty()) {
-        Some(q) => format!("{}/vault/setup?{q}", origins.vault()),
+    let target = match setup_token(query.as_deref()) {
+        Some(token) => format!("{}/vault/setup#token={token}", origins.vault()),
         None => format!("{}/vault/setup", origins.vault()),
     };
     Redirect::to(&target)
@@ -95,6 +111,31 @@ mod tests {
             );
         }
         assert_eq!(begin_location(None, false), "/auth/handoff/begin?next=%2F");
+    }
+
+    #[test]
+    fn only_a_well_formed_setup_token_is_kept() {
+        assert_eq!(setup_token(Some("token=abc")).as_deref(), Some("abc"));
+        assert_eq!(
+            setup_token(Some("x=1&token=0a1B.c_d~e-f&y=2")).as_deref(),
+            Some("0a1B.c_d~e-f")
+        );
+        let long = format!("token={}", "a".repeat(129));
+        for raw in [
+            "",
+            "token=",
+            "token=a%20b",
+            "token=a%23b",
+            "token=a/b",
+            "token=a%0Ab",
+            "token=%3Cscript%3E",
+            long.as_str(),
+            "other=abc",
+        ] {
+            assert_eq!(setup_token(Some(raw)), None, "{raw}");
+        }
+        assert_eq!(setup_token(None), None);
+        assert!(setup_token(Some(&format!("token={}", "a".repeat(128)))).is_some());
     }
 
     #[test]

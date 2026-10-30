@@ -56,7 +56,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ferret_core::{OsRng, SecureRng as _};
 use ferret_server_auth::{Clock, SessionScope};
-use rusqlite::{Connection, OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 use vole_kit::auth::reauth;
 use vole_kit::auth::session::{SessionClaims, sanitize_next as kit_sanitize_next};
@@ -279,7 +279,7 @@ fn fixed32(bytes: Vec<u8>, index: usize) -> rusqlite::Result<[u8; 32]> {
 /// Deletes the row of `code_hash` and returns it. The delete is committed
 /// before anything is checked: a code is used up by its first attempt.
 fn take(conn: &mut Connection, code_hash: &[u8; 32]) -> Result<Option<TakenHandoff>, StoreError> {
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let taken = tx
         .query_row(
             "DELETE FROM ferret_handoffs WHERE code_hash = ?1
@@ -349,7 +349,9 @@ fn open_admin_session(
     presented: Option<&Presented>,
     now: i64,
 ) -> Result<Result<Granted, Refusal>, StoreError> {
-    let tx = conn.transaction()?;
+    // Immediate: the check of the parent and the insert of the child are one
+    // write transaction, so a sign-out of the vault cannot slip in between.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // The vault session the code was made from must be valid in every respect.
     let Some(parent) = lookup(&tx, &taken.sid)? else {
         return Ok(Err(Refusal::ParentInvalid));
@@ -416,19 +418,29 @@ fn open_admin_session(
 /// session, if every check holds. See the module documentation.
 async fn redeem(State(state): State<FerretState>, request: Request) -> Result<Response, ApiError> {
     let (mut parts, body) = request.into_parts();
-    let presented = AdminSession::from_request_parts(&mut parts, &state)
-        .await
-        .ok()
-        .map(|session| Presented {
+    // No admin session in the request is `None`; a failure to find out is an
+    // error (the "never replace another user's session" rule must not be
+    // skipped because the database did not answer).
+    let presented = match AdminSession::from_request_parts(&mut parts, &state).await {
+        Ok(session) => Some(Presented {
             sid: session.sid,
             user_id: session.user_id,
-        });
+        }),
+        Err(error) if error == ApiError::unauthorized() => None,
+        Err(error) => return Err(error),
+    };
     let headers = parts.headers.clone();
     let ApiJson(req) =
         ApiJson::<RedeemReq>::from_request(Request::from_parts(parts, body), &state).await?;
-    let invalid = || ApiError::coded("handoff_invalid");
+    // A refusal also removes the verifier: it is good for one attempt.
+    let invalid = || {
+        let verifier = CookieJar::from_headers(&headers).remove(removal(product::HANDOFF_COOKIE));
+        (verifier, ApiError::coded("handoff_invalid")).into_response()
+    };
 
-    let code = parse_handoff_code(&req.code).map_err(|_| invalid())?;
+    let Ok(code) = parse_handoff_code(&req.code) else {
+        return Ok(invalid());
+    };
     // The verifier of the browser, as a hash. A cookie that is not a verifier
     // is no verifier.
     let verifier_hash = CookieJar::from_headers(&headers)
@@ -438,7 +450,7 @@ async fn redeem(State(state): State<FerretState>, request: Request) -> Result<Re
     let now = i64::try_from(state.clock.now_unix()).map_err(|_| ApiError::internal())?;
     let hash = sha256_32(&code);
 
-    let granted = state
+    let granted = match state
         .vault_db
         .with_conn(move |conn| {
             let Some(taken) = take(conn, &hash)? else {
@@ -453,10 +465,13 @@ async fn redeem(State(state): State<FerretState>, request: Request) -> Result<Re
             open_admin_session(conn, taken, presented.as_ref(), now)
         })
         .await?
-        .map_err(|reason| {
+    {
+        Ok(granted) => granted,
+        Err(reason) => {
             tracing::info!(?reason, "hand-over refused");
-            invalid()
-        })?;
+            return Ok(invalid());
+        }
+    };
 
     let key = state.core.session_key.clone();
     let secure = state.origins.admin_is_https();
