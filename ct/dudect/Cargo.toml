@@ -31,10 +31,14 @@ required-features = ["bench"]
 default = []
 # The native bench: `dudect-bencher` and its command line. Off for the
 # WebAssembly build, which has no use for either.
-bench = ["dep:dudect-bencher"]
+bench = ["dep:dudect-bencher", "server"]
+# The timing tests of the OPAQUE server library (ferret-server-auth). Native
+# only: the library is not part of the WebAssembly build.
+server = ["dep:ferret-server-auth"]
 
 [dependencies]
 ferret-core = { path = "../../crates/ferret-core", features = ["test-support"] }
+ferret-server-auth = { path = "../../crates/ferret-server-auth", features = ["test-support"], optional = true }
 # The harness files ct_eq.rs and ct_select.rs are included here and need `subtle`.
 subtle = "=2.6.1"
 # Statistics (Welch's t-test with percentile cropping) as in the dudect paper.

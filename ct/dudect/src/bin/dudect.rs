@@ -108,6 +108,28 @@ fn control_leaky(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "control_leaky");
 }
 
+fn server_login_start_known_vs_unknown(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "server_login_start_known_vs_unknown");
+}
+fn server_login_start_known_vs_disabled(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "server_login_start_known_vs_disabled");
+}
+fn server_prelogin_known_vs_unknown(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "server_prelogin_known_vs_unknown");
+}
+fn info_server_prelogin_resolve_credential(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_server_prelogin_resolve_credential");
+}
+fn server_state_binding(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "server_state_binding");
+}
+fn server_finish_credential_vs_account(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "server_finish_credential_vs_account");
+}
+fn info_server_finish_state_vs_missing(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_server_finish_state_vs_missing");
+}
+
 ctbench_main!(
     commit_check,
     mac_verify,
@@ -126,5 +148,12 @@ ctbench_main!(
     info_base32_random_pair,
     control_null,
     control_leaky,
-    control_unpad_leaky
+    control_unpad_leaky,
+    server_login_start_known_vs_unknown,
+    server_login_start_known_vs_disabled,
+    server_prelogin_known_vs_unknown,
+    info_server_prelogin_resolve_credential,
+    server_state_binding,
+    server_finish_credential_vs_account,
+    info_server_finish_state_vs_missing
 );

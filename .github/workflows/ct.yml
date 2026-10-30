@@ -43,6 +43,7 @@ on:
     paths:
       - "ct/**"
       - "crates/ferret-core/**"
+      - "crates/ferret-server-auth/**"
       - "bindings/wasm/**"
       - "scripts/lanbox-ct.sh"
       - "scripts/build-wasm.sh"

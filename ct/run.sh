@@ -353,7 +353,7 @@ dudect_native() {
     echo "rustc: $(rustc --version)"
     echo "load: $(cat /proc/loadavg)"
   } | tee -a "$out"
-  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair"
+  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
   local failed=0 invalid=0 grossfail=0 name rep
   for name in $names; do
     if [ -n "${CT_ONLY:-}" ] && [[ "$name" != *"$CT_ONLY"* ]]; then continue; fi

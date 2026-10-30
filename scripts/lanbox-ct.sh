@@ -17,7 +17,9 @@
 # After a dudect run the script writes ct/results/dudect-lanbox.md, the decisive
 # result with date, commit, host and every t-value, which is the one file of
 # ct/results/ that is committed. Run it again before a release and commit the
-# new file.
+# new file. With CT_ONLY set the file is ct/results/dudect-lanbox-<CT_ONLY>.md
+# instead (for example CT_ONLY=server for the benches of the server library),
+# so a partial run never replaces the complete one.
 #
 # Environment:
 #   FERRET_CT_N     measurements per dudect bench (default 1000000; a bench over 4.5
@@ -57,11 +59,17 @@ rc=0
 scripts/lanbox.sh --exec ct/run.sh "$mode" || rc=$?
 
 # The decisive result, in a file that is committed.
+result_file="ct/results/dudect-lanbox.md"
+if [ -n "$CT_ONLY" ]; then result_file="ct/results/dudect-lanbox-$CT_ONLY.md"; fi
 if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; then
   commit="$(git rev-parse HEAD)"
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then commit="$commit (with uncommitted changes)"; fi
   {
-    echo "# Decisive dudect run on the LANBox"
+    if [ -n "$CT_ONLY" ]; then
+      echo "# Dudect run on the LANBox: only the benches with \"$CT_ONLY\" in the name"
+    else
+      echo "# Decisive dudect run on the LANBox"
+    fi
     echo
     echo "Written by \`scripts/lanbox-ct.sh $mode\` ($(date -u +%FT%TZ)). The limit is"
     echo "|t| < 4.5 after 10^6 measurements, a bench over 4.5 measured again with 10^7. Every"
@@ -70,6 +78,7 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
     echo "- commit: \`$commit\`"
     echo "- exit status of the run: $rc"
     echo "- measurements per bench: $FERRET_CT_N"
+    if [ "$CT_REPEAT" != 1 ]; then echo "- every selected bench measured $CT_REPEAT times"; fi
     echo
     for f in dudect-native dudect-wasm; do
       [ -f "ct/results/$f.txt" ] || continue
@@ -81,7 +90,7 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
       echo '```'
       echo
     done
-  } > ct/results/dudect-lanbox.md
-  echo "wrote ct/results/dudect-lanbox.md" >&2
+  } > "$result_file"
+  echo "wrote $result_file" >&2
 fi
 exit "$rc"
