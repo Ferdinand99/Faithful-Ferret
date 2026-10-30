@@ -19,6 +19,20 @@
 //! * Every refusal is the same error, `Malformed(LoginName)`. It depends on
 //!   the bytes of the name alone: no account, no secret and no stored state
 //!   takes part in the decision.
+//!
+//! # Tables
+//!
+//! The result of the normalisation depends on the Unicode tables of two
+//! parts: `unicode-normalization` (pinned, Unicode 16.0) for NFKC, and the
+//! standard library of the compiler for the lower-casing. A name that is
+//! stored in its normalized form is only found again while both give the
+//! same text. The tests pin the table version and a set of fixed results, so
+//! a bump of the crate or of the toolchain that changes a result fails the
+//! build; the stored names would then need a migration first.
+//!
+//! The lower-casing is `str::to_lowercase`: locale-free (a Turkish `I` is `i`
+//! and `İ` becomes `i` with a combining dot), and plain lower-casing, not case
+//! folding, so `ß` and `ss`, or `ς` and `σ`, stay different names.
 
 use core::fmt;
 
@@ -28,7 +42,7 @@ use crate::error::{AuthError, Malformed};
 
 /// The longest login name, in bytes, after normalization.
 ///
-/// Claudes valg: the limit of an e-mail address (RFC 5321, 254 octets).
+/// This is the limit of an e-mail address (RFC 5321, 254 octets).
 pub const LOGIN_NAME_MAX_BYTES: usize = 254;
 
 /// The longest input that is looked at, in bytes, before normalization. NFKC
@@ -62,6 +76,26 @@ impl fmt::Debug for NormalizedLoginName {
     }
 }
 
+/// Format and separator characters that show nothing: soft hyphen, Arabic
+/// letter mark, Mongolian vowel separator, the zero-width and directional marks,
+/// line and paragraph separators, word joiner and invisible operators, the
+/// directional isolates, the byte order mark and the interlinear annotation
+/// marks. (The other `Cf` characters are not used in names.)
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+    )
+}
+
 /// One round: NFKC, lower case, NFKC, trim.
 fn round(text: &str) -> String {
     let folded: String = text.nfkc().collect::<String>().to_lowercase();
@@ -71,8 +105,11 @@ fn round(text: &str) -> String {
 /// Brings a login name into the one form used for lookups and for made-up
 /// credential ids.
 ///
-/// Claudes valg: NFKC and lower case, trimmed, at most 254 bytes, no control
-/// character. Refused names are `Malformed(LoginName)`, all alike.
+/// The name is put in NFKC and lower case and trimmed. It must then be at most
+/// 254 bytes and hold no control character and no invisible format character
+/// (zero-width and bidirectional marks, the byte order mark), which could make
+/// two different names look alike. Refused names are `Malformed(LoginName)`,
+/// all alike.
 pub fn normalize_login_name(raw: &str) -> Result<NormalizedLoginName, AuthError> {
     let refused = AuthError::Malformed(Malformed::LoginName);
     if raw.len() > RAW_MAX_BYTES {
@@ -91,7 +128,7 @@ pub fn normalize_login_name(raw: &str) -> Result<NormalizedLoginName, AuthError>
     let usable = stable
         && !current.is_empty()
         && current.len() <= LOGIN_NAME_MAX_BYTES
-        && !current.chars().any(char::is_control);
+        && !current.chars().any(|c| c.is_control() || is_invisible(c));
     if usable {
         Ok(NormalizedLoginName(current))
     } else {
@@ -176,6 +213,58 @@ mod tests {
             "a\rb",
         ] {
             assert_eq!(normalize_login_name(raw).unwrap_err(), refused(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn normalize_refuses_invisible_format_characters() {
+        for c in [
+            '\u{ad}', '\u{61c}', '\u{200b}', '\u{200d}', '\u{200e}', '\u{200f}', '\u{2028}',
+            '\u{2029}', '\u{202a}', '\u{202e}', '\u{2060}', '\u{2066}', '\u{feff}', '\u{fff9}',
+        ] {
+            for raw in [format!("a{c}b@x.no"), format!("{c}ab@x.no"), format!("ab@x.no{c}")] {
+                assert_eq!(normalize_login_name(&raw).unwrap_err(), refused(), "{raw:?}");
+            }
+        }
+    }
+
+    /// The Unicode tables behind the normalisation. A name is stored in
+    /// normalized form, so a change in any of these results would make stored
+    /// names unfindable: this test fails first, and a migration comes before
+    /// the bump.
+    #[test]
+    fn unicode_tables_and_results_are_pinned() {
+        assert_eq!(unicode_normalization::UNICODE_VERSION, (16, 0, 0));
+        let fixed: [(&str, &str); 15] = [
+            // Capital I with dot above: lower case i with a combining dot.
+            ("\u{130}", "i\u{307}"),
+            // Final sigma only at the end of a word.
+            ("\u{391}\u{3a3}", "\u{3b1}\u{3c2}"),
+            ("\u{3a3}\u{391}", "\u{3c3}\u{3b1}"),
+            // Sharp s, and its capital form.
+            ("\u{df}", "\u{df}"),
+            ("\u{1e9e}", "\u{df}"),
+            // Kelvin sign and ohm sign go through NFKC first.
+            ("\u{212a}", "k"),
+            ("\u{2126}", "\u{3c9}"),
+            // Title case digraph.
+            ("\u{1c5}", "d\u{17e}"),
+            // Ligature, circled digit, full-width forms.
+            ("\u{fb01}", "fi"),
+            ("\u{2460}", "1"),
+            (
+                "\u{ff21}\u{ff22}\u{ff20}\u{ff25}\u{ff38}\u{ff0e}\u{ff23}\u{ff2f}\u{ff2d}",
+                "ab@ex.com",
+            ),
+            // Decomposed and precomposed letters meet in the composed form.
+            ("A\u{30a}", "\u{e5}"),
+            ("\u{c5}", "\u{e5}"),
+            // Cased letters added in Unicode 16.
+            ("\u{1c89}", "\u{1c8a}"),
+            ("\u{10d50}", "\u{10d70}"),
+        ];
+        for (input, expected) in fixed {
+            assert_eq!(name(input), expected, "{input:?}");
         }
     }
 

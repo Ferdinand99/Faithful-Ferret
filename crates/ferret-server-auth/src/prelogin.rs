@@ -26,7 +26,8 @@
 
 use std::collections::HashSet;
 
-use ferret_core::AccountId;
+use ferret_core::opaque::server_suite::REGISTRATION_RECORD_LEN;
+use ferret_core::{AccountId, KsfProfile};
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};
@@ -45,22 +46,23 @@ const ID_LABEL: &[u8] = b"prelogin-id";
 
 /// Label in front of the name for the draws of profile and hint.
 ///
-/// Claudes valg: the same construction as the id, with its own label.
+/// The same construction as the id, with its own label.
 const HINT_LABEL: &[u8] = b"prelogin-hint";
 
 /// Label of the derivation of a made-up record, followed by the credential id.
 ///
-/// Claudes valg: HKDF-SHA512 with the pre-login secret as the key material,
-/// no salt, and this label and the id as `info`.
+/// HKDF-SHA512 with the pre-login secret as the key material, no salt, and
+/// this label and the id as `info`.
 #[cfg_attr(not(test), allow(dead_code))]
 const RECORD_LABEL: &[u8] = b"ferret/v1/prelogin/record";
 
 /// The shares of a policy add up to this many permille.
 const WHOLE: u16 = 1000;
 
-/// Length of a made-up record: public key 32, masking key 64, envelope 96.
+/// Length of a made-up record: the length of a stored one (public key 32,
+/// masking key 64, envelope 96).
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const FAKE_RECORD_LEN: usize = 192;
+const FAKE_RECORD_LEN: usize = REGISTRATION_RECORD_LEN;
 
 /// Bytes drawn for the masking key and the envelope.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -90,8 +92,9 @@ fn hmac_with_name(
     name: &NormalizedLoginName,
 ) -> Zeroizing<[u8; 32]> {
     // HMAC accepts a key of any length, so making it cannot fail.
-    <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes())
-        .map(|mut mac| {
+    let mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes());
+    debug_assert!(mac.is_ok());
+    mac.map(|mut mac| {
             mac.update(label);
             mac.update(name.as_str().as_bytes());
             Zeroizing::new(mac.finalize().into_bytes().into())
@@ -195,14 +198,34 @@ impl PreloginPolicy {
     }
 
     /// Every made-up answer uses `profile` and says the account has a second
-    /// factor: the setting of a server whose accounts all look like that
-    /// (the second factor is on by default, E12).
+    /// factor: the setting of a server whose accounts all look like that (the
+    /// second factor is on by default).
     ///
-    /// `profile` must be a real profile number, not 0.
-    pub fn single(profile: u8) -> Self {
+    /// The profile is a [`KsfProfile`] of the core, so a number that clients do
+    /// not know cannot be given.
+    pub fn single(profile: KsfProfile) -> Self {
         Self {
-            profiles: vec![(profile, WHOLE)],
+            profiles: vec![(profile.number(), WHOLE)],
             sk_true_permille: WHOLE,
+        }
+    }
+
+    /// Checks that every profile of the policy is one that clients know
+    /// (`KsfProfile` of the core). [`new`](Self::new) only checks the numbers.
+    /// A made-up answer with a profile no client accepts would make every
+    /// unknown name fail while real names work, so the server calls this
+    /// when it builds its policy and does not start on an error.
+    ///
+    /// An unknown profile is `Internal(Policy)`.
+    pub fn check_known_profiles(&self) -> Result<(), AuthError> {
+        let known = self
+            .profiles
+            .iter()
+            .all(|(profile, _)| KsfProfile::from_wire(u32::from(*profile)).is_ok());
+        if known {
+            Ok(())
+        } else {
+            Err(AuthError::Internal(InternalKind::Policy))
         }
     }
 }
@@ -232,8 +255,12 @@ fn permille(word: &[u8; 8]) -> u64 {
 /// hint, each as a number below 1000 set against the shares of `policy`. The
 /// answer is the same on every call for the same name, secret and policy.
 ///
-/// Spec: Fase 1 § 4.2; the spread follows the policy (Claudes valg, avvik fra
-/// spesifikasjonen V4).
+/// Spec: Fase 1 § 4.2. The spread follows the policy instead of a fixed
+/// default, so a made-up answer does not stand out from the real ones. Each
+/// value follows its own share; the two draws are independent, so the pair
+/// does not follow the joint spread of the real accounts. The policy is a
+/// setting that changes rarely: when it changes, the made-up answers change
+/// with it.
 pub fn fake_prelogin(
     secret: &PreloginSecret,
     name: &NormalizedLoginName,
@@ -271,8 +298,9 @@ pub fn fake_prelogin(
 /// record every time (`opaque-ke` draws a new masking key on each call), and
 /// another id or secret gives another one.
 ///
-/// Spec: Fase 1 § 4.2 ("ServerLogin::start uten post" is replaced by this
-/// record handed over as the stored one); the derivation is Claudes valg.
+/// Spec: Fase 1 § 4.2 (the answer for an unknown name). The record is handed to
+/// the OPAQUE login as if it were the stored one, because `opaque-ke` draws a
+/// new masking key for its own made-up record on every call.
 // Login start is the first caller.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn fake_record_bytes(
@@ -284,8 +312,9 @@ pub(crate) fn fake_record_bytes(
     let mut body = Zeroizing::new([0u8; FAKE_BODY_LEN]);
     // Expanding 160 bytes from SHA-512 is far below the limit of 255 blocks,
     // so this cannot fail.
-    let _ = Hkdf::<Sha512>::new(None, secret.as_bytes())
+    let expanded = Hkdf::<Sha512>::new(None, secret.as_bytes())
         .expand_multi_info(&[RECORD_LABEL, id.as_bytes()], body.as_mut_slice());
+    debug_assert!(expanded.is_ok());
     let dummy = keys.dummy_public_key();
     let mut record = Zeroizing::new([0u8; FAKE_RECORD_LEN]);
     for (slot, byte) in record.iter_mut().zip(dummy.iter().chain(body.iter())) {
@@ -558,8 +587,29 @@ mod tests {
     }
 
     #[test]
+    fn a_policy_is_checked_against_the_profiles_clients_know() {
+        let known = PreloginPolicy::new(&[(1, 1000)], 500).unwrap();
+        assert_eq!(known.check_known_profiles(), Ok(()));
+        assert_eq!(
+            PreloginPolicy::single(KsfProfile::P1).check_known_profiles(),
+            Ok(())
+        );
+        // Well formed, but no client has a profile 2 (or 200) yet.
+        let bad = AuthError::Internal(InternalKind::Policy);
+        for profiles in [
+            vec![(2, 1000)],
+            vec![(1, 500), (2, 500)],
+            vec![(200, 1000)],
+            vec![(255, 1000)],
+        ] {
+            let policy = PreloginPolicy::new(&profiles, 500).unwrap();
+            assert_eq!(policy.check_known_profiles(), Err(bad), "{profiles:?}");
+        }
+    }
+
+    #[test]
     fn single_is_one_profile_and_always_yes() {
-        let policy = PreloginPolicy::single(1);
+        let policy = PreloginPolicy::single(KsfProfile::P1);
         assert_eq!(policy, PreloginPolicy::new(&[(1, 1000)], 1000).unwrap());
         let secret = synthetic_secret();
         for i in 0..200 {
