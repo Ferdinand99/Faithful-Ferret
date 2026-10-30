@@ -25,7 +25,7 @@ use ferret_core::{
     SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest,
     emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
     make_tombstone, parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint,
-    verify_recovery_setup, verify_secret_key_entry,
+    verify_recovery_setup, verify_secret_key_entry, verify_tombstone,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -554,6 +554,30 @@ impl Vault {
         })
     }
 
+    /// Checks the tombstone of `item_id` at revision `rev` under the deletion
+    /// key of this vault. A tombstone that does not verify (a wrong
+    /// revision, another item id, a changed byte or a wrong length) is
+    /// `tombstone_invalid`; the client keeps its local copy of the item and
+    /// puts it in quarantine. An `item_id` that is not 16 bytes is
+    /// `invalid_input`.
+    ///
+    /// Spec: Fase 1 § 8.4.
+    pub fn verify_tombstone(
+        &self,
+        item_id: Vec<u8>,
+        rev: f64,
+        tomb: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        run(|| {
+            core(verify_tombstone(
+                self.unlocked()?,
+                ItemId::from_bytes(arr(&item_id)?),
+                js_u64(rev)?,
+                &tomb,
+            ))
+        })
+    }
+
     // ------------------------------------------------------ checkpoints
 
     /// Signs the state of the client: `entries` is a list of
@@ -616,6 +640,33 @@ impl Vault {
                 js_u64(top_seq)?,
                 RollbackMemory::Remembered(&mut memory),
             ))?;
+            Ok(memory.to_bytes())
+        })
+    }
+
+    /// Remembers the rows of an incremental `/changes` answer in the rollback
+    /// memory. `rows` are as in `verify_checkpoint`: each tag or tombstone
+    /// is checked here before the row counts. `top_seq` is the highest `seq`
+    /// the server shows and `sync_memory` the stored memory bytes
+    /// (`sync_memory_new()` for a device that has seen nothing yet). The
+    /// highest seen `seq` and the `rev` of each item go up and never down: a
+    /// `top_seq` below the highest seen is
+    /// `checkpoint_top_seq_below_remembered` and a row with a lower `rev`
+    /// than the highest seen for its item is `checkpoint_rev_below_remembered`.
+    /// Returns the new memory bytes, which the client stores in place of the
+    /// old ones; on any error nothing is returned and the old bytes stay
+    /// valid.
+    pub fn accept_rows(
+        &self,
+        rows: JsValue,
+        top_seq: f64,
+        sync_memory: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        run(|| {
+            let vault = self.unlocked()?;
+            let server_rows = server_rows_of(vault, from_js_list(rows)?)?;
+            let mut memory = SyncMemory::from_bytes(&sync_memory)?;
+            core(memory.accept_rows(&server_rows, js_u64(top_seq)?))?;
             Ok(memory.to_bytes())
         })
     }

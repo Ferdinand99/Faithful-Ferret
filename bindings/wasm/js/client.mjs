@@ -100,8 +100,11 @@
 // bytes, before using the result** (before the rekey is uploaded, before the
 // verified state is acted on). A caller that ignores it keeps the old floors
 // and gets no progress; the memory is only as good as the storage it is kept
-// in, and `sync_memory_new()` always starts from none. `accept_older_state`
-// and `sync_memory_prune` return `newSyncMemory` as well. A
+// in, and `sync_memory_new()` always starts from none. `accept_older_state`,
+// `accept_rows` and `sync_memory_prune` return `newSyncMemory` as well.
+// `vault.accept_rows(rows, top_seq, memory)` takes the rows of an incremental
+// `/changes` answer (the same row objects as `verify_checkpoint`; their tags
+// and tombstones are checked) and raises the floors. A
 // checkpoint, a top seq or a row below what the device has seen is
 // `checkpoint_seq_below_remembered`, `checkpoint_top_seq_below_remembered` or
 // `checkpoint_rev_below_remembered`, and the memory is left as it was. Only
@@ -109,6 +112,11 @@
 // has confirmed that the server was restored to an older state, lowers the
 // floors; it returns a new record. `sync_memory_prune(memory, ids)` drops the
 // entries of items that no longer exist, so a full record can take new items.
+//
+// Deleted items: `vault.verify_tombstone(itemId, rev, tomb)` resolves when the
+// tombstone is valid for that item at that revision and rejects with
+// `tombstone_invalid` otherwise (the item is then quarantined, its local copy
+// is kept). An item id that is not 16 bytes is `invalid_input`.
 //
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
@@ -252,6 +260,7 @@ class WorkerChannel {
 function shapeResult(method, value) {
   switch (method) {
     case "verify_checkpoint":
+    case "accept_rows":
     case "accept_older_state":
       return { newSyncMemory: value };
     case "sync_memory_prune":

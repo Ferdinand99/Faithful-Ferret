@@ -84,6 +84,7 @@ const BYTES_ALLOWED = {
   sync_memory_new: "an empty rollback memory: item ids and revision numbers, public",
   "Vault.verify_checkpoint": "the updated rollback memory: item ids and revision numbers, public",
   "Vault.accept_older_state": "the new rollback memory: item ids and revision numbers, public",
+  "Vault.accept_rows": "the new rollback memory: item ids and revision numbers, public",
   argon2_export_key:
     "K_exp: wraps the content key of one export file; it crosses between the job worker and the vault worker once and is wiped; it is not a vault key",
 };

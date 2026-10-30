@@ -132,6 +132,8 @@ export const BYTES_ARGS = {
   // The rollback memory is public data (item ids and revision numbers), so it
   // is typed but neither wiped nor refused when it looks empty.
   verify_checkpoint: [[3, false, false]],
+  accept_rows: [[2, false, false]],
+  verify_tombstone: [[0, false, false], [2, false, false]],
   rekey: [[2, false, false]],
   sync_memory_prune: [[0, false, false]],
 };
@@ -211,9 +213,11 @@ export const F64_ARGS = {
   open_item: [[1, "u64"]],
   encrypt_item: [[1, "u64"], [4, "millis"]],
   make_tombstone: [[1, "u64"]],
+  verify_tombstone: [[1, "u64"]],
   make_checkpoint: [[0, "u64"]],
   verify_checkpoint: [[2, "u64"]],
   accept_older_state: [[2, "u64"]],
+  accept_rows: [[1, "u64"]],
   totp_code: [[1, "seconds"]],
   wrap_prf: [[4, "u64"]],
   passkey_create: [[1, "u64"], [7, "millis"]],
