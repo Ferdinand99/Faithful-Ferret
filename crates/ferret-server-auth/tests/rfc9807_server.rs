@@ -181,6 +181,7 @@ impl Server {
                 sk_hint: false,
             },
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1,
         };
         let mut rng = ReplayRng::new(v.draws.clone());
@@ -371,6 +372,7 @@ fn rfc9807_server_draws_are_exactly_those_of_the_vector() {
                 sk_hint: false,
             },
             purpose: LoginPurpose::Login,
+            session_scope: None,
             ke1: &v.ke1,
         };
         let mut rng = ReplayRng::new(draws);

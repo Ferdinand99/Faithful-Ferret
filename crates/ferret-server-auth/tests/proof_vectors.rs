@@ -25,17 +25,17 @@ fn record() -> &'static [u8] {
     RECORD.get_or_init(|| LoginFixture::new().record.record.as_bytes().to_vec())
 }
 
-fn parse_put<'b>(_: &'b [u8]) -> Result<ReplaceFields<'b>, AuthError> {
+fn parse_put(_: &[u8]) -> Result<ReplaceFields, AuthError> {
     Ok(ReplaceFields {
-        record: record(),
+        record: record().to_vec(),
         ksf_profile: 1,
         pk_r_new: None,
     })
 }
 
-fn parse_recover<'b>(_: &'b [u8]) -> Result<ReplaceFields<'b>, AuthError> {
+fn parse_recover(_: &[u8]) -> Result<ReplaceFields, AuthError> {
     Ok(ReplaceFields {
-        record: record(),
+        record: record().to_vec(),
         ksf_profile: 1,
         pk_r_new: Some(RecoveryPublicKey::new([0x44; 32])),
     })

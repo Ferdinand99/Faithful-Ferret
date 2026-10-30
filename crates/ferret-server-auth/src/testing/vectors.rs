@@ -27,10 +27,11 @@ use crate::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, Caller, CredentialId, FileKind,
     InMemoryChallengeStore, InMemoryLoginStateStore, LoginFinishRequest, LoginId, LoginPurpose,
     LoginStartRequest, LoginStateStore, ManualClock, PreloginPolicy, PreloginSecret, ProfileRules,
-    RecordingThrottle, ReplaceFields, ReplaceKind, ReplaceRequest, RetryAfter, SealedState,
-    ServerKeys, SessionBinding, SessionScope, SignedAccount, StateSealKey, StoredRecord,
-    ValidatedRecord, authorize_replacement, decode_secret_file, encode_secret_file, login_finish,
-    login_start, normalize_login_name, register_start,
+    RecordingThrottle, RegisterStartRequest, RegistrationAuthority, ReplaceFields, ReplaceKind,
+    ReplaceRequest, RetryAfter, SealedState, ServerKeys, SessionBinding, SessionScope,
+    SignedAccount, StateSealKey, StoredRecord, ValidatedRecord, authorize_replacement,
+    decode_secret_file, encode_secret_file, login_finish, login_start, normalize_login_name,
+    register_start,
 };
 use crate::{fake_credential_id, fake_prelogin};
 
@@ -49,7 +50,7 @@ pub fn run_case(case: &Case) -> Outcome {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         dispatch(&case.op, &case.input, &mut rng)
     }))
-    .unwrap_or_else(|_| Err("rng_mismatch".to_string()));
+    .unwrap_or_else(|_| Err("panic".to_string()));
     if rng.finish().is_err() {
         return Err("rng_not_used_up".to_string());
     }
@@ -200,14 +201,27 @@ fn throttle_of(v: &Value) -> Result<RecordingThrottle, String> {
     }
 }
 
-fn scope_of(v: &Value) -> Result<SessionScope, String> {
-    match v.get("scope").and_then(Value::as_str) {
+fn named_scope(name: Option<&str>) -> Result<SessionScope, String> {
+    match name {
         None | Some("full") => Ok(SessionScope::Full),
         Some("pending_2fa") => Ok(SessionScope::Pending2fa),
         Some("account_reset") => Ok(SessionScope::AccountReset),
         Some("unverified") => Ok(SessionScope::Unverified),
         Some(other) => Err(format!("unknown scope {other}")),
     }
+}
+
+/// The `scope` of a signed request; a full session when it is not given.
+fn scope_of(v: &Value) -> Result<SessionScope, String> {
+    named_scope(v.get("scope").and_then(Value::as_str))
+}
+
+/// The `session_scope` of a login start: `None` when it is not given.
+fn session_scope_of(v: &Value) -> Result<Option<SessionScope>, String> {
+    v.get("session_scope")
+        .and_then(Value::as_str)
+        .map(|name| named_scope(Some(name)))
+        .transpose()
 }
 
 fn caller() -> Caller {
@@ -275,10 +289,25 @@ fn fake_record(input: &Value) -> Outcome {
 // ------------------------------------------------------------ registration
 
 fn register_response(input: &Value) -> Outcome {
+    let authority = match input.get("authority") {
+        None | Some(Value::Null) => RegistrationAuthority::NewAccount,
+        Some(session) if text(session, "type")? == "session" => RegistrationAuthority::Session {
+            scope: named_scope(Some(text(session, "scope")?))?,
+            account: credential_of(session, "account")?,
+        },
+        Some(_) => return Err("unknown authority".to_string()),
+    };
+    let request = bytes(input, "request")?;
     let response = register_start(
         &keys_of(input)?,
-        &credential_of(input, "credential_id")?,
-        &bytes(input, "request")?,
+        &throttle_of(input)?,
+        number(input, "now")?,
+        &RegisterStartRequest {
+            caller: caller(),
+            authority,
+            credential: credential_of(input, "credential_id")?,
+            request: &request,
+        },
     )
     .map_err(code)?;
     Ok(json!({ "response": hex_encode(&response) }))
@@ -431,6 +460,7 @@ fn login_start_op(input: &Value, rng: &mut ReplayRng) -> Outcome {
         credential: credential_of(input, "credential_id")?,
         lookup,
         purpose: purpose_of(field(input, "purpose")?)?,
+        session_scope: session_scope_of(input)?,
         ke1: &ke1,
     };
     let response = login_start(&env.cx(), &env.store, rng, &request).map_err(code)?;
@@ -480,21 +510,37 @@ fn login_finish_op(input: &Value) -> Outcome {
 
 // ---------------------------------------------------------- replacement
 
-/// The body of a replacement in these vectors: the record (192 bytes), the
-/// profile number (4 bytes, big endian) and, for a recovery, the new `pk_r`
-/// (32 bytes).
-fn parse_body<'b>(body: &'b [u8]) -> Result<ReplaceFields<'b>, AuthError> {
+/// The parser of the endpoint for a password change or a recovery: the body is
+/// the JSON the client sent, and the fields are
+/// `{ "registration_record": hex, "ksf_profile": number, "pk_r_new": hex }`.
+/// Other fields (the wraps, the manifest) are the endpoint's business and are
+/// ignored here. `pk_r_new` is there for a recovery only.
+fn parse_body(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let bad = AuthError::Malformed(crate::Malformed::RegistrationRecord);
-    let (record, rest) = body.split_at_checked(192).ok_or(bad)?;
-    let (profile, key) = rest.split_first_chunk::<4>().ok_or(bad)?;
-    let pk_r_new = match key.len() {
-        0 => None,
-        32 => <[u8; 32]>::try_from(key).ok().map(RecoveryPublicKey::new),
-        _ => return Err(bad),
+    let json: Value = serde_json::from_slice(body).map_err(|_| bad)?;
+    let record = json
+        .get("registration_record")
+        .and_then(Value::as_str)
+        .and_then(|text| hex_decode(text).ok())
+        .ok_or(bad)?;
+    let ksf_profile = json
+        .get("ksf_profile")
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or(bad)?;
+    let pk_r_new = match json.get("pk_r_new") {
+        None | Some(Value::Null) => None,
+        Some(key) => key
+            .as_str()
+            .and_then(|text| hex_decode(text).ok())
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .map(RecoveryPublicKey::new)
+            .ok_or(AuthError::Malformed(crate::Malformed::RecoveryKey))
+            .map(Some)?,
     };
     Ok(ReplaceFields {
         record,
-        ksf_profile: u32::from_be_bytes(*profile),
+        ksf_profile,
         pk_r_new,
     })
 }

@@ -807,26 +807,26 @@ fn too_short() -> AuthError {
     AuthError::Malformed(ferret_server_auth::Malformed::RegistrationRecord)
 }
 
-fn parse_put(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+fn parse_put(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let (profile, record) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
     Ok(ReplaceFields {
-        record,
+        record: record.to_vec(),
         ksf_profile: u32::from_be_bytes(*profile),
         pk_r_new: None,
     })
 }
 
-fn parse_recover(body: &[u8]) -> Result<ReplaceFields<'_>, AuthError> {
+fn parse_recover(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let (profile, rest) = body.split_first_chunk::<4>().ok_or_else(too_short)?;
     let (key, record) = rest.split_first_chunk::<32>().ok_or_else(too_short)?;
     Ok(ReplaceFields {
-        record,
+        record: record.to_vec(),
         ksf_profile: u32::from_be_bytes(*profile),
         pk_r_new: Some(RecoveryPublicKey::new(*key)),
     })
 }
 
-type Parser = fn(&[u8]) -> Result<ReplaceFields<'_>, AuthError>;
+type Parser = fn(&[u8]) -> Result<ReplaceFields, AuthError>;
 
 fn parse_for(kind: ReplaceKind) -> Parser {
     match kind {
