@@ -1052,7 +1052,6 @@ impl ferret_server_auth::LoginStateStore for ForgetfulStore {
 
 #[test]
 fn an_expired_state_is_refused_even_when_the_store_hands_it_back() {
-    use ferret_server_auth::LoginStateStore as _;
     let f = LoginFixture::new();
     let store = ForgetfulStore(ferret_server_auth::InMemoryLoginStateStore::new());
     let (ke1, state) = f.client_start(FIXTURE_PASSWORD, "client");

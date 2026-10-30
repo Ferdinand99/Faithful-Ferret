@@ -106,8 +106,8 @@ use crate::prelogin::{PreloginPolicy, fake_credential_id, fake_prelogin, fake_re
 use crate::record::{ProfileRules, StoredRecord};
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
-    LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, SealedState, StatePlain, StateSealKey,
-    open_state, seal_state,
+    LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, StatePlain, StateSealKey, open_state,
+    seal_state,
 };
 use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 
@@ -737,7 +737,7 @@ mod tests {
 
     use super::*;
     use crate::prelogin::{clear_steps, steps};
-    use crate::state::{InMemoryLoginStateStore, StoreError};
+    use crate::state::{InMemoryLoginStateStore, SealedState, StoreError};
     use crate::testing::{FIXTURE_PASSWORD, LoginFixture};
     use crate::throttle::RetryAfter;
     use crate::{STATE_TTL_SECS, StateKey};
