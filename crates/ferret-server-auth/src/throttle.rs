@@ -200,7 +200,6 @@ impl Throttle for NoThrottle {
 /// address (`::ffff:a.b.c.d`) is the IPv4 address it carries, because a
 /// dual-stack listener reports IPv4 clients that way and all of them would
 /// otherwise fall into the single network `::/64`.
-#[cfg_attr(not(test), expect(dead_code, reason = "no entry point calls it yet"))]
 fn counted_address(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V4(_) => ip,
@@ -231,7 +230,6 @@ fn counted_address(ip: IpAddr) -> IpAddr {
 /// real one.
 ///
 /// Spec: Fase 1 § 11 (F-34).
-#[cfg_attr(not(test), expect(dead_code, reason = "no entry point calls it yet"))]
 fn keys_for(stage: Stage, caller: &Caller, id: Option<&CredentialId>) -> Vec<ThrottleKey> {
     let ip = caller.ip.map(counted_address);
     let id = id.copied();
@@ -262,7 +260,6 @@ fn keys_for(stage: Stage, caller: &Caller, id: Option<&CredentialId>) -> Vec<Thr
 /// [`Outcome::Failure`], at the time of the admit, because a request that
 /// never said how it ended did not succeed.
 #[must_use = "report the outcome with `finish`; a dropped ticket counts as a failure"]
-#[cfg_attr(not(test), expect(dead_code, reason = "no entry point calls it yet"))]
 pub(crate) struct Admission<'a> {
     throttle: &'a dyn Throttle,
     stage: Stage,
@@ -271,7 +268,6 @@ pub(crate) struct Admission<'a> {
     reported: bool,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no entry point calls it yet"))]
 impl Admission<'_> {
     /// Reports how the request ended, with the stage and keys of the admit.
     pub(crate) fn finish(mut self, outcome: Outcome, now: u64) {
@@ -300,7 +296,6 @@ impl fmt::Debug for Admission<'_> {
 /// any work for the request.
 ///
 /// `id` is `None` when the credential id is not known yet; see [`keys_for`].
-#[cfg_attr(not(test), expect(dead_code, reason = "no entry point calls it yet"))]
 pub(crate) fn admit<'a>(
     throttle: &'a dyn Throttle,
     stage: Stage,

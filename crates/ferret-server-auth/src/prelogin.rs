@@ -53,7 +53,6 @@ const HINT_LABEL: &[u8] = b"prelogin-hint";
 ///
 /// HKDF-SHA512 with the pre-login secret as the key material, no salt, and
 /// this label and the id as `info`.
-#[cfg_attr(not(test), allow(dead_code))]
 const RECORD_LABEL: &[u8] = b"ferret/v1/prelogin/record";
 
 /// The shares of a policy add up to this many permille.
@@ -61,11 +60,9 @@ const WHOLE: u16 = 1000;
 
 /// Length of a made-up record: the length of a stored one (public key 32,
 /// masking key 64, envelope 96).
-#[cfg_attr(not(test), allow(dead_code))]
 const FAKE_RECORD_LEN: usize = REGISTRATION_RECORD_LEN;
 
 /// Bytes drawn for the masking key and the envelope.
-#[cfg_attr(not(test), allow(dead_code))]
 const FAKE_BODY_LEN: usize = 160;
 
 // Records which steps ran, so a test can see that a known and an unknown
@@ -77,13 +74,23 @@ thread_local! {
 }
 
 #[cfg(test)]
-fn step(name: &'static str) {
+pub(crate) fn step(name: &'static str) {
     STEPS.with(|steps| steps.borrow_mut().push(name));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_steps() {
+    STEPS.with(|steps| steps.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn steps() -> Vec<&'static str> {
+    STEPS.with(|steps| steps.borrow().clone())
 }
 
 #[cfg(not(test))]
 #[inline(always)]
-fn step(_name: &'static str) {}
+pub(crate) fn step(_name: &'static str) {}
 
 /// `HMAC-SHA256(secret, label ‖ name)`.
 fn hmac_with_name(
@@ -167,13 +174,29 @@ impl PreloginPolicy {
     /// hint, both in permille.
     ///
     /// The shares of the profiles must add up to exactly 1000. The list must
-    /// not be empty, must not name a profile twice, and profile 0 does not
-    /// exist. The hint share is at most 1000. Anything else is
+    /// not be empty, must not name a profile twice, profile 0 does not exist,
+    /// and every profile must be one that clients know (`KsfProfile` of the
+    /// core). The hint share is at most 1000. Anything else is
     /// `Internal(Policy)`: it is the server's own setting, not a request.
     ///
-    /// Whether a profile is one the clients know is for the caller to decide;
-    /// this only checks the numbers.
+    /// A made-up answer with a profile no client accepts would make every
+    /// unknown name fail while real names work, so such a policy cannot be
+    /// built: a server that builds its policy when it starts fails to start.
     pub fn new(profiles: &[(u8, u16)], sk_true_permille: u16) -> Result<Self, AuthError> {
+        let policy = Self::shaped(profiles, sk_true_permille)?;
+        policy.check_known_profiles()?;
+        Ok(policy)
+    }
+
+    /// Like [`new`](Self::new), but profiles that no client knows yet are
+    /// accepted, for tests that need a longer table than the clients have.
+    #[cfg(feature = "test-support")]
+    pub fn for_tests(profiles: &[(u8, u16)], sk_true_permille: u16) -> Result<Self, AuthError> {
+        Self::shaped(profiles, sk_true_permille)
+    }
+
+    /// The checks of the numbers: shares, duplicates, profile 0, the hint.
+    fn shaped(profiles: &[(u8, u16)], sk_true_permille: u16) -> Result<Self, AuthError> {
         let total = profiles
             .iter()
             .try_fold(0u32, |sum, (_, share)| sum.checked_add(u32::from(*share)));
@@ -211,10 +234,8 @@ impl PreloginPolicy {
     }
 
     /// Checks that every profile of the policy is one that clients know
-    /// (`KsfProfile` of the core). [`new`](Self::new) only checks the numbers.
-    /// A made-up answer with a profile no client accepts would make every
-    /// unknown name fail while real names work, so the server calls this
-    /// when it builds its policy and does not start on an error.
+    /// (`KsfProfile` of the core). [`new`](Self::new) calls it, so a policy
+    /// that was built with `new` always passes.
     ///
     /// An unknown profile is `Internal(Policy)`.
     pub fn check_known_profiles(&self) -> Result<(), AuthError> {
@@ -266,6 +287,7 @@ pub fn fake_prelogin(
     name: &NormalizedLoginName,
     policy: &PreloginPolicy,
 ) -> PreloginAnswer {
+    step("fake-prelogin");
     let digest = hmac_with_name(secret, HINT_LABEL, name);
     let (words, _) = digest.as_chunks::<8>();
     let mut draws = words.iter().map(permille);
@@ -301,8 +323,6 @@ pub fn fake_prelogin(
 /// Spec: Fase 1 § 4.2 (the answer for an unknown name). The record is handed to
 /// the OPAQUE login as if it were the stored one, because `opaque-ke` draws a
 /// new masking key for its own made-up record on every call.
-// Login start is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn fake_record_bytes(
     keys: &ServerKeys,
     secret: &PreloginSecret,
@@ -540,8 +560,8 @@ mod tests {
 
     #[test]
     fn policy_must_sum_to_1000() {
-        assert!(PreloginPolicy::new(&[(1, 1000)], 500).is_ok());
-        assert!(PreloginPolicy::new(&[(1, 600), (2, 400)], 0).is_ok());
+        assert!(PreloginPolicy::for_tests(&[(1, 1000)], 500).is_ok());
+        assert!(PreloginPolicy::for_tests(&[(1, 600), (2, 400)], 0).is_ok());
         let bad = AuthError::Internal(InternalKind::Policy);
         for shares in [
             vec![(1, 999)],
@@ -553,27 +573,33 @@ mod tests {
             vec![(1, u16::MAX), (2, u16::MAX), (3, u16::MAX)],
         ] {
             assert_eq!(
-                PreloginPolicy::new(&shares, 500).unwrap_err(),
+                PreloginPolicy::for_tests(&shares, 500).unwrap_err(),
                 bad,
                 "{shares:?}"
             );
         }
         // The hint share is a share of 1000, too.
-        assert!(PreloginPolicy::new(&[(1, 1000)], 1000).is_ok());
-        assert_eq!(PreloginPolicy::new(&[(1, 1000)], 1001).unwrap_err(), bad);
+        assert!(PreloginPolicy::for_tests(&[(1, 1000)], 1000).is_ok());
+        assert_eq!(
+            PreloginPolicy::for_tests(&[(1, 1000)], 1001).unwrap_err(),
+            bad
+        );
     }
 
     #[test]
     fn policy_rejects_unknown_profile_zero() {
         let bad = AuthError::Internal(InternalKind::Policy);
-        assert_eq!(PreloginPolicy::new(&[(0, 1000)], 500).unwrap_err(), bad);
         assert_eq!(
-            PreloginPolicy::new(&[(1, 500), (0, 500)], 500).unwrap_err(),
+            PreloginPolicy::for_tests(&[(0, 1000)], 500).unwrap_err(),
+            bad
+        );
+        assert_eq!(
+            PreloginPolicy::for_tests(&[(1, 500), (0, 500)], 500).unwrap_err(),
             bad
         );
         // A profile named twice is a mistake, too.
         assert_eq!(
-            PreloginPolicy::new(&[(1, 500), (1, 500)], 500).unwrap_err(),
+            PreloginPolicy::for_tests(&[(1, 500), (1, 500)], 500).unwrap_err(),
             bad
         );
     }
@@ -602,15 +628,20 @@ mod tests {
             vec![(200, 1000)],
             vec![(255, 1000)],
         ] {
-            let policy = PreloginPolicy::new(&profiles, 500).unwrap();
+            let policy = PreloginPolicy::for_tests(&profiles, 500).unwrap();
             assert_eq!(policy.check_known_profiles(), Err(bad), "{profiles:?}");
+            // The constructor for servers refuses the same tables.
+            assert_eq!(PreloginPolicy::new(&profiles, 500).unwrap_err(), bad);
         }
     }
 
     #[test]
     fn single_is_one_profile_and_always_yes() {
         let policy = PreloginPolicy::single(KsfProfile::P1);
-        assert_eq!(policy, PreloginPolicy::new(&[(1, 1000)], 1000).unwrap());
+        assert_eq!(
+            policy,
+            PreloginPolicy::for_tests(&[(1, 1000)], 1000).unwrap()
+        );
         let secret = synthetic_secret();
         for i in 0..200 {
             let answer = fake_prelogin(&secret, &name(&format!("user{i}@example.com")), &policy);
@@ -643,7 +674,7 @@ mod tests {
         );
         // Draw 630 of 1000 falls in the second profile of 400/400/200
         // (400 <= 630 < 800); draw 344 is below 500, so the hint is yes.
-        let policy = PreloginPolicy::new(&[(1, 400), (2, 400), (3, 200)], 500).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 400), (2, 400), (3, 200)], 500).unwrap();
         assert_eq!(
             fake_prelogin(&secret, &n, &policy),
             PreloginAnswer {
@@ -652,14 +683,14 @@ mod tests {
             }
         );
         // With a hint share of 344 the draw 344 is not below it.
-        let policy = PreloginPolicy::new(&[(1, 400), (2, 400), (3, 200)], 344).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 400), (2, 400), (3, 200)], 344).unwrap();
         assert!(!fake_prelogin(&secret, &n, &policy).sk_hint);
-        let policy = PreloginPolicy::new(&[(1, 400), (2, 400), (3, 200)], 345).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 400), (2, 400), (3, 200)], 345).unwrap();
         assert!(fake_prelogin(&secret, &n, &policy).sk_hint);
         // Draw 630 is the border of 630/370.
-        let policy = PreloginPolicy::new(&[(1, 630), (2, 370)], 0).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 630), (2, 370)], 0).unwrap();
         assert_eq!(fake_prelogin(&secret, &n, &policy).ksf_profile, 2);
-        let policy = PreloginPolicy::new(&[(1, 631), (2, 369)], 0).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 631), (2, 369)], 0).unwrap();
         assert_eq!(fake_prelogin(&secret, &n, &policy).ksf_profile, 1);
     }
 
@@ -667,7 +698,7 @@ mod tests {
     fn fake_prelogin_is_stable_across_calls() {
         let secret = synthetic_secret();
         let n = name("alice@example.com");
-        let policy = PreloginPolicy::new(&[(1, 500), (2, 500)], 500).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 500), (2, 500)], 500).unwrap();
         let first = fake_prelogin(&secret, &n, &policy);
         for _ in 0..1000 {
             assert_eq!(fake_prelogin(&secret, &n, &policy), first);
@@ -700,7 +731,7 @@ mod tests {
             (&[(1, 100), (2, 900)], 1000),
         ];
         for (profiles, sk) in cases {
-            let policy = PreloginPolicy::new(profiles, sk).unwrap();
+            let policy = PreloginPolicy::for_tests(profiles, sk).unwrap();
             let yes = share(&secret, &policy, |a| a.sk_hint);
             let wanted = f64::from(sk) / 1000.0;
             assert!((yes - wanted).abs() <= 0.02, "hint {yes} against {wanted}");
@@ -719,7 +750,7 @@ mod tests {
     fn policy_with_two_profiles_serves_both() {
         let secret = synthetic_secret();
         // Even a small share is drawn now and then.
-        let policy = PreloginPolicy::new(&[(1, 990), (2, 10)], 500).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 990), (2, 10)], 500).unwrap();
         let mut seen = HashSet::new();
         for i in 0..5000 {
             let n = name(&format!("someone{i}@example.com"));
@@ -732,7 +763,7 @@ mod tests {
     fn the_hint_and_the_profile_are_drawn_independently() {
         // Each of the four combinations turns up under a half-and-half policy.
         let secret = synthetic_secret();
-        let policy = PreloginPolicy::new(&[(1, 500), (2, 500)], 500).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 500), (2, 500)], 500).unwrap();
         let mut seen = HashSet::new();
         for i in 0..2000 {
             let n = name(&format!("pair{i}@example.com"));
@@ -818,7 +849,7 @@ mod tests {
         assert_ne!(ra[32..96], rb[32..96]);
         assert_ne!(ra[96..], rb[96..]);
         // The answers differ for some names (a single name can match by chance).
-        let policy = PreloginPolicy::new(&[(1, 500), (2, 500)], 500).unwrap();
+        let policy = PreloginPolicy::for_tests(&[(1, 500), (2, 500)], 500).unwrap();
         let differing = (0..200)
             .filter(|i| {
                 let n = name(&format!("user{i}@example.com"));

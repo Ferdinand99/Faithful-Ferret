@@ -75,12 +75,14 @@ pub enum DenyReason {
     StateMissing,
     /// The login state has expired.
     StateExpired,
-    /// The sealed login state did not open or did not parse.
+    /// The sealed login state did not open or did not parse, or it was made
+    /// for another purpose, session or account than the request expects.
+    ///
+    /// One reason covers all of these on purpose: a caller that could tell a
+    /// wrong session from a wrong account from a tampered blob would learn
+    /// something from the difference, and the server's log gains little from
+    /// the split.
     StateInvalid,
-    /// The state belongs to another purpose (login or re-authentication).
-    PurposeMismatch,
-    /// The state belongs to another session.
-    SessionMismatch,
     /// The third OPAQUE message did not verify.
     Ke3,
     /// The nonce was never issued, or is already used.
@@ -99,8 +101,6 @@ impl DenyReason {
         DenyReason::StateMissing,
         DenyReason::StateExpired,
         DenyReason::StateInvalid,
-        DenyReason::PurposeMismatch,
-        DenyReason::SessionMismatch,
         DenyReason::Ke3,
         DenyReason::NonceUnknown,
         DenyReason::NonceExpired,
@@ -258,13 +258,11 @@ mod tests {
                 DenyReason::StateMissing => 0,
                 DenyReason::StateExpired => 1,
                 DenyReason::StateInvalid => 2,
-                DenyReason::PurposeMismatch => 3,
-                DenyReason::SessionMismatch => 4,
-                DenyReason::Ke3 => 5,
-                DenyReason::NonceUnknown => 6,
-                DenyReason::NonceExpired => 7,
-                DenyReason::ProofInvalid => 8,
-                DenyReason::ScopeForbids => 9,
+                DenyReason::Ke3 => 3,
+                DenyReason::NonceUnknown => 4,
+                DenyReason::NonceExpired => 5,
+                DenyReason::ProofInvalid => 6,
+                DenyReason::ScopeForbids => 7,
             }
         }
         fn malformed_index(m: Malformed) -> usize {
@@ -280,7 +278,7 @@ mod tests {
             }
         }
         let deny: Vec<usize> = DenyReason::ALL.iter().map(|r| deny_index(*r)).collect();
-        assert_eq!(deny, (0..10).collect::<Vec<_>>());
+        assert_eq!(deny, (0..8).collect::<Vec<_>>());
         let malformed: Vec<usize> = Malformed::ALL.iter().map(|m| malformed_index(*m)).collect();
         assert_eq!(malformed, (0..8).collect::<Vec<_>>());
     }

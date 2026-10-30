@@ -6,6 +6,10 @@
 //!   next layer runs the same checks.
 //! * [`state_plain_wipe_probe`] lets a test crate look at the memory of a
 //!   sealed state's content before and after it is dropped.
+//! * [`LoginFixture`] is a server with one registered account and the pieces
+//!   to run the client of `ferret-core` against it. [`login_start_with_context`]
+//!   runs the first step with another OPAQUE context or other identities than
+//!   Ferret's, to show that such a server cannot authenticate.
 //!
 //! This is test tooling, not production code, so the strict production lints
 //! are relaxed here.
@@ -354,6 +358,7 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
         credential: CredentialId::from_bytes([fill; 16]),
         purpose: LoginPurpose::Reauth {
             session: SessionBinding([fill; 32]),
+            account: CredentialId::from_bytes([fill; 16]),
         },
         expires_at: 1,
         ksf_profile: 1,
@@ -370,4 +375,268 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
     reader(WipePhase::Before, ptr, SERVER_LOGIN_LEN);
     held.clear();
     reader(WipePhase::After, ptr, SERVER_LOGIN_LEN);
+}
+
+// ------------------------------------------------------------- login fixture
+
+/// Key stretching cost for the tests: far below the floor of the real
+/// profiles, so that a login takes milliseconds. Only the test KSF of the
+/// core accepts it.
+pub const SMALL: ferret_core::KdfParams = ferret_core::KdfParams {
+    m_kib: 64,
+    t: 1,
+    p: 1,
+};
+
+/// The password of the account of a [`LoginFixture`].
+pub const FIXTURE_PASSWORD: &str = "correct horse battery";
+
+/// The address the fixture's caller comes from.
+pub const FIXTURE_IP: &str = "192.0.2.7";
+
+/// A server with one registered account, and the pieces to run the client of
+/// `ferret-core` against it.
+pub struct LoginFixture {
+    /// The OPAQUE keys.
+    pub keys: crate::ServerKeys,
+    /// The pre-login secret.
+    pub prelogin: crate::PreloginSecret,
+    /// The key that seals login states.
+    pub seal: crate::StateSealKey,
+    /// A clock the test sets.
+    pub clock: crate::ManualClock,
+    /// A throttle that admits and remembers every call.
+    pub throttle: crate::RecordingThrottle,
+    /// Every made-up answer uses profile 1.
+    pub policy: crate::PreloginPolicy,
+    /// The profile rules of suite 1.
+    pub profiles: crate::ProfileRules,
+    /// The login state store.
+    pub store: crate::InMemoryLoginStateStore,
+    /// The login name of the account.
+    pub name: crate::NormalizedLoginName,
+    /// The credential id of the account.
+    pub credential: CredentialId,
+    /// The record the account registered, with profile 1.
+    pub record: crate::StoredRecord,
+    /// How many logins `start` has begun: each gets its own random source.
+    starts: AtomicUsize,
+}
+
+impl LoginFixture {
+    /// The time the fixture's clock starts at.
+    pub const START: u64 = 1_700_000_000;
+
+    /// A server and an account `alice@example.com` registered with
+    /// [`FIXTURE_PASSWORD`].
+    pub fn new() -> Self {
+        use ferret_core::TestRng;
+
+        let keys = crate::ServerKeys::generate(&mut TestRng::new(b"fixture keys")).unwrap();
+        let prelogin = crate::PreloginSecret::generate(&mut TestRng::new(b"fixture prelogin"));
+        let seal = crate::StateSealKey::derive(&prelogin).unwrap();
+        let credential = CredentialId::from_bytes([0x42; 16]);
+        let profiles = crate::ProfileRules::ferret_v1();
+        let record = register_account(&keys, &profiles, &credential, FIXTURE_PASSWORD);
+        Self {
+            keys,
+            prelogin,
+            seal,
+            clock: crate::ManualClock::new(Self::START),
+            throttle: crate::RecordingThrottle::new(),
+            policy: crate::PreloginPolicy::single(ferret_core::KsfProfile::from_wire(1).unwrap()),
+            profiles,
+            store: crate::InMemoryLoginStateStore::new(),
+            name: crate::normalize_login_name("alice@example.com").unwrap(),
+            credential,
+            record,
+            starts: AtomicUsize::new(0),
+        }
+    }
+
+    /// Registers another account on this server, with its own record, for
+    /// tests of two accounts. The record is not known to the fixture.
+    pub fn register(&self, credential: &CredentialId, password: &str) -> crate::StoredRecord {
+        register_account(&self.keys, &self.profiles, credential, password)
+    }
+
+    /// The OPAQUE input of a password.
+    pub fn input(password: &str) -> ferret_core::OpaqueInput {
+        ferret_core::MasterPassword::for_unlock(password.as_bytes())
+            .unwrap()
+            .opaque_input(None)
+    }
+
+    /// The server's context.
+    pub fn cx(&self) -> crate::AuthContext<'_> {
+        crate::AuthContext::new(
+            &self.keys,
+            &self.prelogin,
+            &self.seal,
+            &self.clock,
+            &self.throttle,
+            &self.policy,
+            &self.profiles,
+        )
+    }
+
+    /// The caller of the fixture.
+    pub fn caller() -> crate::Caller {
+        crate::Caller {
+            ip: Some(FIXTURE_IP.parse().unwrap()),
+        }
+    }
+
+    /// The lookup of the account.
+    pub fn active(&self) -> crate::AccountLookup<'_> {
+        crate::AccountLookup::Active {
+            record: &self.record,
+            sk_hint: false,
+        }
+    }
+
+    /// KE1 of a client that types `password`, and the state to finish with.
+    /// The client's random source is a `TestRng` seeded with `seed`.
+    pub fn client_start(&self, password: &str, seed: &str) -> (Vec<u8>, ferret_core::LoginState) {
+        ferret_core::opaque_login_start(
+            &mut ferret_core::TestRng::new(seed.as_bytes()),
+            &Self::input(password),
+        )
+        .unwrap()
+    }
+
+    /// The client's last step with the test KSF: KE3, or the client's error.
+    pub fn client_finish(
+        &self,
+        state: ferret_core::LoginState,
+        password: &str,
+        ke2: &[u8],
+        context: &[u8],
+    ) -> Result<Vec<u8>, ferret_core::Error> {
+        use ferret_core::testing::opaque::{TestKsf, login_finish_with};
+        login_finish_with(
+            &mut ferret_core::TestRng::new(b"client finish"),
+            state,
+            &Self::input(password),
+            ke2,
+            &TestKsf::new(SMALL),
+            Some(context),
+            ferret_core::PinState::FirstUse,
+        )
+        .map(|done| done.finished.ke3)
+    }
+
+    /// `login_start` for the fixture's name. Every call draws from its own
+    /// `TestRng`, so the login ids differ.
+    pub fn start(
+        &self,
+        lookup: crate::AccountLookup<'_>,
+        ke1: &[u8],
+        purpose: LoginPurpose,
+    ) -> Result<crate::LoginStartResponse, crate::AuthError> {
+        let request = crate::LoginStartRequest {
+            caller: Self::caller(),
+            name: &self.name,
+            credential: self.credential,
+            lookup,
+            purpose,
+            ke1,
+        };
+        let n = self.starts.fetch_add(1, Ordering::Relaxed);
+        crate::login_start(
+            &self.cx(),
+            &self.store,
+            &mut ferret_core::TestRng::new(format!("fixture server {n}").as_bytes()),
+            &request,
+        )
+    }
+
+    /// `login_finish` from the fixture's caller.
+    pub fn finish(
+        &self,
+        login_id: &LoginId,
+        ke3: &[u8],
+        current_session: Option<(SessionBinding, CredentialId)>,
+    ) -> Result<crate::LoginVerified, crate::AuthError> {
+        crate::login_finish(
+            &self.cx(),
+            &self.store,
+            &crate::LoginFinishRequest {
+                caller: Self::caller(),
+                login_id: login_id.to_hex().as_bytes(),
+                ke3,
+                current_session,
+            },
+        )
+    }
+}
+
+/// A client registration of `password` under `credential` against the server's
+/// keys, packed as the server stores it (profile 1).
+fn register_account(
+    keys: &crate::ServerKeys,
+    profiles: &crate::ProfileRules,
+    credential: &CredentialId,
+    password: &str,
+) -> crate::StoredRecord {
+    use ferret_core::testing::opaque::{TestKsf, register_finish_with};
+    use ferret_core::{TestRng, opaque_register_start};
+
+    let input = LoginFixture::input(password);
+    let mut client = TestRng::new(b"fixture registration");
+    let (request, state) = opaque_register_start(&mut client, &input).unwrap();
+    let response = crate::register_start(keys, credential, &request).unwrap();
+    let done =
+        register_finish_with(&mut client, state, &input, &response, &TestKsf::new(SMALL)).unwrap();
+    crate::register_finish(
+        &done.record,
+        1,
+        profiles,
+        crate::RegistrationKind::NewAccount,
+    )
+    .unwrap()
+}
+
+impl Default for LoginFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::fmt::Debug for LoginFixture {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("LoginFixture([redacted])")
+    }
+}
+
+/// `login_start` run with another OPAQUE context and other identities than
+/// Ferret's. A client of Ferret cannot authenticate such a server.
+pub fn login_start_with_context<R: ferret_core::SecureRng, S: LoginStateStore>(
+    cx: &crate::AuthContext<'_>,
+    store: &S,
+    rng: &mut R,
+    req: &crate::LoginStartRequest<'_>,
+    context: &[u8],
+    identities: Option<(&[u8], &[u8])>,
+) -> Result<crate::LoginStartResponse, crate::AuthError> {
+    let params = crate::login::Params {
+        context,
+        client_identity: identities.map(|(client, _)| client),
+        server_identity: identities.map(|(_, server)| server),
+    };
+    crate::login::start_with(cx, store, rng, req, &params)
+}
+
+/// Takes the sealed state of the login `id` out of `store`, as the first
+/// step of `login_finish` does.
+pub fn take_state<S: LoginStateStore>(store: &S, id: &LoginId, now: u64) -> SealedState {
+    store.take(&id.store_key(), now).unwrap().unwrap()
+}
+
+/// Puts a sealed state in `store` under the key of the login `id`, valid for
+/// the usual time from `now`. For tests that move or change a state.
+pub fn put_state<S: LoginStateStore>(store: &S, id: &LoginId, sealed: SealedState, now: u64) {
+    store
+        .put(id.store_key(), sealed, now + STATE_TTL_SECS, now)
+        .unwrap();
 }

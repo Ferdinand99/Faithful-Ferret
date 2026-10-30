@@ -43,6 +43,25 @@
 //! [`STATE_TTL_SECS`] seconds and is used once: the first `take` removes it,
 //! so a repeated or simultaneous `login_finish` finds nothing.
 //!
+//! # Login
+//!
+//! [`login_start`] and [`login_finish`] are the two server steps of an OPAQUE
+//! login. A name without an account and a disabled account are answered from
+//! a made-up record, in the same steps and with the same shape as a real
+//! one, so the answer to the first message does not tell which names exist.
+//! The module documentation of [`login`] has the order of the steps.
+//!
+//! # Start-up
+//!
+//! A server loads its secrets (`load_or_create`), takes the
+//! [`startup_decision`], builds its [`PreloginPolicy`] from the shares of the
+//! real accounts, and only then serves. [`PreloginPolicy::new`] refuses a
+//! policy that names a key stretching profile that clients do not know, so a
+//! bad policy fails at start-up and never on a request: a made-up answer with
+//! a profile no client accepts would make every unknown name fail while real
+//! names work. [`AuthContext::new`] only bundles borrows and is cheap enough
+//! to build for every request.
+//!
 //! # Features
 //!
 //! * `test-support` (off by default, never part of a release): the manual
@@ -76,6 +95,7 @@ mod ct;
 pub mod error;
 pub mod ids;
 pub mod keys;
+pub mod login;
 pub mod name;
 pub mod prelogin;
 pub mod record;
@@ -96,6 +116,10 @@ pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
 pub use keys::{
     CreatePolicy, FileOrigin, LoadedSecrets, PreloginSecret, ServerKeys, SetupFingerprint,
     load_or_create,
+};
+pub use login::{
+    AccountLookup, AuthContext, LoginFinishRequest, LoginStartRequest, LoginStartResponse,
+    LoginVerified, login_finish, login_start,
 };
 pub use name::{LOGIN_NAME_MAX_BYTES, NormalizedLoginName, normalize_login_name};
 pub use prelogin::{
