@@ -6,6 +6,10 @@
 #   scripts/fuzz-run.sh run    <target|all> <seconds>   fuzz for <seconds> per target
 #   scripts/fuzz-run.sh replay <target|all>             replay the seed corpus and
 #                                                       fuzz/regression/<target>, no new inputs
+#   scripts/fuzz-run.sh merge  <target|all>             shrink fuzz/corpus/<target> to a
+#                                                       smallest set with the same coverage
+#                                                       (libFuzzer -merge=1); the corpus is
+#                                                       replaced only if the merge succeeded
 #
 # The pinned nightly toolchain is named in fuzz/NIGHTLY. Each target leaves
 # fuzz/.out/<target>.log, .summary (one line: executions, executions per
@@ -26,10 +30,10 @@ mode="${1:-}"
 target="${2:-}"
 seconds="${3:-60}"
 if [ -z "$mode" ] || [ -z "$target" ]; then
-  echo "usage: scripts/fuzz-run.sh run <target|all> <seconds> | replay <target|all>" >&2
+  echo "usage: scripts/fuzz-run.sh run <target|all> <seconds> | replay <target|all> | merge <target|all>" >&2
   exit 2
 fi
-case "$mode" in run | replay) ;; *) echo "fuzz-run.sh: unknown mode $mode" >&2; exit 2 ;; esac
+case "$mode" in run | replay | merge) ;; *) echo "fuzz-run.sh: unknown mode $mode" >&2; exit 2 ;; esac
 
 nightly="$(tr -d '[:space:]' < fuzz/NIGHTLY)"
 export RUSTUP_TOOLCHAIN="$nightly"
@@ -90,6 +94,32 @@ for t in "${targets[@]}"; do
     *) maxlen=4096 ;;
   esac
   echo "fuzz-run.sh: $mode $t" >&2
+  if [ "$mode" = merge ]; then
+    # The merged set goes to a new directory and takes the place of the corpus
+    # only when libFuzzer finished. The regression inputs are replayed on their
+    # own and stay out of the corpus.
+    merged="fuzz/.merged/$t"
+    rm -rf "$merged"
+    mkdir -p "$merged"
+    # shellcheck disable=SC2086
+    if cargo fuzz run "${fuzz_args[@]}" "$t" "$merged" "fuzz/corpus/$t" -- \
+         -merge=1 -max_len=$maxlen -timeout=60 -rss_limit_mb=4096 >"fuzz/.out/$t.merge.log" 2>&1; then
+      before="$(find "fuzz/corpus/$t" -type f | wc -l)"
+      rm -rf "fuzz/corpus/$t"
+      mv "$merged" "fuzz/corpus/$t"
+      echo 0 >"fuzz/.out/$t.status"
+      printf '%s mode=merge status=0 files=%s->%s\n' "$t" "$before" "$(find "fuzz/corpus/$t" -type f | wc -l)" \
+        | tee -a "fuzz/.out/$t.summary"
+    else
+      worst=1
+      echo 1 >"fuzz/.out/$t.status"
+      printf '%s mode=merge status=1\n' "$t" >>"fuzz/.out/$t.summary"
+      echo "fuzz-run.sh: $t merge FAILED; the corpus is unchanged. Last lines of the log:" >&2
+      tail -n 25 "fuzz/.out/$t.merge.log" >&2
+      rm -rf "$merged"
+    fi
+    continue
+  fi
   # shellcheck disable=SC2086
   cargo fuzz run "${fuzz_args[@]}" "$t" "${corpora[@]}" -- \
     "${limits[@]}" "${dict[@]}" -max_len=$maxlen -timeout=60 -rss_limit_mb=4096 -print_final_stats=1 ${FUZZ_EXTRA:-} \

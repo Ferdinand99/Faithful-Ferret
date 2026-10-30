@@ -14,6 +14,8 @@ on:
       - "ct/harness/**"
       - "vectors/**"
       - "fuzz/NIGHTLY"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "scripts/coverage-check.mjs"
       - "scripts/coverage-thresholds.json"
       - ".github/workflows/coverage.yml"

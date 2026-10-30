@@ -145,7 +145,7 @@ proptest! {
     /// Reading a canonical origin again gives itself, and the result is
     /// never `null`, an IP host or opaque.
     #[test]
-    fn origin_canonicalization_is_idempotent(
+    fn origin_canonicalization_idempotent(
         scheme in prop_oneof![Just("https"), Just("HTTPS"), Just("http"), Just("ftp")],
         host in "[A-Za-z0-9.\u{e4}\u{e9}\u{3b1}\u{65e5}\u{ff21}-]{0,40}",
         port in prop_oneof![Just(String::new()), (0u32..70000).prop_map(|p| format!(":{p}"))],
