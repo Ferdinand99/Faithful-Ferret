@@ -127,6 +127,17 @@ None of these changed an expected value of a vector. Everything else matched wit
     the 78 upstream cases of `vectors/external/publicsuffix-test_psl.txt`. `localhost` is allowed as an RP ID only
     from `localhost`.
 
+### Server operations (`server.*`)
+
+22. **The only source is `OPS.md`.** The layouts of the secret file, the fingerprint, the made-up record, the key of
+    a nonce and the sealed state are not in the design (only the made-up credential id is, in section 4.2); the
+    section "Server operations" of `OPS.md` states them, and xcheck reads nothing else. The text was written by the
+    author of the Rust library, so a mistake in what it states would be shared; xcheck can only show that the
+    bytes follow from the text, not that the text is right.
+23. **Lower-casing and trimming of login names** use `String.prototype.toLowerCase` and `trim` of the platform.
+    They agree with the Rust `to_lowercase` and `trim` for the names of the vectors; the Unicode tables differ
+    between Node and the library for rare characters, so a name with one of those is not in the vectors.
+
 ## Not covered
 
 * `opaque.register`, `opaque.login` (22 cases): the design names RFC 9807 with ristretto255 but gives no byte-level
@@ -136,10 +147,17 @@ None of these changed an expected value of a vector. Everything else matched wit
   16-zero-byte salt and 64 bytes out, the input `mp || 0x00 || SK`, `credential_identifier = account_id`, default
   identities, `export_key` feeding `KEK_pw`) is checked by no independent implementation. The RFC 9807 vectors in
   the Rust suite use the identity KSF and the context `OPAQUE-POC`, so they do not exercise these choices.
+* `server.register_response`, `server.login_start`, `server.login_finish`, `server.replace_authorize` (62 cases, the
+  whole of `server-opaque.json`): they need the OPRF and the 3DH key exchange of RFC 9807 (and, for the
+  replacement, a ristretto255 check of the uploaded record). The expected values are recorded from the server
+  library and are regression pins; the standard is tied to the same server code by
+  `crates/ferret-server-auth/tests/rfc9807_server.rs`. What goes into them that is plain HMAC, HKDF, SHA-256 or
+  XChaCha20-Poly1305 is covered by the other `server.*` operations: the made-up id, answer and record, and the
+  sealed state that `login_start` writes and `login_finish` opens.
 
 ## Guards
 
 * xcheck refuses to start on a Node whose Unicode version is not 16.0 or 17.0, and on a Node without
   `crypto.argon2Sync` (Node 24.7 or newer; `engines` and `.npmrc` `engine-strict` say the same).
-* An op in the vectors that has no handler and is not in `NOT_COVERED` (only the two OPAQUE ops) fails the run.
+* An op in the vectors that has no handler and is not in `NOT_COVERED` (only the OPAQUE ops and the four server ops above) fails the run.
 
