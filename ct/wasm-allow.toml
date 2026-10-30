@@ -818,15 +818,15 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 
 [[allow]]
 function = "^vault_reveal_plain_export externref shim multivalue shim$"
-instruction = "br_table"
+instruction = "i32\\.div_u"
 max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
 function = "^vault_reveal_plain_export externref shim multivalue shim$"
-instruction = "i32\\.div_u"
-max = 1
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+instruction = "i32\\.load\\(indexed\\)"
+max = 2
+reason = "APPROVED: Both indexed loads are in the loop of export_plain_csv (inlined into the export shim) that reads the number of custom fields of each item, to size the header row. The address is the item at the public loop position (a fixed stride of 304 bytes); the value read is a field count, which is the structure of the file the user asked for in the clear, not a key. The token comparison of this export is same_token, which has no division, no table and no branch on a byte value."
 
 [[allow]]
 function = "^vault_seed_pinned externref shim multivalue shim$"
