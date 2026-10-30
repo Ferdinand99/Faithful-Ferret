@@ -3,8 +3,8 @@
 //! Every flow goes through the public API only, the way an endpoint calls it:
 //! the context with its throttle and clock, the login state store, the
 //! challenge store, the signed proofs, and a test store for the conditional
-//! writes. Where a flow could not be wired from the public API alone, that
-//! is a finding for the report and not something to work around here.
+//! writes. A flow that needs something private would not belong here: every
+//! call below is one a separate endpoint crate can make.
 //!
 //! The quick scenarios use the test stretching function with small
 //! parameters. `full_profile_one_registration_and_login` uses Argon2id with
@@ -534,7 +534,7 @@ fn reauth_login_is_bound_to_its_session() {
     ));
 }
 
-// ------------------------------------------------------- pins and V8
+// ------------------------------------------------------- pins and the claimed profile
 
 #[test]
 fn server_key_change_is_seen_at_reregistration() {
