@@ -22,10 +22,14 @@
 //!
 //! # Memory
 //!
-//! A stage keeps at most [`KitThrottle::DEFAULT_MAX_KEYS`] keys. A full table
+//! A stage keeps at most [`KitThrottle::DEFAULT_MAX_KEYS`] address keys and as
+//! many account keys, in tables of their own. A full table
 //! never refuses a caller (that would let anyone lock everybody out of signing
 //! in, which Fase 1 § 11 rules out): the key that was added first is dropped to
-//! make room, and its counter starts again from zero if it comes back. Keys
+//! make room, and its counter starts again from zero if it comes back. An address
+//! costs an attacker nothing (an IPv6 /64 holds countless ones), so address keys
+//! only ever push out other address keys: the counter of an account is dropped
+//! only for another account key, never by a flood of addresses. Keys
 //! whose attempts have all left the window are swept out a few at a time on
 //! each call ([`KitThrottle::SWEEP_BUDGET`]), so no call walks the whole table
 //! under the lock.
@@ -131,15 +135,38 @@ impl Table {
     }
 }
 
+/// The counters of one stage: address keys and account keys in tables of their
+/// own. An address costs an attacker nothing (an IPv6 /64 holds countless
+/// ones), so a flood of address keys may only push out other address keys; the
+/// counter of an account is dropped only to make room for another account key.
+#[derive(Default)]
+struct Tables {
+    address: Table,
+    account: Table,
+}
+
+impl Tables {
+    fn table_mut(&mut self, key: &ThrottleKey) -> &mut Table {
+        match key {
+            ThrottleKey::Account(_) | ThrottleKey::AccountIp(..) => &mut self.account,
+            ThrottleKey::Ip(_) | ThrottleKey::UnknownAddress => &mut self.address,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.address.len().saturating_add(self.account.len())
+    }
+}
+
 /// The two limited stages.
 #[derive(Default)]
 struct Counters {
-    login: Table,
-    register: Table,
+    login: Tables,
+    register: Tables,
 }
 
 impl Counters {
-    fn stage_mut(&mut self, stage: Stage) -> Option<&mut Table> {
+    fn stage_mut(&mut self, stage: Stage) -> Option<&mut Tables> {
         match stage {
             Stage::LoginStart => Some(&mut self.login),
             Stage::RegisterStart => Some(&mut self.register),
@@ -156,7 +183,8 @@ pub struct KitThrottle {
 }
 
 impl KitThrottle {
-    /// The most keys a stage keeps.
+    /// The most keys a stage keeps in each of its two tables (address keys and
+    /// account keys).
     pub const DEFAULT_MAX_KEYS: usize = 100_000;
     /// How many old keys one call looks at.
     pub const SWEEP_BUDGET: usize = 32;
@@ -168,7 +196,8 @@ impl KitThrottle {
         Self::with_max_keys(clock, Self::DEFAULT_MAX_KEYS)
     }
 
-    /// A limiter that keeps at most `max_keys` keys per stage.
+    /// A limiter that keeps at most `max_keys` address keys and `max_keys`
+    /// account keys per stage.
     pub fn with_max_keys(clock: Arc<dyn Clock>, max_keys: usize) -> Self {
         Self {
             _clock: clock,
@@ -193,10 +222,11 @@ impl KitThrottle {
 impl Throttle for KitThrottle {
     fn admit(&self, stage: Stage, keys: &[ThrottleKey], now: u64) -> Result<(), RetryAfter> {
         let mut counters = self.lock();
-        let Some(table) = counters.stage_mut(stage) else {
+        let Some(tables) = counters.stage_mut(stage) else {
             return Ok(());
         };
-        table.sweep(now, Self::SWEEP_BUDGET);
+        tables.address.sweep(now, Self::SWEEP_BUDGET);
+        tables.account.sweep(now, Self::SWEEP_BUDGET);
 
         // Every limited key is checked first; nothing is counted unless all of
         // them admit.
@@ -205,7 +235,7 @@ impl Throttle for KitThrottle {
             let Some(max) = limit(stage, key) else {
                 continue;
             };
-            let Some(attempts) = table.attempts.get_mut(key) else {
+            let Some(attempts) = tables.table_mut(key).attempts.get_mut(key) else {
                 continue;
             };
             expire(attempts, now);
@@ -223,16 +253,16 @@ impl Throttle for KitThrottle {
         }
 
         // New keys need room; a full table drops its oldest keys.
-        let new_keys = keys
-            .iter()
-            .filter(|key| limit(stage, key).is_some() && !table.attempts.contains_key(*key))
-            .count();
-        while table.len().saturating_add(new_keys) > self.max_keys && table.evict_oldest() {}
-
+        // Room is made in the table of the key's own kind.
         for key in keys {
-            if limit(stage, key).is_some() {
-                table.count(*key, now);
+            if limit(stage, key).is_none() {
+                continue;
             }
+            let table = tables.table_mut(key);
+            if !table.attempts.contains_key(key) {
+                while table.len() >= self.max_keys && table.evict_oldest() {}
+            }
+            table.count(*key, now);
         }
         Ok(())
     }

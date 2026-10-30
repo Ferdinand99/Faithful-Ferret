@@ -412,3 +412,65 @@ fn only_the_last_forwarded_for_line_counts() {
     headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.4"));
     assert_eq!(caller_from(&headers, Some(peer)).ip, ip("198.51.100.4"));
 }
+
+#[test]
+fn a_flood_of_address_keys_never_evicts_an_account_counter() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::with_max_keys(clock as Arc<dyn Clock>, 1_000);
+    let account = ThrottleKey::AccountIp(
+        ferret_server_auth::CredentialId::from_bytes([9; 16]),
+        "192.0.2.77".parse().unwrap(),
+    );
+    // The account has used up its five attempts a minute.
+    for _ in 0..5 {
+        throttle
+            .admit(Stage::LoginStart, &[account], START)
+            .expect("within the limit");
+    }
+    throttle
+        .admit(Stage::LoginStart, &[account], START)
+        .expect_err("the sixth");
+
+    // A million distinct addresses, all in the same window.
+    for n in 0..1_000_000 {
+        let _ = throttle.admit(Stage::LoginStart, &[address(n)], START);
+    }
+    assert!(
+        throttle.tracked_keys() <= 1_001,
+        "{}",
+        throttle.tracked_keys()
+    );
+
+    // The account counter is intact: the attacker did not get a fresh allowance.
+    throttle
+        .admit(Stage::LoginStart, &[account], START)
+        .expect_err("the account limit survived the flood");
+}
+
+#[test]
+fn account_keys_are_pushed_out_only_by_other_account_keys() {
+    let clock = Arc::new(ManualClock::new(START));
+    let throttle = KitThrottle::with_max_keys(clock as Arc<dyn Clock>, 10);
+    let account = |n: u8| {
+        ThrottleKey::AccountIp(
+            ferret_server_auth::CredentialId::from_bytes([n; 16]),
+            "192.0.2.77".parse().unwrap(),
+        )
+    };
+    for _ in 0..5 {
+        throttle
+            .admit(Stage::LoginStart, &[account(0)], START)
+            .expect("within the limit");
+    }
+    // Ten more accounts fill the account table and push the first out; the
+    // table never grows beyond its cap, and nobody is refused.
+    for n in 1..=10 {
+        throttle
+            .admit(Stage::LoginStart, &[account(n)], START)
+            .expect("a new account key");
+    }
+    assert_eq!(throttle.tracked_keys(), 10);
+    throttle
+        .admit(Stage::LoginStart, &[account(0)], START)
+        .expect("the oldest account key was dropped and starts again");
+}
