@@ -18,8 +18,8 @@
 //!
 //! The classes of the first three differ in nothing but whether the name has
 //! an account. Every name has the same length (the length is public and goes
-//! into the HMAC), and the inputs of a class come from a pool of 256 names, so
-//! the data are not the same on every measurement. As in the rest of the
+//! into the HMAC), and both classes use the same pool of 256 names, so the data
+//! are not the same on every measurement but are the same in the two classes. As in the rest of the
 //! crate the input of a measurement is copied into one working cell before
 //! the timer starts, so the memory the library reads is at the same place for
 //! both classes.
@@ -158,8 +158,6 @@ struct Start {
     ke1: Vec<u8>,
     /// Accounts for Left (and for Right of `Disabled`).
     accounts: Vec<Account>,
-    /// Names without an account.
-    unknown: Vec<NormalizedLoginName>,
     tape: RefCell<Tape>,
     // The working cell.
     right: bool,
@@ -178,15 +176,14 @@ impl Target for Start {
         self.right = class == Class::Right;
         // The same copies for both classes (a clone allocates, and the state
         // of the allocator and of the caches after the copy must not tell
-        // the classes apart): the name comes from the pool of the class, the
-        // credential and the record are those of account `i` either way, and
-        // the library does not read them for a name without an account.
+        // the classes apart): the name, credential and record are those of
+        // account `i` either way, and the library does not read the
+        // credential and the record when the lookup says there is no
+        // account. The same names in both classes: the time of the HMAC over
+        // a name varies a little with the name, and two pools of names would
+        // give the classes a different mean however many measurements are made.
         let account = &self.accounts[i];
-        let name = match (class, self.other) {
-            (Class::Right, Other::Unknown) => &self.unknown[i],
-            _ => &account.name,
-        };
-        self.cell.name = name.clone();
+        self.cell.name = account.name.clone();
         self.cell.credential = account.credential;
         self.cell.record = account.record.clone();
         self.tape.get_mut().rewind();
@@ -246,7 +243,6 @@ fn start_target(mix: &mut Mix, name: &'static str, other: Other) -> Start {
     let f = LoginFixture::new();
     let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "dudect client");
     let accounts = accounts(&f, mix);
-    let unknown = (0..SERVER_POOL as u32).map(|n| name_of('u', n)).collect();
     let cell = Account {
         name: accounts[0].name.clone(),
         credential: accounts[0].credential,
@@ -259,7 +255,6 @@ fn start_target(mix: &mut Mix, name: &'static str, other: Other) -> Start {
         clock: FixedClock,
         ke1,
         accounts,
-        unknown,
         tape: RefCell::new(Tape::new(mix.next())),
         right: false,
         cell,
@@ -285,8 +280,7 @@ enum PreloginMode {
 struct Prelogin {
     mode: PreloginMode,
     f: LoginFixture,
-    known: Vec<(NormalizedLoginName, AccountId)>,
-    unknown: Vec<NormalizedLoginName>,
+    names: Vec<(NormalizedLoginName, AccountId)>,
     name: NormalizedLoginName,
     /// What the lookup of the name found. Set before the timer starts, so the
     /// timed code does not branch on the class to build it.
@@ -314,13 +308,15 @@ impl Target for Prelogin {
     }
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
+        // The same name for both classes: the time of the HMAC over a name
+        // varies a little with the name, and two pools of names would give
+        // the classes a different mean however many measurements are made.
+        self.name = self.names[i].0.clone();
         if class == Class::Right {
-            self.name = self.unknown[i].clone();
             self.account = None;
             self.active = 0;
         } else {
-            self.name = self.known[i].0.clone();
-            self.account = Some(self.known[i].1);
+            self.account = Some(self.names[i].1);
             self.active = 1;
         }
     }
@@ -357,17 +353,15 @@ impl Target for Prelogin {
 
 fn prelogin_target(mix: &mut Mix, mode: PreloginMode) -> Prelogin {
     let f = LoginFixture::new();
-    let known = (0..SERVER_POOL as u32)
+    let names = (0..SERVER_POOL as u32)
         .map(|n| (name_of('k', n), AccountId::from_bytes(mix.array::<16>())))
         .collect::<Vec<_>>();
-    let unknown = (0..SERVER_POOL as u32).map(|n| name_of('u', n)).collect();
     Prelogin {
         mode,
-        name: known[0].0.clone(),
-        account: Some(known[0].1),
+        name: names[0].0.clone(),
+        account: Some(names[0].1),
         active: 1,
-        known,
-        unknown,
+        names,
         stored: (1, 1),
         f,
     }
@@ -405,11 +399,13 @@ struct Binding {
     f: LoginFixture,
     id: LoginId,
     sealed: SealedState,
-    /// What the request expects: wrong in the first byte of the session
-    /// (Left) or in the last byte of the account (Right).
-    left: Vec<([u8; 32], [u8; 16])>,
-    right: Vec<([u8; 32], [u8; 16])>,
-    cell: ([u8; 32], [u8; 16]),
+    /// A non-zero byte to xor into the expected value, per input.
+    masks: Vec<u8>,
+    /// What the request expects: session and account, 48 bytes. One byte is
+    /// wrong: the first (Left, in the session) or the last (Right, in the
+    /// account). Both classes read the same pool and run the same code to
+    /// make the cell; they differ in the index of the byte alone.
+    cell: [u8; 48],
 }
 
 impl Target for Binding {
@@ -420,20 +416,25 @@ impl Target for Binding {
         1
     }
     fn prepare(&mut self, class: Class, i: usize) {
-        let i = i % SERVER_POOL;
-        self.cell = match class {
-            Class::Left => self.left[i],
-            Class::Right => self.right[i],
-        };
+        let mut cell = [0u8; 48];
+        cell[..32].copy_from_slice(&SESSION);
+        cell[32..].copy_from_slice(&ACCOUNT);
+        let at = (class as usize) * 47;
+        cell[at] ^= self.masks[i % SERVER_POOL];
+        self.cell = cell;
     }
     fn run(&self, reps: u32) -> u64 {
         let mut acc = 0u64;
         for _ in 0..reps {
+            let mut session = [0u8; 32];
+            let mut account = [0u8; 16];
+            session.copy_from_slice(&self.cell[..32]);
+            account.copy_from_slice(&self.cell[32..]);
             let opened = open_fields(
                 &self.f.seal,
                 &self.id,
                 black_box(&self.sealed),
-                Some(self.cell),
+                Some((session, account)),
                 NOW,
             );
             acc = acc.wrapping_add(u64::from(opened.is_err()));
@@ -446,19 +447,13 @@ fn binding_target(mix: &mut Mix) -> Binding {
     let f = LoginFixture::new();
     let id = LoginId::parse(STATE_ID.as_bytes()).expect("a login id");
     let sealed = sealed(&f, mix, &id, ACCOUNT);
-    let left = (0..SERVER_POOL)
-        .map(|_| (flipped(SESSION, 0, mix), ACCOUNT))
-        .collect();
-    let right = (0..SERVER_POOL)
-        .map(|_| (SESSION, flipped(ACCOUNT, 15, mix)))
-        .collect();
+    let masks = (0..SERVER_POOL).map(|_| (mix.next() as u8) | 1).collect();
     Binding {
         f,
         id,
         sealed,
-        left,
-        right,
-        cell: (SESSION, ACCOUNT),
+        masks,
+        cell: [0; 48],
     }
 }
 
@@ -481,8 +476,9 @@ struct Finish {
     clock: FixedClock,
     hex: String,
     store: SlotStore,
-    left: Vec<SealedState>,
-    right: Vec<SealedState>,
+    /// Input `i` of class `c` is at `2 * i + c`: one allocation for both
+    /// classes, so neither has a place of its own in memory.
+    pool: Vec<SealedState>,
 }
 
 impl Target for Finish {
@@ -498,9 +494,8 @@ impl Target for Finish {
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
         let state = match (class, self.kind) {
-            (Class::Left, _) => Some(self.left[i].clone()),
-            (Class::Right, FinishKind::Credential) => Some(self.right[i].clone()),
             (Class::Right, FinishKind::StateVsMissing) => None,
+            _ => Some(self.pool[2 * i + class as usize].clone()),
         };
         if let Ok(mut slot) = self.store.0.lock() {
             *slot = state;
@@ -530,16 +525,13 @@ fn finish_target(mix: &mut Mix, name: &'static str, kind: FinishKind) -> Finish 
         let credential = flipped(ACCOUNT, at, mix);
         sealed(&f, mix, &id, credential)
     };
-    let (left, right) = match kind {
-        FinishKind::Credential => (
-            (0..SERVER_POOL).map(|_| other(0, mix)).collect(),
-            (0..SERVER_POOL).map(|_| other(15, mix)).collect(),
-        ),
-        FinishKind::StateVsMissing => (
-            (0..SERVER_POOL).map(|_| other(0, mix)).collect(),
-            Vec::new(),
-        ),
-    };
+    let at = |class: usize| if class == 0 { 0 } else { 15 };
+    let mut pool = Vec::with_capacity(2 * SERVER_POOL);
+    for _ in 0..SERVER_POOL {
+        for class in 0..2 {
+            pool.push(other(at(class), mix));
+        }
+    }
     Finish {
         name,
         kind,
@@ -547,8 +539,7 @@ fn finish_target(mix: &mut Mix, name: &'static str, kind: FinishKind) -> Finish 
         f,
         clock: FixedClock,
         store: SlotStore(Mutex::new(None)),
-        left,
-        right,
+        pool,
     }
 }
 
