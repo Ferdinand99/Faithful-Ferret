@@ -15,6 +15,13 @@ ignore = [
   # scripts/check-advisory-reach.sh keeps that dependency path narrow.
   # Remove this entry when opaque-ke moves to elliptic-curve 0.14.
   { id = "RUSTSEC-2026-0387", reason = "not reachable with secret data from the ristretto255 OPAQUE suite; remove when opaque-ke uses elliptic-curve 0.14" },
+  # dudect-bencher 0.7.0 (the timing tests in ct/dudect, a development tool that
+  # is not part of the core, the binding or a release) is built on clap 2,
+  # which pulls in atty and ansi_term. Both are only unmaintained (no known
+  # vulnerability); they print the bench output to a terminal.
+  # Remove these two entries when dudect-bencher moves to a newer clap.
+  { id = "RUSTSEC-2021-0139", reason = "ansi_term is unmaintained; only in clap 2 of dudect-bencher (ct/dudect, a test tool, never released)" },
+  { id = "RUSTSEC-2024-0375", reason = "atty is unmaintained; only in clap 2 of dudect-bencher (ct/dudect, a test tool, never released)" },
 ]
 
 [licenses]
@@ -70,6 +77,8 @@ skip = [
   { crate = "der@0.7", reason = "sec1 0.7 and elliptic-curve 0.13 (opaque-ke)" },
   { crate = "base16ct@0.2", reason = "elliptic-curve 0.13 and sec1 0.7 (opaque-ke)" },
   { crate = "const-oid@0.9", reason = "der 0.7 (opaque-ke)" },
+  # --- Timing tests (ct/dudect, never released) ------------------------------
+  { crate = "bitflags@1", reason = "clap 2 of dudect-bencher 0.7.0 (ct/dudect, a test tool); everything else is on bitflags 2" },
   # --- Build-time ----------------------------------------------------------
   { crate = "syn@2", reason = "build-time proc-macro dependency only: wasm-bindgen-macro-support (getrandom wasm_js backend, wasm32 target) still uses syn 2, the serde and zeroize derives use syn 3" },
 ]
