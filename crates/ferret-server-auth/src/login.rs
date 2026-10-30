@@ -45,7 +45,10 @@
 //! 1. check the structure: the login id and the length of KE3 (exactly 64
 //!    bytes). The store is not touched for a request that is malformed;
 //! 2. `take` the sealed state (the store makes it single use) and open it,
-//!    which checks the purpose, the session and the expiry;
+//!    which checks the purpose, the session, the account of a
+//!    re-authentication and the expiry; the account of the state is then
+//!    compared with the one of the session (`ct_eq`) before the throttle is
+//!    asked;
 //! 3. ask the throttle (`Stage::LoginFinish`) with the credential id of the
 //!    state, or with the address alone when no state could be opened;
 //! 4. run `ServerLogin::finish` on the KE3 and wipe the session key.
@@ -643,8 +646,7 @@ pub fn login_finish<S: LoginStateStore>(
         // A store that fails is also a request that was admitted and failed.
         Err(error) => return Err(refuse_without_id(cx, req, now, AuthError::from(error))),
     };
-    let sealed: Option<SealedState> = taken;
-    let Some(sealed) = sealed else {
+    let Some(sealed) = taken else {
         let missing = AuthError::Denied(DenyReason::StateMissing);
         return Err(refuse_without_id(cx, req, now, missing));
     };

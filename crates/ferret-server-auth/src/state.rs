@@ -444,9 +444,10 @@ pub(crate) fn seal_state<R: SecureRng>(
 ///
 /// * `Denied(StateInvalid)` for a blob of the wrong length or version, one
 ///   made for another id or under another key, one that was changed, one
-///   whose content does not parse, and one whose purpose or session is not
-///   the expected one (so a login cannot be finished as a re-authentication,
-///   or for another session, and the caller learns nothing about which);
+///   whose content does not parse, and one whose purpose, session or account
+///   is not the expected one (so a login cannot be finished as a
+///   re-authentication, or for another session or account, and the caller
+///   learns nothing about which);
 /// * `Denied(StateExpired)` when `now >= expires_at` of the sealed state.
 ///
 /// The length is checked before anything else. The caller reads the account

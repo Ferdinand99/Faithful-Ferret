@@ -307,12 +307,66 @@ speculatively), so the library branches on the lookup result there, and
 `login_start` matches on `AccountLookup` once. The branch is on what the caller
 has already decided from its own lookup, which differs by a database round trip,
 and the library cannot hide that. The compare/choice that follows is branch-free.
-`info_server_prelogin_resolve_credential` reports the size of the branch (a few
-nanoseconds, at the edge of what the timer can see with eight repetitions per
-measurement); `server_prelogin_known_vs_unknown` times the rest of the answer
-and is gated. `permille` takes the remainder of an HMAC output of the name; the
-operand is derived from the pre-login secret, not chosen by the client, and the
-result is the profile that the answer shows anyway.
+`info_server_prelogin_resolve_credential` reports the size of the branch: |t| of
+5.6 and 4.6 at 10^6 (tau 0.016 and 0.005, eight calls per measurement), at the
+threshold of what the timer can see and not gated. `server_prelogin_known_vs_unknown`
+times the rest of the answer (the made-up answer is always computed, the real
+or made-up profile and hint are chosen by a flag with `ct_select_u8`) and is
+gated. `permille` takes the remainder of an HMAC output of the name; the
+operand is derived from the pre-login secret, not chosen by the client, and
+the result is the profile that the answer shows anyway. Accepted.
+
+### S-3. Two pools of inputs gave the classes a different mean
+
+The first runs of the server benches failed, and the cause was the bench, not
+the library. With a pool of names for each class, `server_prelogin_known_vs_unknown`
+gave |t| of 10.9, 34.6 and 16.7 (negative every time, growing with n), and
+with a pool of expected values for each class `server_state_binding` and
+`server_finish_credential_vs_account` gave |t| of 7 to 11 with a different
+sign from one process to the next. A name changes the time of the HMAC (and
+of the division in `permille`) by a little, and 256 names per class are 256
+samples of that: the means of the two pools differ by chance, and dudect, which
+asks whether the means differ, sees that once n is large enough. The same
+lesson as `unpad_ct` (R7), met again. The benches now give both classes the same
+pool (the same names, the same masks; one allocation holds both classes of the
+sealed states, input `i` of class `c` at `2i + c`), and the classes differ in
+the flag alone, or in the index of the byte that is wrong. A bench of
+`login_start` with the working cell filled differently per class (a clone of the
+record only for the class with an account) gave |t| = 20 for the same reason:
+the allocator and the caches were in another state before the timer started.
+Both classes now run the same copies.
+
+### Timing of the server library
+
+`ct/results/dudect-lanbox-server.md` (`CT_ONLY=server CT_REPEAT=2
+scripts/lanbox-ct.sh dudect-native`, 10^6 measurements per bench, a bench over
+4.5 measured again with 10^7), taken while other agents built on the LANBox
+(load average 21 at the start, the dudect process pinned to the least busy core):
+
+| bench | t at 10^6 (two runs) | result |
+|---|---|---|
+| `server_login_start_known_vs_unknown` | -3.88, -2.92 | below 4.5 |
+| `server_login_start_known_vs_disabled` | +2.29, -3.10 | below 4.5 |
+| `server_prelogin_known_vs_unknown` | +2.31, +1.90 | below 4.5 |
+| `server_state_binding` | -1.72, -1.69 | below 4.5 |
+| `server_finish_credential_vs_account` | +4.17, +4.65 (10^7: +2.14) | below 4.5 at 10^7 |
+| `info_server_prelogin_resolve_credential` (not gated) | +5.61, +4.57 | see S-2 |
+| `info_server_finish_state_vs_missing` (not gated) | +19668, +20326 | the setup sees a missing state: an end-to-end timing of `login_finish` sees the difference of one AEAD open |
+
+One run of `server_login_start_known_vs_unknown` with 10^7 measurements from the
+start (not the rule of the decisive run, which asks for 10^7 only after a first
+run over 4.5) gave t = +7.06 (tau +0.0087, with 0.67M of the measurements kept
+after the percentile cuts of the tool), on a LANBox with a load average of 15 and
+other builds running. Its two runs at 10^6 were -3.88 and -2.92 and the sign
+differs, so it is not a stable bias of the kind the controls show, but it is a
+result over 4.5 that has not been explained or repeated: the rerun it asks for
+(10^8, hours) was not made, and the run has to be repeated on a quiet machine
+before the result is called decisive. No code path in `login_start` branches on
+the lookup after `select-id` (`known_and_unknown_run_the_same_steps_in_the_same_order`
+shows the same steps in the same order); the branches that remain are in S-2.
+This times the library, not the database: the
+lookup that decides `Active`, `Unknown` or `Disabled` is the caller's, and the
+comparison of the bytes and delays of the answers is a test of the endpoint.
 
 ## Residual risks that this analysis does not remove
 
@@ -419,3 +473,15 @@ with its reason, and each is repeated in the report.
   It would take a data-flow pass over the output of `wasm-opt` to close the gap,
   or a dudect run on an input that selects the table index of a secret-dependent
   lookup; no such lookup is known in our code. Parked for 14c.
+- **R10. What the server timing tests do not see.** They time the library
+  through its public functions with a limiter that admits everything, a store
+  that keeps nothing and one replayed random tape. They say nothing about the
+  database lookup that builds `AccountLookup` (a row found or not takes
+  another path through the database), the HTTP layer, TLS or the network; the
+  comparison of the bytes and delays of the answers of a running server is a
+  test of the endpoint. The branch on the lookup in `login_start` and
+  `resolve_credential` is the caller's own decision made visible (S-2). The
+  compare of the credential in `login_finish` is shown by the timing only to
+  within the noise of the whole `login_finish` call (|t| up to 4.65 at 10^6 and
+  2.14 at 10^7); that it is `ct_eq` is shown by the call-site test and the
+  analysis of the harness (T5), not by the timing alone. Accepted.

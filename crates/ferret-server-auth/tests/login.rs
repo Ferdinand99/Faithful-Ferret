@@ -1079,5 +1079,4 @@ fn an_expired_state_is_refused_even_when_the_store_hands_it_back() {
     f.clock.set(NOW + 60);
     let error = ferret_server_auth::login_finish(&f.cx(), &store, &finish).unwrap_err();
     assert_eq!(error, denied(DenyReason::StateExpired));
-    let _ = store.purge_expired(NOW);
 }
