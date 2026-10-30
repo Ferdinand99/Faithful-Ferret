@@ -596,3 +596,64 @@ async fn refusals_carry_the_headers_of_their_listener() {
     // for machines.
     assert_eq!(got["content-security-policy"], MACHINE_CSP);
 }
+
+/// Whether a plain cookie leaves a listener with `Secure`, when the listener
+/// itself speaks plain http but its configured public URLs are `vault_url` and
+/// `admin_url` (a TLS terminator in front, like the test instance's).
+async fn plain_cookie_is_secure(
+    app: &TestApp,
+    which: Which,
+    vault_url: &str,
+    admin_url: &str,
+) -> bool {
+    let mut state = app.state.clone();
+    state.origins =
+        ferret_server::config::Origins::parse(vault_url, admin_url).expect("two public URLs");
+    let routes: Router<FerretState> = Router::new().route(
+        "/set",
+        any(|| async {
+            let mut response: Response = StatusCode::NO_CONTENT.into_response();
+            response
+                .headers_mut()
+                .append(SET_COOKIE, HeaderValue::from_static("plain=1; Path=/"));
+            response
+        }),
+    );
+    let routes = routes.with_state(state.clone());
+    let router = match which {
+        Which::Vault => vault_layers(routes, &state),
+        Which::Admin => admin_layers(routes, &state),
+    };
+    let (_, headers, _) = send(&router, Req::get("/set").build()).await;
+    let cookie = headers[SET_COOKIE].to_str().expect("text").to_string();
+    cookie.split("; ").any(|a| a == "Secure")
+}
+
+#[tokio::test]
+async fn secure_follows_the_public_url_not_the_transport_of_the_listener() {
+    let app = TestApp::new().await;
+    for which in [Which::Vault, Which::Admin] {
+        // https in front of a listener that speaks plain http.
+        assert!(
+            plain_cookie_is_secure(
+                &app,
+                which,
+                "https://vault.ferret.test",
+                "https://admin.ferret.test"
+            )
+            .await,
+            "{which:?}"
+        );
+        // A public URL that is http itself (local tests).
+        assert!(
+            !plain_cookie_is_secure(
+                &app,
+                which,
+                "http://vault.ferret.test",
+                "http://admin.ferret.test"
+            )
+            .await,
+            "{which:?}"
+        );
+    }
+}
