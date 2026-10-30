@@ -9,6 +9,8 @@
 //! The test stack uses it to tell a release image (no features) from the image
 //! of the end-to-end stack (`features: e2e-clock`).
 
+use std::ffi::{OsStr, OsString};
+
 use crate::product::VERSION;
 
 /// The cargo features of this build that change what the server does, in
@@ -38,20 +40,17 @@ pub fn text() -> String {
 }
 
 /// Whether the command line is exactly `ferret --build-info`.
-pub fn requested(mut args: impl Iterator<Item = String>) -> bool {
+pub fn requested(mut args: impl Iterator<Item = OsString>) -> bool {
     args.next(); // the program name
-    args.next().as_deref() == Some("--build-info") && args.next().is_none()
+    args.next().as_deref() == Some(OsStr::new("--build-info")) && args.next().is_none()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(list: &[&str]) -> impl Iterator<Item = String> {
-        list.iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .into_iter()
+    fn args(list: &[&str]) -> impl Iterator<Item = OsString> {
+        list.iter().map(OsString::from).collect::<Vec<_>>().into_iter()
     }
 
     #[test]
@@ -65,6 +64,14 @@ mod tests {
             "x"
         ])));
         assert!(!requested(args(&["ferret", "--version"])));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_argument_that_is_not_utf8_is_not_the_flag() {
+        use std::os::unix::ffi::OsStringExt as _;
+        let bad = OsString::from_vec(vec![0xff, 0xfe]);
+        assert!(!requested([OsString::from("ferret"), bad].into_iter()));
     }
 
     #[test]

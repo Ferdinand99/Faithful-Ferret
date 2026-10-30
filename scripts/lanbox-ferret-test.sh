@@ -296,7 +296,9 @@ e2e_clock() {
     '' | *[!0-9]* | ??????????????*) echo "usage: e2e-clock <seconds> (digits only, at most 13)" >&2; exit 2 ;;
   esac
   e2e_require_running
-  dk exec "$e2e_app" sh -c "echo $1 > /tmp/e2e-clock"
+  # Written to a file next to it and renamed, so the server never reads it half-written
+  # (an empty file would read as a failed clock).
+  dk exec "$e2e_app" sh -c "echo $1 > /tmp/e2e-clock.new && mv -f /tmp/e2e-clock.new /tmp/e2e-clock"
   echo "e2e-clock: the server's clock is now $1 seconds ahead"
 }
 
@@ -316,24 +318,34 @@ e2e_up() {
 e2e_down() {
   e2e_remove
   dk image rm "$e2e_image" >/dev/null 2>&1 || true
+  for id in $(dk images -q --filter "label=$e2e_label"); do dk image rm "$id" >/dev/null 2>&1 || true; done
   echo "e2e-down: done"
 }
 
-# The Playwright image, the same as scripts/lanbox-browsers.sh.
-playwright_image="mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948"
+# The runner image (docker/e2e-runner.Dockerfile: the Playwright image of
+# scripts/lanbox-browsers.sh plus certutil), built on first use. The tag follows the
+# content of the file. The Dockerfile goes in on stdin, so no build context (and
+# nothing from docker/, where the owner's .env lives) is sent.
+runner_hash="$(tr -d '' < docker/e2e-runner.Dockerfile | sha256sum | cut -c1-12)"
+runner_image="ferret-e2e-playwright:$runner_hash"
+e2e_runner_image() {
+  if ! dk image inspect "$runner_image" >/dev/null 2>&1; then
+    dk build --label "$e2e_label" -t "$runner_image" - < docker/e2e-runner.Dockerfile >&2
+  fi
+}
 
 # Runs the Playwright tests of web/ in a throwaway container on the stack's
 # network, so the test hosts resolve and no port is published. The web/ folder is
 # streamed in as a tar archive (no bind mounts from this PC). The test CA is
 # trusted by the system store (WebKit), by Node and by Chromium (an NSS database made
-# with certutil from libnss3-tools, which is installed in the container when it is
-# missing). Firefox has its own list: web/playwright.e2e.config.mjs lets it accept the
+# with certutil, which the runner image docker/e2e-runner.Dockerfile has). Firefox has its own list: web/playwright.e2e.config.mjs lets it accept the
 # certificate of the stack.
 # The tests find the stack in FERRET_E2E_VAULT_URL, FERRET_E2E_ADMIN_URL and
 # FERRET_E2E_SETUP_TOKEN. Output on stderr, the exit code is the tests' one.
 e2e_run() {
   e2e_require_running
   local inner pem token
+  e2e_runner_image
   pem="$(e2e_ca)"
   token="$(e2e_token)"
   # The script for the container is in single quotes on purpose.
@@ -343,15 +355,10 @@ tar -x -C /work
 printf "%s\n" "$FERRET_E2E_CA_PEM" > /work/e2e-ca.crt
 cp /work/e2e-ca.crt /usr/local/share/ca-certificates/ferret-e2e.crt
 update-ca-certificates >&2
-if ! command -v certutil >/dev/null 2>&1; then
-  # Chromium reads its trust from an NSS database, which certutil fills.
-  apt-get update -qq >&2 && apt-get install -y -qq --no-install-recommends libnss3-tools >&2 || true
-fi
-if command -v certutil >/dev/null 2>&1; then
-  mkdir -p "$HOME/.pki/nssdb"
-  certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
-  certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n ferret-e2e -i /work/e2e-ca.crt
-fi
+# Chromium reads its trusted authorities from an NSS database; the runner image has certutil.
+mkdir -p "$HOME/.pki/nssdb"
+certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
+certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n ferret-e2e -i /work/e2e-ca.crt
 export NODE_EXTRA_CA_CERTS=/work/e2e-ca.crt
 cd /work/web
 npm ci --no-audit --no-fund --ignore-scripts >&2
@@ -376,7 +383,7 @@ exit $?'
         --tmpfs /root/.npm:size=512m \
         --tmpfs /tmp:exec,size=2g \
         -w /work \
-        "$playwright_image" \
+        "$runner_image" \
         sh -c "$inner" sh "$@"
 }
 

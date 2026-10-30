@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    if ferret_server::build_info::requested(std::env::args()) {
+    if ferret_server::build_info::requested(std::env::args_os()) {
         print!("{}", ferret_server::build_info::text());
         return;
     }

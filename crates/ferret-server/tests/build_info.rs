@@ -108,3 +108,18 @@ mod e2e {
         assert!(run_build_info(&[]).ends_with("features: e2e-clock\n"));
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn an_argument_that_is_not_utf8_is_refused_by_clap_and_does_not_panic() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let out = Command::new(BIN)
+        .arg(std::ffi::OsStr::from_bytes(b"--vault-url=\xff"))
+        .env_clear()
+        .output()
+        .unwrap();
+    // clap's usage error is exit code 2; a panic would be 101 (or a signal with
+    // `panic = "abort"`).
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
+}

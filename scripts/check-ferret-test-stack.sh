@@ -211,6 +211,17 @@ if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not 
 if grep -E 'type=cache' "$dockerfile" | grep -v 'id=ferret-'; then fail "every cache mount needs an id starting with ferret-"; fi
 grep -q '^\*\*/\.env$' .dockerignore || fail ".dockerignore must list **/.env"
 
+# The runner image of the browser tests: the base is the Playwright image of
+# scripts/lanbox-browsers.sh, the package is pinned, and an install cannot fail
+# silently.
+runner=docker/e2e-runner.Dockerfile
+base="$(grep -o 'playwright:v[^@]*@sha256:[0-9a-f]\{64\}' scripts/lanbox-browsers.sh | head -n 1)"
+[ -n "$base" ] || fail "no pinned Playwright image in scripts/lanbox-browsers.sh"
+grep -qF "FROM mcr.microsoft.com/$base" "$runner" || fail "$runner must start from mcr.microsoft.com/$base"
+grep -qE 'libnss3-tools=[0-9]' "$runner" || fail "$runner: libnss3-tools must be pinned to a version"
+if grep -F "|| true" "$runner" | grep -q .; then fail "$runner: an install must not be allowed to fail silently"; fi
+if grep -F 'apt-get' scripts/lanbox-ferret-test.sh; then fail "the runner script must not install packages: the runner image has them"; fi
+
 # The file with the setup token is never committed.
 git check-ignore -q docker/.env || { echo "check-ferret-test-stack: docker/.env is not ignored by git" >&2; exit 1; }
 if git ls-files --error-unmatch docker/.env >/dev/null 2>&1; then

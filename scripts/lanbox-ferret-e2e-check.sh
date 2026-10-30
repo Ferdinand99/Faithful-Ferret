@@ -176,11 +176,17 @@ check_reset() {
   expect "reset: nothing else was removed" "" "$extra"
   expect "reset: the owner's container is untouched" "$owner_id" "$(dk inspect -f '{{.Id}} {{.State.StartedAt}}' ferret-test-app 2>/dev/null || true)"
 
-  # The confirmation: anything but "reset" cancels and removes nothing.
+  # The confirmation: anything but "reset" cancels and removes nothing. The real
+  # script runs against a Docker host that does not exist, never against the live
+  # stack: if the confirmation ever stopped working, the reset would fail on the
+  # missing host instead of removing the owner's container and volume. A cancel
+  # touches no host at all, so the output must hold no Docker error.
   local out rc=0
-  out="$(echo no | scripts/lanbox-ferret-test.sh reset 2>&1)" || rc=$?
+  out="$(echo no | FERRET_DOCKER_ARGS="-H unix:///ferret-e2e-no-such-host.sock" scripts/lanbox-ferret-test.sh reset 2>&1)" || rc=$?
   expect "reset: a wrong answer cancels" 1 "$rc"
-  contains "reset: a wrong answer cancels (message)" "$out" cancelled
+  expect "reset: a wrong answer cancels (message)" "This removes the ferret-test container, network, image and the data volume ferret-test-data.
+Type \"reset\" to go on: cancelled" "$out"
+  case "$out" in *ocker*|*rror*|*annot*) fail "reset: the cancel touched a Docker host ($out)" ;; *) pass "reset: the cancel touched no Docker host" ;; esac
   after="$(all_resources)"
   if has c:ferret-test-app "$after" && has v:ferret-test-data "$after"; then
     pass "reset: after the cancelled reset the owner's container and volume are there"
