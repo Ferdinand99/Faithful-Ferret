@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "export",
   "suite": 1,
-  "spec": "Fase 1 § 6.4 (F-27) and plan U15, U18",
+  "spec": "Fase 1 § 6.4 (F-27)",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",
@@ -1577,6 +1577,25 @@
         "text": "{\"v\":1,\"items\":[{\"id\":\"72727272727272727272727272727272\",\"body\":{\"zzz-first\":7,\"schema\":2,\"type\":\"login\",\"name\":5,\"fields\":\"not a list\",\"urls\":[],\"passkey\":[{\"priv\":\"e3e3\"}],\"created\":1,\"modified\":2,\"favorite\":false}}]}"
       },
       "expect_error": null
+    },
+    {
+      "id": "export/plain/csv-005",
+      "title": "a body with a newer schema is refused by the CSV export",
+      "op": "export.plain.csv",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "include_passkeys": false,
+        "items": [
+          {
+            "body": "a9697a7a7a2d66697273740766736368656d61026474797065656c6f67696e646e616d6505666669656c64736a6e6f742061206c6973746475726c7380676372656174656401686d6f64696669656402686661766f72697465f4",
+            "id": "72727272727272727272727272727272"
+          }
+        ]
+      },
+      "expect_error": "unsupported"
     }
   ]
 }

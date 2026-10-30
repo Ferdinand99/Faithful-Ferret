@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "padding",
   "suite": 1,
-  "spec": "Fase 1 § 5.2 and plan U6",
+  "spec": "Fase 1 § 5.2",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",

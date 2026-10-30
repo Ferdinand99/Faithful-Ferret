@@ -2,7 +2,7 @@
 //! `.ferretexport`, opening it, its header, and the plaintext JSON and CSV.
 //!
 //! As in the other groups, every expected value is made here from the
-//! specification (Fase 1 § 6.4 and plan Appendix B) without calling the
+//! specification (Fase 1 § 6.4) without calling the
 //! core's export code: the header and the body are written as CBOR head by
 //! head, the TLV bytes by hand, Argon2id, HKDF and the AEAD go to the
 //! primitive wrappers (which have their own RFC and Wycheproof vectors),
@@ -1383,5 +1383,19 @@ pub(crate) fn export() -> Result<Vec<u8>, Error> {
         r#"{"zzz-first":7,"schema":2,"type":"login","name":5,"fields":"not a list","urls":[],"passkey":[{"priv":"e3e3"}],"created":1,"modified":2,"favorite":false}"#,
     ));
 
-    file("export", "Fase 1 § 6.4 (F-27) and plan U15, U18", cases)
+    // The CSV columns are those of schema 1, so an item with a newer schema is
+    // refused: the rest of its body would be left out of the file silently.
+    cases.push(invalid_case(
+        "export/plain/csv-005",
+        "a body with a newer schema is refused by the CSV export",
+        "export.plain.csv",
+        vec![],
+        json!({
+            "items": [ { "id": hex_encode(&newer_id), "body": hex_encode(&newer(false)) } ],
+            "include_passkeys": false,
+        }),
+        "unsupported",
+    ));
+
+    file("export", "Fase 1 § 6.4 (F-27)", cases)
 }

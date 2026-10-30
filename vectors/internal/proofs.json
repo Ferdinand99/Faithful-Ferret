@@ -2,7 +2,7 @@
   "format": "ferret-vectors/1",
   "group": "proofs",
   "suite": 1,
-  "spec": "Fase 1 § 4.5 and § 4.6, plan U8",
+  "spec": "Fase 1 § 4.5 and § 4.6",
   "generator": {
     "tool": "ferret-vectorgen",
     "core": "0.1.0",

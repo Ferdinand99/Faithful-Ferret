@@ -19,6 +19,7 @@ export function ikAad(hdr, vaultId, itemId, vkEpoch) {
 // Splits an envelope by the layout the operation expects. The header bytes are not judged here:
 // they only enter the AAD, so a wrong one fails authentication (section 5.3).
 export function splitEnvelope(env, withIkWrap) {
+  if (env.length > 65536) fail('too_large');
   const ikLen = withIkWrap ? 72 : 0;
   const fixed = 3 + ikLen + 24 + 16;
   if (env.length < fixed + 256) fail('malformed_envelope');

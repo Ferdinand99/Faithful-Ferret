@@ -6,7 +6,7 @@
 //! classes are worked out again, the TLV bytes are written out by hand, and
 //! the AEAD and HMAC calls go to the primitive wrappers (which have their own
 //! RFC and Wycheproof vectors). The layout follows Fase 1 § 4.4, § 5.1,
-//! § 5.2 and § 8.6 and plan Appendix B directly. The tests of the core then
+//! § 5.2 and § 8.6 directly. The tests of the core then
 //! run its own functions against these files.
 
 use crate::groups::{generator, invalid_case, valid_case};
@@ -571,7 +571,7 @@ pub(crate) fn padding() -> Result<Vec<u8>, Error> {
         vec![0x80, 0xff],
     );
 
-    file("padding", "Fase 1 § 5.2 and plan U6", cases)
+    file("padding", "Fase 1 § 5.2", cases)
 }
 
 // ------------------------------------------------------------------- items
@@ -786,7 +786,7 @@ fn totp(uri: &str, extra: &[(&str, Vec<u8>)]) -> Vec<u8> {
     cb::map(&e)
 }
 
-fn passkey(seed_uv: bool, seed_nouv: bool, extra: &[(&str, Vec<u8>)]) -> Vec<u8> {
+fn passkey_entries(seed_uv: bool, seed_nouv: bool) -> Vec<(&'static str, Vec<u8>)> {
     let mut e = vec![
         ("cred_id", cb::bytes(&[0xc1; 32])),
         ("rp_id", cb::text("example.com")),
@@ -802,11 +802,16 @@ fn passkey(seed_uv: bool, seed_nouv: bool, extra: &[(&str, Vec<u8>)]) -> Vec<u8>
     if seed_nouv {
         e.push(("prf_seed_nouv", cb::bytes(&[0xf5; 32])));
     }
+    e
+}
+
+fn passkey(seed_uv: bool, seed_nouv: bool, extra: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let mut e = passkey_entries(seed_uv, seed_nouv);
     e.extend(extra.iter().cloned());
     cb::map(&e)
 }
 
-/// A body in the order of plan Appendix B.
+/// A body in the order of the schema.
 #[derive(Clone)]
 struct Body {
     schema: u64,
@@ -1331,6 +1336,11 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
     let mut ordered = Body::new("login", "Key order");
     ordered.fields = vec![field("u", "User", "text", "alice", &[("zz", cb::uint(1))])];
     ordered.urls = vec![url("https://example.com", "host", &[("yy", cb::text("b"))])];
+    ordered.totp = Some(totp(
+        "otpauth://totp/x?secret=ABCDEFGH",
+        &[("tt", cb::uint(2))],
+    ));
+    ordered.passkey = Some(passkey(true, false, &[("pk", cb::text("x"))]));
     ordered.extra = vec![
         ("zzz-first".into(), cb::uint(7)),
         ("mmm-last".into(), cb::text("end")),
@@ -1359,6 +1369,18 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
                     ("match", cb::text("host")),
                 ])]),
             ),
+            (
+                "totp",
+                cb::map(&[
+                    ("tt", cb::uint(2)),
+                    ("uri", cb::text("otpauth://totp/x?secret=ABCDEFGH")),
+                ]),
+            ),
+            ("passkey", {
+                let mut e = vec![("pk", cb::text("x"))];
+                e.extend(passkey_entries(true, false));
+                cb::map(&e)
+            }),
             ("created", cb::uint(ordered.created)),
             ("modified", cb::uint(ordered.modified)),
             ("favorite", cb::boolean(false)),
@@ -1546,6 +1568,14 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
         "malformed_envelope",
     );
     bad("empty", "no bytes", with_env(&[]), "malformed_envelope");
+    let mut huge = base.envelope.clone();
+    huge.resize(65_537, 0);
+    bad(
+        "one_byte_over_the_limit",
+        "65 537 bytes: over the largest envelope, refused before anything else",
+        with_env(&huge),
+        "too_large",
+    );
 
     // Other values than the ones the envelope was sealed for.
     let mut other_id = [0x52u8; 16];
@@ -1747,11 +1777,7 @@ pub(crate) fn item() -> Result<Vec<u8>, Error> {
     // ---- the manifest
     manifest_cases(&mut cases)?;
 
-    file(
-        "item",
-        "Fase 1 § 4.4, § 5.1, § 5.2, § 8.6; plan Appendix B",
-        cases,
-    )
+    file("item", "Fase 1 § 4.4, § 5.1, § 5.2, § 8.6", cases)
 }
 
 // ---------------------------------------------------------------- manifest

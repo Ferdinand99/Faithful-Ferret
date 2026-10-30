@@ -1,6 +1,6 @@
 //! Plaintext exports for migration: JSON and CSV.
 //!
-//! Spec: Fase 1 § 6.4 ("Ukryptert eksport") and plan E4. The caller has
+//! Spec: Fase 1 § 6.4 ("Ukryptert eksport"). The caller has
 //! already asked for the master password again, shown the warnings and let
 //! the user choose the path; this module only formats.
 //!
@@ -20,7 +20,9 @@
 //! followed by `field_N_label,field_N_kind,field_N_value` for N from 1 to
 //! the highest number of custom fields in any item. `url` holds all the
 //! item's addresses separated by one space. The CSV never contains a passkey
-//! private key or PRF seed, whatever the options say.
+//! private key or PRF seed, whatever the options say. It refuses an item whose
+//! body has a newer `schema` (`unsupported`), because the columns are those of
+//! schema 1 and the rest of such a body would be left out silently.
 //!
 //! **Formula injection.** A spreadsheet reads a cell that starts with `=`,
 //! `+`, `-`, `@`, tab or CR as a formula, and some importers skip leading
@@ -333,7 +335,15 @@ fn push_item_row(out: &mut Sink, item: &ExportItem, width: usize) {
 /// change the CSV: it never holds a passkey private key or PRF seed.
 ///
 /// The text holds every secret in clear; the caller must treat it so.
+///
+/// A body with a newer `schema` (read-only) is refused with
+/// [`Error::Unsupported`]: the CSV columns are those of schema 1, and a key
+/// this version cannot place would be dropped from the file without a word.
+/// The JSON export holds such a body whole.
 pub fn export_plain_csv(items: &[ExportItem], _o: &PlainExportOptions) -> Result<String, Error> {
+    if items.iter().any(|i| i.body.is_read_only()) {
+        return Err(Error::Unsupported);
+    }
     let width = items.iter().map(|i| i.body.fields.len()).max().unwrap_or(0);
     let mut header: Vec<String> = FIXED_COLUMNS.iter().map(|c| (*c).to_owned()).collect();
     for n in 1..=width {

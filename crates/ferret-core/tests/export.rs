@@ -1559,3 +1559,22 @@ fn plain_json_leaves_out_a_passkey_it_cannot_read() {
     assert!(!text.contains("passkey"));
     assert!(!text.contains(&"e3".repeat(40)));
 }
+
+#[test]
+fn plain_csv_refuses_a_body_with_a_newer_schema() {
+    // The columns are those of schema 1; the rest of such a body would be
+    // dropped from the file without a word, so the item is refused.
+    let newer = [newer_schema_item()];
+    assert_eq!(
+        export_plain_csv(&newer, &PlainExportOptions::default()),
+        Err(Error::Unsupported)
+    );
+    // A list that also holds ordinary items is refused as a whole.
+    let mixed = [items().remove(0), newer_schema_item()];
+    assert_eq!(
+        export_plain_csv(&mixed, &PlainExportOptions::default()),
+        Err(Error::Unsupported)
+    );
+    // The JSON export holds the body whole.
+    assert!(export_plain_json(&newer, &PlainExportOptions::default()).is_ok());
+}
