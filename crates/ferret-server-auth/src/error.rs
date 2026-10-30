@@ -120,6 +120,8 @@ pub enum InternalKind {
     /// A setting of the server is out of range (for example a pre-login
     /// policy whose shares do not add up).
     Policy,
+    /// A cryptographic step that cannot fail on well formed input failed.
+    Crypto,
 }
 
 /// The class of status a caller should answer with. The library does not
@@ -317,6 +319,7 @@ mod tests {
             InternalKind::Storage,
             InternalKind::SecretFile,
             InternalKind::Policy,
+            InternalKind::Crypto,
         ] {
             assert_eq!(AuthError::Internal(kind).public_code(), "internal");
         }

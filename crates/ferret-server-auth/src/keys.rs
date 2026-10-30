@@ -144,8 +144,6 @@ impl ServerKeys {
     }
 
     /// The set-up, for the OPAQUE calls of this crate.
-    // The first caller is the registration and login code.
-    #[allow(dead_code)]
     pub(crate) fn setup(&self) -> &ServerSetup<FerretSuite> {
         &self.setup
     }
