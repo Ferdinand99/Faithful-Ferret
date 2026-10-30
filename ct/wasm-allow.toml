@@ -565,6 +565,12 @@ max = 1
 reason = "A match on how the length of the bytes handed in compares with 32 (too short, too long, right): a public length. The bytes are copied into the key, not used as an address."
 
 [[allow]]
+function = "^ferret_core::secret::PrfOutput>::from_slice$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: Checking that the 32 bytes handed in are not all zero: a loop over a fixed length whose index is a public counter. The bytes are OR-ed together without a branch on any byte and the address never depends on a value; the result says only whether the buffer was wiped or never filled."
+
+[[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
 instruction = "br_table"
 max = 2
@@ -677,6 +683,12 @@ function = "^ferret_core::wrap::wrap_aad$"
 instruction = "br_table"
 max = 1
 reason = "Building the AAD of a wrap: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call."
+
+[[allow]]
+function = "^ferret_core::wrap::wrap_aad$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: Checking that the 32 public bytes of the PRF salt are not all zero: a loop over a fixed length whose index is a public counter. The salt is public data stored with the wrap, and the loop stops on the first set byte, which tells nothing that the wrap does not already show."
 
 [[allow]]
 function = "^ferret_core::wrap::wrap_vk$"
