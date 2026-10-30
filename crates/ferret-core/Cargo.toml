@@ -29,7 +29,7 @@ sha2 = { version = "=0.11.1", default-features = false, features = ["zeroize"] }
 sha1 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
 # Text handling (Fase 1 section 3.1): NFKD with the Unicode 16.0 tables and the
 # "assigned" check. 0.1.24 is Unicode 16.0 (0.1.25 is 17.0); the tests lock it.
-unicode-normalization = { version = "=0.1.24", default-features = false }
+unicode-normalization = { version = "=0.1.26", default-features = false }
 unicode-general-category = "=1.1.0"
 # CBOR (Fase 1 section 5.2): only the low-level `Decoder`/`Encoder`; the strict
 # rules live in `cbor::decode`. No `derive`, no `half` (f16 is rejected).
