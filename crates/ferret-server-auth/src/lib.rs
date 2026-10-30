@@ -88,7 +88,7 @@ pub use name::{LOGIN_NAME_MAX_BYTES, NormalizedLoginName, normalize_login_name};
 pub use prelogin::{
     PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, resolve_credential,
 };
-pub use record::{ProfileRules, StoredRecord, ValidatedRecord};
+pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
 pub use registration::{register_finish, register_start};
 pub use secret_file::{
     FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,

@@ -15,10 +15,10 @@
 use ferret_core::opaque::server_suite::opaque_ke::{RegistrationRequest, ServerRegistration};
 use ferret_core::opaque::server_suite::{FerretSuite, REGISTRATION_REQUEST_LEN};
 
-use crate::error::{AuthError, Malformed};
+use crate::error::{AuthError, InternalKind, Malformed};
 use crate::ids::CredentialId;
 use crate::keys::ServerKeys;
-use crate::record::{ProfileRules, StoredRecord, ValidatedRecord};
+use crate::record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
 
 /// Answers the client's `registration_request`: the `registration_response`
 /// (64 bytes, the evaluated element and the server's public key).
@@ -39,14 +39,13 @@ pub fn register_start(
     if request.len() != REGISTRATION_REQUEST_LEN {
         return Err(malformed);
     }
-    // A request that decoded cannot make the library fail. If it ever does,
-    // the caller gets the one error for a bad request and not a variant.
-    let started = RegistrationRequest::<FerretSuite>::deserialize(request)
-        .ok()
-        .and_then(|request| {
-            ServerRegistration::<FerretSuite>::start(keys.setup(), request, id.as_bytes()).ok()
-        })
-        .ok_or(malformed)?;
+    let request =
+        RegistrationRequest::<FerretSuite>::deserialize(request).map_err(|_| malformed)?;
+    // A request that decoded cannot make the library fail: what is left is
+    // the derivation of the OPRF key from the seed and the id. A failure
+    // there is a fault of the server, not of the client.
+    let started = ServerRegistration::<FerretSuite>::start(keys.setup(), request, id.as_bytes())
+        .or(Err(AuthError::Internal(InternalKind::Crypto)))?;
     Ok(started.message.serialize().to_vec())
 }
 
@@ -55,18 +54,19 @@ pub fn register_start(
 /// The upload must be exactly 192 bytes with a valid client public key
 /// ([`ValidatedRecord::parse`]). The shape is checked before the profile, so
 /// an error for a bad record never depends on what is stored. The profile is
-/// checked by `rules` against `current`, the stored profile of an existing
-/// account or `None` for a new one.
+/// checked by `rules`; `kind` says whether the account is new or already has
+/// a record, and in that case carries the stored profile (from the stored row,
+/// never from the request).
 ///
 /// Spec: Fase 1 § 4.2 ("Registrering", step 3).
 pub fn register_finish(
     upload: &[u8],
     claimed_profile: u32,
     rules: &ProfileRules,
-    current: Option<u8>,
+    kind: RegistrationKind,
 ) -> Result<StoredRecord, AuthError> {
     let record = ValidatedRecord::parse(upload)?;
-    let ksf_profile = rules.accept(claimed_profile, current)?;
+    let ksf_profile = rules.accept(claimed_profile, kind)?;
     Ok(StoredRecord {
         record,
         ksf_profile,

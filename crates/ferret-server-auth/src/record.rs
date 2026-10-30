@@ -75,6 +75,30 @@ impl fmt::Debug for StoredRecord {
     }
 }
 
+/// Whether a registration creates an account or replaces the record of one
+/// that exists.
+///
+/// The caller has to say which, so a missing stored profile cannot pass as a
+/// new account. `Existing` carries the profile stored for the account. It
+/// must come from the stored row and never from the request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationKind {
+    /// A new account: only the table and the minimum apply.
+    NewAccount,
+    /// An account that already has a record with this profile number. The
+    /// new profile may not be lower.
+    Existing(u8),
+}
+
+impl fmt::Debug for RegistrationKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegistrationKind::NewAccount => f.write_str("RegistrationKind::NewAccount"),
+            RegistrationKind::Existing(_) => f.write_str("RegistrationKind::Existing(..)"),
+        }
+    }
+}
+
 /// Which profile numbers the server accepts, and the lowest one for a new
 /// account.
 ///
@@ -116,22 +140,22 @@ impl ProfileRules {
     ///
     /// * not a number the table knows (this includes anything above 255),
     /// * below the minimum for a new account, or
-    /// * below the profile already stored for the account.
+    /// * below the profile already stored for the account
+    ///   ([`RegistrationKind::Existing`]).
     ///
-    /// `current` is the stored profile of an account that changes its
-    /// record, and `None` for a new account; a new account is not compared
-    /// with anything. The answer depends on the stored profile, so an
-    /// endpoint may give it only after the caller has been authorized.
-    pub fn accept(&self, claimed: u32, current: Option<u8>) -> Result<u8, AuthError> {
+    /// A new account is not compared with anything stored. The answer
+    /// depends on the stored profile, so an endpoint may give it only after
+    /// the caller has been authorized.
+    pub fn accept(&self, claimed: u32, kind: RegistrationKind) -> Result<u8, AuthError> {
         let rejected = AuthError::ProfileRejected;
         let claimed = u8::try_from(claimed).map_err(|_| rejected)?;
         if !self.known.contains(&claimed) || claimed < self.minimum {
             return Err(rejected);
         }
-        if current.is_some_and(|stored| claimed < stored) {
-            return Err(rejected);
+        match kind {
+            RegistrationKind::Existing(stored) if claimed < stored => Err(rejected),
+            RegistrationKind::Existing(_) | RegistrationKind::NewAccount => Ok(claimed),
         }
-        Ok(claimed)
     }
 }
 

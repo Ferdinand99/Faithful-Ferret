@@ -19,8 +19,8 @@ use ferret_core::{
     opaque_register_finish, opaque_register_start,
 };
 use ferret_server_auth::{
-    AuthError, CredentialId, Malformed, ProfileRules, ServerKeys, StoredRecord, ValidatedRecord,
-    register_finish, register_start,
+    AuthError, CredentialId, Malformed, ProfileRules, RegistrationKind, ServerKeys, StoredRecord,
+    ValidatedRecord, register_finish, register_start,
 };
 
 /// A few KiB: far below the floor, so that the tests run in milliseconds.
@@ -159,6 +159,13 @@ fn register_start_matches_the_pinned_vector() {
 
 // Spec: Fase 1 § 4.2 ("Registrering", step 1). Synthetic keys: the server
 // from TestRng("server keys"), the client from TestRng("pinned client").
+//
+// These bytes were produced by this code, so they are a regression pin and
+// not an independent check: they catch a change in the answer, not a mistake
+// that was there from the start. The OPRF itself is checked by
+// `same_id_after_password_change_keeps_the_oprf_key` and by the client
+// finishing the registration against the answer. Independent vectors come
+// with the shared test vectors.
 const PINNED_REQUEST: &str = "4e43ed1bfda05f44e21b852d4d10c6f40ff90ae54d5361f173946e786f06de6b";
 const PINNED_RESPONSE: &str = "1263874e3ee78038bb4c5b6031d3c74f24010bd4c12d2c5492e22a9a1452a6583e5b4cd1a70c1d5fe1179a5d48b5332443df219fbde26258c64f9f61be339524";
 
@@ -248,7 +255,8 @@ fn register_finish_accepts_a_real_client_record() {
     let keys = keys();
     let done = register_plain(&keys, &id(3), "a real password", "client");
     assert_eq!(done.record.len(), REGISTRATION_RECORD_LEN);
-    let stored = register_finish(&done.record, 1, &ProfileRules::ferret_v1(), None).unwrap();
+    let new = RegistrationKind::NewAccount;
+    let stored = register_finish(&done.record, 1, &ProfileRules::ferret_v1(), new).unwrap();
     assert_eq!(stored.ksf_profile, 1);
     assert_eq!(stored.record.as_bytes(), done.record.as_slice());
     // The record is the same value that ValidatedRecord::parse gives.
@@ -268,7 +276,8 @@ fn register_finish_accepts_a_record_made_with_profile_one() {
         opaque_register_finish(&mut client, state, &input, &response, KsfProfile::P1).unwrap();
     assert_eq!(done.server_public_key, keys.public_key());
     let claimed = u32::from(KsfProfile::P1.number());
-    let stored = register_finish(&done.record, claimed, &ProfileRules::ferret_v1(), None).unwrap();
+    let new = RegistrationKind::NewAccount;
+    let stored = register_finish(&done.record, claimed, &ProfileRules::ferret_v1(), new).unwrap();
     assert_eq!(stored.ksf_profile, KsfProfile::P1.number());
     assert_eq!(stored.record.as_bytes(), done.record.as_slice());
 }
@@ -285,7 +294,7 @@ fn register_finish_rejects_191_and_193_bytes() {
     assert_eq!(longer.len(), 193);
     for bad in [shorter, longer] {
         assert_eq!(
-            register_finish(&bad, 1, &rules, None).unwrap_err(),
+            register_finish(&bad, 1, &rules, RegistrationKind::NewAccount).unwrap_err(),
             BAD_RECORD
         );
         assert_eq!(ValidatedRecord::parse(&bad).unwrap_err(), BAD_RECORD);
@@ -297,7 +306,7 @@ fn register_finish_rejects_191_and_193_bytes() {
         let mut input = record.clone();
         input.resize(len, 0);
         assert_eq!(
-            register_finish(&input, 1, &rules, None).unwrap_err(),
+            register_finish(&input, 1, &rules, RegistrationKind::NewAccount).unwrap_err(),
             BAD_RECORD,
             "length {len}"
         );
@@ -314,7 +323,7 @@ fn register_finish_rejects_an_invalid_public_key() {
         bad[..32].copy_from_slice(&point);
         assert_eq!(bad.len(), REGISTRATION_RECORD_LEN);
         assert_eq!(
-            register_finish(&bad, 1, &rules, None).unwrap_err(),
+            register_finish(&bad, 1, &rules, RegistrationKind::NewAccount).unwrap_err(),
             BAD_RECORD,
             "{}",
             hex(&point)
@@ -324,7 +333,7 @@ fn register_finish_rejects_an_invalid_public_key() {
     // detectable and is accepted.
     let mut other = record.clone();
     other[100] ^= 1;
-    assert!(register_finish(&other, 1, &rules, None).is_ok());
+    assert!(register_finish(&other, 1, &rules, RegistrationKind::NewAccount).is_ok());
 }
 
 #[test]
@@ -333,7 +342,11 @@ fn register_finish_checks_the_record_before_the_profile() {
     let record = register_plain(&keys, &id(3), "pw", "client").record;
     let rules = ProfileRules::ferret_v1();
     // A bad record with a bad profile is a bad record, whatever is stored.
-    for current in [None, Some(1), Some(200)] {
+    for current in [
+        RegistrationKind::NewAccount,
+        RegistrationKind::Existing(1),
+        RegistrationKind::Existing(200),
+    ] {
         assert_eq!(
             register_finish(&record[..191], 99, &rules, current).unwrap_err(),
             BAD_RECORD
@@ -341,7 +354,7 @@ fn register_finish_checks_the_record_before_the_profile() {
     }
     // A good record with a bad profile is a rejected profile.
     assert_eq!(
-        register_finish(&record, 99, &rules, None).unwrap_err(),
+        register_finish(&record, 99, &rules, RegistrationKind::NewAccount).unwrap_err(),
         AuthError::ProfileRejected
     );
 }
@@ -355,15 +368,15 @@ fn profile_rules_refuse_unknown_profiles() {
     // fit a byte.
     for claimed in [0u32, 2, 3, 255, 256, 257, 65_537, u32::MAX] {
         assert_eq!(
-            rules.accept(claimed, None).unwrap_err(),
+            rules.accept(claimed, RegistrationKind::NewAccount).unwrap_err(),
             AuthError::ProfileRejected,
             "{claimed}"
         );
     }
-    assert_eq!(rules.accept(1, None), Ok(1));
+    assert_eq!(rules.accept(1, RegistrationKind::NewAccount), Ok(1));
     // A number that wraps to a known one in a byte is still unknown.
     assert_eq!(
-        rules.accept(1 + 256, None).unwrap_err(),
+        rules.accept(1 + 256, RegistrationKind::NewAccount).unwrap_err(),
         AuthError::ProfileRejected
     );
 }
@@ -373,7 +386,7 @@ fn profile_rules_match_the_table_of_the_client() {
     let rules = ProfileRules::ferret_v1();
     for n in 0..=300u32 {
         let known = KsfProfile::from_wire(n).is_ok();
-        assert_eq!(rules.accept(n, None).is_ok(), known, "{n}");
+        assert_eq!(rules.accept(n, RegistrationKind::NewAccount).is_ok(), known, "{n}");
     }
 }
 
@@ -381,14 +394,14 @@ fn profile_rules_match_the_table_of_the_client() {
 fn profile_rules_refuse_below_the_minimum() {
     let rules = ProfileRules::for_tests(&[1, 2, 3], 2);
     assert_eq!(
-        rules.accept(1, None).unwrap_err(),
+        rules.accept(1, RegistrationKind::NewAccount).unwrap_err(),
         AuthError::ProfileRejected
     );
-    assert_eq!(rules.accept(2, None), Ok(2));
-    assert_eq!(rules.accept(3, None), Ok(3));
+    assert_eq!(rules.accept(2, RegistrationKind::NewAccount), Ok(2));
+    assert_eq!(rules.accept(3, RegistrationKind::NewAccount), Ok(3));
     // The minimum applies to an existing account as well.
     assert_eq!(
-        rules.accept(1, Some(1)).unwrap_err(),
+        rules.accept(1, RegistrationKind::Existing(1)).unwrap_err(),
         AuthError::ProfileRejected
     );
 }
@@ -397,50 +410,57 @@ fn profile_rules_refuse_below_the_minimum() {
 fn profile_rules_refuse_below_the_current_profile() {
     let rules = ProfileRules::for_tests(&[1, 2, 3], 1);
     assert_eq!(
-        rules.accept(1, Some(2)).unwrap_err(),
+        rules.accept(1, RegistrationKind::Existing(2)).unwrap_err(),
         AuthError::ProfileRejected
     );
     assert_eq!(
-        rules.accept(2, Some(3)).unwrap_err(),
+        rules.accept(2, RegistrationKind::Existing(3)).unwrap_err(),
         AuthError::ProfileRejected
     );
     // Equal and higher are accepted.
-    assert_eq!(rules.accept(2, Some(2)), Ok(2));
-    assert_eq!(rules.accept(3, Some(2)), Ok(3));
-    assert_eq!(rules.accept(1, Some(1)), Ok(1));
+    assert_eq!(rules.accept(2, RegistrationKind::Existing(2)), Ok(2));
+    assert_eq!(rules.accept(3, RegistrationKind::Existing(2)), Ok(3));
+    assert_eq!(rules.accept(1, RegistrationKind::Existing(1)), Ok(1));
     // An unknown number stays refused whatever is stored.
     assert_eq!(
-        rules.accept(4, Some(1)).unwrap_err(),
+        rules.accept(4, RegistrationKind::Existing(1)).unwrap_err(),
         AuthError::ProfileRejected
     );
 }
 
 #[test]
-fn profile_rules_never_read_current_for_a_new_account() {
-    // With nothing stored the claim is compared with the table and the
-    // minimum only. A stored number that no table row could match changes
-    // nothing for a new account.
-    let rules = ProfileRules::for_tests(&[1, 2], 1);
-    assert_eq!(rules.accept(1, None), Ok(1));
-    assert_eq!(rules.accept(2, None), Ok(2));
-    // The same claim with a stored profile above it is refused: the stored
-    // value is read only when it is given.
+fn a_downgrade_is_refused_for_an_existing_account_and_not_for_a_new_one() {
+    let rules = ProfileRules::for_tests(&[1, 2, 3], 1);
+    // The same claim: allowed for a new account, refused once the account is
+    // known to have a higher profile. The caller has to say which it is.
+    assert_eq!(rules.accept(1, RegistrationKind::NewAccount), Ok(1));
+    for stored in [2u8, 3] {
+        assert_eq!(
+            rules.accept(1, RegistrationKind::Existing(stored)),
+            Err(AuthError::ProfileRejected),
+            "stored {stored}"
+        );
+    }
+    // The same through register_finish.
+    let record = register_plain(&keys(), &id(3), "pw", "client").record;
+    assert!(register_finish(&record, 1, &rules, RegistrationKind::NewAccount).is_ok());
     assert_eq!(
-        rules.accept(1, Some(2)).unwrap_err(),
+        register_finish(&record, 1, &rules, RegistrationKind::Existing(2)).unwrap_err(),
         AuthError::ProfileRejected
     );
+    assert!(register_finish(&record, 2, &rules, RegistrationKind::Existing(2)).is_ok());
 }
 
 #[test]
 fn profile_rules_with_an_empty_table_refuse_everything() {
     let rules = ProfileRules::for_tests(&[], 1);
     for claimed in [0u32, 1, 2, 255] {
-        assert!(rules.accept(claimed, None).is_err());
+        assert!(rules.accept(claimed, RegistrationKind::NewAccount).is_err());
     }
     // A minimum above every known number does the same.
     let high = ProfileRules::for_tests(&[1, 2], 3);
     for claimed in [1u32, 2, 3] {
-        assert!(high.accept(claimed, None).is_err());
+        assert!(high.accept(claimed, RegistrationKind::NewAccount).is_err());
     }
 }
 
@@ -485,8 +505,9 @@ fn same_id_after_password_change_keeps_the_oprf_key() {
 fn debug_output_shows_no_record_bytes() {
     let keys = keys();
     let record = register_plain(&keys, &id(3), "pw", "client").record;
+    let new = RegistrationKind::NewAccount;
     let stored: StoredRecord =
-        register_finish(&record, 1, &ProfileRules::ferret_v1(), None).unwrap();
+        register_finish(&record, 1, &ProfileRules::ferret_v1(), new).unwrap();
     let shown = [
         format!("{:?}", stored),
         format!("{:?}", stored.record),
