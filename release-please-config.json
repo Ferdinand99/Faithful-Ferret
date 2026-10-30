@@ -12,7 +12,8 @@
         { "type": "toml", "path": "Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core')].version" },
         { "type": "toml", "path": "Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core-wasm')].version" },
         { "type": "toml", "path": "Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-vectorgen')].version" },
-        { "type": "toml", "path": "fuzz/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core')].version" }
+        { "type": "toml", "path": "fuzz/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core')].version" },
+        { "type": "toml", "path": "ct/dudect/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core')].version" }
       ]
     }
   }

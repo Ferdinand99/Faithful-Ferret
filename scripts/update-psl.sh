@@ -9,9 +9,10 @@
 # Run this before every release; `scripts/check-psl-age.sh` (weekly and on
 # release pull requests) warns after 75 days and fails after 90.
 #
-# Both files are downloaded and built in a temporary folder first and moved
-# into place together at the end, so a failed download never leaves a new
-# snapshot next to an old test file.
+# Both files are downloaded and built first, next to the files they replace
+# (so on the same file system), and renamed into place one right after the
+# other at the end. A failed download or check never leaves a new snapshot next
+# to an old test file, and a rename never copies.
 #
 # After it runs, by hand:
 #  1. In vectors/external/SOURCE.md, set the new commit and the SHA-256 of the
@@ -30,7 +31,9 @@ out=crates/ferret-core/src/passkey/public_suffix_list.dat
 test_out=vectors/external/publicsuffix-test_psl.txt
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+new_out="$out.new"
+new_test="$test_out.new"
+trap 'rm -rf "$work" "$new_out" "$new_test"' EXIT
 
 curl -fsSL https://publicsuffix.org/list/public_suffix_list.dat -o "$work/list.dat"
 sum="$(sha256sum "$work/list.dat" | cut -d' ' -f1)"
@@ -59,8 +62,11 @@ if [ "$rules" -lt 5000 ] || [ "$cases" -lt 1 ]; then
   exit 1
 fi
 
-mv "$work/snapshot.dat" "$out"
-mv "$work/test_psl.txt" "$test_out"
+# Stage both next to their targets, then rename (atomic on one file system).
+cp "$work/snapshot.dat" "$new_out"
+cp "$work/test_psl.txt" "$new_test"
+mv -f "$new_out" "$out"
+mv -f "$new_test" "$test_out"
 
 echo "snapshot:  $out ($(wc -c < "$out") bytes, $rules rules), commit $commit"
 echo "test file: $test_out, sha256 $(sha256sum "$test_out" | cut -d' ' -f1), $cases cases (the test expects the number in tests/origin.rs)"

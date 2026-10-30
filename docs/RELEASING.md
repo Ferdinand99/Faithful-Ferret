@@ -22,10 +22,13 @@ happens when the maintainer merges the release pull request.
 5. `Release` builds the packages from the tag, runs its checks, signs the files and
    attaches them to the GitHub release.
 
-No one creates tags or releases by hand. If the release workflow fails half way, fix
-the cause and run `Release` again from the Actions page ("Run workflow") with the tag
-(for example `v0.1.0`). It attaches the files to the existing release and replaces
-files that are already there.
+No one creates tags or releases by hand. If the release workflow fails before it uploads
+anything, fix the cause and run `Release` again from the Actions page ("Run workflow", on
+`main` or on the tag) with the tag (for example `v0.1.0`). The workflow only starts from `main`
+or from a `v*` tag, and its publish job uses the GitHub environment `release`, which the
+maintainer sets up under Settings, Environments (required reviewer, and deployment only from
+`main` and `v*` tags). A release asset is never overwritten: if a file of the same name is already
+on the release, the upload fails, and the maintainer decides what to delete by hand.
 
 ## What a release contains
 
@@ -37,8 +40,8 @@ files that are already there.
 | `SHA256SUMS` | The SHA-256 of the three files above |
 | `<file>.sigstore.json` | A [cosign](https://docs.sigstore.dev/) bundle (signature, certificate and transparency log entry) for each of the four files above |
 
-The archives are reproducible: building the same commit with the same pinned tools
-gives the same bytes. The release build never contains the `test-support` feature;
+The packaging is reproducible: packing the same `pkg-web` and `pkg-node` twice gives the same
+archives, byte for byte (the test checks this). The release build never contains the `test-support` feature;
 the build checks the module's exports (`scripts/check-no-test-support.sh`) and the
 package test `release_artifact_has_no_test_support_and_matches_sha256`
 (`tests/node/release.test.mjs`) checks the archives themselves.
@@ -52,13 +55,16 @@ sha256sum -c SHA256SUMS
 
 cosign verify-blob \
   --bundle ferret-core-wasm-web-X.Y.Z.tar.gz.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/Ferdinand99/Faithful-Ferret/\.github/workflows/(release|release-please)\.yml@' \
+  --certificate-identity-regexp '^https://github.com/Ferdinand99/Faithful-Ferret/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ferret-core-wasm-web-X.Y.Z.tar.gz
 ```
 
 The signature is made with the identity of the GitHub Actions workflow (keyless), so
-there is no long-lived signing key to lose. Verify `SHA256SUMS` the same way, then
+there is no long-lived signing key to lose. The identity is this repository's `release.yml`; when
+release-please calls it, the reference is `main` (the called workflow runs at the ref of the
+caller), and a run started by hand on a tag has that tag. A signature made by any other
+workflow or from any other branch does not match. Verify `SHA256SUMS` the same way, then
 check the other files against it.
 
 ## The Public Suffix List snapshot
@@ -118,7 +124,7 @@ Actions and the base image of the builder. These are not tracked by it:
   cargo-vet, cargo-fuzz, cargo-llvm-cov, cargo-cyclonedx). Each is pinned by version, and the
   downloaded ones also by SHA-256. The same version appears in more than one place
   (`docker/builder.Dockerfile`, `.github/workflows/wasm.yml`, `.github/workflows/release.yml`,
-  `.github/workflows/audit.yml`); change all of them.
+  `.github/workflows/audit.yml`, `.github/workflows/ct.yml`); change all of them.
 - **The base images of the builder** are pinned by digest. To move to a new one, look up the
   digest of the new tag with `docker buildx imagetools inspect <image>:<tag>` and change the tag
   and the digest together.
@@ -129,7 +135,7 @@ Actions and the base image of the builder. These are not tracked by it:
   duplicate version needs an entry with a reason. An advisory is not ignored without a written
   reason and an owner decision.
 - `cargo vet` (`supply-chain/`) trusts the audits of Mozilla, Google and the Bytecode Alliance.
-  Every other dependency version is an exemption with a date. `cargo vet suggest` shows which
+  Every other dependency version is an exemption with the date it was made and a "review by" date six months later; at that date the exemptions are looked at again. `cargo vet suggest` shows which
   audits would remove exemptions.
-- The workflows pin every third-party action by commit SHA, give each job the least permissions it
+- The workflows pin every action by commit SHA, give each job the least permissions it
   needs, and never use `pull_request_target`.

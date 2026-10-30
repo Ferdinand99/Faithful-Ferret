@@ -8,10 +8,12 @@
 #   <file>.sigstore.json                     the cosign bundle of each file
 #
 # Called by release-please.yml once the release pull request is merged. It can
-# also be started by hand for a tag that exists (Actions, Release, Run
-# workflow), for example when a run failed half way. The GitHub release itself
-# is made by release-please; this workflow only attaches files to it and never
-# creates a tag or a release.
+# also be started by hand, from main or from a v* tag only, for a tag that
+# exists (Actions, Release, Run workflow), for example when a run failed before
+# it uploaded anything. The GitHub release itself is made by release-please;
+# this workflow only attaches files to it, never replaces one that is there,
+# and never creates a tag or a release. The publish job runs in the protected
+# environment "release".
 #
 # The build job has read access only. The publish job gets the write access
 # and the OIDC token, and it runs no code from the repository: it only handles
@@ -49,6 +51,9 @@ env:
 jobs:
   build:
     name: Build and test the packages
+    # Only from main (release-please calls this workflow there) or from a
+    # release tag; a copy on any other branch does not run.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -125,6 +130,10 @@ jobs:
   publish:
     name: Sign and attach to the GitHub release
     needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # A protected environment (required reviewer, deployment only from main
+    # and v* tags) is set up by the maintainer in the repository settings.
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -155,10 +164,17 @@ jobs:
         run: |
           for f in ferret-core-wasm-*.tar.gz ferret-core-wasm-*.cdx.json SHA256SUMS; do
             cosign verify-blob --bundle "$f.sigstore.json" \
-              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/(release|release-please)\.yml@" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com "$f"
           done
-      - name: Attach to the release of the tag
+      - name: Attach to the release of the tag (never replaces an asset)
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null || { echo "$TAG has no GitHub release; merge the release pull request first" >&2; exit 1; }
-          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for f in dist/*; do
+            if printf '%s\n' "$existing" | grep -Fxq "$(basename "$f")"; then
+              echo "$(basename "$f") is already on the release $TAG; an asset is never replaced" >&2
+              exit 1
+            fi
+          done
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"
