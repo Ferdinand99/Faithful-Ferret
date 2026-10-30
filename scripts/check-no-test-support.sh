@@ -83,6 +83,25 @@ check_server_crate() {
   return "$failed"
 }
 
+# check_server_binary <manifest>: step 2 for a server in a workspace of its own
+# (crates/ferret-server). It is the release binary, so in its normal graph the
+# core must have neither feature and the server library must not have
+# `test-support`, which exports tools that forge sealed states.
+check_server_binary() {
+  local tree failed=0
+  tree="$(resolved_tree --manifest-path "$1")" || { echo "FAIL: cargo tree failed for $1" >&2; return 1; }
+  node_present "$tree" ferret-server-auth || { echo "FAIL: the graph of $1 has no ferret-server-auth" >&2; return 1; }
+  if feature_enabled "$tree" ferret-core test-support; then
+    echo "FAIL: $1 enables ferret-core/test-support in its normal graph" >&2
+    failed=1
+  fi
+  if feature_enabled "$tree" ferret-server-auth test-support; then
+    echo "FAIL: $1 enables ferret-server-auth/test-support in its normal graph" >&2
+    failed=1
+  fi
+  return "$failed"
+}
+
 self_test() {
   local t status=0
   t="$(mktemp -d)"
@@ -178,6 +197,22 @@ extra = ["ferret-core/server-suite", "ferret-core/test-support"]' "$plain" ""
   expect_server uses_server_chain yes yes
   # A server crate that pulled in the core's test-support would be caught:
   expect uses_server_test yes yes
+  # The server binary check: a plain use of the server library passes; its
+  # test-support switched on, directly or through a chain, fails; a server
+  # binary without the library in its graph fails too.
+  expect_binary() {
+    local want=$2 got=pass
+    check_server_binary "$t/$1/Cargo.toml" >/dev/null 2>&1 || got=fail
+    if [ "$got" != "$want" ]; then
+      echo "self-test FAIL: the server binary check says $got for $1, expected $want" >&2
+      status=1
+    fi
+  }
+  expect_binary uses_server pass
+  expect_binary uses_server_dev fail
+  expect_binary uses_server_test fail
+  expect_binary uses_server_chain fail
+  expect_binary clean fail
   if [ "$status" -eq 0 ]; then
     echo "ok: the feature check sees direct and chained features and server crates, and ignores dev-dependencies"
   fi
@@ -211,6 +246,10 @@ fi
 for crate in "${server_crates[@]}"; do
   check_server_crate "$crate" || fail=1
 done
+# The server binary has a workspace of its own.
+if [ -f crates/ferret-server/Cargo.toml ]; then
+  check_server_binary crates/ferret-server/Cargo.toml || fail=1
+fi
 
 # 3. WASM export list. wasm-bindgen exports a method as `<class>_<method>`
 # (`vault_test_vk_region`), so the pattern is a `test_` at the start or after

@@ -96,13 +96,13 @@ pub(crate) const SERVER_LOGIN_LEN: usize = 128;
 
 /// `expires_at (8) ‖ purpose (1) ‖ binding (1 + 48) ‖ credential (16) ‖
 /// ksf_profile (1) ‖ ServerLogin (128)`.
-const PLAIN_LEN: usize = 8 + 1 + 1 + BINDING_LEN + 16 + 1 + SERVER_LOGIN_LEN;
+pub(crate) const PLAIN_LEN: usize = 8 + 1 + 1 + BINDING_LEN + 16 + 1 + SERVER_LOGIN_LEN;
 
 /// The session binding (32) and the account (16) of a re-authentication.
 const BINDING_LEN: usize = 32 + 16;
 
 /// `version ‖ nonce ‖ ciphertext ‖ tag`.
-const BLOB_LEN: usize = 1 + NONCE_LEN + PLAIN_LEN + TAG_LEN;
+pub(crate) const BLOB_LEN: usize = 1 + NONCE_LEN + PLAIN_LEN + TAG_LEN;
 
 const PURPOSE_LOGIN: u8 = 0;
 const PURPOSE_REAUTH: u8 = 1;
@@ -295,7 +295,7 @@ impl StatePlain {
     }
 
     /// The plaintext bytes, wiped on drop.
-    fn encode(&self) -> Zeroizing<Vec<u8>> {
+    pub(crate) fn encode(&self) -> Zeroizing<Vec<u8>> {
         let mut out = Zeroizing::new(Vec::with_capacity(PLAIN_LEN.saturating_add(TAG_LEN)));
         out.extend_from_slice(&self.expires_at.to_be_bytes());
         out.push(self.purpose.code());
@@ -313,7 +313,7 @@ impl StatePlain {
     /// Reads the plaintext. Exactly [`PLAIN_LEN`] bytes, a known purpose,
     /// a flag that agrees with the purpose, and a zero binding for a login;
     /// anything else is `StateInvalid`.
-    fn parse(bytes: &[u8]) -> Result<Self, AuthError> {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, AuthError> {
         let invalid = AuthError::Denied(DenyReason::StateInvalid);
         // The length is checked before anything is read.
         let bytes: &[u8; PLAIN_LEN] = bytes.try_into().map_err(|_| invalid)?;

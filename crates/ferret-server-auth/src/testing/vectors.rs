@@ -510,12 +510,14 @@ fn login_finish_op(input: &Value) -> Outcome {
 
 // ---------------------------------------------------------- replacement
 
-/// The parser of the endpoint for a password change or a recovery: the body is
+/// The reference parser of the replacement body, for the vectors and the fuzz
+/// target; the endpoint has its own. It reads a password change or a recovery: the body is
 /// the JSON the client sent, and the fields are
 /// `{ "registration_record": hex, "ksf_profile": number, "pk_r_new": hex }`.
 /// Other fields (the wraps, the manifest) are the endpoint's business and are
-/// ignored here. `pk_r_new` is there for a recovery only.
-fn parse_body(body: &[u8]) -> Result<ReplaceFields, AuthError> {
+/// ignored here. `pk_r_new` is there for a recovery only. Public so the fuzz
+/// target of the replacement can run it on a body that carries a valid proof.
+pub fn parse_body(body: &[u8]) -> Result<ReplaceFields, AuthError> {
     let bad = AuthError::Malformed(crate::Malformed::RegistrationRecord);
     let json: Value = serde_json::from_slice(body).map_err(|_| bad)?;
     let record = json

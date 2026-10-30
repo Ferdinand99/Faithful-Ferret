@@ -175,6 +175,136 @@ for (const c of cases('passkey.json', 'passkey.create')) {
 for (const c of cases('opaque.json', 'opaque.login')) add('fuzz_opaque_messages', hex(c.input.ke2));
 for (const c of cases('opaque.json', 'opaque.register')) add('fuzz_opaque_messages', hex(c.input.response));
 
+// The server library (crates/ferret-server-auth): messages, secret files, the
+// sealed state, login names, the small wire fields and the replacement body,
+// from vectors/internal/server-opaque.json and server-secrets.json. The first
+// byte of the seeds of the multi-way targets picks the way (see the target).
+const server = (file, ...ops) => load(file).filter((c) => ops.includes(c.op));
+const withSelect = (select, ...parts) => Buffer.concat([Buffer.from([select]), ...parts]);
+const u64be = (n) => {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64BE(BigInt(n));
+  return b;
+};
+const u16be = (n) => {
+  const b = Buffer.alloc(2);
+  b.writeUInt16BE(n);
+  return b;
+};
+const hexOf = (v) => (typeof v === 'string' ? hex(v) : null);
+
+// fuzz_server_messages: 0 registration request, 1 record, 2 KE1, 3 KE3.
+for (const c of server('server-opaque.json', 'server.register_response')) {
+  add('fuzz_server_messages', withMode(0, hexOf(c.input.request)));
+}
+for (const c of server('server-opaque.json', 'server.login_start')) {
+  add('fuzz_server_messages', withMode(2, hexOf(c.input.ke1)));
+  add('fuzz_server_messages', withMode(1, hexOf(c.input.record)));
+}
+for (const c of server('server-opaque.json', 'server.login_finish')) {
+  add('fuzz_server_messages', withMode(3, hexOf(c.input.ke3)));
+}
+for (const c of server('server-opaque.json', 'server.replace_authorize')) {
+  const body = hexOf(c.input.body);
+  const json = body && safeJson(body);
+  const record = json && typeof json.registration_record === 'string' ? hex(json.registration_record) : null;
+  add('fuzz_server_messages', withMode(1, record));
+  add('fuzz_server_messages', withMode(1, hexOf(c.input.current?.record)));
+}
+function safeJson(buf) {
+  try {
+    return JSON.parse(buf.toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// fuzz_server_secret_file: the file, and its payload on its own.
+for (const c of server('server-secrets.json', 'server.secret_file.decode')) add('fuzz_server_secret_file', hexOf(c.input.file));
+for (const c of server('server-secrets.json', 'server.secret_file.encode')) add('fuzz_server_secret_file', hexOf(c.input.payload));
+for (const c of server('server-secrets.json', 'server.setup_fingerprint', 'server.fake_record')) {
+  add('fuzz_server_secret_file', hexOf(c.input.setup_hex));
+}
+for (const c of server('server-secrets.json', 'server.fake_credential_id', 'server.fake_prelogin')) {
+  add('fuzz_server_secret_file', hexOf(c.input.prelogin_secret));
+}
+
+// fuzz_server_sealed_state: 0 a blob, 1 the content to seal, 2 the plaintext,
+// 3 a ServerLogin and a KE3.
+const loginFinish = server('server-opaque.json', 'server.login_finish');
+for (const c of [...server('server-secrets.json', 'server.state_open'), ...loginFinish]) {
+  add('fuzz_server_sealed_state', withMode(0, hexOf(c.input.blob ?? c.input.state_blob)));
+}
+for (const c of server('server-secrets.json', 'server.state_seal')) {
+  const st = c.input.state;
+  if (!st || typeof st.server_login !== 'string') continue;
+  const reauth = st.purpose?.type === 'reauth';
+  const binding = reauth ? Buffer.concat([hex(st.purpose.session), hex(st.purpose.account)]) : Buffer.alloc(48);
+  const credential = hex(st.credential);
+  const login = hex(st.server_login);
+  const ksf = Buffer.from([st.ksf_profile]);
+  // The plaintext of the state: expires_at, purpose, flag, binding, credential, profile, ServerLogin.
+  add(
+    'fuzz_server_sealed_state',
+    withSelect(2, u64be(st.expires_at), Buffer.from([reauth ? 1 : 0, reauth ? 1 : 0]), binding, credential, ksf, login),
+  );
+  // The content to seal, in the order the target reads it.
+  const ttl = Math.max(0, Number(st.expires_at) - Number(c.input.now) - 1);
+  add(
+    'fuzz_server_sealed_state',
+    withSelect(
+      1,
+      Buffer.from([reauth ? 1 : 0]),
+      reauth ? binding : Buffer.alloc(0),
+      credential,
+      u16be(Math.min(ttl, 65535)),
+      ksf,
+      login,
+      Buffer.from('seed0001'),
+    ),
+  );
+  const ke3 = loginFinish.map((f) => hexOf(f.input.ke3)).find((k) => k && k.length === 64);
+  if (ke3) add('fuzz_server_sealed_state', withSelect(3, login, ke3));
+}
+
+// fuzz_server_login_name: the names of the vectors.
+for (const c of [...server('server-secrets.json', 'server.fake_credential_id', 'server.fake_prelogin'), ...server('server-opaque.json', 'server.login_start')]) {
+  if (typeof c.input.name === 'string') add('fuzz_server_login_name', text(c.input.name));
+}
+
+// fuzz_server_wire_fields: 0 a login id, 1 a stored scope, 2 (and 5, 8, ...: the
+// route) a nonce and a proof, led by the length of the nonce.
+for (const c of loginFinish) {
+  if (typeof c.input.login_id === 'string') add('fuzz_server_wire_fields', withSelect(0, text(c.input.login_id)));
+}
+const scopes = new Set(['full', 'pending_2fa', 'account_reset', 'unverified', 'Full', ' full', 'full ', 'FULL', 'pending2fa', '']);
+for (const c of load('server-opaque.json')) {
+  const v = c.input.session_scope ?? c.input.scope;
+  if (typeof v === 'string') scopes.add(v);
+  const a = c.input.authority;
+  if (a && typeof a.scope === 'string') scopes.add(a.scope);
+}
+for (const name of scopes) add('fuzz_server_wire_fields', withSelect(1, text(name)));
+for (const c of server('server-opaque.json', 'server.replace_authorize')) {
+  const nonce = hexOf(c.input.nonce);
+  const proof = hexOf(c.input.proof);
+  if (!nonce || !proof) continue;
+  // The route is the index in MutationOp::ALL: 0 is unlock-method.add, 2 is
+  // unlock-method.password.put and 4 is recover.
+  for (const route of [0, 2, 4]) {
+    add('fuzz_server_wire_fields', withSelect(2 + 3 * route, Buffer.from([nonce.length]), nonce, proof));
+  }
+}
+
+// fuzz_server_replace_body: the first byte is the kind (0 password change, 1
+// recovery); the body is the JSON a client sends.
+for (const c of server('server-opaque.json', 'server.replace_authorize')) {
+  const body = hexOf(c.input.body);
+  if (!body) continue;
+  add('fuzz_server_replace_body', withSelect(c.input.kind === 'recover' ? 1 : 0, body));
+  add('fuzz_server_replace_body', withSelect(c.input.kind === 'recover' ? 0 : 1, body));
+}
+
 // Setup QR payloads.
 for (const c of cases('sheet.json', 'sheet.qr.parse')) add('fuzz_sheet', text(c.input.payload));
 

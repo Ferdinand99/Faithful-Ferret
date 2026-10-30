@@ -6,6 +6,9 @@
 //!   next layer runs the same checks.
 //! * [`challenge_conformance`] is the same set of checks for a
 //!   [`ChallengeStore`](crate::ChallengeStore).
+//! * [`StateFields`], [`seal_fields`], [`open_fields`], [`parse_state_plain`] and
+//!   [`server_login_parses`] reach the parts of the sealed state that the
+//!   crate keeps private, for the fuzz targets.
 //! * [`state_plain_wipe_probe`] lets a test crate look at the memory of a
 //!   sealed state's content before and after it is dropped.
 //! * [`LoginFixture`] is a server with one registered account and the pieces
@@ -1031,4 +1034,120 @@ pub fn register_start_open(
             request,
         },
     )
+}
+
+// ------------------------------------------------------------ state internals
+
+/// The length of the plaintext of a login state, in bytes.
+pub const STATE_PLAIN_LEN: usize = crate::state::PLAIN_LEN;
+
+/// The length of a sealed login state (`version ‖ nonce ‖ ciphertext ‖ tag`),
+/// in bytes.
+pub const SEALED_STATE_LEN: usize = crate::state::BLOB_LEN;
+
+/// The content of a login state as plain data, for tests and fuzz targets
+/// that need to build a state, read one back or compare two.
+///
+/// It holds the session key and the expected MAC in the clear, so it is test
+/// data: it wipes itself when dropped, `Debug` shows nothing, and it has no
+/// `Clone`.
+#[derive(PartialEq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct StateFields {
+    /// The account the login is for.
+    pub credential: [u8; 16],
+    /// `None` for an ordinary login; the session binding and the account of a
+    /// re-authentication otherwise.
+    pub reauth: Option<([u8; 32], [u8; 16])>,
+    /// The second at which the state stops being valid.
+    pub expires_at: u64,
+    /// The key stretching profile the account had.
+    pub ksf_profile: u8,
+    /// The serialized `ServerLogin`.
+    pub server_login: [u8; SERVER_LOGIN_LEN],
+}
+
+impl core::fmt::Debug for StateFields {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("StateFields([redacted])")
+    }
+}
+
+/// The purpose a request expects, from the plain form used by
+/// [`StateFields`].
+pub fn purpose_of(reauth: Option<([u8; 32], [u8; 16])>) -> LoginPurpose {
+    match reauth {
+        None => LoginPurpose::Login,
+        Some((session, account)) => LoginPurpose::Reauth {
+            session: SessionBinding(session),
+            account: CredentialId::from_bytes(account),
+        },
+    }
+}
+
+impl StateFields {
+    fn to_plain(&self) -> StatePlain {
+        StatePlain {
+            credential: CredentialId::from_bytes(self.credential),
+            purpose: purpose_of(self.reauth),
+            expires_at: self.expires_at,
+            ksf_profile: self.ksf_profile,
+            server_login: Zeroizing::new(self.server_login),
+        }
+    }
+
+    fn of(plain: &StatePlain) -> Self {
+        let reauth = match plain.purpose {
+            LoginPurpose::Login => None,
+            LoginPurpose::Reauth { session, account } => Some((session.0, *account.as_bytes())),
+        };
+        Self {
+            credential: *plain.credential.as_bytes(),
+            reauth,
+            expires_at: plain.expires_at,
+            ksf_profile: plain.ksf_profile,
+            server_login: *plain.server_login,
+        }
+    }
+}
+
+/// Seals `fields` for the login `id`, as `login_start` does.
+pub fn seal_fields<R: ferret_core::SecureRng>(
+    key: &crate::StateSealKey,
+    rng: &mut R,
+    id: &LoginId,
+    fields: &StateFields,
+    now: u64,
+) -> Result<SealedState, crate::AuthError> {
+    crate::state::seal_state(key, rng, id, &fields.to_plain(), now)
+}
+
+/// Opens a sealed state for the login `id`, as `login_finish` does, for a
+/// request that expects the purpose given by `expected`.
+pub fn open_fields(
+    key: &crate::StateSealKey,
+    id: &LoginId,
+    sealed: &SealedState,
+    expected: Option<([u8; 32], [u8; 16])>,
+    now: u64,
+) -> Result<StateFields, crate::AuthError> {
+    crate::state::open_state(key, id, sealed, &purpose_of(expected), now)
+        .map(|plain| StateFields::of(&plain))
+}
+
+/// Reads the plaintext of a login state.
+pub fn parse_state_plain(bytes: &[u8]) -> Result<StateFields, crate::AuthError> {
+    StatePlain::parse(bytes).map(|plain| StateFields::of(&plain))
+}
+
+/// The plaintext bytes of a login state.
+pub fn encode_state_plain(fields: &StateFields) -> Vec<u8> {
+    fields.to_plain().encode().to_vec()
+}
+
+/// Whether the parser of `opaque-ke` accepts `bytes` as a serialized
+/// `ServerLogin`. It must never panic, whatever the bytes are.
+pub fn server_login_parses(bytes: &[u8]) -> bool {
+    use ferret_core::opaque::server_suite::FerretSuite;
+    use ferret_core::opaque::server_suite::opaque_ke::ServerLogin;
+    ServerLogin::<FerretSuite>::deserialize(bytes).is_ok()
 }

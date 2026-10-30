@@ -471,7 +471,23 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "ferret-core",
+ "ferret-server-auth",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "ferret-server-auth"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "ferret-core",
+ "hkdf 0.13.0",
+ "hmac 0.13.0",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]

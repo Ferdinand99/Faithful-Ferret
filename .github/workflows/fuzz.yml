@@ -1,4 +1,4 @@
-# Fuzzing of the parsers and verifiers of the core:
+# Fuzzing of the parsers and verifiers of the core and of the server library:
 # libFuzzer with AddressSanitizer through cargo-fuzz, on the pinned nightly
 # toolchain named in fuzz/NIGHTLY.
 #
@@ -18,10 +18,12 @@ on:
   pull_request:
     paths:
       - "crates/ferret-core/**"
+      - "crates/ferret-server-auth/**"
       - "ct/harness/**"
       - "fuzz/**"
       - "scripts/fuzz-run.sh"
       - "scripts/fuzz-seeds.mjs"
+      - "scripts/check-fuzz-targets.mjs"
       - "vectors/**"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -61,6 +63,10 @@ jobs:
           node-version: "22"
       # The seed corpus is what the vectors give.
       - run: node scripts/fuzz-seeds.mjs --check
+      # Every function of the server library that reads bytes from a client or a
+      # file has a target, or a stated reason why not.
+      - run: node scripts/check-fuzz-targets.mjs --self-test
+      - run: node scripts/check-fuzz-targets.mjs
       # The matrix is the list of targets in fuzz/Cargo.toml.
       - id: list
         run: |
