@@ -237,6 +237,25 @@ fn finish_lookup(row: LookupRow) -> rusqlite::Result<AccountLookupOwned> {
 /// only when the real share is more than 50 permille past a bucket's edge, and
 /// the current buckets are stored in the database, so a restart keeps them. With
 /// no accounts: profile 1 for every answer.
+///
+/// What this does not hide, kept here so nobody mistakes it for covered:
+///
+/// * A bucket of 0 or 1000 is used only when the real count is exactly none or
+///   all (a minority answer at an extreme would prove that the name exists),
+///   and a profile with any account is never below 100. The nearest bucket
+///   below 1000 is 900, so with one account in a hundred that differs, about a
+///   tenth of the unknown names answer the minority way too: a minority answer
+///   is weak evidence that a name exists, never proof.
+/// * When the real share leaves a bucket's band the bucket moves once, and the
+///   unknown names whose draw falls between the two buckets flip once. A name
+///   that flips was not held by anyone, but a watcher who sees the flip learns
+///   that the population changed, not which names exist.
+/// * With very few accounts every bucket crossing is a large step (one account
+///   is a share of 500 or more), so tiny populations leak more than large ones.
+/// * A profile whose last account goes disappears from the policy at once and
+///   its bucket is dropped without hysteresis. That is deliberate: a held
+///   bucket for a profile nobody uses would make every answer of that profile
+///   prove that the name does not exist.
 pub fn load_prelogin_policy(conn: &Connection) -> PreloginPolicy {
     match try_load_prelogin_policy(conn) {
         Ok(policy) => policy,
@@ -253,6 +272,8 @@ const BUCKET_STEP: u64 = 100;
 /// it: a bucket reaches 50 permille to each side, so the real share must be
 /// more than 50 past an edge before the bucket changes.
 const BUCKET_HOLD: u64 = 100;
+/// The smallest bucket of a profile that has an account.
+const FLOOR: u16 = 100;
 /// The `ferret_meta` key that holds the current buckets.
 const BUCKETS_KEY: &str = "prelogin_buckets";
 
@@ -315,7 +336,12 @@ fn is_bucket(value: u16) -> bool {
 
 /// The bucket for a real share: the stored one while the share stays within
 /// [`BUCKET_HOLD`] of it, else the multiple of 100 nearest to the share
-/// (halves round up).
+/// (halves round up). The result still goes through [`pin_extremes`], which
+/// knows the exact counts.
+///
+/// What remains visible: a bucket crossing flips the made-up answer once for
+/// the unknown names whose draw lies between the old and the new bucket, and a
+/// small population moves in large steps. See `load_prelogin_policy`.
 fn settle(stored: Option<u16>, share: u64) -> u16 {
     if let Some(bucket) = stored
         && is_bucket(bucket)
@@ -332,9 +358,48 @@ fn settle(stored: Option<u16>, share: u64) -> u16 {
     u16::try_from(nearest).unwrap_or(1000)
 }
 
+/// Keeps the extremes honest, from the exact counts and not from the rounded
+/// share: 0 only when none of the accounts has the property, 1000 only when all
+/// of them have it, and 100 to 900 otherwise. A minority answer at an extreme
+/// would be proof that a name exists, and a profile that has an account must
+/// never be left with no share at all.
+fn pin_extremes(bucket: u16, part: u64, total: u64) -> u16 {
+    if part == 0 {
+        0
+    } else if part >= total {
+        1000
+    } else {
+        bucket.clamp(100, 900)
+    }
+}
+
+/// The buckets for the accounts as they are now: `with_hint` of `total`
+/// accounts have a secret key, `counts` are the accounts per profile. A profile
+/// that has no account is not in `counts`, so its stored bucket is dropped
+/// without hysteresis, on purpose: it is the safe direction.
+fn next_buckets(
+    stored: &Buckets,
+    counts: &[(u8, u64)],
+    with_hint: u64,
+    total: u64,
+) -> Option<Buckets> {
+    let share_of = |part: u64| share_permille(part.min(total), total);
+    let sk = pin_extremes(settle(stored.sk, share_of(with_hint)?), with_hint, total);
+    let mut profiles = Vec::with_capacity(counts.len());
+    for (profile, count) in counts {
+        let bucket = settle(stored.profile(*profile), share_of(*count)?);
+        profiles.push((*profile, pin_extremes(bucket, *count, total)));
+    }
+    Some(Buckets {
+        sk: Some(sk),
+        profiles,
+    })
+}
+
 /// Makes the profile buckets add up to exactly 1000, as the policy needs: a
 /// missing amount goes to the largest bucket, an excess comes off the largest
-/// ones first (ties: the lower profile number).
+/// ones first (ties: the lower profile number), never taking a bucket below 100
+/// (a profile with an account keeps a share). `None` when that is not possible.
 fn fit_to_whole(buckets: &[(u8, u16)]) -> Option<Vec<(u8, u16)>> {
     let mut out = buckets.to_vec();
     let sum = out
@@ -356,9 +421,13 @@ fn fit_to_whole(buckets: &[(u8, u16)]) -> Option<Vec<(u8, u16)>> {
                 break;
             }
             let entry = out.get_mut(index)?;
-            let take = excess.min(u32::from(entry.1));
+            let spare = u32::from(entry.1.saturating_sub(FLOOR));
+            let take = excess.min(spare);
             entry.1 = entry.1.checked_sub(u16::try_from(take).ok()?)?;
             excess = excess.checked_sub(take)?;
+        }
+        if excess != 0 {
+            return None;
         }
     }
     Some(out)
@@ -412,26 +481,19 @@ fn try_load_prelogin_policy(conn: &Connection) -> Result<PreloginPolicy, String>
     // the real accounts move a little, or the names whose answer changed would
     // be the ones nobody holds.
     let stored = read_buckets(conn).map_err(|e| e.to_string())?;
-    let share_of = |part: u64| share_permille(part.min(total), total).ok_or("a share overflows");
-    let sk = settle(stored.sk, share_of(with_hint)?);
-    let mut profiles = Vec::with_capacity(counts.len());
-    for (profile, count) in &counts {
-        profiles.push((
-            *profile,
-            settle(stored.profile(*profile), share_of(*count)?),
-        ));
-    }
-    let fresh = Buckets {
-        sk: Some(sk),
-        profiles,
-    };
+    let fresh = next_buckets(&stored, &counts, with_hint, total).ok_or("a share overflows")?;
     if fresh.encode() != stored.encode() {
-        conn.execute(
+        // Best effort: a write that fails (a busy or full database) must not
+        // change the answers. The policy built here is used either way, and the
+        // next round tries to store it again.
+        if let Err(error) = conn.execute(
             "INSERT OR REPLACE INTO ferret_meta (key, value) VALUES (?1, ?2)",
             params![BUCKETS_KEY, fresh.encode()],
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            tracing::warn!(%error, "the pre-login buckets were not stored");
+        }
     }
+    let sk = fresh.sk.ok_or("no hint bucket")?;
     let shares = fit_to_whole(&fresh.profiles).ok_or("the shares do not add up")?;
     PreloginPolicy::new(&shares, sk).map_err(|e| format!("{e:?}"))
 }
@@ -1067,6 +1129,45 @@ mod tests {
         assert_eq!(settle(Some(500), 0), 0);
         // A stored value that is not a bucket is ignored.
         assert_eq!(settle(Some(530), 530), 500);
+    }
+
+    #[test]
+    fn the_extremes_need_an_exact_none_or_all() {
+        // 1 of 20 without a key is a share of 950, which rounds to 1000.
+        assert_eq!(settle(None, 950), 1000);
+        assert_eq!(pin_extremes(1000, 19, 20), 900);
+        assert_eq!(pin_extremes(0, 1, 20), 100);
+        assert_eq!(pin_extremes(0, 0, 20), 0);
+        assert_eq!(pin_extremes(1000, 20, 20), 1000);
+        assert_eq!(pin_extremes(500, 10, 20), 500);
+        // Even a bucket held from earlier does not keep an extreme alive.
+        assert_eq!(pin_extremes(0, 1, 2), 100);
+        assert_eq!(pin_extremes(100, 0, 2), 0);
+    }
+
+    #[test]
+    fn a_profile_with_an_account_keeps_a_share() {
+        let stored = Buckets::default();
+        let next = next_buckets(&stored, &[(1, 29), (2, 1)], 30, 30).unwrap();
+        assert_eq!(next.sk, Some(1000));
+        assert_eq!(next.profiles, vec![(1, 900), (2, 100)]);
+        let fitted = fit_to_whole(&next.profiles).unwrap();
+        assert_eq!(fitted, vec![(1, 900), (2, 100)]);
+        // Three profiles, the small ones at their floor: the excess comes off
+        // the largest only above the floor.
+        let next = next_buckets(&stored, &[(1, 28), (2, 1), (3, 1)], 0, 30).unwrap();
+        assert_eq!(next.sk, Some(0));
+        assert_eq!(next.profiles, vec![(1, 900), (2, 100), (3, 100)]);
+        let fitted = fit_to_whole(&next.profiles).unwrap();
+        assert_eq!(fitted, vec![(1, 800), (2, 100), (3, 100)]);
+        assert!(fitted.iter().all(|(_, b)| *b >= 100));
+        // A dropped profile leaves the buckets at once.
+        let stored = Buckets {
+            sk: Some(500),
+            profiles: vec![(1, 700), (2, 300)],
+        };
+        let next = next_buckets(&stored, &[(1, 10)], 5, 10).unwrap();
+        assert_eq!(next.profiles, vec![(1, 1000)]);
     }
 
     #[test]

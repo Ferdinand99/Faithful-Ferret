@@ -29,7 +29,7 @@ use ferret_server::wire::b64url;
 use ferret_server_auth::testing::{SMALL, register_start_open};
 use ferret_server_auth::{
     Clock, CredentialId, ManualClock, PreloginPolicy, ProfileRules, RecordingThrottle,
-    RegistrationKind, Stage, StoredRecord, Throttle, ThrottleCall, fake_prelogin,
+    RegistrationKind, Stage, StoredRecord, Throttle, ThrottleCall, ThrottleKey, fake_prelogin,
     normalize_login_name, register_finish,
 };
 use serde_json::{Value, json};
@@ -1711,7 +1711,16 @@ async fn a_session_cookie_adds_no_throttle_call_to_either_step() {
     recording.clear();
     let res = finish_as(&app, &mut jar, &login_id, &ke3, 1, None).await;
     assert_denied(&res);
-    assert_eq!(stages(recording.calls()), pair(Stage::LoginFinish));
+    let calls = recording.calls();
+    assert_eq!(stages(calls.clone()), pair(Stage::LoginFinish));
+    let ThrottleCall::Admit { keys, .. } = &calls[0] else {
+        panic!("the first call is an admit");
+    };
+    assert!(
+        keys.iter()
+            .all(|k| matches!(k, ThrottleKey::Ip(_) | ThrottleKey::UnknownAddress)),
+        "no account key before the state is known"
+    );
 }
 
 #[tokio::test]
@@ -1745,6 +1754,14 @@ async fn a_user_with_the_kits_second_factor_gets_no_session_after_a_good_proof()
         .await,
         0
     );
+
+    // The 403 comes only after the proof: a wrong password for the same user
+    // is the ordinary 401, and tells nothing about the second factor.
+    let (_, started) = start(&app, &mut jar, "alice@example.com", OTHER_PASSWORD, None).await;
+    let login_id = started.unwrap().login_id;
+    let res = finish(&app, &mut jar, &login_id, &[0x33; 64], 1).await;
+    assert_denied(&res);
+    assert_eq!(session_rows(&app).await, 0);
 }
 
 #[tokio::test]
@@ -1891,4 +1908,97 @@ async fn the_made_up_hint_does_not_move_while_the_real_share_stays_inside_the_ba
         .await
         .unwrap();
     assert_eq!(stored, b"sk=600;p1=1000;");
+}
+
+#[tokio::test]
+async fn one_account_without_a_key_among_twenty_does_not_make_the_other_answer_proof() {
+    let app = app().await;
+    // 19 accounts with a secret key and 1 without: a share of 950, which used to
+    // round to 1000 and make every `false` answer prove that the name exists.
+    add_plain_accounts(&app, 1, 20, true).await;
+    add_plain_accounts(&app, 20, 21, false).await;
+    let policy = policy_now(&app).await;
+    assert_eq!(policy, PreloginPolicy::new(&[(1, 1000)], 900).unwrap());
+    let answers = made_up_answers(&app, &policy);
+    assert!(
+        answers.iter().any(|a| !a.1),
+        "some made-up answers say false"
+    );
+    assert!(answers.iter().any(|a| a.1), "and most say true");
+
+    // Everyone with a key: nothing to hide, and the extreme is exact.
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute("UPDATE ferret_accounts SET sk_hint = 1", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let all = policy_now(&app).await;
+    assert_eq!(all, PreloginPolicy::new(&[(1, 1000)], 1000).unwrap());
+    assert!(made_up_answers(&app, &all).iter().all(|a| a.1));
+
+    // Nobody with a key, and 1 of 20 with one: 50 permille is bucket 100, never 0.
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute("UPDATE ferret_accounts SET sk_hint = 0", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let none = policy_now(&app).await;
+    assert_eq!(none, PreloginPolicy::new(&[(1, 1000)], 0).unwrap());
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE ferret_accounts SET sk_hint = 1 WHERE rowid = (SELECT MIN(rowid) FROM ferret_accounts)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let one = policy_now(&app).await;
+    assert_eq!(one, PreloginPolicy::new(&[(1, 1000)], 100).unwrap());
+}
+
+#[tokio::test]
+async fn a_failed_bucket_write_does_not_change_the_policy() {
+    let app = app().await;
+    add_plain_accounts(&app, 1, 20, true).await;
+    add_plain_accounts(&app, 20, 21, false).await;
+    // Storing the buckets fails (as a busy or full database would).
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER no_buckets BEFORE INSERT ON ferret_meta
+                 WHEN NEW.key = 'prelogin_buckets'
+                 BEGIN SELECT RAISE(ABORT, 'no'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    // The policy is the computed one, not the fall-back with a hint for all.
+    let policy = policy_now(&app).await;
+    assert_eq!(policy, PreloginPolicy::new(&[(1, 1000)], 900).unwrap());
+    assert_ne!(policy, PreloginPolicy::single(KsfProfile::P1));
+    let stored = count(
+        &app,
+        "SELECT COUNT(*) FROM ferret_meta WHERE key = 'prelogin_buckets'",
+    )
+    .await;
+    assert_eq!(stored, 0);
+    // The renewal uses it too.
+    refresh_once(
+        &app.state.vault_db,
+        &app.state.prelogin,
+        app.state.clock.as_ref(),
+    )
+    .await;
+    assert_eq!(*app.state.prelogin.read().unwrap(), policy);
 }
