@@ -9,7 +9,9 @@
 // is every number that is not a whole number from 0 to 2^53 - 1 written
 // without a sign, fraction or exponent (the wire has no other numbers).
 // Fields are refused when they are not in the shape: an unknown field is as
-// wrong as a missing one.
+// wrong as a missing one. The messages of a `WireError` can quote the input
+// (the JSON parser's message, a token, a field name): show or log `error.code`
+// only.
 import { b64u, hex16, WireError } from "./b64.mjs";
 
 export { WireError };
@@ -291,19 +293,38 @@ export function handoffCode(code) {
 }
 
 /**
- * The checks that come with a shape once it is read: a hand-over code, and the
- * two forms of an item write (a live row, or a tombstone, never both).
+ * The checks that come with a shape once it is read: a hand-over code, the two
+ * forms of an item write (a live row, or a tombstone, never both) and the two
+ * forms of a conflict answer.
  * @param {string} kind
  * @param {any} value
  */
 export function checkStep(kind, value) {
   if (kind === "redeem_req") handoffCode(value.code);
+  if (kind === "conflict_res") {
+    // The current row of an item: a live row has its blob and tag, a deleted one neither.
+    const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
+    if (value.deleted ? has("blob") || has("tag") : !has("blob") || !has("tag")) {
+      refuse("a conflict answer is a live row (blob and tag) or a deleted one (neither)");
+    }
+  }
   if (kind !== "put_item_req") return;
   const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
   if (value.resurrect === true) refuse("resurrect is not supported yet");
   const live = has("blob") && has("tag") && !has("tomb") && value.deleted !== true;
   const gone = !has("blob") && !has("tag") && has("tomb") && value.deleted === true;
   if (!live && !gone) refuse("a put request is a live row or a tombstone, never both");
+}
+
+/**
+ * The same as {@link encodeWire}, as the bytes to send (and to keep in the
+ * outbox, whose entries hold the exact bytes of the request).
+ * @param {string} kind
+ * @param {any} value
+ * @returns {Uint8Array}
+ */
+export function encodeWireBytes(kind, value) {
+  return new TextEncoder().encode(encodeWire(kind, value));
 }
 
 /**

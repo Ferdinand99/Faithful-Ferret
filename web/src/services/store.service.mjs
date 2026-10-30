@@ -4,7 +4,7 @@
 import { cache } from "../store/cache.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
-import { forgetPinned, loadPinned, loadPinnedByAccount, savePinned } from "../store/pinned.mjs";
+import { forgetPinned, loadPinned, loadPinnedByAccount, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../store/settings.mjs";
 
 /** @type {import("../app.mjs").ServiceDef} */
@@ -16,7 +16,9 @@ export default {
     let opened = null;
     return {
       open: () => {
-        opened ??= openStore().catch((error) => {
+        opened ??= openStore(undefined, undefined, undefined, () => {
+          opened = null; // the browser closed the handle: the next call opens a new one
+        }).catch((error) => {
           opened = null; // try again on the next call
           throw error;
         });
@@ -24,6 +26,7 @@ export default {
       },
       loadPinned,
       loadPinnedByAccount,
+      pinnedForSignIn,
       savePinned,
       forgetPinned,
       deviceId,

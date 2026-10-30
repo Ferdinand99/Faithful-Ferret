@@ -290,6 +290,44 @@ export const ERROR_CODES = [
 ];
 
 /**
+ * The HTTP status of each error code (error_statuses.json, in the order of
+ * ERROR_CODES). The server checks it against its status table, and the web
+ * vault against what its client does with each status.
+ */
+const STATUS_OF = {
+  unauthorized: 401,
+  denied: 401,
+  forbidden: 403,
+  insecure_transport: 400,
+  handoff_invalid: 400,
+  manifest_not_writable: 403,
+  malformed_registration_request: 400,
+  malformed_registration_record: 400,
+  malformed_ke1: 400,
+  malformed_ke3: 400,
+  malformed_login_id: 400,
+  malformed_nonce: 400,
+  malformed_proof: 400,
+  malformed_login_name: 400,
+  malformed_recovery_key: 400,
+  registration_closed: 409,
+  throttled: 429,
+  profile_rejected: 422,
+  unsupported_envelope: 422,
+  tombstone_invalid: 422,
+  too_large: 413,
+  quota_exceeded: 413,
+  idem_reuse: 422,
+  conflict: 409,
+  protocol_header_missing: 400,
+  forbidden_origin: 403,
+  not_found: 404,
+  bad_request: 400,
+  internal: 500,
+  gone: 410,
+};
+
+/**
  * Inputs that must be refused, in `invalid.json`. Each case is
  * `{name, shape, json, layer, error, why}`:
  *
@@ -594,6 +632,11 @@ export function files() {
   const out = {};
   for (const [name, value] of Object.entries(fixtures())) out[name] = `${JSON.stringify(value)}\n`;
   out["error_codes.json"] = `${JSON.stringify(ERROR_CODES)}\n`;
+  const statuses = ERROR_CODES.map((code) => {
+    if (!Number.isInteger(STATUS_OF[code])) throw new Error(`no status for ${code}`);
+    return [code, STATUS_OF[code]];
+  });
+  out["error_statuses.json"] = `${JSON.stringify(Object.fromEntries(statuses))}\n`;
   out["invalid.json"] = `[\n${invalidCases().map((c) => JSON.stringify(c)).join(",\n")}\n]\n`;
   return out;
 }

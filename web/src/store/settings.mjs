@@ -3,10 +3,11 @@
 // key. `device_secrets` is the one place where a secret may be kept at all: the
 // secret key code of the account, sealed with AES-GCM under a non-extractable
 // WebCrypto key that is stored next to it (spec Fase 1 § 6.2). The sealing
-// is the caller's; this file only keeps what it is given, and clearing the row
-// cache or the outbox never touches it.
+// is the caller's; this file keeps the result and accepts nothing but the sealed
+// form, so a clear-text secret cannot be stored there by mistake. Clearing the
+// row cache or the outbox never touches it.
 import { hex16 } from "../b64.mjs";
-import { req, run } from "./idb.mjs";
+import { req, run, serverKey, StoreError } from "./idb.mjs";
 
 const DEVICE_ID_KEY = "device_id";
 
@@ -68,27 +69,54 @@ export async function deviceId(store, rand = (bytes) => crypto.getRandomValues(b
  * @returns {[string, string]}
  */
 function secretKey(serverUrl, accountId) {
-  if (typeof serverUrl !== "string" || serverUrl === "") throw new TypeError("a server address is needed");
   if (!hex16.is(accountId)) throw new TypeError("an account id is 32 lower-case hex characters");
-  return [serverUrl, accountId];
+  return [serverKey(serverUrl), accountId];
+}
+
+/** The AES-GCM nonce is 12 bytes; a sealed value is at least the 16-byte tag, and a secret key code is short. */
+const IV_LENGTH = 12;
+const SEALED_MIN = 16;
+const SEALED_MAX = 1024;
+
+/**
+ * Throws unless `value` is exactly `{ key, iv, sealed }`: a non-extractable
+ * AES-GCM `CryptoKey`, a 12-byte nonce and the sealed bytes.
+ * @param {unknown} value
+ */
+function checkSealed(value) {
+  const bad = () => new StoreError("device_secrets_shape", "device secrets are { key, iv, sealed } and nothing else");
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw bad();
+  if (Object.keys(value).sort().join() !== "iv,key,sealed") throw bad();
+  const { key, iv, sealed } = /** @type {Record<string, any>} */ (value);
+  const keyOk =
+    typeof CryptoKey !== "undefined" &&
+    key instanceof CryptoKey &&
+    key.type === "secret" &&
+    key.extractable === false &&
+    key.algorithm?.name === "AES-GCM";
+  const ok =
+    keyOk &&
+    iv instanceof Uint8Array && iv.length === IV_LENGTH &&
+    sealed instanceof Uint8Array && sealed.length >= SEALED_MIN && sealed.length <= SEALED_MAX;
+  if (!ok) throw bad();
 }
 
 /**
- * The device secrets of an account on a server: one object per account, such as
- * `{ key, sealed }` (the sealing `CryptoKey` and the sealed secret key code).
- * The store does not look inside it.
+ * The device secrets of an account on a server: one object per account,
+ * `{ key, iv, sealed }` (the non-extractable sealing `CryptoKey`, its nonce and
+ * the sealed secret key code). Nothing else is accepted.
  */
 export const deviceSecrets = Object.freeze({
   /**
    * @param {import("./idb.mjs").Store} store
    * @param {string} serverUrl
    * @param {string} accountId
-   * @param {Record<string, any>} value
+   * @param {{ key: CryptoKey, iv: Uint8Array, sealed: Uint8Array }} value
    * @returns {Promise<void>}
    */
   async put(store, serverUrl, accountId, value) {
     const key = secretKey(serverUrl, accountId);
-    if (value === null || typeof value !== "object") throw new TypeError("device secrets are an object");
+    checkSealed(value);
     await run(store, ["device_secrets"], "readwrite", async ([table]) => {
       await req(table.put(value, key));
     });

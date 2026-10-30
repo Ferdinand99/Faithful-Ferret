@@ -6,7 +6,7 @@
 // Writes: pass the body of a retried write as the same string (or bytes) you
 // sent the first time, under the same `idem`. The server hashes the raw body,
 // so a re-serialized retry is 422 `idem_reuse` instead of a replay.
-import { readJson, readWire, SHAPES } from "./wire.mjs";
+import { checkStep, readJson, readWire, SHAPES } from "./wire.mjs";
 
 /** Statuses the server answers for a request that retrying cannot fix. */
 const TERMINAL_STATUSES = Object.freeze([400, 403, 413, 422]);
@@ -47,6 +47,25 @@ export class ApiError extends Error {
 }
 
 /**
+ * Whether a URL parser would keep `path` on the page's own origin: it starts
+ * with one `/` and holds no backslash, control character or space (browsers
+ * read `/\evil.example` and `/<tab>/evil.example` as another host).
+ * @param {unknown} path
+ */
+function isLocalPath(path) {
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) return false;
+  for (const ch of path) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === String.fromCharCode(92) || code <= 0x20 || (code >= 0x7f && code <= 0x9f)) return false;
+  }
+  try {
+    return new URL(path, "https://origin.invalid").origin === "https://origin.invalid";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Seconds from a Retry-After header, or null for anything but whole seconds.
  * @param {string | null} value
  */
@@ -77,9 +96,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
    * @param {CallOptions} options
    */
   async function call(method, path, body, options) {
-    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
-      throw new TypeError("an API path starts with a single /");
-    }
+    if (!isLocalPath(path)) throw new TypeError("an API path starts with a single / and has no backslash or control character");
     const kind = options.shape;
     if (kind !== undefined && !(kind in SHAPES)) throw new TypeError(`no wire shape named ${kind}`);
     /** @type {Record<string, string>} */
@@ -164,7 +181,9 @@ function errorOf(status, text, retryAfter) {
   }
   if (status === 409 && body !== null && typeof body === "object" && "current_rev" in body) {
     try {
-      return new ApiError(status, "conflict", retryAfter, readWire("conflict_res", text));
+      const row = readWire("conflict_res", text);
+      checkStep("conflict_res", row);
+      return new ApiError(status, "conflict", retryAfter, row);
     } catch {
       return new ApiError(status, "bad_response", retryAfter);
     }

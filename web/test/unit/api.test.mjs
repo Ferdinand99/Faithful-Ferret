@@ -1,9 +1,12 @@
 // The API client: headers, error mapping, redirects, answers that are not JSON.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { test } from "node:test";
 import { ApiError, createApi } from "../../src/api.mjs";
 import { b64u } from "../../src/b64.mjs";
+import { SERVER_HEADERS_JSON } from "../serve.mjs";
 
 /** A fetch that records its calls and answers from `answer(url, init)`. */
 function fakeFetch(answer) {
@@ -79,11 +82,33 @@ test("api_sends_a_string_or_bytes_body_exactly_as_given", async () => {
 test("api_refuses_a_path_that_is_not_on_this_origin", async () => {
   const { calls, fetchImpl } = fakeFetch(() => json({}));
   const api = createApi({ fetchImpl, base: "https://vault.example" });
-  for (const path of ["//evil.example/x", "https://evil.example/x", "api/x", ""]) {
+  const bs = String.fromCharCode(92);
+  const paths = [
+    "//evil.example/x",
+    "https://evil.example/x",
+    "api/x",
+    "",
+    // A URL parser reads these as another host.
+    `/${bs}evil.example/x`,
+    "/\t/evil.example/x",
+    "/\n/evil.example/x",
+    "/\r/evil.example/x",
+    "/ /evil.example/x",
+    `/a${bs}b`,
+    "/a\u0000b",
+    "/a\u007fb",
+    "/a\u0085b",
+    "/a b",
+    null,
+    42,
+  ];
+  for (const path of paths) {
     await assert.rejects(api.get(path), TypeError, JSON.stringify(path));
   }
+  assert.equal(calls.length, 0, "nothing was sent");
   await api.get("/api/x");
-  assert.equal(calls.length, 1);
+  await api.get("/api/sync/changes?since=3&limit=500");
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].url, "https://vault.example/api/x");
 });
 
@@ -267,4 +292,45 @@ test("api_checks_an_answer_against_its_wire_shape_when_asked", async () => {
   const bad = fakeFetch(() => json({ ...good, extra: 1 }));
   const error = await failure(createApi({ fetchImpl: bad.fetchImpl }).get("/api/auth/session", { shape: "session_res" }));
   assert.equal(error.code, "bad_response");
+});
+
+test("api_checks_the_form_of_a_conflict_answer", async () => {
+  const blob = b64u.encode(new Uint8Array(40).fill(7));
+  const tag = b64u.encode(new Uint8Array(32).fill(8));
+  for (const body of [
+    { current_rev: 2, deleted: false }, // live without its row
+    { current_rev: 2, deleted: false, blob },
+    { current_rev: 2, deleted: true, blob, tag }, // deleted with a row
+    { current_rev: 2, deleted: true, tag },
+  ]) {
+    const { fetchImpl } = fakeFetch(() => json(body, 409));
+    const error = await failure(createApi({ fetchImpl }).put("/api/sync/items/ab", "{}"));
+    assert.equal(error.code, "bad_response", JSON.stringify(body));
+  }
+});
+
+// The status of every code, from the table both sides read: the client decides
+// what to do with an error from its status, so a code that moves to another
+// status in the server must show up here.
+test("api_handles_every_error_code_with_the_status_the_server_gives_it", async () => {
+  const dir = join(SERVER_HEADERS_JSON, "..");
+  const statuses = JSON.parse(readFileSync(join(dir, "error_statuses.json"), "utf8"));
+  const codes = JSON.parse(readFileSync(join(dir, "error_codes.json"), "utf8"));
+  assert.deepEqual(Object.keys(statuses), codes, "same codes in the same order");
+  const TERMINAL = [400, 403, 413, 422];
+  for (const code of codes) {
+    const status = statuses[code];
+    assert.ok(Number.isInteger(status) && status >= 400 && status <= 599, `${code}: ${status}`);
+    if (code === "conflict") continue; // a 409 conflict has the current row as its body, tested above
+    const { fetchImpl } = fakeFetch(() => json({ error: code }, status));
+    const error = await failure(createApi({ fetchImpl }).put("/api/sync/items/ab", "{}"));
+    assert.equal(error.status, status, code);
+    assert.equal(error.code, code);
+    assert.equal(error.terminal, TERMINAL.includes(status), `${code} (${status})`);
+  }
+  // The 4xx codes the sync engine must not retry: everything except these.
+  const retryable = codes.filter((code) => !TERMINAL.includes(statuses[code]));
+  assert.deepEqual(retryable, [
+    "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone",
+  ]);
 });

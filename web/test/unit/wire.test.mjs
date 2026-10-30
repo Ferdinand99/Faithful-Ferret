@@ -13,10 +13,10 @@ import { test } from "node:test";
 import { SERVER_HEADERS_JSON } from "../serve.mjs";
 import { files } from "../../../crates/ferret-server/tests/fixtures/wire/generate.mjs";
 import { b64u, hex16, WireError } from "../../src/b64.mjs";
-import { checkStep, encodeWire, handoffCode, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
+import { checkStep, encodeWire, encodeWireBytes, handoffCode, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
-const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "invalid.json"];
+const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json"];
 
 const read = (name) => readFileSync(join(DIR, name), "utf8");
 const parseFile = (name) => JSON.parse(read(name));
@@ -286,5 +286,29 @@ test("handoff_code_is_43_chars_base64url", () => {
   handoffCode(code);
   for (const bad of [code.slice(0, 42), `${code}A`, `${code.slice(0, 42)}=`, `${code.slice(0, 42)}B`, ""]) {
     assert.equal(refusalOf(() => handoffCode(bad)), "handoff_invalid", bad);
+  }
+});
+
+test("encode_wire_bytes_is_the_utf8_of_the_text", () => {
+  const value = readWire("put_item_req", read("put_item_req.live.json"));
+  const text = encodeWire("put_item_req", value);
+  const bytes = encodeWireBytes("put_item_req", value);
+  assert.ok(bytes instanceof Uint8Array);
+  assert.equal(Buffer.from(bytes).toString("utf8"), text);
+  assert.equal(refusalOf(() => encodeWireBytes("put_item_req", { ...value, tomb: value.blob })), "tombstone_invalid");
+});
+
+test("a_conflict_answer_is_a_live_row_or_a_deleted_one", () => {
+  for (const name of ["conflict_res.live.json", "conflict_res.deleted.json"]) {
+    checkStep("conflict_res", parseFile(name));
+  }
+  const live = parseFile("conflict_res.live.json");
+  for (const bad of [
+    { ...live, blob: undefined },
+    { ...live, tag: null },
+    { ...live, deleted: true },
+    { current_rev: 1, deleted: true, tag: live.tag },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("conflict_res", bad)), "bad_request");
   }
 });

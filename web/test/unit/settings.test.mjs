@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cache } from "../../src/store/cache.mjs";
+import { StoreError } from "../../src/store/idb.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../../src/store/settings.mjs";
 import { ACCOUNT, SERVER, freshStore, scope } from "./idbHelpers.mjs";
 
@@ -78,6 +79,45 @@ test("device_secrets_store_holds_the_sealing_key_and_the_sealed_sk_and_clearing_
 
   await deviceSecrets.delete(store, SERVER, ACCOUNT);
   assert.equal(await deviceSecrets.get(store, SERVER, ACCOUNT), null);
-  await assert.rejects(deviceSecrets.put(store, SERVER, ACCOUNT, "text"), TypeError);
+  await assert.rejects(deviceSecrets.put(store, SERVER, ACCOUNT, "text"), StoreError);
   await assert.rejects(deviceSecrets.get(store, SERVER, "nope"), TypeError);
+});
+
+test("device_secrets_accept_only_a_sealed_secret_with_a_non_extractable_aes_gcm_key", async () => {
+  const db = await freshStore();
+  const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  const open = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  const hmac = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const iv = new Uint8Array(12).fill(2);
+  const sealed = new Uint8Array(40).fill(3);
+  const good = { key: aes, iv, sealed };
+  const refused = async (value, why) => {
+    await assert.rejects(
+      deviceSecrets.put(db.store, SERVER, ACCOUNT, value),
+      (error) => error instanceof StoreError && error.code === "device_secrets_shape",
+      why,
+    );
+  };
+
+  await refused({ ...good, key: open }, "an extractable key");
+  await refused({ ...good, key: hmac }, "a key of another algorithm");
+  await refused({ ...good, key: new Uint8Array(32) }, "key bytes");
+  await refused({ ...good, iv: new Uint8Array(11) }, "short nonce");
+  await refused({ ...good, iv: new Uint8Array(16) }, "long nonce");
+  await refused({ ...good, iv: Array.from(iv) }, "nonce that is not bytes");
+  await refused({ ...good, sealed: new Uint8Array(15) }, "shorter than the tag");
+  await refused({ ...good, sealed: new Uint8Array(1025) }, "far too long");
+  await refused({ ...good, sealed: "the secret key code" }, "text instead of sealed bytes");
+  await refused({ key: aes, iv }, "no sealed value");
+  await refused({ ...good, sk: "the secret key code" }, "an extra field");
+  await refused({ ...good, extra: 1 }, "an extra field");
+  await refused(null, "null");
+  await refused([good], "a list");
+  await refused("text", "text");
+  assert.equal(await deviceSecrets.get(db.store, SERVER, ACCOUNT), null, "nothing was stored");
+
+  await deviceSecrets.put(db.store, SERVER, ACCOUNT, good);
+  assert.ok(await deviceSecrets.get(db.store, SERVER, ACCOUNT));
+  // The server is stored by origin.
+  assert.ok(await deviceSecrets.get(db.store, `${SERVER}/`, ACCOUNT));
 });

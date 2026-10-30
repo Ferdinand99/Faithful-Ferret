@@ -39,9 +39,10 @@ export const STORES = Object.freeze(["pinned", "rows", "outbox", "settings", "de
  * @param {IDBFactory} [factory]
  * @param {string} [name]
  * @param {typeof IDBKeyRange} [keyRange]
+ * @param {() => void} [onclose] called when the browser closes the connection (another tab upgrades the database)
  * @returns {Promise<Store>}
  */
-export function openStore(factory = indexedDB, name = "ferret", keyRange = globalThis.IDBKeyRange) {
+export function openStore(factory = indexedDB, name = "ferret", keyRange = globalThis.IDBKeyRange, onclose = () => {}) {
   return new Promise((resolve, reject) => {
     let request;
     try {
@@ -65,11 +66,32 @@ export function openStore(factory = indexedDB, name = "ferret", keyRange = globa
     request.onsuccess = () => {
       const db = request.result;
       // Another tab upgrading the database must not be held up by this one.
-      db.onversionchange = () => db.close();
+      db.onversionchange = () => {
+        db.close();
+        onclose();
+      };
+      db.onclose = () => onclose();
       resolve({ db, close: () => db.close(), keyRange });
     };
     request.onerror = () => reject(request.error ?? new StoreError("open_failed", "the database did not open"));
   });
+}
+
+/**
+ * The key a server is stored under: the origin of its address, so that
+ * `https://vault.example` and `https://vault.example/` are one server.
+ * @param {unknown} serverUrl
+ * @returns {string}
+ */
+export function serverKey(serverUrl) {
+  let url;
+  try {
+    url = new URL(/** @type {string} */ (serverUrl));
+  } catch {
+    throw new TypeError("a server address is a URL");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new TypeError("a server address is an http(s) URL");
+  return url.origin;
 }
 
 /**
