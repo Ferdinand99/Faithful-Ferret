@@ -173,7 +173,7 @@ fn pinned_rejects_lower_generation_epoch_profile() {
 
 #[test]
 fn the_password_floor_survives_a_new_method_id() {
-    // Review: a password change that mints a fresh method_id must not reset
+    // A password change that mints a fresh method_id must not reset
     // the floor. The floor is keyed by method type.
     let mut f = fixture();
     let gen3 = seal(&f.ctx, 0x70, 3, password_method(), 0x5a);

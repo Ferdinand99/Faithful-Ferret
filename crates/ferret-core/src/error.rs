@@ -57,7 +57,7 @@ pub enum MalformedKind {
     /// CBOR: bytes after the first data item.
     CborTrailing,
     /// An item body or manifest whose CBOR does not have the shape of
-    /// Appendix B (a missing or mistyped field).
+    /// the item body schema (a missing or mistyped field).
     ItemBody,
     /// Export file header, or the layout of the file around it (a file too
     /// short to hold the wrapped content key and a body).

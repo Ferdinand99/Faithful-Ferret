@@ -55,7 +55,7 @@ skip = [
   # --- Test-only duplicates -------------------------------------------------
   { crate = "argon2@0.5.3", reason = "the independent cross-check implementation of Argon2id used only by tests (`argon2_05`), also the crate behind opaque-ke's own `Argon2` KSF that a test compares ours with; kept next to argon2 0.6 on purpose" },
   { crate = "blake2@0.10", reason = "dev-only: pulled in by argon2 0.5.3 (previous digest generation)" },
-  # --- OPAQUE  ------------------------------------------------------
+  # --- OPAQUE -------------------------------------------------------
   # opaque-ke 4.0.1 is the latest stable release (4.1.0 is only a pre-release)
   # and is built on the previous RustCrypto generation. Our own code uses the
   # new one (digest 0.11, sha2 0.11, hmac 0.13, hkdf 0.13, curve25519-dalek 5
