@@ -47,6 +47,7 @@ where
 pub fn routes_admin<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
+    FerretState: FromRef<S>,
 {
     Router::new()
         .merge(login::admin_routes())
