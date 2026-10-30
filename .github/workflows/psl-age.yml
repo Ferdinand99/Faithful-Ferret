@@ -1,7 +1,15 @@
 # The embedded Public Suffix List snapshot must not be older than 90 days
-# (Fase 1 section 9.2). Checked once a week and on release pull requests, so an
-# unrelated pull request never fails because of the date. Refresh the snapshot
-# with scripts/update-psl.sh.
+# (Fase 1 section 9.2); from 75 days on the check warns. It runs once a week and
+# on release pull requests, so an unrelated pull request never fails because of
+# the date. Refresh the snapshot with scripts/update-psl.sh.
+#
+# A release pull request that release-please opens with the default
+# GITHUB_TOKEN does not start this workflow (GitHub does not start workflows
+# for events caused by that token). release-please.yml therefore runs the same
+# script after it opens or updates the pull request and posts the result as a
+# commit status with the name of the job below, and the release workflow runs
+# it again. With a RELEASE_PLEASE_TOKEN secret this workflow starts normally.
+# See docs/RELEASING.md.
 name: PSL age
 
 on:
