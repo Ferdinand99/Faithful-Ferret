@@ -11,7 +11,7 @@ publish.workspace = true
 default = []
 # Test clocks and the helpers the integration tests share. Never part of a
 # release build: see scripts/check-no-test-support.sh.
-test-support = ["ferret-core/test-support"]
+test-support = ["ferret-core/test-support", "dep:serde_json"]
 
 [dependencies]
 # The one OPAQUE suite, its context string and the message lengths come from
@@ -23,6 +23,8 @@ chacha20poly1305 = { version = "=0.11.0", default-features = false, features = [
 hkdf = "=0.13.0"
 hmac = { version = "=0.13.0", features = ["zeroize"] }
 sha2 = { version = "=0.11.1", default-features = false, features = ["zeroize"] }
+# Only for the runner of the server vectors behind `test-support`.
+serde_json = { version = "=1.0.154", optional = true }
 subtle = "=2.6.1"
 unicode-normalization = { version = "=0.1.24", default-features = false }
 zeroize = { version = "=1.9.1", default-features = false, features = ["alloc", "derive"] }

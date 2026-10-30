@@ -336,6 +336,10 @@ pub(crate) struct Params<'p> {
     pub(crate) context: &'p [u8],
     pub(crate) client_identity: Option<&'p [u8]>,
     pub(crate) server_identity: Option<&'p [u8]>,
+    /// The credential identifier OPAQUE is given instead of the 16 bytes of
+    /// the credential id. Only the published test vectors of RFC 9807 need
+    /// it (their identifier has 4 bytes); the server never sets it.
+    pub(crate) credential_identifier: Option<&'p [u8]>,
 }
 
 impl fmt::Debug for Params<'_> {
@@ -351,6 +355,7 @@ impl Params<'static> {
         context: OPAQUE_CONTEXT,
         client_identity: None,
         server_identity: None,
+        credential_identifier: None,
     };
 }
 
@@ -520,7 +525,7 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
         cx.keys.setup(),
         Some(registration),
         request,
-        id.as_bytes(),
+        params.credential_identifier.unwrap_or(id.as_bytes()),
         params.opaque(),
     )
     .map_err(|_| crypto_failed())?;
