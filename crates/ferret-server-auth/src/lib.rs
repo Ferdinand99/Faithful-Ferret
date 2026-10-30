@@ -66,6 +66,9 @@ pub mod clock;
 mod ct;
 pub mod error;
 pub mod ids;
+pub mod keys;
+pub mod secret_file;
+pub mod startup;
 pub mod throttle;
 
 #[cfg(feature = "test-support")]
@@ -73,6 +76,15 @@ pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
 pub use error::{AuthError, DenyReason, ErrorClass, InternalKind, Malformed};
 pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
+pub use keys::{
+    CreatePolicy, FileOrigin, LoadedSecrets, PreloginSecret, ServerKeys, SetupFingerprint,
+    load_or_create,
+};
+pub use secret_file::{
+    FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,
+    encode_secret_file, permissions_enforced, read_secret_file, write_new_secret_file,
+};
+pub use startup::{StartupDecision, StartupRefusal, startup_decision};
 pub use throttle::{Caller, NoThrottle, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
 #[cfg(feature = "test-support")]
 pub use throttle::{RecordingThrottle, ThrottleCall};
