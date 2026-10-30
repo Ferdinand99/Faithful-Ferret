@@ -1,10 +1,12 @@
 // The local stores as a service. `open()` opens the database once, when it is
 // first needed, and gives every caller the same handle; the other members take
-// that handle as their first argument.
+// that handle as their first argument. A sign-in finds its pinned record with
+// `pinnedForSignIn` only; the plain lookups by e-mail or account stay inside the
+// store, because a miss by e-mail alone looks like a first use.
 import { cache } from "../store/cache.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
-import { forgetPinned, loadPinned, loadPinnedByAccount, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
+import { forgetPinned, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../store/settings.mjs";
 
 /** @type {import("../app.mjs").ServiceDef} */
@@ -24,8 +26,6 @@ export default {
         });
         return opened;
       },
-      loadPinned,
-      loadPinnedByAccount,
       pinnedForSignIn,
       savePinned,
       forgetPinned,

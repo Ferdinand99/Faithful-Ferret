@@ -121,3 +121,58 @@ test("device_secrets_accept_only_a_sealed_secret_with_a_non_extractable_aes_gcm_
   // The server is stored by origin.
   assert.ok(await deviceSecrets.get(db.store, `${SERVER}/`, ACCOUNT));
 });
+
+test("device_secrets_store_copies_not_the_buffer_behind_a_view", async () => {
+  const db = await freshStore();
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  // Views over bigger buffers that hold other bytes next to the ones we mean.
+  const bigIv = new Uint8Array(64).fill(0xee);
+  const bigSealed = new Uint8Array(256).fill(0xdd);
+  const iv = bigIv.subarray(8, 20);
+  const sealed = bigSealed.subarray(16, 56);
+  iv.fill(1);
+  sealed.fill(2);
+  await deviceSecrets.put(db.store, SERVER, ACCOUNT, { key, iv, sealed });
+  // What was stored is exactly the 12 and 40 bytes, in buffers of their own size.
+  const back = await deviceSecrets.get(db.store, SERVER, ACCOUNT);
+  assert.equal(back.iv.buffer.byteLength, 12);
+  assert.equal(back.sealed.buffer.byteLength, 40);
+  assert.deepEqual(Array.from(back.iv), Array(12).fill(1));
+  assert.deepEqual(Array.from(back.sealed), Array(40).fill(2));
+  // Changing the caller's bytes afterwards does not reach the store.
+  iv.fill(9);
+  sealed.fill(9);
+  const again = await deviceSecrets.get(db.store, SERVER, ACCOUNT);
+  assert.deepEqual(Array.from(again.iv), Array(12).fill(1));
+});
+
+test("device_secrets_read_each_field_once_so_a_getter_cannot_swap_a_value_after_the_check", async () => {
+  const db = await freshStore();
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  const good = new Uint8Array(40).fill(4);
+  const reads = { key: 0, iv: 0, sealed: 0 };
+  // The first read is valid; any later read would show something else.
+  const value = {
+    get key() {
+      reads.key += 1;
+      return reads.key === 1 ? key : "not a key";
+    },
+    get iv() {
+      reads.iv += 1;
+      return reads.iv === 1 ? new Uint8Array(12).fill(5) : new Uint8Array(3);
+    },
+    get sealed() {
+      reads.sealed += 1;
+      return reads.sealed === 1 ? good : new Uint8Array(2);
+    },
+  };
+  await deviceSecrets.put(db.store, SERVER, ACCOUNT, value);
+  assert.deepEqual(reads, { key: 1, iv: 1, sealed: 1 });
+  const back = await deviceSecrets.get(db.store, SERVER, ACCOUNT);
+  assert.deepEqual(Array.from(back.iv), Array(12).fill(5));
+  assert.deepEqual(Array.from(back.sealed), Array(40).fill(4));
+
+  // A getter that is bad on its first read is refused.
+  const bad = { key, iv: new Uint8Array(12), get sealed() { return new Uint8Array(3); } };
+  await assert.rejects(deviceSecrets.put(db.store, SERVER, ACCOUNT, bad), (e) => e instanceof StoreError);
+});

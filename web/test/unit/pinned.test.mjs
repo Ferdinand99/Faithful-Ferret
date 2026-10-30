@@ -251,3 +251,50 @@ test("pinned_for_sign_in_is_null_only_for_a_first_use", async () => {
   assert.equal(await pinnedForSignIn(db.store, "https://other.example", "bob@example.org", OTHER), null);
   await assert.rejects(pinnedForSignIn(db.store, SERVER, EMAIL, "nope"), TypeError);
 });
+
+test("pinned_accepts_only_the_form_of_the_core_record", async () => {
+  const db = await freshStore();
+  const base = pinnedRecord();
+  const floor = { type: "password", credential_id: null, generation: 1 };
+  const bad = {
+    "an extra field": { ...base, extra: 1 },
+    "a missing field": (({ pk_a, ...rest }) => rest)(base),
+    "a duplicate floor": { ...base, kek_generation_max: [floor, floor] },
+    "a duplicate passkey": {
+      ...base,
+      kek_generation_max: [
+        { type: "prf", credential_id: new Uint8Array([1]), generation: 1 },
+        { type: "prf", credential_id: new Uint8Array([1]), generation: 2 },
+      ],
+    },
+    "an unknown floor type": { ...base, kek_generation_max: [{ ...floor, type: "pin" }] },
+    "a passkey without a credential": { ...base, kek_generation_max: [{ type: "prf", credential_id: null, generation: 1 }] },
+    "a passkey with an empty credential": { ...base, kek_generation_max: [{ type: "prf", credential_id: new Uint8Array(0), generation: 1 }] },
+    "a credential as text": { ...base, kek_generation_max: [{ type: "prf", credential_id: "abcd", generation: 1 }] },
+    "a credential on a password floor": { ...base, kek_generation_max: [{ ...floor, credential_id: new Uint8Array([1]) }] },
+    "a floor with an extra field": { ...base, kek_generation_max: [{ ...floor, note: "x" }] },
+    "a negative bigint generation": { ...base, kek_generation_max: [{ ...floor, generation: -1n }] },
+    "a negative bigint epoch": { ...base, vk_epoch_max: -1n },
+    "a profile above a byte": { ...base, ksf_profile: 256 },
+    "a fractional generation": { ...base, kek_generation_max: [{ ...floor, generation: 1.5 }] },
+  };
+  for (const [why, record] of Object.entries(bad)) {
+    await refusedWith("pinned_malformed", savePinned(db.store, SERVER, ACCOUNT, EMAIL, record), why);
+  }
+  assert.equal(await loadPinnedByAccount(db.store, SERVER, ACCOUNT), null, "nothing was stored");
+  // Bigints from the core are fine, as are passkey floors with byte credentials.
+  await savePinned(
+    db.store,
+    SERVER,
+    ACCOUNT,
+    EMAIL,
+    pinnedRecord({ vk: 2, floors: [["password", 1], ["recovery", 1], ["prf", 3, [1, 2]]] }),
+  );
+  await savePinned(
+    db.store,
+    SERVER,
+    ACCOUNT,
+    EMAIL,
+    { ...pinnedRecord({ vk: 2, floors: [["password", 1], ["recovery", 1], ["prf", 3, [1, 2]]] }), vk_epoch_max: 2n },
+  );
+});

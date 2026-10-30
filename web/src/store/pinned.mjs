@@ -47,9 +47,9 @@ function lower(a, b) {
   return BigInt(/** @type {number} */ (a)) < BigInt(/** @type {number} */ (b));
 }
 
-/** @param {unknown} value */
+/** A whole number from 0, as a number or a bigint (the core's u64). @param {unknown} value */
 function wholeNumber(value) {
-  return (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof value === "bigint";
+  return (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || (typeof value === "bigint" && value >= 0n);
 }
 
 /**
@@ -80,23 +80,51 @@ function floorKey(floor) {
   return `${floor.type}:${credential}`;
 }
 
-/** @param {PinnedRecord} record */
+const RECORD_FIELDS = [
+  "account_id", "kek_generation_max", "ksf_profile", "pk_a", "server_public_key", "server_url", "sk_bit", "vault_id", "vk_epoch_max",
+].join();
+const FLOOR_FIELDS = "credential_id,generation,type";
+
+/**
+ * Whether `floors` is a list of well-formed floors with no method twice: type
+ * password or recovery without a credential, or prf with a credential id.
+ * @param {unknown} floors
+ */
+function floorsOk(floors) {
+  if (!Array.isArray(floors)) return false;
+  const seen = new Set();
+  for (const floor of floors) {
+    if (floor === null || typeof floor !== "object" || Object.keys(floor).sort().join() !== FLOOR_FIELDS) return false;
+    const { type, credential_id: credential, generation } = floor;
+    if (!wholeNumber(generation)) return false;
+    if (type === "prf" ? !(credential instanceof Uint8Array && credential.length > 0) : !(type === "password" || type === "recovery") || credential !== null) {
+      return false;
+    }
+    const id = floorKey(floor);
+    if (seen.has(id)) return false;
+    seen.add(id);
+  }
+  return true;
+}
+
+/**
+ * Throws unless `record` has the form of the core's PinnedDto and nothing else.
+ * @param {PinnedRecord} record
+ */
 function checkRecord(record) {
   const ok =
     record !== null &&
     typeof record === "object" &&
+    Object.keys(record).sort().join() === RECORD_FIELDS &&
     typeof record.server_url === "string" &&
     bytesOf(record.account_id, 16) &&
     bytesOf(record.vault_id, 16) &&
     wholeNumber(record.vk_epoch_max) &&
-    wholeNumber(record.ksf_profile) &&
+    wholeNumber(record.ksf_profile) && record.ksf_profile <= 255 &&
     typeof record.sk_bit === "boolean" &&
     bytesOf(record.pk_a, 32) &&
     (record.server_public_key === null || bytesOf(record.server_public_key, 32)) &&
-    Array.isArray(record.kek_generation_max) &&
-    record.kek_generation_max.every(
-      (/** @type {any} */ f) => f !== null && typeof f === "object" && typeof f.type === "string" && wholeNumber(f.generation),
-    );
+    floorsOk(record.kek_generation_max);
   if (!ok) throw new StoreError("pinned_malformed", "not a pinned record");
 }
 

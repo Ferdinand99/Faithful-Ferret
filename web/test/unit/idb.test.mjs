@@ -31,3 +31,11 @@ test("a_server_is_known_by_its_origin", () => {
     assert.throws(() => serverKey(bad), TypeError, String(bad));
   }
 });
+
+test("the_store_service_offers_one_sign_in_lookup", async () => {
+  const { default: service } = await import("../../src/services/store.service.mjs");
+  const store = service.create({});
+  assert.equal(typeof store.pinnedForSignIn, "function");
+  assert.equal("loadPinned" in store, false);
+  assert.equal("loadPinnedByAccount" in store, false);
+});

@@ -79,15 +79,23 @@ const SEALED_MIN = 16;
 const SEALED_MAX = 1024;
 
 /**
- * Throws unless `value` is exactly `{ key, iv, sealed }`: a non-extractable
- * AES-GCM `CryptoKey`, a 12-byte nonce and the sealed bytes.
+ * Checks that `value` is exactly `{ key, iv, sealed }`: a non-extractable
+ * AES-GCM `CryptoKey`, a 12-byte nonce and the sealed bytes. Each field is read
+ * once, and the result holds copies: the stored nonce and sealed bytes never
+ * share a buffer with the caller's (a view over a larger buffer would otherwise
+ * store the whole buffer), and a getter cannot show another value after the
+ * check.
  * @param {unknown} value
+ * @returns {{ key: CryptoKey, iv: Uint8Array, sealed: Uint8Array }}
  */
 function checkSealed(value) {
   const bad = () => new StoreError("device_secrets_shape", "device secrets are { key, iv, sealed } and nothing else");
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw bad();
   if (Object.keys(value).sort().join() !== "iv,key,sealed") throw bad();
-  const { key, iv, sealed } = /** @type {Record<string, any>} */ (value);
+  const record = /** @type {Record<string, any>} */ (value);
+  const key = record.key;
+  const iv = record.iv;
+  const sealed = record.sealed;
   const keyOk =
     typeof CryptoKey !== "undefined" &&
     key instanceof CryptoKey &&
@@ -99,6 +107,7 @@ function checkSealed(value) {
     iv instanceof Uint8Array && iv.length === IV_LENGTH &&
     sealed instanceof Uint8Array && sealed.length >= SEALED_MIN && sealed.length <= SEALED_MAX;
   if (!ok) throw bad();
+  return { key, iv: iv.slice(), sealed: sealed.slice() };
 }
 
 /**
@@ -116,9 +125,9 @@ export const deviceSecrets = Object.freeze({
    */
   async put(store, serverUrl, accountId, value) {
     const key = secretKey(serverUrl, accountId);
-    checkSealed(value);
+    const checked = checkSealed(value);
     await run(store, ["device_secrets"], "readwrite", async ([table]) => {
-      await req(table.put(value, key));
+      await req(table.put(checked, key));
     });
   },
 
