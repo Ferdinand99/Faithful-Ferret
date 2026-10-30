@@ -175,6 +175,16 @@ fn rekey_full<R: ferret_core::SecureRng>(
     rng: &mut R,
     edit: impl FnOnce(&mut Vec<(ItemId, SealedItem)>, &mut Vec<(ItemId, Tombstone)>),
 ) -> Result<RekeyBundle, Error> {
+    rekey_remembering(f, i, rng, ferret_core::RollbackMemory::NoMemory, edit)
+}
+
+fn rekey_remembering<R: ferret_core::SecureRng>(
+    f: &Fixture,
+    i: &Inputs,
+    rng: &mut R,
+    memory: ferret_core::RollbackMemory<'_>,
+    edit: impl FnOnce(&mut Vec<(ItemId, SealedItem)>, &mut Vec<(ItemId, Tombstone)>),
+) -> Result<RekeyBundle, Error> {
     let mut items = f.items.clone();
     let mut tombs = f.tombs.clone();
     edit(&mut items, &mut tombs);
@@ -212,7 +222,7 @@ fn rekey_full<R: ferret_core::SecureRng>(
         password_method: (method_id(0x70), password_method()),
         recovery_method_id: method_id(0x71),
     };
-    f.old.rekey(rng, &input)
+    f.old.rekey(rng, &input, memory)
 }
 
 fn rekey_with<R: ferret_core::SecureRng>(
@@ -772,7 +782,9 @@ fn rekey_refuses_input_that_cannot_make_a_plan() {
         recovery_method_id: method_id(0x71),
     };
     assert_eq!(
-        f.old.rekey(&mut draws, &input).err(),
+        f.old
+            .rekey(&mut draws, &input, ferret_core::RollbackMemory::NoMemory)
+            .err(),
         Some(Error::Unsupported)
     );
     // The old manifest must carry the manifest's reserved id.
@@ -785,7 +797,9 @@ fn rekey_refuses_input_that_cannot_make_a_plan() {
         ..input
     };
     assert_eq!(
-        f.old.rekey(&mut draws, &wrong_id).err(),
+        f.old
+            .rekey(&mut draws, &wrong_id, ferret_core::RollbackMemory::NoMemory)
+            .err(),
         Some(Error::Malformed(MalformedKind::Envelope))
     );
 }
@@ -1012,7 +1026,7 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
             ),
             recovery_method_id: MethodId::from_bytes(id16(&input["recovery_method_id"])),
         };
-        let b = vault.rekey(rng, &rekey_input)?;
+        let b = vault.rekey(rng, &rekey_input, ferret_core::RollbackMemory::NoMemory)?;
         let keys = unlocked_vault_keys(&b.vault);
         Ok(Outcome {
             output: json!({
@@ -1137,4 +1151,49 @@ fn rekey_refuses_a_password_wrap_below_the_pinned_profile() {
         Some(Error::KdfProfileDowngrade)
     );
     assert_eq!(draws.remaining(), 0);
+}
+
+#[test]
+fn rekey_checks_the_state_it_replaces_against_the_rollback_memory() {
+    use ferret_core::{CheckpointFailure as F, RollbackMemory, SyncMemory};
+    let f = fixture();
+    let i = inputs(&f);
+    fn no_edit(_: &mut Vec<(ItemId, SealedItem)>, _: &mut Vec<(ItemId, Tombstone)>) {}
+
+    // A device that has seen a newer state refuses to rekey the older one,
+    // before any draw and without changing the record.
+    let mut newer = SyncMemory::new();
+    newer.accept_rows(&[], BASE_SEQ + 5).unwrap();
+    let before = newer.clone();
+    let mut draws = ReplayRng::new(vec![]);
+    assert_eq!(
+        rekey_remembering(
+            &f,
+            &i,
+            &mut draws,
+            RollbackMemory::Remembered(&mut newer),
+            no_edit
+        )
+        .err(),
+        Some(Error::Checkpoint(F::RememberedTopSeq))
+    );
+    assert_eq!(newer, before);
+    assert_eq!(draws.remaining(), 0);
+
+    // A device that has seen the state it is based on may rekey it, and its
+    // record advances to that state.
+    let mut seen = SyncMemory::new();
+    let mut rng = TestRng::new(b"remembered");
+    rekey_remembering(
+        &f,
+        &i,
+        &mut rng,
+        RollbackMemory::Remembered(&mut seen),
+        no_edit,
+    )
+    .unwrap();
+    assert_eq!(
+        (seen.max_seq(), seen.checkpoint_seq()),
+        (BASE_SEQ, BASE_SEQ)
+    );
 }

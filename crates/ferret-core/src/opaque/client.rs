@@ -200,7 +200,19 @@ pub(crate) struct WipeOnDrop<'a>(pub(crate) &'a mut [u8]);
 impl Drop for WipeOnDrop<'_> {
     fn drop(&mut self) {
         self.0.zeroize();
+        #[cfg(feature = "test-support")]
+        if self.0.iter().all(|b| *b == 0) {
+            WIPED_KEY_ARRAYS.with(|n| n.set(n.get().saturating_add(1)));
+        }
     }
+}
+
+#[cfg(feature = "test-support")]
+thread_local! {
+    /// How many key arrays of finish results this thread has wiped (and found
+    /// zero afterwards), so a test can see that the production path uses the
+    /// guard.
+    pub(crate) static WIPED_KEY_ARRAYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The export key as our secret type; the library's copy is wiped.

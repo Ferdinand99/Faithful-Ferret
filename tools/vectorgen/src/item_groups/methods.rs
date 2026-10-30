@@ -434,6 +434,56 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
     c.rng = vec![hex(&next_f.nonce)];
     cases.push(c);
 
+    // The last-method rule counts entries of the type: with a second password
+    // (or a second recovery) method listed, one of them can go.
+    let mut twice = |name: &str,
+                     title: &str,
+                     list: Vec<Ent>,
+                     gone: u8,
+                     rest: Vec<Ent>,
+                     rev: u64|
+     -> Result<(), Error> {
+        let cur = current(name, &list, false, rev)?;
+        let plain = manifest_plain(1, &rest, false);
+        let next = seal_manifest(&format!("methods/next/{name}"), &c1, rev + 1, &plain)?;
+        let mut input = c1.input();
+        input["current"] = manifest_row(&cur);
+        input["method_id"] = h(&[gone; 16]);
+        let mut c = valid_case(
+            &format!("methods/remove/{name}"),
+            title,
+            "methods.remove",
+            vec![],
+            input,
+            json!({
+                "manifest": h(&plain),
+                "sealed": manifest_row(&next),
+                "body": h(&remove_body(gone, next.rev, &next.envelope, &next.tag)),
+            }),
+        );
+        c.rng = vec![hex(&next.nonce)];
+        cases.push(c);
+        Ok(())
+    };
+    let pw2 = Ent::new(1, 0x76, 2);
+    let rk2 = Ent::new(2, 0x77, 1);
+    twice(
+        "second_password_listed",
+        "a password method can be removed when another one is listed",
+        vec![pw.clone(), pw2.clone(), rk.clone()],
+        0x70,
+        vec![pw2, rk.clone()],
+        9,
+    )?;
+    twice(
+        "second_recovery_listed",
+        "a recovery method can be removed when another one is listed",
+        vec![pw.clone(), rk.clone(), rk2.clone()],
+        0x71,
+        vec![pw.clone(), rk2],
+        11,
+    )?;
+
     // ---- methods.remove, refused
     let mut refused = |name: &str, title: &str, input: Value, code: &str| {
         cases.push(invalid_case(

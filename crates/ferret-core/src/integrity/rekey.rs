@@ -223,6 +223,15 @@ fn manifest_next(manifest: &Manifest, method_type: u8) -> Result<u64, Error> {
 impl UnlockedVault {
     /// Builds a full rekey as described in the module documentation.
     ///
+    /// `memory` is the client's [`crate::SyncMemory`] (or the named
+    /// [`RollbackMemory::NoMemory`]). The checkpoint and the rows are the
+    /// server's word, and a rekey replaces the whole server state with a
+    /// re-sealed copy of them, so a rolled-back state would be made current.
+    /// With `Remembered`, a checkpoint, a top `seq` or a row below what the
+    /// device has seen is refused (`checkpoint_*_below_remembered`) before any
+    /// draw, and the memory advances to the state the rekey is based on. Pass
+    /// `NoMemory` only where the device has seen nothing of this vault before.
+    ///
     /// Input that cannot make a valid plan is refused before any random
     /// number is drawn: a checkpoint that is not for `base_seq`, an `item_id`
     /// twice (or the manifest's), a `rev` of `u64::MAX`, a password method
@@ -240,6 +249,7 @@ impl UnlockedVault {
         &self,
         rng: &mut R,
         input: &RekeyInput<'_>,
+        memory: RollbackMemory<'_>,
     ) -> Result<RekeyBundle, Error> {
         let old = *self.context();
         // A checkpoint that is behind `base_seq` leaves the newest rows
@@ -332,13 +342,7 @@ impl UnlockedVault {
             m.envelope,
             m.tag,
         )?);
-        verify_checkpoint(
-            self,
-            input.old_checkpoint,
-            &rows,
-            input.base_seq,
-            RollbackMemory::NoMemory,
-        )?;
+        verify_checkpoint(self, input.old_checkpoint, &rows, input.base_seq, memory)?;
 
         // The new vault.
         let new = UnlockedVault::from_vault_key(new_ctx, VaultKey::generate(rng))?;

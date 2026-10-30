@@ -13,7 +13,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 | Question | Answer |
 |---|---|
 | Does the core cover what phase 4A set out to do? | Yes: key hierarchy and wraps, envelope and items, tombstones, checkpoints, mutation proofs and re-key, encrypted and plain export, OPAQUE sign-in and the account flows, passkeys, TOTP, the WebAssembly binding and the worker client |
-| Test vectors | 1 206 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
+| Test vectors | 1 208 internal cases and 1 634 external ones; they run in Rust, in Node through WebAssembly and in Chromium, Firefox and WebKit, and an independent JavaScript reference opens all of the internal ones except 22 OPAQUE cases |
 | Property tests and fuzzing | 20 000 cases per property pass; all twelve fuzz targets run clean |
 | Constant-time checks | Everything the analysis found is triaged; timing tests pass natively and in Node; the WebAssembly scan has no finding outside its allow list |
 | Dependencies | `cargo deny` and `cargo vet` pass; the duplicate versions are the approved ones |
@@ -23,7 +23,7 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 
 Run in the builder image on a Docker host from the state of the repository at the time of
 writing: formatting, clippy for native and `wasm32-unknown-unknown`, `cargo test
---workspace` (534 tests passed, none failed), the vector check, the passkey API and
+--workspace` (537 tests passed, none failed), the vector check, the passkey API and
 test-support scripts, `cargo deny`, `cargo vet --locked`, the MSRV (1.88) check and the Node tests
 of the binding (48 passed, none failed).
 
@@ -62,27 +62,28 @@ CI only with the `browsers` label, nightly and on manual runs, because of its le
 
 ## Vectors and the independent reference
 
-- Internal vectors: 1 206 cases, of which 31 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
-  the Node and browser runners run the other 1 175. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
+- Internal vectors: 1 208 cases, of which 31 are marked `native-only` (Argon2id with parameters below the floor, which only a test build accepts);
+  the Node and browser runners run the other 1 177. External vectors (RFC 9106, 5869, 8032, 6238, 4226, 9807,
   the XChaCha20 draft, Wycheproof, the Public Suffix List test file): 1 634 cases.
 - `tools/xcheck` is a second implementation in JavaScript, written from the design and the vector
-  files only. It matches 1 184 of the 1 206 internal cases and does not cover the 22 OPAQUE cases
+  files only. It matches 1 186 of the 1 208 internal cases and does not cover the 22 OPAQUE cases
   (see the risks below). It also runs a self-test in which every damaged expectation must be detected.
 - Rules the vectors now pin down: the order in which a body or a manifest is written (known keys in
   schema order, then unknown keys as read, at every level), the error codes of a damaged envelope,
   and the write-back of a body with a newer schema.
 
-## Added after the final review
+## Rollback memory, unlock-method changes and other additions
 
-The final review of the core found no critical problem and asked for the following. Each item has
-vectors (`vectors/VERSION` 21) and tests.
+The items below have vectors (`vectors/VERSION` 22) and tests.
 
 - **Rollback memory.** `SyncMemory` is a small record the client stores beside the pinned record: the
   highest `seq` the server showed, the `seq` of the highest verified checkpoint and the highest `rev` seen
   for each item (Fase 1 § 8.6, "Lokalt minne"). It refuses a server top, a checkpoint or a row below those
   values, with `checkpoint_top_seq_below_remembered`, `checkpoint_seq_below_remembered` and
   `checkpoint_rev_below_remembered`. Floors only go up; every call checks first and changes the record only
-  when the whole call succeeded. `SyncMemory::to_bytes` and `from_bytes` give a fixed storage form.
+  when the whole call succeeded. `SyncMemory::to_bytes` and `from_bytes` give a fixed storage form; a record that is not in it is
+  `malformed_sync_memory`. `SyncMemory::prune` drops the entries of items that are gone for good, which is the
+  way out of a full record.
   The record tracks at most 50 000 items (a vault holds at most 10 000, and deleted items keep their entry);
   a new item beyond that is `too_large`, and nothing is evicted, because dropping an entry would lower a
   floor without a word. The `vk_epoch` floor is the one in `Pinned` and is not repeated.
@@ -296,9 +297,15 @@ These are the points where the design left a choice, with what was decided.
   - The PRF output reaches the vault worker as an argument, because the browser produces it on the page.
   - The client stores one `SyncMemory` per account and server, loads it before every check and stores the
     changed record after a successful one. A user who clears the site data resets it, which is a residual risk
-    of the design (Fase 1 § 8.6, L4). `verify_checkpoint` inside a rekey or an account flow runs without a
-    memory (`RollbackMemory::NoMemory`); the client checks the checkpoint it relies on with its memory before it
-    starts such a flow.
+    of the design (Fase 1 § 8.6, L4). `verify_checkpoint` inside the creation of an account runs without a
+    memory (`RollbackMemory::NoMemory`). `rekey` takes the memory as an argument, so a client passes its own
+    record and the state a rekey re-seals is checked against it; `NoMemory` is a deliberate choice for a device
+    that has seen nothing of the vault before.
+  - A full `SyncMemory` (50 000 items) takes no new item until the client calls `SyncMemory::prune` with the
+    ids of items that are gone for good, or accepts an older state, or forgets the server.
+  - The top `seq` that a server claims is not authenticated, and `SyncMemory` raises `max_seq` to it. A
+    malicious or faulty server that once claims a huge value makes every later honest state look like a
+    rollback; the recovery is `SyncMemory::accept_older_state`, after the user has confirmed.
   - The client compares the server's list of unlock methods with the manifest after every unlock
     (`check_server_methods`) and warns on a difference.
   - A device that remembers an older `vk_epoch` should check the stored rekey proof against its pinned `pk_a`
@@ -313,7 +320,7 @@ These are the points where the design left a choice, with what was decided.
     ids) is made in the binding, which sees the authenticator's answer; the core exports the AAGUID.
 - **Plain CSV export of a body with a newer schema** is refused (`unsupported`), so no secret is dropped from the file
   without a word. The JSON export and the encrypted export hold such a body whole.
-- **Known and accepted gaps from the final review.**
+- **Known and accepted gaps.**
   - The scan of the compiled WebAssembly is blind to an address that goes through a local and to stores; it is a
     work list, not a proof.
   - There is no function that repacks a vault under a new `account_id`. Moving to another server is done with

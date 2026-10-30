@@ -79,6 +79,9 @@ pub enum MalformedKind {
     /// The pinned record: a value out of range or a record that would grow
     /// without bound.
     PinnedRecord,
+    /// A stored rollback memory (`SyncMemory`) that `to_bytes` would not
+    /// have written.
+    SyncMemory,
     /// An OPAQUE message from the server that has the wrong length or holds
     /// something that is not a group element or key. Only the structure is
     /// reported: a message that parses but does not authenticate is
@@ -251,6 +254,7 @@ impl Error {
         Error::Malformed(MalformedKind::Entries),
         Error::Malformed(MalformedKind::Code),
         Error::Malformed(MalformedKind::PinnedRecord),
+        Error::Malformed(MalformedKind::SyncMemory),
         Error::Malformed(MalformedKind::OpaqueMessage),
         Error::Malformed(MalformedKind::Otpauth),
         Error::Malformed(MalformedKind::Origin),
@@ -326,6 +330,7 @@ impl Error {
                 MalformedKind::Entries => "malformed_entries",
                 MalformedKind::Code => "malformed_code",
                 MalformedKind::PinnedRecord => "malformed_pinned_record",
+                MalformedKind::SyncMemory => "malformed_sync_memory",
                 MalformedKind::OpaqueMessage => "malformed_opaque_message",
                 MalformedKind::Otpauth => "malformed_otpauth",
                 MalformedKind::Origin => "malformed_origin",

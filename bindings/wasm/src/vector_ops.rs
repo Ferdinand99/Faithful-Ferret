@@ -887,6 +887,7 @@ fn rekey_run(i: &Value, rng: &mut ReplayRng) -> Result<Value, Error> {
             ),
             recovery_method_id: MethodId::from_bytes(hn(&i["recovery_method_id"])),
         },
+        ferret_core::RollbackMemory::NoMemory,
     )?;
     let keys = unlocked_vault_keys(&b.vault);
     Ok(json!({

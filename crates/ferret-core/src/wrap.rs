@@ -40,8 +40,8 @@ pub const WRAP_LEN: usize = 24 + 32 + 16;
 pub const WRAP_WITH_COMMIT_LEN: usize = WRAP_LEN + COMMIT_LEN;
 
 /// `method_type` values. Spec: Fase 1 § 3.1 (table).
-const TYPE_PASSWORD: u8 = 1;
-const TYPE_RECOVERY: u8 = 2;
+pub(crate) const TYPE_PASSWORD: u8 = 1;
+pub(crate) const TYPE_RECOVERY: u8 = 2;
 const TYPE_PRF: u8 = 3;
 const TYPE_PIN: u8 = 4;
 const TYPE_DEVICE: u8 = 5;

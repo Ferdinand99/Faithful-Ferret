@@ -49,12 +49,7 @@ use crate::item::{Manifest, ManifestEntry};
 use crate::keys::UnlockedVault;
 use crate::pinning::{MAX_CREDENTIAL_ID_LEN, MAX_FLOORS, MAX_GENERATION};
 use crate::rng::SecureRng;
-use crate::wrap::{Method, WRAP_LEN, WrapRecord};
-
-/// `method_type` of the password wrap. Spec: Fase 1 § 3.1.
-const TYPE_PASSWORD: u8 = 1;
-/// `method_type` of the recovery wrap.
-const TYPE_RECOVERY: u8 = 2;
+use crate::wrap::{Method, TYPE_PASSWORD, TYPE_RECOVERY, WRAP_LEN, WrapRecord};
 
 /// The most methods one manifest lists.
 pub const MAX_METHODS: usize = MAX_FLOORS;

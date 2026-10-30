@@ -137,7 +137,7 @@ const cmp16 = (a, b) => {
 
 // version (1) | max_seq (8) | checkpoint_seq (8) | count (4) | count x (item_id (16) | rev (8)), ascending by item_id
 function decodeMemory(bytes) {
-  const bad = () => fail('malformed_pinned_record');
+  const bad = () => fail('malformed_sync_memory');
   if (bytes.length < 21 || bytes[0] !== 1) bad();
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
   const maxSeq = dv.getBigUint64(1, false);

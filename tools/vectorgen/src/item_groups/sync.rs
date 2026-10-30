@@ -279,7 +279,7 @@ pub(crate) fn sync() -> Result<Vec<u8>, Error> {
 
     // ---- decode, refused
     let good = three.bytes();
-    let malformed = "malformed_pinned_record";
+    let malformed = "malformed_sync_memory";
     let mut wrong_version = good.clone();
     wrong_version[0] = 2;
     invalid(

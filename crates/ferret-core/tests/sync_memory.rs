@@ -143,7 +143,7 @@ fn a_record_that_was_not_written_by_the_core_is_refused() {
         m.accept_rows(&[live(1, 1), live(2, 2)], 5).unwrap();
         m.to_bytes()
     };
-    let bad = Err(Error::Malformed(MalformedKind::PinnedRecord));
+    let bad = Err(Error::Malformed(MalformedKind::SyncMemory));
     assert_eq!(SyncMemory::from_bytes(&[]), bad);
     for cut in [1, 8, 20, good.len() - 1] {
         assert_eq!(SyncMemory::from_bytes(&good[..cut]), bad, "cut at {cut}");
@@ -355,4 +355,27 @@ fn sync_vectors_from_file() {
         })
     });
     assert_all_passed(&report, 29);
+}
+
+#[test]
+fn a_full_record_is_emptied_by_an_explicit_prune() {
+    let mut m = SyncMemory::new();
+    let cap = u32::try_from(MAX_TRACKED_ITEMS).unwrap();
+    let rows: Vec<ServerRow> = (0..cap).map(|n| live(n, 5)).collect();
+    m.accept_rows(&rows, 1).unwrap();
+    assert_eq!(m.accept_rows(&[live(cap, 1)], 2), Err(Error::TooLarge));
+
+    // Items that are gone for good are dropped; ids that are not tracked are
+    // ignored, and a repeated id counts once.
+    let gone = [item_id(0), item_id(1), item_id(1), item_id(cap + 7)];
+    assert_eq!(m.prune(&gone), 2);
+    assert_eq!(m.tracked(), MAX_TRACKED_ITEMS - 2);
+    assert_eq!(m.rev_of(&item_id(0)), None);
+    assert_eq!(m.rev_of(&item_id(2)), Some(5));
+
+    // New items fit again, and a dropped id has no floor left.
+    m.accept_rows(&[live(cap, 1), live(0, 1)], 2).unwrap();
+    assert_eq!(m.tracked(), MAX_TRACKED_ITEMS);
+    // The floors of the others are untouched.
+    assert_eq!(m.accept_rows(&[live(2, 4)], 3), rollback(F::RememberedRev));
 }

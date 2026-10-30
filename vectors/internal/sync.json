@@ -527,7 +527,7 @@
         "action": "decode",
         "memory": "02000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f50510000000000000005"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_truncated",
@@ -541,7 +541,7 @@
         "action": "decode",
         "memory": "01000000000000004d0000000000000028000000"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_extra_byte",
@@ -555,7 +555,7 @@
         "action": "decode",
         "memory": "01000000000000004d0000000000000028000000030000000000000000000000000000000000000000000000044142434445464748494a4b4c4d4e4f50000000000000000342434445464748494a4b4c4d4e4f5051000000000000000500"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_count_over_cap",
@@ -569,7 +569,7 @@
         "action": "decode",
         "memory": "01000000000000000500000000000000050000c351"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_unsorted",
@@ -583,7 +583,7 @@
         "action": "decode",
         "memory": "01000000000000000900000000000000000000000242434445464748494a4b4c4d4e4f505100000000000000014142434445464748494a4b4c4d4e4f500000000000000001"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_repeated_item",
@@ -597,7 +597,7 @@
         "action": "decode",
         "memory": "0100000000000000090000000000000000000000024142434445464748494a4b4c4d4e4f5000000000000000014142434445464748494a4b4c4d4e4f500000000000000002"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/decode_checkpoint_above_max",
@@ -611,7 +611,7 @@
         "action": "decode",
         "memory": "010000000000000005000000000000000600000000"
       },
-      "expect_error": "malformed_pinned_record"
+      "expect_error": "malformed_sync_memory"
     },
     {
       "id": "sync/memory_invalid/rows_lower_rev",

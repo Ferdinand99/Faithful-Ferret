@@ -36,6 +36,27 @@
 //! silently lower a floor. The serialised record is at most
 //! `1 + 8 + 8 + 4 + 24 * 50 000` bytes (about 1.2 MB).
 //!
+//! # A full record
+//!
+//! Deleted items keep their entry, while the server drops tombstones after 400
+//! days, so a long-lived account that creates and deletes many items can fill
+//! the record. Sync then stops with `too_large` for every new item. The way
+//! out is [`SyncMemory::prune`]: the client passes the ids of items it knows
+//! are gone for good (a verified tombstone older than the server keeps, or an
+//! item the user purged), and their entries are dropped. That lowers the floor
+//! of those ids to nothing, which is the point, and is an explicit call that
+//! nothing makes on its own. The other exits are forgetting the server and
+//! [`SyncMemory::accept_older_state`].
+//!
+//! # The server's `seq` is not authenticated
+//!
+//! `max_seq` is raised to the highest top `seq` the server has claimed, and
+//! that claim is not signed. A malicious or faulty server that once claims a
+//! huge value makes every later honest state look like a rollback until the
+//! user accepts an older state (a server can refuse to serve anyway, but the
+//! record outlives the episode). Recovery is [`SyncMemory::accept_older_state`],
+//! after the user has confirmed.
+//!
 //! # Older state
 //!
 //! A restore of the server from a backup shows a lower `seq` (with a higher
@@ -45,6 +66,7 @@
 //! a checkpoint that verifies on its own.
 
 use crate::error::{CheckpointFailure, Error, MalformedKind};
+use crate::ids::ItemId;
 use crate::integrity::{Checkpoint, ServerRow, verify_checkpoint};
 use crate::keys::UnlockedVault;
 use std::collections::BTreeMap;
@@ -61,7 +83,7 @@ const HEADER_LEN: usize = 1 + 8 + 8 + 4;
 const ENTRY_LEN: usize = 16 + 8;
 
 fn malformed() -> Error {
-    Error::Malformed(MalformedKind::PinnedRecord)
+    Error::Malformed(MalformedKind::SyncMemory)
 }
 
 fn fail(kind: CheckpointFailure) -> Error {
@@ -191,6 +213,18 @@ impl SyncMemory {
         Ok(())
     }
 
+    /// Drops the entries of items that are gone for good, so a full record
+    /// can take new items again. `ids` are items the client knows no longer
+    /// exist on the server (their tombstones have expired there) or that the
+    /// user purged; ids that are not tracked are ignored. Returns how many
+    /// entries were dropped. The floor of a dropped id is gone: a row for it
+    /// with any `rev` is accepted again. Nothing calls this on its own.
+    pub fn prune(&mut self, ids: &[ItemId]) -> usize {
+        ids.iter()
+            .filter(|id| self.revs.remove(id.as_bytes()).is_some())
+            .count()
+    }
+
     /// Replaces the record with the state of an older checkpoint, **after
     /// the user has confirmed** "accept older state" (Fase 1 § 8.6,
     /// "Legitime tilbakerullinger", for example a server restored from a
@@ -255,7 +289,7 @@ impl SyncMemory {
     }
 
     /// Reads a stored record. Anything that [`SyncMemory::to_bytes`] would
-    /// not have written is `Malformed(PinnedRecord)`: another version, a
+    /// not have written is `Malformed(SyncMemory)`: another version, a
     /// length that does not fit the count, a count above
     /// [`MAX_TRACKED_ITEMS`], entries out of order or repeated, or a
     /// `checkpoint_seq` above `max_seq`.
