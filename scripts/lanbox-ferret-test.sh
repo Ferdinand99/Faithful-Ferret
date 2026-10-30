@@ -38,7 +38,7 @@ label=owner=ferret-test
 lanbox="${FERRET_LANBOX:-10.0.3.26}"
 admin_port=3040
 vault_port=3041
-envfile=docker/.env
+envfile="${FERRET_ENV_FILE:-docker/.env}"
 composefile=docker/compose.ferret-test.yml
 
 # shellcheck disable=SC2206
@@ -61,20 +61,27 @@ tunnel_address() {
     --format "{{with index .NetworkSettings.Networks \"$mode\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true
 }
 
-# A value the way compose interpolates it: the environment of the shell first,
-# then docker/.env.
-effective_value() {
-  if [ -n "${!1+x}" ]; then
-    printf '%s' "${!1}"
-  else
-    env_value "$1"
-  fi
+# The values compose will inject, asked from compose itself (last definition
+# wins, `export ` prefixes and spaces are understood, the shell wins over the
+# file) and never read from the file by hand. The output holds the setup token,
+# so it is kept in a variable and only the one wanted line is printed.
+compose_value() {
+  local out
+  out="$(dc config --environment 2>/dev/null)" || return 0
+  printf '%s
+' "$out" | sed -n "s/^$1=//p" | head -n 1
 }
+configured_proxies() { compose_value FERRET_TRUSTED_PROXIES; }
 
 # Addresses without a host-only prefix (/32, /128), one per line, so that
 # 172.17.0.2 and 172.17.0.2/32 are the same address.
 normalized_addresses() {
   printf '%s\n' "$1" | tr ',' '\n' | sed -e 's/[[:space:]]//g' -e 's#/32$##' -e 's#/128$##' | grep -v '^$' | sort -u
+}
+
+# Whether two lists hold the same addresses.
+same_addresses() {
+  [ -n "$1" ] && [ "$(normalized_addresses "$1")" = "$(normalized_addresses "$2")" ]
 }
 
 make_env() {
@@ -108,13 +115,13 @@ make_env() {
 tunnel_mismatch() {
   local now configured
   now="$(tunnel_address)"
-  configured="$(effective_value FERRET_TRUSTED_PROXIES)"
+  configured="$(configured_proxies)"
   if [ -z "$now" ]; then
     echo "cannot read the address of $tunnel_container on the network it uses to reach the LANBox"
     return 0
   fi
-  if [ "$(normalized_addresses "$now")" != "$(normalized_addresses "$configured")" ]; then
-    echo "$tunnel_container is at $now but FERRET_TRUSTED_PROXIES is $configured"
+  if ! same_addresses "$now" "$configured"; then
+    echo "$tunnel_container is at $now but FERRET_TRUSTED_PROXIES is ${configured:-empty}"
     return 0
   fi
   return 1
@@ -141,8 +148,6 @@ check_tunnel() {
   fi
 }
 
-env_value() { { sed -n "s/^$1=//p" "$envfile" 2>/dev/null || true; } | head -n 1; }
-
 # Refuses to start when something else on the LANBox already listens on one of
 # the two ports (the stack uses the host network, so `docker ps` cannot tell).
 # A throwaway container on the host network lists the listening ports.
@@ -168,7 +173,7 @@ print_addresses() {
 }
 
 print_setup_link() {
-  echo "First administrator: open https://ferret-test.opland.net/setup?token=$(effective_value FERRET_SETUP_TOKEN)"
+  echo "First administrator: open https://ferret-test.opland.net/setup?token=$(compose_value FERRET_SETUP_TOKEN)"
 }
 
 # Both listeners: 200 on /healthz, no Server header, the security headers of the
@@ -210,8 +215,8 @@ smoke() {
   echo "smoke: ok"
 }
 
-cmd="${1:-}"
-case "$cmd" in
+main() {
+case "${1:-}" in
   up | redeploy)
     first_deploy=0
     make_env
@@ -269,3 +274,9 @@ case "$cmd" in
     exit 2
     ;;
 esac
+}
+
+# Run only when executed, not when sourced (scripts/check-ferret-test-stack.sh).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

@@ -21,7 +21,9 @@ services:
       labels:
         owner: ferret-test
     container_name: ferret-test-app
-    restart: unless-stopped
+    # Not started by Docker after a LANBox reboot: `scripts/lanbox-ferret-test.sh up`
+    # starts it, and its check of the trusted proxy address runs first.
+    restart: "no"
     mem_limit: 512m
     labels:
       owner: ferret-test

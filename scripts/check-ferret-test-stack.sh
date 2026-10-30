@@ -34,6 +34,8 @@ if ([...(s.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("cap_ad
 if (!(s.security_opt || []).includes("no-new-privileges:true")) fail("security_opt needs no-new-privileges:true");
 if (s.read_only !== true) fail("read_only must be true");
 if (s.privileged) fail("privileged");
+if (s.restart !== "no") fail("restart must be no: only the deploy script starts the stack, after its proxy check");
+if (Object.keys(s.build?.args || {}).join() !== "FEATURES") fail("the only build arg is FEATURES");
 if (s.network_mode !== "host") fail("network_mode must be host");
 if (s.ports && s.ports.length) fail("no published ports on the host network");
 const vols = Object.keys(c.volumes || {});
@@ -53,6 +55,32 @@ if (env.FERRET_SETUP_TOKEN !== "check") fail("FERRET_SETUP_TOKEN must come from 
 const mem = Number(s.mem_limit);
 if (!(mem > 0)) fail("a memory limit is required");
 '
+
+# The deploy script must read the trusted proxy the way compose injects it (last
+# definition wins, `export ` prefix, spaces), so a second line in docker/.env
+# cannot slip past its check of the tunnel client's address.
+tmp="$(mktemp -d docker/.check.XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
+export FERRET_DOCKER_ARGS="--context default"
+printf '%s
+' 'FERRET_SETUP_TOKEN=check' 'FERRET_TRUSTED_PROXIES=172.17.0.2' 'FERRET_TRUSTED_PROXIES=172.17.0.5' > "$tmp/duplicate.env"
+printf '%s
+' 'FERRET_SETUP_TOKEN=check' 'FERRET_TRUSTED_PROXIES=172.17.0.2' 'export FERRET_TRUSTED_PROXIES=172.17.0.6' > "$tmp/export.env"
+printf '%s
+' 'FERRET_SETUP_TOKEN=check' 'FERRET_TRUSTED_PROXIES=172.17.0.2' '  FERRET_TRUSTED_PROXIES = 172.17.0.7' > "$tmp/spaces.env"
+for case in duplicate:172.17.0.5 export:172.17.0.6 spaces:172.17.0.7; do
+  (
+    export FERRET_ENV_FILE="$tmp/${case%%:*}.env"
+    unset FERRET_TRUSTED_PROXIES FERRET_SETUP_TOKEN
+    # shellcheck disable=SC1091
+    source scripts/lanbox-ferret-test.sh
+    got="$(configured_proxies)"
+    [ "$got" = "${case##*:}" ] || { echo "check-ferret-test-stack: ${case%%:*}.env: the script reads '$got', compose injects ${case##*:}" >&2; exit 1; }
+    if same_addresses "$got" 172.17.0.2; then echo "check-ferret-test-stack: ${case%%:*}.env passed the address check for 172.17.0.2" >&2; exit 1; fi
+    same_addresses 172.17.0.2/32 172.17.0.2 || { echo "check-ferret-test-stack: /32 must equal the plain address" >&2; exit 1; }
+    if same_addresses "172.17.0.2,172.17.0.3" 172.17.0.2 || same_addresses "" 172.17.0.2; then echo "check-ferret-test-stack: a list with more or no entries must not match" >&2; exit 1; fi
+  )
+done
 
 # The Dockerfile.
 dockerfile=docker/server.Dockerfile
