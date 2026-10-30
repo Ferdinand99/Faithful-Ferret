@@ -1,11 +1,15 @@
 //! Errors of the library and the codes a client may see.
 //!
-//! Three rules shape this file.
+//! These rules shape this file.
 //!
 //! * Every failure of authentication is [`AuthError::Denied`], and its public
 //!   code is `"denied"` whatever the [`DenyReason`]. The reason is for the
 //!   server's own log and for tests; a client that could tell a missing state
-//!   from a wrong password could use the difference.
+//!   from a wrong password could use the difference. The one exception is
+//!   `ScopeForbids`, which only a caller that is already signed in can get:
+//!   its code is `"forbidden"` and its class is [`ErrorClass::Forbidden`].
+//! * A server file that is damaged or missing is [`AuthError::Internal`] with
+//!   [`InternalKind::SecretFile`], not a fault of the client.
 //! * [`AuthError::Malformed`] depends on the bytes of the client alone, never
 //!   on stored state or a secret.
 //! * [`AuthError::Internal`] never reaches a client with its cause.
@@ -32,8 +36,6 @@ pub enum Malformed {
     Proof,
     /// The login name.
     LoginName,
-    /// A secret file on disk.
-    SecretFile,
 }
 
 impl Malformed {
@@ -47,7 +49,6 @@ impl Malformed {
         Malformed::Nonce,
         Malformed::Proof,
         Malformed::LoginName,
-        Malformed::SecretFile,
     ];
 
     /// The code of the kind, as it appears in an error body.
@@ -61,7 +62,6 @@ impl Malformed {
             Malformed::Nonce => "malformed_nonce",
             Malformed::Proof => "malformed_proof",
             Malformed::LoginName => "malformed_login_name",
-            Malformed::SecretFile => "malformed_secret_file",
         }
     }
 }
@@ -120,14 +120,30 @@ pub enum InternalKind {
 }
 
 /// The class of status a caller should answer with. The library does not
-/// know HTTP; the endpoint maps a class to a status code.
+/// know HTTP; the endpoint maps a class to a status code:
+///
+/// | class | status | body |
+/// |---|---|---|
+/// | `BadRequest` | 400 | the public code of the error |
+/// | `Denied` | 401 | one fixed body for every reason |
+/// | `Forbidden` | 403 | the code `forbidden` |
+/// | `TooManyRequests` | 429 | the code `throttled`, with `retry_after_secs` read from the [`AuthError`] |
+/// | `Internal` | 500 | the code `internal`, never the cause |
+///
+/// A class does not carry the retry time, so the endpoint reads it from
+/// `AuthError::Throttled`. It never needs to look at a [`DenyReason`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorClass {
     /// The request itself is wrong (a 4xx that is not a login failure).
     BadRequest,
-    /// The authentication failed. One class, one body, for every reason.
+    /// The authentication failed. One status and one body for every reason,
+    /// so a client cannot tell a wrong password from a missing state.
     Denied,
+    /// The caller holds a session, and the scope of that session does not
+    /// allow the call. Only returned after authentication, so it tells a
+    /// client nothing about accounts.
+    Forbidden,
     /// The caller must wait.
     TooManyRequests,
     /// The server failed.
@@ -140,9 +156,14 @@ pub enum ErrorClass {
 pub enum AuthError {
     /// A message of the client was not well formed.
     Malformed(Malformed),
-    /// An authentication failed. The public code is always `"denied"`.
+    /// An authentication or an authorization failed. The public code is
+    /// `"denied"` for every reason except [`DenyReason::ScopeForbids`], which
+    /// can only happen to a caller that is already signed in and has the
+    /// code `"forbidden"`.
     Denied(DenyReason),
-    /// A signed call named an unknown or too low key stretching profile.
+    /// A signed call named an unknown or too low key stretching profile. It
+    /// depends on the stored profile, so it may be returned only after the
+    /// proof or the session has been checked.
     ProfileRejected,
     /// The caller made too many attempts.
     Throttled {
@@ -154,10 +175,12 @@ pub enum AuthError {
 }
 
 impl AuthError {
-    /// The code for an error body. The same for every [`DenyReason`].
+    /// The code for an error body. The same for every [`DenyReason`] except
+    /// the scope refusal of a signed-in caller.
     pub const fn public_code(&self) -> &'static str {
         match self {
             AuthError::Malformed(kind) => kind.public_code(),
+            AuthError::Denied(DenyReason::ScopeForbids) => "forbidden",
             AuthError::Denied(_) => "denied",
             AuthError::ProfileRejected => "profile_rejected",
             AuthError::Throttled { .. } => "throttled",
@@ -169,6 +192,7 @@ impl AuthError {
     pub const fn http_class(&self) -> ErrorClass {
         match self {
             AuthError::Malformed(_) | AuthError::ProfileRejected => ErrorClass::BadRequest,
+            AuthError::Denied(DenyReason::ScopeForbids) => ErrorClass::Forbidden,
             AuthError::Denied(_) => ErrorClass::Denied,
             AuthError::Throttled { .. } => ErrorClass::TooManyRequests,
             AuthError::Internal(_) => ErrorClass::Internal,
@@ -195,10 +219,26 @@ mod tests {
         assert!(!DenyReason::ALL.is_empty());
         for reason in DenyReason::ALL {
             let error = AuthError::Denied(*reason);
+            if *reason == DenyReason::ScopeForbids {
+                continue;
+            }
             assert_eq!(error.public_code(), "denied", "{reason:?}");
             assert_eq!(error.to_string(), "denied", "{reason:?}");
             assert_eq!(error.http_class(), ErrorClass::Denied, "{reason:?}");
         }
+    }
+
+    #[test]
+    fn a_scope_refusal_is_forbidden_and_nothing_else_is() {
+        let error = AuthError::Denied(DenyReason::ScopeForbids);
+        assert_eq!(error.public_code(), "forbidden");
+        assert_eq!(error.to_string(), "forbidden");
+        assert_eq!(error.http_class(), ErrorClass::Forbidden);
+        let others = DenyReason::ALL
+            .iter()
+            .filter(|r| AuthError::Denied(**r).http_class() == ErrorClass::Forbidden)
+            .count();
+        assert_eq!(others, 1);
     }
 
     /// `ALL` must list every variant: these matches have no wildcard arm, so a
@@ -229,13 +269,12 @@ mod tests {
                 Malformed::Nonce => 5,
                 Malformed::Proof => 6,
                 Malformed::LoginName => 7,
-                Malformed::SecretFile => 8,
             }
         }
         let deny: Vec<usize> = DenyReason::ALL.iter().map(|r| deny_index(*r)).collect();
         assert_eq!(deny, (0..10).collect::<Vec<_>>());
         let malformed: Vec<usize> = Malformed::ALL.iter().map(|m| malformed_index(*m)).collect();
-        assert_eq!(malformed, (0..9).collect::<Vec<_>>());
+        assert_eq!(malformed, (0..8).collect::<Vec<_>>());
     }
 
     #[test]
@@ -255,7 +294,6 @@ mod tests {
             (Malformed::Nonce, "malformed_nonce"),
             (Malformed::Proof, "malformed_proof"),
             (Malformed::LoginName, "malformed_login_name"),
-            (Malformed::SecretFile, "malformed_secret_file"),
         ];
         assert_eq!(golden.len(), Malformed::ALL.len());
         for (kind, code) in golden {

@@ -29,15 +29,18 @@ resolved_tree() {
   cargo tree "$@" -e normal -f '{p} [{f}]' --prefix none
 }
 
+# The tests below use here-strings, not `printf | grep -q`: under pipefail a grep
+# that stops reading early can give printf a SIGPIPE and read as "no match".
+#
 # feature_enabled <tree> <crate> <feature>: does the node of the crate list the
 # feature?
 feature_enabled() {
-  printf '%s\n' "$1" | grep -Eq "^$2 v[^ ]+ .*\[([^]]*,)?$3(,[^]]*)?\]"
+  grep -Eq "^$2 v[^ ]+ .*\[([^]]*,)?$3(,[^]]*)?\]" <<< "$1"
 }
 
 # node_present <tree> <crate>: is the crate in the graph at all?
 node_present() {
-  printf '%s\n' "$1" | grep -Eq "^$2 v[^ ]+ "
+  grep -Eq "^$2 v[^ ]+ " <<< "$1"
 }
 
 # check_release_crate <crate>: step 1. Prints a line for each failure.
@@ -57,7 +60,7 @@ check_release_crate() {
     echo "FAIL: $1 depends on ferret-server-auth in its release graph" >&2
     failed=1
   fi
-  if printf '%s\n' "$tree" | grep -q '^ferret-vectorgen '; then
+  if grep -q '^ferret-vectorgen ' <<< "$tree"; then
     echo "FAIL: $1 depends on ferret-vectorgen in its release graph" >&2
     failed=1
   fi
@@ -222,7 +225,7 @@ if [ -f "$wasm" ]; then
   if [ -z "$exports" ]; then
     echo "FAIL: could not read the export list of $wasm" >&2
     fail=1
-  elif printf '%s\n' "$exports" | grep -Eq '(^|_)test_|replay'; then
+  elif grep -Eq '(^|_)test_|replay' <<< "$exports"; then
     echo "FAIL: $wasm exports a test-support function:" >&2
     printf '%s\n' "$exports" | grep -E '(^|_)test_|replay' >&2
     fail=1

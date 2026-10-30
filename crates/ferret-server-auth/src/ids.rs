@@ -50,6 +50,11 @@ impl fmt::Debug for CredentialId {
 
 /// The id of a login between `login_start` and `login_finish`: 128 random
 /// bits, on the wire 32 lower-case hexadecimal characters.
+///
+/// The id is a bearer value for the minute it lives, but it is not a
+/// credential on its own: the server stores only a hash of it (see
+/// [`StateKey`]), and `login_finish` also needs the client's third OPAQUE
+/// message. The type is `Copy`, so it cannot wipe itself on drop.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LoginId([u8; 16]);
 
@@ -98,7 +103,7 @@ impl LoginId {
     /// The key under which the state of this login is stored:
     /// `SHA-256(label ‖ login_id)`.
     ///
-    /// Choice: a label and a hash, so a dump of the store holds no id.
+    /// A label and a hash are used so that a dump of the store holds no id.
     #[allow(dead_code)]
     pub(crate) fn store_key(&self) -> StateKey {
         let mut hash = Sha256::new();

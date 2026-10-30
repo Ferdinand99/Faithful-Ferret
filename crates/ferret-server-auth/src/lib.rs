@@ -2,14 +2,30 @@
 //! zero-knowledge password manager.
 //!
 //! The library holds everything a server needs around the OPAQUE protocol
-//! (RFC 9807) and nothing else: no HTTP, no database, no logging and no
-//! clock or randomness of its own. Randomness comes from a `SecureRng` of `ferret-core` that
-//! the caller passes in, time from a [`Clock`]. The OPAQUE suite, its context
-//! string and the message lengths are the ones of `ferret-core`, so client and
-//! server cannot drift apart.
+//! (RFC 9807) and nothing else: no HTTP, no database, no logging, and no
+//! clock or randomness of its own. Randomness comes from a `SecureRng` of
+//! `ferret-core` that the caller passes in, time from a [`Clock`]. The OPAQUE
+//! suite, its context string and the message lengths are the ones of
+//! `ferret-core`, so client and server cannot drift apart.
 //!
 //! This is a server crate. It enables the `server-suite` feature of
 //! `ferret-core` and must never be part of a client release.
+//!
+//! # Errors and status codes
+//!
+//! Every failure is an [`AuthError`]. An endpoint answers from its
+//! [`ErrorClass`] and, for a throttle, from the error itself:
+//!
+//! | class | status | body |
+//! |---|---|---|
+//! | [`ErrorClass::BadRequest`] | 400 | the public code of the error |
+//! | [`ErrorClass::Denied`] | 401 | one fixed body for every denial |
+//! | [`ErrorClass::Forbidden`] | 403 | the code `forbidden` |
+//! | [`ErrorClass::TooManyRequests`] | 429 | the code `throttled`; `retry_after_secs` is read from [`AuthError::Throttled`] |
+//! | [`ErrorClass::Internal`] | 500 | the code `internal`, never the cause |
+//!
+//! A [`DenyReason`] is for the server's own log. An endpoint must not choose
+//! a status or a body from it.
 //!
 //! # Features
 //!
@@ -51,8 +67,8 @@ pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
 /// How long the sealed state between `login_start` and `login_finish` lives,
 /// in seconds. The state is used once.
 ///
-/// Choice: one minute is long enough for a client to answer, and short enough
-/// that an abandoned login does not linger.
+/// One minute is long enough for a client to answer, and short enough that an
+/// abandoned login does not linger.
 pub const STATE_TTL_SECS: u64 = 60;
 
 /// How long a nonce for a signed request stays valid, in seconds.
