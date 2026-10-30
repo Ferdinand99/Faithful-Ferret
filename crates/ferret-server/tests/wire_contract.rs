@@ -437,7 +437,7 @@ fn error_statuses_are_the_status_table() {
             .get(*code)
             .unwrap_or_else(|| panic!("{code} has no status in error_statuses.json"));
         assert_eq!(
-            ferret_server::error::status_of(code).as_u16(),
+            u64::from(ferret_server::error::status_of(code).as_u16()),
             status.as_u64().unwrap(),
             "{code}"
         );
