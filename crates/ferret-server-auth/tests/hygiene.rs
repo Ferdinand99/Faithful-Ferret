@@ -41,6 +41,15 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "ManualClock",
     "Stage",
     "Outcome",
+    // Secret files and start-up: names, switches and public values. The
+    // fingerprint is made of public keys only. None holds file content.
+    "FileKind",
+    "SecretFileError",
+    "SetupFingerprint",
+    "CreatePolicy",
+    "FileOrigin",
+    "StartupDecision",
+    "StartupRefusal",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines

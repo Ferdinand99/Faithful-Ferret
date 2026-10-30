@@ -67,6 +67,9 @@ mod ct;
 pub mod error;
 pub mod ids;
 pub mod throttle;
+pub mod keys;
+pub mod secret_file;
+pub mod startup;
 
 #[cfg(feature = "test-support")]
 pub use clock::ManualClock;
@@ -76,6 +79,15 @@ pub use ids::{CredentialId, LoginId, SessionBinding, StateKey};
 pub use throttle::{Caller, NoThrottle, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
 #[cfg(feature = "test-support")]
 pub use throttle::{RecordingThrottle, ThrottleCall};
+pub use keys::{
+    CreatePolicy, FileOrigin, LoadedSecrets, PreloginSecret, ServerKeys, SetupFingerprint,
+    load_or_create,
+};
+pub use secret_file::{
+    FileKind, OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE, SecretFileError, decode_secret_file,
+    encode_secret_file, permissions_enforced, read_secret_file, write_new_secret_file,
+};
+pub use startup::{StartupDecision, StartupRefusal, startup_decision};
 
 /// How long the sealed state between `login_start` and `login_finish` lives,
 /// in seconds. The state is used once.
