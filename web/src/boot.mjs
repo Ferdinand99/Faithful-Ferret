@@ -2,6 +2,7 @@
 // its two workers, the translations, the services and the router.
 import { createClient } from "../js/client.mjs";
 import { startApp } from "./app.mjs";
+import { consumeEntry } from "./flows/entry.mjs";
 import { SUPPORTED_LANGUAGES, createI18n, negotiate } from "./i18n.mjs";
 import routes from "./routes.gen.mjs";
 import services from "./services.gen.mjs";
@@ -28,6 +29,9 @@ async function boot() {
   document.documentElement.lang = i18n.lang;
   const root = document.getElementById("app");
   if (!root) throw new Error("no #app element");
+  // /vault/login?handoff=1&challenge=... and /vault/setup#token=... : read what the
+  // address carries and take it out of the address before the router starts.
+  consumeEntry(window);
   const app = startApp({ root, routes, serviceDefs: services, client, i18n });
   return { client, i18n, router: app.router, services: app.services, tt };
 }

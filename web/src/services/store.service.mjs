@@ -2,11 +2,12 @@
 // first needed, and gives every caller the same handle; the other members take
 // that handle as their first argument. A sign-in finds its pinned record with
 // `pinnedForSignIn` only; the plain lookups by e-mail or account stay inside the
-// store, because a miss by e-mail alone looks like a first use.
+// store, because a miss by e-mail alone looks like a first use. The one exception
+// is `pinHintForEmail`, an early guard for the core's `login_finish` (see below).
 import { cache } from "../store/cache.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
-import { forgetPinned, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
+import { forgetPinned, loadPinned, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../store/settings.mjs";
 
 /** @type {import("../app.mjs").ServiceDef} */
@@ -27,6 +28,11 @@ export default {
         return opened;
       },
       pinnedForSignIn,
+      // For the one caller that has to guard the core's `login_finish`, which runs
+      // before the server has named the account: the record the typed e-mail maps
+      // to, or null. A null is never a first use by itself; the record that opens the
+      // vault comes from `pinnedForSignIn`.
+      pinHintForEmail: loadPinned,
       savePinned,
       forgetPinned,
       deviceId,
