@@ -787,3 +787,27 @@ fn wrap_aad_matches_the_vector_intermediate() {
     assert_eq!(by_hand, want);
     let _ = hex_encode(&want);
 }
+
+// ------------------------------------------------- the vault wraps itself
+
+#[test]
+fn the_unlocked_vault_wraps_its_own_key_for_every_method() {
+    let c = ctx();
+    let vault = UnlockedVault::from_vault_key(c, vk(0x5a)).unwrap();
+    let k = kek(9);
+    for (i, method) in all_methods().into_iter().enumerate() {
+        let mut rng = TestRng::new(b"wrap for method");
+        let rec = vault
+            .wrap_for_method(&mut rng, &k, method_id(0x40), 2, method.clone())
+            .unwrap();
+        assert_eq!(rec.method, method);
+        assert_eq!(rec.kek_generation, 2);
+        assert_eq!(rec.method.type_code(), u8::try_from(i + 1).unwrap());
+        // The same record as the free function makes, and it opens.
+        let mut rng = TestRng::new(b"wrap for method");
+        let by_hand = wrap_vk(&mut rng, &c, &vk(0x5a), &k, method_id(0x40), 2, method).unwrap();
+        assert_eq!(rec, by_hand);
+        let opened = unwrap_vk(&c, &k, &rec).unwrap();
+        assert!(opened.same_vault_key(&vault));
+    }
+}
