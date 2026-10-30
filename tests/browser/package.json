@@ -1,0 +1,12 @@
+{
+  "name": "ferret-browser-tests",
+  "private": true,
+  "type": "module",
+  "description": "Playwright smoke tests of the WASM binding in Chromium, Firefox and WebKit",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0"
+  }
+}

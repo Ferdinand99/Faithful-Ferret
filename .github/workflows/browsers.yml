@@ -1,0 +1,124 @@
+# Browser smoke tests: every test vector through the WASM binding in Chromium,
+# Firefox and WebKit, the worker tests (no secret in a message, the workers
+# are ended, a passkey signature verifies with WebCrypto) and, when asked for,
+# the export with 256 MiB of Argon2id.
+#
+# The slow export test (about 8 times slower in Firefox) runs on a pull request
+# only with the `browsers` label, and always in the nightly run and on manual
+# runs. Third-party actions are pinned by commit SHA, the Playwright image by
+# digest; tools are pinned by version and checksum. The workflow has read
+# access only and never uses `pull_request_target`.
+name: Browsers
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: browsers-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_PACK_VERSION: 0.15.0
+  WASM_BINDGEN_CLI_VERSION: 0.2.129
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+  NODE_VERSION: 22.23.4
+  NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+
+jobs:
+  build:
+    name: Build the web packages
+    # A label other than `browsers` changes nothing here.
+    if: github.event.action != 'labeled' || github.event.label.name == 'browsers'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install wasm-pack and wasm-bindgen-cli
+        run: cargo install --locked "wasm-pack@${WASM_PACK_VERSION}" "wasm-bindgen-cli@${WASM_BINDGEN_CLI_VERSION}"
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+      - name: Install Node
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Build pkg-web (release)
+        run: scripts/build-wasm.sh
+      - name: Build pkg-web-test (test-support; never released)
+        run: scripts/build-wasm.sh --test-web
+      - name: The release build exports nothing from test-support
+        run: scripts/check-no-test-support.sh
+      - name: Keep the two web packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wasm-web
+          path: |
+            bindings/wasm/pkg-web
+            bindings/wasm/pkg-web-test
+          if-no-files-found: error
+          retention-days: 3
+
+  browsers:
+    name: ${{ matrix.browser }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    container:
+      # Playwright 1.60.0 on Ubuntu 24.04. Keep the tag and the digest in step
+      # with tests/browser/package.json and scripts/lanbox-browsers.sh.
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      options: --init --shm-size=2gb
+    env:
+      HOME: /root
+      CI: "1"
+      FERRET_EXPORT_256: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'browsers')) && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Fetch the two web packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wasm-web
+          path: bindings/wasm
+      - name: Install the locked Playwright package
+        working-directory: tests/browser
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Run the tests in ${{ matrix.browser }}
+        working-directory: tests/browser
+        run: npx playwright test --project=${{ matrix.browser }}
+      - name: Pass counts
+        if: always()
+        working-directory: tests/browser
+        run: node summary.mjs
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-results-${{ matrix.browser }}
+          path: tests/browser/results
+          if-no-files-found: ignore
+          retention-days: 7

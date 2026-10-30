@@ -7,3 +7,6 @@ node_modules/
 # WebAssembly packages built by scripts/lanbox-wasm.sh
 /bindings/wasm/pkg-*
 /bindings/wasm/node_modules
+
+# Output of the browser tests
+/tests/browser/results/
