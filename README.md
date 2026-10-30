@@ -68,8 +68,10 @@ Security is the top priority of the project, and this is how the design handles 
 
 ### Honest limits
 
-- **No external audit is funded.** Ferret is a small open source project and has not been independently audited.
-  Making the design and code public is how others can check it.
+- **There is no external audit, and none is planned or funded.** Ferret is a small open source project and has
+  not been independently audited by anyone. Making the design and code public is how others can check it, and
+  [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a scoped starting point for anyone who wants to review the
+  cryptographic core.
 - **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. This
   limitation will be documented, and administrators will be able to turn the web vault off and use the extension
   and apps only.
@@ -87,9 +89,13 @@ The Rust cryptographic core lives at the repository root as a Cargo workspace:
 - `vectors/`: the cross-platform test vectors that every client must pass.
 - `ct/`: the small single-file constant-time code (Crockford coding) that the core includes and the constant-time analyzer reads.
 - `docker/`, `scripts/`: the build image and scripts for building and testing on a Docker host.
+- `fuzz/`: the fuzz targets, their seed corpus and the inputs of fixed crashes.
+- `supply-chain/`, `deny.toml`: the dependency audits and policy (`cargo vet`, `cargo deny`).
+- `docs/`: the [review package](docs/REVIEW-PACKAGE.md), the [results of phase 4A](docs/PHASE-4A-REPORT.md), the
+  [wrap formats](docs/WRAP-AAD.md) and [how a release is made](docs/RELEASING.md).
 - `site/`, `assets/`: the website and brand assets.
 
-This project has had no external security audit.
+This project has had no external security audit, and none is planned.
 
 ## Roadmap
 
