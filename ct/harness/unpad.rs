@@ -9,6 +9,11 @@
 //
 //     rustc --crate-type=lib --edition=2024 ct/harness/unpad.rs
 //
+// Every public function is `#[inline(never)]`. Without it rustc leaves a
+// small function out of the compiled library when nothing in the file calls
+// it, and the analyzer would find nothing to look at. With it, the code the
+// analyzer reads is a function of its own, and so it is in the core.
+//
 // What may depend on secret data here is the *content* of the buffer. The
 // loop runs once for every byte of the buffer (its length is public), and
 // every comparison, selection and update is done with arithmetic and masks.
@@ -32,6 +37,7 @@ fn byte_is(a: u8, b: u8) -> u32 {
 /// zero bytes only (possibly none), and 0 otherwise. When `ok` is 1, `len` is
 /// the index of the marker, which is the length of the plaintext. When `ok`
 /// is 0, `len` is not meaningful.
+#[inline(never)]
 pub fn unpad_scan(padded: &[u8]) -> (u32, usize) {
     // `found`: the marker has been seen. `invalid`: a byte other than 0x00
     // was seen after the marker's position was still open.

@@ -1,0 +1,243 @@
+# Constant-time checks (plan section 10), on GitHub-hosted runners:
+#
+#   analyzer     ct_analyzer on ct/harness/*.rs (x86_64 and arm64, O0 O2 O3 Os,
+#                with --warnings), the triage in ct/TRIAGE.md with its pinned
+#                counts, the assembly check of ct_select_bytes, and the check
+#                that ct/dudect agrees with the root lock and profile.
+#   wasm-scan    division, remainder, br_table and table lookups in the WASM
+#                build at the optimisation level that is shipped (wasm-bindgen,
+#                wasm-opt -Oz, names kept), against ct/wasm-allow.toml; the scan
+#                is tested on fixtures that it must flag; and the scanned module
+#                is shown to be the shipped package.
+#   dudect-smoke dudect, native and WebAssembly in Node, 100 000 measurements.
+#   dudect-deny  cargo deny for the timing tests, which have a workspace and a
+#                policy of their own (ct/dudect/deny.toml).
+#
+# The timing tests are split in two on purpose. A hosted runner is a shared
+# virtual machine: its clock is jittery and its neighbours change from one
+# minute to the next, and the threshold of dudect (|t| < 4.5) is a statement
+# about differences of a fraction of a nanosecond after a million
+# measurements. So here the smoke job checks that the harness builds and runs
+# and that the controls behave (a leaky control that is not seen makes the run
+# invalid). A gated bench over 4.5 is a warning, because a hosted runner is
+# noisy; but a bench that is still over 500 when it is measured again with ten
+# times as many measurements fails the job. The limit of 500 comes from the CI
+# history of this workflow: the reruns of the gated benches on hosted runners
+# were 12.4, 17.3, 19.7, 20.8, 29.4, 33.7 and 41.0 in absolute value (the worst
+# 41.0, a native unpad_ct; the others are at 1 to 3), and the leaky controls were
+# at 9.0e3 (WebAssembly, the lowest) to 4.3e4 at 10^5, so at least 2.8e4 at the
+# rerun of 10^6. 500 is twelve times the worst noise seen and more than fifty
+# times below the weakest leak the controls show; an early exit in the three
+# 32-byte comparisons is thousands. The run that decides
+# is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
+# LANBox; a bench over 4.5 is measured again with 10^7), whose result is
+# committed in ct/results/dudect-lanbox.md.
+#
+# Third-party actions are pinned by commit SHA, tools by version and checksum,
+# the analyzer by commit and SHA-256 (ct/analyzer.pin). The workflow has read
+# access only and never uses `pull_request_target`.
+name: Constant time
+
+on:
+  pull_request:
+    paths:
+      - "ct/**"
+      - "crates/ferret-core/**"
+      - "bindings/wasm/**"
+      - "scripts/lanbox-ct.sh"
+      - "scripts/build-wasm.sh"
+      - "docker/builder.Dockerfile"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ct.yml"
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ct-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_PACK_VERSION: 0.15.0
+  WASM_BINDGEN_CLI_VERSION: 0.2.129
+  WASM_TOOLS_VERSION: 1.262.0
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+  NODE_VERSION: 22.23.4
+  NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+
+jobs:
+  analyzer:
+    name: ct_analyzer and triage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+      # The toolchain is the one of rust-toolchain.toml, so the target is added
+      # to that one, from inside the repository.
+      - name: Add the arm64 target
+        run: rustup target add aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: The analyzer pin and the builder image agree
+        run: |
+          set -eu
+          commit="$(sed -n 's/^commit=//p' ct/analyzer.pin)"
+          grep -q "CT_ANALYZER_COMMIT=${commit}" docker/builder.Dockerfile
+          sed -n 's/^sha256 [^=]*=//p' ct/analyzer.pin | while read -r sum; do
+            grep -q "${sum}" docker/builder.Dockerfile
+          done
+      - name: Install Node
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Fetch the analyzer (pinned commit, checked SHA-256)
+        run: echo "CT_ANALYZER=$(ct/fetch-analyzer.sh "$RUNNER_TEMP/ct-analyzer")" >> "$GITHUB_ENV"
+      - name: The timing tests use the lock and the profile of the root
+        run: ct/run.sh lock
+      - name: The checksum comparison of the two locks fails on a doctored lock
+        run: ct/run.sh lock-selftest
+      - name: ct_analyzer on every harness file, two architectures, four levels
+        run: ct/run.sh analyze
+      - name: Every finding is triaged, with the pinned counts (ct_analyzer_clean_or_triaged)
+        run: ct/run.sh triage
+      - name: ct_select_bytes reads both slices
+        run: ct/run.sh select-asm
+      - name: The assembly check flags a known-bad select (negative control)
+        run: ct/run.sh select-asm-negative
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ct-analyzer-reports
+          path: ct/results/analyzer
+          if-no-files-found: ignore
+          retention-days: 14
+
+  wasm-scan:
+    name: WebAssembly scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install wasm-pack, wasm-bindgen-cli and wasm-tools
+        run: cargo install --locked "wasm-pack@${WASM_PACK_VERSION}" "wasm-bindgen-cli@${WASM_BINDGEN_CLI_VERSION}" "wasm-tools@${WASM_TOOLS_VERSION}"
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+      - name: Install Node
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: The scan flags what it is meant to flag (fixtures)
+        run: ct/run.sh wasm-selftest
+      - name: Only allow-listed instructions in our functions (wasm_scan_only_allowlisted)
+        run: ct/run.sh wasm-scan
+      - name: The allow file matches the scan (a regeneration gives the committed file, no hand edit, no stale file)
+        run: ct/run.sh wasm-allow-check
+      - name: Nothing raised or new in a key-handling function without an APPROVED reason (against the base branch)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --depth=1 origin "$BASE_REF"
+          ct/run.sh wasm-allow-baseline
+      - name: The scanned module is the shipped module
+        run: ct/run.sh wasm-shipped
+      - name: Keep the scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ct-wasm-scan
+          path: ct/results/wasm/scan.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dudect-smoke:
+    name: dudect smoke run (not the decisive run)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            . -> target
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+      - name: Install Node
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Format and lints of the timing tests (they are not in the root workspace)
+        run: |
+          cargo fmt --check --manifest-path ct/dudect/Cargo.toml
+          cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
+      - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 500 a failure)
+        env:
+          CT_SMOKE: "1"
+          FERRET_CT_N: "100000"
+        run: ct/run.sh dudect-native
+      - name: dudect, WebAssembly in Node (the same)
+        env:
+          CT_SMOKE: "1"
+          FERRET_CT_N: "100000"
+        run: ct/run.sh dudect-wasm
+      - name: Keep the t-values
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ct-dudect-smoke
+          path: |
+            ct/results/dudect-native.txt
+            ct/results/dudect-wasm.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dudect-deny:
+    name: cargo-deny (timing tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: ct/dudect/Cargo.toml
+          command: check
+          arguments: --all-features --config ct/dudect/deny.toml

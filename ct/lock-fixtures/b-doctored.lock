@@ -1,0 +1,13 @@
+version = 4
+
+[[package]]
+name = "alpha"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+
+[[package]]
+name = "beta"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9999222222222222222222222222222222222222222222222222222222222222"

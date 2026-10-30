@@ -74,85 +74,104 @@ macro_rules! secret_type {
     };
 }
 
-secret_type!(
+/// Defines every secret key type with `secret_type!` and, with
+/// `test-support`, lists them all in [`SECRET_TYPES`] so that a test can go
+/// through every one of them. A secret type that is not listed here does not
+/// exist: `secret_type!` is only called from this macro.
+macro_rules! secret_types {
+    ($($(#[$meta:meta])* $name:ident, $len:expr;)+) => {
+        $(secret_type!($(#[$meta])* $name, $len);)+
+
+        /// One entry per secret key type, for the tests of `test-support`
+        /// builds: the name, the length and a probe that proves the wipe on
+        /// drop.
+        #[cfg(feature = "test-support")]
+        pub static SECRET_TYPES: &[SecretTypeEntry] = &[
+            $(SecretTypeEntry {
+                name: stringify!($name),
+                len: $len,
+                wipe_probe: |fill, reader| {
+                    // A key in a vector with room for it: `clear` drops it
+                    // in place and leaves the allocation, so the bytes can be
+                    // read again at the same address. (An `Option` that is
+                    // set to `None` would let the compiler treat the bytes as
+                    // gone.)
+                    let mut keys: Vec<$name> = Vec::with_capacity(1);
+                    keys.push($name::from_test_bytes([fill; $len]));
+                    let ptr = match keys.first() {
+                        Some(key) => key.expose().as_ptr(),
+                        None => return,
+                    };
+                    reader(WipePhase::Before, ptr, $len);
+                    keys.clear();
+                    reader(WipePhase::After, ptr, $len);
+                },
+            }),+
+        ];
+    };
+}
+
+/// When [`SecretTypeEntry::wipe_probe`] hands out the bytes of a key.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WipePhase {
+    /// The key is alive and holds the fill byte.
+    Before,
+    /// The key was dropped in place; the memory is still allocated.
+    After,
+}
+
+/// A secret key type as listed in [`SECRET_TYPES`].
+#[cfg(feature = "test-support")]
+pub struct SecretTypeEntry {
+    /// The type's name.
+    pub name: &'static str,
+    /// The type's length in bytes.
+    pub len: usize,
+    /// Builds a key filled with the byte, calls `reader(Before, ptr, len)`,
+    /// drops the key in place and calls `reader(After, ptr, len)`. The reader
+    /// may read `len` bytes at `ptr` both times: the allocation is alive
+    /// until the probe returns. The reader needs `unsafe` for that, so the
+    /// check lives in a test crate; the core stays `forbid(unsafe_code)`.
+    pub wipe_probe: fn(fill: u8, reader: &mut dyn FnMut(WipePhase, *const u8, usize)),
+}
+
+secret_types! {
     /// Vault key (VK).
-    VaultKey,
-    32
-);
-secret_type!(
+    VaultKey, 32;
     /// Item key (IK).
-    ItemKey,
-    32
-);
-secret_type!(
+    ItemKey, 32;
     /// Key-encryption key (KEK) for one unlock method.
-    Kek,
-    32
-);
-secret_type!(
+    Kek, 32;
     /// The hardware-bound secret `KEK_dev_pin` of the mobile PIN method
     /// (Fase 1 § 7.4), as released by the platform keystore.
-    KekDevPin,
-    32
-);
-secret_type!(
+    KekDevPin, 32;
     /// Recovery key (RK).
-    RecoveryKey,
-    32
-);
-secret_type!(
+    RecoveryKey, 32;
     /// Secret key (SK), the second factor mixed into the OPAQUE input.
-    SecretKey,
-    16
-);
-secret_type!(
+    SecretKey, 16;
     /// OPAQUE export key.
-    ExportKey,
-    64
-);
-secret_type!(
+    ExportKey, 64;
     /// Output of the WebAuthn PRF extension.
-    PrfOutput,
-    32
-);
-secret_type!(
+    PrfOutput, 32;
     /// Seed derived from a PRF output.
-    PrfSeed,
-    32
-);
-secret_type!(
+    PrfSeed, 32;
     /// Key for the checkpoint MAC and item tags.
-    KHead,
-    32
-);
-secret_type!(
+    KHead, 32;
     /// Key for tombstones.
-    KDel,
-    32
-);
-secret_type!(
+    KDel, 32;
     /// Key for the manifest.
-    KMeta,
-    32
-);
-secret_type!(
+    KMeta, 32;
     /// Seed for the authentication key pair.
-    AuthSeed,
-    32
-);
-secret_type!(
+    AuthSeed, 32;
     /// Content key of an export file (EK).
-    ExportContentKey,
-    32
-);
-secret_type!(
+    ExportContentKey, 32;
     /// `K_exp`, the key that wraps the content key of an export file
     /// (Fase 1 § 6.4). It is the result of the slow Argon2id step, so a
     /// binding can run that step in a short-lived worker and hand this key
     /// to the worker that holds the vault. It is not a vault key.
-    ExportWrapKey,
-    32
-);
+    ExportWrapKey, 32;
+}
 
 /// The exact-length check of the release constructors below.
 fn exact_len<const N: usize>(bytes: &[u8]) -> Result<[u8; N], Error> {

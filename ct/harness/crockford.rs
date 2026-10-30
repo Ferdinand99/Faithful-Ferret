@@ -9,6 +9,11 @@
 //
 //     rustc --crate-type=lib --edition=2024 ct/harness/crockford.rs
 //
+// Every public function is `#[inline(never)]`. Without it rustc leaves a
+// small function out of the compiled library when nothing in the file calls
+// it, and the analyzer would find nothing to look at. With it, the code the
+// analyzer reads is a function of its own, and so it is in the core.
+//
 // What may depend on secret data here is the *value* of the bytes and the
 // symbols. Every loop count, every branch and every index depends on the
 // lengths of the slices only, which are public. Symbol values are turned into
@@ -39,6 +44,7 @@ fn is_equal(a: u32, b: u32) -> u32 {
 ///
 /// `0..=9` are `'0'..='9'`; the letters start at value 10 and skip `I`
 /// (after value 17), `L` (after 19), `O` (after 21) and `U` (after 26).
+#[inline(never)]
 pub fn encode_symbol(value: u8) -> u8 {
     let v = u32::from(value) & 31;
     let ch = v
@@ -53,6 +59,7 @@ pub fn encode_symbol(value: u8) -> u8 {
 
 /// Folds a typed character to its canonical form: lower case to upper case,
 /// `O` to `0`, `I` and `L` to `1`. Every other byte is returned unchanged.
+#[inline(never)]
 pub fn normalize_byte(byte: u8) -> u8 {
     let c = u32::from(byte);
     let upper = c.wrapping_sub(in_range(c, 97, 122).wrapping_mul(32));
@@ -67,6 +74,7 @@ pub fn normalize_byte(byte: u8) -> u8 {
 
 /// The 5-bit value of a canonical letter and 1 if the letter is valid, else
 /// 0. Call it after [`normalize_byte`]. The value of an invalid letter is 0.
+#[inline(never)]
 pub fn decode_symbol(canonical: u8) -> (u8, u8) {
     let c = u32::from(canonical);
     let digit = in_range(c, 48, 57);
@@ -95,6 +103,7 @@ pub fn decode_symbol(canonical: u8) -> (u8, u8) {
 ///
 /// Fase 1 section 6.1: 256 bits plus 4 zero bits give 52 symbols; section 6.2:
 /// 128 bits plus 2 zero bits give 26 symbols.
+#[inline(never)]
 pub fn encode_symbols(data: &[u8], out: &mut [u8]) {
     let mut bytes = data.iter();
     let mut acc: u32 = 0;
@@ -129,6 +138,7 @@ pub struct Decoded {
 ///
 /// The caller passes lengths with `5 * symbols.len() - 8 * out.len()` in
 /// `0..8`; with any other lengths `out` is only partly written.
+#[inline(never)]
 pub fn decode_symbols(symbols: &[u8], out: &mut [u8]) -> Decoded {
     let mut slots = out.iter_mut();
     let mut acc: u32 = 0;

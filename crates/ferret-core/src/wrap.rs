@@ -20,7 +20,7 @@ use crate::ids::MethodId;
 use crate::keys::{UnlockedVault, VaultContext};
 use crate::ksf_profile::KsfProfile;
 use crate::prim::aead::{aead_open, aead_seal};
-use crate::prim::{ct::ct_eq, hkdf::hkdf_sha256};
+use crate::prim::{ct::commit_eq, hkdf::hkdf_sha256};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, VaultKey};
 use crate::tlv::{SUITE, Tlv, tag};
@@ -267,7 +267,11 @@ fn open_vault_key(ctx: &VaultContext, kek: &Kek, rec: &WrapRecord) -> Result<Vau
     let (sealed, commit) = rec.wrap.split_at(WRAP_LEN);
     if rec.method.has_commit() {
         let expected = commit_of(kek)?;
-        if !ct_eq(&expected, commit) {
+        // `commit` has COMMIT_LEN bytes (the length of the wrap was checked).
+        let same = <&[u8; COMMIT_LEN]>::try_from(commit)
+            .map(|got| commit_eq(&expected, got))
+            .unwrap_or(false);
+        if !same {
             return Err(Error::Decrypt);
         }
     }
