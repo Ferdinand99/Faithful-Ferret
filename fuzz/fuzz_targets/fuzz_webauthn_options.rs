@@ -4,13 +4,13 @@
 //! 9.2).
 #![no_main]
 
+use arbitrary::Arbitrary;
 use ferret_core::passkey::{PrfCreate, PrfEval, PrfRequest};
 use ferret_core::testing::TestRng;
 use ferret_core::{
     CallerContext, CreateRequest, GetRequest, UserVerification, UvOutcome, canonical_origin,
     passkey_create, passkey_get,
 };
-use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]

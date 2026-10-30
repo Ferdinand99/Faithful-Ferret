@@ -9,6 +9,7 @@
 use crate::envelope::{
     AadHeader, HEADER_LEN, KIND_ITEM, SealOpts, SealedItem, body_aad, item_key_aad, item_tag,
     open_item_padded, parse_envelope, reseal_item, seal_item_padded, seal_manifest_cbor,
+    seal_manifest_padded,
 };
 use crate::error::Error;
 use crate::ids::ItemId;
@@ -35,6 +36,30 @@ pub fn seal_plaintext<R: SecureRng>(
         existing,
         &Sabotage::default(),
     )
+}
+
+/// Seals `padded` as it is as an item body: no padding is added and none is
+/// checked, only that the length is one of the padding classes. The envelope
+/// opens (tag and both AEADs pass) and the padding is then read by
+/// `decrypt_item`, so a bad padding or a bad body can be made authentic.
+pub fn seal_padded<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    item_id: ItemId,
+    rev: u64,
+    padded: &[u8],
+) -> Result<SealedItem, Error> {
+    let envelope = seal_item_padded(
+        rng,
+        vault,
+        &item_id,
+        rev,
+        padded,
+        None,
+        &SealOpts::PRODUCTION,
+    )?;
+    let tag = item_tag(vault, item_id, rev, &envelope)?;
+    Ok(SealedItem { envelope, tag, rev })
 }
 
 /// What a sealed envelope gets wrong on purpose.
@@ -169,4 +194,14 @@ pub fn seal_manifest_plaintext<R: SecureRng>(
     cbor: &[u8],
 ) -> Result<SealedItem, Error> {
     seal_manifest_cbor(rng, vault, rev, cbor)
+}
+
+/// Seals `padded` as it is as the manifest body (see [`seal_padded`]).
+pub fn seal_manifest_padded_body<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    rev: u64,
+    padded: &[u8],
+) -> Result<SealedItem, Error> {
+    seal_manifest_padded(rng, vault, rev, padded)
 }

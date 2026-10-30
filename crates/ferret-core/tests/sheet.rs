@@ -141,8 +141,19 @@ fn qr_payload_limits() {
     }
 }
 
+fn config() -> ProptestConfig {
+    let cases = std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(512);
+    ProptestConfig {
+        cases,
+        ..ProptestConfig::default()
+    }
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(config())]
 
     /// What the writer makes, the reader reads back, and writing that gives
     /// the same text.

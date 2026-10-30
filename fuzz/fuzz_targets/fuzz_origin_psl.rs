@@ -14,9 +14,10 @@ fuzz_target!(|data: &[u8]| {
         Some(i) => (&data[..i], &data[i + 1..]),
         None => (data, &data[..0]),
     };
-    let (Ok(origin_text), Ok(rp_text)) =
-        (std::str::from_utf8(origin_bytes), std::str::from_utf8(rp_bytes))
-    else {
+    let (Ok(origin_text), Ok(rp_text)) = (
+        std::str::from_utf8(origin_bytes),
+        std::str::from_utf8(rp_bytes),
+    ) else {
         return;
     };
     let Ok(origin) = canonical_origin(origin_text) else {
@@ -30,6 +31,9 @@ fuzz_target!(|data: &[u8]| {
         assert!(origin.host() == rp.as_str() || origin.host().ends_with(&dotted));
         assert!(rp.as_str() == "localhost" || !is_public_suffix(rp.as_str()));
         // The accepted ID is itself canonical.
-        assert_eq!(validate_rp_id(&origin, rp.as_str()).expect("fixed point"), rp);
+        assert_eq!(
+            validate_rp_id(&origin, rp.as_str()).expect("fixed point"),
+            rp
+        );
     }
 });

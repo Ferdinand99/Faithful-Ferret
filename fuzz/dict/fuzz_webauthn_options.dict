@@ -1,0 +1,14 @@
+# fuzz_webauthn_options: the request is read as an Arbitrary structure and its
+# strings come straight from the bytes.
+rp_example="example.com"
+rp_sub="login.example.com"
+rp_suffix="co.uk"
+rp_localhost="localhost"
+rp_ip="127.0.0.1"
+rp_idna="xn--"
+user_name="alice@example.com"
+rp_name="Example"
+b64url="AAAAAAAAAAAAAAAAAAAAAA"
+cose_es256="\xff\xff\xff\xff\xff\xff\xff\xf9"
+cose_rs256="\xff\xff\xff\xff\xff\xff\xfe\xff"
+zero32="\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"

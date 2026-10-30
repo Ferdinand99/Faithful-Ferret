@@ -11,8 +11,8 @@ use ferret_core::cbor::{self, Value};
 use ferret_core::envelope::{IK_WRAP_LEN, KIND_ITEM, KIND_MANIFEST, MAX_ENVELOPE_LEN, VERSION};
 use ferret_core::item::pad::MAX_PLAINTEXT;
 use ferret_core::testing::item::{
-    Sabotage, intermediate, open_plaintext, reseal, seal_manifest_plaintext, seal_plaintext,
-    seal_with,
+    Sabotage, intermediate, open_plaintext, reseal, seal_manifest_padded_body,
+    seal_manifest_plaintext, seal_padded, seal_plaintext, seal_with,
 };
 use ferret_core::testing::prim::{aead_open_count, hmac_sha256};
 use ferret_core::testing::vector::{self, Outcome};
@@ -1565,4 +1565,81 @@ fn debug_of_a_value_and_of_a_manifest_entry_shows_no_contents() {
     entry.extra = vec![("note".into(), Value::text("secret-note"))];
     assert!(!format!("{entry:?}").contains("secret-note"));
     assert!(!format!("{:?}", Value::text("secret-note")).contains("secret"));
+}
+
+// ------------------------------------------- authentic bodies with bad padding
+
+/// A padded buffer of `len` bytes: `plain`, the marker and zeros.
+fn padded_of(plain: &[u8], len: usize) -> Vec<u8> {
+    let mut padded = plain.to_vec();
+    padded.push(0x80);
+    padded.resize(len, 0);
+    padded
+}
+
+#[test]
+fn padded_seal_opens_like_the_padding_of_the_core() {
+    let vault = unlocked(0x5a);
+    let cbor = full_body().to_cbor().unwrap();
+    let padded = padded_of(&cbor, 1_024);
+    let by_hand = seal_padded(&mut rng("p"), &vault, item_id(1), 1, &padded).unwrap();
+    let by_core = seal_plaintext(&mut rng("p"), &vault, item_id(1), 1, &cbor, None).unwrap();
+    assert_eq!(by_hand, by_core, "same bytes, same nonces, same envelope");
+    assert_eq!(open(&vault, 1, &by_hand).unwrap().body, full_body());
+}
+
+#[test]
+fn authentic_bad_padding_is_decrypt_and_authentic_bad_cbor_is_malformed() {
+    let vault = unlocked(0x5a);
+    let cbor = full_body().to_cbor().unwrap();
+    // No marker, only zeros after the body: authentic, but the padding is bad.
+    let mut no_marker = cbor.clone();
+    no_marker.resize(1_024, 0);
+    let s = seal_padded(&mut rng("n"), &vault, item_id(1), 1, &no_marker).unwrap();
+    assert_eq!(open(&vault, 1, &s).err(), Some(Error::Decrypt));
+    // A byte after the marker.
+    let mut trailing = padded_of(&cbor, 1_024);
+    trailing[1_000] = 1;
+    let s = seal_padded(&mut rng("t"), &vault, item_id(1), 1, &trailing).unwrap();
+    assert_eq!(open(&vault, 1, &s).err(), Some(Error::Decrypt));
+    // Good padding around bytes that are not CBOR.
+    let s = seal_padded(
+        &mut rng("c"),
+        &vault,
+        item_id(1),
+        1,
+        &padded_of(&[0xff, 0xff], 256),
+    )
+    .unwrap();
+    assert!(matches!(open(&vault, 1, &s), Err(Error::Malformed(_))));
+    // A length that is not a padding class is not sealed at all.
+    assert_eq!(
+        seal_padded(&mut rng("l"), &vault, item_id(1), 1, &[0x80; 300]).err(),
+        Some(Error::Malformed(MalformedKind::Envelope))
+    );
+}
+
+#[test]
+fn padded_manifest_seal_opens_like_the_padding_of_the_core() {
+    let vault = unlocked(0x5a);
+    let manifest = sample_manifest();
+    let cbor = manifest.to_cbor().unwrap();
+    let by_hand =
+        seal_manifest_padded_body(&mut rng("m"), &vault, 1, &padded_of(&cbor, 256)).unwrap();
+    let by_core = seal_manifest_plaintext(&mut rng("m"), &vault, 1, &cbor).unwrap();
+    assert_eq!(by_hand, by_core);
+    assert_eq!(
+        decrypt_manifest(&vault, 1, &by_hand.envelope, &by_hand.tag).unwrap(),
+        manifest
+    );
+    // Zeros only: authentic, bad padding.
+    let s = seal_manifest_padded_body(&mut rng("z"), &vault, 1, &[0u8; 256]).unwrap();
+    assert_eq!(
+        decrypt_manifest(&vault, 1, &s.envelope, &s.tag).err(),
+        Some(Error::Decrypt)
+    );
+    assert_eq!(
+        seal_manifest_padded_body(&mut rng("l"), &vault, 1, &[0x80; 255]).err(),
+        Some(Error::Malformed(MalformedKind::Envelope))
+    );
 }
