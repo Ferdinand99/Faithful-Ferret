@@ -51,6 +51,10 @@ const MAY_DERIVE_DEBUG: &[&str] = &[
     "FileOrigin",
     "StartupDecision",
     "StartupRefusal",
+    // Pre-login: the public shares of the real accounts, the public answer
+    // for a name, with no name, key or secret in them.
+    "PreloginPolicy",
+    "PreloginAnswer",
 ];
 
 /// Source text with comments and string literals replaced by spaces (newlines

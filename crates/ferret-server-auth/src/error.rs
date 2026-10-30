@@ -117,6 +117,9 @@ pub enum InternalKind {
     Storage,
     /// A secret file could not be read, written or created.
     SecretFile,
+    /// A setting of the server is out of range (for example a pre-login
+    /// policy whose shares do not add up).
+    Policy,
 }
 
 /// The class of status a caller should answer with. The library does not
@@ -310,7 +313,11 @@ mod tests {
             .public_code(),
             "throttled"
         );
-        for kind in [InternalKind::Storage, InternalKind::SecretFile] {
+        for kind in [
+            InternalKind::Storage,
+            InternalKind::SecretFile,
+            InternalKind::Policy,
+        ] {
             assert_eq!(AuthError::Internal(kind).public_code(), "internal");
         }
     }

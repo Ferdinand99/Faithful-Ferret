@@ -196,8 +196,6 @@ impl PreloginSecret {
     }
 
     /// The 32 bytes, for the derivation of made-up answers.
-    // The first caller is the pre-login code.
-    #[allow(dead_code)]
     pub(crate) fn as_bytes(&self) -> &[u8; PRELOGIN_PAYLOAD_LEN] {
         &self.0
     }
