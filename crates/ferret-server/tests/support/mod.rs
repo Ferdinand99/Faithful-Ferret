@@ -18,25 +18,19 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
-use ferret_core::{KsfProfile, OsRng};
-use ferret_server::auth::state_store::SqliteLoginStateStore;
-use ferret_server::config::{Config, Origins};
+use ferret_server::config::Config;
 use ferret_server::http::proxy_guard::ProxyList;
-use ferret_server::state::{FerretState, VaultDb};
-use ferret_server::{product, server};
-use ferret_server_auth::{
-    Clock, ManualClock, NoThrottle, PreloginPolicy, PreloginSecret, ServerKeys, StateSealKey,
-    Throttle,
-};
+use ferret_server::server;
+use ferret_server::state::FerretState;
+use ferret_server_auth::{Clock, ManualClock, NoThrottle, Throttle};
 use serde_json::Value;
 use tower::ServiceExt as _;
-use vole_kit::state::Core;
 
 /// The public address of the vault listener in tests.
 pub const VAULT_URL: &str = "https://vault.ferret.test";
@@ -296,26 +290,7 @@ impl TestApp {
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).expect("create the data directory");
-        product::install();
-        let pool = vole_kit::db::build_pool(&dir.join(product::DB_FILE));
-        vole_kit::db::migrate(&pool, &dir.join("backups"))
-            .await
-            .expect("migrate");
-        let core = Core::new(
-            pool,
-            vole_kit::auth::load_or_create_key(&dir),
-            reqwest_client(),
-            &product::KIT,
-        );
         let clock = Arc::new(ManualClock::new(settings.start));
-        let mut rng = OsRng;
-        let prelogin = PreloginSecret::generate(&mut rng);
-        let seal = StateSealKey::derive(&prelogin).expect("derive the seal key");
-        let secrets = ferret_server::auth::secrets::Secrets {
-            keys: ServerKeys::generate(&mut rng).expect("generate the OPAQUE set-up"),
-            prelogin,
-            seal,
-        };
         let config = Config {
             data_dir: dir.clone(),
             host: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
@@ -325,23 +300,14 @@ impl TestApp {
             admin_url: ADMIN_URL.to_string(),
             trusted_proxies: Vec::new(),
         };
-        let admin_url = ADMIN_URL.to_string();
-        core.with_conn(move |c| {
-            vole_kit::db::settings::set(c, vole_kit::db::settings::BASE_URL, &admin_url)
-        })
-        .await
-        .expect("set the public URL");
-        let state = FerretState {
-            vault_db: VaultDb::new(core.db.clone()),
-            core,
-            origins: Origins::parse(&config.vault_url, &config.admin_url).expect("origins"),
-            clock: clock.clone() as Arc<dyn Clock>,
-            proxies: Arc::new(settings.proxies),
-            secrets: Arc::new(secrets),
-            throttle: settings.throttle,
-            login_states: Arc::new(SqliteLoginStateStore::in_memory()),
-            prelogin: Arc::new(RwLock::new(PreloginPolicy::single(KsfProfile::P1))),
-        };
+        // The same start-up as the binary: migrations, the secret files and the
+        // check of them against the database, the login state store. Only the
+        // clock, the throttle and the proxy list are the test's own.
+        let mut state = ferret_server::start(&config, clock.clone() as Arc<dyn Clock>)
+            .await
+            .expect("start the server");
+        state.throttle = settings.throttle;
+        state.proxies = Arc::new(settings.proxies);
         TestApp {
             vault: server::vault_router(state.clone()),
             admin: server::admin_router(state.clone()),
@@ -425,8 +391,4 @@ impl TestApp {
     pub fn clear_jar(&self, which: Which) {
         self.jars.lock().expect("jars").remove(&which);
     }
-}
-
-fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder().build().expect("an HTTP client")
 }
