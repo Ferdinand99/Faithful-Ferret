@@ -2,11 +2,11 @@
 //! and the store behind them.
 //!
 //! **Narrow state.** Nothing under `vault/` names the application state, the
-//! kit's `Core`, its cookie key or its crypto: the routes are generic over the
-//! state and take a [`VaultDb`](crate::state::VaultDb) (and other narrow
-//! handles) through `FromRef`. The session comes from the `VaultSession`
-//! extractor of `http::extract`, which is the only code that knows the cookie
-//! key. `tests/arch.rs` checks the names.
+//! kit's core state, its cookie key or its crypto: the routes are generic over
+//! the state and take the database handle (and other narrow handles) through
+//! `FromRef`. The session comes from the `VaultSession` extractor of
+//! `http::extract`, which is the only code that knows the cookie key. A test
+//! that checks the names is still to come.
 //!
 //! Integers that come from a client use checked arithmetic; the lint below is
 //! `deny`.

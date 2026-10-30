@@ -25,7 +25,7 @@ back = "Tilbake til innstillinger"
 
 [general]
 sub = "Hvordan denne instansen navngir seg selv, hvor den nås og hvordan den holder styr på tid."
-base_url_help = "Der folk når administrasjonssidene: brukes i lenker i meldinger. Nettvelvet har sin egen adresse (FERRET_VAULT_URL)."
+base_url_help = "Der folk når administrasjonssidene: brukes i lenker i meldinger. Netthvelvet har sin egen adresse (FERRET_VAULT_URL)."
 
 [api]
 docs_subtitle = "Faithful Ferret har ingen offentlig API-referanse ennå."

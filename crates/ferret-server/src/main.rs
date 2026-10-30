@@ -20,10 +20,6 @@ async fn main() {
         .with_ansi(std::io::stdout().is_terminal())
         .init();
 
-    // Every TLS stack in the binary uses rustls; pin its crypto provider so a
-    // dependency enabling a second one can't make rustls panic at runtime.
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
     if let Err(err) = ferret_server::server::run(config).await {
         tracing::error!("{err}");
         std::process::exit(1);

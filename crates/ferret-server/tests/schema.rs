@@ -417,3 +417,174 @@ fn the_other_tables_check_their_ids_too() {
         )
         .is_err());
 }
+
+fn insert_named_user(conn: &Connection, name: &str, role: &str) -> i64 {
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?1, 'x', ?2)",
+        params![name, role],
+    )
+    .expect("a user");
+    conn.last_insert_rowid()
+}
+
+/// Gives `user` an account and a vault, and one row of everything that belongs
+/// to them. `n` tells the ids of one user's rows from another's.
+fn fill_vault(conn: &Connection, user: i64, n: u8) {
+    let account = [n; 16];
+    let vault = [n.wrapping_add(100); 16];
+    insert_account(conn, user, &account, &vault, &[1u8; 192], &[2; 32]).expect("account");
+    let run = |sql: &str, args: &[&dyn rusqlite::ToSql]| {
+        conn.execute(sql, args)
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    };
+    run(
+        "INSERT INTO ferret_vaults (vault_id, account_id) VALUES (?1, ?2)",
+        params![&vault[..], &account[..]],
+    );
+    run(
+        "INSERT INTO ferret_unlock_methods (method_id, account_id, method_type, wrap, kek_generation, created_at) VALUES (?1, ?2, 1, x'00', 1, 0)",
+        params![&[n; 16][..], &account[..]],
+    );
+    let (blob, tag, tomb) = ([1u8; 40], [2u8; 32], [3u8; 40]);
+    run(
+        "INSERT INTO ferret_items (vault_id, item_id, rev, seq, deleted, blob, tag, size, changed_at) VALUES (?1, ?2, 1, 1, 0, ?3, ?4, 0, 0)",
+        params![&vault[..], &[1u8; 16][..], &blob[..], &tag[..]],
+    );
+    run(
+        "INSERT INTO ferret_items (vault_id, item_id, rev, seq, deleted, tomb, size, changed_at) VALUES (?1, ?2, 2, 2, 1, ?3, 0, 0)",
+        params![&vault[..], &[2u8; 16][..], &tomb[..]],
+    );
+    run(
+        "INSERT INTO ferret_checkpoints (vault_id, seq, digest, mac, entries) VALUES (?1, 2, x'00', x'00', x'00')",
+        params![&vault[..]],
+    );
+    run(
+        "INSERT INTO ferret_idem (vault_id, device_id, idem, request_hash, rev, seq, created_at) VALUES (?1, ?2, ?3, ?4, 1, 1, 0)",
+        params![&vault[..], &[9u8; 16][..], &[9u8; 16][..], &[9u8; 32][..]],
+    );
+    run(
+        "INSERT INTO ferret_sessions (sid_hash, user_id, issued_at, origin, device_id, scope, last_seen) VALUES (?1, ?2, 0, 'vault', ?3, 'full', 0)",
+        params![&[n; 32][..], user, &[1u8; 16][..]],
+    );
+    run(
+        "INSERT INTO ferret_handoffs (code_hash, sid_hash, user_id, purpose, next, challenge, expires_at) VALUES (?1, ?2, ?3, 'login', '/settings', ?4, 60)",
+        params![&[n; 32][..], &[n; 32][..], user, &[5u8; 32][..]],
+    );
+}
+
+fn count(conn: &Connection, table: &str, column: &str, value: &[u8]) -> i64 {
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+        params![value],
+        |r| r.get(0),
+    )
+    .expect("count")
+}
+
+fn count_user(conn: &Connection, table: &str, user: i64) -> i64 {
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE user_id = ?1"),
+        params![user],
+        |r| r.get(0),
+    )
+    .expect("count")
+}
+
+#[test]
+fn deleting_a_user_removes_the_vault_and_everything_in_it() {
+    let mut conn = migrated();
+    let admin = insert_named_user(&conn, "admin@example.com", "admin");
+    let member = insert_named_user(&conn, "member@example.com", "editor");
+    fill_vault(&conn, admin, 1);
+    fill_vault(&conn, member, 2);
+    let (account, vault) = ([2u8; 16], [102u8; 16]);
+    let owned = [
+        ("ferret_accounts", "account_id", &account[..]),
+        ("ferret_unlock_methods", "account_id", &account[..]),
+        ("ferret_vaults", "vault_id", &vault[..]),
+        ("ferret_items", "vault_id", &vault[..]),
+        ("ferret_checkpoints", "vault_id", &vault[..]),
+        ("ferret_idem", "vault_id", &vault[..]),
+    ];
+    // Everything is there before.
+    for (table, column, value) in owned {
+        assert!(count(&conn, table, column, value) >= 1, "{table}");
+    }
+    assert_eq!(count(&conn, "ferret_items", "vault_id", &vault), 2);
+
+    // The kit's way to delete a user (the Users page calls it).
+    let result = vole_kit::db::users::delete_user(&mut conn, member).expect("delete");
+    assert!(result.is_ok(), "the user could not be deleted");
+
+    for (table, column, value) in owned {
+        assert_eq!(count(&conn, table, column, value), 0, "{table} keeps rows");
+    }
+    for table in ["ferret_sessions", "ferret_handoffs"] {
+        assert_eq!(count_user(&conn, table, member), 0, "{table} keeps rows");
+    }
+    // Nothing of the other user went.
+    let (account, vault) = ([1u8; 16], [101u8; 16]);
+    assert_eq!(count(&conn, "ferret_accounts", "account_id", &account), 1);
+    assert_eq!(
+        count(&conn, "ferret_unlock_methods", "account_id", &account),
+        1
+    );
+    assert_eq!(count(&conn, "ferret_vaults", "vault_id", &vault), 1);
+    assert_eq!(count(&conn, "ferret_items", "vault_id", &vault), 2);
+    assert_eq!(count(&conn, "ferret_checkpoints", "vault_id", &vault), 1);
+    assert_eq!(count(&conn, "ferret_idem", "vault_id", &vault), 1);
+    assert_eq!(count_user(&conn, "ferret_sessions", admin), 1);
+    assert_eq!(count_user(&conn, "ferret_handoffs", admin), 1);
+}
+
+#[test]
+fn rows_of_a_vault_that_does_not_exist_are_refused() {
+    let conn = migrated();
+    let ghost = [77u8; 16];
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_items (vault_id, item_id, rev, seq, deleted, tomb, size, changed_at) VALUES (?1, ?2, 1, 1, 1, x'00', 0, 0)",
+            params![&ghost[..], &[1u8; 16][..]],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_checkpoints (vault_id, seq, digest, mac, entries) VALUES (?1, 1, x'00', x'00', x'00')",
+            params![&ghost[..]],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_idem (vault_id, device_id, idem, request_hash, rev, seq, created_at) VALUES (?1, ?2, ?2, ?3, 1, 1, 0)",
+            params![&ghost[..], &[1u8; 16][..], &[1u8; 32][..]],
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn an_account_has_one_user_and_one_vault_and_the_hint_is_a_flag() {
+    let conn = migrated();
+    let user = insert_user(&conn);
+    let other = insert_named_user(&conn, "other@example.com", "viewer");
+    insert_account(&conn, user, &[1; 16], &[11; 16], &[1u8; 192], &[2; 32]).expect("account");
+    assert!(
+        insert_account(&conn, user, &[2; 16], &[12; 16], &[1u8; 192], &[2; 32]).is_err(),
+        "a second account for one user"
+    );
+    assert!(
+        insert_account(&conn, other, &[3; 16], &[11; 16], &[1u8; 192], &[2; 32]).is_err(),
+        "a second account for one vault id"
+    );
+    let hint = |value: i64, account: &[u8; 16], vault: &[u8; 16]| {
+        conn.execute(
+            "INSERT INTO ferret_accounts (account_id, user_id, vault_id, opaque_record, ksf_profile, sk_hint, pk_a, pk_r, created_at) \
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?6, 0)",
+            params![&account[..], other, &vault[..], &[1u8; 192][..], value, &[2u8; 32][..]],
+        )
+    };
+    assert!(hint(2, &[4; 16], &[14; 16]).is_err(), "sk_hint 2");
+    assert!(hint(1, &[4; 16], &[14; 16]).is_ok());
+}

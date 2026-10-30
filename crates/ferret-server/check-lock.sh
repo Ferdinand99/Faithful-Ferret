@@ -5,9 +5,11 @@
 # not:
 #
 #   * every crate in the tree of ferret-core and ferret-server-auth of the root
-#     graph (what the release builds) is at the same version in the server, so the crypto that is
-#     served is the crypto that was tested and vetted (vole-kit's own crates,
-#     such as a second `rand_core`, are outside that tree and may differ);
+#     graph (what the release builds) is in the server's tree at the same
+#     version, so the crypto that is served is the crypto that was tested and
+#     vetted (vole-kit's own crates, such as a second `rand_core`, are outside
+#     that tree and may differ). The server's tree may be a superset: see
+#     `compare` below;
 #   * every crate that both locks have at the same name and version has the same
 #     checksum in both;
 #   * `overflow-checks` and `panic` of [profile.release] are the same in both
@@ -34,6 +36,18 @@ normalise() {
 # bring crates the root graph does not build, sometimes at another version of a
 # name the root has too. What must not happen is that a crate the root builds is
 # not at that version in the server.
+#
+# Why a superset is sound: cargo never resolves two semver-compatible versions
+# of one crate in a graph, so when the version the root builds is in the
+# server's subtree, it is the one the server links, and a drifted crate (say
+# sha2 0.11.2 against 0.11.1) drops the root's line out of the server set and
+# fails here. An extra crate comes from a feature that vole-kit switches on
+# (its `argon2` has the password hashing and random salts on, which bring in
+# `password-hash 0.6` and `getrandom 0.2`). It adds API and dependencies; the
+# source of the crates the root vets is the same (the checksum check below), so
+# the hashing the core does is unchanged. A crate that is in both trees under
+# another version only because of such an extra edge is not a mismatch and is
+# not compared by name.
 compare() {
   local missing
   missing="$(comm -23 <(normalise < "$1") <(normalise < "$2"))"

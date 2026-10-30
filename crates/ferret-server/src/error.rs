@@ -20,8 +20,7 @@ use ferret_server_auth::{AuthError, ErrorClass};
 /// Why the server could not start.
 pub type StartError = Box<dyn std::error::Error + Send + Sync>;
 
-/// A part that a later step of the milestone builds: its stub returns this
-/// instead of panicking.
+/// A part that is not built yet: its stub returns this instead of panicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotImplemented(pub &'static str);
 

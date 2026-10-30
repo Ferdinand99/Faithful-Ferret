@@ -228,3 +228,17 @@ fn core_dumps_are_disabled() {
     assert_eq!(limit.current, Some(0));
     assert_eq!(limit.maximum, Some(0));
 }
+
+#[tokio::test]
+async fn the_pool_has_foreign_keys_on() {
+    // The cascades of the schema (a deleted user takes the vault with it) rely
+    // on it, and the server's pool is the kit's.
+    let app = TestApp::new().await;
+    let on: i64 = app
+        .state
+        .vault_db
+        .with_conn(|c| Ok(c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?))
+        .await
+        .expect("pragma");
+    assert_eq!(on, 1);
+}

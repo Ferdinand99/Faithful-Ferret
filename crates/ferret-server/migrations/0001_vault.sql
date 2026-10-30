@@ -4,6 +4,11 @@
 -- Every id column holds exactly 16 bytes. Every table is STRICT. The rule that
 -- a live item has a blob and a tag and a tombstone has neither is a CHECK, so
 -- no code path can store a row that breaks it.
+--
+-- Everything that belongs to a vault (items, checkpoint, idempotency records)
+-- references the vault row and goes with it, and the vault goes with its account
+-- and the account with its user: deleting a user in the kit's admin pages
+-- removes the ciphertext as well.
 
 CREATE TABLE ferret_accounts (
   account_id BLOB PRIMARY KEY CHECK(length(account_id) = 16),
@@ -41,7 +46,7 @@ CREATE TABLE ferret_vaults (
 ) STRICT;
 
 CREATE TABLE ferret_items (
-  vault_id BLOB NOT NULL CHECK(length(vault_id) = 16),
+  vault_id BLOB NOT NULL CHECK(length(vault_id) = 16) REFERENCES ferret_vaults(vault_id) ON DELETE CASCADE,
   item_id BLOB NOT NULL CHECK(length(item_id) = 16),
   rev INTEGER NOT NULL,
   seq INTEGER NOT NULL,
@@ -59,7 +64,7 @@ CREATE TABLE ferret_items (
 CREATE INDEX ferret_items_seq ON ferret_items(vault_id, seq);
 
 CREATE TABLE ferret_checkpoints (
-  vault_id BLOB PRIMARY KEY CHECK(length(vault_id) = 16),
+  vault_id BLOB PRIMARY KEY CHECK(length(vault_id) = 16) REFERENCES ferret_vaults(vault_id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
   digest BLOB NOT NULL,
   mac BLOB NOT NULL,
@@ -67,7 +72,7 @@ CREATE TABLE ferret_checkpoints (
 ) STRICT;
 
 CREATE TABLE ferret_idem (
-  vault_id BLOB NOT NULL CHECK(length(vault_id) = 16),
+  vault_id BLOB NOT NULL CHECK(length(vault_id) = 16) REFERENCES ferret_vaults(vault_id) ON DELETE CASCADE,
   device_id BLOB NOT NULL CHECK(length(device_id) = 16),
   idem BLOB NOT NULL CHECK(length(idem) = 16),
   request_hash BLOB NOT NULL CHECK(length(request_hash) = 32),

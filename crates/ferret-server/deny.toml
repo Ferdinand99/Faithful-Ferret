@@ -69,3 +69,6 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # vole-kit, at a tag, from the repository of the same owner.
 allow-git = ["https://github.com/Ferdinand99/Vigilant-Vole"]
+# A git dependency must name a tag: a branch or a revision of the allowed
+# repository is refused.
+required-git-spec = "tag"
