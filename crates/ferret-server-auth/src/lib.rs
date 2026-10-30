@@ -32,6 +32,9 @@
 //! The library counts nothing. It asks a [`Throttle`] before it does any
 //! work for a request and reports the outcome afterwards. A refusal is an
 //! [`AuthError::Throttled`] with a wait between one second and one hour.
+//! The library groups the caller's address itself (an IPv6 address as its
+//! /64, an IPv4-mapped one as IPv4) and counts a caller without an address in
+//! one shared bucket, so a limit cannot be skipped by a missing header.
 //!
 //! # Features
 //!
