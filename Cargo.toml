@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ferret-core", "tools/vectorgen", "bindings/wasm"]
+members = ["crates/ferret-core", "crates/ferret-server-auth", "tools/vectorgen", "bindings/wasm"]
 # The timing tests have a lock, a deny policy and a release profile of their own
 # (ct/dudect/Cargo.toml): their tree (clap 2, Windows crates) does not belong in
 # the lock, `cargo deny` and `cargo vet` of the release graph.

@@ -103,3 +103,4 @@ jobs:
       - run: rustup toolchain install 1.88 --profile minimal
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo +1.88 check -p ferret-core --features test-support
+      - run: cargo +1.88 check -p ferret-server-auth --features test-support
