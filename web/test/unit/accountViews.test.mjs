@@ -680,3 +680,62 @@ test("the_crypto_service_hands_the_sync_service_to_the_session", async () => {
     else delete globalThis.location;
   }
 });
+
+test("the_challenge_and_the_token_are_taken_out_of_the_address_before_the_first_await_of_boot", () => {
+  const source = readFileSync(join(web, "src", "boot.mjs"), "utf8");
+  const body = source.slice(source.indexOf("async function boot()"));
+  const firstAwait = body.indexOf("await ");
+  const consume = body.indexOf("consumeEntry(window)");
+  assert.ok(consume > 0 && firstAwait > 0 && consume < firstAwait, "consumeEntry runs before any await");
+});
+
+test("the_code_fields_turn_off_spellcheck_autocorrect_and_autocapitalize", async () => {
+  await withDom(async () => {
+    const off = (node) => ["spellcheck", "autocapitalize", "autocorrect"].every((name) => node.getAttribute(name) === (name === "spellcheck" ? "false" : "off"));
+    // The secret key on the sign-in page.
+    const login = loginView(loginDeps().deps);
+    const skCode = byRole(login, "sk-code");
+    assert.ok(off(skCode));
+    assert.equal(skCode.getAttribute("autocomplete"), "off");
+    // The setup token on the setup page.
+    const setup = setupView({ t: i18n().t, session: fakeSession(), setupToken: null, adminUrl: null, go() {}, handoff: {} });
+    assert.ok(off(byRole(setup, "setup-token")));
+    // The recovery key and the secret key typed back on the sheet.
+    const world = await scenario();
+    const root = setupView({ t: i18n().t, session: world.session, setupToken: "t", adminUrl: null, go() {}, handoff: {} });
+    byRole(root, "email").value = EMAIL;
+    byRole(root, "password").value = PASSWORD;
+    byRole(root, "password-repeat").value = PASSWORD;
+    await fire(byRole(root, "setup-form"), "submit");
+    await until(() => byRole(root, "rk-typed") !== null);
+    assert.ok(off(byRole(root, "rk-typed")));
+    assert.ok(off(byRole(root, "sk-typed")));
+    assert.equal(byRole(root, "rk-typed").getAttribute("autocomplete"), "off");
+    // The master password keeps the autocomplete values a password manager needs.
+    assert.equal(byRole(login, "password").getAttribute("autocomplete"), "current-password");
+    assert.equal(byRole(setup, "password").getAttribute("autocomplete"), "new-password");
+    assert.equal(byRole(login, "password").getAttribute("spellcheck"), null);
+  });
+});
+
+test("the_admin_buttons_show_whenever_the_user_is_signed_in_locked_or_not", async () => {
+  await withDom(async () => {
+    const info = { accountId: "a", email: EMAIL };
+    // Signed in at the server but the vault is locked: the password form, and the admin button, since the session is enough.
+    const locked = loginDeps({ info });
+    const lockedPage = loginView(locked.deps);
+    assert.ok(byRole(lockedPage, "password"));
+    assert.ok(byRole(lockedPage, "admin"));
+    assert.equal(byRole(lockedPage, "open-vault"), null, "the vault itself is not offered while locked");
+    await fire(byRole(lockedPage, "admin"), "click");
+    await settle();
+    assert.equal(locked.toAdmin.length, 1);
+
+    // With a hand-over request, the click to continue is there too, locked or open.
+    const entry = readEntry({ pathname: "/vault/login", search: `?handoff=1&challenge=${CHALLENGE}`, hash: "" });
+    for (const current of [null, {}]) {
+      const page = loginView(loginDeps({ info, entry, session: fakeSession({ current }) }).deps);
+      assert.ok(byRole(page, "continue-admin"), `current=${current}`);
+    }
+  });
+});

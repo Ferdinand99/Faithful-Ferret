@@ -429,3 +429,82 @@ test("no_secret_in_storage_or_console", async () => {
   }
   assert.deepEqual(writes, []);
 });
+
+test("every_lock_goes_through_the_session_on_the_failure_paths_too", async () => {
+  const events = [];
+  const sync = { start: async () => events.push("start"), stop: () => events.push("stop") };
+  // The check works at first and is broken for the later attempts.
+  // A check after login/finish fails over an open vault: the vault is closed through the session.
+  let broken = false;
+  const probe = await scenario({
+    sync,
+    handlers: {
+      check_server_methods: () => {
+        if (broken) throw coded("method_list_unknown");
+      },
+    },
+  });
+  await signIn(probe, { rememberSk: true });
+  let heard = 0;
+  probe.session.onLock(() => { heard += 1; });
+  assert.notEqual(probe.session.current(), null);
+  events.length = 0;
+  broken = true;
+  await assert.rejects(probe.session.unlock({ password: PASSWORD }), { code: "method_list_unknown" });
+  assert.equal(probe.session.current(), null);
+  assert.ok(events.includes("stop"), "sync stopped");
+  assert.ok(heard >= 1, "the lock listeners were told");
+  assert.equal(probe.session.freshReauth(), false);
+
+  // The same for a failed sign-in over an open vault.
+  broken = false;
+  await signIn(probe, { rememberSk: true });
+  events.length = 0;
+  heard = 0;
+  broken = true;
+  await assert.rejects(signIn(probe), { code: "method_list_unknown" });
+  assert.equal(probe.session.current(), null);
+  assert.ok(events.includes("stop"));
+  assert.ok(heard >= 1);
+
+  // A sign-in that works over an open vault locks the old one first: stop, then start.
+  broken = false;
+  await signIn(probe, { rememberSk: true });
+  events.length = 0;
+  heard = 0;
+  await signIn(probe);
+  assert.deepEqual(events, ["stop", "start"]);
+  assert.equal(heard, 1);
+
+  // A failed registration also ends the worker through the session.
+  const reg = await scenario({ sync, handlers: { register_finish: () => { throw coded("kdf_out_of_memory"); } } });
+  let regHeard = 0;
+  reg.session.onLock(() => { regHeard += 1; });
+  await assert.rejects(reg.session.register({ email: EMAIL, password: PASSWORD }), { code: "kdf_out_of_memory" });
+  assert.equal(regHeard, 1);
+});
+
+test("sign_out_always_asks_the_server_and_wipes_the_device_even_when_a_step_fails", async () => {
+  // The cache cannot be cleared: the server is still asked, the error is the cache's.
+  const world = await scenario();
+  await signIn(world);
+  world.store.cache = { ...world.store.cache, clearAccount: async () => { throw new Error("idb down"); } };
+  await assert.rejects(world.session.signOut(), /idb down/);
+  assert.ok(world.requests.some((r) => r.method === "POST" && r.url === "/api/auth/logout"));
+  assert.equal(world.session.current(), null);
+  assert.ok(world.client.locked >= 1);
+
+  // The store cannot even be opened.
+  const nostore = await scenario();
+  await signIn(nostore);
+  nostore.store.open = async () => { throw new Error("no idb"); };
+  await assert.rejects(nostore.session.signOut(), /no idb/);
+  assert.ok(nostore.requests.some((r) => r.url === "/api/auth/logout"));
+
+  // The server cannot be reached: the device is wiped, and the error says the session may live on.
+  const offline = await scenario({ overrides: { "POST /api/auth/logout": () => { throw new TypeError("offline"); } } });
+  await signIn(offline);
+  await assert.rejects(offline.session.signOut(), { code: "signout_incomplete" });
+  assert.equal(offline.session.current(), null);
+  assert.ok(offline.client.locked >= 1);
+});

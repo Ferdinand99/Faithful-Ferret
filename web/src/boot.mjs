@@ -16,6 +16,10 @@ async function loadCatalog(lang) {
 }
 
 async function boot() {
+  // /vault/login?handoff=1&challenge=... and /vault/setup#token=... : read what the
+  // address carries and take it out of the address first, before any await, so a
+  // failed fetch below leaves neither the challenge nor the token in the address bar.
+  consumeEntry(window);
   const tt = installTrustedTypes();
   // The workers are made from a TrustedScriptURL of the `ferret` policy.
   const client = createClient({
@@ -29,9 +33,6 @@ async function boot() {
   document.documentElement.lang = i18n.lang;
   const root = document.getElementById("app");
   if (!root) throw new Error("no #app element");
-  // /vault/login?handoff=1&challenge=... and /vault/setup#token=... : read what the
-  // address carries and take it out of the address before the router starts.
-  consumeEntry(window);
   const app = startApp({ root, routes, serviceDefs: services, client, i18n });
   return { client, i18n, router: app.router, services: app.services, tt };
 }

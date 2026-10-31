@@ -171,6 +171,10 @@ async function open(env, p) {
     const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
     if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
 
+    // Accepted residual: when the e-mail was changed on another device, the early
+    // guard of `login_finish` was `first_use`, so a lower KSF profile than the pinned one
+    // is caught only here, after Argon2id has run. `unlock_password` still refuses it
+    // (`pinned_profile_downgrade`) and the sign-in ends. M1 has one profile, so none can be lower.
     const pin = record ? { kind: "pinned", record } : { kind: "first_use", sk_bit: p.skBit };
     const ctx = { account_id: hex16.decode(done.account_id), vault_id: hex16.decode(done.vault_id), vk_epoch: done.vk_epoch };
     const opened = await client.vault.unlock_password(server, ctx, wrapToCore(passwordWraps[0], start.ksf_profile), pin);
@@ -198,7 +202,7 @@ async function open(env, p) {
       purpose: p.purpose,
     };
   } catch (error) {
-    await Promise.resolve(client.lock()).catch(() => undefined);
+    await Promise.resolve(env.lock()).catch(() => undefined);
     // A sign-in that did not open the vault leaves no session behind; a
     // re-authentication must not end the session it was made for.
     if (p.purpose === "login") await api.post("/api/auth/logout").catch(() => undefined);

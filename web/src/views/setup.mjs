@@ -38,7 +38,7 @@ export function setupView(deps) {
   const remember = choice(t, { id: "remember", role: "remember", label: "account.remember.label", checked: true });
   const rememberNote = el("small", { class: "help" }, t("account.remember.note"));
   const rememberRow = el("div", { class: "remember", "data-role": "remember-row" }, remember.row, rememberNote);
-  const token = deps.setupToken ? null : field(t, { id: "setup-token", role: "setup-token", label: "account.setup.token", autocomplete: "off", required: false });
+  const token = deps.setupToken ? null : field(t, { id: "setup-token", role: "setup-token", label: "account.setup.token", autocomplete: "off", required: false, secret: true });
   const tokenNote = deps.setupToken ? el("p", { class: "help", "data-role": "token-received" }, t("account.setup.token_received")) : null;
   const submit = el("button", { type: "submit", class: "primary", "data-role": "submit" }, t("account.setup.submit"));
   const form = el("form", { class: "stack", "data-role": "setup-form" });

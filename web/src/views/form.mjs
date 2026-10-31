@@ -28,15 +28,24 @@ export function trustNotice(t) {
 /**
  * A labelled input.
  * @param {Translate} t
- * @param {{ id: string, role: string, label: string, type?: string, autocomplete?: string, required?: boolean, help?: string, inputmode?: string }} spec
+ * A `secret` field holds a code that opens the vault (recovery key, secret key,
+ * setup token): the browser must not spell-check it (Chromium's enhanced check
+ * sends text to a remote service), correct it, capitalise it or learn it.
+ * @param {{ id: string, role: string, label: string, type?: string, autocomplete?: string, required?: boolean, help?: string, inputmode?: string, secret?: boolean }} spec
  * @returns {{ row: HTMLElement, input: HTMLInputElement }}
  */
-export function field(t, { id, role, label, type = "text", autocomplete = "off", required = true, help, inputmode }) {
+export function field(t, { id, role, label, type = "text", autocomplete = "off", required = true, help, inputmode, secret = false }) {
   /** @type {Record<string, string | boolean>} */
   const attrs = { id, name: id, type, autocomplete, "data-role": role };
   if (required) attrs.required = true;
   if (inputmode) attrs.inputmode = inputmode;
   const input = /** @type {HTMLInputElement} */ (el("input", attrs));
+  if (secret) {
+    // `el()` does not list these attributes; they are set on the element directly.
+    input.setAttribute("spellcheck", "false");
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("autocorrect", "off");
+  }
   const row = el("div", { class: "field" }, el("label", { for: id }, t(label)), input, help ? el("small", { class: "help" }, t(help)) : null);
   return { row, input };
 }

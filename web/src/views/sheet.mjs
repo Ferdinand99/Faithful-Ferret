@@ -37,8 +37,8 @@ export function sheetView({ t, sheet, useSecretKey, onConfirm, onPrint }) {
   );
   const recovery = el("dl", { class: "sheet-fields", "data-role": "sheet-recovery" }, ...row("account.sheet.recovery_key", "sheet-recovery-key", sheet.recoveryKeyCode));
 
-  const rk = field(t, { id: "rk-typed", role: "rk-typed", label: "account.sheet.type_recovery", autocomplete: "off" });
-  const sk = useSecretKey ? field(t, { id: "sk-typed", role: "sk-typed", label: "account.sheet.type_secret", autocomplete: "off" }) : null;
+  const rk = field(t, { id: "rk-typed", role: "rk-typed", label: "account.sheet.type_recovery", autocomplete: "off", secret: true });
+  const sk = useSecretKey ? field(t, { id: "sk-typed", role: "sk-typed", label: "account.sheet.type_secret", autocomplete: "off", secret: true }) : null;
   const submit = el("button", { type: "submit", class: "primary", "data-role": "confirm" }, t("account.sheet.confirm"));
   const form = el("form", { class: "stack", "data-role": "confirm-form" }, rk.row, ...(sk ? [sk.row] : []), submit);
   const busy = busyState({ root: form, status, controls: [rk.input, submit, ...(sk ? [sk.input] : [])], t, key: "account.sheet.checking" });

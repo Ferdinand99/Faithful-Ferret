@@ -78,7 +78,7 @@ export function createCryptoSession({
   // One form of the address reaches the core and the store.
   const server = serverKey(serverUrl);
   /** @type {Env} */
-  const env = { client, api, store, server, now, rand, secrets };
+  const env = { client, api, store, server, now, rand, secrets, lock: () => lock() };
 
   const seam = createSyncSeam();
   seam.attach(sync);
@@ -150,6 +150,7 @@ export function createCryptoSession({
      * @param {Parameters<typeof register>[1]} args
      */
     async register(args) {
+      if (current !== null) await lock();
       const flow = await register(env, args);
       const email = args.email.trim();
       return {
@@ -163,10 +164,13 @@ export function createCryptoSession({
     },
 
     async signIn(/** @type {Parameters<typeof signIn>[1]} */ args) {
+      // A sign-in never runs on top of an open vault: that one is locked first.
+      if (current !== null) await lock();
       return opened(await signIn(env, args));
     },
 
     async unlock(/** @type {Parameters<typeof unlock>[1]} */ args) {
+      if (current !== null) await lock();
       const result = await unlock(env, args);
       // A sign-in that `unlock` fell back to is not a re-authentication.
       if (result.purpose === "reauth") reauthAt = now();
@@ -178,19 +182,35 @@ export function createCryptoSession({
 
     /**
      * Locks, clears the cached rows of the account and ends the server
-     * session. The pinned record and the device id stay. The device is signed
-     * out even when the server cannot be reached; then `signout_incomplete`.
+     * session. The pinned record and the device id stay. The server is always
+     * asked to end the session; if that fails, or it cannot be reached, the device
+     * is still wiped and the error is `signout_incomplete`: the server session
+     * may still be live.
      */
     async signOut() {
-      const info = current ? { accountId: current.accountId } : await sessionInfo(env).catch(() => null);
-      await lock();
-      const db = await store.open();
-      if (info) await store.cache.clearAccount(db, info.accountId);
+      /** @type {unknown} */
+      let failure = null;
+      /** @type {string | null} */
+      let accountId = current ? current.accountId : null;
+      if (accountId === null) accountId = (await sessionInfo(env).catch(() => null))?.accountId ?? null;
+      // Whatever else goes wrong, the device is wiped and the server is asked.
+      try {
+        await lock();
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
+        if (accountId !== null) await store.cache.clearAccount(await store.open(), accountId);
+      } catch (error) {
+        failure ??= error;
+      }
       try {
         await api.post("/api/auth/logout");
       } catch {
+        // The server session may still be live: say so.
         throw new AccountError("signout_incomplete");
       }
+      if (failure !== null) throw failure;
     },
 
     /** Removes the secret key this device remembers for the account. */

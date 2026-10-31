@@ -92,20 +92,20 @@ export async function register(env, args) {
     sheetCore = await client.vault.reveal_emergency_sheet(server, email);
   } catch (error) {
     // Nothing was uploaded; the job and any vault it made are dropped.
-    await Promise.resolve(client.lock()).catch(() => undefined);
+    await Promise.resolve(env.lock()).catch(() => undefined);
     throw error;
   }
 
   const recoveryWrap = account.wraps.find((/** @type {any} */ w) => w?.method?.type === "recovery");
   if (!recoveryWrap) {
-    await Promise.resolve(client.lock()).catch(() => undefined);
+    await Promise.resolve(env.lock()).catch(() => undefined);
     throw new AccountError("methods_invalid");
   }
   // The secret key is read now: the core drops it once both keys are typed back.
   /** @type {string | null} */
   let skCode = typeof sheetCore.access?.secret_key_code === "string" ? sheetCore.access.secret_key_code : null;
   if (useSecretKey && skCode === null) {
-    await Promise.resolve(client.lock()).catch(() => undefined);
+    await Promise.resolve(env.lock()).catch(() => undefined);
     throw new AccountError("methods_invalid");
   }
 
@@ -153,7 +153,7 @@ export async function register(env, args) {
           await store.savePinned(db, server, res.account_id, email, account.pinned);
         } catch (error) {
           // The account exists on the server now; this device could not keep its record.
-          await Promise.resolve(client.lock()).catch(() => undefined);
+          await Promise.resolve(env.lock()).catch(() => undefined);
           phase = "done";
           skCode = null;
           throw new AccountError("pin_save_failed", { accountId: res.account_id, cause: /** @type {any} */ (error)?.code ?? null });
@@ -182,7 +182,7 @@ export async function register(env, args) {
       phase = "aborted";
       skCode = null;
       await Promise.resolve(client.vault.clear_setup_secrets()).catch(() => undefined);
-      await Promise.resolve(client.lock()).catch(() => undefined);
+      await Promise.resolve(env.lock()).catch(() => undefined);
     },
   };
 }

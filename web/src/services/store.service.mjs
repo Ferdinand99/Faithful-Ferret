@@ -31,7 +31,9 @@ export default {
       // For the one caller that has to guard the core's `login_finish`, which runs
       // before the server has named the account: the record the typed e-mail maps
       // to, or null. A null is never a first use by itself; the record that opens the
-      // vault comes from `pinnedForSignIn`.
+      // vault comes from `pinnedForSignIn`. Accepted residual: if the e-mail was changed on
+      // another device, this hint is null, so a KSF downgrade is caught only at
+      // `unlock_password`, after Argon2id has run; it is still refused there.
       pinHintForEmail: loadPinned,
       savePinned,
       forgetPinned,

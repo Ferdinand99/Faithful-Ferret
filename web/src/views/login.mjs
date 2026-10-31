@@ -102,7 +102,7 @@ export function loginView(deps) {
     const yes = choice(t, { id: "sk-yes", role: "sk-yes", label: "account.sk.yes", type: "radio", name: "sk-answer", value: "yes" });
     const no = choice(t, { id: "sk-no", role: "sk-no", label: "account.sk.no", type: "radio", name: "sk-answer", value: "no" });
     const question = el("fieldset", { class: "sk-question", "data-role": "sk-question" }, el("legend", null, t("account.sk.question")), yes.row, no.row);
-    const code = field(t, { id: "sk-code", role: "sk-code", label: "account.sk.code", autocomplete: "off", required: false, help: "account.sk.needed" });
+    const code = field(t, { id: "sk-code", role: "sk-code", label: "account.sk.code", autocomplete: "off", required: false, help: "account.sk.needed", secret: true });
     const hint = el("p", { class: "notice", role: "note", "data-role": "sk-hint" });
     hint.hidden = true;
     const remembered = el("p", { class: "help", "data-role": "sk-remembered" }, t("account.sk.remembered"));
