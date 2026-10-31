@@ -323,14 +323,19 @@ account's own, or a fixed all-zero id: a select of two valid addresses) and
 loads once, so the source has no branch there; that a compiler turns it into a
 `cmov` is not guaranteed, and `info_server_prelogin_resolve_credential`
 measures it (before the change |t| of 5.6 and 4.6 at 10^6, tau 0.016 and
-0.005, eight calls per measurement). The match in `login_start` stays: it needs
-an always-present record reference, which is an API change
-(`StoredRecord::placeholder()` for unknown and disabled, and the match as a
-`ct_select`), to be decided with the result of
-`info_server_login_start_lookup_only`. The branch is accepted as long as the
-caller's own lookup on the same bit, which differs by a database round trip,
-dominates it; the endpoint test (§ 4.2: response bytes and delays) has to cover
-that, see R10. The choices after the match are branch-free.
+0.005, eight calls per measurement). The match in `login_start` was the first reading of the quiet run at 10^7
+(known against unknown t = -12.3, known against disabled t = +6.3): its arms
+read different memory (the account's record from the heap, a name without one
+from a static). It is now `stored_for`, the one function that names the kinds
+of lookup; it chooses between two references (the account's record, or a
+stand-in record of the same shape) and two small values, and everything read
+afterwards is read through the chosen reference. `ct/run.sh lookup-asm` (CI,
+x86_64 and arm64) fails if the compiled function has a conditional jump (16
+and 17 lines, none), and `login_start_looks_at_the_kind_of_lookup_in_one_function_only`
+pins that no other code in `login.rs` names a kind or reads `req.lookup`. What
+stays is the caller's own branch on the same bit. The caller's own lookup on the same bit, which differs by a database round trip,
+dominates what is left; the endpoint test (§ 4.2: response bytes and delays) has to cover
+that, see R10. The choices after it are branch-free.
 `server_prelogin_known_vs_unknown` times the rest of the pre-login answer (the
 made-up answer is always computed, the real or made-up profile and hint are
 chosen by a flag with `ct_select_u8`) and is gated.
