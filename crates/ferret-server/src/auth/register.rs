@@ -72,8 +72,8 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
 use vole_kit::auth::pages::{SetupTokenError, check_setup_token};
-use vole_kit::auth::session::required_setup_token;
 use vole_kit::auth::session::SessionClaims;
+use vole_kit::auth::session::required_setup_token;
 use vole_kit::auth::{reauth, username_problem};
 use vole_kit::db::{settings, users};
 

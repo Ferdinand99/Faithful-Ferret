@@ -444,7 +444,10 @@ async fn start_refuses_what_is_malformed_with_the_code_of_the_field() {
 #[tokio::test]
 async fn an_oversized_body_is_413_too_large_on_both_steps() {
     let app = app().await;
-    for path in ["/api/auth/opaque/login/start", "/api/auth/opaque/login/finish"] {
+    for path in [
+        "/api/auth/opaque/login/start",
+        "/api/auth/opaque/login/finish",
+    ] {
         let raw = Request::builder()
             .method("POST")
             .uri(path)

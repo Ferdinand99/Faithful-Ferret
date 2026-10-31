@@ -442,7 +442,10 @@ fn the_kit_is_shown_only_the_last_forwarded_for_line() {
 
     // One line, or none, is passed on untouched.
     let mut one = HeaderMap::new();
-    one.append("x-forwarded-for", HeaderValue::from_static("1.2.3.4, 5.6.7.8"));
+    one.append(
+        "x-forwarded-for",
+        HeaderValue::from_static("1.2.3.4, 5.6.7.8"),
+    );
     assert_eq!(&*last_forwarded_line(&one), &one);
     let none = HeaderMap::new();
     assert_eq!(&*last_forwarded_line(&none), &none);
