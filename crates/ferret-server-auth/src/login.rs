@@ -473,12 +473,12 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
 /// What the lookup of the name gave, unpacked for the selection: the real
 /// side of every choice between a real and a made-up value. Zero for a name
 /// without an account.
-struct Stored<'a> {
+pub(crate) struct Stored<'a> {
     /// 1 for an account that may log in, else 0.
-    active: u8,
-    record: &'a [u8],
-    ksf_profile: u8,
-    sk_hint: u8,
+    pub(crate) active: u8,
+    pub(crate) record: &'a [u8],
+    pub(crate) ksf_profile: u8,
+    pub(crate) sk_hint: u8,
 }
 
 /// Unpacks the lookup. This is the one place that looks at which kind of
