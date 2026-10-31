@@ -241,7 +241,7 @@ const fn build_stand_in() -> [u8; RECORD_LEN] {
     let mut index = 0;
     while index < STAND_IN_POINT.len() {
         bytes[index] = STAND_IN_POINT[index];
-        index += 1;
+        index = index.saturating_add(1);
     }
     bytes
 }
