@@ -732,19 +732,21 @@ async fn two_finishes_at_once_let_exactly_one_through() {
         let (_, second) = prepared(&app, &format!("two{round}@example.test")).await;
         assert_eq!(count_registrations(&app).await, 2);
         let (a, b) = tokio::join!(call(&app, FINISH, &first), call(&app, FINISH, &second));
-        let mut statuses = [a.status, b.status];
-        statuses.sort();
-        assert_eq!(
-            statuses,
-            [StatusCode::CREATED, StatusCode::CONFLICT],
-            "round {round}"
-        );
-        let loser = if a.status == StatusCode::CONFLICT {
-            &a
+        // The loser either took its waiting row before the winner committed
+        // (and finds the server closed, 409), or finds the row already removed
+        // by the winner's transaction (and is denied, 401).
+        let (winner, loser) = if a.status == StatusCode::CREATED {
+            (&a, &b)
         } else {
-            &b
+            (&b, &a)
         };
-        assert_eq!(error_of(loser), "registration_closed");
+        assert_eq!(winner.status, StatusCode::CREATED, "round {round}");
+        let loser_answer = (loser.status, error_of(loser));
+        assert!(
+            loser_answer == (StatusCode::CONFLICT, "registration_closed".to_string())
+                || loser_answer == (StatusCode::UNAUTHORIZED, "denied".to_string()),
+            "round {round}: {loser_answer:?}"
+        );
         assert_eq!(
             counts(&app).await,
             vec![1, 1, 1, 2, 1, 1, 1],
