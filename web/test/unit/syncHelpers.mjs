@@ -19,6 +19,9 @@ export async function until(condition, what = "condition") {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/** The revision the engine shows for an item, which is what an edit made from that screen names (0 for an unknown id). */
+export const currentRev = (engine, id) => engine.list().find((item) => item.id === id)?.rev ?? 0;
+
 /** Lets the engine's pending work run for a few turns. */
 export async function settle(turns = 40) {
   for (let turn = 0; turn < turns; turn += 1) await new Promise((resolve) => setImmediate(resolve));
@@ -227,9 +230,14 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     async item_view(handle) {
       const open = handles.get(handle);
       if (!open) throw new FakeFerretError("invalid_handle");
-      const { item_type, name, urls = [], favorite = false, modified = 0 } = open.body;
+      const { item_type, name, urls = [], favorite = false, modified = 0, fields = [] } = open.body;
+      // Like the core: a secret kind has no value in the view.
+      const shown = fields.map((f) => ({
+        id: f.id, label: f.label ?? "", kind: f.kind ?? "text",
+        value: ["password", "hidden"].includes(f.kind) ? null : (f.value ?? ""),
+      }));
       return {
-        item_type, name, fields: [], urls: urls.map((url) => ({ url, matching: "domain" })),
+        item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
         has_totp: false, passkey: null, has_notes: false, created: modified, modified, favorite,
         device: null, read_only: open.body.read_only === true,
       };
