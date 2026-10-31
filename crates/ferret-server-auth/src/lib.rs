@@ -130,11 +130,11 @@ pub use login::{
     LoginVerified, login_finish, login_start,
 };
 pub use name::{LOGIN_NAME_MAX_BYTES, NormalizedLoginName, normalize_login_name};
+#[cfg(feature = "test-support")]
+pub use prelogin::resolve_credential;
 pub use prelogin::{
     PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, prelogin_answer,
 };
-#[cfg(feature = "test-support")]
-pub use prelogin::resolve_credential;
 pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
 pub use registration::{
     RegisterStartRequest, RegistrationAuthority, register_finish, register_start,

@@ -12,9 +12,10 @@ log is `[ok]`. The limit is |t| < 4.5 at 10^7 measurements from the start (a
 bench over it fails without a rerun). Every line of the output that exists is
 below.
 
-- commit: `29fbc6b` (the head of the pull request when the run started)
+- commit: `29fbc6b` (the head of the pull request when the run started; the working copy had a local change to `scripts/lanbox.sh` only, which is not part of the code under test)
 - exit status of the run: not captured
 - measurements per bench: 10000000
+- profile: `opt-level = "s"` (the profile of `ct/dudect`); the server ships at 3, see `ct/TRIAGE.md`
 - load: 0.92 (1 minute) at the start; at the end not captured
 
 ## Native

@@ -26,10 +26,10 @@
 
 use std::collections::HashSet;
 
-use ferret_core::opaque::server_suite::REGISTRATION_RECORD_LEN;
 #[cfg(feature = "test-support")]
 use ferret_core::AccountId;
 use ferret_core::KsfProfile;
+use ferret_core::opaque::server_suite::REGISTRATION_RECORD_LEN;
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};

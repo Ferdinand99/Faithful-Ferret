@@ -392,7 +392,7 @@ linked, LTO `dudect` binary at both levels (both run in CI), and the dudect
 build of `CT_ONLY=server` defaults to `opt-level = 3` (`CT_OPT_LEVEL` sets
 another), with the LTO, codegen-units, panic and overflow-check settings of the
 server's profile. The numbers of 29fbc6b are not at that level; the release run
-repeats them there (the command is in the report).
+repeats them there (`CT_ONLY=server scripts/lanbox-ct.sh dudect-native` now builds at 3).
 
 ### S-3. Two pools of inputs gave the classes a different mean
 
@@ -650,10 +650,10 @@ with its reason, and each is repeated in the report.
   build the lookup. Its record parse was one of them (`finish_lookup` parsed the
   record only for an active account); it was fixed in #66, and every lookup now
   parses one record, the real one on one path and a constant on the other, so
-  the endpoint test should still look at the difference between those two. The
-  endpoint test owner must see these two. `prelogin_answer` has no caller yet
+  the endpoint test should still look at the difference between those two.
+  `prelogin_answer` has no caller yet
   (the server has no pre-login route), so the endpoint test of that route is
-  still to be written.  What the library leaves on the account bit is
+  still to be written. What the library leaves on the account bit is
   the read of the caller's own record and id (one object against a pool,
   `fixed_vs_pool` +1.76) and `info_server_prelogin_resolve_credential`
   (+5.28, not gated, not on a shipped path). The compares of the credential and
