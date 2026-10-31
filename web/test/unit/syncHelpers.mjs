@@ -19,6 +19,9 @@ export async function until(condition, what = "condition") {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/** The revision the engine shows for an item, which is what an edit made from that screen names (0 for an unknown id). */
+export const currentRev = (engine, id) => engine.list().find((item) => item.id === id)?.rev ?? 0;
+
 /** Lets the engine's pending work run for a few turns. */
 export async function settle(turns = 40) {
   for (let turn = 0; turn < turns; turn += 1) await new Promise((resolve) => setImmediate(resolve));

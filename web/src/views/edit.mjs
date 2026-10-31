@@ -228,7 +228,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
         // The form shows what this device had when it opened. If another device's change has arrived
         // since, saving would replace it without a word: refuse, and let the user look again.
         const now = engine.list().find((/** @type {any} */ i) => i.id === id);
-        if (!now || (baseRev !== undefined && now.rev !== baseRev)) {
+        if (!now || baseRev === undefined || now.rev !== baseRev) {
           showError(describeError(t, { code: "item_changed" }));
           return;
         }

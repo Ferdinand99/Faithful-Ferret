@@ -9,6 +9,7 @@ import itemRoute from "../../src/routes/item.route.mjs";
 import listRoute from "../../src/routes/list.route.mjs";
 import newRoute from "../../src/routes/new.route.mjs";
 import unlockRoute from "../../src/routes/unlock.route.mjs";
+import { enterVault } from "../../src/views/shell.mjs";
 import { all, click, fakeClient, fakeClock, fakeEngine, fakePage, fakeSession, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
@@ -17,6 +18,8 @@ const ENTRY = {
   quarantined: false, missingOnServer: false, blocked: false, blockedReason: null, readOnly: false,
 };
 const VIEW = { item_type: "login", name: "Bank", fields: [], urls: [], has_notes: false, favorite: false, read_only: false };
+
+const enterVaultFor = (r) => enterVault(r.ctx("/items"));
 
 /** A page context over fakes. `engineNow` is what `sync.current()` answers. */
 function rig({ open = true, engineNow = "engine", startFails = false, info } = {}) {
@@ -55,7 +58,7 @@ test("a_locked_vault_shows_the_unlock_screen_for_every_vault_route", async () =>
         assert.ok(find(node, "unlock"), route.path);
         assert.equal(find(node, "shell"), null, "no vault frame around a locked vault");
         assert.equal(find(node, "list"), null);
-        assert.equal(r.session.attached, r.sync, "the sync service is handed to the session");
+        assert.equal(r.session.attached, null, "the routes do not replace the seam the lock service put on the session");
       } finally {
         r.done();
       }
@@ -249,6 +252,23 @@ test("the_idle_lock_runs_even_when_the_sync_engine_cannot_start", async () => {
       assert.ok(find(node, "unlock-host"), "by the unlock screen");
     } finally {
       lock.stop();
+    }
+  });
+});
+
+test("a_frame_built_after_the_vault_locked_is_the_unlock_screen", async () => {
+  await withDom(async () => {
+    const r = rig();
+    try {
+      // The route is loading when the lock lands; its page is built after the session has locked.
+      const vault = await enterVaultFor(r);
+      r.session.isOpen = false;
+      const node = vault.page(document.createElement("section"));
+      assert.equal(find(node, "shell"), null, "no frame with a Lock button");
+      assert.ok(find(node, "unlock-host"));
+      await settle(); // the unlock screen fills itself in
+    } finally {
+      r.done();
     }
   });
 });

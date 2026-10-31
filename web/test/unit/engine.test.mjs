@@ -9,7 +9,7 @@ import { cache } from "../../src/store/cache.mjs";
 import { createSyncEngine, MANIFEST_ID, SyncError } from "../../src/sync/engine.mjs";
 import { freshStore, scope } from "./idbHelpers.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, settle, until,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, FakeTimers, Model, settle, until,
 } from "./syncHelpers.mjs";
 
 const MARKER = "Secret Bank Login";
@@ -50,7 +50,7 @@ test("create_update_delete_roundtrip_against_the_model", async () => {
   assert.equal(item.rev, 1);
   await until(() => d.engine.list()[0].pending === false, "no longer pending");
 
-  await d.engine.update(id, { name: "Renamed" });
+  await d.engine.update(id, { name: "Renamed" }, currentRev(d.engine, id));
   await until(() => d.model.items.get(id)?.rev === 2, "the server has rev 2");
   await until(async () => (await rowsOf(d)).some((r) => r.rev === 2), "rev 2 in the cache");
   [item] = d.engine.list();
@@ -95,7 +95,7 @@ test("second_engine_sees_the_change_within_one_poll", async () => {
   await until(() => b.engine.list().length === 1, "B sees the item");
   assert.equal(b.engine.list()[0].name, MARKER);
 
-  await a.engine.update(id, { name: "Changed on A" });
+  await a.engine.update(id, { name: "Changed on A" }, currentRev(a.engine, id));
   await until(() => model.items.get(id).rev === 2);
   b.timers.advance(5_000);
   await until(() => b.engine.list()[0].name === "Changed on A", "B sees the edit");
@@ -141,7 +141,7 @@ test("row_with_invalid_tag_is_not_accepted_and_marks_damaged", async () => {
   assert.deepEqual((await rowsOf(d)).map((r) => r.itemId), [ID_B], "the bad row is not cached");
   assert.ok(warnings(d).some((w) => w.code === "row_damaged" && w.id === ID_A));
   await assert.rejects(d.engine.open(ID_A), (e) => e.code === "damaged");
-  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "damaged");
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }, currentRev(d.engine, ID_A)), (e) => e.code === "damaged");
 
   // A good version first, then a bad newer row: the good one stays.
   model.set(ID_B, { rev: 2, ...client.wireRow(ID_B, 2, { item_type: "login", name: "Newer" }), tag: b64u.encode(new Uint8Array(32)) });
@@ -206,7 +206,7 @@ test("tombstone_without_valid_tag_is_quarantined_and_the_local_copy_is_kept", as
   const rows = await rowsOf(d);
   assert.deepEqual(rows.map((r) => [r.rev, r.deleted]), [[1, false]], "the cache still has the live row");
   assert.equal((await d.engine.open(ID_A)).view.name, "Keep me");
-  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "quarantined");
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }, currentRev(d.engine, ID_A)), (e) => e.code === "quarantined");
   await assert.rejects(d.engine.remove(ID_A), (e) => e.code === "quarantined");
   d.engine.stop();
 
@@ -266,7 +266,7 @@ test("manifest_row_is_skipped_in_list_but_kept_in_cache", async () => {
   assert.ok(rows.some((r) => r.itemId === MANIFEST_ID && r.rev === 1), "kept in the cache");
   assert.equal(d.client.vault.calls.some((c) => c[1] === MANIFEST_ID), false, "never opened as an item");
   await assert.rejects(d.engine.open(MANIFEST_ID), (e) => e.code === "not_found");
-  await assert.rejects(d.engine.update(MANIFEST_ID, { name: "x" }), (e) => e.code === "not_found");
+  await assert.rejects(d.engine.update(MANIFEST_ID, { name: "x" }, currentRev(d.engine, MANIFEST_ID)), (e) => e.code === "not_found");
   d.engine.stop();
 });
 
@@ -276,7 +276,7 @@ test("cache_never_receives_plaintext", async () => {
   await d.engine.start();
   const id = await d.engine.create(DRAFT);
   await until(() => model.items.has(id));
-  await d.engine.update(id, { name: `${MARKER} 2`, notes: "TopSecretNotes" });
+  await d.engine.update(id, { name: `${MARKER} 2`, notes: "TopSecretNotes" }, currentRev(d.engine, id));
   await until(() => model.items.get(id).rev === 2);
   await d.engine.syncNow();
   await until(async () => (await rowsOf(d)).some((r) => r.rev === 2));
@@ -323,7 +323,7 @@ test("writes_to_different_items_do_not_block_each_other", async () => {
   await until(async () => model.items.has(a) && (await d.store.outbox.all(d.store.database.store, scope())).length === 0, "A is stored on the server");
   // From now on writes of item A fail three times; B must go through regardless.
   d.api.faults.push(...Array.from({ length: 3 }, () => ({ kind: "network", only: a })));
-  await d.engine.update(a, { name: "A2" });
+  await d.engine.update(a, { name: "A2" }, currentRev(d.engine, a));
   await until(() => d.timers.pending >= 1, "A waits for its retry");
   const b = await d.engine.create({ item_type: "login", name: "B" });
   await until(() => model.items.has(b), "B reaches the server while A waits");
@@ -535,7 +535,7 @@ test("discardMissing_removes_the_item_with_its_row_and_its_upload", async () => 
   model.minValidSince = model.seq;
   await d.engine.syncNow();
   await until(() => d.engine.list().find((i) => i.id === ID_A)?.blocked === true);
-  await assert.rejects(d.engine.update(ID_A, { name: "x" }), (e) => e.code === "blocked");
+  await assert.rejects(d.engine.update(ID_A, { name: "x" }, currentRev(d.engine, ID_A)), (e) => e.code === "blocked");
   await assert.rejects(d.engine.discardMissing(ID_B), (e) => e.code === "not_found");
 
   await d.engine.discardMissing(ID_A);
@@ -668,7 +668,7 @@ test("a_409_on_a_deleted_item_is_checked_through_the_feed", async () => {
   await d.engine.start();
   // Another device deletes it (a good tombstone) before this one writes.
   model.set(ID_A, { rev: 2, deleted: true, tomb: client.wireTomb(ID_A, 2) });
-  await d.engine.update(ID_A, { name: "Late edit" });
+  await d.engine.update(ID_A, { name: "Late edit" }, currentRev(d.engine, ID_A));
   await until(() => d.events.error.some((e) => e.code === "conflict"), "the conflict");
   const conflict = d.events.error.find((e) => e.code === "conflict");
   assert.deepEqual([conflict.id, conflict.currentRev, conflict.deleted], [ID_A, 2, true]);
@@ -682,7 +682,7 @@ test("a_409_on_a_deleted_item_is_checked_through_the_feed", async () => {
   const e = await device({ model: model2, client });
   await e.engine.start();
   model2.set(ID_B, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(1)) });
-  await e.engine.update(ID_B, { name: "Late edit" });
+  await e.engine.update(ID_B, { name: "Late edit" }, currentRev(e.engine, ID_B));
   await until(() => e.events.error.some((x) => x.code === "conflict"));
   await until(() => e.engine.list()[0]?.quarantined === true, "quarantined");
   e.engine.stop();
@@ -692,7 +692,7 @@ test("the_engine_is_not_given_a_wrong_id_or_a_second_start", async () => {
   const d = await device({ model: new Model() });
   await d.engine.start();
   await assert.rejects(d.engine.start(), (e) => e.code === "invalid_state");
-  await assert.rejects(d.engine.update("nothex", { name: "x" }), (e) => e.code === "not_found");
+  await assert.rejects(d.engine.update("nothex", { name: "x" }, currentRev(d.engine, "nothex")), (e) => e.code === "not_found");
   await assert.rejects(d.engine.remove(ID_A), (e) => e.code === "not_found");
   assert.throws(() => d.engine.on("nothing", () => {}), TypeError);
   const off = d.engine.on("changed", () => assert.fail("removed listeners are not called"));
@@ -744,7 +744,7 @@ test("a_reuploaded_item_accepts_its_own_writes_below_the_floor_and_drops_the_mar
   await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the mark is saved as reuploaded");
   assert.equal((await marks())[ID_B].rev, 3, "the old floor is saved");
   for (const rev of [2, 3, 4]) {
-    await d.engine.update(ID_B, { name: `Mine ${rev}` });
+    await d.engine.update(ID_B, { name: `Mine ${rev}` }, currentRev(d.engine, ID_B));
     await until(() => d.model.items.get(ID_B).rev === rev && itemB(d).rev === rev && !itemB(d).pending, `rev ${rev}`);
     assert.equal(itemB(d).name, `Mine ${rev}`);
   }
@@ -815,7 +815,7 @@ test("a_lock_during_a_mark_save_never_wipes_the_saved_marks", async () => {
     if (slow) await gate;
     return itemView(handle);
   };
-  await d.engine.update(id, { name: "Late edit" });
+  await d.engine.update(id, { name: "Late edit" }, currentRev(d.engine, id));
   await until(() => d.engine.list().find((i) => i.id === id)?.blocked === true, "the refusal");
   // The user discards the refused draft; the worker is slow to describe the item, and the lock lands in that wait.
   slow = true;
@@ -901,7 +901,7 @@ const marksOf = async (d) => {
   return (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
 };
 const editB = async (d, name, rev) => {
-  await d.engine.update(ID_B, { name });
+  await d.engine.update(ID_B, { name }, currentRev(d.engine, ID_B));
   await until(() => d.model.items.get(ID_B).rev === rev && itemB(d)?.rev === rev && !itemB(d).pending, `rev ${rev}`);
   await until(async () => (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === rev, `rev ${rev} cached`);
 };
@@ -967,7 +967,7 @@ test("a_failed_save_of_the_digest_list_stops_the_write", async () => {
   await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded", "the mark is saved");
   const sent = d.api.puts.length;
   d.store.failSet = 1;
-  await assert.rejects(d.engine.update(ID_B, { name: "Not queued" }), /disk is full/);
+  await assert.rejects(d.engine.update(ID_B, { name: "Not queued" }, currentRev(d.engine, ID_B)), /disk is full/);
   assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
   assert.equal(d.api.puts.length, sent, "nothing was sent");
   assert.equal(itemB(d).name, "Hidden B");
@@ -1064,7 +1064,7 @@ test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => 
   await copyIsBack(d);
   await editB(d, "Mine 2", 2);
   d.store.failPutRows = 1;
-  await d.engine.update(ID_B, { name: "Mine 3" }); // its row reaches the old floor and would end the mark
+  await d.engine.update(ID_B, { name: "Mine 3" }, currentRev(d.engine, ID_B)); // its row reaches the old floor and would end the mark
   await until(() => d.events.state.some((s) => s.kind === "failed"), "the cache write fails");
   // Another flag save follows (an unrelated item is refused); it must still carry the mark of B.
   d.api.faults.push({ kind: "status", status: 413, code: "too_large" });
@@ -1128,7 +1128,7 @@ test("a_write_waits_for_the_save_of_its_digest_that_another_save_has_taken_over"
   let releaseOpen;
   let releaseSet;
   d.store.holdOpen = new Promise((resolve) => { releaseOpen = resolve; });
-  const update = d.engine.update(ID_B, { name: "Mine 2" }); // stops in `queue`, after it has noted its digest
+  const update = d.engine.update(ID_B, { name: "Mine 2" }, currentRev(d.engine, ID_B)); // stops in `queue`, after it has noted its digest
   await settle(10);
   d.store.holdSet = new Promise((resolve) => { releaseSet = resolve; });
   const pass = d.engine.syncNow(); // its save takes the changed marks and is slow
@@ -1151,7 +1151,7 @@ test("an_edit_made_from_an_older_revision_is_refused_and_nothing_is_written", as
   await d.engine.start();
   const id = await d.engine.create(DRAFT);
   await until(() => d.model.items.get(id)?.rev === 1, "the server has rev 1");
-  await d.engine.update(id, { name: "Second" });
+  await d.engine.update(id, { name: "Second" }, currentRev(d.engine, id));
   await until(() => d.model.items.get(id)?.rev === 2, "the server has rev 2");
   await assert.rejects(() => d.engine.update(id, { name: "From a stale form" }, 1), { code: "item_changed" });
   await settle();
@@ -1159,5 +1159,20 @@ test("an_edit_made_from_an_older_revision_is_refused_and_nothing_is_written", as
   assert.equal(d.engine.list()[0].name, "Second");
   await d.engine.update(id, { name: "Third" }, 2);
   await until(() => d.model.items.get(id)?.rev === 3, "the matching revision is accepted");
+  d.engine.stop();
+});
+
+test("an_edit_without_the_revision_it_was_made_from_is_refused_and_writes_nothing", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  const id = await d.engine.create(DRAFT);
+  await until(() => d.model.items.get(id)?.rev === 1, "the server has rev 1");
+  for (const rev of [undefined, null, "1", 1.5, Number.NaN]) {
+    await assert.rejects(() => d.engine.update(id, { name: "No base" }, rev), TypeError, String(rev));
+  }
+  await assert.rejects(() => d.engine.update(id, { name: "No base" }), TypeError);
+  await settle();
+  assert.equal(d.model.items.get(id).rev, 1, "no write went out");
+  assert.equal(d.engine.list()[0].name, MARKER);
   d.engine.stop();
 });

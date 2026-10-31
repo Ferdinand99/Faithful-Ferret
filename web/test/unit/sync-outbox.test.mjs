@@ -10,7 +10,7 @@ import { backoffMs, classify, createOutboxRunner, itemPath, MAX_BACKOFF_MS } fro
 import { createSyncEngine } from "../../src/sync/engine.mjs";
 import { freshStore, scope } from "./idbHelpers.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, settle, until,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, FakeTimers, Model, settle, until,
 } from "./syncHelpers.mjs";
 
 const hex = (n) => n.toString(16).padStart(32, "0");
@@ -215,10 +215,10 @@ test("409_keeps_the_draft_and_does_not_overwrite", async () => {
   await until(() => b.engine.list().length === 1);
 
   // B edits and the server takes it; A, which has not polled, edits from rev 1.
-  await b.engine.update(id, { name: "From B" });
+  await b.engine.update(id, { name: "From B" }, currentRev(b.engine, id));
   await until(() => model.items.get(id).rev === 2);
   const serverRow = { ...model.items.get(id) };
-  await a.engine.update(id, { name: "From A" });
+  await a.engine.update(id, { name: "From A" }, currentRev(a.engine, id));
   await until(() => a.events.error.length === 1, "the conflict event");
   assert.equal(a.events.error[0].code, "conflict");
   assert.equal(a.events.error[0].id, id);
@@ -310,10 +310,10 @@ test("an_edit_after_a_409_is_refused_and_the_block_survives_a_restart_and_discar
   await until(() => model.items.get(id)?.rev === 1);
   b.timers.advance(5_000);
   await until(() => b.engine.list().length === 1);
-  await b.engine.update(id, { name: "From B" });
+  await b.engine.update(id, { name: "From B" }, currentRev(b.engine, id));
   await until(() => model.items.get(id).rev === 2);
 
-  await a.engine.update(id, { name: "From A" });
+  await a.engine.update(id, { name: "From A" }, currentRev(a.engine, id));
   await until(() => a.events.error.some((e) => e.code === "conflict"), "the conflict");
   // The server's version is what is on screen, with the block shown; the draft stays in the outbox.
   await until(() => a.engine.list()[0].name === "From B" && a.engine.list()[0].rev === 2, "the server's version is shown");
@@ -322,7 +322,7 @@ test("an_edit_after_a_409_is_refused_and_the_block_survives_a_restart_and_discar
   assert.equal((await stored(a)).length, 1);
 
   // A new edit is refused with a clear error, not queued behind the refused write.
-  await assert.rejects(a.engine.update(id, { name: "Again" }), (e) => e.code === "blocked" && e.reason === "conflict");
+  await assert.rejects(a.engine.update(id, { name: "Again" }, currentRev(a.engine, id)), (e) => e.code === "blocked" && e.reason === "conflict");
   await assert.rejects(a.engine.remove(id), (e) => e.code === "blocked");
   assert.equal((await stored(a)).length, 1);
   a.engine.stop();
@@ -336,7 +336,7 @@ test("an_edit_after_a_409_is_refused_and_the_block_survives_a_restart_and_discar
   const [back] = again.engine.list();
   assert.deepEqual([back.blocked, back.blockedReason, back.name, back.rev], [true, "conflict", "From B", 2]);
   assert.equal(again.api.puts.length, 0, "a refused write is not sent again");
-  await assert.rejects(again.engine.update(id, { name: "Again" }), (e) => e.code === "blocked");
+  await assert.rejects(again.engine.update(id, { name: "Again" }, currentRev(again.engine, id)), (e) => e.code === "blocked");
   await assert.rejects(again.engine.discard(ID_NONE), (e) => e.code === "not_found");
 
   // discard drops the draft and the block; the item can be edited again, from the server's version.
@@ -344,7 +344,7 @@ test("an_edit_after_a_409_is_refused_and_the_block_survives_a_restart_and_discar
   assert.equal((await stored(again)).length, 0);
   const [free] = again.engine.list();
   assert.deepEqual([free.blocked, free.blockedReason, free.pending, free.name], [false, null, false, "From B"]);
-  await again.engine.update(id, { name: "After discard" });
+  await again.engine.update(id, { name: "After discard" }, currentRev(again.engine, id));
   await until(() => model.items.get(id).rev === 3, "the new edit is sent");
   assert.equal(JSON.parse(model.writes.at(-1).body).base_rev, 2);
   again.engine.stop();
@@ -416,15 +416,15 @@ test("a_failed_store_during_discard_leaves_the_item_blocked_and_nothing_is_sent_
   await until(() => model.items.get(id)?.rev === 1);
   b.timers.advance(5_000);
   await until(() => b.engine.list().length === 1);
-  await b.engine.update(id, { name: "From B" });
+  await b.engine.update(id, { name: "From B" }, currentRev(b.engine, id));
   await until(() => model.items.get(id).rev === 2);
-  await a.engine.update(id, { name: "From A" });
+  await a.engine.update(id, { name: "From A" }, currentRev(a.engine, id));
   await until(() => a.engine.list()[0]?.blocked === true && a.engine.list()[0].name === "From B");
 
   a.store.failRemove = 1;
   await assert.rejects(a.engine.discard(id), /disk is full/);
   assert.equal(a.engine.list()[0].blocked, true, "the block is held");
-  await assert.rejects(a.engine.update(id, { name: "Again" }), (e) => e.code === "blocked");
+  await assert.rejects(a.engine.update(id, { name: "Again" }, currentRev(a.engine, id)), (e) => e.code === "blocked");
   assert.equal((await stored(a)).length, 1, "the entry is still stored");
   a.engine.stop();
 

@@ -290,3 +290,28 @@ test("a_frame_that_left_the_page_is_wiped_when_the_next_one_is_built", async () 
     assert.ok(!textOf(first).includes("pw-SECRET-1"), "a screen that is gone does not keep a revealed secret");
   });
 });
+
+test("a_lock_never_misses_the_frame_on_the_page_even_after_many_stale_frames", async () => {
+  await withDom(async () => {
+    const id = "11".repeat(16);
+    const engine = fakeEngine({
+      items: [{ id, name: "Bank", type: "login", favorite: false, urls: [], username: "", rev: 1, pending: false, damaged: false, quarantined: false, missingOnServer: false, blocked: false, blockedReason: null, readOnly: false }],
+      views: { [id]: { item_type: "login", name: "Bank", fields: [], urls: [], has_notes: false, read_only: false } },
+    });
+    const session = fakeSession({ client: { locked: 0 } });
+    const make = (content, scope) => shellView({
+      t, engine, session, content, scope, lock: async () => {}, touch: () => true,
+      onLocked: () => unlockScreen({ session, t, go() {}, onUnlocked() {} }),
+    });
+    const onPage = make(document.createElement("section"), createWipeScope());
+    onPage.isConnected = true;
+    // More late frames of superseded routes than the set holds, all built after the one on the page.
+    for (let i = 0; i < 40; i += 1) {
+      const stale = make(document.createElement("section"), createWipeScope());
+      stale.isConnected = false;
+    }
+    await session.lock();
+    await settle();
+    assert.ok(find(onPage, "unlock-host") || find(onPage, "unlock"), "the frame on the page shows the unlock screen");
+  });
+});

@@ -243,3 +243,16 @@ test("an_item_that_vanished_while_the_form_was_open_is_not_saved", async () => {
     assert.ok(textOf(find(root, "error")).includes("vault.error.item_changed"));
   });
 });
+
+test("an_item_without_a_summary_when_the_form_opened_is_not_saved_later", async () => {
+  await withDom(async () => {
+    // The engine had no summary of the item when the form opened (so there is no base revision).
+    const engine = fakeEngine({ items: [], views: { [ID]: { ...VIEW } } });
+    const root = await editView({ engine, client: fakeClient(engine), id: ID, t });
+    engine.items.push({ ...ENTRY, rev: 5 }); // the item shows up before Save
+    type(root, "name", "x");
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter((c) => c[0] !== "open"), [], "nothing is sent without a base revision");
+    assert.ok(textOf(find(root, "error")).includes("vault.error.item_changed"));
+  });
+});

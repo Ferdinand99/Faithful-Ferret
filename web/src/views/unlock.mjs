@@ -9,38 +9,7 @@
 // seconds, and the form says so.
 import { el, mount } from "../dom.mjs";
 import { codeOf } from "./common.mjs";
-
-/**
- * The codes that the sign-in pages have an error text for.
- * One set of texts serves both screens, so a warning about the server's answer
- * (a pinned key that does not match, a changed list of unlock methods) reads
- * the same here as on the sign-in page.
- */
-export const ACCOUNT_ERRORS = Object.freeze([
-  "bad_response", "checksum", "decrypt", "denied", "epoch_mismatch", "forbidden", "forbidden_origin", "ids_changed",
-  "input_forbidden_character", "input_not_utf8", "input_too_long", "input_too_short", "insecure_transport",
-  "kdf_profile_downgrade", "kdf_profile_unknown", "method_list_changed", "method_list_missing", "method_list_unknown",
-  "methods_invalid", "network", "password_required", "pin_save_failed", "pinned_account_id", "pinned_account_mismatch",
-  "pinned_auth_key", "pinned_epoch_downgrade", "pinned_floor_downgrade", "pinned_floor_missing",
-  "pinned_identity_changed", "pinned_kek_generation", "pinned_profile_downgrade", "pinned_server_key",
-  "pinned_server_key_changed", "pinned_server_url", "pinned_sk_bit", "pinned_vault_id", "pinned_vk_epoch",
-  "profile_rejected", "session_ended", "sk_answer_required", "sk_required", "throttled", "two_factor_unsupported",
-  "unauthorized", "unknown", "worker_failed",
-]);
-
-/**
- * The text for an error of the unlock call: the sign-in pages' text for the
- * code, or their general one. Nothing the user typed is in it.
- * @param {import("./common.mjs").Translate} t
- * @param {unknown} error
- */
-export function unlockErrorText(t, error) {
-  const code = codeOf(error);
-  let text = t(ACCOUNT_ERRORS.includes(code) ? `account.error.${code}` : "account.error.unknown");
-  const retry = /** @type {any} */ (error)?.retryAfter;
-  if (typeof retry === "number" && retry > 0) text = `${text} ${t("account.error.retry_in", { seconds: retry })}`;
-  return text;
-}
+import { describeError as unlockErrorText } from "./form.mjs";
 
 /**
  * What the unlock screen needs to know, found without asking the server for

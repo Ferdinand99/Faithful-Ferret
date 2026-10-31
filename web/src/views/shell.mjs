@@ -69,7 +69,9 @@ function trackLock(session, screen) {
     }
   }
   while (set.size >= MAX_LIVE) {
-    const oldest = /** @type {LiveScreen} */ (set.values().next().value);
+    // The oldest frame that is not on the page. A frame that is on it is never dropped: a lock must reach it.
+    const oldest = [...set].find((one) => /** @type {any} */ (one.root).isConnected !== true);
+    if (!oldest) break;
     set.delete(oldest);
     oldest.scope?.run();
   }
@@ -185,7 +187,6 @@ export async function enterVault(ctx) {
   const session = services.crypto;
   const sync = services.sync;
   if (!session || !sync) throw new Error("vault: the account session or the sync service is missing");
-  session.attachSync?.(sync);
   const autoLock = autoLockFor(session, sync);
 
   const open = session.current?.() ?? null;
@@ -224,8 +225,11 @@ export async function enterVault(ctx) {
     scope,
     touch,
     /** @param {HTMLElement} content */
-    page: (content) =>
-      shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen }),
+    page: (content) => {
+      // A route that was still loading when the vault locked must not put a frame over the unlock screen.
+      if (!session.current?.()) return lockedScreen();
+      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen });
+    },
   };
 }
 

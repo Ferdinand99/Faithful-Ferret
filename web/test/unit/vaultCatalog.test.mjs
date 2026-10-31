@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACCOUNT_ERRORS } from "../../src/views/unlock.mjs";
+import { KNOWN_ERRORS } from "../../src/views/form.mjs";
 import { web } from "./helpers.mjs";
 
 const read = (lang, name) => JSON.parse(readFileSync(join(web, "src", "locales", lang, `${name}.json`), "utf8"));
@@ -88,7 +88,7 @@ test("the_unlock_screen_uses_the_sign_in_pages_texts_when_those_are_in_the_build
   if (!existsSync(join(web, "src", "locales", "en", "account.json"))) return;
   for (const lang of ["en", "nb"]) {
     const texts = catalog(lang);
-    for (const code of ACCOUNT_ERRORS) assert.ok(`account.error.${code}` in texts, `${lang}: account.error.${code}`);
+    for (const code of KNOWN_ERRORS) assert.ok(`account.error.${code}` in texts, `${lang}: account.error.${code}`);
     assert.ok("account.error.retry_in" in texts);
   }
 });

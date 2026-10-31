@@ -8,7 +8,6 @@ export default {
   load: ({ services, i18n, go }) => {
     const session = services.crypto;
     if (!session) throw new Error("vault: the account session is missing");
-    session.attachSync?.(services.sync);
     if (session.current?.()) {
       go("/items");
       return el("section", { class: "card", role: "status" }, el("p", null, i18n.t("vault.loading")));
