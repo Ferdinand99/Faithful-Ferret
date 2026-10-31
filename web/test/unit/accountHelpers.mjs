@@ -267,9 +267,10 @@ export async function settle(times = 20) {
   for (let i = 0; i < times; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** Waits until `check()` is true. */
-export async function until(check, times = 200) {
-  for (let i = 0; i < times && !check(); i += 1) await new Promise((resolve) => setImmediate(resolve));
+/** Waits until `check()` is true, for at most `ms` milliseconds (a slow machine needs more than a few turns). */
+export async function until(check, ms = 15_000) {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 5));
   if (!check()) throw new Error("until: the condition did not become true");
 }
 
