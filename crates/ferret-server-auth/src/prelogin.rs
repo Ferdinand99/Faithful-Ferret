@@ -164,10 +164,7 @@ pub fn resolve_credential(
 /// The account id to read: the account's own, or `none`. A choice between two
 /// references, with no read before it; see [`resolve_credential`].
 #[inline(never)]
-pub(crate) fn pick_account<'a>(
-    account: Option<&'a AccountId>,
-    none: &'a [u8; 16],
-) -> &'a [u8; 16] {
+pub(crate) fn pick_account<'a>(account: Option<&'a AccountId>, none: &'a [u8; 16]) -> &'a [u8; 16] {
     account.map_or(none, AccountId::as_bytes)
 }
 

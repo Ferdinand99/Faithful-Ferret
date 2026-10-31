@@ -1189,7 +1189,9 @@ fn the_prelogin_answer_has_no_branch_of_its_own() {
     let answer = function_body(&prelogin, "prelogin_answer");
     assert!(answer.contains("stored_for(lookup, placeholder)"));
     assert!(answer.contains("choose_answer(&stored, fake)"));
-    for branch in [" if ", "match ", "?", "&&", "||", " while ", " for ", "loop"] {
+    for branch in [
+        " if ", "match ", "?", "&&", "||", " while ", " for ", "loop",
+    ] {
         assert!(
             !answer.contains(branch),
             "prelogin_answer has `{branch}`: it must not branch"
