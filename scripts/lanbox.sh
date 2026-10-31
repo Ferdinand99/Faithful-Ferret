@@ -23,6 +23,12 @@
 #                       unpacked here, for generated files such as Cargo.lock
 #   FERRET_EXPORT_ALWAYS  set to 1 to export after a failed run too (reports of a
 #                       check that failed are what you want to read)
+#   DEV_RUN             optional run id (lowercase letters, digits and dashes, at
+#                       most 63 characters, starting with a letter or digit). When
+#                       set, the container gets the label dev.run=$DEV_RUN and the
+#                       name ferret-$DEV_RUN-<pid>, so the run shows up in devdash
+#   DEV_TITLE           optional title, added as the label dev.title when DEV_RUN
+#                       is set
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
@@ -44,6 +50,20 @@ for name in ${FERRET_PASS_ENV:-}; do
   fi
   pass_env+=(-e "$name")
 done
+
+dev_args=()
+if [ -n "${DEV_RUN:-}" ]; then
+  # bash's own matcher, so an embedded newline cannot slip past the anchors
+  dev_run_re='^[a-z0-9][a-z0-9-]{0,62}$'
+  if ! (LC_ALL=C; [[ $DEV_RUN =~ $dev_run_re ]]); then
+    echo "lanbox.sh: DEV_RUN must match $dev_run_re" >&2
+    exit 2
+  fi
+  dev_args+=(--label "dev.run=$DEV_RUN" --name "ferret-$DEV_RUN-$$")
+  if [ -n "${DEV_TITLE:-}" ]; then
+    dev_args+=(--label "dev.title=$DEV_TITLE")
+  fi
+fi
 
 hash="$(tr -d '\r' < docker/builder.Dockerfile | sha256sum | cut -c1-12)"
 image="ferret-core-builder:${hash}"
@@ -100,6 +120,7 @@ exit "$rc"'
 
 run=(docker "${docker_args[@]}" run --rm -i
   --label owner=ferret-core
+  "${dev_args[@]}"
   --cpus "$cpus"
   --memory "$memory"
   -e CARGO_BUILD_JOBS="$cpus"
