@@ -79,12 +79,8 @@ const SYNC_ERRORS = new Set([
 
 /** Codes with a text under `vault.error.`. */
 const VAULT_ERRORS = new Set([
-  "clipboard", "decrypt", "denied", "item_changed", "name_required", "network", "password_required", "read_only_schema", "reveal_failed",
-  "session_ended", "sk_answer_required", "sk_required", "stopped", "throttled", "unknown", "worker_failed",
+  "clipboard", "item_changed", "name_required", "read_only_schema", "reveal_failed", "stopped", "unknown", "worker_failed",
 ]);
-
-/** The core and server codes that mean "the server's answer does not match what this device knows". */
-const PIN_CODES = /^(?:pinned_|method_list_|kdf_profile_|epoch_mismatch$)/;
 
 /**
  * The text for an error. Codes are matched against a fixed list; the message
@@ -94,7 +90,6 @@ const PIN_CODES = /^(?:pinned_|method_list_|kdf_profile_|epoch_mismatch$)/;
  */
 export function describeError(t, error) {
   const code = codeOf(error);
-  if (PIN_CODES.test(code) && !SYNC_ERRORS.has(code)) return t("vault.error.pinned");
   if (code === "blocked") {
     const reason = /** @type {any} */ (error)?.reason;
     const why = typeof reason === "string" && SYNC_ERRORS.has(reason) ? ` ${t(`sync.error.${reason}`)}` : "";

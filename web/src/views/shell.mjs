@@ -27,19 +27,53 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {() => HTMLElement} onLocked makes the unlock screen
  */
 
-/** The shell that shows the lock event for each session; one at a time. @type {WeakMap<object, { wipe: (() => void) | null }>} */
-const shells = new WeakMap();
+/**
+ * @typedef {object} LiveScreen a frame (or a notice) that is built and may still be on the page
+ * @property {HTMLElement} root
+ * @property {{ run(): void } | null} scope
+ * @property {() => void} wipe what a lock does to it
+ * @property {boolean} seen it was on the page at some point
+ */
 
-/** @param {any} session @param {() => void} wipe */
-function trackLock(session, wipe) {
-  let slot = shells.get(session);
-  if (!slot) {
-    const made = { wipe: /** @type {(() => void) | null} */ (null) };
-    slot = made;
-    shells.set(session, made);
-    session.onLock?.(() => made.wipe?.());
+/** The screens of each session that a lock must wipe. @type {WeakMap<object, Set<LiveScreen>>} */
+const live = new WeakMap();
+
+/** More screens than this cannot be on the page; the oldest are wiped and forgotten. */
+const MAX_LIVE = 16;
+
+/**
+ * Remembers a screen so that a lock wipes it. Every screen that was built is
+ * kept, not only the newest: a route that finishes late (two quick
+ * navigations) builds its frame after a newer one, and the frame on the page
+ * may be either of them. A screen that was shown and has left the page is
+ * wiped and dropped here, when the next one is built.
+ * @param {any} session @param {LiveScreen} screen
+ */
+function trackLock(session, screen) {
+  let set = live.get(session);
+  if (!set) {
+    const made = /** @type {Set<LiveScreen>} */ (new Set());
+    set = made;
+    live.set(session, made);
+    session.onLock?.(() => {
+      const all = [...made];
+      made.clear();
+      for (const one of all) one.wipe();
+    });
   }
-  slot.wipe = wipe;
+  for (const one of [...set]) {
+    if (/** @type {any} */ (one.root).isConnected === true) one.seen = true;
+    else if (one.seen) {
+      set.delete(one);
+      one.scope?.run();
+    }
+  }
+  while (set.size >= MAX_LIVE) {
+    const oldest = /** @type {LiveScreen} */ (set.values().next().value);
+    set.delete(oldest);
+    oldest.scope?.run();
+  }
+  set.add(screen);
 }
 
 /**
@@ -114,9 +148,11 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   function wipe() {
     scope.run();
     shown.clear();
-    mount(root, onLocked());
+    // A frame that has left the page only needs to be emptied; the one on it gets the unlock screen.
+    if (/** @type {any} */ (root).isConnected === false) mount(root);
+    else mount(root, onLocked());
   }
-  trackLock(session, wipe);
+  trackLock(session, { root, scope, wipe, seen: false });
 
   lockButton.addEventListener("click", async () => {
     await lock();
@@ -157,6 +193,9 @@ export async function enterVault(ctx) {
   const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked });
   if (!open) return { locked: lockedScreen() };
 
+  // An open vault always has an idle lock, whatever else fails below (Spec: Fase 1 section 7.1).
+  if (!autoLock.running()) autoLock.start();
+
   let engine = sync.current();
   if (!engine) {
     try {
@@ -166,14 +205,14 @@ export async function enterVault(ctx) {
     }
   }
   if (!engine) {
+    // The vault stays open and the idle lock is running; the card says sync is down and offers the lock.
     const lockButton = el("button", { type: "button", "data-role": "lock" }, t("vault.lock"));
     lockButton.addEventListener("click", () => void autoLock.lock());
-    return {
-      locked: el("section", { class: "card vault-ui", role: "alert", "data-role": "sync-unavailable" },
-        el("p", null, t("vault.error.sync_unavailable")), lockButton),
-    };
+    const card = el("section", { class: "card vault-ui", role: "alert", "data-role": "sync-unavailable" },
+      el("p", null, t("vault.error.sync_unavailable")), lockButton);
+    trackLock(session, { root: card, scope: null, seen: false, wipe: () => mount(card, lockedScreen()) });
+    return { locked: card };
   }
-  if (!autoLock.running()) autoLock.start();
 
   const scope = createWipeScope();
   const touch = () => autoLock.touch();

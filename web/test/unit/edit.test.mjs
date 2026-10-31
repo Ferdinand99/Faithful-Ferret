@@ -209,3 +209,37 @@ test("an_action_after_the_lock_time_does_not_save", async () => {
     await settle();
   });
 });
+
+test("a_save_after_another_devices_change_arrived_is_refused_and_nothing_is_written", async () => {
+  await withDom(async () => {
+    const { root, engine, moves } = await edit();
+    type(root, "name", "My edit");
+    // The feed delivers a newer version of the item while the form is open.
+    engine.items[0] = { ...engine.items[0], rev: 2, name: "Changed elsewhere" };
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter((c) => c[0] !== "open"), [], "nothing was sent to the engine");
+    assert.equal(find(root, "error").hidden, false);
+    assert.ok(textOf(find(root, "error")).includes("vault.error.item_changed"));
+    assert.equal(find(root, "name").value, "My edit", "what was typed stays");
+    assert.ok(!find(root, "save").disabled, "the form can be used again");
+    assert.deepEqual(moves, []);
+  });
+});
+
+test("a_save_names_the_revision_the_form_was_built_from", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit();
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.expectedRevs, [1], "the engine is told the base revision as well");
+  });
+});
+
+test("an_item_that_vanished_while_the_form_was_open_is_not_saved", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit();
+    engine.items.length = 0;
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter((c) => c[0] !== "open"), []);
+    assert.ok(textOf(find(root, "error")).includes("vault.error.item_changed"));
+  });
+});

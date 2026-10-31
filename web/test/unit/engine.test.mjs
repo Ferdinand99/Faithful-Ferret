@@ -1145,3 +1145,19 @@ test("a_write_waits_for_the_save_of_its_digest_that_another_save_has_taken_over"
   assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local").length, 0);
   d.engine.stop();
 });
+
+test("an_edit_made_from_an_older_revision_is_refused_and_nothing_is_written", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  const id = await d.engine.create(DRAFT);
+  await until(() => d.model.items.get(id)?.rev === 1, "the server has rev 1");
+  await d.engine.update(id, { name: "Second" });
+  await until(() => d.model.items.get(id)?.rev === 2, "the server has rev 2");
+  await assert.rejects(() => d.engine.update(id, { name: "From a stale form" }, 1), { code: "item_changed" });
+  await settle();
+  assert.equal(d.model.items.get(id).rev, 2, "no write went out");
+  assert.equal(d.engine.list()[0].name, "Second");
+  await d.engine.update(id, { name: "Third" }, 2);
+  await until(() => d.model.items.get(id)?.rev === 3, "the matching revision is accepted");
+  d.engine.stop();
+});

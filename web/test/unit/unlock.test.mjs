@@ -52,7 +52,7 @@ test("unlock_asks_for_sk_when_the_device_does_not_remember_it", async () => {
     type(host, "password", PASSWORD);
     await submit(find(host, "unlock-form"));
     assert.deepEqual(session.unlocks, []);
-    assert.ok(textOf(find(host, "error")).includes("vault.error.sk_required"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.sk_required"));
 
     type(host, "password", PASSWORD);
     type(host, "secret-key", ` ${SK} `);
@@ -85,7 +85,7 @@ test("the_core_can_ask_for_the_key_after_the_first_try", async () => {
     type(host, "password", PASSWORD);
     await submit(find(host, "unlock-form"));
     assert.ok(find(host, "secret-key"), "the field appears");
-    assert.ok(textOf(find(host, "error")).includes("vault.error.sk_required"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.sk_required"));
 
     session.unlockError = null;
     type(host, "password", PASSWORD);
@@ -135,7 +135,7 @@ test("a_wrong_password_shows_a_message_and_leaves_nothing_in_the_form", async ()
     type(host, "password", PASSWORD);
     await submit(find(host, "unlock-form"));
     assert.equal(find(host, "error").hidden, false);
-    assert.ok(textOf(find(host, "error")).includes("vault.error.decrypt"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.decrypt"));
     assert.equal(find(host, "password").value, "");
     assert.equal(find(host, "submit").disabled, false, "another try is possible");
     assert.equal(unlocked(), 0);
@@ -152,9 +152,30 @@ test("a_warning_about_the_servers_answer_is_loud_and_not_wrong_password", async 
       type(host, "password", PASSWORD);
       await submit(find(host, "unlock-form"));
       const text = textOf(find(host, "error"));
-      assert.ok(text.includes("vault.error.pinned"), code);
-      assert.ok(!text.includes("vault.error.decrypt"), code);
+      assert.ok(text.includes(`account.error.${code}`), code);
+      assert.ok(!text.includes("account.error.decrypt"), code);
     }
+  });
+});
+
+test("unlock_uses_the_sign_in_pages_texts_for_the_codes_they_know", async () => {
+  await withDom(async () => {
+    for (const code of ["epoch_mismatch", "methods_invalid", "two_factor_unsupported", "ids_changed", "pinned_auth_key", "pin_save_failed"]) {
+      const session = fakeSession();
+      session.unlockError = coded(code);
+      const { host } = await screen(session);
+      type(host, "password", PASSWORD);
+      await submit(find(host, "unlock-form"));
+      assert.ok(textOf(find(host, "error")).includes(`account.error.${code}`), code);
+    }
+    // A code nobody knows gets the general text, never the error's own message.
+    const session = fakeSession();
+    session.unlockError = Object.assign(new Error("typed secret: hunter2"), { code: "brand_new" });
+    const { host } = await screen(session);
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.unknown"));
+    assert.ok(!textOf(host).includes("hunter2"));
   });
 });
 
@@ -183,7 +204,7 @@ test("an_empty_password_is_not_sent", async () => {
     const { host } = await screen(session);
     await submit(find(host, "unlock-form"));
     assert.deepEqual(session.unlocks, []);
-    assert.ok(textOf(find(host, "error")).includes("vault.error.password_required"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.password_required"));
   });
 });
 

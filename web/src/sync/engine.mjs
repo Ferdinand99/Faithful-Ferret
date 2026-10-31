@@ -1130,12 +1130,16 @@ export function createSyncEngine({
     /**
      * Changes an item: the draft is applied to the newest version this device
      * has, inside the core. The write goes out as revision base + 1.
-     * @param {string} id @param {object} draft
+     * `expectedRev` is the revision the caller's form was built from; when this
+     * device has a different one by now (another device's change arrived), the
+     * edit is refused with `item_changed` and nothing is written.
+     * @param {string} id @param {object} draft @param {number} [expectedRev]
      */
-    async update(id, draft) {
+    async update(id, draft, expectedRev) {
       if (stopped) throw new SyncError("stopped");
       await withItem(id, async () => {
         const version = editable(id);
+        if (expectedRev !== undefined && version.rev !== expectedRev) throw new SyncError("item_changed");
         const rev = version.rev + 1;
         const handle = await client.vault.open_item(hex16.decode(id), version.rev, version.envelope, version.tag);
         try {

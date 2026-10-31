@@ -228,3 +228,65 @@ test("an_engine_that_will_not_stop_does_not_keep_the_worker_alive", async () => 
   });
   assert.equal(ended, 1);
 });
+
+test("a_lock_wipes_every_frame_that_was_built_not_only_the_last", async () => {
+  await withDom(async () => {
+    const id = "11".repeat(16);
+    const engine = fakeEngine({
+      items: [{ id, name: "Bank", type: "login", favorite: false, urls: [], username: "", rev: 1, pending: false, damaged: false, quarantined: false, missingOnServer: false, blocked: false, blockedReason: null, readOnly: false }],
+      views: { [id]: { item_type: "login", name: "Bank", fields: [{ id: "password", label: "Password", kind: "password", value: null }], urls: [], has_notes: false, read_only: false } },
+      secrets: { [id]: ["pw-SECRET-1"] },
+    });
+    const client = fakeClient(engine);
+    const session = fakeSession({ client });
+    const clock = fakeClock();
+    const autoLock = autoLockFor(session, engine, { now: clock.now, timers: clock, doc: fakePage() });
+    autoLock.start();
+    const frame = async (content, scope) => shellView({
+      t, engine, session, content, scope, lock: () => autoLock.lock(), touch: () => autoLock.touch(),
+      onLocked: () => unlockScreen({ session, t, go() {}, onUnlocked() {} }),
+    });
+
+    // The item frame is the one on the page; a route that finished later built the list frame, which is detached.
+    const scopeA = createWipeScope();
+    const first = await frame(await itemView({ engine, sync: engine, client, id, t, scope: scopeA }), scopeA);
+    first.isConnected = true;
+    await click(find(first, "reveal", "f0"));
+    assert.ok(textOf(first).includes("pw-SECRET-1"));
+    const scopeB = createWipeScope();
+    const second = await frame(document.createElement("section"), scopeB);
+    second.isConnected = false;
+
+    await click(find(second, "lock"));
+    await settle();
+    assert.ok(!textOf(first).includes("pw-SECRET-1"), "the frame on the page is wiped");
+    assert.ok(find(first, "unlock-host") || find(first, "unlock"), "and shows the unlock screen");
+    assert.equal(find(second, "unlock-host"), null, "a frame that is not on the page is only emptied");
+  });
+});
+
+test("a_frame_that_left_the_page_is_wiped_when_the_next_one_is_built", async () => {
+  await withDom(async () => {
+    const id = "11".repeat(16);
+    const engine = fakeEngine({
+      items: [{ id, name: "Bank", type: "login", favorite: false, urls: [], username: "", rev: 1, pending: false, damaged: false, quarantined: false, missingOnServer: false, blocked: false, blockedReason: null, readOnly: false }],
+      views: { [id]: { item_type: "login", name: "Bank", fields: [{ id: "password", label: "Password", kind: "password", value: null }], urls: [], has_notes: false, read_only: false } },
+      secrets: { [id]: ["pw-SECRET-1"] },
+    });
+    const client = fakeClient(engine);
+    const session = fakeSession({ client });
+    const make = async (content, scope) => shellView({ t, engine, session, content, scope, lock: async () => {}, touch: () => true, onLocked: () => document.createElement("div") });
+    const scopeA = createWipeScope();
+    const first = await make(await itemView({ engine, sync: engine, client, id, t, scope: scopeA }), scopeA);
+    first.isConnected = true;
+    await click(find(first, "reveal", "f0"));
+    assert.ok(textOf(first).includes("pw-SECRET-1"));
+    // The next route builds its frame while the first is still on the page, then the router swaps them.
+    const second = await make(document.createElement("section"), createWipeScope());
+    second.isConnected = true;
+    first.isConnected = false;
+    assert.ok(textOf(first).includes("pw-SECRET-1"), "still there until the next frame is built");
+    await make(document.createElement("section"), createWipeScope());
+    assert.ok(!textOf(first).includes("pw-SECRET-1"), "a screen that is gone does not keep a revealed secret");
+  });
+});

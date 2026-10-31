@@ -130,6 +130,7 @@ export function fakeEngine({ items = [], views = {}, secrets = {} } = {}) {
     items,
     handles,
     calls: [],
+    expectedRevs: [],
     stopped: false,
     list: () => (engine.stopped ? [] : engine.items),
     async open(id) {
@@ -145,8 +146,9 @@ export function fakeEngine({ items = [], views = {}, secrets = {} } = {}) {
       if (engine.failWith) throw engine.failWith;
       return "ab".repeat(16);
     },
-    async update(id, draft) {
+    async update(id, draft, expectedRev) {
       engine.calls.push(["update", id, structuredClone(draft)]);
+      engine.expectedRevs.push(expectedRev);
       if (engine.failWith) throw engine.failWith;
     },
     async remove(id) {

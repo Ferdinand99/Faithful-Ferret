@@ -47,8 +47,11 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
 
   /** @type {any} */
   let view = null;
+  /** The revision the form is built from; a save against any other is refused. @type {number | undefined} */
+  let baseRev;
   if (id !== null) {
     const entry = engine.list().find((/** @type {any} */ i) => i.id === id);
+    baseRev = entry?.rev;
     if (entry && !canChange(entry)) {
       mount(root,
         el("h1", null, entry.name || t("vault.item.unnamed")),
@@ -221,11 +224,20 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
         showError(describeError(t, { code: "name_required" }));
         return;
       }
+      if (id !== null) {
+        // The form shows what this device had when it opened. If another device's change has arrived
+        // since, saving would replace it without a word: refuse, and let the user look again.
+        const now = engine.list().find((/** @type {any} */ i) => i.id === id);
+        if (!now || (baseRev !== undefined && now.rev !== baseRev)) {
+          showError(describeError(t, { code: "item_changed" }));
+          return;
+        }
+      }
       save.disabled = true;
       mount(status, document.createTextNode(t("vault.edit.saving")));
       const draft = buildDraft();
       try {
-        const target = id === null ? await engine.create(draft) : (await engine.update(id, draft), id);
+        const target = id === null ? await engine.create(draft) : (await engine.update(id, draft, baseRev), id);
         scrub(draft);
         wipeForm();
         mount(status);

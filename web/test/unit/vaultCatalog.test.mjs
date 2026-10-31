@@ -1,9 +1,10 @@
 // The vault's texts: English and Norwegian have the same keys, and every key the
 // vault sources ask for exists, so no screen shows a bare key.
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { ACCOUNT_ERRORS } from "../../src/views/unlock.mjs";
 import { web } from "./helpers.mjs";
 
 const read = (lang, name) => JSON.parse(readFileSync(join(web, "src", "locales", lang, `${name}.json`), "utf8"));
@@ -66,7 +67,7 @@ test("every_code_the_screens_translate_has_a_text", () => {
   for (const [, name, body] of lists) {
     const prefix = name === "SYNC" ? "sync.error." : "vault.error.";
     const codes = [...body.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
-    assert.ok(codes.length > 10);
+    assert.ok(codes.length > 5);
     for (const code of codes) assert.ok(`${prefix}${code}` in en, `${prefix}${code}`);
   }
   for (const mark of ["damaged", "quarantined", "missing", "blocked", "read_only", "pending"]) assert.ok(`vault.mark.${mark}` in en, mark);
@@ -79,5 +80,15 @@ test("the_vault_sources_never_build_markup_from_text_or_use_a_storage_api", () =
     const source = text(file);
     assert.doesNotMatch(source, /\.(?:innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|eval\(|new Function\(/, file);
     assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB|console\./, `${file} keeps nothing in browser storage and logs nothing`);
+  }
+});
+
+test("the_unlock_screen_uses_the_sign_in_pages_texts_when_those_are_in_the_build", () => {
+  // The texts belong to the account flows. When their catalog is part of the build, every code listed here has one.
+  if (!existsSync(join(web, "src", "locales", "en", "account.json"))) return;
+  for (const lang of ["en", "nb"]) {
+    const texts = catalog(lang);
+    for (const code of ACCOUNT_ERRORS) assert.ok(`account.error.${code}` in texts, `${lang}: account.error.${code}`);
+    assert.ok("account.error.retry_in" in texts);
   }
 });

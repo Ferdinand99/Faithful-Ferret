@@ -9,7 +9,7 @@ import itemRoute from "../../src/routes/item.route.mjs";
 import listRoute from "../../src/routes/list.route.mjs";
 import newRoute from "../../src/routes/new.route.mjs";
 import unlockRoute from "../../src/routes/unlock.route.mjs";
-import { all, click, fakeClient, fakeEngine, fakeSession, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { all, click, fakeClient, fakeClock, fakeEngine, fakePage, fakeSession, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
 const ENTRY = {
@@ -226,6 +226,29 @@ test("an_error_with_a_code_the_screens_do_not_know_shows_the_general_message", a
       assert.ok(textOf(find(node, "banners")).includes("vault.error.unknown"));
     } finally {
       r.done();
+    }
+  });
+});
+
+test("the_idle_lock_runs_even_when_the_sync_engine_cannot_start", async () => {
+  await withDom(async () => {
+    const r = rig({ engineNow: "none", startFails: true });
+    const clock = fakeClock();
+    // The idle lock of the session, with a clock the test moves.
+    const lock = autoLockFor(r.session, r.sync, { now: clock.now, timers: clock, doc: fakePage(), idleMs: 60_000 });
+    try {
+      const node = await listRoute.load(r.ctx("/items"));
+      assert.ok(find(node, "sync-unavailable"), "the page says syncing is down");
+      assert.equal(lock.running(), true, "the vault is open, so the idle lock is armed");
+      clock.advance(59_999);
+      assert.equal(r.session.locked, 0);
+      clock.advance(1);
+      await settle();
+      assert.equal(r.session.locked, 1, "the idle time ended the session");
+      assert.equal(find(node, "lock"), null, "the notice is replaced");
+      assert.ok(find(node, "unlock-host"), "by the unlock screen");
+    } finally {
+      lock.stop();
     }
   });
 });
