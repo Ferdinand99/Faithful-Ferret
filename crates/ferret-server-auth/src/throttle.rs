@@ -17,6 +17,10 @@
 //! cannot tell the two apart by what it is asked and a caller cannot tell
 //! them apart by what it is told.
 //!
+//! Counters are scoped per [`Stage`]: the same key in two stages is two
+//! counters, so what a caller does at one entry point does not use up its
+//! budget at another.
+//!
 //! # Addresses
 //!
 //! `keys_for` groups the address before it goes into a key: an IPv6 address
@@ -595,6 +599,50 @@ mod tests {
         // IPv6 address and counts as its /64.
         let not_mapped = v6([0, 0, 0, 0, 0xfffe, 0, 0xc000, 0x201]);
         assert_eq!(counted_address(not_mapped), v6([0; 8]));
+    }
+
+    #[test]
+    fn addresses_that_embed_an_ipv4_address_without_the_mapped_prefix_count_as_their_network() {
+        // Loopback, the deprecated IPv4-compatible form and the IPv4-translated
+        // form are not the mapped range: each is an ordinary IPv6 address and
+        // counts as `::/64`. Unmapping any of them would put unrelated callers
+        // under one IPv4 key (`::1` would become 0.0.0.1), so a change here is
+        // a decision.
+        let zero_network = v6([0; 8]);
+        for address in [
+            // ::1
+            v6([0, 0, 0, 0, 0, 0, 0, 1]),
+            // ::192.0.2.1
+            v6([0, 0, 0, 0, 0, 0, 0xc000, 0x201]),
+            // ::ffff:0:192.0.2.1
+            v6([0, 0, 0, 0, 0xffff, 0, 0xc000, 0x201]),
+        ] {
+            assert_eq!(counted_address(address), zero_network, "{address}");
+        }
+        // Only the real mapped form is unmapped.
+        assert_eq!(
+            counted_address(v6([0, 0, 0, 0, 0, 0xffff, 0xc000, 0x201])),
+            V4
+        );
+    }
+
+    #[test]
+    fn the_keys_of_a_caller_without_an_address_are_exact_for_every_stage() {
+        assert_eq!(
+            keys_for(Stage::LoginStart, &NO_IP, Some(&ID)),
+            vec![ThrottleKey::UnknownAddress]
+        );
+        for stage in [Stage::RegisterStart, Stage::Challenge, Stage::Replace] {
+            assert_eq!(
+                keys_for(stage, &NO_IP, Some(&ID)),
+                vec![ThrottleKey::UnknownAddress, ThrottleKey::Account(ID)],
+                "{stage:?}"
+            );
+        }
+        assert_eq!(
+            keys_for(Stage::LoginFinish, &NO_IP, Some(&ID)),
+            vec![ThrottleKey::UnknownAddress, ThrottleKey::Account(ID)]
+        );
     }
 
     #[test]

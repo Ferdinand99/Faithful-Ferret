@@ -17,7 +17,9 @@ use zeroize::Zeroizing;
 use crate::error::{AuthError, Malformed};
 
 /// A record that is well formed: exactly 192 bytes, with a client public key
-/// that is a valid ristretto255 element.
+/// that is a valid ristretto255 element. The one exception is the stand-in
+/// record of the crate (`zeroed`), which holds zeros, is never parsed and can
+/// never be chosen for an account that may log in.
 ///
 /// The server cannot know more than that. The bytes hold the masking key of
 /// the record, so they are wiped when the value is dropped.
@@ -40,6 +42,13 @@ impl ValidatedRecord {
         }
         RegistrationUpload::<FerretSuite>::deserialize(bytes).map_err(|_| malformed)?;
         Ok(Self(Zeroizing::new(bytes.to_vec())))
+    }
+
+    /// 192 zero bytes: the stand-in for the record of a name without an
+    /// account, so that the code that reads a record reads one on every path.
+    /// It is not a valid OPAQUE record and is never parsed.
+    pub(crate) fn zeroed() -> Self {
+        Self(Zeroizing::new(vec![0u8; REGISTRATION_RECORD_LEN]))
     }
 
     /// The 192 bytes, as the client made them.

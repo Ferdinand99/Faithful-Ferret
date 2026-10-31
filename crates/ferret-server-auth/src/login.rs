@@ -45,7 +45,10 @@
 //! 1. check the structure: the login id and the length of KE3 (exactly 64
 //!    bytes). The store is not touched for a request that is malformed;
 //! 2. `take` the sealed state (the store makes it single use) and open it,
-//!    which checks the purpose, the session and the expiry;
+//!    which checks the purpose, the session, the account of a
+//!    re-authentication and the expiry; the account of the state is then
+//!    compared with the one of the session (`ct_eq`) before the throttle is
+//!    asked;
 //! 3. ask the throttle (`Stage::LoginFinish`) with the credential id of the
 //!    state, or with the address alone when no state could be opened;
 //! 4. run `ServerLogin::finish` on the KE3 and wipe the session key.
@@ -82,6 +85,7 @@
 //! Spec: Fase 1 § 4.2 ("Innlogging"); RFC 9807 section 6.3.
 
 use core::fmt;
+use std::sync::LazyLock;
 
 use ferret_core::SecureRng;
 use ferret_core::opaque::server_suite::opaque_ke::{
@@ -99,18 +103,26 @@ use crate::error::{AuthError, DenyReason, InternalKind, Malformed};
 use crate::ids::{CredentialId, LoginId, SessionBinding};
 use crate::keys::{PreloginSecret, ServerKeys};
 use crate::name::NormalizedLoginName;
-use crate::prelogin::{PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step};
-use crate::record::{ProfileRules, StoredRecord};
+use crate::prelogin::{
+    PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step,
+};
+use crate::record::{ProfileRules, StoredRecord, ValidatedRecord};
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
-    LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, SealedState, StatePlain, StateSealKey,
-    open_state, seal_state,
+    LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, StatePlain, StateSealKey, open_state,
+    seal_state,
 };
 use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 
-/// A zero record, the "real" side of the selection for a name without an
-/// account.
-const ZERO_RECORD: [u8; REGISTRATION_RECORD_LEN] = [0; REGISTRATION_RECORD_LEN];
+/// The stand-in for the record of a name without an account: the "real" side
+/// of the selection when there is none. It is a record like any other for the
+/// code that reads it (a pointer, a length and a profile), so the lookup is
+/// unpacked with a choice of two references and not with a read that happens
+/// on one path only.
+pub(crate) static NO_ACCOUNT: LazyLock<StoredRecord> = LazyLock::new(|| StoredRecord {
+    record: ValidatedRecord::zeroed(),
+    ksf_profile: 0,
+});
 
 /// Everything the login functions need from the server: borrows of its keys,
 /// secrets, clock, throttle and rules.
@@ -428,20 +440,22 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     if now == u64::MAX {
         return Err(clock_failed());
     }
-    let stored = match req.lookup {
-        AccountLookup::Active { record, sk_hint } => Stored {
-            active: 1,
-            record: record.record.as_bytes(),
-            ksf_profile: record.ksf_profile,
-            sk_hint: u8::from(sk_hint),
-        },
-        AccountLookup::Unknown | AccountLookup::Disabled => Stored {
-            active: 0,
-            record: ZERO_RECORD.as_slice(),
-            ksf_profile: 0,
-            sk_hint: 0,
-        },
-    };
+    // The stand-in is looked at before the lookup is, so that reading it is
+    // not something that one kind of lookup does.
+    let placeholder: &StoredRecord = &NO_ACCOUNT;
+    let stored = stored_for(req.lookup, placeholder);
+    // The record is copied into a buffer of this call at once, and the
+    // stand-in is read on every path: the account's record (or the stand-in
+    // again) on one side of the select, the stand-in on the other. Every read
+    // of a record after this is of a buffer of this call, at the same place
+    // for an account, an unknown name and a disabled one.
+    let mut own_record = Zeroizing::new([0u8; REGISTRATION_RECORD_LEN]);
+    ct_select_bytes(
+        stored.active,
+        stored.record,
+        placeholder.record.as_bytes(),
+        own_record.as_mut_slice(),
+    );
 
     // The id OPAQUE binds the answer to: the account's own, or the made-up
     // one of the name. Both are computed, one is selected.
@@ -460,7 +474,15 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     // before any OPAQUE work, any draw and any write.
     step("admit");
     let ticket = admit(cx.throttle, Stage::LoginStart, &req.caller, Some(&id), now)?;
-    let answer = start_admitted(cx, store, rng, req, params, (&id, &stored), now);
+    let answer = start_admitted(
+        cx,
+        store,
+        rng,
+        req,
+        params,
+        (&id, &stored, &own_record),
+        now,
+    );
     let outcome = if answer.is_ok() {
         Outcome::Success
     } else {
@@ -473,12 +495,52 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
 /// What the lookup of the name gave, unpacked for the selection: the real
 /// side of every choice between a real and a made-up value. Zero for a name
 /// without an account.
-struct Stored<'a> {
+pub(crate) struct Stored<'a> {
     /// 1 for an account that may log in, else 0.
-    active: u8,
-    record: &'a [u8],
-    ksf_profile: u8,
-    sk_hint: u8,
+    pub(crate) active: u8,
+    pub(crate) record: &'a [u8],
+    pub(crate) ksf_profile: u8,
+    pub(crate) sk_hint: u8,
+}
+
+/// Unpacks the lookup. This is the one place that looks at which kind of
+/// lookup it is, and it only chooses between two references and two small
+/// values (the account's own, or `placeholder` and zeros); everything that is
+/// read afterwards is read through the chosen reference, the same way for an
+/// account, an unknown name and a disabled one. `ct/run.sh lookup-asm` checks
+/// that the compiled function has no conditional jump.
+///
+/// `#[inline(never)]` keeps it a function of its own, so the check reads the
+/// code that runs.
+#[inline(never)]
+pub(crate) fn stored_for<'a>(
+    lookup: AccountLookup<'a>,
+    placeholder: &'a StoredRecord,
+) -> Stored<'a> {
+    let (record, sk_hint, active) = match lookup {
+        AccountLookup::Active { record, sk_hint } => (record, sk_hint, 1u8),
+        AccountLookup::Unknown | AccountLookup::Disabled => (placeholder, false, 0u8),
+    };
+    Stored {
+        active,
+        record: record.record.as_bytes(),
+        ksf_profile: record.ksf_profile,
+        sk_hint: u8::from(sk_hint),
+    }
+}
+
+/// The profile and the second-factor hint to answer with: the account's own
+/// when `stored` is an account, the made-up ones of the name when it is not.
+/// Both are given, and the choice is two `ct_select_u8`. The pre-login answer
+/// ([`crate::prelogin_answer`]) and `login_start` both use it, so the two
+/// answers of one name cannot drift apart. `ct/run.sh lookup-asm` checks the
+/// compiled function for a conditional jump.
+#[inline(never)]
+pub(crate) fn choose_answer(stored: &Stored<'_>, fake: PreloginAnswer) -> PreloginAnswer {
+    PreloginAnswer {
+        ksf_profile: ct_select_u8(stored.active, stored.ksf_profile, fake.ksf_profile),
+        sk_hint: ct_select_u8(stored.active, stored.sk_hint, u8::from(fake.sk_hint)) == 1,
+    }
 }
 
 impl fmt::Debug for Stored<'_> {
@@ -488,17 +550,18 @@ impl fmt::Debug for Stored<'_> {
 }
 
 /// The part of `login_start` that runs after the limiter let the request
-/// through. `chosen` is the credential id in use and the unpacked lookup.
+/// through. `chosen` is the credential id in use, the unpacked lookup and the
+/// copy of the record that this call made.
 fn start_admitted<R: SecureRng, S: LoginStateStore>(
     cx: &AuthContext<'_>,
     store: &S,
     rng: &mut R,
     req: &LoginStartRequest<'_>,
     params: &Params<'_>,
-    chosen: (&CredentialId, &Stored<'_>),
+    chosen: (&CredentialId, &Stored<'_>, &[u8; REGISTRATION_RECORD_LEN]),
     now: u64,
 ) -> Result<LoginStartResponse, AuthError> {
-    let (id, stored) = chosen;
+    let (id, stored, own_record) = chosen;
 
     step("parse-ke1");
     let request = parse_ke1(req.ke1)?;
@@ -511,12 +574,14 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
     let mut record = Zeroizing::new([0u8; REGISTRATION_RECORD_LEN]);
     ct_select_bytes(
         stored.active,
-        stored.record,
+        own_record.as_slice(),
         fake_record.as_slice(),
         record.as_mut_slice(),
     );
-    let ksf_profile = ct_select_u8(stored.active, stored.ksf_profile, fake.ksf_profile);
-    let sk_hint = ct_select_u8(stored.active, stored.sk_hint, u8::from(fake.sk_hint)) == 1;
+    let PreloginAnswer {
+        ksf_profile,
+        sk_hint,
+    } = choose_answer(stored, fake);
 
     step("parse-record");
     let registration = ServerRegistration::<FerretSuite>::deserialize(record.as_slice())
@@ -643,8 +708,7 @@ pub fn login_finish<S: LoginStateStore>(
         // A store that fails is also a request that was admitted and failed.
         Err(error) => return Err(refuse_without_id(cx, req, now, AuthError::from(error))),
     };
-    let sealed: Option<SealedState> = taken;
-    let Some(sealed) = sealed else {
+    let Some(sealed) = taken else {
         let missing = AuthError::Denied(DenyReason::StateMissing);
         return Err(refuse_without_id(cx, req, now, missing));
     };
@@ -735,7 +799,7 @@ mod tests {
 
     use super::*;
     use crate::prelogin::{clear_steps, steps};
-    use crate::state::{InMemoryLoginStateStore, StoreError};
+    use crate::state::{InMemoryLoginStateStore, SealedState, StoreError};
     use crate::testing::{FIXTURE_PASSWORD, LoginFixture};
     use crate::throttle::RetryAfter;
     use crate::{STATE_TTL_SECS, StateKey};
@@ -904,6 +968,39 @@ mod tests {
         "seal",
         "put",
     ];
+
+    #[test]
+    fn the_three_kinds_of_lookup_unpack_to_the_same_shape() {
+        let f = LoginFixture::new();
+        let placeholder: &StoredRecord = &NO_ACCOUNT;
+        let (active, profile, hint, first) = crate::testing::unpack_lookup(f.active(), placeholder);
+        assert_eq!(
+            (active, profile, hint),
+            (1, f.record.ksf_profile, 0),
+            "an account gives its own profile and hint"
+        );
+        assert_eq!(first, f.record.record.as_bytes()[0]);
+        // A name without an account and a disabled one give the stand-in, the
+        // same way, and the stand-in is a record of the length of a real one.
+        let unknown = crate::testing::unpack_lookup(AccountLookup::Unknown, placeholder);
+        let disabled = crate::testing::unpack_lookup(AccountLookup::Disabled, placeholder);
+        // `active` and `hint` are the contract; the profile and the first
+        // byte are those of the stand-in, whatever they are.
+        assert_eq!(
+            unknown,
+            (
+                0,
+                placeholder.ksf_profile,
+                0,
+                placeholder.record.as_bytes()[0]
+            )
+        );
+        assert_eq!(disabled, unknown);
+        assert_eq!(
+            stored_for(AccountLookup::Unknown, placeholder).record.len(),
+            stored_for(f.active(), placeholder).record.len()
+        );
+    }
 
     #[test]
     fn known_and_unknown_run_the_same_steps_in_the_same_order() {

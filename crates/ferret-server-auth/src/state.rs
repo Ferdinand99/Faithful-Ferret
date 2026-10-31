@@ -326,7 +326,10 @@ impl StatePlain {
         let [ksf_profile] = *take::<1>(&mut rest).ok_or(invalid)?;
         let login = take::<SERVER_LOGIN_LEN>(&mut rest).ok_or(invalid)?;
         let purpose = match (code, flag) {
-            (PURPOSE_LOGIN, 0) if binding == [0u8; BINDING_LEN] => Some(LoginPurpose::Login),
+            // The binding holds the session of a re-authentication in the
+            // other case: even in a plaintext that the AEAD has accepted it
+            // is not compared with a plain `==`.
+            (PURPOSE_LOGIN, 0) if ct_eq(&binding, &[0u8; BINDING_LEN]) => Some(LoginPurpose::Login),
             (PURPOSE_REAUTH, 1) => {
                 let (session, account) = binding.split_at(32);
                 let mut s = [0u8; 32];
@@ -441,9 +444,10 @@ pub(crate) fn seal_state<R: SecureRng>(
 ///
 /// * `Denied(StateInvalid)` for a blob of the wrong length or version, one
 ///   made for another id or under another key, one that was changed, one
-///   whose content does not parse, and one whose purpose or session is not
-///   the expected one (so a login cannot be finished as a re-authentication,
-///   or for another session, and the caller learns nothing about which);
+///   whose content does not parse, and one whose purpose, session or account
+///   is not the expected one (so a login cannot be finished as a
+///   re-authentication, or for another session or account, and the caller
+///   learns nothing about which);
 /// * `Denied(StateExpired)` when `now >= expires_at` of the sealed state.
 ///
 /// The length is checked before anything else. The caller reads the account

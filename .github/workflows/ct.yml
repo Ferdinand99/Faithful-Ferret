@@ -31,7 +31,11 @@
 # 32-byte comparisons is thousands. The run that decides
 # is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
 # LANBox; a bench over 4.5 is measured again with 10^7), whose result is
-# committed in ct/results/dudect-lanbox.md.
+# committed in ct/results/dudect-lanbox.md. The benches of the server library
+# (`CT_ONLY=server`) are gated at 10^7 measurements from the start, with the
+# controls in the same run, and the result is marked NOT DECISIVE when the
+# 1-minute load average of the LANBox was above 2 at the start or the end; it is
+# committed in ct/results/dudect-lanbox-server.md. The release run is a full run.
 #
 # Third-party actions are pinned by commit SHA, tools by version and checksum,
 # the analyzer by commit and SHA-256 (ct/analyzer.pin). The workflow has read
@@ -43,6 +47,7 @@ on:
     paths:
       - "ct/**"
       - "crates/ferret-core/**"
+      - "crates/ferret-server-auth/**"
       - "bindings/wasm/**"
       - "scripts/lanbox-ct.sh"
       - "scripts/build-wasm.sh"
@@ -120,6 +125,8 @@ jobs:
         run: ct/run.sh select-asm
       - name: The assembly check flags a known-bad select (negative control)
         run: ct/run.sh select-asm-negative
+      - name: The unpacking of the lookup in login_start has no conditional jump
+        run: ct/run.sh lookup-asm
       - name: Keep the reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -212,6 +219,8 @@ jobs:
         run: |
           cargo fmt --check --manifest-path ct/dudect/Cargo.toml
           cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
+      - name: The lookup code of the timed binary has no conditional jump, at opt-level s and 3
+        run: ct/run.sh timed-asm
       - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 500 a failure)
         env:
           CT_SMOKE: "1"

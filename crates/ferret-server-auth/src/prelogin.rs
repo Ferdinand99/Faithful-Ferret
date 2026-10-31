@@ -6,8 +6,8 @@
 //! account, in a way that looks the same and stays the same on every ask:
 //!
 //! * [`fake_credential_id`]: the credential id OPAQUE binds the answer to.
-//!   [`resolve_credential`] picks the account's own id or this one, in one
-//!   place.
+//!   `resolve_credential` (behind `test-support`: no request path uses it)
+//!   picks the account's own id or this one, in one place.
 //! * [`fake_prelogin`]: the key stretching profile and the second-factor hint
 //!   that a pre-login answer carries. They are drawn from the shares of the
 //!   real accounts ([`PreloginPolicy`]), so the made-up answers are spread as
@@ -26,18 +26,23 @@
 
 use std::collections::HashSet;
 
+#[cfg(feature = "test-support")]
+use ferret_core::AccountId;
+use ferret_core::KsfProfile;
 use ferret_core::opaque::server_suite::REGISTRATION_RECORD_LEN;
-use ferret_core::{AccountId, KsfProfile};
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "test-support")]
 use crate::ct::ct_select_bytes;
 use crate::error::{AuthError, InternalKind};
 use crate::ids::CredentialId;
 use crate::keys::{PreloginSecret, ServerKeys};
+use crate::login::{AccountLookup, NO_ACCOUNT, choose_answer, stored_for};
 use crate::name::NormalizedLoginName;
+use crate::record::StoredRecord;
 
 /// Label in front of the name for the made-up credential id.
 ///
@@ -134,23 +139,70 @@ pub fn fake_credential_id(secret: &PreloginSecret, name: &NormalizedLoginName) -
 /// name run the same steps. Calling it with the account looked up for the
 /// normalized name is what keeps the two forms from drifting apart.
 ///
+/// This is a helper for tests and benchmarks, and it is behind the
+/// `test-support` feature on purpose: no request path calls it. `login_start`
+/// makes this choice itself, and the pre-login answer is
+/// [`prelogin_answer`]. The information bench that times it
+/// (`info_server_prelogin_resolve_credential`) has a small stable offset
+/// that has not been isolated, so a request path must not start to use it
+/// before that bench is made a gate and passes.
+///
 /// Spec: Fase 1 § 4.2.
+#[cfg(feature = "test-support")]
 pub fn resolve_credential(
     secret: &PreloginSecret,
     name: &NormalizedLoginName,
     account: Option<&AccountId>,
 ) -> CredentialId {
     let fake = fake_credential_id(secret, name);
-    let real = account.map(|a| *a.as_bytes()).unwrap_or_default();
+    // The account is read through a reference that may be absent, and a load
+    // through a pointer that may be null is a branch. So the pointer is
+    // chosen first (the account's own, or a fixed all-zero id), in a function
+    // of its own that `ct/run.sh lookup-asm` checks for a conditional jump,
+    // and the load is the same for both.
+    static NO_ACCOUNT_ID: [u8; 16] = [0; 16];
+    let real = pick_account(account, &NO_ACCOUNT_ID);
+    let active = u8::from(account.is_some());
+    // The stand-in id is read on every path too: the account's id (or the
+    // stand-in again) on one side of a select, the stand-in on the other.
+    let mut own = [0u8; 16];
+    ct_select_bytes(active, real, &NO_ACCOUNT_ID, &mut own);
     step("select-id");
     let mut chosen = [0u8; 16];
-    ct_select_bytes(
-        u8::from(account.is_some()),
-        &real,
-        fake.as_bytes(),
-        &mut chosen,
-    );
+    ct_select_bytes(active, &own, fake.as_bytes(), &mut chosen);
     CredentialId::from_bytes(chosen)
+}
+
+/// The account id to read: the account's own, or `none`. A choice between two
+/// references, with no read before it; see [`resolve_credential`].
+#[cfg(feature = "test-support")]
+#[inline(never)]
+pub(crate) fn pick_account<'a>(account: Option<&'a AccountId>, none: &'a [u8; 16]) -> &'a [u8; 16] {
+    account.map_or(none, AccountId::as_bytes)
+}
+
+/// The pre-login answer for a name: the key stretching profile and the
+/// second-factor hint of the account when `lookup` is one that may log in, the
+/// made-up ones of the name when it is not (no account, or a disabled one).
+///
+/// The made-up answer is always computed, the lookup is unpacked by the same
+/// function as in `login_start` (which chooses between two references and
+/// reads through the chosen one), and the choice of the two values is
+/// `ct_select_u8`; no step looks at which kind of lookup it is. It is the
+/// function for a pre-login endpoint, so that a known name, an unknown one and
+/// a disabled one do the same work. The server has no such route yet (the
+/// profile and hint go out in the answer of `login/start`, chosen by the same
+/// `choose_answer`), so nothing calls it but the tests and the timing bench.
+pub fn prelogin_answer(
+    secret: &PreloginSecret,
+    name: &NormalizedLoginName,
+    policy: &PreloginPolicy,
+    lookup: AccountLookup<'_>,
+) -> PreloginAnswer {
+    let fake = fake_prelogin(secret, name, policy);
+    let placeholder: &StoredRecord = &NO_ACCOUNT;
+    let stored = stored_for(lookup, placeholder);
+    choose_answer(&stored, fake)
 }
 
 /// How the made-up pre-login answers are spread: the share of each key
@@ -774,6 +826,39 @@ mod tests {
     }
 
     // ------------------------------------------------------------ fake record
+
+    #[test]
+    fn the_prelogin_answer_is_the_accounts_own_or_the_made_up_one() {
+        use crate::login::AccountLookup;
+        use crate::testing::LoginFixture;
+        let f = LoginFixture::new();
+        let made_up = fake_prelogin(&f.prelogin, &f.name, &f.policy);
+        let own = prelogin_answer(&f.prelogin, &f.name, &f.policy, f.active());
+        // The fixture's account has profile 1 and no second factor; the policy
+        // says "profile 1, second factor" for a name without an account.
+        assert_eq!(
+            own,
+            PreloginAnswer {
+                ksf_profile: f.record.ksf_profile,
+                sk_hint: false
+            }
+        );
+        assert!(made_up.sk_hint);
+        for lookup in [AccountLookup::Unknown, AccountLookup::Disabled] {
+            assert_eq!(
+                prelogin_answer(&f.prelogin, &f.name, &f.policy, lookup),
+                made_up
+            );
+        }
+    }
+
+    #[test]
+    fn pick_account_chooses_between_two_references() {
+        let (own, none) = ([7u8; 16], [0u8; 16]);
+        let account = AccountId::from_bytes(own);
+        assert_eq!(pick_account(Some(&account), &none), &own);
+        assert_eq!(pick_account(None, &none), &none);
+    }
 
     #[test]
     fn fake_record_is_a_valid_opaque_record() {

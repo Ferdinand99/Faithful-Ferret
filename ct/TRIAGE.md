@@ -241,6 +241,368 @@ every flag and every pair of values. It is in `subtle::...::conditional_select`
 at `O0` and inlined into `ct_select_u8` at `O2` and above; the `u32` and `u64`
 versions widen the byte first and have no such check.
 
+## Server library (`ferret-server-auth`)
+
+The OPAQUE server library compares and selects with the same code as the core
+and nothing else. `src/ct.rs` includes `ct/harness/ct_eq.rs` and
+`ct/harness/ct_select.rs` by path, the files the analyzer reads
+(`ct_include_is_the_analyzer_source` checks the include, in this crate and in
+the core), so the 40 reports above, T5 to T7, T11 and the assembly check of
+`ct_select_bytes` (`ct/run.sh select-asm`) are the analysis of the server's
+`ct_eq` and `ct_select_*` too. There is no harness file of its own: the
+selection of bytes was added to `ct_select.rs` with the core. What this part
+adds is the review of every place the library compares or chooses, a timing
+test of the library through its public functions, and tests that keep the
+list of places from growing unnoticed.
+
+- **WebAssembly.** The library is not in the binding. The scan
+  (`ct/wasm-allow.toml`) and the WebAssembly timing module have nothing of it
+  to read, and `the_server_library_is_not_in_the_webassembly_build` fails if
+  the binding starts to depend on it. The server benches of `ct/dudect` are
+  behind the feature `server` and are native only.
+- **Places that compare or choose.** `no_secret_comparison_uses_eq` lists every
+  line of the shipped code that compares with `==`, `!=`, `.eq(`, `.ne(`, an
+  assertion macro, `matches!` or a slice pattern, with the reason it cannot leak
+  (lengths, times, closed sets, public data); a listed text has to account for
+  everything compared on its line, so a second compare appended to a listed
+  line fails, and only the body of a test module is left out of the scan.
+  `types_with_bytes_derive_partial_eq_only_when_listed` does the same for
+  derived `PartialEq` over bytes, text and the usual wrappers of them, and
+  `the_constant_time_call_sites_are_the_ones_that_were_checked` pins how many
+  times each file calls `ct_eq` and `ct_select_*`. A new place fails one of them
+  until it has been read and listed here. These are tripwires, not a proof.
+  They do not see ordering (`<`, `cmp`, `sort`, `binary_search`), a map keyed
+  by a raw secret (review point 4 holds only while the key types stay
+  digests), `starts_with` and `contains` on byte slices, a call of `ct_eq`
+  under another name (`use ... as`), a direct use of `subtle`, or a derived
+  `PartialEq` over a byte type of another crate that the needles do not name.
+- **Where the library does not run division, search or index by a secret.** In
+  `login.rs`, `state.rs` and `replace.rs` the shipped code has no `/`, `%`,
+  `checked_div`, `checked_rem`, `min`, `max`, `position`, `find`, `contains`,
+  `binary_search` or `windows`. What is left in the crate is in
+  `prelogin::fake_prelogin`: the remainder `permille` (an HMAC output modulo
+  1000, a constant divisor), the early exit of the `find_map` over the profiles
+  of the policy on that draw, and the compare of the hint draw with the share of
+  the policy. All three work on a value derived from the pre-login secret, not
+  chosen by the client, and their result is the answer that is given anyway.
+  Accepted.
+
+### Review points
+
+| # | Compare or choice | Secret? | How it is done | Checked by |
+|---|---|---|---|---|
+| 1 | KE3 against the expected MAC | yes | `opaque-ke` (`subtle::ConstantTimeEq`) inside `ServerLogin::finish` | a KE3 with one byte changed, at every position, is refused (`tests/rfc9807_server.rs`) |
+| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 3 calls, `prelogin.rs`, 2) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only`, `info_server_login_start_real_vs_made_up` and `info_server_login_start_fixed_vs_pool`; `server_prelogin_known_vs_unknown` times `prelogin_answer` (`stored_for` and `choose_answer` get the class), with its null control `control_server_prelogin_null` |
+| 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 48 binding bytes (`LoginPurpose::same_as`), the purpose byte next to it with `&` | T5 and the call-site test; `server_state_binding` is a smoke test (it cannot tell `ct_eq` from `==` on 48 bytes behind an AEAD open) |
+| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open); `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
+| 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
+| 5 | SHA-256 checksum of a secret file | the content is secret | `ct_eq` (`secret_file.rs`) | `the_constant_time_call_sites_are_the_ones_that_were_checked` |
+| 6 | Fingerprint of the set-up at start-up | no (a hash, no remote caller) | `PartialEq` of `SetupFingerprint` is `ct_eq` anyway | `no_secret_comparison_uses_eq` |
+| 7 | Profile numbers, lengths, times | no | plain | `no_secret_comparison_uses_eq` |
+| 8 | AEAD tag of a sealed state | yes | inside `chacha20poly1305` (`subtle`) | not re-verified here (R6) |
+| 9 | Ed25519 proof | no (public data) | `ferret-core` | not re-verified here |
+| 10 | Hex reading of the login id | the value is a bearer | rejects on length and character class; the answer depends on the given bytes alone, and nothing is compared with a stored value | `LoginId::parse` tests; the lookup is by the SHA-256 key |
+
+### S-1. A plain `==` on the binding bytes of a login state
+
+Found by `no_secret_comparison_uses_eq`: the parser of a sealed state
+compared the binding with zeros (`binding == [0u8; BINDING_LEN]`) to accept a
+plain login. The bytes are those of a plaintext the AEAD has already
+accepted, so no caller can steer the compare, and the same bytes hold the
+session of a re-authentication in the other case. Fixed: it is `ct_eq` now.
+
+### S-2. Whether an account was found was branched on (fixed)
+
+That bit is secret from the network: whether a name has an account is what
+§ 4.2 keeps from a caller. The first version of the library branched on it in
+three places, and the quiet run at 10^7 on e4e6334 showed it
+(`ct/results/dudect-lanbox-server-prefix.md`, load average 1.35 at the start and
+1.21 at the end, controls fine): `server_login_start_known_vs_unknown`
+t = -12.31, `server_login_start_known_vs_disabled` t = +6.26,
+`server_prelogin_known_vs_unknown` t = +18.31 and
+`info_server_prelogin_resolve_credential` t = +17.04.
+
+* `login_start` matched on `AccountLookup`, and the arms read different memory
+  (the account's record from the heap, a name without one from a static). It is
+  now `stored_for`, the one function that names the kinds of lookup: it chooses
+  between two references (the account's record, or a stand-in record of the
+  same shape) and two small values, and everything read afterwards is read
+  through the chosen reference.
+* `resolve_credential(secret, name, Option<&AccountId>)` read the account id
+  through a reference that may be absent, which is a branch. The choice is now
+  `pick_account`, a select of two valid references, and the load is the same
+  for both.
+* The choice of the profile and the hint was inside `start_admitted` only.
+  `choose_answer` (two `ct_select_u8`) is now a function of its own that
+  `login_start` uses, and `prelogin_answer(secret, name, policy, lookup)` is
+  the same choice as a library function for a pre-login endpoint: the made-up
+  answer is always computed, the lookup is unpacked by `stored_for`, and
+  `choose_answer` picks the values. The server has no pre-login route yet
+  (the profile and the hint go out in the answer of `login/start`, through
+  `choose_answer`), so `prelogin_answer` has no production caller: the path in
+  use today is `login_start`, which the `server_login_start_*` benches time,
+  and the gated pre-login bench times the function that a future route would
+  call.
+
+`ct/run.sh lookup-asm` (CI, x86_64 and arm64) compiles the crate and fails if
+`stored_for`, `choose_answer` or `pick_account` has a conditional jump (they
+have none), and `login_start_looks_at_the_kind_of_lookup_in_one_function_only`
+and `the_prelogin_answer_has_no_branch_of_its_own` pin that nothing else in
+the crate names a kind of lookup or branches in those paths. That a compiler
+turns the selects into `cmov` is not guaranteed by the language; the asm check
+is what holds it, and the benches measure it. What stays is the caller's own
+lookup on the same bit (a database row found or not), which differs by a round
+trip and is covered by the endpoint test (§ 4.2), see R10. The two parts of the
+login start bench alone were below 4.5 (`lookup_only` +2.62, `real_vs_made_up`
+-2.05) and the whole failed, so the rerun after this change is the proof, not
+the argument above.
+
+The rerun on 6f8743b (`ct/results/dudect-lanbox-server-r2.md`, load 1.08 and
+1.17, controls fine) gave `server_login_start_known_vs_unknown` t = +17.41,
+`..._known_vs_disabled` +4.27, `server_prelogin_known_vs_unknown` -4.20,
+`server_finish_credential_vs_account` +25.92 and
+`info_server_prelogin_resolve_credential` +8.53. The sign of the first moved
+from -12.3 to +17.4 with the same library path for `Unknown` and `Disabled`
+(+17.4 and +4.27) as before (-12.3 and +6.3): a difference in code or in the
+math would keep its sign in both, a bias that comes from where the inputs sit
+in memory does not. What the library still did differently was to read the
+stand-in record (one object, late) on the no-account path only. It now copies
+the record into a buffer of its own at once, with the stand-in on the other
+side of that select, so the stand-in is read on every path and everything
+after reads a buffer of the call; `resolve_credential` does the same with the
+stand-in id. What stays is the one read of the caller's own record, wherever
+the caller left it: an unknown name has no record, so this is inherent, and
+`info_server_login_start_fixed_vs_pool` (one fixed object against a pool of
+256, both `Active`) shows how large that kind of effect is by itself. The
+finish failure was not the library: nothing on its path had changed (see S-3).
+
+Result of 29fbc6b (quiet LANBox, 10^7): known against unknown
+-3.90, known against disabled -2.54, pre-login -2.56, all controls fine. S-2 is
+fixed; what remains is the caller's own record and the caller's own lookup,
+which R10 carries.
+
+**The profile of these results.** They were measured at `opt-level = "s"`, the
+profile of `ct/dudect` (a copy of the root profile, which is the profile of the
+core and of the WebAssembly package). The server ships at `opt-level = 3`
+(`crates/ferret-server/Cargo.toml`). So the branch-freeness of `stored_for`,
+`choose_answer` and `pick_account` was not read at the level that ships, and
+the timing was not taken there. Since then `ct/run.sh lookup-asm` reads the
+crate at levels 3 and `s` on both architectures, `ct/run.sh timed-asm` reads the
+linked, LTO `dudect` binary at both levels (both run in CI), and the dudect
+build of `CT_ONLY=server` defaults to `opt-level = 3` (`CT_OPT_LEVEL` sets
+another), with the LTO, codegen-units, panic and overflow-check settings of the
+server's profile. The numbers of 29fbc6b are not at that level; the release run
+repeats them there (`CT_ONLY=server scripts/lanbox-ct.sh dudect-native` now builds at 3).
+
+### S-3. Two pools of inputs gave the classes a different mean
+
+The first runs of the server benches failed, and the cause was the bench, not
+the library. With a pool of names for each class, `server_prelogin_known_vs_unknown`
+gave |t| of 10.9, 34.6 and 16.7 (negative every time, growing with n), and
+with a pool of expected values for each class `server_state_binding` and
+`server_finish_credential_vs_account` gave |t| of 7 to 11 with a different
+sign from one process to the next. 256 names (or 256 sealed states) per class
+are 256 samples of whatever depends on the input or on where it sits in
+memory (layout, or data: not isolated; HMAC and a constant-divisor remainder
+have no data-dependent time on this CPU in theory): the means of the two pools
+differ by chance, and dudect, which asks whether the means differ, sees that
+once n is large enough. The same
+lesson as `unpad_ct` (R7), met again. The benches now give both classes the same
+pool (the same names, the same masks; one allocation holds both classes of the
+sealed states, input `i` of class `c` at `2i + c`), and the classes differ in
+the flag alone, or in the index of the byte that is wrong. A bench of
+`login_start` with the working cell filled differently per class (a clone of the
+record only for the class with an account) gave |t| = 20 for the same reason:
+the allocator and the caches were in another state before the timer started.
+Both classes now run the same copies.
+
+The lesson came back a third time. The finish bench still gave each class
+its own 256 sealed states (own nonce, ciphertext and tag, each a heap buffer
+of its own), and "one allocation" for the pool only held for the 24-byte `Vec`
+headers: the 244-byte buffers have a place of their own. Its t was +2.67 on
+e4e6334 and +25.92 on 6f8743b although nothing on the finish path had
+changed; the fix in 6f8743b had moved the heap layout. The two states of an
+input now share the seed and differ in one byte of the credential (the first
+or the last), so the blobs differ in two ciphertext bytes and the tag; `prepare`
+reads both for either class and builds the slot with a mask, and a null control
+of the same shape (`control_server_finish_null`) gives the floor. The same goes
+for the bench classes of `login_start` and the pre-login answer: `prepare` has
+no branch on the class (both sides are built and picked by index), and the
+harness runs a fixed loop of taken branches after `prepare`, outside the timer,
+so the branch history is the same for both classes. `ct/run.sh dudect-native`
+also reads the disassembly of the timed (LTO) binary for `stored_for`,
+`choose_answer` and `pick_account`, since `lookup-asm` reads a build without
+LTO.
+
+**The fourth time: the mask was not a mask in the binary.** At opt-level 3
+(the profile the server ships) `server_finish_credential_vs_account` failed
+again, t = -13.95, on b7f2c54, while it had passed at `s` (+1.39). A throwaway
+run found the cause (`ct/results/dudect-lanbox-finish-diag.md`, five rounds at
+10^7, load 1.0 to 1.4, `control_leaky` seen). In the disassembly of
+`Finish::prepare` the mask `0 - class` had been folded into a select, the loop
+unswitched on the class (`test`, `je`, then two copy loops, each reading one
+state) and no `pand` or xor-and-xor was left: each class read only its own pool
+buffer just before the timer, which is the pool bias of this paragraph in the
+form the mask was written to remove. The same function with the class behind
+`black_box` has the mask loop (`pand`, `pandn`). The benches, five rounds
+(a pass is |t| < 4.5):
+
+| bench | what it tests | result |
+|---|---|---|
+| `server_finish_credential_vs_account` | the bench as it was | fails in all five rounds, t +21 to +35 |
+| `control_server_finish_null` | the old null control (it never reached the mask) | passes, t between -2.5 and +2.5 |
+| `info_server_finish_same_masked` | the mask of the bench, equal bytes in the two buffers | fails (+19 to +22 in four rounds, -26 in one): the class reaches the timer without any data difference |
+| `info_server_finish_hidden_mask` | the data of the bench, the class behind `black_box` | passes in all five, t between -2.7 and +2.7 |
+| `info_server_finish_swapped` | the two positions swapped | fails with the same sign as the bench in four rounds (+4.4 in the fifth): no relation to the position |
+| `info_server_finish_open_only` | as the hidden-mask bench, stopping after the open | passes, t between -2.9 and +2.5 |
+
+So the difference was made by `prepare`, not by the compare or the open: the
+data, hidden from the compiler, give nothing at 10^7, and `ct_eq` (the crate's
+function in the same binary: a length test, one back-edge, a `black_box` call
+per byte) cannot exit early. The null control had been built to the wrong shape
+(its class never reached the mask); it now has the two buffers and the mask of
+the bench, with equal bytes. The class goes through `black_box` in `prepare`,
+and `ct/run.sh timed-asm` fails if `Finish::prepare` of the timed binary has
+no mask loop. The claim above that `prepare` reads both states for either class
+was true of the source and, at opt-level 3, not of the binary until this fix.
+
+**The fifth time: the mask was a mask, and the class was still tested.** The fix
+above was not enough: the run on 49efe22 failed again, with the null control
+itself at t = -24.57 on equal bytes, and the gate at -19.66. The explanation
+above ("each class reads only its own pool buffer") was an inference from the
+disassembly of the old form; nobody had shown that the buffer read moved the
+timer, and the failure had the same size and the same crop after the mask came
+back as before, so it was not the carrier, or not the only one. Another use of
+the class stayed in `Finish::prepare`: `if matches!(kind, StateVsMissing) &&
+class == Class::Right`, for the information bench of a missing state. In the
+disassembly of 49efe22 that is `test %cl,%cl; je` on the class itself, before
+the test of the target kind, so the two classes ran different code just before
+the timer, whatever the kind of the target. The missing-state case is now a
+target of its own, `FinishMissing`, and `Finish::prepare` is the source that
+had passed, with the class used in the mask only (a test in `server.rs` pins
+it). `ct/run.sh timed-asm` proves that a mask loop exists in the timed binary,
+not that the class is used only there; the source test pins the second.
+
+The check (`ct/results/dudect-lanbox-finish-diag2.md`, two layouts of the bench
+binary, eight rounds of 10^7, load 0.43 to 1.11, `control_leaky` at 10^4 or more
+in both): the new null control and the gate pass in all eight rounds (t between
+-2.5 and +3.2 for the null control, -2.6 and +2.6 for the gate), and the
+old `prepare` on equal bytes (`info_server_finish_old_shape`) fails in seven of
+the eight (t from -77 to +65; the eighth is +2.5). So with equal bytes and the
+same buffers, the class test before the timer alone makes the failure, and
+removing it removes the failure. What is not shown is which part of the class
+test carries it into the timing (the jump, the instruction fetch or the branch
+predictor tables, which `level_branch_history` does not clear); that is
+inference. The two passes are for these two layouts of one binary: a layout that
+fails with the new `prepare` would be the first sign of a difference in the
+shipped code, and the release run repeats the finish benches (`CT_REPEAT=3`).
+
+### Timing of the server library
+
+**Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:
+`CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on
+e4e6334 with a quiet LANBox (1-minute load average 1.35 at the start, 1.21 at the
+end, the dudect process pinned to cpu 6). A gated bench over 4.5 at 10^7 fails
+without a rerun.
+
+| bench | t at 10^7 | result |
+|---|---|---|
+| `control_null` | +1.55 | control fine |
+| `control_server_login_start_null` | -1.55 | noise floor of a target of this size |
+| `control_leaky`, `control_unpad_leaky` | +235900, -150386 | the setup sees an early exit |
+| `server_login_start_known_vs_unknown` | -12.31 (0.666M kept) | FAIL |
+| `server_login_start_known_vs_disabled` (replicate) | +6.26 | FAIL |
+| `server_prelogin_known_vs_unknown` | +18.31 | FAIL |
+| `server_state_binding` (smoke test) | +2.62 | below 4.5 |
+| `server_finish_credential_vs_account` (smoke test) | +2.67 | below 4.5 |
+| `info_server_login_start_lookup_only` | +2.62 | below 4.5 alone |
+| `info_server_login_start_real_vs_made_up` | -2.05 | below 4.5 alone |
+| `info_server_prelogin_resolve_credential` | +17.04 | the branch of S-2 |
+| `info_server_finish_state_vs_missing` | +129475 | a missing state exits early; the caller knows whether it sent a state, so this is information only |
+
+The earlier table (10^6, loaded machine, load average 21, no controls) is
+replaced by this one; it had passed all of these benches except the second
+login start run at 10^7 (+7.06), which this run shows was a real offset.
+
+**After the first fix (6f8743b).** `ct/results/dudect-lanbox-server-r2.md`, the same
+command, load average 1.08 at the start and 1.17 at the end:
+
+| bench | t at 10^7 | result |
+|---|---|---|
+| `control_null`, `control_server_login_start_null` | -1.48, -1.91 | control fine |
+| `server_login_start_known_vs_unknown` | +17.41 (0.663M kept) | FAIL |
+| `server_login_start_known_vs_disabled` | +4.27 | below 4.5, narrowly |
+| `server_prelogin_known_vs_unknown` | -4.20 | below 4.5, narrowly |
+| `server_state_binding` | +1.70 | below 4.5 |
+| `server_finish_credential_vs_account` | +25.92 | FAIL (the bench, S-3) |
+| `info_server_login_start_lookup_only`, `..._real_vs_made_up` | +2.53, +3.02 | below 4.5 alone |
+| `info_server_prelogin_resolve_credential` | +8.53 | information only |
+
+The code changed again after this run (29fbc6b: the record copy of S-2, the
+benches of S-3, the null controls `control_server_prelogin_null` and
+`control_server_finish_null`, the info bench
+`info_server_login_start_fixed_vs_pool`).
+
+**Decisive, 29fbc6b, at `opt-level = "s"`.** `ct/results/dudect-lanbox-server.md`:
+`CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on a
+quiet LANBox (1-minute load average 0.92 at the start; the load at the end was
+not captured, because the local client was stopped overnight and the file was
+written from the container log, which may also lack the last information bench;
+see the header of the file). The timed binary was checked first: `stored_for`,
+`choose_answer` and `pick_account` have 0 conditional jumps in the LTO build.
+**Every gated bench is under 4.5.**
+
+| bench | t at 10^7 | result |
+|---|---|---|
+| `control_null`, `control_server_login_start_null`, `control_server_prelogin_null`, `control_server_finish_null` | +2.60, -1.72, -2.65, -1.92 | controls fine |
+| `control_leaky`, `control_unpad_leaky` | +217549, -256953 | the setup sees an early exit |
+| `server_login_start_known_vs_unknown` | -3.90 | below 4.5 |
+| `server_login_start_known_vs_disabled` | -2.54 | below 4.5 |
+| `server_prelogin_known_vs_unknown` | -2.56 | below 4.5 |
+| `server_state_binding` (smoke test) | -1.83 | below 4.5 |
+| `server_finish_credential_vs_account` (smoke test) | +1.39 | below 4.5 |
+| `info_server_login_start_lookup_only` | -2.52 | below 4.5 |
+| `info_server_login_start_real_vs_made_up` | -1.38 | below 4.5 |
+| `info_server_login_start_fixed_vs_pool` | +1.76 | below 4.5 |
+| `info_server_prelogin_resolve_credential` | +5.28 (not gated) | see below |
+
+**At the profile the server ships (b7f2c54, `opt-level = 3`).** Quiet LANBox,
+10^7: login start +2.76 (known against unknown, null +1.68) and -2.88 (known
+against disabled), pre-login +1.87 (null -1.45), state binding +1.74, all under
+4.5, and `info_server_prelogin_resolve_credential` +6.18 (positive for the
+fourth time; not gated, not on a shipped path). `server_finish_credential_vs_account`
+was -13.95 and is explained above; the release run repeats the full set with the
+fix.
+
+The two earlier tables above (before the fix, and 6f8743b) stay as the
+history of how S-2 and S-3 were found. `server_login_start_known_vs_unknown`
+at -3.90 is the closest gated value to the limit; the null control of the same
+cost gave -1.72 and the controls that must see a leak gave 10^5, so the setup
+is sound, and the point is not closed by this one run alone: the release run
+repeats it.
+
+**`info_server_prelogin_resolve_credential` (+5.28) is not gated, and why.**
+`resolve_credential` is a helper that returns the credential id OPAQUE uses for
+a name. Neither `login_start` (which does its own select) nor `prelogin_answer`
+calls it, and nothing in `crates/ferret-server` does, so it is not on a shipped
+path. It is now behind the `test-support` feature, so that no request path can
+start to use it without this being looked at. The gated
+`server_prelogin_known_vs_unknown` times `prelogin_answer` (-2.56, with its null
+control at -2.65). The cause of the +5.28 has not been isolated. What is known:
+its sign was positive in all three runs (+17.04, +8.53, +5.28) although the code
+changed between them, so by the test of S-2 it is not a layout bias, and its
+tau (+0.0017, nearly the whole sample) is about three times that of
+`fixed_vs_pool`, whose +1.76 is inside the floor. A likely cause is that for a
+known name the first select reads two objects (the account's id and the
+stand-in) and for an unknown name the same static twice: the same shape as the
+first select of `login_start`, which `info_server_login_start_lookup_only`
+isolates (-2.52, passes). If a request path is ever to call
+`resolve_credential`, the bench has to become a gate and pass first.
+
+This times the library, not the database: the lookup that decides `Active`,
+`Unknown` or `Disabled` is the caller's, and the comparison of the bytes and
+delays of the answers is a test of the endpoint.
+
 ## Residual risks that this analysis does not remove
 
 These are not findings of the analyzer on the harness. They are the things the
@@ -346,3 +708,27 @@ with its reason, and each is repeated in the report.
   It would take a data-flow pass over the output of `wasm-opt` to close the gap,
   or a dudect run on an input that selects the table index of a secret-dependent
   lookup; no such lookup is known in our code. Parked for 14c.
+- **R10. What the server timing tests do not see.** They time the library
+  through its public functions with a limiter that admits everything, a store
+  that keeps nothing and one replayed random tape. They say nothing about the
+  database lookup that builds `AccountLookup` (a row found or not takes
+  another path through the database), the HTTP layer, TLS or the network; the
+  comparison of the bytes and delays of the answers of a running server is a
+  test of the endpoint (§ 4.2), and it has to name this part as an input. The
+  library no longer branches on the lookup (S-2), so what is left on that bit
+  is the caller's own lookup. The endpoint has differences of the same kind: a
+  row or no row is another SQL path, and the handler matches on the kind to
+  build the lookup. Its record parse was one of them (`finish_lookup` parsed the
+  record only for an active account); it was fixed in #66, and every lookup now
+  parses one record, the real one on one path and a constant on the other, so
+  the endpoint test should still look at the difference between those two.
+  `prelogin_answer` has no caller yet
+  (the server has no pre-login route), so the endpoint test of that route is
+  still to be written. What the library leaves on the account bit is
+  the read of the caller's own record and id (one object against a pool,
+  `fixed_vs_pool` +1.76) and `info_server_prelogin_resolve_credential`
+  (+5.28, not gated, not on a shipped path). The compares of the credential and
+  of the binding in `login_finish` are shown by the timing only to within the
+  noise of the whole call (|t| 1.39 and 1.83 at 10^7 on the quiet run); that they are
+  `ct_eq` is shown by the call-site test and the analysis of the harness (T5),
+  not by the timing alone. Accepted.
