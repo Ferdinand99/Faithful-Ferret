@@ -210,7 +210,7 @@ lookup_asm() {
     CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
       cargo rustc --release --lib -p ferret-server-auth --features test-support --target "$t" -- --emit asm >&2
     asm="$(ls -t target/"$t"/release/deps/ferret_server_auth-*.s | head -n1)"
-    body="$(awk '/^_ZN[0-9a-zA-Z_.$]*10stored_for17h[0-9a-f]+E:$/{on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
+    body="$(awk '/^_(ZN|R)[0-9a-zA-Z_.$]*10stored_for(17h[0-9a-f]+E)?:$/{on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
     lines="$(printf '%s\n' "$body" | grep -c . || true)"
     case "$arch" in
       x86_64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+j[^m]' || true)" ;;
