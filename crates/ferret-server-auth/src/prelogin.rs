@@ -141,12 +141,18 @@ pub fn resolve_credential(
     account: Option<&AccountId>,
 ) -> CredentialId {
     let fake = fake_credential_id(secret, name);
-    let real = account.map(|a| *a.as_bytes()).unwrap_or_default();
+    // The account is read through a reference that may be absent, and a load
+    // through a pointer that may be null is a branch. So the pointer is
+    // chosen first (the account's own, or a fixed all-zero id: a select of
+    // two valid addresses, which the compiler can make without a branch) and
+    // the load is the same for both.
+    static NO_ACCOUNT: [u8; 16] = [0; 16];
+    let real = account.map_or(&NO_ACCOUNT, AccountId::as_bytes);
     step("select-id");
     let mut chosen = [0u8; 16];
     ct_select_bytes(
         u8::from(account.is_some()),
-        &real,
+        real,
         fake.as_bytes(),
         &mut chosen,
     );

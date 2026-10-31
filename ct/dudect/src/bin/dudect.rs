@@ -130,6 +130,16 @@ fn info_server_finish_state_vs_missing(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "info_server_finish_state_vs_missing");
 }
 
+fn control_server_login_start_null(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "control_server_login_start_null");
+}
+fn info_server_login_start_lookup_only(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_server_login_start_lookup_only");
+}
+fn info_server_login_start_real_vs_made_up(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_server_login_start_real_vs_made_up");
+}
+
 ctbench_main!(
     commit_check,
     mac_verify,
@@ -153,6 +163,9 @@ ctbench_main!(
     server_login_start_known_vs_disabled,
     server_prelogin_known_vs_unknown,
     info_server_prelogin_resolve_credential,
+    control_server_login_start_null,
+    info_server_login_start_lookup_only,
+    info_server_login_start_real_vs_made_up,
     server_state_binding,
     server_finish_credential_vs_account,
     info_server_finish_state_vs_missing

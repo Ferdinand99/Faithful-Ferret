@@ -31,7 +31,11 @@
 # 32-byte comparisons is thousands. The run that decides
 # is `scripts/lanbox-ct.sh` (10^6 measurements per bench on a pinned core of the
 # LANBox; a bench over 4.5 is measured again with 10^7), whose result is
-# committed in ct/results/dudect-lanbox.md.
+# committed in ct/results/dudect-lanbox.md. The benches of the server library
+# (`CT_ONLY=server`) are gated at 10^7 measurements from the start, with the
+# controls in the same run, and the result is marked NOT DECISIVE when the
+# 1-minute load average of the LANBox was above 2 at the start or the end; it is
+# committed in ct/results/dudect-lanbox-server.md. The release run is a full run.
 #
 # Third-party actions are pinned by commit SHA, tools by version and checksum,
 # the analyzer by commit and SHA-256 (ct/analyzer.pin). The workflow has read

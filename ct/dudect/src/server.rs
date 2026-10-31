@@ -9,32 +9,44 @@
 //! | target | operation | Left | Right |
 //! |---|---|---|---|
 //! | `server_login_start_known_vs_unknown` | `login_start`, the same KE1 and the same draws | a name with an account | a name without |
-//! | `server_login_start_known_vs_disabled` | `login_start`, the same | a name with an account | the name of an account that may not log in |
-//! | `server_prelogin_known_vs_unknown` | `fake_prelogin` and the branch-free choice of the answer (`ct_select_u8`) by a flag | a name with an account | a name without |
+//! | `server_login_start_known_vs_disabled` | `login_start`, the same (runs the same library path as `Unknown`: a replicate, not a second piece of evidence) | a name with an account | the name of an account that may not log in |
+//! | `control_server_login_start_null` | `login_start`, the same (null control of the same cost: the classes are the same) | an account | the same account |
+//! | `info_server_login_start_lookup_only` | `login_start` with every byte OPAQUE sees the same: the record and id are the made-up ones in both | `Active` with the made-up record | `Unknown` |
+//! | `info_server_login_start_real_vs_made_up` | `login_start`, both `Active`: only the data differ | the real record and id | the made-up record and id |
+//! | `server_prelogin_known_vs_unknown` | the choice of the answer by a flag (`ct_select_u8`) next to the always-computed `fake_prelogin`: the pattern an endpoint has to follow, timed. No library code in it depends on the class | a name with an account | a name without |
 //! | `info_server_prelogin_resolve_credential` | the same with `resolve_credential`, which takes the lookup as `Option<&AccountId>` (information only) | a name with an account | a name without |
 //! | `server_state_binding` | `open_fields` of a re-authentication state (the AEAD, then the purpose, session and account compare of `state.rs`) | session wrong in the first byte | account wrong in the last byte |
 //! | `server_finish_credential_vs_account` | `login_finish` of a re-authentication whose state is for another account (the compare of `login.rs`) | other account, first byte differs | other account, last byte differs |
 //! | `info_server_finish_state_vs_missing` | `login_finish` | the state is there | there is none (information only: shows that an end-to-end timing of `login_finish` sees a difference of one AEAD open) |
 //!
-//! The classes of the first three differ in nothing but whether the name has
-//! an account. Every name has the same length (the length is public and goes
-//! into the HMAC), and both classes use the same pool of 256 names, so the data
-//! are not the same on every measurement but are the same in the two classes. As in the rest of the
-//! crate the input of a measurement is copied into one working cell before
-//! the timer starts, so the memory the library reads is at the same place for
-//! both classes.
+//! The classes of the login start benches differ in nothing but the variant
+//! of the lookup (and, for the data bench, the record). The lookup is built in
+//! `prepare`, before the timer starts, so the timed code has no branch on the
+//! class of its own; the records of both kinds are read in `prepare` for
+//! either class. Every name has the same length (the length is public and
+//! goes into the HMAC), and both classes use the same pool of 256 names, so
+//! the data are not the same on every measurement but are the same in the two
+//! classes. As in the rest of the crate the input of a measurement is set
+//! before the timer starts.
+//!
+//! The benches of the compares (`server_state_binding`,
+//! `server_finish_credential_vs_account`) put a first-byte difference against
+//! a last-byte difference behind an AEAD open of about a microsecond. They are
+//! smoke tests: they cannot tell `ct_eq` from `==` on 16 or 48 bytes. What
+//! shows that the compares are `ct_eq` is `ct/TRIAGE.md` (T5) and the
+//! call-site test in the crate.
 
 use crate::{Class, Mix, Target};
 use ferret_core::testing::TestRng;
 use ferret_core::{AccountId, SecureRng};
 use ferret_server_auth::testing::{
-    FIXTURE_PASSWORD, LoginFixture, StateFields, open_fields, seal_fields,
+    FIXTURE_PASSWORD, LoginFixture, StateFields, made_up_record, open_fields, seal_fields,
 };
 use ferret_server_auth::{
     AccountLookup, AuthContext, Caller, Clock, CredentialId, LoginFinishRequest, LoginId,
     LoginPurpose, LoginStartRequest, LoginStateStore, NoThrottle, NormalizedLoginName, SealedState,
-    SessionBinding, StateKey, StoreError, StoredRecord, fake_prelogin, login_finish, login_start,
-    normalize_login_name, resolve_credential,
+    SessionBinding, StateKey, StoreError, StoredRecord, fake_credential_id, fake_prelogin,
+    login_finish, login_start, normalize_login_name, resolve_credential,
 };
 use std::cell::RefCell;
 use std::hint::black_box;
@@ -135,33 +147,63 @@ fn cx<'a>(f: &'a LoginFixture, clock: &'a FixedClock) -> AuthContext<'a> {
 
 // ------------------------------------------------------------ login_start
 
-/// What the other class (Right) of a start is.
+/// What the two classes of a start are.
 #[derive(Clone, Copy)]
-enum Other {
-    /// A name without an account.
-    Unknown,
-    /// The name of an account that may not log in.
-    Disabled,
+enum StartKind {
+    /// Left: an account of the name. Right: no account for the name.
+    KnownVsUnknown,
+    /// Left: an account. Right: the same account, which may not log in.
+    KnownVsDisabled,
+    /// Null control: both classes are the account, so the classes are the
+    /// same and the noise floor of a target of this size is what t shows.
+    Null,
+    /// Left: an account whose record and id are the made-up ones of the name,
+    /// so every byte OPAQUE sees is what the `Unknown` path computes. Right:
+    /// `Unknown`. Only the variant of the lookup differs (information only).
+    LookupOnly,
+    /// Both classes are `Active`: Left with the real record and id, Right
+    /// with the made-up ones. Only the data differ (information only).
+    RealVsMadeUp,
 }
 
-struct Account {
+/// An account of the pool and what the made-up answer for its name is. Leaked
+/// once, so a lookup that points into it can be built before the timer starts.
+struct Entry {
     name: NormalizedLoginName,
+    id: CredentialId,
+    real: StoredRecord,
+    made_up_id: CredentialId,
+    made_up: StoredRecord,
+}
+
+/// What the timed code reads, set by `prepare`.
+struct Cell {
+    name: &'static NormalizedLoginName,
     credential: CredentialId,
-    record: StoredRecord,
+    lookup: AccountLookup<'static>,
 }
 
 struct Start {
     name: &'static str,
-    other: Other,
+    kind: StartKind,
     f: LoginFixture,
     clock: FixedClock,
     ke1: Vec<u8>,
-    /// Accounts for Left (and for Right of `Disabled`).
-    accounts: Vec<Account>,
+    entries: Vec<&'static Entry>,
     tape: RefCell<Tape>,
-    // The working cell.
-    right: bool,
-    cell: Account,
+    cell: Cell,
+    /// Keeps the reads of `prepare` from being optimised away.
+    touched: u64,
+}
+
+/// Reads every byte of a record, so that it is in the cache when the timer
+/// starts, whichever class reads it.
+fn touch(record: &StoredRecord) -> u64 {
+    record
+        .record
+        .as_bytes()
+        .iter()
+        .fold(0u64, |sum, byte| sum.wrapping_add(u64::from(*byte)))
 }
 
 impl Target for Start {
@@ -171,43 +213,58 @@ impl Target for Start {
     fn reps(&self) -> u32 {
         1
     }
+    fn informational(&self) -> bool {
+        matches!(self.kind, StartKind::LookupOnly | StartKind::RealVsMadeUp)
+    }
     fn prepare(&mut self, class: Class, i: usize) {
-        let i = i % SERVER_POOL;
-        self.right = class == Class::Right;
-        // The same copies for both classes (a clone allocates, and the state
-        // of the allocator and of the caches after the copy must not tell
-        // the classes apart): the name, credential and record are those of
-        // account `i` either way, and the library does not read the
-        // credential and the record when the lookup says there is no
-        // account. The same names in both classes: the time of the HMAC over
-        // a name varies a little with the name, and two pools of names would
-        // give the classes a different mean however many measurements are made.
-        let account = &self.accounts[i];
-        self.cell.name = account.name.clone();
-        self.cell.credential = account.credential;
-        self.cell.record = account.record.clone();
+        let e = self.entries[i % SERVER_POOL];
+        // Both records are read for either class, so that the caches and the
+        // allocator are in the same state; the class decides only what the
+        // lookup points at, and that is settled here, not in the timed code.
+        self.touched = touch(&e.real).wrapping_add(touch(&e.made_up));
+        let right = class == Class::Right;
+        let (credential, lookup) = match (self.kind, right) {
+            (StartKind::KnownVsUnknown, true) => (e.id, AccountLookup::Unknown),
+            (StartKind::KnownVsDisabled, true) => (e.id, AccountLookup::Disabled),
+            (StartKind::LookupOnly, true) => (e.made_up_id, AccountLookup::Unknown),
+            (StartKind::LookupOnly, false) => (
+                e.made_up_id,
+                AccountLookup::Active {
+                    record: &e.made_up,
+                    sk_hint: true,
+                },
+            ),
+            (StartKind::RealVsMadeUp, true) => (
+                e.made_up_id,
+                AccountLookup::Active {
+                    record: &e.made_up,
+                    sk_hint: true,
+                },
+            ),
+            _ => (
+                e.id,
+                AccountLookup::Active {
+                    record: &e.real,
+                    sk_hint: true,
+                },
+            ),
+        };
+        self.cell = Cell {
+            name: &e.name,
+            credential,
+            lookup,
+        };
         self.tape.get_mut().rewind();
     }
     fn run(&self, reps: u32) -> u64 {
-        let mut acc = 0u64;
+        let mut acc = black_box(self.touched) & 0;
         let cx = cx(&self.f, &self.clock);
         for _ in 0..reps {
-            let lookup = if !self.right {
-                AccountLookup::Active {
-                    record: &self.cell.record,
-                    sk_hint: false,
-                }
-            } else {
-                match self.other {
-                    Other::Unknown => AccountLookup::Unknown,
-                    Other::Disabled => AccountLookup::Disabled,
-                }
-            };
             let request = LoginStartRequest {
                 caller: LoginFixture::caller(),
-                name: &self.cell.name,
+                name: self.cell.name,
                 credential: self.cell.credential,
-                lookup,
+                lookup: self.cell.lookup,
                 purpose: LoginPurpose::Login,
                 session_scope: None,
                 ke1: black_box(&self.ke1),
@@ -226,38 +283,48 @@ impl Target for Start {
     }
 }
 
-fn accounts(f: &LoginFixture, mix: &mut Mix) -> Vec<Account> {
+fn entries(f: &LoginFixture, mix: &mut Mix) -> Vec<&'static Entry> {
     (0..SERVER_POOL as u32)
         .map(|n| {
-            let credential = CredentialId::from_bytes(mix.array::<16>());
-            Account {
-                name: name_of('k', n),
-                credential,
-                record: f.register(&credential, FIXTURE_PASSWORD),
-            }
+            let id = CredentialId::from_bytes(mix.array::<16>());
+            let name = name_of('k', n);
+            let made_up_id = fake_credential_id(&f.prelogin, &name);
+            let entry = Entry {
+                made_up: made_up_record(&f.keys, &f.prelogin, &made_up_id, 1),
+                made_up_id,
+                real: f.register(&id, FIXTURE_PASSWORD),
+                id,
+                name,
+            };
+            // Bench data, kept for the life of the process.
+            &*Box::leak(Box::new(entry))
         })
         .collect()
 }
 
-fn start_target(mix: &mut Mix, name: &'static str, other: Other) -> Start {
+fn start_target(mix: &mut Mix, name: &'static str, kind: StartKind) -> Start {
     let f = LoginFixture::new();
     let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "dudect client");
-    let accounts = accounts(&f, mix);
-    let cell = Account {
-        name: accounts[0].name.clone(),
-        credential: accounts[0].credential,
-        record: accounts[0].record.clone(),
+    let entries = entries(&f, mix);
+    let first = entries[0];
+    let cell = Cell {
+        name: &first.name,
+        credential: first.id,
+        lookup: AccountLookup::Active {
+            record: &first.real,
+            sk_hint: true,
+        },
     };
     Start {
         name,
-        other,
+        kind,
         f,
         clock: FixedClock,
         ke1,
-        accounts,
+        entries,
         tape: RefCell::new(Tape::new(mix.next())),
-        right: false,
         cell,
+        touched: 0,
     }
 }
 
@@ -549,12 +616,27 @@ pub fn targets(mix: &mut Mix) -> Vec<Box<dyn Target + Send>> {
         Box::new(start_target(
             mix,
             "server_login_start_known_vs_unknown",
-            Other::Unknown,
+            StartKind::KnownVsUnknown,
         )),
         Box::new(start_target(
             mix,
             "server_login_start_known_vs_disabled",
-            Other::Disabled,
+            StartKind::KnownVsDisabled,
+        )),
+        Box::new(start_target(
+            mix,
+            "control_server_login_start_null",
+            StartKind::Null,
+        )),
+        Box::new(start_target(
+            mix,
+            "info_server_login_start_lookup_only",
+            StartKind::LookupOnly,
+        )),
+        Box::new(start_target(
+            mix,
+            "info_server_login_start_real_vs_made_up",
+            StartKind::RealVsMadeUp,
         )),
         Box::new(prelogin_target(mix, PreloginMode::Select)),
         Box::new(prelogin_target(mix, PreloginMode::Resolve)),
@@ -570,4 +652,53 @@ pub fn targets(mix: &mut Mix) -> Vec<Box<dyn Target + Send>> {
             FinishKind::StateVsMissing,
         )),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every target builds, and runs for both classes and several inputs.
+    #[test]
+    fn every_server_target_builds_and_runs_for_both_classes() {
+        let mut mix = Mix::new(1);
+        for mut target in targets(&mut mix) {
+            for i in 0..4 {
+                for class in [Class::Left, Class::Right] {
+                    target.prepare(class, i);
+                    let _ = target.run(target.reps());
+                }
+            }
+        }
+    }
+
+    /// In the lookup-only bench both classes give `login_start` the same
+    /// bytes to work on, so the answers are the same: the made-up record
+    /// handed over as an account's own gives the answer of an unknown name.
+    #[test]
+    fn the_lookup_only_bench_gives_the_same_answer_in_both_classes() {
+        let mut mix = Mix::new(2);
+        let target = start_target(&mut mix, "t", StartKind::LookupOnly);
+        let answer = |target: &mut Start, class| {
+            target.prepare(class, 3);
+            let cx = cx(&target.f, &target.clock);
+            let request = LoginStartRequest {
+                caller: LoginFixture::caller(),
+                name: target.cell.name,
+                credential: target.cell.credential,
+                lookup: target.cell.lookup,
+                purpose: LoginPurpose::Login,
+                session_scope: None,
+                ke1: &target.ke1,
+            };
+            let mut tape = target.tape.borrow_mut();
+            tape.rewind();
+            let response = login_start(&cx, &NullStore, &mut *tape, &request).unwrap();
+            (response.ke2, response.ksf_profile, response.sk_hint)
+        };
+        let mut target = target;
+        let left = answer(&mut target, Class::Left);
+        let right = answer(&mut target, Class::Right);
+        assert_eq!(left, right);
+    }
 }

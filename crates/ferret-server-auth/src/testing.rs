@@ -622,6 +622,23 @@ impl core::fmt::Debug for LoginFixture {
     }
 }
 
+/// The record `login_start` makes up for the credential id `id` (a name
+/// without an account), as a stored record with the key stretching profile
+/// `ksf_profile`. For the timing tests, which hand it to `login_start` as if
+/// it were an account's own.
+pub fn made_up_record(
+    keys: &crate::ServerKeys,
+    prelogin: &crate::PreloginSecret,
+    id: &CredentialId,
+    ksf_profile: u8,
+) -> crate::StoredRecord {
+    let bytes = crate::prelogin::fake_record_bytes(keys, prelogin, id);
+    crate::StoredRecord {
+        record: crate::record::ValidatedRecord::parse(bytes.as_slice()).unwrap(),
+        ksf_profile,
+    }
+}
+
 /// `login_start` run with another OPAQUE context and other identities than
 /// Ferret's. A client of Ferret cannot authenticate such a server.
 pub fn login_start_with_context<R: ferret_core::SecureRng, S: LoginStateStore>(

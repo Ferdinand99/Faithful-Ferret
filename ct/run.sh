@@ -37,7 +37,9 @@
 #                 warning, a bench over CT_GROSS (500) in the rerun too is a failure
 #   CT_PIN_CPU    CPU number for the dudect runs (taskset), "auto" for the least busy,
 #                 empty for no pinning
-#   CT_ONLY       only the dudect benches whose name contains this
+#   CT_ONLY       only the dudect benches whose name contains this (the controls,
+#                 control_*, always run too)
+#   CT_QUIET_LOAD 1-minute load average above which a run is marked NOT DECISIVE (2)
 #   CT_REPEAT     measure each selected bench this many times (spread of t)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -47,6 +49,10 @@ results="${CT_RESULTS:-ct/results}"
 analyzer="${CT_ANALYZER:-/opt/ct-analyzer/ct_analyzer/analyzer.py}"
 n="${FERRET_CT_N:-1000000}"
 gross="${CT_GROSS:-500}"
+# A dudect run is decisive only on a quiet machine: the 1-minute load average
+# at the start and at the end is recorded, and above this it is marked
+# "NOT DECISIVE".
+CT_QUIET_LOAD="${CT_QUIET_LOAD:-2}"
 mkdir -p "$results"
 
 harness_files=(base32 crockford ct_eq ct_select unpad)
@@ -352,11 +358,17 @@ dudect_native() {
     echo "host: $(uname -n), $(grep -m1 'model name' /proc/cpuinfo || true)"
     echo "rustc: $(rustc --version)"
     echo "load: $(cat /proc/loadavg)"
+    if over "$(cut -d' ' -f1 /proc/loadavg)" "$CT_QUIET_LOAD"; then
+      echo "NOT DECISIVE: the 1-minute load average at the start was above $CT_QUIET_LOAD; the machine was not quiet"
+    fi
   } | tee -a "$out"
-  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
+  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled control_server_login_start_null info_server_login_start_lookup_only info_server_login_start_real_vs_made_up server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
   local failed=0 invalid=0 grossfail=0 name rep
   for name in $names; do
-    if [ -n "${CT_ONLY:-}" ] && [[ "$name" != *"$CT_ONLY"* ]]; then continue; fi
+    # A selected run always has the controls with it: a result without them
+    # does not show that the setup could see a leak, or stayed quiet on equal
+    # classes, in that session.
+    if [ -n "${CT_ONLY:-}" ] && [[ "$name" != *"$CT_ONLY"* ]] && [[ "$name" != control_* ]]; then continue; fi
     for rep in $(seq 1 "${CT_REPEAT:-1}"); do
       local line t line2 t2="" first_over=0 second_over=0
       line="$(bench_line "$bin" "$name" "$n")"
@@ -376,6 +388,13 @@ dudect_native() {
           ;;
         info_*) echo "[info] $name is reported, not gated" | tee -a "$out"; continue ;;
       esac
+      if [ "$first_over" = 1 ] && [ "$n" -ge 10000000 ]; then
+        # The rerun would be ten times as long again (hours); a bench over the
+        # limit at 10^7 is a failure that is looked at, not measured again.
+        echo "[FAIL] $name: |t| >= 4.5 at n=$n (no rerun above 10^7)" | tee -a "$out"
+        failed=1
+        continue
+      fi
       if [ "$first_over" = 1 ]; then
         line2="$(bench_line "$bin" "$name" "$((n * 10))")"
         echo "[rerun n=$((n * 10))] $line2" | tee -a "$out"
@@ -394,6 +413,12 @@ dudect_native() {
       fi
     done
   done
+  {
+    echo "load at the end: $(cat /proc/loadavg)"
+    if over "$(cut -d' ' -f1 /proc/loadavg)" "$CT_QUIET_LOAD"; then
+      echo "NOT DECISIVE: the 1-minute load average at the end was above $CT_QUIET_LOAD"
+    fi
+  } | tee -a "$out"
   finish "$failed" "$invalid" "$grossfail"
 }
 

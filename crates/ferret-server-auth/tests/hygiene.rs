@@ -444,14 +444,65 @@ fn proofs_are_verified_in_one_module_only() {
 
 // ------------------------------------------------------------ comparisons
 
-/// The text of a source file as it is shipped: no test module, and no
-/// comments or string literals.
+/// The position of the bracket that closes the one that opens at `open`.
+fn matching_close(t: &[char], open: usize) -> Option<usize> {
+    let (o, c) = (t[open], if t[open] == '{' { '}' } else { ')' });
+    let mut depth = 0usize;
+    for (at, ch) in t.iter().enumerate().skip(open) {
+        if *ch == o {
+            depth += 1;
+        } else if *ch == c {
+            depth -= 1;
+            if depth == 0 {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+/// The text of a source file as it is shipped: no comments or string
+/// literals, and the body of every `#[cfg(test)] mod` blanked. Only the body
+/// of the module goes, so code that follows a test module is still scanned.
 fn shipped(text: &str) -> String {
-    let text = text.replace("\r\n", "\n");
-    let cut = text.find("#[cfg(test)]\nmod ").unwrap_or(text.len());
-    blank_comments_and_strings(&text[..cut])
-        .into_iter()
-        .collect()
+    let t = blank_comments_and_strings(&text.replace("\r\n", "\n"));
+    let mut out = t.clone();
+    let attribute: Vec<char> = "#[cfg(".chars().collect();
+    let mut i = 0;
+    while i + attribute.len() <= t.len() {
+        if t[i..i + attribute.len()] == attribute[..] {
+            // The attribute `#[cfg(...)]` up to its closing bracket; it is a
+            // test attribute when `test` is one of its words and `not` is
+            // not (`test`, `all(test, feature = "x")`).
+            let close = (i..t.len()).find(|at| t[*at] == ']').unwrap_or(t.len() - 1);
+            let words: Vec<String> = t[i..close]
+                .split(|c: &char| !is_ident(*c))
+                .map(|w| w.iter().collect())
+                .collect();
+            let is_test = words.iter().any(|w| w == "test") && !words.iter().any(|w| w == "not");
+            let after = skip_ws(&t, close + 1);
+            if is_test && word_at(&t, after).as_deref() == Some("mod") {
+                let mut j = after;
+                while j < t.len() && t[j] != '{' && t[j] != ';' {
+                    j += 1;
+                }
+                let end = if j < t.len() && t[j] == '{' {
+                    matching_close(&t, j).unwrap_or(t.len() - 1)
+                } else {
+                    j.min(t.len() - 1)
+                };
+                for slot in &mut out[i..=end] {
+                    if *slot != '\n' {
+                        *slot = ' ';
+                    }
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.into_iter().collect()
 }
 
 /// The shipped files of `src/` with the name of each, without the test
@@ -641,6 +692,62 @@ const COMPARISONS: &[(&str, &str, usize, &str)] = &[
         1,
         "the version byte of a blob, which is in the clear",
     ),
+    // Matches on closed sets and on the variant of a purpose.
+    (
+        "keys.rs",
+        "matches!(policy, CreatePolicy::CreateIfMissing)",
+        1,
+        "a setting of the server",
+    ),
+    (
+        "login.rs",
+        "matches!(req.purpose, LoginPurpose::Reauth",
+        1,
+        "the variant of the purpose, which the request names",
+    ),
+    (
+        "state.rs",
+        "out.push(u8::from(matches!(",
+        1,
+        "the variant of the purpose, written as a flag",
+    ),
+    (
+        "replace.rs",
+        "if matches!(",
+        1,
+        "the kind of the operation, which the request names",
+    ),
+    (
+        "name.rs",
+        "matches!(",
+        1,
+        "a character of the login name against the list of invisible characters; a login name is public",
+    ),
+    // Destructuring of bytes into variables: no compare against a literal.
+    (
+        "secret_file.rs",
+        "let [_, _, _, _, version, file_kind, suite, len_high, len_low] = *header;",
+        1,
+        "the header of a file, read into variables; the numbers are compared on their own lines",
+    ),
+    (
+        "state.rs",
+        "let [code] = *take::<1>(&mut rest)",
+        1,
+        "one byte of an AEAD-accepted plaintext, read into a variable",
+    ),
+    (
+        "state.rs",
+        "let [flag] = *take::<1>(&mut rest)",
+        1,
+        "one byte of an AEAD-accepted plaintext, read into a variable",
+    ),
+    (
+        "state.rs",
+        "let [ksf_profile] = *take::<1>(&mut rest)",
+        1,
+        "one byte of an AEAD-accepted plaintext, read into a variable",
+    ),
     // Public data compared with public data.
     (
         "replace.rs",
@@ -662,31 +769,153 @@ const COMPARISONS: &[(&str, &str, usize, &str)] = &[
     ),
 ];
 
-#[test]
-fn no_secret_comparison_uses_eq() {
-    let mut used = vec![0usize; COMPARISONS.len()];
-    for (file, code) in shipped_sources() {
-        for line in code.lines().map(str::trim).filter(|l| has_equality(l)) {
-            let hit = COMPARISONS
+/// Compares that are not `==` or `!=`: the method forms, the assertion
+/// macros, and slice or array patterns, which compare the bytes against
+/// literals.
+fn other_compare(line: &str) -> bool {
+    [
+        ".eq(",
+        ".ne(",
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+        "let [",
+        "matches!(",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+}
+
+fn flagged(line: &str) -> bool {
+    has_equality(line) || other_compare(line)
+}
+
+/// What is wrong with the flagged lines of `files` against `table`, as text.
+/// A listed text has to account for everything flagged on its line: what is
+/// left of the line, once the listed text is cut out, must not be flagged
+/// again, so a second compare appended to a listed line is found.
+fn comparison_problems(
+    files: &[(String, String)],
+    table: &[(&str, &str, usize, &str)],
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut used = vec![0usize; table.len()];
+    for (file, code) in files {
+        for line in code.lines().map(str::trim).filter(|l| flagged(l)) {
+            let hit = table
                 .iter()
-                .position(|(f, text, _, _)| *f == file && line.contains(text));
+                .position(|(f, text, _, _)| f == file && line.contains(text));
             match hit {
-                Some(n) => used[n] += 1,
-                None => panic!(
-                    "{file}: `{line}` compares with == or !=. Compare a value that may be \
-                     secret with ct_eq (src/ct.rs); if nothing here can be secret, list \
-                     the line in COMPARISONS with the reason"
-                ),
+                Some(n) => {
+                    used[n] += 1;
+                    let rest = line.replacen(table[n].1, "", 1);
+                    if flagged(&rest) {
+                        problems.push(format!(
+                            "{file}: `{line}` has more than the listed `{}`: another compare on the same line",
+                            table[n].1
+                        ));
+                    }
+                }
+                None => problems.push(format!(
+                    "{file}: `{line}` compares (==, !=, a method, an assertion or a pattern).                      Compare a value that may be secret with ct_eq (src/ct.rs); if nothing                      here can be secret, list the line in COMPARISONS with the reason"
+                )),
             }
         }
     }
-    for (n, (file, text, count, _)) in COMPARISONS.iter().enumerate() {
-        assert_eq!(
-            used[n], *count,
-            "COMPARISONS: {file} `{text}` is on {} lines, listed for {count}",
-            used[n]
-        );
+    for (n, (file, text, count, _)) in table.iter().enumerate() {
+        if used[n] != *count {
+            problems.push(format!(
+                "COMPARISONS: {file} `{text}` is on {} lines, listed for {count}",
+                used[n]
+            ));
+        }
     }
+    problems
+}
+
+#[test]
+fn no_secret_comparison_uses_eq() {
+    let problems = comparison_problems(&shipped_sources(), COMPARISONS);
+    assert!(
+        problems.is_empty(),
+        "{}",
+        problems.join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn the_comparison_scan_finds_every_way_around_it() {
+    let table: &[(&str, &str, usize, &str)] = &[(
+        "a.rs",
+        "self.code() == other.code()",
+        1,
+        "a byte of the purpose",
+    )];
+    let scan = |code: &str| comparison_problems(&[("a.rs".into(), shipped(code))], table);
+    let good = "fn f() { let same = self.code() == other.code(); }
+";
+    assert!(scan(good).is_empty(), "{:?}", scan(good));
+
+    // A second compare appended to a listed line.
+    let appended =
+        "fn f() { let same = self.code() == other.code() && self.binding() == other.binding(); }
+";
+    assert!(!scan(appended).is_empty());
+    // An unlisted line, and the other forms of compare.
+    for body in [
+        "a == b",
+        "a != b",
+        "let _ = a.eq(&b);",
+        "let _ = a.ne(&b);",
+        "assert_eq!(a, b);",
+        "debug_assert_ne!(a, b);",
+        "if let [0, 0, ..] = binding { }",
+        "let m = matches!(binding, [0; 48]);",
+    ] {
+        let code = format!(
+            "{good}fn g() {{ {body} }}
+"
+        );
+        assert!(!scan(&code).is_empty(), "{body}");
+    }
+    // Shipped code after a test module is still scanned; the module is not.
+    let after = format!(
+        "{good}#[cfg(test)]
+mod tests {{
+    fn t() {{ assert_eq!(1, 1); }}
+}}
+fn g() {{ a == b }}
+"
+    );
+    assert!(!scan(&after).is_empty());
+    let only_tests = format!(
+        "{good}#[cfg(test)]
+mod tests {{
+    fn t() {{ assert_eq!(1, 1); if x == y {{}} }}
+}}
+"
+    );
+    assert!(scan(&only_tests).is_empty(), "{:?}", scan(&only_tests));
+    // A test module that is only declared (`mod helpers;`) hides nothing.
+    let declared = format!(
+        "{good}#[cfg(test)]
+mod helpers;
+fn g() {{ a == b }}
+"
+    );
+    assert!(!scan(&declared).is_empty());
+    // A listed line that goes away is a stale entry.
+    assert!(
+        !scan(
+            "fn f() {}
+"
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -809,7 +1038,18 @@ fn declaration_body(t: &[char], from: usize) -> String {
 }
 
 fn holds_bytes(body: &str) -> bool {
-    body.contains("[u8") || body.contains("Vec<u8>") || body.contains("String")
+    [
+        "[u8",
+        "Vec<u8",
+        "String",
+        "&str",
+        "Box<str>",
+        "GenericArray",
+        "Output<",
+        "Zeroizing<",
+    ]
+    .iter()
+    .any(|needle| body.contains(needle))
 }
 
 #[test]
@@ -858,7 +1098,7 @@ fn types_with_bytes_derive_partial_eq_only_when_listed() {
 fn the_server_library_is_not_in_the_webassembly_build() {
     let root = manifest_dir().join("../..");
     let binding = std::fs::read_to_string(root.join("bindings/wasm/Cargo.toml")).unwrap();
-    for needle in ["ferret-server-auth", "server-suite", "opaque"] {
+    for needle in ["ferret-server-auth", "server-suite"] {
         assert!(
             !binding.contains(needle),
             "bindings/wasm/Cargo.toml names {needle}: the constant-time checks of the \

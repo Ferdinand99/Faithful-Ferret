@@ -22,8 +22,9 @@
 # so a partial run never replaces the complete one.
 #
 # Environment:
-#   FERRET_CT_N     measurements per dudect bench (default 1000000; a bench over 4.5
-#                   is measured again with ten times as many)
+#   FERRET_CT_N     measurements per dudect bench (default 1000000, and 10000000 when
+#                   CT_ONLY=server; a bench over 4.5 is measured again with ten times
+#                   as many, except at 10^7, where it fails)
 #   CT_PIN_CPU      CPU the dudect runs are pinned to with taskset (default "auto":
 #                   the least busy CPU of the last second; a number for a fixed
 #                   one; "" for no pinning)
@@ -46,11 +47,20 @@ esac
 
 export FERRET_EXPORT="ct/results"
 export FERRET_EXPORT_ALWAYS=1
-export FERRET_CT_N="${FERRET_CT_N:-1000000}"
-export CT_PIN_CPU="${CT_PIN_CPU-auto}"
 export CT_ONLY="${CT_ONLY:-}"
+case "$CT_ONLY" in
+  *[!A-Za-z0-9_-]*)
+    echo "lanbox-ct.sh: CT_ONLY may hold letters, digits, _ and - only (it is part of a file name)" >&2
+    exit 2
+    ;;
+esac
+# The server benches are gated at 10^7 measurements; the rest at 10^6.
+default_n=1000000
+if [ "$CT_ONLY" = server ]; then default_n=10000000; fi
+export FERRET_CT_N="${FERRET_CT_N:-$default_n}"
+export CT_PIN_CPU="${CT_PIN_CPU-auto}"
 export CT_REPEAT="${CT_REPEAT:-1}"
-export FERRET_PASS_ENV="FERRET_CT_N CT_PIN_CPU CT_ONLY CT_REPEAT"
+export FERRET_PASS_ENV="FERRET_CT_N CT_PIN_CPU CT_ONLY CT_REPEAT CT_QUIET_LOAD"
 
 case "$mode" in all | dudect-native) rm -f ct/results/dudect-native.txt ;; esac
 case "$mode" in all | dudect-wasm) rm -f ct/results/dudect-wasm.txt ;; esac
@@ -78,6 +88,9 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
     echo "- commit: \`$commit\`"
     echo "- exit status of the run: $rc"
     echo "- measurements per bench: $FERRET_CT_N"
+    if grep -q "NOT DECISIVE" ct/results/dudect-native.txt 2>/dev/null; then
+      echo "- **NOT DECISIVE**: the machine was not quiet (1-minute load average above 2 at the start or the end; see the load lines below)"
+    fi
     if [ "$CT_REPEAT" != 1 ]; then echo "- every selected bench measured $CT_REPEAT times"; fi
     echo
     for f in dudect-native dudect-wasm; do

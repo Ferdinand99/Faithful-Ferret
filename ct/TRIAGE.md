@@ -261,27 +261,40 @@ list of places from growing unnoticed.
   the binding starts to depend on it. The server benches of `ct/dudect` are
   behind the feature `server` and are native only.
 - **Places that compare or choose.** `no_secret_comparison_uses_eq` lists every
-  `==` and `!=` in the shipped code with the reason it cannot leak (lengths,
-  times, closed sets, public data), `types_with_bytes_derive_partial_eq_only_when_listed`
-  does the same for derived `PartialEq` over bytes, and
+  line of the shipped code that compares with `==`, `!=`, `.eq(`, `.ne(`, an
+  assertion macro, `matches!` or a slice pattern, with the reason it cannot leak
+  (lengths, times, closed sets, public data); a listed text has to account for
+  everything compared on its line, so a second compare appended to a listed
+  line fails, and only the body of a test module is left out of the scan.
+  `types_with_bytes_derive_partial_eq_only_when_listed` does the same for
+  derived `PartialEq` over bytes, text and the usual wrappers of them, and
   `the_constant_time_call_sites_are_the_ones_that_were_checked` pins how many
   times each file calls `ct_eq` and `ct_select_*`. A new place fails one of them
-  until it has been read and listed here.
+  until it has been read and listed here. These are tripwires, not a proof.
+  They do not see ordering (`<`, `cmp`, `sort`, `binary_search`), a map keyed
+  by a raw secret (review point 4 holds only while the key types stay
+  digests), `starts_with` and `contains` on byte slices, a call of `ct_eq`
+  under another name (`use ... as`), a direct use of `subtle`, or a derived
+  `PartialEq` over a byte type of another crate that the needles do not name.
 - **Where the library does not run division, search or index by a secret.** In
   `login.rs`, `state.rs` and `replace.rs` the shipped code has no `/`, `%`,
   `checked_div`, `checked_rem`, `min`, `max`, `position`, `find`, `contains`,
-  `binary_search` or `windows`. The one remainder in the crate is
-  `prelogin::permille` (HMAC output modulo 1000, in the made-up answer of a
-  name), see S-2.
+  `binary_search` or `windows`. What is left in the crate is in
+  `prelogin::fake_prelogin`: the remainder `permille` (an HMAC output modulo
+  1000, a constant divisor), the early exit of the `find_map` over the profiles
+  of the policy on that draw, and the compare of the hint draw with the share of
+  the policy. All three work on a value derived from the pre-login secret, not
+  chosen by the client, and their result is the answer that is given anyway.
+  Accepted.
 
 ### Review points
 
 | # | Compare or choice | Secret? | How it is done | Checked by |
 |---|---|---|---|---|
 | 1 | KE3 against the expected MAC | yes | `opaque-ke` (`subtle::ConstantTimeEq`) inside `ServerLogin::finish` | a KE3 with one byte changed, at every position, is refused (`tests/rfc9807_server.rs`) |
-| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 2 calls, `prelogin.rs`, 1) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown`, `server_login_start_known_vs_disabled`, `server_prelogin_known_vs_unknown` |
-| 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 49 bytes of the binding (`LoginPurpose::same_as`), the purpose byte next to it with `&` | `server_state_binding` |
-| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | `server_finish_credential_vs_account`; `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
+| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 2 calls, `prelogin.rs`, 1) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only` and `info_server_login_start_real_vs_made_up`; `server_prelogin_known_vs_unknown` times the pattern an endpoint has to follow (no library code in it depends on the class) |
+| 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 48 binding bytes (`LoginPurpose::same_as`), the purpose byte next to it with `&` | T5 and the call-site test; `server_state_binding` is a smoke test (it cannot tell `ct_eq` from `==` on 48 bytes behind an AEAD open) |
+| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open); `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
 | 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
 | 5 | SHA-256 checksum of a secret file | the content is secret | `ct_eq` (`secret_file.rs`) | `the_constant_time_call_sites_are_the_ones_that_were_checked` |
 | 6 | Fingerprint of the set-up at start-up | no (a hash, no remote caller) | `PartialEq` of `SetupFingerprint` is `ct_eq` anyway | `no_secret_comparison_uses_eq` |
@@ -298,23 +311,29 @@ plain login. The bytes are those of a plaintext the AEAD has already
 accepted, so no caller can steer the compare, and the same bytes hold the
 session of a re-authentication in the other case. Fixed: it is `ct_eq` now.
 
-### S-2. `resolve_credential` branches on whether an account was given
+### S-2. The library branches once on whether an account was found
 
-`resolve_credential(secret, name, Option<&AccountId>)` reads the account id
-through a reference that may be absent. A load through a reference that may be
-null cannot be made branch-free by the compiler (it may not read it
-speculatively), so the library branches on the lookup result there, and
-`login_start` matches on `AccountLookup` once. The branch is on what the caller
-has already decided from its own lookup, which differs by a database round trip,
-and the library cannot hide that. The compare/choice that follows is branch-free.
-`info_server_prelogin_resolve_credential` reports the size of the branch: |t| of
-5.6 and 4.6 at 10^6 (tau 0.016 and 0.005, eight calls per measurement), at the
-threshold of what the timer can see and not gated. `server_prelogin_known_vs_unknown`
-times the rest of the answer (the made-up answer is always computed, the real
-or made-up profile and hint are chosen by a flag with `ct_select_u8`) and is
-gated. `permille` takes the remainder of an HMAC output of the name; the
-operand is derived from the pre-login secret, not chosen by the client, and
-the result is the profile that the answer shows anyway. Accepted.
+That bit is secret from the network: whether a name has an account is what
+§ 4.2 keeps from a caller. The library branches on it in two places:
+`login_start` matches on `AccountLookup`, and `resolve_credential(secret, name,
+Option<&AccountId>)` read the account id through a reference that may be
+absent, which is a branch (a load through a pointer that may be null cannot be
+made without one). `resolve_credential` now chooses the pointer first (the
+account's own, or a fixed all-zero id: a select of two valid addresses) and
+loads once, so the source has no branch there; that a compiler turns it into a
+`cmov` is not guaranteed, and `info_server_prelogin_resolve_credential`
+measures it (before the change |t| of 5.6 and 4.6 at 10^6, tau 0.016 and
+0.005, eight calls per measurement). The match in `login_start` stays: it needs
+an always-present record reference, which is an API change
+(`StoredRecord::placeholder()` for unknown and disabled, and the match as a
+`ct_select`), to be decided with the result of
+`info_server_login_start_lookup_only`. The branch is accepted as long as the
+caller's own lookup on the same bit, which differs by a database round trip,
+dominates it; the endpoint test (§ 4.2: response bytes and delays) has to cover
+that, see R10. The choices after the match are branch-free.
+`server_prelogin_known_vs_unknown` times the rest of the pre-login answer (the
+made-up answer is always computed, the real or made-up profile and hint are
+chosen by a flag with `ct_select_u8`) and is gated.
 
 ### S-3. Two pools of inputs gave the classes a different mean
 
@@ -323,10 +342,12 @@ the library. With a pool of names for each class, `server_prelogin_known_vs_unkn
 gave |t| of 10.9, 34.6 and 16.7 (negative every time, growing with n), and
 with a pool of expected values for each class `server_state_binding` and
 `server_finish_credential_vs_account` gave |t| of 7 to 11 with a different
-sign from one process to the next. A name changes the time of the HMAC (and
-of the division in `permille`) by a little, and 256 names per class are 256
-samples of that: the means of the two pools differ by chance, and dudect, which
-asks whether the means differ, sees that once n is large enough. The same
+sign from one process to the next. 256 names (or 256 sealed states) per class
+are 256 samples of whatever depends on the input or on where it sits in
+memory (layout, or data: not isolated; HMAC and a constant-divisor remainder
+have no data-dependent time on this CPU in theory): the means of the two pools
+differ by chance, and dudect, which asks whether the means differ, sees that
+once n is large enough. The same
 lesson as `unpad_ct` (R7), met again. The benches now give both classes the same
 pool (the same names, the same masks; one allocation holds both classes of the
 sealed states, input `i` of class `c` at `2i + c`), and the classes differ in
@@ -338,35 +359,56 @@ Both classes now run the same copies.
 
 ### Timing of the server library
 
-`ct/results/dudect-lanbox-server.md` (`CT_ONLY=server CT_REPEAT=2
-scripts/lanbox-ct.sh dudect-native`, 10^6 measurements per bench, a bench over
-4.5 measured again with 10^7), taken while other builds ran on the LANBox
-(load average 21 at the start, the dudect process pinned to the least busy core):
+**The table below is indicative, not decisive.** It is
+`ct/results/dudect-lanbox-server.md` as it was first written
+(`CT_ONLY=server CT_REPEAT=2`, 10^6 measurements per bench, a bench over 4.5
+measured again with 10^7), on commit 9aaa566, taken while other builds ran on
+the LANBox (load average 21 at the start, the dudect process pinned to the least
+busy core, no controls in the run). Only docs, comments, imports and a rebinding
+changed in `src/` after that commit. The decisive run is the one that replaces
+it: 10^7 measurements per bench from the start, the controls in the same run,
+the load average at the start and at the end in the file, on a quiet LANBox (the
+file says NOT DECISIVE when the 1-minute load average was above 2). The gated
+benches fail at 10^7 without a rerun.
 
 | bench | t at 10^6 (two runs) | result |
 |---|---|---|
 | `server_login_start_known_vs_unknown` | -3.88, -2.92 | below 4.5 |
-| `server_login_start_known_vs_disabled` | +2.29, -3.10 | below 4.5 |
+| `server_login_start_known_vs_disabled` (replicate) | +2.29, -3.10 | below 4.5 |
 | `server_prelogin_known_vs_unknown` | +2.31, +1.90 | below 4.5 |
-| `server_state_binding` | -1.72, -1.69 | below 4.5 |
-| `server_finish_credential_vs_account` | +4.17, +4.65 (10^7: +2.14) | below 4.5 at 10^7 |
-| `info_server_prelogin_resolve_credential` (not gated) | +5.61, +4.57 | see S-2 |
+| `server_state_binding` (smoke test) | -1.72, -1.69 | below 4.5 |
+| `server_finish_credential_vs_account` (smoke test) | +4.17, +4.65 (10^7: +2.14) | below 4.5 at 10^7 |
+| `info_server_prelogin_resolve_credential` (not gated) | +5.61, +4.57 | before the pointer select, see S-2 |
 | `info_server_finish_state_vs_missing` (not gated) | +19668, +20326 | the setup sees a missing state: an end-to-end timing of `login_finish` sees the difference of one AEAD open |
 
 One run of `server_login_start_known_vs_unknown` with 10^7 measurements from the
-start (not the rule of the decisive run, which asks for 10^7 only after a first
-run over 4.5) gave t = +7.06 (tau +0.0087, with 0.67M of the measurements kept
-after the percentile cuts of the tool), on a LANBox with a load average of 15 and
-other builds running. Its two runs at 10^6 were -3.88 and -2.92 and the sign
-differs, so it is not a stable bias of the kind the controls show, but it is a
-result over 4.5 that has not been explained or repeated: the rerun it asks for
-(10^8, hours) was not made, and the run has to be repeated on a quiet machine
-before the result is called decisive. No code path in `login_start` branches on
-the lookup after `select-id` (`known_and_unknown_run_the_same_steps_in_the_same_order`
-shows the same steps in the same order); the branches that remain are in S-2.
-This times the library, not the database: the
-lookup that decides `Active`, `Unknown` or `Disabled` is the caller's, and the
-comparison of the bytes and delays of the answers is a test of the endpoint.
+start gave t = +7.06 (tau +0.0087), on a LANBox with a load average of 15. It is
+probably not noise. The tool reports the largest |t| of the whole sample, about
+a hundred percentile crops and a second-order test, and `n` is the size of that
+test: 0.67M of 10^7 means the fastest 6.7 % of the runs, which are the ones
+nobody disturbed and the most sensitive place for a small constant offset. The
+two runs at 10^6 (-3.88 at n = 0.979M, -2.92 at n = 0.999M) are near-uncropped
+tests, so their sign says nothing about the cropped one. The sign (Left, the
+known side, slower) is that of `info_server_prelogin_resolve_credential`, which
+times the branch of S-2 on the same bit. tau = 0.0087 of a crop spread of a few
+hundred nanoseconds is a few nanoseconds, a handful of cycles. The suspects, in
+order: the match on the lookup and the loads of the known side, the bench's own
+class branch (it was in the timed closure then; it is in `prepare` now), and the
+data (the dummy public key of the unknown side is one value, the known side has
+256). The rerun is therefore a diagnosis: `control_server_login_start_null` gives
+the noise floor of a target this size, `info_server_login_start_lookup_only` has
+every byte OPAQUE sees the same and only the variant of the lookup differs, and
+`info_server_login_start_real_vs_made_up` has only the data differ. Read: if the
+gated bench passes at 10^7, the point is closed; if it fails and `lookup_only`
+has the same sign, the cause is the variant, and it is either accepted as part
+of S-2 by a written ruling or removed by the API change in S-2; if the data
+bench shows it, look further down the stack before release. In every case the
+size is a few cycles against a database lookup and a network that differ by
+orders of magnitude, and the exposure is decided by the endpoint test.
+
+This times the library, not the database: the lookup that decides `Active`,
+`Unknown` or `Disabled` is the caller's, and the comparison of the bytes and
+delays of the answers is a test of the endpoint.
 
 ## Residual risks that this analysis does not remove
 
@@ -479,9 +521,12 @@ with its reason, and each is repeated in the report.
   database lookup that builds `AccountLookup` (a row found or not takes
   another path through the database), the HTTP layer, TLS or the network; the
   comparison of the bytes and delays of the answers of a running server is a
-  test of the endpoint. The branch on the lookup in `login_start` and
-  `resolve_credential` is the caller's own decision made visible (S-2). The
-  compare of the credential in `login_finish` is shown by the timing only to
-  within the noise of the whole `login_finish` call (|t| up to 4.65 at 10^6 and
-  2.14 at 10^7); that it is `ct_eq` is shown by the call-site test and the
+  test of the endpoint (§ 4.2), and it has to name this part as an input. The
+  branch on the lookup in `login_start` is the secret bit, branched on once;
+  the caller's own lookup on the same bit dominates it (S-2). The endpoint
+  has a larger difference of the same kind: the M1 `finish_lookup` parses the
+  record only for a known account (a finding of the review of the endpoint code), and the endpoint
+  test owner must see both. The compare of the credential in `login_finish`
+  is shown by the timing only to within the noise of the whole `login_finish`
+  call (|t| up to 4.65 at 10^6 and 2.14 at 10^7); that it is `ct_eq` is shown by the call-site test and the
   analysis of the harness (T5), not by the timing alone. Accepted.
