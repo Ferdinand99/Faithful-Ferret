@@ -434,6 +434,38 @@ also reads the disassembly of the timed (LTO) binary for `stored_for`,
 `choose_answer` and `pick_account`, since `lookup-asm` reads a build without
 LTO.
 
+**The fourth time: the mask was not a mask in the binary.** At opt-level 3
+(the profile the server ships) `server_finish_credential_vs_account` failed
+again, t = -13.95, on b7f2c54, while it had passed at `s` (+1.39). A throwaway
+run found the cause (`ct/results/dudect-lanbox-finish-diag.md`, five rounds at
+10^7, load 1.0 to 1.4, `control_leaky` seen). In the disassembly of
+`Finish::prepare` the mask `0 - class` had been folded into a select, the loop
+unswitched on the class (`test`, `je`, then two copy loops, each reading one
+state) and no `pand` or xor-and-xor was left: each class read only its own pool
+buffer just before the timer, which is the pool bias of this paragraph in the
+form the mask was written to remove. The same function with the class behind
+`black_box` has the mask loop (`pand`, `pandn`). The benches, five rounds
+(a pass is |t| < 4.5):
+
+| bench | what it tests | result |
+|---|---|---|
+| `server_finish_credential_vs_account` | the bench as it was | fails in all five rounds, t +21 to +35 |
+| `control_server_finish_null` | the old null control (it never reached the mask) | passes, t between -2.5 and +2.5 |
+| `info_server_finish_same_masked` | the mask of the bench, equal bytes in the two buffers | fails (+19 to +22 in four rounds, -26 in one): the class reaches the timer without any data difference |
+| `info_server_finish_hidden_mask` | the data of the bench, the class behind `black_box` | passes in all five, t between -2.7 and +2.7 |
+| `info_server_finish_swapped` | the two positions swapped | fails with the same sign as the bench in four rounds (+4.4 in the fifth): no relation to the position |
+| `info_server_finish_open_only` | as the hidden-mask bench, stopping after the open | passes, t between -2.9 and +2.5 |
+
+So the difference was made by `prepare`, not by the compare or the open: the
+data, hidden from the compiler, give nothing at 10^7, and `ct_eq` (the crate's
+function in the same binary: a length test, one back-edge, a `black_box` call
+per byte) cannot exit early. The null control had been built to the wrong shape
+(its class never reached the mask); it now has the two buffers and the mask of
+the bench, with equal bytes. The class goes through `black_box` in `prepare`,
+and `ct/run.sh timed-asm` fails if `Finish::prepare` of the timed binary has
+no mask loop. The claim above that `prepare` reads both states for either class
+was true of the source and, at opt-level 3, not of the binary until this fix.
+
 ### Timing of the server library
 
 **Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:
@@ -502,6 +534,14 @@ see the header of the file). The timed binary was checked first: `stored_for`,
 | `info_server_login_start_real_vs_made_up` | -1.38 | below 4.5 |
 | `info_server_login_start_fixed_vs_pool` | +1.76 | below 4.5 |
 | `info_server_prelogin_resolve_credential` | +5.28 (not gated) | see below |
+
+**At the profile the server ships (b7f2c54, `opt-level = 3`).** Quiet LANBox,
+10^7: login start +2.76 (known against unknown, null +1.68) and -2.88 (known
+against disabled), pre-login +1.87 (null -1.45), state binding +1.74, all under
+4.5, and `info_server_prelogin_resolve_credential` +6.18 (positive for the
+fourth time; not gated, not on a shipped path). `server_finish_credential_vs_account`
+was -13.95 and is explained above; the release run repeats the full set with the
+fix.
 
 The two earlier tables above (before the fix, and 6f8743b) stay as the
 history of how S-2 and S-3 were found. `server_login_start_known_vs_unknown`

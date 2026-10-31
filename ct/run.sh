@@ -417,6 +417,21 @@ timed_asm() { # $1 binary
       bad=1
     fi
   done
+  # The bench's own `prepare` of the finish bench: the mask that picks one of the
+  # two states must still be a mask in the binary (a vector `pand`, or a scalar
+  # xor, and, xor), not a branch on the class that copies one state: at
+  # opt-level 3 the compiler once folded the mask into a select and unswitched
+  # the loop on it (ct/TRIAGE.md, S-3).
+  local prep masks pands
+  prep="$(objdump -C -d --no-show-raw-insn "$1" \
+    | awk '/^[0-9a-f]+ </{on = ($0 ~ /server::Finish as .*>::prepare/)} on{print}')"
+  masks="$(printf '%s\n' "$prep" | awk '{m=$2} (p2=="xor" && p1=="and" && m=="xor"){c++} {p2=p1; p1=m} END{print c+0}')"
+  pands="$(printf '%s\n' "$prep" | grep -cE '[[:space:]]v?pand' || true)"
+  echo "timed-asm Finish::prepare: $(printf '%s\n' "$prep" | grep -c .) lines, mask loops (xor, and, xor) $masks, pand $pands"
+  if [ "$((masks + pands))" -lt 1 ]; then
+    echo "FAIL: Finish::prepare of the timed binary has no mask loop: the class is a branch there" >&2
+    bad=1
+  fi
   return "$bad"
 }
 

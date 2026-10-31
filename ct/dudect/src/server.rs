@@ -17,7 +17,7 @@
 //! | `server_prelogin_known_vs_unknown` | `prelogin_answer`: the made-up answer always computed, the lookup unpacked as in `login_start`, the profile and hint chosen with `ct_select_u8` | a name with an account | a name without |
 //! | `info_server_prelogin_resolve_credential` | `resolve_credential` with `Some(account)` or `None`: the account id chosen between two references (information only) | a name with an account | a name without |
 //! | `control_server_prelogin_null` | `prelogin_answer`, the classes are the same (null control) | an account | the same account |
-//! | `control_server_finish_null` | `login_finish`, the classes are the same (null control) | the state | the same state |
+//! | `control_server_finish_null` | `login_finish`, the classes are the same (null control: the two buffers and the mask of the real bench, with equal bytes) | the state | the same state |
 //! | `server_state_binding` | `open_fields` of a re-authentication state (the AEAD, then the purpose, session and account compare of `state.rs`) | session wrong in the first byte | account wrong in the last byte |
 //! | `server_finish_credential_vs_account` | `login_finish` of a re-authentication whose state is for another account (the compare of `login.rs`) | other account, first byte differs | other account, last byte differs |
 //! | `info_server_finish_state_vs_missing` | `login_finish` | the state is there | there is none (information only: shows that an end-to-end timing of `login_finish` sees a difference of one AEAD open) |
@@ -573,7 +573,7 @@ enum FinishKind {
     Credential,
     /// A state for another account is there (Left) or there is none (Right).
     StateVsMissing,
-    /// Null control: both classes get the same state.
+    /// Null control: the two states of an input have the same bytes.
     Null,
 }
 
@@ -607,11 +607,12 @@ impl Target for Finish {
         let (a, b) = (self.pool[2 * i].as_bytes(), self.pool[2 * i + 1].as_bytes());
         // Both states are read for either class, byte by byte in the same
         // order; the class is a mask, not a branch or an index of its own.
-        // The null control always has the mask of the first class.
-        let m = match self.kind {
-            FinishKind::Null => 0u8,
-            _ => 0u8.wrapping_sub(class as u8),
-        };
+        // The class goes through `black_box`: to the compiler it is a bool,
+        // and at opt-level 3 it folded the mask into a select, unswitched the
+        // loop on it and copied one state only, so each class read its own
+        // pool buffer just before the timer (see ct/TRIAGE.md, S-3). The null
+        // control has the same mask and the same two buffers, and equal bytes.
+        let m = black_box(0u8.wrapping_sub(class as u8));
         let bytes: Vec<u8> = a.iter().zip(b).map(|(x, y)| x ^ ((x ^ y) & m)).collect();
         let mut state = Some(SealedState::from_bytes(bytes));
         if matches!(self.kind, FinishKind::StateVsMissing) && class == Class::Right {
@@ -647,11 +648,18 @@ fn finish_target(mix: &mut Mix, name: &'static str, kind: FinishKind) -> Finish 
     // blobs share the version, the nonce and every ciphertext byte but the
     // two of the credential position; the tags differ. That is the least that
     // the compare under test needs to differ.
+    // The null control has the buffers and the mask of the real bench and
+    // equal bytes: it sees what `prepare` does with the class, and no data.
+    let positions = if matches!(kind, FinishKind::Null) {
+        [0usize, 0]
+    } else {
+        [0, 15]
+    };
     let mut pool = Vec::with_capacity(2 * SERVER_POOL);
     for _ in 0..SERVER_POOL {
         let seed = mix.next();
         let mask = (mix.next() as u8) | 1;
-        for at in [0usize, 15] {
+        for at in positions {
             let mut credential = ACCOUNT;
             credential[at] ^= mask;
             let mut rng = TestRng::new(&seed.to_le_bytes());
@@ -798,13 +806,17 @@ mod tests {
         }
     }
 
-    /// `prepare` gives Left the first state and Right the second, and the
-    /// null control the first for both.
+    /// `prepare` gives Left the first state and Right the second; in the null
+    /// control the two states have the same bytes.
     #[test]
     fn prepare_picks_the_state_by_a_mask() {
         let mut mix = Mix::new(4);
         for (kind, right_is_second) in [(FinishKind::Credential, true), (FinishKind::Null, false)] {
             let mut target = finish_target(&mut mix, "t", kind);
+            assert_eq!(
+                target.pool[10].as_bytes() == target.pool[11].as_bytes(),
+                !right_is_second
+            );
             for class in [Class::Left, Class::Right] {
                 target.prepare(class, 5);
                 let slot = target.store.0.lock().unwrap();
