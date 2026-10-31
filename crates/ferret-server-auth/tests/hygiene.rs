@@ -1157,7 +1157,8 @@ fn login_start_looks_at_the_kind_of_lookup_in_one_function_only() {
     let select = outside[..read].rfind("ct_select_bytes(").unwrap();
     assert!(outside[select..read].matches('\n').count() <= 2);
     assert!(
-        outside[read..].trim_start_matches(|c: char| c != '\n')
+        outside[read..]
+            .trim_start_matches(|c: char| c != '\n')
             .trim_start()
             .starts_with("placeholder.record.as_bytes()"),
         "the other side of the select is not the stand-in"
