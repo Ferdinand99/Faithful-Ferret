@@ -466,6 +466,37 @@ and `ct/run.sh timed-asm` fails if `Finish::prepare` of the timed binary has
 no mask loop. The claim above that `prepare` reads both states for either class
 was true of the source and, at opt-level 3, not of the binary until this fix.
 
+**The fifth time: the mask was a mask, and the class was still tested.** The fix
+above was not enough: the run on 49efe22 failed again, with the null control
+itself at t = -24.57 on equal bytes, and the gate at -19.66. The explanation
+above ("each class reads only its own pool buffer") was an inference from the
+disassembly of the old form; nobody had shown that the buffer read moved the
+timer, and the failure had the same size and the same crop after the mask came
+back as before, so it was not the carrier, or not the only one. Another use of
+the class stayed in `Finish::prepare`: `if matches!(kind, StateVsMissing) &&
+class == Class::Right`, for the information bench of a missing state. In the
+disassembly of 49efe22 that is `test %cl,%cl; je` on the class itself, before
+the test of the target kind, so the two classes ran different code just before
+the timer, whatever the kind of the target. The missing-state case is now a
+target of its own, `FinishMissing`, and `Finish::prepare` is the source that
+had passed, with the class used in the mask only (a test in `server.rs` pins
+it). `ct/run.sh timed-asm` proves that a mask loop exists in the timed binary,
+not that the class is used only there; the source test pins the second.
+
+The check (`ct/results/dudect-lanbox-finish-diag2.md`, two layouts of the bench
+binary, eight rounds of 10^7, load 0.43 to 1.11, `control_leaky` at 10^4 or more
+in both): the new null control and the gate pass in all eight rounds (t between
+-2.5 and +3.2 for the null control, -2.6 and +2.6 for the gate), and the
+old `prepare` on equal bytes (`info_server_finish_old_shape`) fails in seven of
+the eight (t from -77 to +65; the eighth is +2.5). So with equal bytes and the
+same buffers, the class test before the timer alone makes the failure, and
+removing it removes the failure. What is not shown is which part of the class
+test carries it into the timing (the jump, the instruction fetch or the branch
+predictor tables, which `level_branch_history` does not clear); that is
+inference. The two passes are for these two layouts of one binary: a layout that
+fails with the new `prepare` would be the first sign of a difference in the
+shipped code, and the release run repeats the finish benches (`CT_REPEAT=3`).
+
 ### Timing of the server library
 
 **Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:

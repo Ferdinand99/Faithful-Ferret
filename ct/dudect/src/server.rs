@@ -571,15 +571,12 @@ enum FinishKind {
     /// The credential of the state differs from the account of the session
     /// in the first byte (Left) or in the last byte (Right).
     Credential,
-    /// A state for another account is there (Left) or there is none (Right).
-    StateVsMissing,
     /// Null control: the two states of an input have the same bytes.
     Null,
 }
 
 struct Finish {
     name: &'static str,
-    kind: FinishKind,
     f: LoginFixture,
     clock: FixedClock,
     hex: String,
@@ -599,9 +596,6 @@ impl Target for Finish {
     fn reps(&self) -> u32 {
         1
     }
-    fn informational(&self) -> bool {
-        matches!(self.kind, FinishKind::StateVsMissing)
-    }
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
         let (a, b) = (self.pool[2 * i].as_bytes(), self.pool[2 * i + 1].as_bytes());
@@ -612,15 +606,13 @@ impl Target for Finish {
         // loop on it and copied one state only, so each class read its own
         // pool buffer just before the timer (see ct/TRIAGE.md, S-3). The null
         // control has the same mask and the same two buffers, and equal bytes.
+        // The mask is the only use of `class` here: any other use lets the two
+        // classes run different code before the timer (a test in this file
+        // pins it).
         let m = black_box(0u8.wrapping_sub(class as u8));
         let bytes: Vec<u8> = a.iter().zip(b).map(|(x, y)| x ^ ((x ^ y) & m)).collect();
-        let mut state = Some(SealedState::from_bytes(bytes));
-        if matches!(self.kind, FinishKind::StateVsMissing) && class == Class::Right {
-            // The information bench: there is no state.
-            state = None;
-        }
         if let Ok(mut slot) = self.store.0.lock() {
-            *slot = state;
+            *slot = Some(SealedState::from_bytes(bytes));
         }
     }
     fn run(&self, reps: u32) -> u64 {
@@ -637,6 +629,33 @@ impl Target for Finish {
             acc = acc.wrapping_add(u64::from(result.is_err()));
         }
         black_box(acc)
+    }
+}
+
+/// A state, or none. A target of its own: this is the one finish bench whose
+/// `prepare` has to look at the class, and `Finish::prepare` must not.
+struct FinishMissing(Finish);
+
+impl Target for FinishMissing {
+    fn name(&self) -> &'static str {
+        self.0.name
+    }
+    fn reps(&self) -> u32 {
+        self.0.reps()
+    }
+    fn informational(&self) -> bool {
+        true
+    }
+    fn prepare(&mut self, class: Class, i: usize) {
+        self.0.prepare(class, i);
+        if class == Class::Right
+            && let Ok(mut slot) = self.0.store.0.lock()
+        {
+            *slot = None;
+        }
+    }
+    fn run(&self, reps: u32) -> u64 {
+        self.0.run(reps)
     }
 }
 
@@ -671,7 +690,6 @@ fn finish_target(mix: &mut Mix, name: &'static str, kind: FinishKind) -> Finish 
     }
     Finish {
         name,
-        kind,
         hex: id.to_hex(),
         f,
         clock: FixedClock,
@@ -727,11 +745,11 @@ pub fn targets(mix: &mut Mix) -> Vec<Box<dyn Target + Send>> {
             "control_server_finish_null",
             FinishKind::Null,
         )),
-        Box::new(finish_target(
+        Box::new(FinishMissing(finish_target(
             mix,
             "info_server_finish_state_vs_missing",
-            FinishKind::StateVsMissing,
-        )),
+            FinishKind::Credential,
+        ))),
     ]
 }
 
@@ -829,5 +847,17 @@ mod tests {
                 assert_eq!(state, expected);
             }
         }
+    }
+
+    /// `Finish::prepare` uses the class in the mask and nowhere else: any other
+    /// use lets the two classes run different code before the timer.
+    #[test]
+    fn finish_prepare_uses_the_class_in_the_mask_only() {
+        let src = include_str!("server.rs");
+        let body = &src[src.find("impl Target for Finish {").unwrap()..];
+        let prepare = &body[body.find("fn prepare").unwrap()..body.find("fn run").unwrap()];
+        assert_eq!(prepare.matches("class as").count(), 1);
+        assert_eq!(prepare.matches("class ==").count(), 0);
+        assert_eq!(prepare.matches("match class").count(), 0);
     }
 }
