@@ -144,6 +144,11 @@ pub enum InternalKind {
 /// | `TooManyRequests` | 429 | the code `throttled`, with `retry_after_secs` read from the [`AuthError`] |
 /// | `Internal` | 500 | the code `internal`, never the cause |
 ///
+/// The 400 of `BadRequest` is the default. `AuthError::ProfileRejected` has
+/// this class too, but the server maps it by its public code and answers 422:
+/// the request is well formed, and the content is what the server will not
+/// accept.
+///
 /// A class does not carry the retry time, so the endpoint reads it from
 /// `AuthError::Throttled`. It never needs to look at a [`DenyReason`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -159,7 +159,15 @@ impl ApiError {
 
     /// The error for one of [`crate::wire::ERROR_CODES`], with the status that
     /// code always has ([`status_of`]).
+    ///
+    /// A code that is not in the table is a mistake in the caller (a typo): it
+    /// panics in a debug build, so a test that reaches the call finds it, and
+    /// answers 500 in a release build.
     pub fn coded(code: &'static str) -> Self {
+        debug_assert!(
+            CODE_STATUS.iter().any(|(listed, _)| *listed == code),
+            "unknown error code {code:?}"
+        );
         Self::new(status_of(code), code)
     }
 }
@@ -335,6 +343,13 @@ mod tests {
         assert_eq!(status_of("gone"), StatusCode::GONE);
         // A code that is not listed is a bug of the caller, and reads as 500.
         assert_eq!(status_of("nope"), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "unknown error code")]
+    fn a_code_that_is_not_listed_panics_in_a_debug_build() {
+        let _ = ApiError::coded("bad_requset");
     }
 
     #[test]

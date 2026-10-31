@@ -414,6 +414,44 @@ fn only_the_last_forwarded_for_line_counts() {
 }
 
 #[test]
+fn the_kit_is_shown_only_the_last_forwarded_for_line() {
+    use ferret_server::auth::throttle::last_forwarded_line;
+
+    let peer: SocketAddr = "10.0.3.26:4000".parse().unwrap();
+    let mut headers = HeaderMap::new();
+    headers.append("x-real-ip", HeaderValue::from_static("203.0.113.8"));
+    headers.append("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+    headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.4"));
+    let seen = last_forwarded_line(&headers);
+    let lines: Vec<&str> = seen
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    assert_eq!(lines, ["198.51.100.4"]);
+    // What the kit reads (the first line) is now the line the sign-in reads,
+    // so rotating the client's own first line changes nothing.
+    let kit_view = vole_kit::auth::session::client_ip(&seen, Some(peer), true);
+    assert_eq!(kit_view, ip("198.51.100.4"));
+    assert_eq!(kit_view, caller_from(&headers, Some(peer)).ip);
+    assert_eq!(
+        seen.get("x-real-ip").and_then(|v| v.to_str().ok()),
+        Some("203.0.113.8"),
+        "other headers are kept"
+    );
+
+    // One line, or none, is passed on untouched.
+    let mut one = HeaderMap::new();
+    one.append(
+        "x-forwarded-for",
+        HeaderValue::from_static("1.2.3.4, 5.6.7.8"),
+    );
+    assert_eq!(&*last_forwarded_line(&one), &one);
+    let none = HeaderMap::new();
+    assert_eq!(&*last_forwarded_line(&none), &none);
+}
+
+#[test]
 fn a_flood_of_address_keys_never_evicts_an_account_counter() {
     let clock = Arc::new(ManualClock::new(START));
     let throttle = KitThrottle::with_max_keys(clock as Arc<dyn Clock>, 1_000);

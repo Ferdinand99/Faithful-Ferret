@@ -34,6 +34,7 @@
 //! each call ([`KitThrottle::SWEEP_BUDGET`]), so no call walks the whole table
 //! under the lock.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -281,17 +282,23 @@ impl Throttle for KitThrottle {
 /// instead of appending), only the last line counts: the first may be the
 /// client's.
 pub fn caller_from(headers: &HeaderMap, peer: Option<SocketAddr>) -> Caller {
-    let lines = headers.get_all("x-forwarded-for");
-    if lines.iter().nth(1).is_some() {
-        let mut only_last = headers.clone();
-        if let Some(last) = lines.iter().next_back() {
-            only_last.insert("x-forwarded-for", HeaderValue::clone(last));
-        }
-        return Caller {
-            ip: vole_kit::auth::session::client_ip(&only_last, peer, true),
-        };
-    }
     Caller {
-        ip: vole_kit::auth::session::client_ip(headers, peer, true),
+        ip: vole_kit::auth::session::client_ip(&last_forwarded_line(headers), peer, true),
     }
+}
+
+/// The headers as the kit's address reading should see them: when
+/// `X-Forwarded-For` comes in several lines, only the last one is kept (the
+/// first may have been written by the client, and the kit reads the first
+/// line). With one line or none the headers are returned as they are.
+pub fn last_forwarded_line(headers: &HeaderMap) -> Cow<'_, HeaderMap> {
+    let lines = headers.get_all("x-forwarded-for");
+    if lines.iter().nth(1).is_none() {
+        return Cow::Borrowed(headers);
+    }
+    let mut only_last = headers.clone();
+    if let Some(last) = lines.iter().next_back() {
+        only_last.insert("x-forwarded-for", HeaderValue::clone(last));
+    }
+    Cow::Owned(only_last)
 }
