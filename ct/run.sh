@@ -218,6 +218,8 @@ lookup_asm() {
     esac
     echo "lookup-asm $arch: $lines lines, conditional jumps $jumps"
     if [ "$lines" -lt 5 ]; then
+      echo "asm file: $asm ($(wc -l < "$asm") lines); lines that name stored_for:" >&2
+      grep -n "stored_for" "$asm" | head -20 >&2 || true
       echo "FAIL: stored_for was not found in the assembly of $t" >&2
       return 1
     fi

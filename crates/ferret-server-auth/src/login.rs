@@ -934,8 +934,7 @@ mod tests {
     fn the_three_kinds_of_lookup_unpack_to_the_same_shape() {
         let f = LoginFixture::new();
         let placeholder: &StoredRecord = &NO_ACCOUNT;
-        let (active, profile, hint, first) =
-            crate::testing::unpack_lookup(f.active(), placeholder);
+        let (active, profile, hint, first) = crate::testing::unpack_lookup(f.active(), placeholder);
         assert_eq!(
             (active, profile, hint),
             (1, f.record.ksf_profile, 0),
