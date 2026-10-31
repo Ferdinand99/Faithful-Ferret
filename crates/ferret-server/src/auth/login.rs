@@ -19,6 +19,11 @@
 //! * A name without an account and a disabled user are `Unknown` and
 //!   `Disabled` for the library, which answers both from the made-up record:
 //!   same status, same body shape, same effects.
+//! * Every lookup parses exactly one OPAQUE record (the point decode is the
+//!   slow part): the account's own for an active user, a constant stand-in for
+//!   a disabled user and for a name without a row. The three kinds therefore
+//!   cost the server the same before the library is called. The database read
+//!   itself still finds a row or not.
 //! * For a re-authentication the account is the one of the session that asks,
 //!   never one named in the request body.
 //! * `login/finish` names its purpose (`login`, the default, or `reauth`), like
@@ -176,7 +181,7 @@ pub fn lookup_account(
             read_lookup_row,
         )
         .optional()?;
-    row.map_or(Ok(AccountLookupOwned::Unknown), finish_lookup)
+    finish_lookup(row)
 }
 
 /// Like [`lookup_account`], for the user of a session.
@@ -188,7 +193,7 @@ fn lookup_account_of_user(conn: &Connection, user_id: i64) -> rusqlite::Result<A
             read_lookup_row,
         )
         .optional()?;
-    row.map_or(Ok(AccountLookupOwned::Unknown), finish_lookup)
+    finish_lookup(row)
 }
 
 type LookupRow = (Vec<u8>, Vec<u8>, i64, i64, bool);
@@ -211,13 +216,72 @@ fn bad_row(index: usize, what: &str) -> rusqlite::Error {
     )
 }
 
-fn finish_lookup(row: LookupRow) -> rusqlite::Result<AccountLookupOwned> {
-    let (account, record, profile, hint, active) = row;
-    if !active {
-        return Ok(AccountLookupOwned::Disabled);
-    }
+/// The first 32 bytes of the stand-in record: the compressed ristretto255 base
+/// point, a valid group element.
+const STAND_IN_POINT: [u8; 32] = [
+    0xe2, 0xf2, 0xae, 0x0a, 0x6a, 0xbc, 0x4e, 0x71, 0xa8, 0x84, 0xa9, 0x61, 0xc5, 0x00, 0x51, 0x5f,
+    0x58, 0xe3, 0x0b, 0x6a, 0xa5, 0x82, 0xdd, 0x8d, 0xb6, 0xa6, 0x59, 0x45, 0xe0, 0x8d, 0x2d, 0x76,
+];
+
+/// The length of a stored OPAQUE record.
+const RECORD_LEN: usize = 192;
+
+/// A record that belongs to no account and is well formed: a valid public key
+/// point followed by zeros. It is never used to answer anything (the library
+/// makes up the answer for a name without an account), it only gives the paths
+/// that have no usable record the same parse to pay as a real one.
+fn stand_in_record() -> &'static [u8] {
+    static RECORD: OnceLock<Vec<u8>> = OnceLock::new();
+    RECORD.get_or_init(|| {
+        let mut bytes = Vec::with_capacity(RECORD_LEN);
+        bytes.extend_from_slice(&STAND_IN_POINT);
+        bytes.resize(RECORD_LEN, 0);
+        bytes
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread has parsed a record for a lookup.
+    static RECORD_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The one place where a lookup parses a record. The parse includes a point
+/// decode, which takes measurable time, so every lookup must pay it exactly
+/// once, whatever the account turns out to be.
+fn parse_record(bytes: &[u8]) -> Result<ValidatedRecord, AuthError> {
+    #[cfg(test)]
+    RECORD_PARSES.with(|n| n.set(n.get().saturating_add(1)));
+    ValidatedRecord::parse(bytes)
+}
+
+/// Pays the parse of a record for a lookup that has no record to use. The
+/// result is thrown away; `black_box` keeps the compiler from removing the
+/// work.
+fn parse_stand_in() {
+    let _ = std::hint::black_box(parse_record(stand_in_record()).is_ok());
+}
+
+/// Turns what the database gave (or the absence of a row) into the lookup.
+///
+/// Every path parses exactly one record: the real one for an account that may
+/// sign in, the stand-in for a disabled user and for a name without a row. The
+/// work is therefore the same for active, disabled and unknown names, as it is
+/// inside the library afterwards.
+fn finish_lookup(row: Option<LookupRow>) -> rusqlite::Result<AccountLookupOwned> {
+    let (account, record, profile, hint) = match row {
+        Some((account, record, profile, hint, true)) => (account, record, profile, hint),
+        Some((_, _, _, _, false)) => {
+            parse_stand_in();
+            return Ok(AccountLookupOwned::Disabled);
+        }
+        None => {
+            parse_stand_in();
+            return Ok(AccountLookupOwned::Unknown);
+        }
+    };
     let account = <[u8; 16]>::try_from(account).map_err(|_| bad_row(0, "account id"))?;
-    let record = ValidatedRecord::parse(&record).map_err(|_| bad_row(1, "OPAQUE record"))?;
+    let record = parse_record(&record).map_err(|_| bad_row(1, "OPAQUE record"))?;
     let ksf_profile = u8::try_from(profile).map_err(|_| bad_row(2, "profile"))?;
     Ok(AccountLookupOwned::Active {
         credential: CredentialId::from_bytes(account),
@@ -249,7 +313,10 @@ fn finish_lookup(row: LookupRow) -> rusqlite::Result<AccountLookupOwned> {
 /// * When the real share leaves a bucket's band the bucket moves once, and the
 ///   unknown names whose draw falls between the two buckets flip once. A name
 ///   that flips was not held by anyone, but a watcher who sees the flip learns
-///   that the population changed, not which names exist.
+///   that the population changed, not which names exist. At 0 and 1000 the
+///   exact count decides, not the band, so a single account that moves into or
+///   out of "none" or "all" moves the bucket at once, and one account that
+///   keeps toggling flips it (1000 and 900, or 0 and 100) every time.
 /// * With very few accounts every bucket crossing is a large step (one account
 ///   is a share of 500 or more), so tiny populations leak more than large ones.
 /// * A profile whose last account goes disappears from the policy at once and
@@ -1208,6 +1275,103 @@ mod tests {
         assert_eq!(share_permille(2, 3), Some(667));
         assert_eq!(share_permille(0, 5), Some(0));
         assert_eq!(share_permille(5, 5), Some(1000));
+    }
+
+    fn parses() -> usize {
+        RECORD_PARSES.with(std::cell::Cell::get)
+    }
+
+    fn active_row() -> LookupRow {
+        (vec![7; 16], stand_in_record().to_vec(), 1, 0, true)
+    }
+
+    #[test]
+    fn the_stand_in_record_is_a_well_formed_record() {
+        assert_eq!(stand_in_record().len(), RECORD_LEN);
+        assert!(ValidatedRecord::parse(stand_in_record()).is_ok());
+    }
+
+    #[test]
+    fn every_kind_of_lookup_parses_exactly_one_record() {
+        let before = parses();
+        let active = finish_lookup(Some(active_row())).unwrap();
+        assert!(matches!(active, AccountLookupOwned::Active { .. }));
+        assert_eq!(parses(), before + 1, "an active account");
+
+        let before = parses();
+        let mut disabled = active_row();
+        disabled.4 = false;
+        let disabled = finish_lookup(Some(disabled)).unwrap();
+        assert!(matches!(disabled, AccountLookupOwned::Disabled));
+        assert_eq!(parses(), before + 1, "a disabled account");
+
+        let before = parses();
+        let unknown = finish_lookup(None).unwrap();
+        assert!(matches!(unknown, AccountLookupOwned::Unknown));
+        assert_eq!(parses(), before + 1, "a name without an account");
+    }
+
+    #[test]
+    fn a_disabled_account_with_a_damaged_record_is_still_disabled() {
+        let mut row = active_row();
+        row.1 = vec![1; 5];
+        row.4 = false;
+        let before = parses();
+        assert!(matches!(
+            finish_lookup(Some(row)).unwrap(),
+            AccountLookupOwned::Disabled
+        ));
+        assert_eq!(parses(), before + 1);
+        // An active account with a damaged record is an error, not a lookup.
+        let mut row = active_row();
+        row.1 = vec![1; 5];
+        assert!(finish_lookup(Some(row)).is_err());
+    }
+
+    /// The two lookups that read the database run the parse once per call for
+    /// an active, a disabled, a bare and an absent user alike.
+    #[test]
+    fn both_database_lookups_parse_once_for_every_kind_of_user() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, active INTEGER NOT NULL);
+             CREATE TABLE ferret_accounts (
+                 account_id BLOB NOT NULL, user_id INTEGER NOT NULL, opaque_record BLOB NOT NULL,
+                 ksf_profile INTEGER NOT NULL, sk_hint INTEGER NOT NULL);
+             INSERT INTO users VALUES (1, 'alice@example.com', 1), (2, 'dora@example.com', 0),
+                                      (3, 'root@example.com', 1);",
+        )
+        .unwrap();
+        for user in [1_i64, 2] {
+            conn.execute(
+                "INSERT INTO ferret_accounts VALUES (?1, ?2, ?3, 1, 0)",
+                params![vec![user as u8; 16], user, stand_in_record()],
+            )
+            .unwrap();
+        }
+        let kinds = [
+            ("alice@example.com", 1_i64, "active"),
+            ("dora@example.com", 2, "disabled"),
+            ("root@example.com", 3, "unknown"),
+            ("nobody@example.com", 99, "unknown"),
+        ];
+        for (email, user_id, kind) in kinds {
+            let name = normalize_login_name(email).unwrap();
+            let before = parses();
+            let by_name = lookup_account(&conn, &name).unwrap();
+            assert_eq!(parses(), before + 1, "{kind} by name");
+            let before = parses();
+            let by_user = lookup_account_of_user(&conn, user_id).unwrap();
+            assert_eq!(parses(), before + 1, "{kind} by user");
+            for found in [by_name, by_user] {
+                let got = match found {
+                    AccountLookupOwned::Active { .. } => "active",
+                    AccountLookupOwned::Disabled => "disabled",
+                    AccountLookupOwned::Unknown => "unknown",
+                };
+                assert_eq!(got, kind);
+            }
+        }
     }
 
     #[test]

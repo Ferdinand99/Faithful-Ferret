@@ -442,6 +442,32 @@ async fn start_refuses_what_is_malformed_with_the_code_of_the_field() {
 }
 
 #[tokio::test]
+async fn an_oversized_body_is_413_too_large_on_both_steps() {
+    let app = app().await;
+    for path in ["/api/auth/opaque/login/start", "/api/auth/opaque/login/finish"] {
+        let raw = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("origin", Which::Vault.url())
+            .header("ferret-protocol", "1")
+            .header("x-forwarded-proto", "https")
+            .header("content-type", "application/json")
+            .body(Body::from(vec![b' '; 20 * 1024]))
+            .unwrap();
+        let res = app.call_raw(Which::Vault, raw).await;
+        assert_eq!(
+            (res.status.as_u16(), error_code(&res).as_str()),
+            (413, "too_large"),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM ferret_login_states").await,
+        0
+    );
+}
+
+#[tokio::test]
 async fn login_start_throttled_gives_429_retry_after_with_identical_body_for_unknown_email() {
     let throttle: Arc<dyn Throttle> = Arc::new(KitThrottle::new(
         Arc::new(ManualClock::new(START)) as Arc<dyn Clock>

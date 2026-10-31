@@ -24,6 +24,10 @@
 //! | [`ErrorClass::TooManyRequests`] | 429 | the code `throttled`; `retry_after_secs` is read from [`AuthError::Throttled`] |
 //! | [`ErrorClass::Internal`] | 500 | the code `internal`, never the cause |
 //!
+//! The class is a default. An endpoint may map by the public code instead, as
+//! the Faithful Ferret server does: it answers 422 (and not 400) for
+//! [`AuthError::ProfileRejected`], whose class is `BadRequest`.
+//!
 //! A [`DenyReason`] is for the server's own log. An endpoint must not choose
 //! a status or a body from it.
 //!

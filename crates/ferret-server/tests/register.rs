@@ -278,7 +278,8 @@ async fn setup_roundtrip_with_real_client() {
     let client = client("ada@example.test");
     let started = call(&app, START, &client.start_body("Ada@Example.test", None)).await;
     assert_eq!(started.status, StatusCode::OK, "{}", started.text());
-    assert_eq!(started.header("cache-control"), "");
+    // The answer holds the key to `finish`, like every other answer here.
+    assert_eq!(started.header("cache-control"), "no-store");
     let started = started.json();
     assert_eq!(started["ksf_profile"], 1);
     assert_eq!(
@@ -517,6 +518,192 @@ async fn wrong_or_missing_setup_token_is_403_and_throttled_after_repeated_guesse
         (res.status, error_of(&res).as_str()),
         (StatusCode::BAD_REQUEST, "bad_request")
     );
+}
+
+#[tokio::test]
+async fn starts_without_a_token_are_refused_before_the_kit_and_the_throttle() {
+    let log = log_buffer();
+    set_setup_open_for_tests(Some(false));
+    let token = required_setup_token().expect("a setup token is required");
+    let throttle = Arc::new(RecordingThrottle::new());
+    let app = proxied()
+        .throttle(throttle.clone() as Arc<dyn Throttle>)
+        .build()
+        .await;
+    let c = client("tokenless@example.test");
+    for n in 0..200 {
+        let given = if n % 2 == 0 { None } else { Some("  ") };
+        let res = call(&app, START, &c.start_body("tokenless@example.test", given)).await;
+        assert_eq!(
+            (res.status, error_of(&res).as_str()),
+            (StatusCode::FORBIDDEN, "forbidden"),
+            "request {n}"
+        );
+    }
+    assert!(
+        throttle.calls().is_empty(),
+        "the library throttle was not asked"
+    );
+    assert_eq!(count_registrations(&app).await, 0);
+    let logged = String::from_utf8_lossy(
+        &log.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+    .into_owned();
+    assert!(
+        !logged.contains("setup page opened without the setup token"),
+        "a start without a token wrote a warning line"
+    );
+
+    // Nothing was counted against the address: the right token still works.
+    let ok = call(
+        &app,
+        START,
+        &c.start_body("tokenless@example.test", Some(&token)),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.text());
+}
+
+#[tokio::test]
+async fn transport_is_checked_before_the_body_is_read() {
+    let app = server().await;
+    for uri in [START, FINISH] {
+        // Plain HTTP (no `X-Forwarded-Proto`), with a body that is not JSON, one
+        // that is far too large, and a type that is not JSON.
+        for (content_type, body) in [
+            ("application/json", b"not json".to_vec()),
+            ("application/json", vec![b' '; 300 * 1024]),
+            ("text/plain", b"{}".to_vec()),
+        ] {
+            let req = Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("origin", support::VAULT_URL)
+                .header("ferret-protocol", "1")
+                .header("content-type", content_type)
+                .body(Body::from(body))
+                .unwrap();
+            let res = app.call_raw(Which::Vault, req).await;
+            assert_eq!(
+                (res.status, error_of(&res).as_str()),
+                (StatusCode::BAD_REQUEST, "insecure_transport"),
+                "{uri} {content_type}"
+            );
+        }
+    }
+    assert_eq!(count_registrations(&app).await, 0);
+}
+
+#[tokio::test]
+async fn pending_rows_are_capped_at_64_and_the_oldest_go_first() {
+    // Every start is admitted, so the cap is what limits the table.
+    let throttle = Arc::new(RecordingThrottle::new());
+    let app = proxied()
+        .throttle(throttle as Arc<dyn Throttle>)
+        .build()
+        .await;
+    let (_, first) = prepared(&app, "name0@example.test").await;
+    for n in 1..=64 {
+        // The rows must differ in age, or "oldest" has no meaning.
+        app.clock.advance(1);
+        let name = format!("name{n}@example.test");
+        let started = call(&app, START, &client(&name).start_body(&name, None)).await;
+        assert_eq!(started.status, StatusCode::OK, "{n}: {}", started.text());
+        let expected = i64::from(n + 1).min(64);
+        assert_eq!(count_registrations(&app).await, expected, "after {n}");
+    }
+    assert_eq!(count_registrations(&app).await, 64);
+    let res = call(&app, FINISH, &first).await;
+    assert_eq!(
+        (res.status, error_of(&res).as_str()),
+        (StatusCode::UNAUTHORIZED, "denied"),
+        "the oldest row was dropped"
+    );
+    nothing_was_created(&app).await;
+}
+
+#[tokio::test]
+async fn a_start_sweeps_the_rows_that_expired() {
+    let app = server().await;
+    let (_, early) = prepared(&app, "early@example.test").await;
+    app.clock.advance(300);
+    let (_, middle) = prepared(&app, "middle@example.test").await;
+    assert_eq!(count_registrations(&app).await, 2);
+    // The first row expires at 600; the second still has 300 seconds.
+    app.clock.advance(300);
+    prepared(&app, "last@example.test").await;
+    assert_eq!(
+        count_registrations(&app).await,
+        2,
+        "the expired row was removed by the start, not by a finish"
+    );
+    let res = call(&app, FINISH, &early).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    let res = call(&app, FINISH, &middle).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+}
+
+#[tokio::test]
+async fn finishing_removes_every_waiting_registration() {
+    let app = server().await;
+    let (_, first) = prepared(&app, "first@example.test").await;
+    let (_, other) = prepared(&app, "other@example.test").await;
+    let (_, third) = prepared(&app, "third@example.test").await;
+    assert_eq!(count_registrations(&app).await, 3);
+    let res = call(&app, FINISH, &first).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    assert_eq!(
+        count_registrations(&app).await,
+        0,
+        "the rows of the names that did not finish are gone"
+    );
+    for body in [other, third] {
+        let res = call(&app, FINISH, &body).await;
+        assert_eq!(
+            (res.status, error_of(&res).as_str()),
+            (StatusCode::UNAUTHORIZED, "denied")
+        );
+    }
+    assert_eq!(count(&app, "users").await, 1);
+}
+
+#[tokio::test]
+async fn the_secret_key_bit_is_stored_as_the_hint() {
+    for (sk_bit, expected) in [(true, 1_i64), (false, 0)] {
+        let app = server().await;
+        let (_, mut finish) = prepared(&app, "hint@example.test").await;
+        finish["sk_bit"] = json!(sk_bit);
+        let res = call(&app, FINISH, &finish).await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+        let hint: i64 = app
+            .state
+            .vault_db
+            .with_conn(|conn| {
+                Ok(conn.query_row("SELECT sk_hint FROM ferret_accounts", [], |r| r.get(0))?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(hint, expected, "sk_bit {sk_bit}");
+    }
+}
+
+#[tokio::test]
+async fn a_method_id_may_not_be_the_account_id_or_the_vault_id() {
+    let app = server().await;
+    for (n, which) in ["account_id", "vault_id"].into_iter().enumerate() {
+        for slot in 0..2 {
+            let (started, mut finish) = prepared(&app, &format!("ids{n}{slot}@example.test")).await;
+            finish["wraps"][slot]["method_id"] = started[which].clone();
+            let res = call(&app, FINISH, &finish).await;
+            assert_eq!(
+                (res.status, error_of(&res).as_str()),
+                (StatusCode::BAD_REQUEST, "bad_request"),
+                "{which} in wrap {slot}"
+            );
+            nothing_was_created(&app).await;
+        }
+    }
 }
 
 #[tokio::test]

@@ -9,10 +9,16 @@
 //!
 //! 1. A vault URL of `https` needs a request that came through a trusted proxy
 //!    that says so (`insecure_transport` otherwise): the session cookies of the
-//!    answer to `finish` would be dropped by the browser.
+//!    answer to `finish` would be dropped by the browser. This is checked
+//!    before the body is read, so a body that is wrong in some other way does
+//!    not change the answer.
 //! 2. The login name and the setup token are checked for length and shape, and
 //!    the setup token against the kit's (which counts wrong guesses per
-//!    address and answers `429` when they come too fast).
+//!    address and answers `429` when they come too fast). A request with no
+//!    setup token at all is refused (`403`) before the kit is asked: the kit
+//!    counts nothing for it and would write a log line for each one. The kit
+//!    reads the client address from the last `X-Forwarded-For` line, like the
+//!    sign-in throttle does (`last_forwarded_line`).
 //! 3. The server assigns the account id, the vault id and the registration id
 //!    from the operating system's generator: the client never picks them.
 //! 4. `ferret_server_auth::register_start` asks the throttle (the first thing
@@ -32,7 +38,10 @@
 //! 3. One transaction writes the kit user, the site settings, the account with
 //!    its vault, wraps, manifest and checkpoint, and the session. Either all of
 //!    it is there or none of it.
-//! 4. The answer is `201` with the cookies of the new session.
+//! 4. The answer is `201` with the cookies of the new session. The rows of the
+//!    registrations that were still waiting are removed in the same
+//!    transaction: no further registration is possible, and the rows hold login
+//!    names.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -63,12 +72,13 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
 use vole_kit::auth::pages::{SetupTokenError, check_setup_token};
+use vole_kit::auth::session::required_setup_token;
 use vole_kit::auth::session::SessionClaims;
 use vole_kit::auth::{reauth, username_problem};
 use vole_kit::db::{settings, users};
 
 use crate::auth::session::{Origin, insert_session, new_session, session_cookies};
-use crate::auth::throttle::caller_from;
+use crate::auth::throttle::{caller_from, last_forwarded_line};
 use crate::error::{ApiError, StoreError};
 use crate::http::proxy_guard::request_is_https;
 use crate::ids::{AccountId, DeviceId, MANIFEST_ITEM_ID, MethodId, SessionSecret, VaultId};
@@ -235,6 +245,16 @@ fn login_name(raw: &str) -> Result<String, ApiError> {
 
 /// Checks the setup token the kit asks for. A missing or wrong one is `403`,
 /// and guesses that come too fast are `429`: the kit counts them per address.
+///
+/// A request with no token (or a blank one) never reaches the kit while a token
+/// is required: the kit counts nothing for it and writes a warning line for
+/// each one, which a flood could use to fill the log. It gets the same `403`.
+///
+/// The kit reads the client address from the first `X-Forwarded-For` line,
+/// where the sign-in throttle reads the last one (the first may be written by
+/// the client when the trusted proxy adds a line of its own). The kit is
+/// therefore given the headers with only the last line, so both read the same
+/// hop.
 fn check_token(
     state: &FerretState,
     headers: &HeaderMap,
@@ -244,7 +264,12 @@ fn check_token(
     if given.is_some_and(|token| token.len() > SETUP_TOKEN_MAX_BYTES) {
         return Err(ApiError::coded("bad_request"));
     }
-    match check_setup_token(&state.core, headers, Some(peer), given) {
+    let has_token = given.is_some_and(|token| !token.trim().is_empty());
+    if !has_token && required_setup_token().is_some() {
+        return Err(ApiError::coded("forbidden"));
+    }
+    let seen = last_forwarded_line(headers);
+    match check_setup_token(&state.core, &seen, Some(peer), given) {
         Ok(()) => Ok(()),
         Err(SetupTokenError::Missing | SetupTokenError::Wrong) => Err(ApiError::coded("forbidden")),
         Err(SetupTokenError::Throttled(wait)) => Err(ApiError::throttled(
@@ -322,14 +347,20 @@ fn random_id() -> [u8; 16] {
     id
 }
 
+/// The answer to `start`: `no-store`, because it holds the key to `finish`.
+type StartAnswer = ([(HeaderName, HeaderValue); 1], Json<RegisterStartRes>);
+
 /// `POST /api/auth/opaque/register/start`.
 async fn register_start(
     State(state): State<FerretState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    ApiJson(req): ApiJson<RegisterStartReq>,
-) -> Result<Json<RegisterStartRes>, ApiError> {
+    request: Request,
+) -> Result<StartAnswer, ApiError> {
+    // The transport comes before the body: a request over plain HTTP is
+    // refused for that, whatever its body is.
+    let headers = request.headers().clone();
     require_transport(&state, &headers, peer)?;
+    let ApiJson(req) = ApiJson::<RegisterStartReq>::from_request(request, &state).await?;
     let email = login_name(&req.email)?;
     check_token(&state, &headers, peer, req.setup_token.as_deref())?;
     let (now, signed_now) = now_of(&state)?;
@@ -369,13 +400,16 @@ async fn register_start(
     if matches!(stored, Stored::Closed) {
         return Err(ApiError::coded("registration_closed"));
     }
-    Ok(Json(RegisterStartRes {
-        registration_id,
-        account_id,
-        vault_id,
-        response,
-        ksf_profile: NEW_ACCOUNT_PROFILE.number(),
-    }))
+    Ok((
+        [(CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(RegisterStartRes {
+            registration_id,
+            account_id,
+            vault_id,
+            response,
+            ksf_profile: NEW_ACCOUNT_PROFILE.number(),
+        }),
+    ))
 }
 
 // ------------------------------------------------------------------ finish
@@ -580,7 +614,8 @@ enum Created {
 }
 
 /// Writes the kit user, the site settings, the account with its vault, and the
-/// session, in one transaction. Nothing is written if the server has a user
+/// session, in one transaction, and removes every waiting registration row.
+/// Nothing is written if the server has a user
 /// already or if any step fails.
 fn write_account(
     conn: &mut Connection,
@@ -592,6 +627,9 @@ fn write_account(
     let Some(user_id) = users::insert_first_admin(&tx, &pending.email, EXTERNAL_HASH, "")? else {
         return Ok(Created::Closed);
     };
+    // Registration is closed from here on, so no waiting row can be finished.
+    // They hold login names; none is kept.
+    tx.execute("DELETE FROM ferret_registrations", [])?;
     settings::set(&tx, settings::SITE_NAME, SITE_NAME)?;
     settings::set(&tx, settings::TIMEZONE, TIMEZONE)?;
     let version: i64 = tx.query_row(
@@ -644,10 +682,11 @@ type Finished = (
 async fn register_finish_step(
     State(state): State<FerretState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    ApiJson(req): ApiJson<RegisterFinishReq>,
+    request: Request,
 ) -> Result<Finished, ApiError> {
+    let headers = request.headers().clone();
     require_transport(&state, &headers, peer)?;
+    let ApiJson(req) = ApiJson::<RegisterFinishReq>::from_request(request, &state).await?;
     let (_, signed_now) = now_of(&state)?;
 
     let registration_id = req.registration_id;
