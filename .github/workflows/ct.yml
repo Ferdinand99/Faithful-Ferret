@@ -219,6 +219,8 @@ jobs:
         run: |
           cargo fmt --check --manifest-path ct/dudect/Cargo.toml
           cargo clippy --manifest-path ct/dudect/Cargo.toml --locked --target-dir target --features bench --all-targets -- -D warnings
+      - name: The lookup code of the timed binary has no conditional jump, at opt-level s and 3
+        run: ct/run.sh timed-asm
       - name: dudect, native (100 000 measurements per bench; a t over 4.5 is a warning, over 500 a failure)
         env:
           CT_SMOKE: "1"

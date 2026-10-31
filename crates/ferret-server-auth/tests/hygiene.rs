@@ -479,7 +479,8 @@ fn shipped(text: &str) -> String {
                 .split(|c: &char| !is_ident(*c))
                 .map(|w| w.iter().collect())
                 .collect();
-            let is_test = words.iter().any(|w| w == "test") && !words.iter().any(|w| w == "not");
+            let is_test = words.iter().any(|w| w == "test")
+                && !words.iter().any(|w| w == "not" || w == "any");
             let after = skip_ws(&t, close + 1);
             if is_test && word_at(&t, after).as_deref() == Some("mod") {
                 let mut j = after;
@@ -487,7 +488,7 @@ fn shipped(text: &str) -> String {
                     j += 1;
                 }
                 let end = if j < t.len() && t[j] == '{' {
-                    matching_close(&t, j).unwrap_or(t.len() - 1)
+                    matching_close(&t, j).expect("the braces of a test module match")
                 } else {
                     j.min(t.len() - 1)
                 };
@@ -782,6 +783,8 @@ fn other_compare(line: &str) -> bool {
         "debug_assert_ne!",
         "let [",
         "matches!(",
+        "PartialEq::eq(",
+        "] =>",
     ]
     .iter()
     .any(|needle| line.contains(needle))
@@ -874,6 +877,8 @@ fn the_comparison_scan_finds_every_way_around_it() {
         "assert_eq!(a, b);",
         "debug_assert_ne!(a, b);",
         "if let [0, 0, ..] = binding { }",
+        "match binding { [0, ..] => 1, _ => 2 }",
+        "let _ = PartialEq::eq(&a, &b);",
         "let m = matches!(binding, [0; 48]);",
     ] {
         let code = format!(

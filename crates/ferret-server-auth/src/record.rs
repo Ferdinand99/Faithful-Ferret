@@ -17,7 +17,9 @@ use zeroize::Zeroizing;
 use crate::error::{AuthError, Malformed};
 
 /// A record that is well formed: exactly 192 bytes, with a client public key
-/// that is a valid ristretto255 element.
+/// that is a valid ristretto255 element. The one exception is the stand-in
+/// record of the crate (`zeroed`), which holds zeros, is never parsed and can
+/// never be chosen for an account that may log in.
 ///
 /// The server cannot know more than that. The bytes hold the masking key of
 /// the record, so they are wiped when the value is dropped.

@@ -6,8 +6,8 @@
 //! account, in a way that looks the same and stays the same on every ask:
 //!
 //! * [`fake_credential_id`]: the credential id OPAQUE binds the answer to.
-//!   [`resolve_credential`] picks the account's own id or this one, in one
-//!   place.
+//!   `resolve_credential` (behind `test-support`: no request path uses it)
+//!   picks the account's own id or this one, in one place.
 //! * [`fake_prelogin`]: the key stretching profile and the second-factor hint
 //!   that a pre-login answer carries. They are drawn from the shares of the
 //!   real accounts ([`PreloginPolicy`]), so the made-up answers are spread as
@@ -27,12 +27,15 @@
 use std::collections::HashSet;
 
 use ferret_core::opaque::server_suite::REGISTRATION_RECORD_LEN;
-use ferret_core::{AccountId, KsfProfile};
+#[cfg(feature = "test-support")]
+use ferret_core::AccountId;
+use ferret_core::KsfProfile;
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Sha256, Sha512};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "test-support")]
 use crate::ct::ct_select_bytes;
 use crate::error::{AuthError, InternalKind};
 use crate::ids::CredentialId;
@@ -136,7 +139,16 @@ pub fn fake_credential_id(secret: &PreloginSecret, name: &NormalizedLoginName) -
 /// name run the same steps. Calling it with the account looked up for the
 /// normalized name is what keeps the two forms from drifting apart.
 ///
+/// This is a helper for tests and benchmarks, and it is behind the
+/// `test-support` feature on purpose: no request path calls it. `login_start`
+/// makes this choice itself, and the pre-login answer is
+/// [`prelogin_answer`]. The information bench that times it
+/// (`info_server_prelogin_resolve_credential`) has a small stable offset
+/// that has not been isolated, so a request path must not start to use it
+/// before that bench is made a gate and passes.
+///
 /// Spec: Fase 1 § 4.2.
+#[cfg(feature = "test-support")]
 pub fn resolve_credential(
     secret: &PreloginSecret,
     name: &NormalizedLoginName,
@@ -163,6 +175,7 @@ pub fn resolve_credential(
 
 /// The account id to read: the account's own, or `none`. A choice between two
 /// references, with no read before it; see [`resolve_credential`].
+#[cfg(feature = "test-support")]
 #[inline(never)]
 pub(crate) fn pick_account<'a>(account: Option<&'a AccountId>, none: &'a [u8; 16]) -> &'a [u8; 16] {
     account.map_or(none, AccountId::as_bytes)
@@ -175,11 +188,11 @@ pub(crate) fn pick_account<'a>(account: Option<&'a AccountId>, none: &'a [u8; 16
 /// The made-up answer is always computed, the lookup is unpacked by the same
 /// function as in `login_start` (which chooses between two references and
 /// reads through the chosen one), and the choice of the two values is
-/// `ct_select_u8`; no step looks at which kind of lookup it is. Use it for the
-/// pre-login endpoint, so a known name, an unknown one and a disabled one do
-/// the same work.
-///
-/// Spec: Fase 1 § 4.2.
+/// `ct_select_u8`; no step looks at which kind of lookup it is. It is the
+/// function for a pre-login endpoint, so that a known name, an unknown one and
+/// a disabled one do the same work. The server has no such route yet (the
+/// profile and hint go out in the answer of `login/start`, chosen by the same
+/// `choose_answer`), so nothing calls it but the tests and the timing bench.
 pub fn prelogin_answer(
     secret: &PreloginSecret,
     name: &NormalizedLoginName,

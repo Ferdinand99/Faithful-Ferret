@@ -9,6 +9,7 @@
 #                             pinned counts
 #   ct/run.sh select-asm      ct_select_bytes reads both slices (assembly check)
 #   ct/run.sh select-asm-negative  the same check must flag a known-bad select
+#   ct/run.sh timed-asm       the same on the dudect binary (LTO), at opt-level s and 3
 #   ct/run.sh lookup-asm      the unpacking of the lookup and the choice of the answer (login_start,
 #                             the pre-login answer) have no conditional jump
 #   ct/run.sh wasm-scan       div/rem/sqrt/br_table/table loads in the WASM
@@ -41,6 +42,8 @@
 #                 empty for no pinning
 #   CT_ONLY       only the dudect benches whose name contains this (the controls,
 #                 control_*, always run too)
+#   CT_OPT_LEVEL  opt-level of the dudect build (default: the profile of ct/dudect, "s";
+#                 3 for CT_ONLY=server, because the server ships at 3)
 #   CT_QUIET_LOAD 1-minute load average above which a run is marked NOT DECISIVE (2)
 #   CT_REPEAT     measure each selected bench this many times (spread of t)
 set -euo pipefail
@@ -205,10 +208,14 @@ select_asm_negative() {
 # be a branch on whether the name has an account. Each is compiled as a function
 # of its own, and its body must have no conditional jump, on x86_64 and arm64.
 lookup_asm() {
-  local arch t asm fn body lines jumps
+  local arch t asm fn body lines jumps opt
+  # The server is built at opt-level 3 (crates/ferret-server/Cargo.toml), the
+  # root workspace and the WebAssembly package at "s": both are read.
+  for opt in 3 s; do
   for arch in "${archs[@]}"; do
     t="$(triple "$arch")"
-    CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="$opt" CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
       cargo rustc --release --lib -p ferret-server-auth --features test-support --target "$t" -- --emit asm >&2
     asm="$(ls -t target/"$t"/release/deps/ferret_server_auth-*.s | head -n1)"
     for fn in stored_for choose_answer pick_account; do
@@ -218,7 +225,7 @@ lookup_asm() {
         x86_64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+j[^m]' || true)" ;;
         arm64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+(b\.[a-z]+|cbn?z|tbn?z)\s' || true)" ;;
       esac
-      echo "lookup-asm $arch $fn: $lines lines, conditional jumps $jumps"
+      echo "lookup-asm opt-level $opt $arch $fn: $lines lines, conditional jumps $jumps"
       if [ "$lines" -lt 5 ]; then
         echo "asm file: $asm ($(wc -l < "$asm") lines); lines that name $fn:" >&2
         grep -n "$fn" "$asm" | head -20 >&2 || true
@@ -231,6 +238,7 @@ lookup_asm() {
         return 1
       fi
     done
+  done
   done
 }
 
@@ -386,12 +394,14 @@ finish() { # $1 failed, $2 invalid, $3 gross
 # specialised `stored_for`, `choose_answer` or `pick_account` for it. Their
 # bodies in the disassembly (a name with a suffix of LTO counts) must have no
 # conditional jump, and each must be there: a function that was inlined or
-# merged is not checked, which is a failure and not a pass.
+# merged is not checked, which is a failure and not a pass (so is a missing
+# objdump). `ct_select_bytes` is not in the list: it has the loop of the copy,
+# and `select-asm` reads it without LTO.
 timed_asm() { # $1 binary
   local fn body lines jumps bad=0
   if ! command -v objdump >/dev/null 2>&1; then
-    echo "timed-asm: objdump is not installed, the timed binary was not checked"
-    return 0
+    echo "FAIL: objdump is not installed, so the timed binary was not checked" >&2
+    return 1
   fi
   for fn in stored_for choose_answer pick_account; do
     body="$(objdump -d --no-show-raw-insn "$1" \
@@ -410,8 +420,26 @@ timed_asm() { # $1 binary
   return "$bad"
 }
 
+# `timed_asm` on the binary built at each optimisation level, with the LTO and
+# panic settings of ct/dudect: "s" is that profile, 3 is the server's. Compile
+# time only, no timing.
+timed_asm_levels() {
+  local opt
+  for opt in s 3; do
+    echo "timed-asm at opt-level $opt"
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="$opt" cargo build --release "${dudect[@]}" --features bench --bin dudect >&2
+    timed_asm target/release/dudect || return 1
+  done
+}
+
 dudect_native() {
-  cargo build --release "${dudect[@]}" --features bench --bin dudect >&2
+  # The timing has to be of the code that is shipped. The server ships at
+  # opt-level 3 and ct/dudect is a copy of the root profile ("s"), so the
+  # server benches are built at 3 unless CT_OPT_LEVEL says otherwise; the same
+  # LTO, codegen-units, panic and overflow-checks as the server's profile.
+  local opt="${CT_OPT_LEVEL:-}"
+  if [ -z "$opt" ] && [ "${CT_ONLY:-}" = server ]; then opt=3; fi
+  env ${opt:+CARGO_PROFILE_RELEASE_OPT_LEVEL="$opt"} cargo build --release "${dudect[@]}" --features bench --bin dudect >&2
   local bin=target/release/dudect
   local out="$results/dudect-native.txt"
   : > "$out"
@@ -423,6 +451,7 @@ dudect_native() {
     echo "dudect native: n=$n per bench (rerun with $((n * 10)) when |t| >= 4.5), cpu=${cpu:-none}, $(date -u +%FT%TZ)"
     echo "host: $(uname -n), $(grep -m1 'model name' /proc/cpuinfo || true)"
     echo "rustc: $(rustc --version)"
+    echo "profile: opt-level ${opt:-s (ct/dudect/Cargo.toml)}, lto, codegen-units 1, panic abort, overflow checks"
     echo "load: $(cat /proc/loadavg)"
     if over "$(cut -d' ' -f1 /proc/loadavg)" "$CT_QUIET_LOAD"; then
       echo "NOT DECISIVE: the 1-minute load average at the start was above $CT_QUIET_LOAD; the machine was not quiet"
@@ -524,6 +553,7 @@ case "$mode" in
   select-asm) select_asm ;;
   select-asm-negative) select_asm_negative ;;
   lookup-asm) lookup_asm ;;
+  timed-asm) timed_asm_levels ;;
   wasm-scan) wasm_scan ;;
   wasm-allow-check) wasm_allow_check ;;
   wasm-selftest) wasm_selftest ;;
@@ -541,6 +571,7 @@ case "$mode" in
     select_asm
     select_asm_negative
     lookup_asm
+    timed_asm_levels
     wasm_selftest
     wasm_scan
     wasm_allow_check
@@ -549,7 +580,7 @@ case "$mode" in
     dudect_wasm
     ;;
   *)
-    echo "usage: ct/run.sh analyze|triage|select-asm|select-asm-negative|lookup-asm|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|lock-selftest|all" >&2
+    echo "usage: ct/run.sh analyze|triage|select-asm|select-asm-negative|lookup-asm|timed-asm|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-selftest|wasm-shipped|dudect-native|dudect-wasm|lock|lock-selftest|all" >&2
     exit 2
     ;;
 esac

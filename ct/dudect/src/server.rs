@@ -400,9 +400,9 @@ impl Target for Prelogin {
     }
     fn prepare(&mut self, class: Class, i: usize) {
         let e = self.entries[i % SERVER_POOL];
-        // The same name for both classes: the time of the HMAC over a name
-        // varies with the name, and two pools of names would give the
-        // classes a different mean however many measurements are made. The
+        // The same name for both classes: two pools of names would give the
+        // classes a different mean, whatever the cause of the difference
+        // between two names (layout or data: not isolated). The
         // record and the account are read for either class, and the lookup
         // and the reference are built here, so the timed code has no branch
         // of its own on the class.

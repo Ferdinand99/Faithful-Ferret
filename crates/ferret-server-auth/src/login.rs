@@ -984,7 +984,17 @@ mod tests {
         // same way, and the stand-in is a record of the length of a real one.
         let unknown = crate::testing::unpack_lookup(AccountLookup::Unknown, placeholder);
         let disabled = crate::testing::unpack_lookup(AccountLookup::Disabled, placeholder);
-        assert_eq!(unknown, (0, 0, 0, 0));
+        // `active` and `hint` are the contract; the profile and the first
+        // byte are those of the stand-in, whatever they are.
+        assert_eq!(
+            unknown,
+            (
+                0,
+                placeholder.ksf_profile,
+                0,
+                placeholder.record.as_bytes()[0]
+            )
+        );
         assert_eq!(disabled, unknown);
         assert_eq!(
             stored_for(AccountLookup::Unknown, placeholder).record.len(),

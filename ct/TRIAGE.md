@@ -292,7 +292,7 @@ list of places from growing unnoticed.
 | # | Compare or choice | Secret? | How it is done | Checked by |
 |---|---|---|---|---|
 | 1 | KE3 against the expected MAC | yes | `opaque-ke` (`subtle::ConstantTimeEq`) inside `ServerLogin::finish` | a KE3 with one byte changed, at every position, is refused (`tests/rfc9807_server.rs`) |
-| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 2 calls, `prelogin.rs`, 1) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only` and `info_server_login_start_real_vs_made_up`; `server_prelogin_known_vs_unknown` times the pattern an endpoint has to follow (no library code in it depends on the class) |
+| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 3 calls, `prelogin.rs`, 2) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only`, `info_server_login_start_real_vs_made_up` and `info_server_login_start_fixed_vs_pool`; `server_prelogin_known_vs_unknown` times `prelogin_answer` (`stored_for` and `choose_answer` get the class), with its null control `control_server_prelogin_null` |
 | 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 48 binding bytes (`LoginPurpose::same_as`), the purpose byte next to it with `&` | T5 and the call-site test; `server_state_binding` is a smoke test (it cannot tell `ct_eq` from `==` on 48 bytes behind an AEAD open) |
 | 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open); `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
 | 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
@@ -332,11 +332,17 @@ t = -12.31, `server_login_start_known_vs_disabled` t = +6.26,
   through a reference that may be absent, which is a branch. The choice is now
   `pick_account`, a select of two valid references, and the load is the same
   for both.
-* The pre-login answer had no library function: the endpoint was left to choose
-  the profile and the hint. `prelogin_answer(secret, name, policy, lookup)` is
-  it now: the made-up answer is always computed, the lookup is unpacked by
-  `stored_for`, and `choose_answer` (two `ct_select_u8`, also used by
-  `login_start`) picks the values.
+* The choice of the profile and the hint was inside `start_admitted` only.
+  `choose_answer` (two `ct_select_u8`) is now a function of its own that
+  `login_start` uses, and `prelogin_answer(secret, name, policy, lookup)` is
+  the same choice as a library function for a pre-login endpoint: the made-up
+  answer is always computed, the lookup is unpacked by `stored_for`, and
+  `choose_answer` picks the values. The server has no pre-login route yet
+  (the profile and the hint go out in the answer of `login/start`, through
+  `choose_answer`), so `prelogin_answer` has no production caller: the path in
+  use today is `login_start`, which the `server_login_start_*` benches time,
+  and the gated pre-login bench times the function that a future route would
+  call.
 
 `ct/run.sh lookup-asm` (CI, x86_64 and arm64) compiles the crate and fails if
 `stored_for`, `choose_answer` or `pick_account` has a conditional jump (they
@@ -370,10 +376,23 @@ the caller left it: an unknown name has no record, so this is inherent, and
 256, both `Active`) shows how large that kind of effect is by itself. The
 finish failure was not the library: nothing on its path had changed (see S-3).
 
-Result after round 3 (29fbc6b, quiet LANBox, 10^7): known against unknown
+Result of 29fbc6b (quiet LANBox, 10^7): known against unknown
 -3.90, known against disabled -2.54, pre-login -2.56, all controls fine. S-2 is
 fixed; what remains is the caller's own record and the caller's own lookup,
 which R10 carries.
+
+**The profile of these results.** They were measured at `opt-level = "s"`, the
+profile of `ct/dudect` (a copy of the root profile, which is the profile of the
+core and of the WebAssembly package). The server ships at `opt-level = 3`
+(`crates/ferret-server/Cargo.toml`). So the branch-freeness of `stored_for`,
+`choose_answer` and `pick_account` was not read at the level that ships, and
+the timing was not taken there. Since then `ct/run.sh lookup-asm` reads the
+crate at levels 3 and `s` on both architectures, `ct/run.sh timed-asm` reads the
+linked, LTO `dudect` binary at both levels (both run in CI), and the dudect
+build of `CT_ONLY=server` defaults to `opt-level = 3` (`CT_OPT_LEVEL` sets
+another), with the LTO, codegen-units, panic and overflow-check settings of the
+server's profile. The numbers of 29fbc6b are not at that level; the release run
+repeats them there (the command is in the report).
 
 ### S-3. Two pools of inputs gave the classes a different mean
 
@@ -402,7 +421,7 @@ its own 256 sealed states (own nonce, ciphertext and tag, each a heap buffer
 of its own), and "one allocation" for the pool only held for the 24-byte `Vec`
 headers: the 244-byte buffers have a place of their own. Its t was +2.67 on
 e4e6334 and +25.92 on 6f8743b although nothing on the finish path had
-changed; the fix of round 2 had moved the heap layout. The two states of an
+changed; the fix in 6f8743b had moved the heap layout. The two states of an
 input now share the seed and differ in one byte of the credential (the first
 or the last), so the blobs differ in two ciphertext bytes and the tag; `prepare`
 reads both for either class and builds the slot with a mask, and a null control
@@ -420,7 +439,7 @@ LTO.
 **Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:
 `CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on
 e4e6334 with a quiet LANBox (1-minute load average 1.35 at the start, 1.21 at the
-end, the dudect process pinned to cpu 1). A gated bench over 4.5 at 10^7 fails
+end, the dudect process pinned to cpu 6). A gated bench over 4.5 at 10^7 fails
 without a rerun.
 
 | bench | t at 10^7 | result |
@@ -442,7 +461,7 @@ The earlier table (10^6, loaded machine, load average 21, no controls) is
 replaced by this one; it had passed all of these benches except the second
 login start run at 10^7 (+7.06), which this run shows was a real offset.
 
-**After round 2 (6f8743b).** `ct/results/dudect-lanbox-server-r2.md`, the same
+**After the first fix (6f8743b).** `ct/results/dudect-lanbox-server-r2.md`, the same
 command, load average 1.08 at the start and 1.17 at the end:
 
 | bench | t at 10^7 | result |
@@ -456,12 +475,12 @@ command, load average 1.08 at the start and 1.17 at the end:
 | `info_server_login_start_lookup_only`, `..._real_vs_made_up` | +2.53, +3.02 | below 4.5 alone |
 | `info_server_prelogin_resolve_credential` | +8.53 | information only |
 
-The code changed again after this run (round 3: the record copy of S-2, the
+The code changed again after this run (29fbc6b: the record copy of S-2, the
 benches of S-3, the null controls `control_server_prelogin_null` and
 `control_server_finish_null`, the info bench
 `info_server_login_start_fixed_vs_pool`).
 
-**Decisive, after round 3 (29fbc6b).** `ct/results/dudect-lanbox-server.md`:
+**Decisive, 29fbc6b, at `opt-level = "s"`.** `ct/results/dudect-lanbox-server.md`:
 `CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on a
 quiet LANBox (1-minute load average 0.92 at the start; the load at the end was
 not captured, because the local client was stopped overnight and the file was
@@ -484,7 +503,7 @@ see the header of the file). The timed binary was checked first: `stored_for`,
 | `info_server_login_start_fixed_vs_pool` | +1.76 | below 4.5 |
 | `info_server_prelogin_resolve_credential` | +5.28 (not gated) | see below |
 
-The two earlier tables above (before the fix, and after round 2) stay as the
+The two earlier tables above (before the fix, and 6f8743b) stay as the
 history of how S-2 and S-3 were found. `server_login_start_known_vs_unknown`
 at -3.90 is the closest gated value to the limit; the null control of the same
 cost gave -1.72 and the controls that must see a leak gave 10^5, so the setup
@@ -492,22 +511,22 @@ is sound, and the point is not closed by this one run alone: the release run
 repeats it.
 
 **`info_server_prelogin_resolve_credential` (+5.28) is not gated, and why.**
-`resolve_credential` is a public helper that returns the credential id OPAQUE
-uses for a name; neither `login_start` (which does its own select) nor
-`prelogin_answer` calls it, so it is not on a shipped path of the library. The
-path that answers a pre-login request is `prelogin_answer`, and that is what
-the gated `server_prelogin_known_vs_unknown` times (-2.56, with its null
-control at -2.65). The value fell from +17.04 to +8.53 and to +5.28 as the
-source changed (`pick_account`, then the read of the stand-in id on every
-path), and `pick_account` is checked branch-free in the source, in the
-non-LTO assembly and in the timed binary. What is left, tau +0.0017 over
-nearly the whole sample, is of the size the bench itself shows for one object
-against a pool (`fixed_vs_pool` +1.76 on login start): the two sides read
-the account's id from a heap buffer of the caller and the stand-in id from a
-static, which is the same residual as the caller's own record (S-2, R10). It
-has not been isolated further. If the endpoint starts to call
-`resolve_credential` on a request path, it has to be gated then, and the
-residual looked at again.
+`resolve_credential` is a helper that returns the credential id OPAQUE uses for
+a name. Neither `login_start` (which does its own select) nor `prelogin_answer`
+calls it, and nothing in `crates/ferret-server` does, so it is not on a shipped
+path. It is now behind the `test-support` feature, so that no request path can
+start to use it without this being looked at. The gated
+`server_prelogin_known_vs_unknown` times `prelogin_answer` (-2.56, with its null
+control at -2.65). The cause of the +5.28 has not been isolated. What is known:
+its sign was positive in all three runs (+17.04, +8.53, +5.28) although the code
+changed between them, so by the test of S-2 it is not a layout bias, and its
+tau (+0.0017, nearly the whole sample) is about three times that of
+`fixed_vs_pool`, whose +1.76 is inside the floor. A likely cause is that for a
+known name the first select reads two objects (the account's id and the
+stand-in) and for an unknown name the same static twice: the same shape as the
+first select of `login_start`, which `info_server_login_start_lookup_only`
+isolates (-2.52, passes). If a request path is ever to call
+`resolve_credential`, the bench has to become a gate and pass first.
 
 This times the library, not the database: the lookup that decides `Active`,
 `Unknown` or `Disabled` is the caller's, and the comparison of the bytes and
@@ -626,11 +645,15 @@ with its reason, and each is repeated in the report.
   comparison of the bytes and delays of the answers of a running server is a
   test of the endpoint (§ 4.2), and it has to name this part as an input. The
   library no longer branches on the lookup (S-2), so what is left on that bit
-  is the caller's own lookup. The endpoint has differences of the same kind:
-  the M1 `finish_lookup` parses the record only for an active account (a
-  finding of the review of the endpoint code), a row or no row is another SQL
-  path, and the handler matches on the kind to build the lookup; the endpoint
-  test owner must see all three. What the library leaves on the account bit is
+  is the caller's own lookup. The endpoint has differences of the same kind: a
+  row or no row is another SQL path, and the handler matches on the kind to
+  build the lookup. Its record parse was one of them (`finish_lookup` parsed the
+  record only for an active account); it was fixed in #66, and every lookup now
+  parses one record, the real one on one path and a constant on the other, so
+  the endpoint test should still look at the difference between those two. The
+  endpoint test owner must see these two. `prelogin_answer` has no caller yet
+  (the server has no pre-login route), so the endpoint test of that route is
+  still to be written.  What the library leaves on the account bit is
   the read of the caller's own record and id (one object against a pool,
   `fixed_vs_pool` +1.76) and `info_server_prelogin_resolve_credential`
   (+5.28, not gated, not on a shipped path). The compares of the credential and
