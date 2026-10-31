@@ -270,6 +270,14 @@ fn log_buffer() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
+/// Everything logged so far.
+fn logged_text(log: &Arc<Mutex<Vec<u8>>>) -> String {
+    let bytes = log
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 // ------------------------------------------------------------------- tests
 
 #[tokio::test]
@@ -545,14 +553,23 @@ async fn starts_without_a_token_are_refused_before_the_kit_and_the_throttle() {
         "the library throttle was not asked"
     );
     assert_eq!(count_registrations(&app).await, 0);
-    let logged = String::from_utf8_lossy(
-        &log.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    )
-    .into_owned();
     assert!(
-        !logged.contains("setup page opened without the setup token"),
+        !logged_text(&log).contains("setup page opened without the setup token"),
         "a start without a token wrote a warning line"
+    );
+
+    // Control: the capture does see the kit's lines. A wrong token (which does
+    // reach the kit) writes one, so the absence above means something.
+    let wrong = call(
+        &app,
+        START,
+        &c.start_body("tokenless@example.test", Some("not-the-token")),
+    )
+    .await;
+    assert_eq!(wrong.status, StatusCode::FORBIDDEN);
+    assert!(
+        logged_text(&log).contains("setup attempted with a wrong setup token"),
+        "the log capture does not see the kit's lines"
     );
 
     // Nothing was counted against the address: the right token still works.
@@ -563,6 +580,77 @@ async fn starts_without_a_token_are_refused_before_the_kit_and_the_throttle() {
     )
     .await;
     assert_eq!(ok.status, StatusCode::OK, "{}", ok.text());
+}
+
+/// A start with two `X-Forwarded-For` lines, as a trusted proxy that adds a
+/// line of its own sends it: the first is whatever the client wrote.
+async fn guess_from(app: &TestApp, first_line: &str, last_line: &str, n: usize) -> Res {
+    let c = client("forwarded@example.test");
+    let req = Req::post(START)
+        .page_fetch(Which::Vault)
+        .header("x-forwarded-proto", "https")
+        .header("sec-fetch-site", "same-origin")
+        .header("x-forwarded-for", first_line)
+        .header("x-forwarded-for", last_line)
+        .json(&c.start_body("forwarded@example.test", Some(&format!("guess-{n}"))))
+        .build();
+    app.call_raw(Which::Vault, req).await
+}
+
+/// Only the list of trusted proxies is set here (the test process does not set
+/// the kit's own `FERRET_TRUST_PROXY`), which is the setting Ferret documents.
+/// The setup-token limiter must still count the real client: the address in the
+/// last `X-Forwarded-For` line, whatever the client wrote in the first.
+#[tokio::test]
+async fn the_setup_token_limiter_counts_the_real_client_behind_the_trusted_proxy() {
+    set_setup_open_for_tests(Some(false));
+    required_setup_token().expect("a setup token is required");
+
+    // One real client that rotates the first line on every guess is throttled.
+    let app = server().await;
+    let mut throttled = false;
+    for n in 0..200 {
+        let first = format!("10.9.0.{}", n % 250 + 1);
+        let res = guess_from(&app, &first, "203.0.113.9", n).await;
+        if res.status == StatusCode::TOO_MANY_REQUESTS {
+            throttled = true;
+            break;
+        }
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "guess {n}");
+    }
+    assert!(throttled, "rotating the first line escaped the limiter");
+
+    // Many real clients, each behind the same proxy, are counted one by one: a
+    // proxy that is the peer of all of them is not one shared bucket.
+    let app = server().await;
+    for n in 0..200 {
+        let client_ip = format!("203.0.113.{}", n % 250 + 1);
+        let res = guess_from(&app, "10.9.0.1", &client_ip, n).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "client {n}");
+    }
+}
+
+#[tokio::test]
+async fn a_finish_that_still_holds_its_row_after_a_user_exists_is_409() {
+    let app = server().await;
+    let (_, finish) = prepared(&app, "late@example.test").await;
+    prepared(&app, "waiting@example.test").await;
+    // A user appears by some other way while both rows wait.
+    app.state
+        .vault_db
+        .with_conn(|conn| Ok(support::accounts::insert_user(conn, "root@example.test")))
+        .await
+        .unwrap();
+    let res = call(&app, FINISH, &finish).await;
+    assert_eq!(
+        (res.status, error_of(&res).as_str()),
+        (StatusCode::CONFLICT, "registration_closed")
+    );
+    assert!(res.set_cookies().is_empty());
+    assert_eq!(count(&app, "users").await, 1);
+    assert_eq!(count(&app, "ferret_accounts").await, 0);
+    // The refused try wrote nothing, and removed no other waiting row.
+    assert_eq!(count_registrations(&app).await, 1);
 }
 
 #[tokio::test]

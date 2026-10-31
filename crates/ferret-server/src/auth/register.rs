@@ -2,8 +2,13 @@
 //! listener only). Spec: Fase 1 § 4.2 ("Registrering") and § 6.1.
 //!
 //! In this version only the first administrator registers: the kit's setup
-//! token opens the door, and a server that has a user refuses with
-//! `409 registration_closed`.
+//! token opens the door, and a server that has a user refuses a `start` with
+//! `409 registration_closed`. A `finish` whose waiting row is gone (expired,
+//! already used, or removed when the first administrator was made) is
+//! `401 denied`, the same answer as for an id that never existed: `finish` has
+//! no setup token, so a 409 there would tell anyone with a made-up id whether
+//! the server is set up. Only a `finish` that still holds its row when the
+//! first administrator already exists gets the 409.
 //!
 //! # `start`
 //!
@@ -16,9 +21,9 @@
 //!    the setup token against the kit's (which counts wrong guesses per
 //!    address and answers `429` when they come too fast). A request with no
 //!    setup token at all is refused (`403`) before the kit is asked: the kit
-//!    counts nothing for it and would write a log line for each one. The kit
-//!    reads the client address from the last `X-Forwarded-For` line, like the
-//!    sign-in throttle does (`last_forwarded_line`).
+//!    counts nothing for it and would write a log line for each one. The kit is
+//!    told the client address the sign-in throttle uses, so the limiter always
+//!    counts the real client.
 //! 3. The server assigns the account id, the vault id and the registration id
 //!    from the operating system's generator: the client never picks them.
 //! 4. `ferret_server_auth::register_start` asks the throttle (the first thing
@@ -72,13 +77,12 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
 use vole_kit::auth::pages::{SetupTokenError, check_setup_token};
-use vole_kit::auth::session::SessionClaims;
-use vole_kit::auth::session::required_setup_token;
+use vole_kit::auth::session::{SessionClaims, required_setup_token};
 use vole_kit::auth::{reauth, username_problem};
 use vole_kit::db::{settings, users};
 
 use crate::auth::session::{Origin, insert_session, new_session, session_cookies};
-use crate::auth::throttle::{caller_from, last_forwarded_line};
+use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
 use crate::http::proxy_guard::request_is_https;
 use crate::ids::{AccountId, DeviceId, MANIFEST_ITEM_ID, MethodId, SessionSecret, VaultId};
@@ -250,11 +254,13 @@ fn login_name(raw: &str) -> Result<String, ApiError> {
 /// is required: the kit counts nothing for it and writes a warning line for
 /// each one, which a flood could use to fill the log. It gets the same `403`.
 ///
-/// The kit reads the client address from the first `X-Forwarded-For` line,
-/// where the sign-in throttle reads the last one (the first may be written by
-/// the client when the trusted proxy adds a line of its own). The kit is
-/// therefore given the headers with only the last line, so both read the same
-/// hop.
+/// The kit works out the client address itself from the headers and its own
+/// proxy setting (`FERRET_TRUST_PROXY`), which is separate from the list of
+/// trusted proxies this server uses. It could therefore count the proxy as the
+/// client, or the first `X-Forwarded-For` line, which the client may have
+/// written. So the kit is given no headers and the address [`caller_from`]
+/// reads for the sign-in throttle as the peer: it then keys the limiter on that
+/// address whatever its own setting is.
 fn check_token(
     state: &FerretState,
     headers: &HeaderMap,
@@ -268,8 +274,10 @@ fn check_token(
     if !has_token && required_setup_token().is_some() {
         return Err(ApiError::coded("forbidden"));
     }
-    let seen = last_forwarded_line(headers);
-    match check_setup_token(&state.core, &seen, Some(peer), given) {
+    let at = caller_from(headers, Some(peer))
+        .ip
+        .map(|ip| SocketAddr::new(ip, peer.port()));
+    match check_setup_token(&state.core, &HeaderMap::new(), at, given) {
         Ok(()) => Ok(()),
         Err(SetupTokenError::Missing | SetupTokenError::Wrong) => Err(ApiError::coded("forbidden")),
         Err(SetupTokenError::Throttled(wait)) => Err(ApiError::throttled(

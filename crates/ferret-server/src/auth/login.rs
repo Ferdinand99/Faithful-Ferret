@@ -231,13 +231,19 @@ const RECORD_LEN: usize = 192;
 /// makes up the answer for a name without an account), it only gives the paths
 /// that have no usable record the same parse to pay as a real one.
 fn stand_in_record() -> &'static [u8] {
-    static RECORD: OnceLock<Vec<u8>> = OnceLock::new();
-    RECORD.get_or_init(|| {
-        let mut bytes = Vec::with_capacity(RECORD_LEN);
-        bytes.extend_from_slice(&STAND_IN_POINT);
-        bytes.resize(RECORD_LEN, 0);
-        bytes
-    })
+    &STAND_IN_RECORD
+}
+
+static STAND_IN_RECORD: [u8; RECORD_LEN] = build_stand_in();
+
+const fn build_stand_in() -> [u8; RECORD_LEN] {
+    let mut bytes = [0u8; RECORD_LEN];
+    let mut index = 0;
+    while index < STAND_IN_POINT.len() {
+        bytes[index] = STAND_IN_POINT[index];
+        index += 1;
+    }
+    bytes
 }
 
 #[cfg(test)]
@@ -256,10 +262,10 @@ fn parse_record(bytes: &[u8]) -> Result<ValidatedRecord, AuthError> {
 }
 
 /// Pays the parse of a record for a lookup that has no record to use. The
-/// result is thrown away; `black_box` keeps the compiler from removing the
-/// work.
+/// result is thrown away; `black_box` on the input and on the outcome keeps the
+/// compiler from folding the parse of a constant or removing it.
 fn parse_stand_in() {
-    let _ = std::hint::black_box(parse_record(stand_in_record()).is_ok());
+    let _ = std::hint::black_box(parse_record(std::hint::black_box(stand_in_record())).is_ok());
 }
 
 /// Turns what the database gave (or the absence of a row) into the lookup.
