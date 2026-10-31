@@ -604,10 +604,7 @@ impl Target for Finish {
     }
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
-        let (a, b) = (
-            self.pool[2 * i].as_bytes(),
-            self.pool[2 * i + 1].as_bytes(),
-        );
+        let (a, b) = (self.pool[2 * i].as_bytes(), self.pool[2 * i + 1].as_bytes());
         // Both states are read for either class, byte by byte in the same
         // order; the class is a mask, not a branch or an index of its own.
         // The null control always has the mask of the first class.
