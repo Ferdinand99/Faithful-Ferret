@@ -381,6 +381,35 @@ finish() { # $1 failed, $2 invalid, $3 gross
   [ "$failed" = 0 ]
 }
 
+# The same check as `lookup-asm`, on the binary that is timed: it is built with
+# LTO, and with every call passing the same stand-in, the compiler may have
+# specialised `stored_for`, `choose_answer` or `pick_account` for it. Their
+# bodies in the disassembly (a name with a suffix of LTO counts) must have no
+# conditional jump, and each must be there: a function that was inlined or
+# merged is not checked, which is a failure and not a pass.
+timed_asm() { # $1 binary
+  local fn body lines jumps bad=0
+  if ! command -v objdump >/dev/null 2>&1; then
+    echo "timed-asm: objdump is not installed, the timed binary was not checked"
+    return 0
+  fi
+  for fn in stored_for choose_answer pick_account; do
+    body="$(objdump -d --no-show-raw-insn "$1" \
+      | awk -v fn="$fn" '/^[0-9a-f]+ </{on = ($0 ~ ("<_(ZN|R)[0-9a-zA-Z_.$]*" length(fn) fn "[^>]*>:$"))} on{print}')"
+    lines="$(printf '%s\n' "$body" | grep -c . || true)"
+    jumps="$(printf '%s\n' "$body" | grep -cE '^\s+[0-9a-f]+:\s+j[^m]' || true)"
+    echo "timed-asm $fn: $lines lines, conditional jumps $jumps"
+    if [ "$lines" -lt 3 ]; then
+      echo "FAIL: $fn is not a function of the timed binary (inlined or merged), so it was not checked" >&2
+      bad=1
+    elif [ "$jumps" != 0 ]; then
+      echo "FAIL: $fn has a conditional jump in the timed binary" >&2
+      bad=1
+    fi
+  done
+  return "$bad"
+}
+
 dudect_native() {
   cargo build --release "${dudect[@]}" --features bench --bin dudect >&2
   local bin=target/release/dudect
@@ -399,8 +428,12 @@ dudect_native() {
       echo "NOT DECISIVE: the 1-minute load average at the start was above $CT_QUIET_LOAD; the machine was not quiet"
     fi
   } | tee -a "$out"
-  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled control_server_login_start_null info_server_login_start_lookup_only info_server_login_start_real_vs_made_up server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
+  local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled control_server_login_start_null control_server_prelogin_null control_server_finish_null info_server_login_start_lookup_only info_server_login_start_real_vs_made_up info_server_login_start_fixed_vs_pool server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
   local failed=0 invalid=0 grossfail=0 name rep
+  # The lookup code of the timed binary, before any bench is run.
+  local asm_ok=1
+  timed_asm "$bin" 2>&1 | tee -a "$out" || asm_ok=0
+  if [ "$asm_ok" = 0 ]; then invalid=1; fi
   for name in $names; do
     # A selected run always has the controls with it: a result without them
     # does not show that the setup could see a leak, or stayed quiet on equal

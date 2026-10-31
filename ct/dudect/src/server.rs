@@ -12,9 +12,12 @@
 //! | `server_login_start_known_vs_disabled` | `login_start`, the same (runs the same library path as `Unknown`: a replicate, not a second piece of evidence) | a name with an account | the name of an account that may not log in |
 //! | `control_server_login_start_null` | `login_start`, the same (null control of the same cost: the classes are the same) | an account | the same account |
 //! | `info_server_login_start_lookup_only` | `login_start` with every byte OPAQUE sees the same: the record and id are the made-up ones in both | `Active` with the made-up record | `Unknown` |
+//! | `info_server_login_start_fixed_vs_pool` | `login_start`, both `Active` with a real record: only "one fixed object against a pool of 256" differs | the record of the input | one fixed record |
 //! | `info_server_login_start_real_vs_made_up` | `login_start`, both `Active`: only the data differ | the real record and id | the made-up record and id |
 //! | `server_prelogin_known_vs_unknown` | `prelogin_answer`: the made-up answer always computed, the lookup unpacked as in `login_start`, the profile and hint chosen with `ct_select_u8` | a name with an account | a name without |
 //! | `info_server_prelogin_resolve_credential` | `resolve_credential` with `Some(account)` or `None`: the account id chosen between two references (information only) | a name with an account | a name without |
+//! | `control_server_prelogin_null` | `prelogin_answer`, the classes are the same (null control) | an account | the same account |
+//! | `control_server_finish_null` | `login_finish`, the classes are the same (null control) | the state | the same state |
 //! | `server_state_binding` | `open_fields` of a re-authentication state (the AEAD, then the purpose, session and account compare of `state.rs`) | session wrong in the first byte | account wrong in the last byte |
 //! | `server_finish_credential_vs_account` | `login_finish` of a re-authentication whose state is for another account (the compare of `login.rs`) | other account, first byte differs | other account, last byte differs |
 //! | `info_server_finish_state_vs_missing` | `login_finish` | the state is there | there is none (information only: shows that an end-to-end timing of `login_finish` sees a difference of one AEAD open) |
@@ -164,6 +167,11 @@ enum StartKind {
     /// Both classes are `Active`: Left with the real record and id, Right
     /// with the made-up ones. Only the data differ (information only).
     RealVsMadeUp,
+    /// Both classes are `Active` with a real record: Left the record of the
+    /// input (one of a pool of 256), Right one fixed object for every input.
+    /// Only "one object against a pool" differs, which is the structure of
+    /// the stand-in against accounts (information only).
+    FixedVsPool,
 }
 
 /// An account of the pool and what the made-up answer for its name is. Leaked
@@ -214,41 +222,51 @@ impl Target for Start {
         1
     }
     fn informational(&self) -> bool {
-        matches!(self.kind, StartKind::LookupOnly | StartKind::RealVsMadeUp)
+        matches!(
+            self.kind,
+            StartKind::LookupOnly | StartKind::RealVsMadeUp | StartKind::FixedVsPool
+        )
     }
     fn prepare(&mut self, class: Class, i: usize) {
         let e = self.entries[i % SERVER_POOL];
-        // Both records are read for either class, so that the caches and the
-        // allocator are in the same state; the class decides only what the
-        // lookup points at, and that is settled here, not in the timed code.
-        self.touched = touch(&e.real).wrapping_add(touch(&e.made_up));
-        let right = class == Class::Right;
-        let (credential, lookup) = match (self.kind, right) {
-            (StartKind::KnownVsUnknown, true) => (e.id, AccountLookup::Unknown),
-            (StartKind::KnownVsDisabled, true) => (e.id, AccountLookup::Disabled),
-            (StartKind::LookupOnly, true) => (e.made_up_id, AccountLookup::Unknown),
-            (StartKind::LookupOnly, false) => (
-                e.made_up_id,
-                AccountLookup::Active {
-                    record: &e.made_up,
-                    sk_hint: true,
-                },
-            ),
-            (StartKind::RealVsMadeUp, true) => (
-                e.made_up_id,
-                AccountLookup::Active {
-                    record: &e.made_up,
-                    sk_hint: true,
-                },
-            ),
-            _ => (
-                e.id,
-                AccountLookup::Active {
-                    record: &e.real,
-                    sk_hint: true,
-                },
-            ),
+        let fixed = self.entries[0];
+        // Both records (and the fixed one) are read for either class, so that
+        // the caches and the allocator are in the same state. Both sides are
+        // built and the class picks one by index: the stores, the reads and
+        // the branches are the same for either class, so `prepare` leaves
+        // nothing in the predictor or the caches that tells them apart.
+        self.touched = touch(&e.real)
+            .wrapping_add(touch(&e.made_up))
+            .wrapping_add(touch(&fixed.real));
+        let real = AccountLookup::Active {
+            record: &e.real,
+            sk_hint: true,
         };
+        let made_up = AccountLookup::Active {
+            record: &e.made_up,
+            sk_hint: true,
+        };
+        let sides: [(CredentialId, AccountLookup<'static>); 2] = match self.kind {
+            StartKind::KnownVsUnknown => [(e.id, real), (e.id, AccountLookup::Unknown)],
+            StartKind::KnownVsDisabled => [(e.id, real), (e.id, AccountLookup::Disabled)],
+            StartKind::Null => [(e.id, real), (e.id, real)],
+            StartKind::LookupOnly => [
+                (e.made_up_id, made_up),
+                (e.made_up_id, AccountLookup::Unknown),
+            ],
+            StartKind::RealVsMadeUp => [(e.id, real), (e.made_up_id, made_up)],
+            StartKind::FixedVsPool => [
+                (e.id, real),
+                (
+                    fixed.id,
+                    AccountLookup::Active {
+                        record: &fixed.real,
+                        sk_hint: true,
+                    },
+                ),
+            ],
+        };
+        let (credential, lookup) = sides[class as usize];
         self.cell = Cell {
             name: &e.name,
             credential,
@@ -340,6 +358,8 @@ enum PreloginMode {
     /// `resolve_credential` with `Some(account)` or `None` (information only):
     /// the account id is chosen between two references and read once.
     Resolve,
+    /// Null control: `prelogin_answer` with the account for both classes.
+    Null,
 }
 
 /// A name of the pool with its account and record. Leaked once, so the lookup
@@ -367,6 +387,7 @@ impl Target for Prelogin {
         match self.mode {
             PreloginMode::Resolve => "info_server_prelogin_resolve_credential",
             PreloginMode::Answer => "server_prelogin_known_vs_unknown",
+            PreloginMode::Null => "control_server_prelogin_null",
         }
     }
     fn reps(&self) -> u32 {
@@ -387,22 +408,28 @@ impl Target for Prelogin {
         // of its own on the class.
         self.touched = touch(&e.record).wrapping_add(u64::from(e.account.as_bytes()[0]));
         self.name = &e.name;
-        let right = class == Class::Right;
-        self.lookup = if right {
-            AccountLookup::Unknown
+        // Both sides are built and the class picks one by index (the null
+        // control always picks the first), so `prepare` has no branch on
+        // the class.
+        let side = if matches!(self.mode, PreloginMode::Null) {
+            0
         } else {
+            class as usize
+        };
+        self.lookup = [
             AccountLookup::Active {
                 record: &e.record,
                 sk_hint: false,
-            }
-        };
-        self.account = if right { None } else { Some(&e.account) };
+            },
+            AccountLookup::Unknown,
+        ][side];
+        self.account = [Some(&e.account), None][side];
     }
     fn run(&self, reps: u32) -> u64 {
         let mut acc = black_box(self.touched) & 0;
         for _ in 0..reps {
             match self.mode {
-                PreloginMode::Answer => {
+                PreloginMode::Answer | PreloginMode::Null => {
                     let answer = prelogin_answer(
                         &self.f.prelogin,
                         black_box(self.name),
@@ -472,12 +499,6 @@ fn fields(credential: [u8; 16]) -> StateFields {
 fn sealed(f: &LoginFixture, mix: &mut Mix, id: &LoginId, credential: [u8; 16]) -> SealedState {
     let mut rng = TestRng::new(&mix.next().to_le_bytes());
     seal_fields(&f.seal, &mut rng, id, &fields(credential), NOW).expect("a state seals")
-}
-
-/// A value with one byte changed to something else.
-fn flipped<const N: usize>(mut a: [u8; N], at: usize, mix: &mut Mix) -> [u8; N] {
-    a[at] ^= (mix.next() as u8) | 1;
-    a
 }
 
 struct Binding {
@@ -552,6 +573,8 @@ enum FinishKind {
     Credential,
     /// A state for another account is there (Left) or there is none (Right).
     StateVsMissing,
+    /// Null control: both classes get the same state.
+    Null,
 }
 
 struct Finish {
@@ -561,8 +584,11 @@ struct Finish {
     clock: FixedClock,
     hex: String,
     store: SlotStore,
-    /// Input `i` of class `c` is at `2 * i + c`: one allocation for both
-    /// classes, so neither has a place of its own in memory.
+    /// The two states of input `i` are at `2 * i` (Left) and `2 * i + 1`
+    /// (Right). They share the nonce and every ciphertext byte but the two of
+    /// the credential position, and they differ in the tag. Each state is a
+    /// heap buffer of its own, so neither is "one place in memory": `prepare`
+    /// reads both for either class.
     pool: Vec<SealedState>,
 }
 
@@ -578,10 +604,23 @@ impl Target for Finish {
     }
     fn prepare(&mut self, class: Class, i: usize) {
         let i = i % SERVER_POOL;
-        let state = match (class, self.kind) {
-            (Class::Right, FinishKind::StateVsMissing) => None,
-            _ => Some(self.pool[2 * i + class as usize].clone()),
+        let (a, b) = (
+            self.pool[2 * i].as_bytes(),
+            self.pool[2 * i + 1].as_bytes(),
+        );
+        // Both states are read for either class, byte by byte in the same
+        // order; the class is a mask, not a branch or an index of its own.
+        // The null control always has the mask of the first class.
+        let m = match self.kind {
+            FinishKind::Null => 0u8,
+            _ => 0u8.wrapping_sub(class as u8),
         };
+        let bytes: Vec<u8> = a.iter().zip(b).map(|(x, y)| x ^ ((x ^ y) & m)).collect();
+        let mut state = Some(SealedState::from_bytes(bytes));
+        if matches!(self.kind, FinishKind::StateVsMissing) && class == Class::Right {
+            // The information bench: there is no state.
+            state = None;
+        }
         if let Ok(mut slot) = self.store.0.lock() {
             *slot = state;
         }
@@ -606,15 +645,23 @@ impl Target for Finish {
 fn finish_target(mix: &mut Mix, name: &'static str, kind: FinishKind) -> Finish {
     let f = LoginFixture::new();
     let id = LoginId::parse(STATE_ID.as_bytes()).expect("a login id");
-    let other = |at: usize, mix: &mut Mix| {
-        let credential = flipped(ACCOUNT, at, mix);
-        sealed(&f, mix, &id, credential)
-    };
-    let at = |class: usize| if class == 0 { 0 } else { 15 };
+    // The two states of an input are sealed with the same seed and differ in
+    // one byte of the credential: the first (Left) or the last (Right). The
+    // blobs share the version, the nonce and every ciphertext byte but the
+    // two of the credential position; the tags differ. That is the least that
+    // the compare under test needs to differ.
     let mut pool = Vec::with_capacity(2 * SERVER_POOL);
     for _ in 0..SERVER_POOL {
-        for class in 0..2 {
-            pool.push(other(at(class), mix));
+        let seed = mix.next();
+        let mask = (mix.next() as u8) | 1;
+        for at in [0usize, 15] {
+            let mut credential = ACCOUNT;
+            credential[at] ^= mask;
+            let mut rng = TestRng::new(&seed.to_le_bytes());
+            pool.push(
+                seal_fields(&f.seal, &mut rng, &id, &fields(credential), NOW)
+                    .expect("a state seals"),
+            );
         }
     }
     Finish {
@@ -656,13 +703,24 @@ pub fn targets(mix: &mut Mix) -> Vec<Box<dyn Target + Send>> {
             "info_server_login_start_real_vs_made_up",
             StartKind::RealVsMadeUp,
         )),
+        Box::new(start_target(
+            mix,
+            "info_server_login_start_fixed_vs_pool",
+            StartKind::FixedVsPool,
+        )),
         Box::new(prelogin_target(mix, PreloginMode::Answer)),
         Box::new(prelogin_target(mix, PreloginMode::Resolve)),
+        Box::new(prelogin_target(mix, PreloginMode::Null)),
         Box::new(binding_target(mix)),
         Box::new(finish_target(
             mix,
             "server_finish_credential_vs_account",
             FinishKind::Credential,
+        )),
+        Box::new(finish_target(
+            mix,
+            "control_server_finish_null",
+            FinishKind::Null,
         )),
         Box::new(finish_target(
             mix,
@@ -718,5 +776,49 @@ mod tests {
         let left = answer(&mut target, Class::Left);
         let right = answer(&mut target, Class::Right);
         assert_eq!(left, right);
+    }
+
+    /// The two states of an input differ only where the compare under test
+    /// needs them to: the two ciphertext bytes of the credential position
+    /// (plaintext offsets 58 and 73) and the tag.
+    #[test]
+    fn the_two_states_of_a_finish_input_differ_in_the_credential_bytes_and_the_tag_only() {
+        let mut mix = Mix::new(3);
+        let target = finish_target(&mut mix, "t", FinishKind::Credential);
+        for i in 0..SERVER_POOL {
+            let (a, b) = (
+                target.pool[2 * i].as_bytes(),
+                target.pool[2 * i + 1].as_bytes(),
+            );
+            assert_eq!(a.len(), b.len());
+            let differing: Vec<usize> = (0..a.len()).filter(|at| a[*at] != b[*at]).collect();
+            let tag = a.len() - 16;
+            let expected_prefix = [25 + 58, 25 + 73];
+            assert!(differing.starts_with(&expected_prefix), "{differing:?}");
+            assert!(differing[2..].iter().all(|at| *at >= tag), "{differing:?}");
+            // The version and the nonce are the same.
+            assert_eq!(a[..25], b[..25]);
+        }
+    }
+
+    /// `prepare` gives Left the first state and Right the second, and the
+    /// null control the first for both.
+    #[test]
+    fn prepare_picks_the_state_by_a_mask() {
+        let mut mix = Mix::new(4);
+        for (kind, right_is_second) in [(FinishKind::Credential, true), (FinishKind::Null, false)] {
+            let mut target = finish_target(&mut mix, "t", kind);
+            for class in [Class::Left, Class::Right] {
+                target.prepare(class, 5);
+                let slot = target.store.0.lock().unwrap();
+                let state = slot.as_ref().unwrap().as_bytes().to_vec();
+                let expected = if class == Class::Right && right_is_second {
+                    target.pool[11].as_bytes()
+                } else {
+                    target.pool[10].as_bytes()
+                };
+                assert_eq!(state, expected);
+            }
+        }
     }
 }

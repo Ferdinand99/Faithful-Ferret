@@ -23,6 +23,17 @@ fn measurements() -> usize {
         .unwrap_or(1_000_000)
 }
 
+/// `prepare` may branch on the class; the global history of the branch
+/// predictor would carry that into the first branches of the timed code. A
+/// fixed run of taken back-edges leaves the same history for both classes.
+/// It runs outside the timer.
+#[inline(never)]
+fn level_branch_history() {
+    for k in 0..1024u32 {
+        std::hint::black_box(k);
+    }
+}
+
 fn bench(runner: &mut CtRunner, rng: &mut BenchRng, name: &str) {
     let mut target: Box<dyn Target + Send> = targets(rng.next_u64())
         .into_iter()
@@ -47,6 +58,7 @@ fn bench(runner: &mut CtRunner, rng: &mut BenchRng, name: &str) {
         // the timed code does not start in the shadow of a class-dependent
         // copy.
         fence(Ordering::SeqCst);
+        level_branch_history();
         let class = if left { Class::Left } else { Class::Right };
         runner.run_one(class, || target.run(reps));
     }
@@ -140,6 +152,16 @@ fn info_server_login_start_real_vs_made_up(r: &mut CtRunner, rng: &mut BenchRng)
     bench(r, rng, "info_server_login_start_real_vs_made_up");
 }
 
+fn control_server_prelogin_null(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "control_server_prelogin_null");
+}
+fn control_server_finish_null(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "control_server_finish_null");
+}
+fn info_server_login_start_fixed_vs_pool(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_server_login_start_fixed_vs_pool");
+}
+
 ctbench_main!(
     commit_check,
     mac_verify,
@@ -166,6 +188,9 @@ ctbench_main!(
     control_server_login_start_null,
     info_server_login_start_lookup_only,
     info_server_login_start_real_vs_made_up,
+    control_server_prelogin_null,
+    control_server_finish_null,
+    info_server_login_start_fixed_vs_pool,
     server_state_binding,
     server_finish_credential_vs_account,
     info_server_finish_state_vs_missing

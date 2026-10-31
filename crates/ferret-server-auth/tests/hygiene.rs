@@ -961,8 +961,8 @@ const CT_CALLS: &[(&str, &str, usize)] = &[
     ("ct_eq(", "registration.rs", 1),
     ("ct_eq(", "secret_file.rs", 1),
     ("ct_eq(", "state.rs", 2),
-    ("ct_select_bytes(", "login.rs", 2),
-    ("ct_select_bytes(", "prelogin.rs", 1),
+    ("ct_select_bytes(", "login.rs", 3),
+    ("ct_select_bytes(", "prelogin.rs", 2),
     ("ct_select_u8(", "login.rs", 2),
     ("ct_select_u32(", "", 0),
     ("ct_select_u64(", "", 0),
@@ -1148,6 +1148,21 @@ fn login_start_looks_at_the_kind_of_lookup_in_one_function_only() {
     );
     let inside: String = chars[open_body..=end].iter().collect();
     assert_eq!(inside.matches("AccountLookup::").count(), 3);
+    // The record is read once outside it, as `stored.record`, in a select
+    // whose other side is the stand-in, before the OPAQUE work starts: the
+    // stand-in is read on every path, and everything after reads a buffer of
+    // the call.
+    assert_eq!(outside.matches("stored.record").count(), 1);
+    let read = outside.find("stored.record").unwrap();
+    let select = outside[..read].rfind("ct_select_bytes(").unwrap();
+    assert!(outside[select..read].matches('\n').count() <= 2);
+    assert!(
+        outside[read..].trim_start_matches(|c: char| c != '\n')
+            .trim_start()
+            .starts_with("placeholder.record.as_bytes()"),
+        "the other side of the select is not the stand-in"
+    );
+    assert!(read < outside.find("start_admitted(").unwrap());
     // Nothing in it reads through the account's reference before the choice
     // is made (a read in one arm would be a branch).
     assert!(!inside.contains("as_bytes") || inside.find("as_bytes") > inside.find("};"));

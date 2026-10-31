@@ -150,14 +150,14 @@ pub fn resolve_credential(
     // and the load is the same for both.
     static NO_ACCOUNT_ID: [u8; 16] = [0; 16];
     let real = pick_account(account, &NO_ACCOUNT_ID);
+    let active = u8::from(account.is_some());
+    // The stand-in id is read on every path too: the account's id (or the
+    // stand-in again) on one side of a select, the stand-in on the other.
+    let mut own = [0u8; 16];
+    ct_select_bytes(active, real, &NO_ACCOUNT_ID, &mut own);
     step("select-id");
     let mut chosen = [0u8; 16];
-    ct_select_bytes(
-        u8::from(account.is_some()),
-        real,
-        fake.as_bytes(),
-        &mut chosen,
-    );
+    ct_select_bytes(active, &own, fake.as_bytes(), &mut chosen);
     CredentialId::from_bytes(chosen)
 }
 

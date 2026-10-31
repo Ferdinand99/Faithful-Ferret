@@ -351,6 +351,25 @@ login start bench alone were below 4.5 (`lookup_only` +2.62, `real_vs_made_up`
 -2.05) and the whole failed, so the rerun after this change is the proof, not
 the argument above.
 
+The rerun on 6f8743b (`ct/results/dudect-lanbox-server-r2.md`, load 1.08 and
+1.17, controls fine) gave `server_login_start_known_vs_unknown` t = +17.41,
+`..._known_vs_disabled` +4.27, `server_prelogin_known_vs_unknown` -4.20,
+`server_finish_credential_vs_account` +25.92 and
+`info_server_prelogin_resolve_credential` +8.53. The sign of the first moved
+from -12.3 to +17.4 with the same library path for `Unknown` and `Disabled`
+(+17.4 and +4.27) as before (-12.3 and +6.3): a difference in code or in the
+math would keep its sign in both, a bias that comes from where the inputs sit
+in memory does not. What the library still did differently was to read the
+stand-in record (one object, late) on the no-account path only. It now copies
+the record into a buffer of its own at once, with the stand-in on the other
+side of that select, so the stand-in is read on every path and everything
+after reads a buffer of the call; `resolve_credential` does the same with the
+stand-in id. What stays is the one read of the caller's own record, wherever
+the caller left it: an unknown name has no record, so this is inherent, and
+`info_server_login_start_fixed_vs_pool` (one fixed object against a pool of
+256, both `Active`) shows how large that kind of effect is by itself. The
+finish failure was not the library: nothing on its path had changed (see S-3).
+
 ### S-3. Two pools of inputs gave the classes a different mean
 
 The first runs of the server benches failed, and the cause was the bench, not
@@ -372,6 +391,24 @@ the flag alone, or in the index of the byte that is wrong. A bench of
 record only for the class with an account) gave |t| = 20 for the same reason:
 the allocator and the caches were in another state before the timer started.
 Both classes now run the same copies.
+
+The lesson came back a third time. The finish bench still gave each class
+its own 256 sealed states (own nonce, ciphertext and tag, each a heap buffer
+of its own), and "one allocation" for the pool only held for the 24-byte `Vec`
+headers: the 244-byte buffers have a place of their own. Its t was +2.67 on
+e4e6334 and +25.92 on 6f8743b although nothing on the finish path had
+changed; the fix of round 2 had moved the heap layout. The two states of an
+input now share the seed and differ in one byte of the credential (the first
+or the last), so the blobs differ in two ciphertext bytes and the tag; `prepare`
+reads both for either class and builds the slot with a mask, and a null control
+of the same shape (`control_server_finish_null`) gives the floor. The same goes
+for the bench classes of `login_start` and the pre-login answer: `prepare` has
+no branch on the class (both sides are built and picked by index), and the
+harness runs a fixed loop of taken branches after `prepare`, outside the timer,
+so the branch history is the same for both classes. `ct/run.sh dudect-native`
+also reads the disassembly of the timed (LTO) binary for `stored_for`,
+`choose_answer` and `pick_account`, since `lookup-asm` reads a build without
+LTO.
 
 ### Timing of the server library
 
@@ -400,11 +437,27 @@ The earlier table (10^6, loaded machine, load average 21, no controls) is
 replaced by this one; it had passed all of these benches except the second
 login start run at 10^7 (+7.06), which this run shows was a real offset.
 
-The code of S-2 was changed after this run. **The run after the fix replaces
-this table** (same command, `ct/results/dudect-lanbox-server.md`); until then
-the three failing benches are open. The pre-login bench was also changed
-(it now times `prelogin_answer`, with the lookup built before the timer starts),
-so its old number is not a measurement of the new code.
+**After round 2 (6f8743b).** `ct/results/dudect-lanbox-server-r2.md`, the same
+command, load average 1.08 at the start and 1.17 at the end:
+
+| bench | t at 10^7 | result |
+|---|---|---|
+| `control_null`, `control_server_login_start_null` | -1.48, -1.91 | control fine |
+| `server_login_start_known_vs_unknown` | +17.41 (0.663M kept) | FAIL |
+| `server_login_start_known_vs_disabled` | +4.27 | below 4.5, narrowly |
+| `server_prelogin_known_vs_unknown` | -4.20 | below 4.5, narrowly |
+| `server_state_binding` | +1.70 | below 4.5 |
+| `server_finish_credential_vs_account` | +25.92 | FAIL (the bench, S-3) |
+| `info_server_login_start_lookup_only`, `..._real_vs_made_up` | +2.53, +3.02 | below 4.5 alone |
+| `info_server_prelogin_resolve_credential` | +8.53 | information only |
+
+The code changed again after this run (round 3: the record copy of S-2, the
+benches of S-3, the null controls `control_server_prelogin_null` and
+`control_server_finish_null`, the info bench
+`info_server_login_start_fixed_vs_pool`). **The run after round 3 replaces
+these tables** (`ct/results/dudect-lanbox-server.md`); until then
+`server_login_start_known_vs_unknown` and `server_finish_credential_vs_account`
+are open.
 
 This times the library, not the database: the lookup that decides `Active`,
 `Unknown` or `Disabled` is the caller's, and the comparison of the bytes and

@@ -444,6 +444,18 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     // not something that one kind of lookup does.
     let placeholder: &StoredRecord = &NO_ACCOUNT;
     let stored = stored_for(req.lookup, placeholder);
+    // The record is copied into a buffer of this call at once, and the
+    // stand-in is read on every path: the account's record (or the stand-in
+    // again) on one side of the select, the stand-in on the other. Every read
+    // of a record after this is of a buffer of this call, at the same place
+    // for an account, an unknown name and a disabled one.
+    let mut own_record = Zeroizing::new([0u8; REGISTRATION_RECORD_LEN]);
+    ct_select_bytes(
+        stored.active,
+        stored.record,
+        placeholder.record.as_bytes(),
+        own_record.as_mut_slice(),
+    );
 
     // The id OPAQUE binds the answer to: the account's own, or the made-up
     // one of the name. Both are computed, one is selected.
@@ -462,7 +474,15 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     // before any OPAQUE work, any draw and any write.
     step("admit");
     let ticket = admit(cx.throttle, Stage::LoginStart, &req.caller, Some(&id), now)?;
-    let answer = start_admitted(cx, store, rng, req, params, (&id, &stored), now);
+    let answer = start_admitted(
+        cx,
+        store,
+        rng,
+        req,
+        params,
+        (&id, &stored, &own_record),
+        now,
+    );
     let outcome = if answer.is_ok() {
         Outcome::Success
     } else {
@@ -530,17 +550,18 @@ impl fmt::Debug for Stored<'_> {
 }
 
 /// The part of `login_start` that runs after the limiter let the request
-/// through. `chosen` is the credential id in use and the unpacked lookup.
+/// through. `chosen` is the credential id in use, the unpacked lookup and the
+/// copy of the record that this call made.
 fn start_admitted<R: SecureRng, S: LoginStateStore>(
     cx: &AuthContext<'_>,
     store: &S,
     rng: &mut R,
     req: &LoginStartRequest<'_>,
     params: &Params<'_>,
-    chosen: (&CredentialId, &Stored<'_>),
+    chosen: (&CredentialId, &Stored<'_>, &[u8; REGISTRATION_RECORD_LEN]),
     now: u64,
 ) -> Result<LoginStartResponse, AuthError> {
-    let (id, stored) = chosen;
+    let (id, stored, own_record) = chosen;
 
     step("parse-ke1");
     let request = parse_ke1(req.ke1)?;
@@ -553,7 +574,7 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
     let mut record = Zeroizing::new([0u8; REGISTRATION_RECORD_LEN]);
     ct_select_bytes(
         stored.active,
-        stored.record,
+        own_record.as_slice(),
         fake_record.as_slice(),
         record.as_mut_slice(),
     );
