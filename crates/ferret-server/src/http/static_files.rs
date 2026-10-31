@@ -10,6 +10,8 @@
 //! * `/`, `/index.html` and the web vault's own routes (`/vault` and
 //!   everything below it) answer with `index.html`: the page decides what to
 //!   show;
+//! * the page carries the address of the admin pages in a
+//!   `<meta name="ferret-admin-url">` tag (see `vault_routes_with_admin`);
 //! * `/app/…`, `/js/…`, `/pkg-web/…` and `/assets/…` answer with the file of
 //!   that path, if there is one;
 //! * everything else is `404`, never `index.html`.
@@ -32,6 +34,7 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use sha2::Digest as _;
 
 use crate::error::ApiError;
 use crate::state::FerretState;
@@ -189,21 +192,85 @@ fn serve_path(source: &dyn StaticSource, uri: &Uri, headers: &HeaderMap) -> Resp
     }
 }
 
+/// `text` for the value of an HTML attribute in double quotes.
+fn escape_attribute(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `index.html` with `<meta name="ferret-admin-url" content="...">` added at
+/// the end of the head. The page reads the address of the admin pages from it:
+/// a hand-over code is sent there, so it has to come from the page the server
+/// delivers and never from an address a visitor can choose. A file with no
+/// `</head>` or no text is returned as it was. The `ETag` follows the changed
+/// bytes.
+fn with_admin_url(file: StaticFile, admin: &str) -> StaticFile {
+    let Ok(text) = std::str::from_utf8(&file.bytes) else {
+        return file;
+    };
+    let Some(at) = text.find("</head>") else {
+        return file;
+    };
+    let tag = format!(
+        "<meta name=\"ferret-admin-url\" content=\"{}\">\n  ",
+        escape_attribute(admin)
+    );
+    let mut bytes = String::with_capacity(text.len() + tag.len());
+    bytes.push_str(&text[..at]);
+    bytes.push_str(&tag);
+    bytes.push_str(&text[at..]);
+    let bytes = bytes.into_bytes();
+    StaticFile {
+        sha256: sha2::Sha256::digest(&bytes).into(),
+        bytes: Cow::Owned(bytes),
+        content_type: file.content_type,
+    }
+}
+
 /// `index.html`, or `404` if the binary has none.
-fn serve_index(source: &dyn StaticSource, headers: &HeaderMap) -> Response {
+fn serve_index(source: &dyn StaticSource, admin: Option<&str>, headers: &HeaderMap) -> Response {
     match source.get("index.html") {
-        Some(file) => respond(file, headers),
+        Some(file) => respond(
+            match admin {
+                Some(admin) => with_admin_url(file, admin),
+                None => file,
+            },
+            headers,
+        ),
         None => ApiError::not_found().into_response(),
     }
 }
 
-/// The routes that serve the files of `source` on the vault listener.
+/// The routes that serve the files of `source` on the vault listener, with
+/// no address of the admin pages in the page.
 pub fn vault_routes(source: Arc<dyn StaticSource>) -> Router<FerretState> {
+    routes(source, None)
+}
+
+/// The routes that serve the files of `source` on the vault listener. The
+/// page gets the address of the admin pages (`admin`, an origin) in a meta
+/// tag; the admin listener serves no page at all.
+pub fn vault_routes_with_admin(source: Arc<dyn StaticSource>, admin: &str) -> Router<FerretState> {
+    routes(source, Some(Arc::from(admin)))
+}
+
+fn routes(source: Arc<dyn StaticSource>, admin: Option<Arc<str>>) -> Router<FerretState> {
     let index = {
         let source = source.clone();
         move |headers: HeaderMap| {
             let source = source.clone();
-            async move { serve_index(source.as_ref(), &headers) }
+            let admin = admin.clone();
+            async move { serve_index(source.as_ref(), admin.as_deref(), &headers) }
         }
     };
     let files = move |uri: Uri, headers: HeaderMap| {

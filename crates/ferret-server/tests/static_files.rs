@@ -13,7 +13,9 @@ use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request, StatusCode};
 use ferret_server::error::ApiError;
-use ferret_server::http::static_files::{MemorySource, StaticFile, vault_routes};
+use ferret_server::http::static_files::{
+    MemorySource, StaticFile, vault_routes, vault_routes_with_admin,
+};
 use ferret_server::http::vault_layers;
 use ferret_server::state::FerretState;
 use sha2::{Digest, Sha256};
@@ -384,4 +386,92 @@ async fn vault_listener_does_not_serve_kit_pages() {
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
         assert_eq!(res.json()["error"], "not_found", "{path}");
     }
+}
+
+const PAGE: &str = "<!doctype html>\n<html>\n<head>\n  <title>Faithful Ferret</title>\n</head>\n<body></body>\n</html>\n";
+
+/// A web vault with a real head, and the vault listener built with the admin address.
+fn vault_with_admin(app: &TestApp, admin: &str) -> Router {
+    let mut files = BTreeMap::new();
+    files.insert("index.html", file(PAGE.as_bytes(), HTML));
+    files.insert("app/boot.mjs", file(b"export {};", JS));
+    let source = Arc::new(MemorySource(
+        files.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ));
+    let routes: Router<FerretState> = Router::new()
+        .merge(vault_routes_with_admin(source, admin))
+        .fallback(not_found);
+    vault_layers(routes.with_state(app.state.clone()), &app.state)
+}
+
+#[tokio::test]
+async fn the_vault_page_carries_the_admin_address_in_a_meta_tag() {
+    let app = TestApp::new().await;
+    let router = vault_with_admin(&app, "https://admin.example.com:8443");
+    for path in ["/", "/index.html", "/vault/login", "/vault/setup"] {
+        let (status, headers, body) = get(&router, path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_section_12(&headers, path);
+        let text = String::from_utf8(body).expect("text");
+        let tag = "<meta name=\"ferret-admin-url\" content=\"https://admin.example.com:8443\">";
+        assert_eq!(text.matches(tag).count(), 1, "{path}");
+        // In the head, before it closes, and nothing else of the page changed.
+        assert!(text.find(tag).expect("tag") < text.find("</head>").expect("head"));
+        assert_eq!(text.replace(&format!("{tag}\n  "), ""), PAGE, "{path}");
+    }
+    // Other files are served as they are.
+    let (_, _, script) = get(&router, "/app/boot.mjs").await;
+    assert_eq!(script, b"export {};");
+}
+
+#[tokio::test]
+async fn the_admin_address_in_the_page_is_escaped_and_the_etag_follows_the_page() {
+    let app = TestApp::new().await;
+    let router = vault_with_admin(&app, "x\"><script>alert(1)</script>&'");
+    let (_, _, body) = get(&router, "/").await;
+    let text = String::from_utf8(body).expect("text");
+    assert!(!text.contains("<script>"), "{text}");
+    assert!(
+        text.contains("content=\"x&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;&#39;\"")
+    );
+
+    // The tag changes the bytes, so the ETag is the one of the page as sent, and a 304 still works.
+    let plain = vault_with_admin(&app, "https://a.example");
+    let other = vault_with_admin(&app, "https://b.example");
+    let (_, first, body) = get(&plain, "/").await;
+    let (_, second, _) = get(&other, "/").await;
+    assert_ne!(first["etag"], second["etag"]);
+    let hex: String = Sha256::digest(&body)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(first["etag"], format!("\"{hex}\"").as_str());
+    let (status, _, empty) = send(
+        &plain,
+        Req::get("/")
+            .header("if-none-match", first["etag"].to_str().expect("etag"))
+            .build(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(empty.is_empty());
+}
+
+#[tokio::test]
+async fn a_page_with_no_head_and_a_server_with_no_admin_address_are_served_unchanged() {
+    let app = TestApp::new().await;
+    let (_, _, body) = get(&vault(&app, source()), "/").await;
+    assert_eq!(body, INDEX.as_bytes());
+    // No `</head>` to put the tag in: the page is served as it is.
+    let mut files = BTreeMap::new();
+    files.insert("index.html", file(INDEX.as_bytes(), HTML));
+    let headless = Arc::new(MemorySource(
+        files.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    ));
+    let routes: Router<FerretState> = Router::new()
+        .merge(vault_routes_with_admin(headless, "https://a.example"))
+        .fallback(not_found);
+    let router = vault_layers(routes.with_state(app.state.clone()), &app.state);
+    let (_, _, body) = get(&router, "/").await;
+    assert_eq!(body, INDEX.as_bytes());
 }

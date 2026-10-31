@@ -9,7 +9,6 @@ export default {
   title: "account.login.title",
   load: async ({ i18n, services, go }) => {
     const session = services.crypto;
-    session.attachSync(services.sync);
     const info = await session.info();
     return loginView({
       t: i18n.t,

@@ -9,7 +9,6 @@ export default {
   title: "account.setup.title",
   load: ({ i18n, services, go }) => {
     const session = services.crypto;
-    session.attachSync(services.sync);
     return setupView({
       t: i18n.t,
       session,

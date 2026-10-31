@@ -46,8 +46,9 @@ pub fn vault_router(state: FerretState) -> Router {
         .route("/healthz", get(healthz))
         .merge(vault::routes())
         .merge(auth::routes_vault())
-        .merge(http::static_files::vault_routes(
+        .merge(http::static_files::vault_routes_with_admin(
             http::static_files::default_source(),
+            state.origins.admin(),
         ))
         .fallback(not_found);
     http::vault_layers(routes.with_state(state.clone()), &state)

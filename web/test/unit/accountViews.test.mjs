@@ -12,7 +12,7 @@ import { KNOWN_ERRORS } from "../../src/views/form.mjs";
 import { loginView } from "../../src/views/login.mjs";
 import { passwordView } from "../../src/views/password.mjs";
 import { setupView } from "../../src/views/setup.mjs";
-import { EMAIL, PASSWORD, RK_CODE, SK_CODE, accountDocument, byRole, coded, fire, scenario, settle, textOf, until } from "./accountHelpers.mjs";
+import { ACCOUNT, EMAIL, PASSWORD, RK_CODE, SERVER, SK_CODE, accountDocument, byRole, coded, fire, scenario, settle, textOf, until } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
 
 const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
@@ -621,5 +621,62 @@ test("the_pages_never_use_innerhtml_or_inline_handlers", () => {
       const source = readFileSync(join(web, "src", dir, file), "utf8");
       assert.doesNotMatch(source, /\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|localStorage|sessionStorage|console\./, `${dir}/${file}`);
     }
+  }
+});
+
+test("the_hand_over_buttons_pick_up_the_admin_address_from_the_meta_tag_of_the_page", async () => {
+  await withDom(async () => {
+    const savedLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+    const document = globalThis.document;
+    const meta = (content) => ({ getAttribute: (name) => (name === "content" ? content : null) });
+    Object.defineProperty(globalThis, "location", { value: { origin: "https://vault.example" }, configurable: true });
+    try {
+      const route = (await import("../../src/routes/login.route.mjs")).default;
+      const load = async (content) => {
+        document.querySelector = (selector) => (selector === 'meta[name="ferret-admin-url"]' && content !== null ? meta(content) : null);
+        const session = fakeSession({ current: {} });
+        session.info = async () => ({ accountId: "a", email: EMAIL });
+        return route.load({ i18n: i18n(), services: { crypto: session, api: {} }, go() {} });
+      };
+      // The tag the server writes gives the buttons their address.
+      const page = await load(ADMIN);
+      assert.ok(byRole(page, "admin"));
+      // Without it (or with an unusable one) there is no way into the admin pages from here.
+      for (const content of [null, "", "javascript:alert(1)", "https://vault.example"]) {
+        assert.equal(byRole(await load(content), "admin"), null, String(content));
+      }
+    } finally {
+      if (savedLocation) Object.defineProperty(globalThis, "location", savedLocation);
+      else delete globalThis.location;
+    }
+  });
+});
+
+test("the_crypto_service_hands_the_sync_service_to_the_session", async () => {
+  const { default: cryptoService } = await import("../../src/services/crypto.service.mjs");
+  const { default: syncService } = await import("../../src/services/sync.service.mjs");
+  const { orderServices } = await import("../../src/app.mjs");
+  const apiService = (await import("../../src/services/api.service.mjs")).default;
+  const storeService = (await import("../../src/services/store.service.mjs")).default;
+  // The service comes after the sync service it depends on.
+  assert.ok(cryptoService.deps.includes("sync"));
+  const names = orderServices([cryptoService, syncService, apiService, storeService]).map((s) => s.name);
+  assert.ok(names.indexOf("sync") < names.indexOf("crypto"));
+
+  const world = await scenario();
+  const events = [];
+  const sync = { start: async (scope) => events.push(["start", scope.accountId]), stop: () => events.push(["stop"]) };
+  // The service takes the page's own origin as the server address.
+  const savedLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", { value: { origin: SERVER }, configurable: true });
+  try {
+    const session = cryptoService.create({ api: world.api, store: world.store, client: world.client, sync });
+    await session.signIn({ email: EMAIL, password: PASSWORD, skBit: true, skCode: SK_CODE });
+    assert.deepEqual(events, [["start", ACCOUNT]]);
+    await session.lock();
+    assert.deepEqual(events.at(-1), ["stop"]);
+  } finally {
+    if (savedLocation) Object.defineProperty(globalThis, "location", savedLocation);
+    else delete globalThis.location;
   }
 });
