@@ -227,9 +227,14 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     async item_view(handle) {
       const open = handles.get(handle);
       if (!open) throw new FakeFerretError("invalid_handle");
-      const { item_type, name, urls = [], favorite = false, modified = 0 } = open.body;
+      const { item_type, name, urls = [], favorite = false, modified = 0, fields = [] } = open.body;
+      // Like the core: a secret kind has no value in the view.
+      const shown = fields.map((f) => ({
+        id: f.id, label: f.label ?? "", kind: f.kind ?? "text",
+        value: ["password", "hidden"].includes(f.kind) ? null : (f.value ?? ""),
+      }));
       return {
-        item_type, name, fields: [], urls: urls.map((url) => ({ url, matching: "domain" })),
+        item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
         has_totp: false, passkey: null, has_notes: false, created: modified, modified, favorite,
         device: null, read_only: open.body.read_only === true,
       };

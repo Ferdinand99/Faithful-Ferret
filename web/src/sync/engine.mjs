@@ -40,6 +40,7 @@ import { createOutboxRunner } from "./outbox.mjs";
  * @property {string} name
  * @property {boolean} favorite
  * @property {string[]} urls
+ * @property {string} username the plain user name field, for the list and its search ("" when the item has none)
  * @property {number} modified
  * @property {boolean} pending a write of this item is waiting for the server
  * @property {boolean} damaged the server's newest row could not be opened (the last good version is shown)
@@ -239,6 +240,16 @@ export function createSyncEngine({
     }
   }
 
+  /**
+   * The value of the field with the id `username`, when the core shows it (a
+   * hidden field has no value in the view).
+   * @param {any} view
+   */
+  function usernameOf(view) {
+    const field = Array.isArray(view.fields) ? view.fields.find((/** @type {any} */ f) => f?.id === "username") : null;
+    return typeof field?.value === "string" ? field.value : "";
+  }
+
   /** @param {any} view @param {number} rev */
   function summaryOf(view, rev) {
     return {
@@ -247,6 +258,7 @@ export function createSyncEngine({
       name: String(view.name ?? ""),
       favorite: view.favorite === true,
       urls: Array.isArray(view.urls) ? view.urls.map((/** @type {any} */ u) => String(u?.url ?? "")) : [],
+      username: usernameOf(view),
       modified: Number.isSafeInteger(view.modified) ? view.modified : 0,
       readOnly: view.read_only === true,
     };
@@ -1053,6 +1065,7 @@ export function createSyncEngine({
           name: s.name,
           favorite: s.favorite,
           urls: [...s.urls],
+          username: s.username,
           modified: s.modified,
           pending: runner.entriesOf(id).length > 0,
           damaged: flag?.kind === "damaged",

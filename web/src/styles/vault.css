@@ -1,0 +1,251 @@
+/* The vault screens: the frame, the list, one item, the form and the dialog.
+   Colours come from base.css. No state is shown by colour alone: every mark and
+   notice also has words. Rules are scoped to .vault-ui, which every vault screen carries. */
+.vault-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.vault-ui .vault-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.vault-ui .vault-bar .brand {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.vault-ui .vault-bar nav {
+  display: flex;
+  gap: 1rem;
+  margin-right: auto;
+}
+
+.vault-ui .sync-status {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.vault-ui .banners {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.vault-ui .banner {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-left-width: 0.375rem;
+  border-radius: 0.375rem;
+  background: var(--card);
+}
+
+.vault-ui .banner-warning {
+  border-left-color: #b26b00;
+}
+
+.vault-ui .banner-error {
+  border-left-color: #b3261e;
+}
+
+.vault-ui button,
+.vault-ui .button {
+  display: inline-block;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.375rem;
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.vault-ui button.secondary,
+.vault-ui .button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+.vault-ui button.danger {
+  border-color: #b3261e;
+  background: #b3261e;
+  color: #ffffff;
+}
+
+.vault-ui button.link {
+  padding: 0 0 0 0.5rem;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.vault-ui button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.vault-ui input[type="text"],
+.vault-ui input[type="password"],
+.vault-ui input[type="search"],
+.vault-ui select,
+.vault-ui textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.vault-ui .field {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.vault-ui .field .help,
+.vault-ui .aside,
+.vault-ui .count,
+.vault-ui .detail {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.vault-ui .choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.vault-ui .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.vault-ui .error {
+  color: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vault-ui .error {
+    color: #f2b8b5;
+  }
+}
+
+.vault-ui .toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.vault-ui .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.vault-ui .items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-ui .item {
+  display: grid;
+  gap: 0.125rem;
+  padding: 0.625rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .item-link {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .star {
+  margin-right: 0.25rem;
+}
+
+.vault-ui .marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.vault-ui .mark {
+  padding: 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  font-size: 0.75rem;
+}
+
+.vault-ui .mark-damaged,
+.vault-ui .mark-quarantined,
+.vault-ui .mark-blocked,
+.vault-ui .mark-missing {
+  border-color: #b26b00;
+}
+
+.vault-ui .notice {
+  margin: 1rem 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid #b26b00;
+  border-radius: 0.375rem;
+}
+
+.vault-ui .notice p {
+  margin: 0 0 0.5rem;
+}
+
+.vault-ui .field-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) 2fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .field-row .label {
+  color: var(--muted);
+}
+
+.vault-ui .field-row .value {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.vault-ui .field-row .actions {
+  margin: 0;
+}
+
+@media (max-width: 30rem) {
+  .vault-ui .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vault-ui .dialog {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 2px solid var(--fg);
+  border-radius: 0.5rem;
+  background: var(--card);
+}
+
+.vault-ui .dialog h2 {
+  margin-top: 0;
+  font-size: 1.125rem;
+}
