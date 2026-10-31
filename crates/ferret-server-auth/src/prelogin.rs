@@ -182,7 +182,7 @@ pub(crate) fn pick_account<'a>(
 /// pre-login endpoint, so a known name, an unknown one and a disabled one do
 /// the same work.
 ///
-/// Spec: Fase 1 ง 4.2.
+/// Spec: Fase 1 ยง 4.2.
 pub fn prelogin_answer(
     secret: &PreloginSecret,
     name: &NormalizedLoginName,

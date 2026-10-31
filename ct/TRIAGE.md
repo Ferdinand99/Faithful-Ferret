@@ -314,7 +314,7 @@ session of a re-authentication in the other case. Fixed: it is `ct_eq` now.
 ### S-2. Whether an account was found was branched on (fixed)
 
 That bit is secret from the network: whether a name has an account is what
-ง 4.2 keeps from a caller. The first version of the library branched on it in
+ยง 4.2 keeps from a caller. The first version of the library branched on it in
 three places, and the quiet run at 10^7 on e4e6334 showed it
 (`ct/results/dudect-lanbox-server-prefix.md`, load average 1.35 at the start and
 1.21 at the end, controls fine): `server_login_start_known_vs_unknown`
@@ -346,7 +346,7 @@ the crate names a kind of lookup or branches in those paths. That a compiler
 turns the selects into `cmov` is not guaranteed by the language; the asm check
 is what holds it, and the benches measure it. What stays is the caller's own
 lookup on the same bit (a database row found or not), which differs by a round
-trip and is covered by the endpoint test (ง 4.2), see R10. The two parts of the
+trip and is covered by the endpoint test (ยง 4.2), see R10. The two parts of the
 login start bench alone were below 4.5 (`lookup_only` +2.62, `real_vs_made_up`
 -2.05) and the whole failed, so the rerun after this change is the proof, not
 the argument above.
@@ -521,7 +521,7 @@ with its reason, and each is repeated in the report.
   database lookup that builds `AccountLookup` (a row found or not takes
   another path through the database), the HTTP layer, TLS or the network; the
   comparison of the bytes and delays of the answers of a running server is a
-  test of the endpoint (ง 4.2), and it has to name this part as an input. The
+  test of the endpoint (ยง 4.2), and it has to name this part as an input. The
   library no longer branches on the lookup (S-2), so what is left on that bit
   is the caller's own lookup. The endpoint has differences of the same kind:
   the M1 `finish_lookup` parses the record only for an active account (a
