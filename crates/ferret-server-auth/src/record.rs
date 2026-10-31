@@ -42,6 +42,13 @@ impl ValidatedRecord {
         Ok(Self(Zeroizing::new(bytes.to_vec())))
     }
 
+    /// 192 zero bytes: the stand-in for the record of a name without an
+    /// account, so that the code that reads a record reads one on every path.
+    /// It is not a valid OPAQUE record and is never parsed.
+    pub(crate) fn zeroed() -> Self {
+        Self(Zeroizing::new(vec![0u8; REGISTRATION_RECORD_LEN]))
+    }
+
     /// The 192 bytes, as the client made them.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0

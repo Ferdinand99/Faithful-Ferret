@@ -85,6 +85,7 @@
 //! Spec: Fase 1 § 4.2 ("Innlogging"); RFC 9807 section 6.3.
 
 use core::fmt;
+use std::sync::LazyLock;
 
 use ferret_core::SecureRng;
 use ferret_core::opaque::server_suite::opaque_ke::{
@@ -103,7 +104,7 @@ use crate::ids::{CredentialId, LoginId, SessionBinding};
 use crate::keys::{PreloginSecret, ServerKeys};
 use crate::name::NormalizedLoginName;
 use crate::prelogin::{PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step};
-use crate::record::{ProfileRules, StoredRecord};
+use crate::record::{ProfileRules, StoredRecord, ValidatedRecord};
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
     LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, StatePlain, StateSealKey, open_state,
@@ -111,9 +112,15 @@ use crate::state::{
 };
 use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 
-/// A zero record, the "real" side of the selection for a name without an
-/// account.
-const ZERO_RECORD: [u8; REGISTRATION_RECORD_LEN] = [0; REGISTRATION_RECORD_LEN];
+/// The stand-in for the record of a name without an account: the "real" side
+/// of the selection when there is none. It is a record like any other for the
+/// code that reads it (a pointer, a length and a profile), so the lookup is
+/// unpacked with a choice of two references and not with a read that happens
+/// on one path only.
+static NO_ACCOUNT: LazyLock<StoredRecord> = LazyLock::new(|| StoredRecord {
+    record: ValidatedRecord::zeroed(),
+    ksf_profile: 0,
+});
 
 /// Everything the login functions need from the server: borrows of its keys,
 /// secrets, clock, throttle and rules.
@@ -431,20 +438,10 @@ pub(crate) fn start_with<R: SecureRng, S: LoginStateStore>(
     if now == u64::MAX {
         return Err(clock_failed());
     }
-    let stored = match req.lookup {
-        AccountLookup::Active { record, sk_hint } => Stored {
-            active: 1,
-            record: record.record.as_bytes(),
-            ksf_profile: record.ksf_profile,
-            sk_hint: u8::from(sk_hint),
-        },
-        AccountLookup::Unknown | AccountLookup::Disabled => Stored {
-            active: 0,
-            record: ZERO_RECORD.as_slice(),
-            ksf_profile: 0,
-            sk_hint: 0,
-        },
-    };
+    // The stand-in is looked at before the lookup is, so that reading it is
+    // not something that one kind of lookup does.
+    let placeholder: &StoredRecord = &NO_ACCOUNT;
+    let stored = stored_for(req.lookup, placeholder);
 
     // The id OPAQUE binds the answer to: the account's own, or the made-up
     // one of the name. Both are computed, one is selected.
@@ -482,6 +479,32 @@ struct Stored<'a> {
     record: &'a [u8],
     ksf_profile: u8,
     sk_hint: u8,
+}
+
+/// Unpacks the lookup. This is the one place that looks at which kind of
+/// lookup it is, and it only chooses between two references and two small
+/// values (the account's own, or `placeholder` and zeros); everything that is
+/// read afterwards is read through the chosen reference, the same way for an
+/// account, an unknown name and a disabled one. `ct/run.sh lookup-asm` checks
+/// that the compiled function has no conditional jump.
+///
+/// `#[inline(never)]` keeps it a function of its own, so the check reads the
+/// code that runs.
+#[inline(never)]
+pub(crate) fn stored_for<'a>(
+    lookup: AccountLookup<'a>,
+    placeholder: &'a StoredRecord,
+) -> Stored<'a> {
+    let (record, sk_hint, active) = match lookup {
+        AccountLookup::Active { record, sk_hint } => (record, sk_hint, 1u8),
+        AccountLookup::Unknown | AccountLookup::Disabled => (placeholder, false, 0u8),
+    };
+    Stored {
+        active,
+        record: record.record.as_bytes(),
+        ksf_profile: record.ksf_profile,
+        sk_hint: u8::from(sk_hint),
+    }
 }
 
 impl fmt::Debug for Stored<'_> {
@@ -906,6 +929,30 @@ mod tests {
         "seal",
         "put",
     ];
+
+    #[test]
+    fn the_three_kinds_of_lookup_unpack_to_the_same_shape() {
+        let f = LoginFixture::new();
+        let placeholder: &StoredRecord = &NO_ACCOUNT;
+        let (active, profile, hint, first) =
+            crate::testing::unpack_lookup(f.active(), placeholder);
+        assert_eq!(
+            (active, profile, hint),
+            (1, f.record.ksf_profile, 0),
+            "an account gives its own profile and hint"
+        );
+        assert_eq!(first, f.record.record.as_bytes()[0]);
+        // A name without an account and a disabled one give the stand-in, the
+        // same way, and the stand-in is a record of the length of a real one.
+        let unknown = crate::testing::unpack_lookup(AccountLookup::Unknown, placeholder);
+        let disabled = crate::testing::unpack_lookup(AccountLookup::Disabled, placeholder);
+        assert_eq!(unknown, (0, 0, 0, 0));
+        assert_eq!(disabled, unknown);
+        assert_eq!(
+            stored_for(AccountLookup::Unknown, placeholder).record.len(),
+            stored_for(f.active(), placeholder).record.len()
+        );
+    }
 
     #[test]
     fn known_and_unknown_run_the_same_steps_in_the_same_order() {

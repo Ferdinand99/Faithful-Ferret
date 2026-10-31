@@ -1106,3 +1106,49 @@ fn the_server_library_is_not_in_the_webassembly_build() {
         );
     }
 }
+
+/// `login_start` looks at which kind of lookup it got in one function, which
+/// chooses between two references and two small values, and nowhere else: no
+/// `match` or `if` on the lookup, so an account, an unknown name and a disabled
+/// one go through the same calls. `ct/run.sh lookup-asm` checks the compiled
+/// function for a conditional jump.
+#[test]
+fn login_start_looks_at_the_kind_of_lookup_in_one_function_only() {
+    let (_, code) = shipped_sources()
+        .into_iter()
+        .find(|(file, _)| file == "login.rs")
+        .unwrap();
+    // The lookup of the request is read once, as the argument of the function.
+    assert_eq!(code.matches("req.lookup").count(), 1);
+    assert!(
+        code.contains("stored_for(req.lookup, placeholder)"),
+        "login_start no longer unpacks the lookup with stored_for"
+    );
+    // The stand-in is taken before the lookup is unpacked.
+    let placeholder = code
+        .find("let placeholder: &StoredRecord = &NO_ACCOUNT;")
+        .unwrap();
+    assert!(placeholder < code.find("stored_for(req.lookup, placeholder)").unwrap());
+
+    // The kinds are named inside that function and nowhere else.
+    let chars: Vec<char> = code.chars().collect();
+    let function: Vec<char> = "fn stored_for".chars().collect();
+    let start = (0..chars.len())
+        .find(|i| chars[*i..].starts_with(&function))
+        .unwrap();
+    let close_parameters = (start..chars.len()).find(|i| chars[*i] == ')').unwrap();
+    let open_body = (close_parameters..chars.len())
+        .find(|i| chars[*i] == '{')
+        .unwrap();
+    let end = matching_close(&chars, open_body).unwrap();
+    let outside: String = chars[..open_body].iter().chain(&chars[end..]).collect();
+    assert!(
+        !outside.contains("AccountLookup::"),
+        "a kind of lookup is named outside stored_for"
+    );
+    let inside: String = chars[open_body..=end].iter().collect();
+    assert_eq!(inside.matches("AccountLookup::").count(), 3);
+    // Nothing in it reads through the account's reference before the choice
+    // is made (a read in one arm would be a branch).
+    assert!(!inside.contains("as_bytes") || inside.find("as_bytes") > inside.find("};"));
+}

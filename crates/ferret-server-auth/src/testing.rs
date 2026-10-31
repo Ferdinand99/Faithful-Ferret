@@ -639,6 +639,23 @@ pub fn made_up_record(
     }
 }
 
+/// What `login_start` unpacks from a lookup: `(active, profile, hint, first
+/// byte of the record)`. For the assembly check of `ct/run.sh lookup-asm`,
+/// which needs the function in the compiled crate, and for the tests of what
+/// the three kinds of lookup give.
+pub fn unpack_lookup(
+    lookup: crate::AccountLookup<'_>,
+    placeholder: &crate::StoredRecord,
+) -> (u8, u8, u8, u8) {
+    let stored = crate::login::stored_for(lookup, placeholder);
+    (
+        stored.active,
+        stored.ksf_profile,
+        stored.sk_hint,
+        stored.record.first().copied().unwrap_or(0),
+    )
+}
+
 /// `login_start` run with another OPAQUE context and other identities than
 /// Ferret's. A client of Ferret cannot authenticate such a server.
 pub fn login_start_with_context<R: ferret_core::SecureRng, S: LoginStateStore>(

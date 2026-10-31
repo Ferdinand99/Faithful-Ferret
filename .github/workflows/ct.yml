@@ -125,6 +125,8 @@ jobs:
         run: ct/run.sh select-asm
       - name: The assembly check flags a known-bad select (negative control)
         run: ct/run.sh select-asm-negative
+      - name: The unpacking of the lookup in login_start has no conditional jump
+        run: ct/run.sh lookup-asm
       - name: Keep the reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
