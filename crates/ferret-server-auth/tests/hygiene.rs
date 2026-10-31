@@ -1152,3 +1152,63 @@ fn login_start_looks_at_the_kind_of_lookup_in_one_function_only() {
     // is made (a read in one arm would be a branch).
     assert!(!inside.contains("as_bytes") || inside.find("as_bytes") > inside.find("};"));
 }
+
+/// The body of the function `name` in `code` (comments and strings blanked),
+/// from its opening brace to the closing one.
+fn function_body(code: &str, name: &str) -> String {
+    let chars: Vec<char> = code.chars().collect();
+    let head: Vec<char> = format!("fn {name}").chars().collect();
+    let start = (0..chars.len())
+        .find(|i| chars[*i..].starts_with(&head))
+        .unwrap();
+    let close_parameters = (start..chars.len()).find(|i| chars[*i] == ')').unwrap();
+    let open_body = (close_parameters..chars.len())
+        .find(|i| chars[*i] == '{')
+        .unwrap();
+    let end = matching_close(&chars, open_body).unwrap();
+    chars[open_body..=end].iter().collect()
+}
+
+/// The pre-login answer goes through the same unpacking and the same choice as
+/// `login_start`, and has no branch of its own: no `if`, `match`, `?` or
+/// short-circuit operator in the function, and no kind of lookup named in the
+/// module. `choose_answer` and `pick_account` are plain selects, which
+/// `ct/run.sh lookup-asm` checks, like `stored_for`.
+#[test]
+fn the_prelogin_answer_has_no_branch_of_its_own() {
+    let files = shipped_sources();
+    let code = |name: &str| {
+        files
+            .iter()
+            .find(|(file, _)| file == name)
+            .map(|(_, code)| code.clone())
+            .unwrap()
+    };
+    let prelogin = code("prelogin.rs");
+    assert!(!prelogin.contains("AccountLookup::"));
+    let answer = function_body(&prelogin, "prelogin_answer");
+    assert!(answer.contains("stored_for(lookup, placeholder)"));
+    assert!(answer.contains("choose_answer(&stored, fake)"));
+    for branch in [" if ", "match ", "?", "&&", "||", " while ", " for ", "loop"] {
+        assert!(
+            !answer.contains(branch),
+            "prelogin_answer has `{branch}`: it must not branch"
+        );
+    }
+    // The three functions that choose are free of branches in the source too.
+    let login = code("login.rs");
+    for (source, name) in [
+        (&login, "choose_answer"),
+        (&login, "stored_for"),
+        (&prelogin, "pick_account"),
+    ] {
+        let body = function_body(source, name);
+        for branch in [" if ", "?", "&&", "||", " while ", " for ", "loop"] {
+            assert!(!body.contains(branch), "{name} has `{branch}`");
+        }
+    }
+    // login_start chooses its answer the same way, once.
+    assert_eq!(login.matches("choose_answer(stored, fake)").count(), 1);
+    // The choice of the account id in resolve_credential is the same function.
+    assert_eq!(prelogin.matches("pick_account(account,").count(), 1);
+}

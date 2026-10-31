@@ -103,7 +103,9 @@ use crate::error::{AuthError, DenyReason, InternalKind, Malformed};
 use crate::ids::{CredentialId, LoginId, SessionBinding};
 use crate::keys::{PreloginSecret, ServerKeys};
 use crate::name::NormalizedLoginName;
-use crate::prelogin::{PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step};
+use crate::prelogin::{
+    PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step,
+};
 use crate::record::{ProfileRules, StoredRecord, ValidatedRecord};
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
@@ -117,7 +119,7 @@ use crate::throttle::{Caller, Outcome, Stage, Throttle, admit};
 /// code that reads it (a pointer, a length and a profile), so the lookup is
 /// unpacked with a choice of two references and not with a read that happens
 /// on one path only.
-static NO_ACCOUNT: LazyLock<StoredRecord> = LazyLock::new(|| StoredRecord {
+pub(crate) static NO_ACCOUNT: LazyLock<StoredRecord> = LazyLock::new(|| StoredRecord {
     record: ValidatedRecord::zeroed(),
     ksf_profile: 0,
 });
@@ -507,6 +509,20 @@ pub(crate) fn stored_for<'a>(
     }
 }
 
+/// The profile and the second-factor hint to answer with: the account's own
+/// when `stored` is an account, the made-up ones of the name when it is not.
+/// Both are given, and the choice is two `ct_select_u8`. The pre-login answer
+/// ([`crate::prelogin_answer`]) and `login_start` both use it, so the two
+/// answers of one name cannot drift apart. `ct/run.sh lookup-asm` checks the
+/// compiled function for a conditional jump.
+#[inline(never)]
+pub(crate) fn choose_answer(stored: &Stored<'_>, fake: PreloginAnswer) -> PreloginAnswer {
+    PreloginAnswer {
+        ksf_profile: ct_select_u8(stored.active, stored.ksf_profile, fake.ksf_profile),
+        sk_hint: ct_select_u8(stored.active, stored.sk_hint, u8::from(fake.sk_hint)) == 1,
+    }
+}
+
 impl fmt::Debug for Stored<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Stored([redacted])")
@@ -541,8 +557,10 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
         fake_record.as_slice(),
         record.as_mut_slice(),
     );
-    let ksf_profile = ct_select_u8(stored.active, stored.ksf_profile, fake.ksf_profile);
-    let sk_hint = ct_select_u8(stored.active, stored.sk_hint, u8::from(fake.sk_hint)) == 1;
+    let PreloginAnswer {
+        ksf_profile,
+        sk_hint,
+    } = choose_answer(stored, fake);
 
     step("parse-record");
     let registration = ServerRegistration::<FerretSuite>::deserialize(record.as_slice())

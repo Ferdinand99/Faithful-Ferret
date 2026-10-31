@@ -37,7 +37,9 @@ use crate::ct::ct_select_bytes;
 use crate::error::{AuthError, InternalKind};
 use crate::ids::CredentialId;
 use crate::keys::{PreloginSecret, ServerKeys};
+use crate::login::{AccountLookup, NO_ACCOUNT, choose_answer, stored_for};
 use crate::name::NormalizedLoginName;
+use crate::record::StoredRecord;
 
 /// Label in front of the name for the made-up credential id.
 ///
@@ -143,11 +145,11 @@ pub fn resolve_credential(
     let fake = fake_credential_id(secret, name);
     // The account is read through a reference that may be absent, and a load
     // through a pointer that may be null is a branch. So the pointer is
-    // chosen first (the account's own, or a fixed all-zero id: a select of
-    // two valid addresses, which the compiler can make without a branch) and
-    // the load is the same for both.
-    static NO_ACCOUNT: [u8; 16] = [0; 16];
-    let real = account.map_or(&NO_ACCOUNT, AccountId::as_bytes);
+    // chosen first (the account's own, or a fixed all-zero id), in a function
+    // of its own that `ct/run.sh lookup-asm` checks for a conditional jump,
+    // and the load is the same for both.
+    static NO_ACCOUNT_ID: [u8; 16] = [0; 16];
+    let real = pick_account(account, &NO_ACCOUNT_ID);
     step("select-id");
     let mut chosen = [0u8; 16];
     ct_select_bytes(
@@ -157,6 +159,40 @@ pub fn resolve_credential(
         &mut chosen,
     );
     CredentialId::from_bytes(chosen)
+}
+
+/// The account id to read: the account's own, or `none`. A choice between two
+/// references, with no read before it; see [`resolve_credential`].
+#[inline(never)]
+pub(crate) fn pick_account<'a>(
+    account: Option<&'a AccountId>,
+    none: &'a [u8; 16],
+) -> &'a [u8; 16] {
+    account.map_or(none, AccountId::as_bytes)
+}
+
+/// The pre-login answer for a name: the key stretching profile and the
+/// second-factor hint of the account when `lookup` is one that may log in, the
+/// made-up ones of the name when it is not (no account, or a disabled one).
+///
+/// The made-up answer is always computed, the lookup is unpacked by the same
+/// function as in `login_start` (which chooses between two references and
+/// reads through the chosen one), and the choice of the two values is
+/// `ct_select_u8`; no step looks at which kind of lookup it is. Use it for the
+/// pre-login endpoint, so a known name, an unknown one and a disabled one do
+/// the same work.
+///
+/// Spec: Fase 1 § 4.2.
+pub fn prelogin_answer(
+    secret: &PreloginSecret,
+    name: &NormalizedLoginName,
+    policy: &PreloginPolicy,
+    lookup: AccountLookup<'_>,
+) -> PreloginAnswer {
+    let fake = fake_prelogin(secret, name, policy);
+    let placeholder: &StoredRecord = &NO_ACCOUNT;
+    let stored = stored_for(lookup, placeholder);
+    choose_answer(&stored, fake)
 }
 
 /// How the made-up pre-login answers are spread: the share of each key
@@ -780,6 +816,39 @@ mod tests {
     }
 
     // ------------------------------------------------------------ fake record
+
+    #[test]
+    fn the_prelogin_answer_is_the_accounts_own_or_the_made_up_one() {
+        use crate::login::AccountLookup;
+        use crate::testing::LoginFixture;
+        let f = LoginFixture::new();
+        let made_up = fake_prelogin(&f.prelogin, &f.name, &f.policy);
+        let own = prelogin_answer(&f.prelogin, &f.name, &f.policy, f.active());
+        // The fixture's account has profile 1 and no second factor; the policy
+        // says "profile 1, second factor" for a name without an account.
+        assert_eq!(
+            own,
+            PreloginAnswer {
+                ksf_profile: f.record.ksf_profile,
+                sk_hint: false
+            }
+        );
+        assert!(made_up.sk_hint);
+        for lookup in [AccountLookup::Unknown, AccountLookup::Disabled] {
+            assert_eq!(
+                prelogin_answer(&f.prelogin, &f.name, &f.policy, lookup),
+                made_up
+            );
+        }
+    }
+
+    #[test]
+    fn pick_account_chooses_between_two_references() {
+        let (own, none) = ([7u8; 16], [0u8; 16]);
+        let account = AccountId::from_bytes(own);
+        assert_eq!(pick_account(Some(&account), &none), &own);
+        assert_eq!(pick_account(None, &none), &none);
+    }
 
     #[test]
     fn fake_record_is_a_valid_opaque_record() {

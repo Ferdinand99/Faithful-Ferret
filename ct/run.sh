@@ -9,7 +9,8 @@
 #                             pinned counts
 #   ct/run.sh select-asm      ct_select_bytes reads both slices (assembly check)
 #   ct/run.sh select-asm-negative  the same check must flag a known-bad select
-#   ct/run.sh lookup-asm      the unpacking of the lookup in login_start has no conditional jump
+#   ct/run.sh lookup-asm      the unpacking of the lookup and the choice of the answer (login_start,
+#                             the pre-login answer) have no conditional jump
 #   ct/run.sh wasm-scan       div/rem/sqrt/br_table/table loads in the WASM
 #                             build at the shipped optimisation level
 #                             (wasm-bindgen + wasm-opt -Oz, names kept), against
@@ -198,36 +199,38 @@ select_asm_negative() {
   esac
 }
 
-# The unpacking of the lookup in `login_start` (`stored_for` in
-# crates/ferret-server-auth/src/login.rs) chooses between the account's own
-# record and a stand-in. A branch there would be a branch on whether the name
-# has an account. The function is compiled as a function of its own, and its
-# body must have no conditional jump, on x86_64 and arm64.
+# The unpacking of the lookup (`stored_for`), the choice of the profile and the
+# hint (`choose_answer`) and the choice of the account id (`pick_account`)
+# choose between the account's own value and a stand-in. A branch there would
+# be a branch on whether the name has an account. Each is compiled as a function
+# of its own, and its body must have no conditional jump, on x86_64 and arm64.
 lookup_asm() {
-  local arch t asm body lines jumps
+  local arch t asm fn body lines jumps
   for arch in "${archs[@]}"; do
     t="$(triple "$arch")"
     CARGO_PROFILE_RELEASE_PANIC=unwind CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
       cargo rustc --release --lib -p ferret-server-auth --features test-support --target "$t" -- --emit asm >&2
     asm="$(ls -t target/"$t"/release/deps/ferret_server_auth-*.s | head -n1)"
-    body="$(awk '/^_(ZN|R)[0-9a-zA-Z_.$]*10stored_for(17h[0-9a-f]+E)?:$/{on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
-    lines="$(printf '%s\n' "$body" | grep -c . || true)"
-    case "$arch" in
-      x86_64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+j[^m]' || true)" ;;
-      arm64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+(b\.[a-z]+|cbn?z|tbn?z)\s' || true)" ;;
-    esac
-    echo "lookup-asm $arch: $lines lines, conditional jumps $jumps"
-    if [ "$lines" -lt 5 ]; then
-      echo "asm file: $asm ($(wc -l < "$asm") lines); lines that name stored_for:" >&2
-      grep -n "stored_for" "$asm" | head -20 >&2 || true
-      echo "FAIL: stored_for was not found in the assembly of $t" >&2
-      return 1
-    fi
-    if [ "$jumps" != 0 ]; then
-      printf '%s\n' "$body" >&2
-      echo "FAIL: stored_for has a conditional jump on $t: the unpacking of the lookup branches" >&2
-      return 1
-    fi
+    for fn in stored_for choose_answer pick_account; do
+      body="$(awk -v fn="$fn" '$0 ~ ("^_(ZN|R)[0-9a-zA-Z_.$]*" length(fn) fn "(17h[0-9a-f]+E)?:$") {on=1} on{print} on&&/\.Lfunc_end/{exit}' "$asm")"
+      lines="$(printf '%s\n' "$body" | grep -c . || true)"
+      case "$arch" in
+        x86_64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+j[^m]' || true)" ;;
+        arm64) jumps="$(printf '%s\n' "$body" | grep -cE '^\s+(b\.[a-z]+|cbn?z|tbn?z)\s' || true)" ;;
+      esac
+      echo "lookup-asm $arch $fn: $lines lines, conditional jumps $jumps"
+      if [ "$lines" -lt 5 ]; then
+        echo "asm file: $asm ($(wc -l < "$asm") lines); lines that name $fn:" >&2
+        grep -n "$fn" "$asm" | head -20 >&2 || true
+        echo "FAIL: $fn was not found in the assembly of $t" >&2
+        return 1
+      fi
+      if [ "$jumps" != 0 ]; then
+        printf '%s\n' "$body" >&2
+        echo "FAIL: $fn has a conditional jump on $t: it branches on whether the name has an account" >&2
+        return 1
+      fi
+    done
   done
 }
 

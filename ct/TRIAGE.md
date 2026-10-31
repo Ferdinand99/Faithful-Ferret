@@ -311,34 +311,45 @@ plain login. The bytes are those of a plaintext the AEAD has already
 accepted, so no caller can steer the compare, and the same bytes hold the
 session of a re-authentication in the other case. Fixed: it is `ct_eq` now.
 
-### S-2. The library branches once on whether an account was found
+### S-2. Whether an account was found was branched on (fixed)
 
 That bit is secret from the network: whether a name has an account is what
-§ 4.2 keeps from a caller. The library branches on it in two places:
-`login_start` matches on `AccountLookup`, and `resolve_credential(secret, name,
-Option<&AccountId>)` read the account id through a reference that may be
-absent, which is a branch (a load through a pointer that may be null cannot be
-made without one). `resolve_credential` now chooses the pointer first (the
-account's own, or a fixed all-zero id: a select of two valid addresses) and
-loads once, so the source has no branch there; that a compiler turns it into a
-`cmov` is not guaranteed, and `info_server_prelogin_resolve_credential`
-measures it (before the change |t| of 5.6 and 4.6 at 10^6, tau 0.016 and
-0.005, eight calls per measurement). The match in `login_start` was the first reading of the quiet run at 10^7
-(known against unknown t = -12.3, known against disabled t = +6.3): its arms
-read different memory (the account's record from the heap, a name without one
-from a static). It is now `stored_for`, the one function that names the kinds
-of lookup; it chooses between two references (the account's record, or a
-stand-in record of the same shape) and two small values, and everything read
-afterwards is read through the chosen reference. `ct/run.sh lookup-asm` (CI,
-x86_64 and arm64) fails if the compiled function has a conditional jump (16
-and 17 lines, none), and `login_start_looks_at_the_kind_of_lookup_in_one_function_only`
-pins that no other code in `login.rs` names a kind or reads `req.lookup`. What
-stays is the caller's own branch on the same bit. The caller's own lookup on the same bit, which differs by a database round trip,
-dominates what is left; the endpoint test (§ 4.2: response bytes and delays) has to cover
-that, see R10. The choices after it are branch-free.
-`server_prelogin_known_vs_unknown` times the rest of the pre-login answer (the
-made-up answer is always computed, the real or made-up profile and hint are
-chosen by a flag with `ct_select_u8`) and is gated.
+§ 4.2 keeps from a caller. The first version of the library branched on it in
+three places, and the quiet run at 10^7 on e4e6334 showed it
+(`ct/results/dudect-lanbox-server-prefix.md`, load average 1.35 at the start and
+1.21 at the end, controls fine): `server_login_start_known_vs_unknown`
+t = -12.31, `server_login_start_known_vs_disabled` t = +6.26,
+`server_prelogin_known_vs_unknown` t = +18.31 and
+`info_server_prelogin_resolve_credential` t = +17.04.
+
+* `login_start` matched on `AccountLookup`, and the arms read different memory
+  (the account's record from the heap, a name without one from a static). It is
+  now `stored_for`, the one function that names the kinds of lookup: it chooses
+  between two references (the account's record, or a stand-in record of the
+  same shape) and two small values, and everything read afterwards is read
+  through the chosen reference.
+* `resolve_credential(secret, name, Option<&AccountId>)` read the account id
+  through a reference that may be absent, which is a branch. The choice is now
+  `pick_account`, a select of two valid references, and the load is the same
+  for both.
+* The pre-login answer had no library function: the endpoint was left to choose
+  the profile and the hint. `prelogin_answer(secret, name, policy, lookup)` is
+  it now: the made-up answer is always computed, the lookup is unpacked by
+  `stored_for`, and `choose_answer` (two `ct_select_u8`, also used by
+  `login_start`) picks the values.
+
+`ct/run.sh lookup-asm` (CI, x86_64 and arm64) compiles the crate and fails if
+`stored_for`, `choose_answer` or `pick_account` has a conditional jump (they
+have none), and `login_start_looks_at_the_kind_of_lookup_in_one_function_only`
+and `the_prelogin_answer_has_no_branch_of_its_own` pin that nothing else in
+the crate names a kind of lookup or branches in those paths. That a compiler
+turns the selects into `cmov` is not guaranteed by the language; the asm check
+is what holds it, and the benches measure it. What stays is the caller's own
+lookup on the same bit (a database row found or not), which differs by a round
+trip and is covered by the endpoint test (§ 4.2), see R10. The two parts of the
+login start bench alone were below 4.5 (`lookup_only` +2.62, `real_vs_made_up`
+-2.05) and the whole failed, so the rerun after this change is the proof, not
+the argument above.
 
 ### S-3. Two pools of inputs gave the classes a different mean
 
@@ -364,52 +375,36 @@ Both classes now run the same copies.
 
 ### Timing of the server library
 
-**The table below is indicative, not decisive.** It is
-`ct/results/dudect-lanbox-server.md` as it was first written
-(`CT_ONLY=server CT_REPEAT=2`, 10^6 measurements per bench, a bench over 4.5
-measured again with 10^7), on commit 9aaa566, taken while other builds ran on
-the LANBox (load average 21 at the start, the dudect process pinned to the least
-busy core, no controls in the run). Only docs, comments, imports and a rebinding
-changed in `src/` after that commit. The decisive run is the one that replaces
-it: 10^7 measurements per bench from the start, the controls in the same run,
-the load average at the start and at the end in the file, on a quiet LANBox (the
-file says NOT DECISIVE when the 1-minute load average was above 2). The gated
-benches fail at 10^7 without a rerun.
+**Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:
+`CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on
+e4e6334 with a quiet LANBox (1-minute load average 1.35 at the start, 1.21 at the
+end, the dudect process pinned to cpu 1). A gated bench over 4.5 at 10^7 fails
+without a rerun.
 
-| bench | t at 10^6 (two runs) | result |
+| bench | t at 10^7 | result |
 |---|---|---|
-| `server_login_start_known_vs_unknown` | -3.88, -2.92 | below 4.5 |
-| `server_login_start_known_vs_disabled` (replicate) | +2.29, -3.10 | below 4.5 |
-| `server_prelogin_known_vs_unknown` | +2.31, +1.90 | below 4.5 |
-| `server_state_binding` (smoke test) | -1.72, -1.69 | below 4.5 |
-| `server_finish_credential_vs_account` (smoke test) | +4.17, +4.65 (10^7: +2.14) | below 4.5 at 10^7 |
-| `info_server_prelogin_resolve_credential` (not gated) | +5.61, +4.57 | before the pointer select, see S-2 |
-| `info_server_finish_state_vs_missing` (not gated) | +19668, +20326 | the setup sees a missing state: an end-to-end timing of `login_finish` sees the difference of one AEAD open |
+| `control_null` | +1.55 | control fine |
+| `control_server_login_start_null` | -1.55 | noise floor of a target of this size |
+| `control_leaky`, `control_unpad_leaky` | +235900, -150386 | the setup sees an early exit |
+| `server_login_start_known_vs_unknown` | -12.31 (0.666M kept) | FAIL |
+| `server_login_start_known_vs_disabled` (replicate) | +6.26 | FAIL |
+| `server_prelogin_known_vs_unknown` | +18.31 | FAIL |
+| `server_state_binding` (smoke test) | +2.62 | below 4.5 |
+| `server_finish_credential_vs_account` (smoke test) | +2.67 | below 4.5 |
+| `info_server_login_start_lookup_only` | +2.62 | below 4.5 alone |
+| `info_server_login_start_real_vs_made_up` | -2.05 | below 4.5 alone |
+| `info_server_prelogin_resolve_credential` | +17.04 | the branch of S-2 |
+| `info_server_finish_state_vs_missing` | +129475 | a missing state exits early; the caller knows whether it sent a state, so this is information only |
 
-One run of `server_login_start_known_vs_unknown` with 10^7 measurements from the
-start gave t = +7.06 (tau +0.0087), on a LANBox with a load average of 15. It is
-probably not noise. The tool reports the largest |t| of the whole sample, about
-a hundred percentile crops and a second-order test, and `n` is the size of that
-test: 0.67M of 10^7 means the fastest 6.7 % of the runs, which are the ones
-nobody disturbed and the most sensitive place for a small constant offset. The
-two runs at 10^6 (-3.88 at n = 0.979M, -2.92 at n = 0.999M) are near-uncropped
-tests, so their sign says nothing about the cropped one. The sign (Left, the
-known side, slower) is that of `info_server_prelogin_resolve_credential`, which
-times the branch of S-2 on the same bit. tau = 0.0087 of a crop spread of a few
-hundred nanoseconds is a few nanoseconds, a handful of cycles. The suspects, in
-order: the match on the lookup and the loads of the known side, the bench's own
-class branch (it was in the timed closure then; it is in `prepare` now), and the
-data (the dummy public key of the unknown side is one value, the known side has
-256). The rerun is therefore a diagnosis: `control_server_login_start_null` gives
-the noise floor of a target this size, `info_server_login_start_lookup_only` has
-every byte OPAQUE sees the same and only the variant of the lookup differs, and
-`info_server_login_start_real_vs_made_up` has only the data differ. Read: if the
-gated bench passes at 10^7, the point is closed; if it fails and `lookup_only`
-has the same sign, the cause is the variant, and it is either accepted as part
-of S-2 by a written ruling or removed by the API change in S-2; if the data
-bench shows it, look further down the stack before release. In every case the
-size is a few cycles against a database lookup and a network that differ by
-orders of magnitude, and the exposure is decided by the endpoint test.
+The earlier table (10^6, loaded machine, load average 21, no controls) is
+replaced by this one; it had passed all of these benches except the second
+login start run at 10^7 (+7.06), which this run shows was a real offset.
+
+The code of S-2 was changed after this run. **The run after the fix replaces
+this table** (same command, `ct/results/dudect-lanbox-server.md`); until then
+the three failing benches are open. The pre-login bench was also changed
+(it now times `prelogin_answer`, with the lookup built before the timer starts),
+so its old number is not a measurement of the new code.
 
 This times the library, not the database: the lookup that decides `Active`,
 `Unknown` or `Disabled` is the caller's, and the comparison of the bytes and
@@ -527,11 +522,13 @@ with its reason, and each is repeated in the report.
   another path through the database), the HTTP layer, TLS or the network; the
   comparison of the bytes and delays of the answers of a running server is a
   test of the endpoint (§ 4.2), and it has to name this part as an input. The
-  branch on the lookup in `login_start` is the secret bit, branched on once;
-  the caller's own lookup on the same bit dominates it (S-2). The endpoint
-  has a larger difference of the same kind: the M1 `finish_lookup` parses the
-  record only for a known account (a finding of the review of the endpoint code), and the endpoint
-  test owner must see both. The compare of the credential in `login_finish`
-  is shown by the timing only to within the noise of the whole `login_finish`
-  call (|t| up to 4.65 at 10^6 and 2.14 at 10^7); that it is `ct_eq` is shown by the call-site test and the
-  analysis of the harness (T5), not by the timing alone. Accepted.
+  library no longer branches on the lookup (S-2), so what is left on that bit
+  is the caller's own lookup. The endpoint has differences of the same kind:
+  the M1 `finish_lookup` parses the record only for an active account (a
+  finding of the review of the endpoint code), a row or no row is another SQL
+  path, and the handler matches on the kind to build the lookup; the endpoint
+  test owner must see all three. The compares of the credential and of the
+  binding in `login_finish` are shown by the timing only to within the noise of
+  the whole call (|t| 2.67 and 2.62 at 10^7 on the quiet run); that they are
+  `ct_eq` is shown by the call-site test and the analysis of the harness (T5),
+  not by the timing alone. Accepted.

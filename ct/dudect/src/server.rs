@@ -13,8 +13,8 @@
 //! | `control_server_login_start_null` | `login_start`, the same (null control of the same cost: the classes are the same) | an account | the same account |
 //! | `info_server_login_start_lookup_only` | `login_start` with every byte OPAQUE sees the same: the record and id are the made-up ones in both | `Active` with the made-up record | `Unknown` |
 //! | `info_server_login_start_real_vs_made_up` | `login_start`, both `Active`: only the data differ | the real record and id | the made-up record and id |
-//! | `server_prelogin_known_vs_unknown` | the choice of the answer by a flag (`ct_select_u8`) next to the always-computed `fake_prelogin`: the pattern an endpoint has to follow, timed. No library code in it depends on the class | a name with an account | a name without |
-//! | `info_server_prelogin_resolve_credential` | the same with `resolve_credential`, which takes the lookup as `Option<&AccountId>` (information only) | a name with an account | a name without |
+//! | `server_prelogin_known_vs_unknown` | `prelogin_answer`: the made-up answer always computed, the lookup unpacked as in `login_start`, the profile and hint chosen with `ct_select_u8` | a name with an account | a name without |
+//! | `info_server_prelogin_resolve_credential` | `resolve_credential` with `Some(account)` or `None`: the account id chosen between two references (information only) | a name with an account | a name without |
 //! | `server_state_binding` | `open_fields` of a re-authentication state (the AEAD, then the purpose, session and account compare of `state.rs`) | session wrong in the first byte | account wrong in the last byte |
 //! | `server_finish_credential_vs_account` | `login_finish` of a re-authentication whose state is for another account (the compare of `login.rs`) | other account, first byte differs | other account, last byte differs |
 //! | `info_server_finish_state_vs_missing` | `login_finish` | the state is there | there is none (information only: shows that an end-to-end timing of `login_finish` sees a difference of one AEAD open) |
@@ -45,8 +45,8 @@ use ferret_server_auth::testing::{
 use ferret_server_auth::{
     AccountLookup, AuthContext, Caller, Clock, CredentialId, LoginFinishRequest, LoginId,
     LoginPurpose, LoginStartRequest, LoginStateStore, NoThrottle, NormalizedLoginName, SealedState,
-    SessionBinding, StateKey, StoreError, StoredRecord, fake_credential_id, fake_prelogin,
-    login_finish, login_start, normalize_login_name, resolve_credential,
+    SessionBinding, StateKey, StoreError, StoredRecord, fake_credential_id, login_finish,
+    login_start, normalize_login_name, prelogin_answer, resolve_credential,
 };
 use std::cell::RefCell;
 use std::hint::black_box;
@@ -333,36 +333,40 @@ fn start_target(mix: &mut Mix, name: &'static str, kind: StartKind) -> Start {
 /// What a prelogin target times.
 #[derive(Clone, Copy)]
 enum PreloginMode {
-    /// `resolve_credential` with `Some(account)` or `None`, then the answer.
-    /// The library takes the lookup as a reference that may be absent, and
-    /// reading through it takes a branch on whether it is there: information
-    /// only, see `ct/TRIAGE.md`.
+    /// `prelogin_answer` of the library: the made-up answer is always
+    /// computed, the lookup is unpacked as in `login_start`, and the profile
+    /// and hint are chosen with `ct_select_u8`.
+    Answer,
+    /// `resolve_credential` with `Some(account)` or `None` (information only):
+    /// the account id is chosen between two references and read once.
     Resolve,
-    /// The made-up answer is always computed, and the real or the made-up
-    /// profile and hint are chosen by a flag (as `login_start` does): the part
-    /// that is branch-free by design.
-    Select,
+}
+
+/// A name of the pool with its account and record. Leaked once, so the lookup
+/// can point into it and be built before the timer starts.
+struct PreloginEntry {
+    name: NormalizedLoginName,
+    account: AccountId,
+    record: StoredRecord,
 }
 
 struct Prelogin {
     mode: PreloginMode,
     f: LoginFixture,
-    names: Vec<(NormalizedLoginName, AccountId)>,
-    name: NormalizedLoginName,
-    /// What the lookup of the name found. Set before the timer starts, so the
-    /// timed code does not branch on the class to build it.
-    account: Option<AccountId>,
-    /// The same as a flag, for the choice of the answer.
-    active: u8,
-    /// The profile and hint of the stored account.
-    stored: (u8, u8),
+    entries: Vec<&'static PreloginEntry>,
+    // What the timed code reads, set by `prepare`.
+    name: &'static NormalizedLoginName,
+    lookup: AccountLookup<'static>,
+    account: Option<&'static AccountId>,
+    /// Keeps the reads of `prepare` from being optimised away.
+    touched: u64,
 }
 
 impl Target for Prelogin {
     fn name(&self) -> &'static str {
         match self.mode {
             PreloginMode::Resolve => "info_server_prelogin_resolve_credential",
-            PreloginMode::Select => "server_prelogin_known_vs_unknown",
+            PreloginMode::Answer => "server_prelogin_known_vs_unknown",
         }
     }
     fn reps(&self) -> u32 {
@@ -374,45 +378,50 @@ impl Target for Prelogin {
         matches!(self.mode, PreloginMode::Resolve)
     }
     fn prepare(&mut self, class: Class, i: usize) {
-        let i = i % SERVER_POOL;
+        let e = self.entries[i % SERVER_POOL];
         // The same name for both classes: the time of the HMAC over a name
-        // varies a little with the name, and two pools of names would give
-        // the classes a different mean however many measurements are made.
-        self.name = self.names[i].0.clone();
-        if class == Class::Right {
-            self.account = None;
-            self.active = 0;
+        // varies with the name, and two pools of names would give the
+        // classes a different mean however many measurements are made. The
+        // record and the account are read for either class, and the lookup
+        // and the reference are built here, so the timed code has no branch
+        // of its own on the class.
+        self.touched = touch(&e.record).wrapping_add(u64::from(e.account.as_bytes()[0]));
+        self.name = &e.name;
+        let right = class == Class::Right;
+        self.lookup = if right {
+            AccountLookup::Unknown
         } else {
-            self.account = Some(self.names[i].1);
-            self.active = 1;
-        }
+            AccountLookup::Active {
+                record: &e.record,
+                sk_hint: false,
+            }
+        };
+        self.account = if right { None } else { Some(&e.account) };
     }
     fn run(&self, reps: u32) -> u64 {
-        let mut acc = 0u64;
+        let mut acc = black_box(self.touched) & 0;
         for _ in 0..reps {
-            // What an endpoint does with a name: the id OPAQUE uses, and the
-            // made-up answer, which are both always computed; the real answer
-            // and the made-up one are chosen without a branch.
-            let fake = fake_prelogin(&self.f.prelogin, black_box(&self.name), &self.f.policy);
-            let (active, first) = match self.mode {
-                PreloginMode::Resolve => {
-                    let account = black_box(self.account.as_ref());
-                    let id = resolve_credential(&self.f.prelogin, &self.name, account);
-                    (u8::from(account.is_some()), id.as_bytes()[0])
+            match self.mode {
+                PreloginMode::Answer => {
+                    let answer = prelogin_answer(
+                        &self.f.prelogin,
+                        black_box(self.name),
+                        &self.f.policy,
+                        self.lookup,
+                    );
+                    acc = acc
+                        .wrapping_add(u64::from(answer.ksf_profile))
+                        .wrapping_add(u64::from(answer.sk_hint));
                 }
-                PreloginMode::Select => (black_box(self.active), 0),
-            };
-            let profile =
-                crate::harness::ct_select::ct_select_u8(active, self.stored.0, fake.ksf_profile);
-            let hint = crate::harness::ct_select::ct_select_u8(
-                active,
-                self.stored.1,
-                u8::from(fake.sk_hint),
-            );
-            acc = acc
-                .wrapping_add(u64::from(first))
-                .wrapping_add(u64::from(profile))
-                .wrapping_add(u64::from(hint));
+                PreloginMode::Resolve => {
+                    let id = resolve_credential(
+                        &self.f.prelogin,
+                        black_box(self.name),
+                        black_box(self.account),
+                    );
+                    acc = acc.wrapping_add(u64::from(id.as_bytes()[0]));
+                }
+            }
         }
         black_box(acc)
     }
@@ -420,16 +429,25 @@ impl Target for Prelogin {
 
 fn prelogin_target(mix: &mut Mix, mode: PreloginMode) -> Prelogin {
     let f = LoginFixture::new();
-    let names = (0..SERVER_POOL as u32)
-        .map(|n| (name_of('k', n), AccountId::from_bytes(mix.array::<16>())))
-        .collect::<Vec<_>>();
+    let entries: Vec<&'static PreloginEntry> = (0..SERVER_POOL as u32)
+        .map(|n| {
+            let entry = PreloginEntry {
+                name: name_of('k', n),
+                account: AccountId::from_bytes(mix.array::<16>()),
+                record: f.record.clone(),
+            };
+            // Bench data, kept for the life of the process.
+            &*Box::leak(Box::new(entry))
+        })
+        .collect();
+    let first = entries[0];
     Prelogin {
         mode,
-        name: names[0].0.clone(),
-        account: Some(names[0].1),
-        active: 1,
-        names,
-        stored: (1, 1),
+        name: &first.name,
+        lookup: AccountLookup::Unknown,
+        account: Some(&first.account),
+        entries,
+        touched: 0,
         f,
     }
 }
@@ -638,7 +656,7 @@ pub fn targets(mix: &mut Mix) -> Vec<Box<dyn Target + Send>> {
             "info_server_login_start_real_vs_made_up",
             StartKind::RealVsMadeUp,
         )),
-        Box::new(prelogin_target(mix, PreloginMode::Select)),
+        Box::new(prelogin_target(mix, PreloginMode::Answer)),
         Box::new(prelogin_target(mix, PreloginMode::Resolve)),
         Box::new(binding_target(mix)),
         Box::new(finish_target(
