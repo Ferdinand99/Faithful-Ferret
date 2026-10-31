@@ -11,7 +11,7 @@ import { el, mount } from "../dom.mjs";
 import { codeOf } from "./common.mjs";
 
 /**
- * The codes that the sign-in pages have a text for, under `account.error.`.
+ * The codes that the sign-in pages have an error text for.
  * One set of texts serves both screens, so a warning about the server's answer
  * (a pinned key that does not match, a changed list of unlock methods) reads
  * the same here as on the sign-in page.
