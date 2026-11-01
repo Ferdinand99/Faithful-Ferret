@@ -23,6 +23,7 @@ on:
       - "scripts/lanbox-ferret-test.sh"
       - "scripts/check-ferret-test-stack.sh"
       - "scripts/lanbox-ferret-e2e-check.sh"
+      - "scripts/lanbox-ferret-e2e-gate.sh"
       - "release-please-config.json"
       - ".github/workflows/server.yml"
   push:
@@ -113,4 +114,4 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/check-ferret-test-stack.sh
-      - run: shellcheck docker/ferret-entrypoint.sh scripts/lanbox-ferret-test.sh scripts/lanbox-ferret-e2e-check.sh scripts/check-ferret-test-stack.sh
+      - run: shellcheck docker/ferret-entrypoint.sh scripts/lanbox-ferret-test.sh scripts/lanbox-ferret-e2e-check.sh scripts/lanbox-ferret-e2e-gate.sh scripts/check-ferret-test-stack.sh

@@ -421,7 +421,7 @@ test("the_signed_in_panel_offers_lock_sign_out_forget_and_the_admin_pages", asyn
     assert.equal(byRole(panel, "continue-admin"), null);
     await fire(byRole(panel, "admin"), "click");
     await settle();
-    assert.deepEqual(toAdmin, [{ adminUrl: ADMIN, next: "/", purpose: "login" }]);
+    assert.deepEqual(toAdmin, [{ adminUrl: ADMIN, next: "/settings/general", purpose: "login" }]);
     await fire(byRole(panel, "forget-sk"), "click");
     await settle();
     assert.deepEqual(session.calls.at(-1), ["forgetSecretKey", "ab".repeat(16)]);
@@ -737,5 +737,19 @@ test("the_admin_buttons_show_whenever_the_user_is_signed_in_locked_or_not", asyn
       const page = loginView(loginDeps({ info, entry, session: fakeSession({ current }) }).deps);
       assert.ok(byRole(page, "continue-admin"), `current=${current}`);
     }
+  });
+});
+
+test("a_secret_key_code_typed_for_another_address_is_not_sent_for_a_device_that_holds_the_key", async () => {
+  await withDom(async () => {
+    // The e-mail address of an account this device knows, with its key sealed here.
+    const known = fakeSession({ device: { pinned: true, skBit: true, skStored: true } });
+    const root = loginView(loginDeps({ session: known }).deps);
+    // A code was typed while the field was shown for an address the device did not know.
+    byRole(root, "sk-code").value = SK_CODE;
+    await submitSignIn(root, {});
+    await settle();
+    assert.equal(byRole(root, "sk-code").value, "");
+    assert.equal(known.calls[0][1].skCode, "");
   });
 });

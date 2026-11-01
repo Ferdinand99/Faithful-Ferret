@@ -4,6 +4,7 @@
 // the account is uploaded only when the recovery key and the secret key have
 // been typed back and checked (Spec: Fase 1 § 6.1).
 import { AccountError } from "../crypto/errors.mjs";
+import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { el, mount } from "../dom.mjs";
 import { busyState, choice, describeError, field, setText, trustNotice } from "./form.mjs";
 import { sheetView } from "./sheet.mjs";
@@ -114,7 +115,7 @@ export function setupView(deps) {
         ? null
         : el("button", { type: "button", "data-role": "admin" }, t("account.signedin.admin"));
     admin?.addEventListener("click", () => {
-      if (adminUrl !== null) void handoff.goToAdmin({ adminUrl, next: "/", purpose: "login" }).catch(showError);
+      if (adminUrl !== null) void handoff.goToAdmin({ adminUrl, next: ADMIN_LANDING, purpose: "login" }).catch(showError);
     });
     mount(root, el("h1", null, t("account.setup.done_heading")), el("p", null, t("account.setup.done_body")), el("div", { class: "actions" }, open, admin), errorBox);
   }

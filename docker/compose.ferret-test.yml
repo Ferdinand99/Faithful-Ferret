@@ -18,6 +18,9 @@ services:
       args:
         # Empty: a release build, no test features.
         FEATURES: ""
+        # Empty: the published WebAssembly package. FERRET_WASM_LOCAL=1 (a test build
+        # only, see docker/server.Dockerfile) uses web/wasm.local.tar.gz.
+        WASM_LOCAL: ${FERRET_WASM_LOCAL:-}
       labels:
         owner: ferret-test
     container_name: ferret-test-app
@@ -42,8 +45,8 @@ services:
       - /tmp:size=16m
     # TEST STACK ONLY: host networking. With published ports on a bridge
     # network, Docker's port proxy makes every connection arrive from the
-    # bridge gateway, so the tunnel client of the proxy (Newt, on the default
-    # bridge) and every other client on the host would look the same, and the
+    # bridge gateway, so the tunnel client of the proxy (Newt, on its own
+    # network newt-net) and every other client on the host would look the same, and the
     # server refuses to trust a gateway address. On the host network the server
     # sees the real source address: the tunnel client's own address for the
     # Pangolin traffic (FERRET_TRUSTED_PROXIES) and the client's for
@@ -52,13 +55,17 @@ services:
     #
     # Residual risk, accepted for throwaway test data and not to be copied to a
     # stack with real data:
-    #  * The trusted address is Newt's address on the default bridge, which
-    #    cannot be pinned. After a reboot or a recreate another container on
-    #    that bridge may get the same address and would then be believed.
-    #    scripts/lanbox-ferret-test.sh up refuses to start when the address
-    #    differs, but nothing checks it while the container runs.
-    #  * Any container on the default bridge that can send ARP can pose as
-    #    that address.
+    #  * The trusted address is Newt's fixed address (172.30.0.2) on its own
+    #    network newt-net, so a reboot or a recreate does not move it and no
+    #    other container on the default bridge can take it over. The network
+    #    only keeps that address as long as Docker is told to preserve
+    #    user-defined networks (Unraid: Settings > Docker, "Preserve user
+    #    defined networks"). scripts/lanbox-ferret-test.sh up refuses to start
+    #    when the address differs, but nothing checks it while the container
+    #    runs. Another container that is put on newt-net with a different
+    #    address is not believed; one that is given 172.30.0.2 would be.
+    #  * A host that can send ARP on the LANBox's bridges can pose as that
+    #    address.
     #  * Everything Newt forwards counts as the proxy, including a Pangolin raw
     #    TCP resource or client access aimed at these ports, which skips the
     #    sign-in of the proxy and can send any X-Forwarded-* header.
@@ -72,7 +79,7 @@ services:
       FERRET_VAULT_URL: https://vault-test.opland.net
       FERRET_ADMIN_URL: https://ferret-test.opland.net
       # The address the Pangolin tunnel traffic reaches the server from: the
-      # address of the Newt container on the default bridge. Never a bridge
+      # address of the Newt container on newt-net. Never a bridge
       # gateway (the server refuses it). Set in docker/.env.
       FERRET_TRUSTED_PROXIES: ${FERRET_TRUSTED_PROXIES:?set FERRET_TRUSTED_PROXIES in docker/.env}
       # The kit honours X-Forwarded-Proto for its own cookies. Safe: the server

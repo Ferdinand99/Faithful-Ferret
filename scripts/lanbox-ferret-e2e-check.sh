@@ -21,7 +21,7 @@
 #    no label or another name survive; the owner's container and volume are
 #    still there), and the confirmation cancels on anything but "reset".
 #  * the e2e stack: shares no container, network or volume with the owner's
-#    stack and leaves it running; has one network, no volume, no published
+#    stack and leaves it running; has one network, one volume, no published
 #    port; starts fresh each time; moves its clock on request; the browsers of
 #    scripts/lanbox-ferret-test.sh e2e-run reach it over https, and the TLS
 #    terminator is the only trusted proxy.
@@ -230,7 +230,7 @@ check_stack() {
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_app" | sed 's/ $//')"
   expect "e2e: the terminator is on its own network only" "$e2e_network" \
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_tls" | sed 's/ $//')"
-  expect "e2e: no volumes or bind mounts" "" \
+  expect "e2e: the data volume is the only mount (no bind mount)" "volume:ferret-e2e-data" \
     "$(dk inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} {{end}}' "$e2e_app" "$e2e_tls" | tr -d ' \n')"
   expect "e2e: no published port (a port the image declares is only exposed)" "" \
     "$(dk inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$e2e_app" "$e2e_tls" | tr -d ' \n')"
@@ -256,7 +256,7 @@ check_stack() {
   local project rc2=0
   local args=()
   for project in ${FERRET_E2E_BROWSERS:-chromium firefox webkit}; do args+=("--project=$project"); done
-  scripts/lanbox-ferret-test.sh e2e-run "${args[@]}" || rc2=$?
+  scripts/lanbox-ferret-test.sh e2e-run "${args[@]}" stack.spec || rc2=$?
   expect "e2e-run: the stack tests pass in every browser" 0 "$rc2"
   contains "e2e: the terminator was seen as a trusted proxy" "$(dk logs "$e2e_app" 2>&1)" "trusted=true"
 
@@ -266,7 +266,7 @@ check_stack() {
 
   e2e_down >/dev/null
   expect "e2e-down: nothing of the project is left" "" \
-    "$( { dk ps -a --filter "label=$e2e_label" --format '{{.Names}}'; dk network ls --filter "label=$e2e_label" --format '{{.Name}}'; dk images -q "$e2e_image"; } | tr -d '\n')"
+    "$( { dk ps -a --filter "label=$e2e_label" --format '{{.Names}}'; dk network ls --filter "label=$e2e_label" --format '{{.Name}}'; dk volume ls --filter "label=$e2e_label" --format '{{.Name}}'; dk images -q "$e2e_image"; } | tr -d '\n')"
 }
 
 which="${1:-all}"
