@@ -38,7 +38,8 @@ pub struct VectorFile {
 pub struct Generator {
     /// Tool name, `ferret-vectorgen`.
     pub tool: String,
-    /// Core version.
+    /// Fixed marker (`see-vectors-version`); the vectors are versioned by
+    /// `vectors/VERSION`, not by the crate version.
     pub core: String,
     /// Commit of the generator.
     pub commit: String,

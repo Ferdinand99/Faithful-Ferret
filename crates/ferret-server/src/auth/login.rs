@@ -302,8 +302,8 @@ fn finish_lookup(row: Option<LookupRow>) -> rusqlite::Result<AccountLookupOwned>
 // ------------------------------------------------------ the pre-login policy
 
 /// How the made-up answers of unknown names are spread, from the real accounts:
-/// the share of each key stretching profile and the share of accounts with a
-/// second factor. The shares are kept in buckets of 100 permille that change
+/// the share of each key stretching profile and the share of accounts that use
+/// a secret key. The shares are kept in buckets of 100 permille that change
 /// only when the real share is more than 50 permille past a bucket's edge, and
 /// the current buckets are stored in the database, so a restart keeps them. With
 /// no accounts: profile 1 for every answer.
@@ -351,7 +351,7 @@ const FLOOR: u16 = 100;
 const BUCKETS_KEY: &str = "prelogin_buckets";
 
 /// The buckets the pre-login policy is built from, as they are kept in the
-/// database: the bucket of the second-factor hint and one per profile.
+/// database: the bucket of the secret-key hint and one per profile.
 #[derive(Default)]
 struct Buckets {
     sk: Option<u16>,

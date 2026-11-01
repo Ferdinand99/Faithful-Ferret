@@ -17,9 +17,9 @@ No external audit has been done and none is planned (see [`REVIEW-PACKAGE.md`](R
 |---|---|
 | Does the library cover what phase 2 set out to do? | Yes: registration, sign-in and re-authentication, made-up answers for unknown and disabled names, sealed single-use login state, session scopes, challenges and signed requests, rate limit hooks, secret files and the start-up decision |
 | Tests | 948 tests pass in the workspace (core, server library, vector generator, WebAssembly binding), with and without `test-support` |
-| Vectors | `vectors/VERSION` 24; two new server files (`server-opaque.json`, 76 cases, and `server-secrets.json`, 105 cases); `vectors/VERSION` is 24 after the generator change; RFC 9807 appendix C.1.1 and C.1.2 server messages reproduced byte for byte |
-| Fuzzing | 18 targets, 6 of them for the server library; the seed and regression replay is clean; one full nightly run (20 minutes per target) was clean on an earlier commit; the run on the final code is the gate for the release, see "Fuzzing" |
-| Coverage | Server library 96.14 % lines and 93.63 % branches (thresholds 95 and 90); core total 96.52 % lines |
+| Vectors | `vectors/VERSION` 24 (23 with the server files, 24 after the generator change); two new server files (`server-opaque.json`, 76 cases, and `server-secrets.json`, 105 cases); RFC 9807 appendix C.1.1 and C.1.2 server messages reproduced byte for byte |
+| Fuzzing | 18 targets, 6 of them for the server library; the seed and regression replay is clean; two full nightly runs (20 minutes per target) were clean, the second on baf8aee, the last change to the library code; one more full run after the release-path changes land is the gate for the release, see "Fuzzing" |
+| Coverage | Server library 96.14 % lines and 93.63 % branches (thresholds 95 and 90); all measured files (core and server library) 96.52 % lines |
 | Constant time | Every gated server bench is under 4.5 at 10^7 measurements, three repeats, at the optimisation level that is shipped, with controls; see the limits below |
 | Dependencies | `cargo deny` and `cargo vet --locked` pass with no new exception; the library adds no new duplicate version to the tree |
 | Release | The library follows the version of the repository (one component); the lock files that name it are in the release configuration, and the checks that read the version no longer fail when it changes |
@@ -81,8 +81,9 @@ point, 9 handle files and paths, 5 have a reason of their own).
 
 The gate for the release is one full nightly run on the final code, that is the first nightly
 run after the release-path changes are on `main`. It has to pass before the release pull
-request is merged. Only tests, CI and documentation (and the vector generator, which the
-fuzz targets do not use) differ from baf8aee in the library after that commit.
+request is merged. After baf8aee the library changed in doc comments only, plus the
+`server_login_wipe_probe` helper in `testing.rs` behind `test-support`; the vector generator
+and CI also changed, and the fuzz targets use neither.
 
 ## Coverage
 
@@ -164,7 +165,7 @@ server (395 with the test clock of the end-to-end image), the two lock checks, t
 test-support check, a locked `cargo metadata` of the fuzz and timing workspaces, and the
 coverage run (library 96.14 % lines, 93.63 % branches). The release pull request is
 refreshed by release-please only when its text changes, so the commit that lands this work is a
-visible `fix:`, and the configuration sets `always-update`.
+visible `fix:` (release-please's `always-update` setting is not used).
 
 ## Decisions
 

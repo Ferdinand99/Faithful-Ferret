@@ -27,11 +27,14 @@ happens when the maintainer merges the release pull request.
    `--locked` build after a release fails on a lock that still has the old version.
    Release-please pushes to an open release pull request only when its text changes; a commit
    that does not show in the notes (`chore:`, `test:`) leaves the pull request as it is. The
-   configuration sets `always-update`, and a change to the release files should be a `fix:` or
-   `feat:`, so the pull request is regenerated. After such a change, look at the lock files in
-   the release pull request: each of the four must show the version line of every first-party
-   crate in it changed (`ferret-core` and `ferret-server-auth` in `fuzz/Cargo.lock` and
-   `ct/dudect/Cargo.lock`), and its checks must be green.
+   release-please setting `always-update` is not used: it is read from the top level of the
+   configuration only, and it would rewrite the pull request on every push. So a change to the
+   release files must land as a `fix:` or `feat:` commit, which adds a line to the notes and
+   regenerates the pull request. After such a change, look at the lock files in the release
+   pull request: each of the four must show the version line of the crates that carry the
+   repository's version changed (`ferret-core` and `ferret-server-auth` in `fuzz/Cargo.lock`
+   and `ct/dudect/Cargo.lock`; `ferret-core-fuzz` and `ferret-ct` keep their own versions),
+   and its checks must be green.
 3. Before merging, check that the Public Suffix List snapshot is fresh (below), that
    all checks on the pull request are green, and read the changelog.
 4. Merging the pull request makes release-please create the tag `vX.Y.Z` and the GitHub
