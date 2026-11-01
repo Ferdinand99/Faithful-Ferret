@@ -12,10 +12,8 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development. The cryptographic core is being written and is not for real passwords yet. There is no
-> release and no release date.** The design is approved, and the Rust core and its test vectors are now being built
-> in this repository. There is nothing to install or run. Please do not store real passwords in anything built from
-> this repository until a release says it is ready.
+> **Status: in development.** The cryptographic core, the OPAQUE server library, the server and the web vault work
+> end to end in testing (v0.2.0). It is not for real passwords yet. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -100,16 +98,14 @@ This project has had no external security audit, and none is planned.
 
 ## Roadmap
 
-The phases are the order of work, not cuts in scope, and there are no dates:
+The steps are the order of work, not cuts in scope, and there are no dates:
 
-1. Design (done).
-2. Throwaway prototypes of the risky parts: biometric unlock from a browser extension, acting as a passkey
-   provider, key derivation speed on every platform, and the sync protocol.
-3. Security design: the threat model, cryptographic design and sync protocol, published and reviewed.
-4. The server and a shared Rust cryptographic core.
-5. The web vault.
-6. The browser extension, then the iOS and Android apps.
-7. Hardening and 1.0.
+1. Design, throwaway prototypes and the security design (done).
+2. The server and the shared Rust cryptographic core (first version done).
+3. The web vault (first version done, work continues).
+4. Safe sync, recovery and daily use (next).
+5. The browser extension and the iOS and Android apps (later).
+6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).
 
