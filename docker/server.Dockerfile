@@ -20,12 +20,18 @@ ARG ALPINE_IMAGE=alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd5
 # Builds web/dist, the static files the server embeds. The build fetches the
 # pinned WebAssembly package of the crypto core and checks its SHA-256
 # (web/wasm.lock.json).
+#
+# A test stack may build against a package made from the sources of the same
+# commit (scripts/lanbox-wasm.sh and scripts/package-release.sh) instead of the
+# published one: put the archive at web/wasm.local.tar.gz and change the checksum
+# in web/wasm.lock.json to its checksum, both only in the working tree. The file is
+# not in git, so a clean checkout, and so a release build, never has it.
 FROM ${NODE_IMAGE} AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY web ./
-RUN node scripts/build.mjs
+RUN if [ -f wasm.local.tar.gz ]; then FERRET_WASM_TAR=wasm.local.tar.gz node scripts/build.mjs; else node scripts/build.mjs; fi
 
 # --- Server ------------------------------------------------------------------
 FROM ${RUST_IMAGE} AS build

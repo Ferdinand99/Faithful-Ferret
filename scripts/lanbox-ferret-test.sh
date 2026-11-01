@@ -18,7 +18,7 @@
 #
 # The end-to-end stack (compose project ferret-e2e: its own app with the test clock,
 # a TLS terminator and the test host names vault-e2e.test and admin-e2e.test on a
-# network of its own; no published port, data in tmpfs). Only resources named
+# network of its own; no published port; the data in a volume that every start removes). Only resources named
 # ferret-e2e* and labelled owner=ferret-e2e are created or removed, and it never
 # touches the stack above:
 #
@@ -267,9 +267,10 @@ reset_resources() {
 # crashed test container, for example). Only ferret-e2e resources.
 e2e_remove() {
   local id name
-  dce down --remove-orphans >/dev/null 2>&1 || true
+  dce down -v --remove-orphans >/dev/null 2>&1 || true
   for id in $(dk ps -aq --filter "label=$e2e_label"); do dk rm -f "$id" >/dev/null; done
   for name in $(dk network ls -q --filter "label=$e2e_label"); do dk network rm "$name" >/dev/null; done
+  for name in $(dk volume ls -q --filter "label=$e2e_label"); do dk volume rm "$name" >/dev/null; done
 }
 
 e2e_running() {
@@ -312,7 +313,7 @@ e2e_up() {
   echo
   echo "End-to-end stack is up (project $e2e_project, no published ports):"
   echo "  vault  https://vault-e2e.test  admin  https://admin-e2e.test   (only on the network $e2e_network)"
-  echo "  run the tests:  $0 e2e-run    setup token:  $0 e2e-token"
+  echo "  run the tests:  scripts/lanbox-ferret-test.sh e2e-run    setup token:  scripts/lanbox-ferret-test.sh e2e-token"
 }
 
 e2e_down() {
@@ -341,7 +342,9 @@ e2e_runner_image() {
 # with certutil, which the runner image docker/e2e-runner.Dockerfile has). Firefox has its own list: web/playwright.e2e.config.mjs lets it accept the
 # certificate of the stack.
 # The tests find the stack in FERRET_E2E_VAULT_URL, FERRET_E2E_ADMIN_URL and
-# FERRET_E2E_SETUP_TOKEN. Output on stderr, the exit code is the tests' one.
+# FERRET_E2E_SETUP_TOKEN, and FERRET_E2E_STATE when the host script has the state of an
+# earlier phase. Output of the tests on stderr; what a phase leaves in /work/out/*.json
+# (name, then the JSON) on stdout; the exit code is the tests' one.
 e2e_run() {
   e2e_require_running
   local inner pem token
@@ -360,6 +363,8 @@ mkdir -p "$HOME/.pki/nssdb"
 certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
 certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n ferret-e2e -i /work/e2e-ca.crt
 export NODE_EXTRA_CA_CERTS=/work/e2e-ca.crt
+mkdir -p /work/out
+export FERRET_E2E_OUT=/work/out
 cd /work/web
 npm ci --no-audit --no-fund --ignore-scripts >&2
 set +e
@@ -367,7 +372,24 @@ if [ "$#" -eq 0 ] || ! printf "%s\n" "$@" | grep -q "^--config"; then
   set -- --config playwright.e2e.config.mjs "$@"
 fi
 npx playwright test "$@" >&2
-exit $?'
+status=$?
+# After a failure, what the page looked like (the container is gone afterwards).
+if [ "$status" -ne 0 ]; then
+  for f in test-results/*/error-context.md; do
+    [ -f "$f" ] || continue
+    echo "--- $f" >&2
+    head -c 2500 "$f" >&2
+    echo >&2
+  done
+fi
+# What a phase leaves for the host script (the state of the run), on stdout.
+for f in /work/out/*.json; do
+  [ -f "$f" ] || continue
+  basename "$f" .json
+  cat "$f"
+  echo
+done
+exit $status'
   tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web \
     | dk run --rm -i --init \
         --name ferret-e2e-playwright \
@@ -379,6 +401,8 @@ exit $?'
         -e FERRET_E2E_ADMIN_URL=https://admin-e2e.test \
         -e FERRET_E2E_SETUP_TOKEN="$token" \
         -e FERRET_E2E_CA_PEM="$pem" \
+        -e FERRET_E2E_STATE="${FERRET_E2E_STATE:-}" \
+        -e FERRET_E2E_PHASE="${FERRET_E2E_PHASE:-}" \
         --tmpfs /work:exec,size=2g \
         --tmpfs /root/.npm:size=512m \
         --tmpfs /tmp:exec,size=2g \

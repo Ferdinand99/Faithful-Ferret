@@ -14,8 +14,8 @@
 #    proxies from docker/.env, which git ignores.
 # The end-to-end stack (checked below the owner's):
 #  * its own project, containers, network and image, all named ferret-e2e* and
-#    labelled owner=ferret-e2e; no volume, no bind mount, no published port, the
-#    data in tmpfs; built with the e2e-clock feature; trusts only the TLS
+#    labelled owner=ferret-e2e; one named volume for the data and no bind mount, no
+#    published port; built with the e2e-clock feature; trusts only the TLS
 #    terminator; and shares no name, network, volume or address with the
 #    owner's stack.
 # The deploy script: its drift guard reads what compose injects, refuses a
@@ -90,7 +90,10 @@ for (const [k, s] of Object.entries(e2e.services)) {
   if (s.labels?.owner !== "ferret-e2e") fail(k + ": label owner=ferret-e2e");
   if (s.ports && s.ports.length) fail(k + ": no published ports");
   if (s.network_mode) fail(k + ": no network_mode (host networking would reach the LANBox)");
-  if (s.volumes && s.volumes.length) fail(k + ": no volumes and no bind mounts, the data is in tmpfs");
+  // Only the app has a volume: the named volume ferret-e2e-data on /data, nothing else.
+  const mounts = (s.volumes || []).map((v) => (typeof v === "string" ? v : v.source + ":" + v.target));
+  const want = k === "ferret-e2e-app" ? ["ferret-e2e-data:/data"] : [];
+  if (JSON.stringify(mounts) !== JSON.stringify(want)) fail(k + ": mounts must be " + JSON.stringify(want) + ", got " + JSON.stringify(mounts) + " (no bind mounts)");
   if (s.privileged) fail(k + ": privileged");
   if (s.read_only !== true) fail(k + ": read_only");
   if (!(s.security_opt || []).includes("no-new-privileges:true")) fail(k + ": no-new-privileges");
@@ -99,14 +102,19 @@ for (const [k, s] of Object.entries(e2e.services)) {
   if (!(Number(s.mem_limit) > 0)) fail(k + ": a memory limit is required");
   if (Object.keys(s.networks || {}).join() !== "ferret-e2e-net") fail(k + ": only the network ferret-e2e-net");
 }
-if (Object.keys(e2e.volumes || {}).length) fail("no named volumes: a volume would outlive the run");
+{
+  const volumes = Object.entries(e2e.volumes || {});
+  if (volumes.length !== 1 || volumes[0][0] !== "ferret-e2e-data" || volumes[0][1].name !== "ferret-e2e-data" || volumes[0][1].labels?.owner !== "ferret-e2e") {
+    fail("the only volume is ferret-e2e-data, named so and labelled owner=ferret-e2e");
+  }
+}
 const app = e2e.services["ferret-e2e-app"];
 const tls = e2e.services["ferret-e2e-tls"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
 if (Object.keys(app.build?.args || {}).join() !== "FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and nothing else");
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("app cap_add");
-if (!(app.tmpfs || []).some((t) => t.startsWith("/data"))) fail("the data directory must be tmpfs");
+if ((app.tmpfs || []).some((t) => t.startsWith("/data"))) fail("the data directory is the named volume, not tmpfs");
 if (!/^caddy:[0-9.]+-alpine@sha256:[0-9a-f]{64}$/.test(tls.image)) fail("the TLS terminator image must be pinned by digest");
 if ([...(tls.cap_add || [])].join() !== "NET_BIND_SERVICE") fail("tls cap_add");
 for (const t of ["/data", "/config"]) if (!(tls.tmpfs || []).some((x) => x.startsWith(t))) fail("tls " + t + " must be tmpfs (no anonymous volume)");
@@ -224,6 +232,7 @@ if grep -F 'apt-get' scripts/lanbox-ferret-test.sh; then fail "the runner script
 
 # The file with the setup token is never committed.
 git check-ignore -q docker/.env || { echo "check-ferret-test-stack: docker/.env is not ignored by git" >&2; exit 1; }
+git check-ignore -q web/wasm.local.tar.gz || { echo "check-ferret-test-stack: web/wasm.local.tar.gz (a local WebAssembly package for a test build) is not ignored by git" >&2; exit 1; }
 if git ls-files --error-unmatch docker/.env >/dev/null 2>&1; then
   echo "check-ferret-test-stack: docker/.env is tracked" >&2
   exit 1

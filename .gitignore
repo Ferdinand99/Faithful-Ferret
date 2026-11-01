@@ -5,6 +5,7 @@ node_modules/
 *.log
 
 # WebAssembly packages built by scripts/lanbox-wasm.sh
+/web/wasm.local.tar.gz
 /bindings/wasm/pkg-*
 /bindings/wasm/node_modules
 

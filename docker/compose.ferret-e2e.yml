@@ -8,9 +8,10 @@
 #    named ferret-e2e* and labelled owner=ferret-e2e;
 #  * its own app, built with the cargo feature `e2e-clock` (the test clock; a
 #    release image does not have it);
-#  * no named volume and no published port: the data is in tmpfs, so every start
-#    is a fresh, empty database, and the only way in is from a container on the
-#    network ferret-e2e-net;
+#  * one named volume for the data (ferret-e2e-data, so that a container restart
+#    keeps it, which a restart test needs) that every `e2e-up` and `e2e-down`
+#    removes, so every run starts with a fresh, empty database; no published port:
+#    the only way in is from a container on the network ferret-e2e-net;
 #  * its own host names, vault-e2e.test and admin-e2e.test, that are aliases of
 #    the TLS terminator on that network; and its own trusted proxy, the address
 #    of that terminator and nothing else. It never goes through Pangolin and
@@ -48,8 +49,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m
-      # Throwaway data: empty at every start, never written to the SSD.
-      - /data:size=64m
+    volumes:
+      # Throwaway data. Kept over a restart of the container, removed with the
+      # stack (e2e-up and e2e-down remove it).
+      - ferret-e2e-data:/data
     networks:
       ferret-e2e-net:
         ipv4_address: 172.30.250.3
@@ -118,6 +121,12 @@ services:
           tls internal
           reverse_proxy ferret-e2e-app:3040
         }
+
+volumes:
+  ferret-e2e-data:
+    name: ferret-e2e-data
+    labels:
+      owner: ferret-e2e
 
 networks:
   ferret-e2e-net:
