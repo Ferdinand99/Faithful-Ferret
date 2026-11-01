@@ -10,13 +10,15 @@ use serde_json::{Value, json};
 
 /// Provenance written into every generated file.
 ///
-/// The `commit` field is a fixed marker, not a git hash: a hash would change
-/// the file with every commit and break the byte-for-byte `vectorgen check`.
-/// Vectors are versioned by `vectors/VERSION` instead.
+/// The `core` and `commit` fields are fixed markers, not a crate version or a
+/// git hash: either would change every file with each release or commit and
+/// break the byte-for-byte `vectorgen check` (a release bumps the crate
+/// version without touching a vector). Vectors are versioned by
+/// `vectors/VERSION` instead.
 pub(crate) fn generator() -> Generator {
     Generator {
         tool: "ferret-vectorgen".into(),
-        core: env!("CARGO_PKG_VERSION").into(),
+        core: "see-vectors-version".into(),
         commit: "see-vectors-version".into(),
         unicode: "16.0.0".into(),
         rng: "hmac-sha256-ctr(seed)".into(),

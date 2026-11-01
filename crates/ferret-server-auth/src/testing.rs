@@ -10,7 +10,9 @@
 //!   [`server_login_parses`] reach the parts of the sealed state that the
 //!   crate keeps private, for the fuzz targets.
 //! * [`state_plain_wipe_probe`] lets a test crate look at the memory of a
-//!   sealed state's content before and after it is dropped.
+//!   sealed state's content before and after it is dropped, and
+//!   [`server_login_wipe_probe`] does the same for the `ServerLogin` value of
+//!   `opaque-ke` itself.
 //! * [`LoginFixture`] is a server with one registered account and the pieces
 //!   to run the client of `ferret-core` against it. [`login_start_with_context`]
 //!   runs the first step with another OPAQUE context or other identities than
@@ -386,6 +388,26 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
     reader(WipePhase::Before, ptr, SERVER_LOGIN_LEN);
     held.clear();
     reader(WipePhase::After, ptr, SERVER_LOGIN_LEN);
+}
+
+/// Reads 128 bytes of `fill` as a serialized `ServerLogin` of `opaque-ke`
+/// (the session key and the expected MAC), calls `reader(Before, ptr, len)` on
+/// the whole memory of the parsed value, drops it in place and calls
+/// `reader(After, ptr, len)`. `len` is the size of the value, so the reader
+/// sees every byte the library keeps, not only the two arrays. The allocation
+/// lives until the probe returns. The reader needs `unsafe`, so the check lives
+/// in a test crate; this crate forbids it.
+pub fn server_login_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const u8, usize)) {
+    use ferret_core::opaque::server_suite::FerretSuite;
+    use ferret_core::opaque::server_suite::opaque_ke::ServerLogin;
+    let login = ServerLogin::<FerretSuite>::deserialize(&[fill; SERVER_LOGIN_LEN]).unwrap();
+    let mut held: Vec<ServerLogin<FerretSuite>> = Vec::with_capacity(1);
+    held.push(login);
+    let ptr = held.as_ptr().cast::<u8>();
+    let len = core::mem::size_of::<ServerLogin<FerretSuite>>();
+    reader(WipePhase::Before, ptr, len);
+    held.clear();
+    reader(WipePhase::After, ptr, len);
 }
 
 // ------------------------------------------------------------- login fixture

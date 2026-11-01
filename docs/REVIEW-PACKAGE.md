@@ -1,11 +1,11 @@
-# Review package: the Ferret cryptographic core
+# Review package: the Ferret cryptographic core and server library
 
 Faithful Ferret has **not been audited by anyone outside the project**, and no external
 audit is planned or funded. This page is a scoped package for anyone who wants to read the
-core critically: community reviewers, researchers, students, or a future auditor. It says
-what the core does, where each construction lives, what is already checked and how to
-re-run the checks, and which risks are known and accepted. It is meant to make a review
-quick to start, not to replace one.
+core and the server library critically: community reviewers, researchers, students, or a
+future auditor. It says what they do, where each construction lives, what is already
+checked and how to re-run the checks, and which risks are known and accepted. It is meant
+to make a review quick to start, not to replace one.
 
 Please report findings as described in [`SECURITY.md`](../SECURITY.md).
 
@@ -17,14 +17,24 @@ In scope:
   of Rust outside `src/testing/` (the test-support code, 1 900 lines, which is never part of a
   release); counted with `wc -l` over the `.rs` files under `crates/ferret-core/src/`, without comments or
   blank lines taken out.
+- `crates/ferret-server-auth/`: the server half of the OPAQUE login, safe Rust, no HTTP,
+  no database, no clock or randomness of its own. About 9 200 lines of Rust in `src/`
+  outside the test-support code (`src/testing.rs` and `src/testing/`, 1 900 lines, never
+  part of a release); counted with `wc -l`, without comments or blank lines taken out, so
+  the unit tests inside the modules are in the figure. The integration tests under `tests/`
+  are another 10 300 lines (with the support module they share).
 - `bindings/wasm/`: the WebAssembly binding and the worker client in `bindings/wasm/js/`,
   which keep key material inside WebAssembly memory.
 - `vectors/`, `tools/vectorgen/`, `tools/xcheck/`: the test vectors, their generator and an
   independent JavaScript reference that opens them.
 - The code that checks timing behaviour, fuzzing, coverage and the release build.
 
-Out of scope here: the server, the web vault, the browser extension and the mobile apps.
-They are not written yet; this package covers phase 4A only.
+Out of scope here: the server binary (`crates/ferret-server`) that calls the server library,
+the web vault, the browser extension and the mobile apps. The server library is in scope; the
+endpoints, the database and the HTTP layer that use it are not covered by this package. The
+core and the WebAssembly binding are described in
+[`PHASE-4A-REPORT.md`](PHASE-4A-REPORT.md), the server library in
+[`PHASE-2-REPORT.md`](PHASE-2-REPORT.md).
 
 The code cites the design document with references such as "Spec: Fase 1 § 4.3" ("Fase 1"
 is Norwegian for phase 1). That document is
@@ -85,6 +95,43 @@ ceiling on import, an inner key, 128 MiB body limit), the plaintext JSON and CSV
 canonicalisation with an embedded Public Suffix List), TOTP (`totp.rs`), the emergency sheet
 and its setup QR text (`sheet.rs`), and password and code input rules (`text/`, `codes.rs`).
 
+## What the server library does
+
+`crates/ferret-server-auth/` is the server half of the sign-in and of the signed requests.
+It enables the `server-suite` feature of `ferret-core`, so the OPAQUE suite, its context
+string and the message lengths are the core's own, and client and server cannot drift
+apart. It takes randomness and time from the caller, keeps nothing on disk except two secret
+files, and logs nothing. Sections of the design document: § 4.2 (registration and sign-in),
+§ 4.6 (signed requests), § 6.3 (sessions and the reset account).
+
+- **Registration and sign-in** (`registration.rs`, `login.rs`, `record.rs`): the two steps
+  of each OPAQUE exchange. The key stretching profile of an existing account comes from the
+  stored record and never from the request. A name without an account and a disabled
+  account are answered from a made-up record, in the same steps and with the same shape as
+  a real one (`prelogin.rs`), so the first answer does not tell which names exist.
+- **Sealed login state** (`state.rs`): the server's half of the exchange (128 bytes) is
+  sealed with XChaCha20-Poly1305 under a key derived from the pre-login secret, kept for 60
+  seconds and removed by the first `take`. The login id, the credential, the purpose and the
+  session of a re-authentication are bound to the blob; a login cannot finish as a
+  re-authentication, and a re-authentication only for the account of its session.
+- **Rate limits** (`throttle.rs`): the library counts nothing itself. Every entry point asks
+  a `Throttle` before it does any work and reports the outcome; the caller's address is
+  grouped by the library (IPv6 as /64, IPv4-mapped as IPv4).
+- **Sessions** (`scope.rs`): which operations each kind of session may start
+  (`authorize(scope, capability)`), including the partial session before the second factor
+  and the session of a reset account.
+- **Signed requests** (`replace.rs`): single-use challenges bound to a session, and the
+  check of the Ed25519 proof that must accompany a password change, a profile upgrade or a
+  recovery. The proof covers the exact request bytes; the signature check is `ferret-core`'s.
+- **Secrets and start-up** (`secret_file.rs`, `keys.rs`, `startup.rs`): the OPAQUE set-up
+  and the pre-login secret live in two files (mode 0600, owned by the running user, with a
+  checksum); the caller stores a fingerprint of the set-up with the accounts, and `startup_decision`
+  refuses to start when the files and the database disagree (a lost or swapped set-up would
+  otherwise break every sign-in without a word).
+- **Wire types** (`ids.rs`, `name.rs`, `error.rs`): login ids, credential ids, the
+  normalisation of the login name, and one error type whose public codes are coarse (a
+  denial is one code whatever the cause).
+
 ## Where to look
 
 | Area | Files | Lines | What to check |
@@ -96,6 +143,9 @@ and its setup QR text (`sheet.rs`), and password and code input rules (`text/`, 
 | Export and import | `export.rs`, `export/plain.rs` | 617, 350 | Parameter floor and ceiling before any Argon2 work; limits; neutralised CSV |
 | Passkeys | `passkey/` | about 1 600 | Origin and RP ID rules; that no private key or PRF seed leaves except as allowed (`scripts/check-passkey-api.sh`) |
 | Text and codes | `text/`, `codes.rs`, `ct/harness/crockford.rs` | 417, 341, 154 | Normalisation and length rules; checksum and look-alike handling |
+| Sign-in and registration on the server | `login.rs`, `registration.rs`, `prelogin.rs`, `record.rs` | 1 189, 201, 958, 197 | That the work done for a known, an unknown and a disabled name is the same; the order of the steps (the limiter is asked before any OPAQUE work, and the state is taken before the limiter is asked with its id); that a stored record is validated before use |
+| Login state and secrets | `state.rs`, `keys.rs`, `secret_file.rs`, `startup.rs` | 1 453, 451, 605, 97 | The seal and its associated data; single use; expiry at the end of time; file modes and owner; what happens at start-up when the files and the database disagree |
+| Sessions, challenges and signed requests | `scope.rs`, `replace.rs`, `throttle.rs` | 296, 1 415, 982 | That a session only starts what its scope allows; the single-use nonce; that the proof covers the request body, the operation and the account; that the limiter is asked before any effectful work |
 | WebAssembly binding | `bindings/wasm/src/`, `bindings/wasm/js/` | about 5 500 and 900 (a quarter of the Rust is `vector_ops.rs`, test support) | That secrets are returned only where `reveal-allowlist.txt` says; worker lifecycle; wiping |
 
 ## What is already checked, and how to run it
@@ -108,17 +158,19 @@ Docker host (`scripts/lanbox.sh` and the `scripts/lanbox-*.sh` wrappers; set
 | Check | How | Where it is described |
 |---|---|---|
 | Unit and integration tests | `cargo test --workspace` | `crates/ferret-core/tests/` |
-| Test vectors, internal (about 1 100 cases) and external (RFCs and Wycheproof, about 1 600) | `cargo run -p ferret-vectorgen --bin vectorgen -- check`, then the Rust, Node and browser runners | `vectors/OPS.md`, `vectors/ERRORS.md` |
+| Test vectors, internal (about 1 400 cases) and external (RFCs and Wycheproof, about 1 600) | `cargo run -p ferret-vectorgen --bin vectorgen -- check`, then the Rust, Node and browser runners | `vectors/OPS.md`, `vectors/ERRORS.md` |
 | Independent re-implementation of the vectors | `cd tools/xcheck && npm ci && node src/run.mjs` | `tools/xcheck/AMBIGUITIES.md` |
 | Three browsers, no secret in worker messages | `tests/browser` (Playwright) | `scripts/lanbox-browsers.sh` |
 | Property tests (20 000 cases per property in the nightly run) | `PROPTEST_CASES=20000 cargo test -p ferret-core --test 'props_*'` | `.github/workflows/props.yml` |
-| Twelve fuzz targets with AddressSanitizer | `scripts/lanbox-fuzz.sh <target\|all> <seconds>` | `fuzz/`, `.github/workflows/fuzz.yml` |
+| Eighteen fuzz targets with AddressSanitizer (six of them for the server library) | `scripts/lanbox-fuzz.sh <target\|all> <seconds>` | `fuzz/`, `.github/workflows/fuzz.yml` |
 | Line and branch coverage thresholds | `scripts/lanbox-coverage.sh` | `scripts/coverage-thresholds.json` |
-| Constant-time analysis and timing tests | `ct/run.sh` (analyzer, WebAssembly scan, timing tests) and `scripts/lanbox-ct.sh` | `ct/TRIAGE.md`, `ct/results/` |
+| Constant-time analysis and timing tests, including the server library | `ct/run.sh` (analyzer, WebAssembly scan, timing tests) and `scripts/lanbox-ct.sh` (`CT_ONLY=server` for the server benches) | `ct/TRIAGE.md` ("Server library"), `ct/results/` |
+| Server library against RFC 9807 and its own vectors | `cargo test -p ferret-server-auth`; the `server.*` operations in `vectors/internal/server-*.json` | `vectors/OPS.md` |
 | Dependencies | `cargo deny check`, `cargo vet` | `deny.toml`, `supply-chain/` |
 | No test code in a release | `scripts/check-no-test-support.sh`, `tests/node/release.test.mjs` | [`RELEASING.md`](RELEASING.md) |
 
-The measured results of the phase are in [`PHASE-4A-REPORT.md`](PHASE-4A-REPORT.md).
+The measured results are in [`PHASE-4A-REPORT.md`](PHASE-4A-REPORT.md) (the core and the
+binding) and [`PHASE-2-REPORT.md`](PHASE-2-REPORT.md) (the server library).
 
 ## Known risks that are accepted
 
@@ -158,6 +210,43 @@ each has a reason.
   checkpoint must have sequence number 1. The check of the server address in the setup QR code
   is syntactic only, so a client has to show the host to the user. A key-stretching upgrade
   path exists but is untested until a second profile exists.
+- **The server library's timing evidence is narrow.** The timing tests time the library's
+  public functions with a limiter that admits everything, a store that keeps nothing and one
+  replayed random tape. They say nothing about the database lookup that decides whether a
+  name has an account, the HTTP layer, TLS or the network; a test of the running server
+  has to cover those. The two compares of the finish step (the credential and the binding
+  of the state) are shown to be `ct_eq` by a call-site test and by reading, not by timing
+  alone. `ct/TRIAGE.md` has the full list (S-1 to S-3, R10).
+- **Server-side wiping.** The sealed state, the session key and the expected MAC are wiped
+  where the library holds them, and the `ServerLogin` value of `opaque-ke` is checked to
+  wipe itself on drop; copies made by the allocator, the stack or the caller's own buffers
+  are out of reach, as for the core.
+- **What the library leaves to the caller.** A signed proof is the third of three things that
+  § 4.6 asks of a sensitive request; the library checks only the proof. The endpoint must also
+  require (a) the password again within five minutes and (b) a fresh second factor when the
+  account has one, and check that an account is not disabled after the sign-in finishes. It
+  promotes a partial session to a full one, charges the rate limit key of an account only on
+  failure (counting successes would reveal that the account exists), and chooses the rate
+  limit numbers; the server limits only the first step of sign-in and of registration today, so
+  the per-account back-off of § 11 is not in force. The wire encoding of the nonce and the
+  proof, the status codes, the tables, the transaction around a password change, the revocation
+  of other sessions and tokens after it, and the check that the method named in a remove body
+  is the one in the URL are the endpoint's as well. The endpoint code is not covered by this
+  package. The library gives it the error class and the checks; it cannot make the endpoint use
+  them, and the endpoint does a database read and one record parse before the library asks the
+  throttle.
+- **Made-up answers are a weak disguise on a small server.** An unknown or disabled name is
+  answered with a profile and a secret-key hint drawn from the shares of the real accounts. The
+  two are drawn separately, so their pairing does not follow the joint spread; a share that is
+  a few accounts rounds and moves when one is added or removed; and with a handful of accounts a
+  minority answer is weak evidence that the account is real. For a self-hosted server with few
+  accounts this is the main enumeration path left after timing.
+- **A replaced pre-login secret is not detected.** Only the OPAQUE set-up has a fingerprint, so
+  a restore with the wrong `prelogin_secret` file changes every made-up answer without a
+  message.
+- **`opaque-ke` parsers accept trailing bytes.** The library checks the exact length of
+  every OPAQUE message and record before it parses, and a test locks the behaviour of the
+  upstream parsers.
 - **Passkeys.** The PRF result goes from the page to the vault worker as an argument; this is
   by design because it comes from the browser.
 - **Limits of the checks.** Coverage and fuzzing show that code was exercised, not that it is
@@ -172,3 +261,6 @@ each has a reason.
 4. `account.rs` and `pinning.rs` for the order of the pin checks.
 5. `export.rs`.
 6. `bindings/wasm/src/vault.rs` and `bindings/wasm/reveal-allowlist.txt`.
+7. For the server library: the module documentation of `login.rs` (the order of the steps),
+   then `state.rs`, `prelogin.rs`, `replace.rs` and `scope.rs`, and the "Server library"
+   section of `ct/TRIAGE.md`.

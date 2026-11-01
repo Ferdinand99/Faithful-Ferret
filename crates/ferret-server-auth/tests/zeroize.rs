@@ -11,7 +11,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use ferret_core::secret::WipePhase;
-use ferret_server_auth::testing::state_plain_wipe_probe;
+use ferret_server_auth::testing::{server_login_wipe_probe, state_plain_wipe_probe};
 
 fn read(ptr: *const u8, len: usize) -> Vec<u8> {
     (0..len)
@@ -38,6 +38,38 @@ fn state_plain_zeroizes_on_drop() {
         assert!(
             after.iter().all(|b| *b == 0),
             "the ServerLogin bytes are not wiped on drop: {after:02x?}"
+        );
+    }
+}
+
+/// The `ServerLogin` value of `opaque-ke` itself wipes the session key and the
+/// expected MAC when it is dropped. Between the two steps of a login the
+/// library keeps only sealed bytes; the value exists inside `login_start`
+/// and inside the proof check of `login_finish`, and this is the drop that
+/// ends it. The probe reads the whole value, so a copy
+/// of either array anywhere in it would show.
+#[test]
+fn opaque_server_login_zeroizes_on_drop() {
+    for fill in [0xa5u8, 0x01, 0xff] {
+        let mut seen: Vec<(WipePhase, Vec<u8>)> = Vec::new();
+        server_login_wipe_probe(fill, &mut |phase, ptr, len| {
+            assert!(len >= 128, "the value holds at least the two arrays");
+            seen.push((phase, read(ptr, len)));
+        });
+        assert_eq!(seen.len(), 2, "the probe reads before and after");
+        let (before_phase, before) = &seen[0];
+        let (after_phase, after) = &seen[1];
+        assert_eq!(*before_phase, WipePhase::Before);
+        assert_eq!(*after_phase, WipePhase::After);
+        let held = |bytes: &[u8]| bytes.iter().filter(|b| **b == fill).count();
+        assert!(
+            held(before) >= 128,
+            "the value holds the session key and the MAC while it lives: {before:02x?}"
+        );
+        assert_eq!(
+            held(after),
+            0,
+            "the ServerLogin of opaque-ke keeps bytes after the drop: {after:02x?}"
         );
     }
 }

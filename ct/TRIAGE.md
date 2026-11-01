@@ -286,6 +286,20 @@ list of places from growing unnoticed.
   the policy. All three work on a value derived from the pre-login secret, not
   chosen by the client, and their result is the answer that is given anyway.
   Accepted.
+- **Wiping of the login state.** The 128 serialized bytes of a `ServerLogin`
+  (the session key and the expected MAC) are held in a `Zeroizing` buffer in
+  the plaintext of a sealed state, and `state_plain_zeroizes_on_drop` reads
+  that memory after the drop. The `ServerLogin` value of `opaque-ke` 4.0.1 is
+  checked the same way by `opaque_server_login_zeroizes_on_drop`
+  (`tests/zeroize.rs`): it parses 128 bytes of a known pattern, reads the
+  whole value, drops it and finds no byte of the pattern. The probe is shown
+  to see an unwiped buffer by `the_probe_sees_a_buffer_that_is_not_wiped`.
+  What the tests cannot see, and what stays as a residual risk: copies made
+  while the value is moved (`ServerLogin::finish` takes it by value, and
+  `deserialize` and `serialize` build temporaries on the stack), the
+  `session_key` that `finish` returns (the library wipes it in
+  `check_proof`), and the pages of the allocator and the swap. Accepted, as
+  for the core.
 
 ### Review points
 
@@ -295,7 +309,7 @@ list of places from growing unnoticed.
 | 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 3 calls, `prelogin.rs`, 2, behind `test-support`) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only`, `info_server_login_start_real_vs_made_up` and `info_server_login_start_fixed_vs_pool`; `server_prelogin_known_vs_unknown` times `prelogin_answer` (`stored_for` and `choose_answer` get the class), with its null control `control_server_prelogin_null` |
 | 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 48 binding bytes (`LoginPurpose::same_as`), the purpose byte next to it with `&` | T5 and the call-site test; `server_state_binding` is a smoke test (it cannot tell `ct_eq` from `==` on 48 bytes behind an AEAD open) |
 | 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open), with the null control `control_server_finish_null`; `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
-| 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
+| 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by a SHA-256 of the value (`StateKey` with a label, `ChallengeKey` over the fixed-length session binding and nonce); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
 | 5 | SHA-256 checksum of a secret file | the content is secret | `ct_eq` (`secret_file.rs`) | `the_constant_time_call_sites_are_the_ones_that_were_checked` |
 | 6 | Fingerprint of the set-up at start-up | no (a hash, no remote caller) | `PartialEq` of `SetupFingerprint` is `ct_eq` anyway | `no_secret_comparison_uses_eq` |
 | 7 | Profile numbers, lengths, times | no | plain | `no_secret_comparison_uses_eq` |

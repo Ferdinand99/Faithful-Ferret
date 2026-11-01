@@ -285,8 +285,19 @@ fn release_please_extra_files_name_three_server_lock_paths_and_the_manifest_vers
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let old = "0.1.0";
+    // The version of the repository as it is now, so the test does not go
+    // stale when a release bumps it.
+    let old_version = read(&root_dir().join("Cargo.toml"))
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("version = \"")
+                .and_then(|v| v.strip_suffix('"'))
+                .map(str::to_string)
+        })
+        .expect("the root manifest has a workspace version");
+    let old = old_version.as_str();
     let new = "9.8.7";
+    assert_ne!(old, new, "the bump must change the version");
     std::fs::write(
         scratch.join("Cargo.toml"),
         root_manifest.replacen(

@@ -5,7 +5,7 @@
   "spec": "Fase 1 § 4.2 and § 4.6; RFC 9807",
   "generator": {
     "tool": "ferret-vectorgen",
-    "core": "0.1.0",
+    "core": "see-vectors-version",
     "commit": "see-vectors-version",
     "unicode": "16.0.0",
     "rng": "hmac-sha256-ctr(seed)"
