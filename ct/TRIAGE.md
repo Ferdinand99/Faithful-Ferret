@@ -286,6 +286,20 @@ list of places from growing unnoticed.
   the policy. All three work on a value derived from the pre-login secret, not
   chosen by the client, and their result is the answer that is given anyway.
   Accepted.
+- **Wiping of the login state.** The 128 serialized bytes of a `ServerLogin`
+  (the session key and the expected MAC) are held in a `Zeroizing` buffer in
+  the plaintext of a sealed state, and `state_plain_zeroizes_on_drop` reads
+  that memory after the drop. The `ServerLogin` value of `opaque-ke` 4.0.1 is
+  checked the same way by `opaque_server_login_zeroizes_on_drop`
+  (`tests/zeroize.rs`): it parses 128 bytes of a known pattern, reads the
+  whole value, drops it and finds no byte of the pattern. The probe is shown
+  to see an unwiped buffer by `the_probe_sees_a_buffer_that_is_not_wiped`.
+  What the tests cannot see, and what stays as a residual risk: copies made
+  while the value is moved (`ServerLogin::finish` takes it by value, and
+  `deserialize` and `serialize` build temporaries on the stack), the
+  `session_key` that `finish` returns (the library wipes it in
+  `check_proof`), and the pages of the allocator and the swap. Accepted, as
+  for the core.
 
 ### Review points
 

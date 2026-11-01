@@ -10,6 +10,6 @@
     "codes": { "paths": ["crates/ferret-core/src/codes.rs", "ct/harness/crockford.rs"], "lines": 95, "branches": 90 },
     "text": { "paths": ["crates/ferret-core/src/text/"], "lines": 95, "branches": 90 },
     "export": { "paths": ["crates/ferret-core/src/export.rs", "crates/ferret-core/src/export/"], "lines": 95, "branches": 90 },
-    "server-auth": { "paths": ["crates/ferret-server-auth/src/"], "lines": 95, "branches": 90 }
+    "server_auth": { "paths": ["crates/ferret-server-auth/src/"], "lines": 95, "branches": 90 }
   }
 }

@@ -9,7 +9,7 @@
 //!
 //! * `test-support` (off by default, never part of a release): a replaying
 //!   RNG, a deterministic test RNG and the test-vector loader and runner in
-//!   [`testing`].
+//!   `testing` (documented with the feature on).
 //! * `server-suite` (off by default, never enabled by the WASM package): the
 //!   OPAQUE cipher suite, the `rand 0.8` adapter and the message lengths, as
 //!   `opaque::server_suite`, for a server built on this crate.

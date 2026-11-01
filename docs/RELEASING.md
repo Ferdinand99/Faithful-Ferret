@@ -11,10 +11,21 @@ happens when the maintainer merges the release pull request.
    changes).
 2. The workflow `Release Please` (`.github/workflows/release-please.yml`) keeps one
    open pull request, "chore(main): release x.y.z". It changes the version in
-   `Cargo.toml`, in `Cargo.lock` and in `fuzz/Cargo.lock`, writes `CHANGELOG.md` and
+   `Cargo.toml`, in the lock files (`Cargo.lock`, `fuzz/Cargo.lock`, `ct/dudect/Cargo.lock`
+   and `crates/ferret-server/Cargo.lock`), writes `CHANGELOG.md` and
    `version.txt`, and updates `.release-please-manifest.json`. The configuration, with one component,
    is `release-please-config.json`. Before 1.0 a breaking change raises the minor
    version, not the major one.
+
+   The server library `ferret-server-auth` has no component and no package of its own. It is a
+   member of the workspace with `version.workspace = true` and `publish = false`, so it
+   carries the version of the one component, and the release tag `vX.Y.Z` is the version of
+   the library too. It has one consumer, the server, which pins the library to a tag of this
+   repository, so a second line of versions would only make two numbers for one contract (the
+   client and the server must run the same OPAQUE suite). Every lock file that names the
+   library is listed in `release-please-config.json` next to the one that names the core;
+   when a new crate or lock file joins the tree, add its line there, or the next
+   `--locked` build after a release fails on a lock that still has the old version.
 3. Before merging, check that the Public Suffix List snapshot is fresh (below), that
    all checks on the pull request are green, and read the changelog.
 4. Merging the pull request makes release-please create the tag `vX.Y.Z` and the GitHub

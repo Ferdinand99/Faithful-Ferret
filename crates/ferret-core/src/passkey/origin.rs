@@ -31,7 +31,7 @@
 //! iOS and Digital Asset Links (`assetlinks.json`) on Android; for browsers on
 //! Android only a built-in allow-list of privileged callers may state an
 //! `origin`. The provider checks the relation and then passes the origin it
-//! has established to this module as a [`CallerContext`], so the same
+//! has established to this module as a [`CallerContext`](super::CallerContext), so the same
 //! canonicalisation and the same exact `rp_id` rule at signing time apply.
 
 use super::psl;

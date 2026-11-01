@@ -7,7 +7,7 @@
 //!
 //! * [`origin`]: canonical origins, RP IDs and the Public Suffix List.
 //! * [`passkey_create`] and [`passkey_get`]: the two ceremonies.
-//! * [`prf`]: the two PRF seeds and the `prf` extension.
+//! * `prf`: the two PRF seeds and the `prf` extension.
 //!
 //! # What the caller must have done
 //!
