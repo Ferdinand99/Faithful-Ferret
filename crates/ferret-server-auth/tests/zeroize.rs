@@ -42,9 +42,11 @@ fn state_plain_zeroizes_on_drop() {
     }
 }
 
-/// The `ServerLogin` value of `opaque-ke` itself, as the library holds it
-/// between the start of a login and its finish, wipes the session key and the
-/// expected MAC when it is dropped. The probe reads the whole value, so a copy
+/// The `ServerLogin` value of `opaque-ke` itself wipes the session key and the
+/// expected MAC when it is dropped. Between the two steps of a login the
+/// library keeps only sealed bytes; the value exists inside `login_start`
+/// and inside the proof check of `login_finish`, and this is the drop that
+/// ends it. The probe reads the whole value, so a copy
 /// of either array anywhere in it would show.
 #[test]
 fn opaque_server_login_zeroizes_on_drop() {

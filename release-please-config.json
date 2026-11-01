@@ -6,6 +6,7 @@
       "package-name": "faithful-ferret-core",
       "include-component-in-tag": false,
       "bump-minor-pre-major": true,
+      "always-update": true,
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" },

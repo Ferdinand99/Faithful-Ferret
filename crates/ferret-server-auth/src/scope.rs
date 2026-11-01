@@ -57,7 +57,9 @@ pub enum Capability {
     SecondFactor,
     /// Start an OPAQUE registration.
     OpaqueRegisterStart,
-    /// Start or finish a re-authentication login.
+    /// Start a re-authentication login. Only the start checks this; the
+    /// finish relies on the binding in the sealed state and on the endpoint's
+    /// session extractor.
     ReauthLogin,
     /// Read the recovery wrap.
     RecoveryWrapRead,

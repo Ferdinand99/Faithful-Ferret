@@ -9,6 +9,13 @@
 //! replacing the recovery wrap, a rekey) go through [`authorize_signed`],
 //! which is the same check without the record.
 //!
+//! The proof is the third of the three things that Fase 1 § 4.6 asks for a
+//! sensitive request. The other two are not checked here: the password again
+//! within five minutes (a re-authentication login that sets the freshness of
+//! the session) and a fresh second factor for an account that has one. The
+//! endpoint must require both before it calls these functions; a valid proof
+//! alone is not enough for a password change, an upgrade or a recovery.
+//!
 //! Nothing outside this module verifies a proof. The functions of
 //! `ferret-core` that do (`verify_auth_proof`, `verify_recovery_proof`) are
 //! called from here only, after the nonce is used up, and a test keeps it so.

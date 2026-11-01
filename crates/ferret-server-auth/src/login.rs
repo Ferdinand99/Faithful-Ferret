@@ -12,7 +12,7 @@
 //!   (`ct_select_bytes`), so the steps that follow are the same ones;
 //! * a name without an account, and an account that is disabled, are both
 //!   answered from the made-up record. The answer has the same shape (320
-//!   bytes of KE2, a profile, a second-factor hint) and is the same on every
+//!   bytes of KE2, a profile, a secret-key hint) and is the same on every
 //!   ask for the same name and KE1;
 //! * the throttle is asked first, with the resolved credential id, so a
 //!   limiter sees the same kind of request for both.
@@ -222,7 +222,9 @@ pub enum AccountLookup<'a> {
     Active {
         /// The stored record and its key stretching profile.
         record: &'a StoredRecord,
-        /// Whether the account has a second factor.
+        /// Whether the account uses a secret key (SK). A suggestion for the
+        /// sign-in screen only; it is not a second factor, and the client
+        /// never takes the SK bit from it.
         sk_hint: bool,
     },
     /// No account has this name.
@@ -279,7 +281,8 @@ pub struct LoginStartResponse {
     pub ke2: Vec<u8>,
     /// The key stretching profile the client must use.
     pub ksf_profile: u8,
-    /// Whether the account has a second factor.
+    /// Whether the account uses a secret key (SK). A suggestion for the
+    /// sign-in screen only; it is not a second factor.
     pub sk_hint: bool,
 }
 
@@ -529,7 +532,7 @@ pub(crate) fn stored_for<'a>(
     }
 }
 
-/// The profile and the second-factor hint to answer with: the account's own
+/// The profile and the secret-key hint to answer with: the account's own
 /// when `stored` is an account, the made-up ones of the name when it is not.
 /// Both are given, and the choice is two `ct_select_u8`. The pre-login answer
 /// ([`crate::prelogin_answer`]) and `login_start` both use it, so the two
@@ -674,7 +677,10 @@ fn parse_ke3(bytes: &[u8]) -> Result<CredentialFinalization<FerretSuite>, AuthEr
 ///
 /// Every refusal of the proof is [`AuthError::Denied`] with a reason of its
 /// own and the one public code `denied`; a missing, used, expired, foreign
-/// or wrongly bound state and a wrong KE3 cannot be told apart by a client.
+/// or wrongly bound state and a wrong KE3 cannot be told apart by a client
+/// from the status and the body of the answer. The time is another matter: a
+/// missing state returns before any OPAQUE work, so it is faster, and a caller
+/// knows whether it sent a state (see `ct/TRIAGE.md`).
 ///
 /// An expired state is reported as [`DenyReason::StateMissing`], not as an
 /// expiry: the store drops a state at its expiry time (`now >= expires_at`)

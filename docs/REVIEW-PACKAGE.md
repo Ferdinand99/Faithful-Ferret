@@ -22,7 +22,7 @@ In scope:
   outside the test-support code (`src/testing.rs` and `src/testing/`, 1 900 lines, never
   part of a release); counted with `wc -l`, without comments or blank lines taken out, so
   the unit tests inside the modules are in the figure. The integration tests under `tests/`
-  are another 9 500 lines.
+  are another 10 300 lines (with the support module they share).
 - `bindings/wasm/`: the WebAssembly binding and the worker client in `bindings/wasm/js/`,
   which keep key material inside WebAssembly memory.
 - `vectors/`, `tools/vectorgen/`, `tools/xcheck/`: the test vectors, their generator and an
@@ -158,7 +158,7 @@ Docker host (`scripts/lanbox.sh` and the `scripts/lanbox-*.sh` wrappers; set
 | Check | How | Where it is described |
 |---|---|---|
 | Unit and integration tests | `cargo test --workspace` | `crates/ferret-core/tests/` |
-| Test vectors, internal (about 1 100 cases) and external (RFCs and Wycheproof, about 1 600) | `cargo run -p ferret-vectorgen --bin vectorgen -- check`, then the Rust, Node and browser runners | `vectors/OPS.md`, `vectors/ERRORS.md` |
+| Test vectors, internal (about 1 400 cases) and external (RFCs and Wycheproof, about 1 600) | `cargo run -p ferret-vectorgen --bin vectorgen -- check`, then the Rust, Node and browser runners | `vectors/OPS.md`, `vectors/ERRORS.md` |
 | Independent re-implementation of the vectors | `cd tools/xcheck && npm ci && node src/run.mjs` | `tools/xcheck/AMBIGUITIES.md` |
 | Three browsers, no secret in worker messages | `tests/browser` (Playwright) | `scripts/lanbox-browsers.sh` |
 | Property tests (20 000 cases per property in the nightly run) | `PROPTEST_CASES=20000 cargo test -p ferret-core --test 'props_*'` | `.github/workflows/props.yml` |
@@ -221,10 +221,29 @@ each has a reason.
   where the library holds them, and the `ServerLogin` value of `opaque-ke` is checked to
   wipe itself on drop; copies made by the allocator, the stack or the caller's own buffers
   are out of reach, as for the core.
-- **What the library leaves to the caller.** The wire encoding of the nonce and the proof, the
-  status codes, the rate limit numbers, the database tables and the transaction around a
-  password change belong to the endpoint code, which this package does not cover. The
-  library gives it the error class and the checks; it cannot make the endpoint use them.
+- **What the library leaves to the caller.** A signed proof is the third of three things that
+  § 4.6 asks of a sensitive request; the library checks only the proof. The endpoint must also
+  require (a) the password again within five minutes and (b) a fresh second factor when the
+  account has one, and check that an account is not disabled after the sign-in finishes. It
+  promotes a partial session to a full one, charges the rate limit key of an account only on
+  failure (counting successes would reveal that the account exists), and chooses the rate
+  limit numbers; the server limits only the first step of sign-in and of registration today, so
+  the per-account back-off of § 11 is not in force. The wire encoding of the nonce and the
+  proof, the status codes, the tables, the transaction around a password change, the revocation
+  of other sessions and tokens after it, and the check that the method named in a remove body
+  is the one in the URL are the endpoint's as well. The endpoint code is not covered by this
+  package. The library gives it the error class and the checks; it cannot make the endpoint use
+  them, and the endpoint does a database read and one record parse before the library asks the
+  throttle.
+- **Made-up answers are a weak disguise on a small server.** An unknown or disabled name is
+  answered with a profile and a secret-key hint drawn from the shares of the real accounts. The
+  two are drawn separately, so their pairing does not follow the joint spread; a share that is
+  a few accounts rounds and moves when one is added or removed; and with a handful of accounts a
+  minority answer is weak evidence that the account is real. For a self-hosted server with few
+  accounts this is the main enumeration path left after timing.
+- **A replaced pre-login secret is not detected.** Only the OPAQUE set-up has a fingerprint, so
+  a restore with the wrong `prelogin_secret` file changes every made-up answer without a
+  message.
 - **`opaque-ke` parsers accept trailing bytes.** The library checks the exact length of
   every OPAQUE message and record before it parses, and a test locks the behaviour of the
   upstream parsers.

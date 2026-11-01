@@ -12,20 +12,26 @@ happens when the maintainer merges the release pull request.
 2. The workflow `Release Please` (`.github/workflows/release-please.yml`) keeps one
    open pull request, "chore(main): release x.y.z". It changes the version in
    `Cargo.toml`, in the lock files (`Cargo.lock`, `fuzz/Cargo.lock`, `ct/dudect/Cargo.lock`
-   and `crates/ferret-server/Cargo.lock`), writes `CHANGELOG.md` and
-   `version.txt`, and updates `.release-please-manifest.json`. The configuration, with one component,
+   and `crates/ferret-server/Cargo.lock`), writes `CHANGELOG.md`, and updates `.release-please-manifest.json`. The configuration, with one component,
    is `release-please-config.json`. Before 1.0 a breaking change raises the minor
    version, not the major one.
 
    The server library `ferret-server-auth` has no component and no package of its own. It is a
    member of the workspace with `version.workspace = true` and `publish = false`, so it
    carries the version of the one component, and the release tag `vX.Y.Z` is the version of
-   the library too. It has one consumer, the server, which pins the library to a tag of this
-   repository, so a second line of versions would only make two numbers for one contract (the
-   client and the server must run the same OPAQUE suite). Every lock file that names the
+   the library too. It has one consumer, the server (`crates/ferret-server`), which takes it by
+   a path dependency from the same repository, so a second line of versions would only make
+   two numbers for one contract (the client and the server must run the same OPAQUE suite). Every lock file that names the
    library is listed in `release-please-config.json` next to the one that names the core;
    when a new crate or lock file joins the tree, add its line there, or the next
    `--locked` build after a release fails on a lock that still has the old version.
+   Release-please pushes to an open release pull request only when its text changes; a commit
+   that does not show in the notes (`chore:`, `test:`) leaves the pull request as it is. The
+   configuration sets `always-update`, and a change to the release files should be a `fix:` or
+   `feat:`, so the pull request is regenerated. After such a change, look at the lock files in
+   the release pull request: each of the four must show the version line of every first-party
+   crate in it changed (`ferret-core` and `ferret-server-auth` in `fuzz/Cargo.lock` and
+   `ct/dudect/Cargo.lock`), and its checks must be green.
 3. Before merging, check that the Public Suffix List snapshot is fresh (below), that
    all checks on the pull request are green, and read the changelog.
 4. Merging the pull request makes release-please create the tag `vX.Y.Z` and the GitHub

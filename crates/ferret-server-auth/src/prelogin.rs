@@ -8,11 +8,16 @@
 //! * [`fake_credential_id`]: the credential id OPAQUE binds the answer to.
 //!   `resolve_credential` (behind `test-support`: no request path uses it)
 //!   picks the account's own id or this one, in one place.
-//! * [`fake_prelogin`]: the key stretching profile and the second-factor hint
+//! * [`fake_prelogin`]: the key stretching profile and the secret-key hint
+//!   (`sk_hint`: whether the account uses a secret key, not a second factor)
 //!   that a pre-login answer carries. They are drawn from the shares of the
-//!   real accounts ([`PreloginPolicy`]), so the made-up answers are spread as
-//!   the real ones are and carry no information about whether an account
-//!   exists.
+//!   real accounts ([`PreloginPolicy`]), so each made-up value is spread as
+//!   the real ones are. That hides the answer only as far as the shares do:
+//!   the two values are drawn separately, so their pairing does not follow the
+//!   joint spread of the real accounts, a share that is a few accounts rounds
+//!   and moves when one is added or removed, and a small server has a
+//!   minority answer that is weak evidence of a real account. See
+//!   [`fake_prelogin`] and the server's policy loader for the residual.
 //! * `fake_record_bytes` (crate-internal): a record that OPAQUE accepts in place of a stored
 //!   one, the same for the same id every time.
 //!
@@ -182,7 +187,7 @@ pub(crate) fn pick_account<'a>(account: Option<&'a AccountId>, none: &'a [u8; 16
 }
 
 /// The pre-login answer for a name: the key stretching profile and the
-/// second-factor hint of the account when `lookup` is one that may log in, the
+/// secret-key hint of the account when `lookup` is one that may log in, the
 /// made-up ones of the name when it is not (no account, or a disabled one).
 ///
 /// The made-up answer is always computed, the lookup is unpacked by the same
@@ -206,7 +211,7 @@ pub fn prelogin_answer(
 }
 
 /// How the made-up pre-login answers are spread: the share of each key
-/// stretching profile, and the share of "has a second factor", both in
+/// stretching profile, and the share of accounts that use a secret key, both in
 /// permille.
 ///
 /// The server sets them from its real accounts. If every real account used
@@ -217,7 +222,7 @@ pub fn prelogin_answer(
 pub struct PreloginPolicy {
     /// Profile numbers and their shares, in the order given.
     profiles: Vec<(u8, u16)>,
-    /// The share of answers that say the account has a second factor.
+    /// The share of answers that say the account uses a secret key.
     sk_true_permille: u16,
 }
 
@@ -272,9 +277,9 @@ impl PreloginPolicy {
         }
     }
 
-    /// Every made-up answer uses `profile` and says the account has a second
-    /// factor: the setting of a server whose accounts all look like that (the
-    /// second factor is on by default).
+    /// Every made-up answer uses `profile` and says the account uses a secret
+    /// key: the setting of a server whose accounts all look like that (the
+    /// secret key is on by default).
     ///
     /// The profile is a [`KsfProfile`] of the core, so a number that clients do
     /// not know cannot be given.
@@ -304,12 +309,13 @@ impl PreloginPolicy {
 }
 
 /// The pre-login data of a name: which key stretching profile to use and
-/// whether the account has a second factor.
+/// whether the account uses a secret key.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PreloginAnswer {
     /// The key stretching profile the client must use.
     pub ksf_profile: u8,
-    /// Whether the account has a second factor.
+    /// Whether the account uses a secret key (SK). A suggestion for the
+    /// sign-in screen only; it is not a second factor.
     pub sk_hint: bool,
 }
 
@@ -834,8 +840,8 @@ mod tests {
         let f = LoginFixture::new();
         let made_up = fake_prelogin(&f.prelogin, &f.name, &f.policy);
         let own = prelogin_answer(&f.prelogin, &f.name, &f.policy, f.active());
-        // The fixture's account has profile 1 and no second factor; the policy
-        // says "profile 1, second factor" for a name without an account.
+        // The fixture's account has profile 1 and no secret key; the policy
+        // says "profile 1, secret key" for a name without an account.
         assert_eq!(
             own,
             PreloginAnswer {
