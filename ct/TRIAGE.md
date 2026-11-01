@@ -292,9 +292,9 @@ list of places from growing unnoticed.
 | # | Compare or choice | Secret? | How it is done | Checked by |
 |---|---|---|---|---|
 | 1 | KE3 against the expected MAC | yes | `opaque-ke` (`subtle::ConstantTimeEq`) inside `ServerLogin::finish` | a KE3 with one byte changed, at every position, is refused (`tests/rfc9807_server.rs`) |
-| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 3 calls, `prelogin.rs`, 2) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only`, `info_server_login_start_real_vs_made_up` and `info_server_login_start_fixed_vs_pool`; `server_prelogin_known_vs_unknown` times `prelogin_answer` (`stored_for` and `choose_answer` get the class), with its null control `control_server_prelogin_null` |
+| 2 | Real or made-up record, id, profile and hint | no for the world, but the choice must not show in time | both sides are always computed; `ct_select_bytes` (`login.rs`, 3 calls, `prelogin.rs`, 2, behind `test-support`) and `ct_select_u8` (`login.rs`, 2) choose | T7, T11, `select-asm`; `known_and_unknown_run_the_same_steps_in_the_same_order` (trace of steps); `server_login_start_known_vs_unknown` and its replicate `server_login_start_known_vs_disabled` (the same library path), with the null control `control_server_login_start_null` and the isolating benches `info_server_login_start_lookup_only`, `info_server_login_start_real_vs_made_up` and `info_server_login_start_fixed_vs_pool`; `server_prelogin_known_vs_unknown` times `prelogin_answer` (`stored_for` and `choose_answer` get the class), with its null control `control_server_prelogin_null` |
 | 3 | Purpose, session and account of a re-authentication | yes | `ct_eq` on the 48 binding bytes (`LoginPurpose::same_as`), the purpose byte next to it with `&` | T5 and the call-site test; `server_state_binding` is a smoke test (it cannot tell `ct_eq` from `==` on 48 bytes behind an AEAD open) |
-| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open); `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
+| 3b | Account of the session against the credential of the state | yes | `ct_eq` in `login_finish`, before the limiter is asked | T5 and the call-site test; `server_finish_credential_vs_account` is a smoke test (16 bytes behind an AEAD open), with the null control `control_server_finish_null`; `a_finish_refused_before_the_account_is_known_charges_the_address_alone` |
 | 4 | Nonce and login id in the stores | yes (bearer values) | the stores are keyed by `SHA-256(label, value)` (`StateKey`, `ChallengeKey`); no `==` on a raw value | `types_with_bytes_derive_partial_eq_only_when_listed`; `no_secret_comparison_uses_eq` |
 | 5 | SHA-256 checksum of a secret file | the content is secret | `ct_eq` (`secret_file.rs`) | `the_constant_time_call_sites_are_the_ones_that_were_checked` |
 | 6 | Fingerprint of the set-up at start-up | no (a hash, no remote caller) | `PartialEq` of `SetupFingerprint` is `ct_eq` anyway | `no_secret_comparison_uses_eq` |
@@ -481,7 +481,9 @@ the timer, whatever the kind of the target. The missing-state case is now a
 target of its own, `FinishMissing`, and `Finish::prepare` is the source that
 had passed, with the class used in the mask only (a test in `server.rs` pins
 it). `ct/run.sh timed-asm` proves that a mask loop exists in the timed binary,
-not that the class is used only there; the source test pins the second.
+not that the class is used only there; the second is pinned by a test in
+`server.rs` that counts every mention of the class in the function, and that
+runs in CI (`cargo test` of `ct/dudect`).
 
 The check (`ct/results/dudect-lanbox-finish-diag2.md`, two layouts of the bench
 binary, eight rounds of 10^7, load 0.43 to 1.11, `control_leaky` at 10^4 or more
@@ -614,15 +616,17 @@ Inferred, not shown: which part of the class test carried the failure into the
 timer (the jump, the instruction fetch or the predictor tables). What the
 passes do not say: they are for these builds of one binary, so a layout that
 fails with the new form would be the first sign of a difference in the shipped
-code; and the three timings of `login_finish` and the compares are smoke tests
-(see row 3 and 3b), the claim for `ct_eq` is carried by T5 and the call-site
+code; and the two timings of the compares (`server_state_binding` and
+`server_finish_credential_vs_account`) are smoke tests (see row 3 and 3b), the claim for `ct_eq` is carried by T5 and the call-site
 test.
 
 **`info_server_prelogin_resolve_credential` is above 4.5 and is not gated.** At
 ef12966 it is +7.09, +7.18 and +11.20, which is higher than at b7f2c54 (+6.18)
 and 29fbc6b (+5.28): its sign has been positive in every run (+17.04, +8.53,
-+5.28, +6.18, +7.09, +7.18, +11.20) and it did not fall as the code was
-changed. This is not hidden here and not explained. `resolve_credential` is
++5.28, +6.18, +7.09, +7.18, +11.20); it fell from +17.04 to +5.28 as the
+code was changed, and then rose to +6.18 and +7 to +11 although no shipped code
+changed from b7f2c54 to ef12966, so the rise is not a code change. This is not
+hidden here and not explained. `resolve_credential` is
 behind the `test-support` feature and no request path calls it (see below); the
 gated `server_prelogin_known_vs_unknown` times `prelogin_answer`, the function
 a pre-login route would call, and passes (+1.48, +1.43, +1.25, with a null
@@ -636,14 +640,18 @@ a name. Neither `login_start` (which does its own select) nor `prelogin_answer`
 calls it, and nothing in `crates/ferret-server` does, so it is not on a shipped
 path. It is behind the `test-support` feature, so that no request path can
 start to use it without this being looked at. The cause of its offset (see the
-values above) has not been isolated. What is known: the sign is positive in all
-seven runs although the code changed between them, so by the test of S-2 it is
-not a layout bias, and its tau is several times that of the benches that pass.
+values above) has not been isolated. What is known: the sign has been positive
+in every run, which is five builds (the three repeats of one build count once,
+because the sign follows the binary and not the process), and its tau is several
+times that of the benches that pass.
 A guess, not a finding: for a known name the first select reads two objects
 (the account's id and the stand-in) and for an unknown name the same static
 twice, the shape of the first select of `login_start`, which
 `info_server_login_start_lookup_only` isolates and which passes (+2.44, -2.42,
-+1.68), so the guess is weak. If a request path is ever to call
++1.68), but that bench takes about a hundred microseconds and this one a few,
+so an effect of this size would not show in it: the guess is open, and its shape
+is on the shipped path, in the first select of `login_start`. The size is far
+below anything observable, so the residual does not grow. If a request path is ever to call
 `resolve_credential`, the bench has to become a gate and pass first.
 
 This times the library, not the database: the lookup that decides `Active`,

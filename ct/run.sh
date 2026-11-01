@@ -426,7 +426,7 @@ timed_asm() { # $1 binary
   prep="$(objdump -C -d --no-show-raw-insn "$1" \
     | awk '/^[0-9a-f]+ </{on = ($0 ~ /server::Finish as .*>::prepare/)} on{print}')"
   masks="$(printf '%s\n' "$prep" | awk '{m=$2} (p2=="xor" && p1=="and" && m=="xor"){c++} {p2=p1; p1=m} END{print c+0}')"
-  pands="$(printf '%s\n' "$prep" | grep -cE '[[:space:]]v?pand' || true)"
+  pands="$(printf '%s\n' "$prep" | grep -cE '[[:space:]]v?pand[[:space:]]' || true)"
   echo "timed-asm Finish::prepare: $(printf '%s\n' "$prep" | grep -c .) lines, mask loops (xor, and, xor) $masks, pand $pands"
   if [ "$((masks + pands))" -lt 1 ]; then
     echo "FAIL: Finish::prepare of the timed binary has no mask loop: the class is a branch there" >&2
@@ -463,7 +463,11 @@ dudect_native() {
   pin=()
   if [ -n "$cpu" ]; then pin=(taskset -c "$cpu"); fi
   {
-    echo "dudect native: n=$n per bench (rerun with $((n * 10)) when |t| >= 4.5), cpu=${cpu:-none}, $(date -u +%FT%TZ)"
+    if [ "$n" -lt 10000000 ]; then
+      echo "dudect native: n=$n per bench (rerun with $((n * 10)) when |t| >= 4.5), cpu=${cpu:-none}, $(date -u +%FT%TZ)"
+    else
+      echo "dudect native: n=$n per bench (a bench with |t| >= 4.5 fails, no rerun at 10^7), cpu=${cpu:-none}, $(date -u +%FT%TZ)"
+    fi
     echo "host: $(uname -n), $(grep -m1 'model name' /proc/cpuinfo || true)"
     echo "rustc: $(rustc --version)"
     echo "profile: opt-level ${opt:-s (ct/dudect/Cargo.toml)}, lto, codegen-units 1, panic abort, overflow checks"

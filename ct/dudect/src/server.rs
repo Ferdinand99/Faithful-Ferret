@@ -850,14 +850,21 @@ mod tests {
     }
 
     /// `Finish::prepare` uses the class in the mask and nowhere else: any other
-    /// use lets the two classes run different code before the timer.
+    /// use lets the two classes run different code before the timer. Every
+    /// mention of `class` in the code of the function is counted (comments are
+    /// not code): the parameter, and the mask.
     #[test]
     fn finish_prepare_uses_the_class_in_the_mask_only() {
         let src = include_str!("server.rs");
         let body = &src[src.find("impl Target for Finish {").unwrap()..];
         let prepare = &body[body.find("fn prepare").unwrap()..body.find("fn run").unwrap()];
-        assert_eq!(prepare.matches("class as").count(), 1);
-        assert_eq!(prepare.matches("class ==").count(), 0);
-        assert_eq!(prepare.matches("match class").count(), 0);
+        let code: String = prepare
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The parameter and the mask, and no other use.
+        assert_eq!(code.matches("class").count(), 2, "{code}");
+        assert!(code.contains("let m = black_box(0u8.wrapping_sub(class as u8));"));
     }
 }
