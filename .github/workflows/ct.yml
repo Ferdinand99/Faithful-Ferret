@@ -35,7 +35,7 @@
 # (`CT_ONLY=server`) are gated at 10^7 measurements from the start, with the
 # controls in the same run, and the result is marked NOT DECISIVE when the
 # 1-minute load average of the LANBox was above 2 at the start or the end; it is
-# committed in ct/results/dudect-lanbox-server.md. The release run is a full run.
+# committed in ct/results/dudect-lanbox-server.md (the earlier runs of the fix are kept next to it). The release run is a full run.
 #
 # Third-party actions are pinned by commit SHA, tools by version and checksum,
 # the analyzer by commit and SHA-256 (ct/analyzer.pin). The workflow has read

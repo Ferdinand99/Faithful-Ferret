@@ -391,8 +391,8 @@ crate at levels 3 and `s` on both architectures, `ct/run.sh timed-asm` reads the
 linked, LTO `dudect` binary at both levels (both run in CI), and the dudect
 build of `CT_ONLY=server` defaults to `opt-level = 3` (`CT_OPT_LEVEL` sets
 another), with the LTO, codegen-units, panic and overflow-check settings of the
-server's profile. The numbers of 29fbc6b are not at that level; the release run
-repeats them there (`CT_ONLY=server scripts/lanbox-ct.sh dudect-native` now builds at 3).
+server's profile. The numbers of 29fbc6b are not at that level; the run on
+ef12966 (below) repeats them there.
 
 ### S-3. Two pools of inputs gave the classes a different mean
 
@@ -543,7 +543,7 @@ benches of S-3, the null controls `control_server_prelogin_null` and
 `control_server_finish_null`, the info bench
 `info_server_login_start_fixed_vs_pool`).
 
-**Decisive, 29fbc6b, at `opt-level = "s"`.** `ct/results/dudect-lanbox-server.md`:
+**29fbc6b, at `opt-level = "s"`.** `ct/results/dudect-lanbox-server-29fbc6b.md`:
 `CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on a
 quiet LANBox (1-minute load average 0.92 at the start; the load at the end was
 not captured, because the local client was stopped overnight and the file was
@@ -571,32 +571,79 @@ see the header of the file). The timed binary was checked first: `stored_for`,
 against disabled), pre-login +1.87 (null -1.45), state binding +1.74, all under
 4.5, and `info_server_prelogin_resolve_credential` +6.18 (positive for the
 fourth time; not gated, not on a shipped path). `server_finish_credential_vs_account`
-was -13.95 and is explained above; the release run repeats the full set with the
-fix.
+was -13.95 and is explained above (S-3); the run below is the full set with
+the fix.
 
-The two earlier tables above (before the fix, and 6f8743b) stay as the
-history of how S-2 and S-3 were found. `server_login_start_known_vs_unknown`
-at -3.90 is the closest gated value to the limit; the null control of the same
-cost gave -1.72 and the controls that must see a leak gave 10^5, so the setup
-is sound, and the point is not closed by this one run alone: the release run
-repeats it.
+The earlier tables above (before the fix, 6f8743b, 29fbc6b and b7f2c54) stay as
+the history of how S-2 and S-3 were found.
 
-**`info_server_prelogin_resolve_credential` (+5.28) is not gated, and why.**
+**Decisive, ef12966, at `opt-level = 3`, three repeats.**
+`ct/results/dudect-lanbox-server.md`: `CT_ONLY=server CT_REPEAT=3`, 10^7
+measurements per bench, controls in the same run, a quiet LANBox (1-minute load
+average 0.81 at the start and 1.07 at the end, exit status 0). The timed binary
+was checked first (`stored_for` 16 lines, `choose_answer` 28, `pick_account` 6,
+0 conditional jumps; `Finish::prepare` has the mask loop). The profile is
+`opt-level 3, lto, codegen-units 1, panic abort, overflow checks`, which is the
+server's. **Every gated bench is under 4.5 in all three repeats**, and the
+controls behave (`control_null` at most 2.09, the three null controls of the
+server benches at most 3.89, `control_leaky` and `control_unpad_leaky` over 8 x
+10^4).
+
+| bench | t at 10^7, three repeats |
+|---|---|
+| `server_login_start_known_vs_unknown` | -2.63, +2.28, +2.23 |
+| `server_login_start_known_vs_disabled` | +2.37, +1.25, -1.47 |
+| `server_prelogin_known_vs_unknown` | +1.48, +1.43, +1.25 |
+| `server_state_binding` (smoke test) | +1.88, -1.96, -1.48 |
+| `server_finish_credential_vs_account` (smoke test) | -2.00, -0.95, +2.31 |
+| `control_server_login_start_null` | -2.07, +1.47, -1.58 |
+| `control_server_prelogin_null` | -3.14, +1.89, +1.78 |
+| `control_server_finish_null` | -3.89, +2.01, -2.46 |
+| `info_server_login_start_lookup_only` | +2.44, -2.42, +1.68 |
+| `info_server_login_start_real_vs_made_up` | +2.60, +2.54, -1.87 |
+| `info_server_login_start_fixed_vs_pool` | -1.15, +1.76, +1.35 |
+| `info_server_finish_state_vs_missing` (a missing state exits early; known to the caller) | +112842, +106246, +115950 |
+| `info_server_prelogin_resolve_credential` (not gated) | +7.09, +7.18, +11.20 |
+
+**What this shows.** The finish item is resolved: the gate and its null control
+pass in all three repeats at the shipped profile, after the fix of S-3 (the class
+used in the mask only). Proven: with equal bytes the old form of `Finish::prepare`
+failed and the new one passes in two layouts of the bench binary
+(`dudect-lanbox-finish-diag2.md`), and the full set passes in a third build.
+Inferred, not shown: which part of the class test carried the failure into the
+timer (the jump, the instruction fetch or the predictor tables). What the
+passes do not say: they are for these builds of one binary, so a layout that
+fails with the new form would be the first sign of a difference in the shipped
+code; and the three timings of `login_finish` and the compares are smoke tests
+(see row 3 and 3b), the claim for `ct_eq` is carried by T5 and the call-site
+test.
+
+**`info_server_prelogin_resolve_credential` is above 4.5 and is not gated.** At
+ef12966 it is +7.09, +7.18 and +11.20, which is higher than at b7f2c54 (+6.18)
+and 29fbc6b (+5.28): its sign has been positive in every run (+17.04, +8.53,
++5.28, +6.18, +7.09, +7.18, +11.20) and it did not fall as the code was
+changed. This is not hidden here and not explained. `resolve_credential` is
+behind the `test-support` feature and no request path calls it (see below); the
+gated `server_prelogin_known_vs_unknown` times `prelogin_answer`, the function
+a pre-login route would call, and passes (+1.48, +1.43, +1.25, with a null
+control at most 3.14). The value is a reported residual of a helper that the
+shipped server does not contain, and it has to be understood, or the helper
+removed, before anything uses it.
+
+**Why `info_server_prelogin_resolve_credential` is not gated.**
 `resolve_credential` is a helper that returns the credential id OPAQUE uses for
 a name. Neither `login_start` (which does its own select) nor `prelogin_answer`
 calls it, and nothing in `crates/ferret-server` does, so it is not on a shipped
-path. It is now behind the `test-support` feature, so that no request path can
-start to use it without this being looked at. The gated
-`server_prelogin_known_vs_unknown` times `prelogin_answer` (-2.56, with its null
-control at -2.65). The cause of the +5.28 has not been isolated. What is known:
-its sign was positive in all three runs (+17.04, +8.53, +5.28) although the code
-changed between them, so by the test of S-2 it is not a layout bias, and its
-tau (+0.0017, nearly the whole sample) is about three times that of
-`fixed_vs_pool`, whose +1.76 is inside the floor. A likely cause is that for a
-known name the first select reads two objects (the account's id and the
-stand-in) and for an unknown name the same static twice: the same shape as the
-first select of `login_start`, which `info_server_login_start_lookup_only`
-isolates (-2.52, passes). If a request path is ever to call
+path. It is behind the `test-support` feature, so that no request path can
+start to use it without this being looked at. The cause of its offset (see the
+values above) has not been isolated. What is known: the sign is positive in all
+seven runs although the code changed between them, so by the test of S-2 it is
+not a layout bias, and its tau is several times that of the benches that pass.
+A guess, not a finding: for a known name the first select reads two objects
+(the account's id and the stand-in) and for an unknown name the same static
+twice, the shape of the first select of `login_start`, which
+`info_server_login_start_lookup_only` isolates and which passes (+2.44, -2.42,
++1.68), so the guess is weak. If a request path is ever to call
 `resolve_credential`, the bench has to become a gate and pass first.
 
 This times the library, not the database: the lookup that decides `Active`,
@@ -727,8 +774,8 @@ with its reason, and each is repeated in the report.
   still to be written. What the library leaves on the account bit is
   the read of the caller's own record and id (one object against a pool,
   `fixed_vs_pool` +1.76) and `info_server_prelogin_resolve_credential`
-  (+5.28, not gated, not on a shipped path). The compares of the credential and
+  (+7.09 to +11.20, not gated, not on a shipped path). The compares of the credential and
   of the binding in `login_finish` are shown by the timing only to within the
-  noise of the whole call (|t| 1.39 and 1.83 at 10^7 on the quiet run); that they are
+  noise of the whole call (|t| at most 2.31 and 1.96 at 10^7 in the last run); that they are
   `ct_eq` is shown by the call-site test and the analysis of the harness (T5),
   not by the timing alone. Accepted.
