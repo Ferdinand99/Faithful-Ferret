@@ -43,9 +43,6 @@
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
 #   FERRET_LANBOX       address of the LANBox (default 10.0.3.26)
 #   FERRET_PROXY_CONTAINER  name of the tunnel client container (default Newt)
-#   FERRET_WASM_LOCAL   1 builds the web vault against web/wasm.local.tar.gz instead of the
-#                       published WebAssembly package (test builds only; the image is labelled
-#                       ferret.wasm.local=1 and the build prints a warning)
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 

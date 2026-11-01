@@ -29,9 +29,6 @@ services:
       args:
         # The test clock (FERRET_E2E_CLOCK_FILE below). Only this image has it.
         FEATURES: e2e-clock
-        # Empty: the published WebAssembly package. FERRET_WASM_LOCAL=1 (a test build
-        # only, see docker/server.Dockerfile) uses web/wasm.local.tar.gz.
-        WASM_LOCAL: ${FERRET_WASM_LOCAL:-}
       labels:
         owner: ferret-e2e
     container_name: ferret-e2e-app

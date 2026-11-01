@@ -18,9 +18,6 @@ services:
       args:
         # Empty: a release build, no test features.
         FEATURES: ""
-        # Empty: the published WebAssembly package. FERRET_WASM_LOCAL=1 (a test build
-        # only, see docker/server.Dockerfile) uses web/wasm.local.tar.gz.
-        WASM_LOCAL: ${FERRET_WASM_LOCAL:-}
       labels:
         owner: ferret-test
     container_name: ferret-test-app

@@ -49,27 +49,12 @@ stack.
 ## The WebAssembly package
 
 The web vault is built against the published WebAssembly package named in
-`web/wasm.lock.json`. When the sources are ahead of the last release (the
-package lacks a function the vault calls), a test stack can use a package made from
-the same commit instead:
-
-```
-scripts/lanbox-wasm.sh                                   # builds bindings/wasm/pkg-web
-scripts/package-release.sh package 0.1.0 /some/dir       # writes the archive and its checksum
-cp /some/dir/ferret-core-wasm-web-0.1.0.tar.gz web/wasm.local.tar.gz
-# put the archive's SHA-256 into web/wasm.lock.json (do not commit this change)
-FERRET_WASM_LOCAL=1 scripts/lanbox-ferret-e2e-gate.sh    # or ... lanbox-ferret-test.sh up
-```
-
-The build argument `WASM_LOCAL=1` (set by `FERRET_WASM_LOCAL=1`) is what switches it
-on. Without it the archive is deleted before the build, so a stray file or a changed
-lock can only fail the checksum of the published package. An image built with it
-prints a warning in the build log and carries the label `ferret.wasm.local=1`, and
-the gate says which package it ran against. The archive is ignored by git, the lock
-change stays in the working tree, no workflow sets the argument (the stack check
-enforces that), and a clean checkout never has either. The vault shows the
-difference at once: without `verify_tombstone` in the package, an item deleted
-on one device comes back on the next sign-in marked "Deletion not checked".
+`web/wasm.lock.json`: its release file, version and SHA-256. The build fetches
+the file and stops if the checksum differs. There is no way to build a test stack
+against any other package. When the vault needs a function that the pinned package
+lacks, cut a release first, then move the pin: take the SHA-256 from the release's
+`SHA256SUMS`, verify that file and the package with `cosign verify-blob` (see
+`docs/RELEASING.md`), and change version, url and sha256 in the lock together.
 
 ## Checks by hand on the test deployment
 
