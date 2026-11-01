@@ -743,9 +743,9 @@ fieldset {
 }
 
 /* A button inside a tinted notice sits on the card colour, so its text keeps its contrast. */
-.notice .btn {
+.notice .btn:not(.btn-primary) {
   --btn-bg: var(--card);
-  --btn-hover: var(--fill);
+  --btn-hover: color-mix(in srgb, var(--card) 92%, var(--text));
 }
 
 /* 8. Segmented control (the theme switch in the footer) */
@@ -856,6 +856,7 @@ fieldset {
   input[type="checkbox"],
   input[type="radio"] {
     forced-color-adjust: none;
+    border-color: CanvasText;
   }
 
   .btn,

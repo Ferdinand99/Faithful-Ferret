@@ -95,6 +95,15 @@ async function scene(page, which) {
   }, which);
 }
 
+/** The page is up in the language the test asked for, and Inter is in, so the measures are the real ones. */
+async function pageIsReady(page, locale) {
+  await page.goto("/");
+  await expect(page.locator("#app h1")).toBeVisible();
+  const language = locale.split("-")[0];
+  await expect(page.locator("html")).toHaveAttribute("lang", language);
+  await page.waitForFunction(() => document.fonts.check("16px InterVariable") && [...document.fonts].some((face) => face.status === "loaded"), undefined, { timeout: 15_000 });
+}
+
 /** The setup page, filled in and sent, so that the sheet is on the page the way the flow puts it there. */
 async function setupSheet(page) {
   await scene(page, "setup");
@@ -112,8 +121,7 @@ for (const locale of ["en", "nb-NO"]) {
     for (const width of WIDTHS) {
       test(`nothing_is_cut_off_or_outside_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
-        await page.goto("/");
-        await expect(page.locator("#app h1")).toBeVisible();
+        await pageIsReady(page, locale);
         for (const name of ["signed-in", "list", "item"]) {
           await scene(page, name);
           expect(await clipped(page), `${name} at ${width}px`).toEqual([]);
@@ -125,8 +133,7 @@ for (const locale of ["en", "nb-NO"]) {
 
     test("the_emergency_sheet_is_one_wide_card_with_one_mark", async ({ page }) => {
       await page.setViewportSize({ width: 1100, height: 900 });
-      await page.goto("/");
-      await expect(page.locator("#app h1")).toBeVisible();
+      await pageIsReady(page, locale);
       await setupSheet(page);
       const shape = await page.evaluate(() => {
         const cards = [...document.querySelectorAll("#app .auth-card")];
