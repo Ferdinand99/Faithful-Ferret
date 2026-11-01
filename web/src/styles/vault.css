@@ -72,6 +72,17 @@
     background-color var(--dur-ui) ease;
 }
 
+.vault-ui .vault-bar nav a[aria-current="page"] {
+  background: var(--fill);
+  color: var(--text);
+}
+
+@media (pointer: coarse) {
+  .vault-ui .vault-bar nav a {
+    min-height: 44px;
+  }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .vault-ui .vault-bar nav a:hover {
     background: var(--hover);
@@ -108,6 +119,10 @@
 
 /* On a phone the bar takes two rows: the name and Lock, then the links and the state. */
 @media (max-width: 40rem) {
+  html {
+    scroll-padding-top: 8rem;
+  }
+
   .vault-ui .vault-bar {
     padding-inline: max(var(--sp-4), var(--safe-left)) max(var(--sp-4), var(--safe-right));
     padding-bottom: var(--sp-2);
@@ -255,14 +270,18 @@
 }
 
 /* The name is the link, and the link covers the whole row. */
+/* Two names that differ only at the end must stay apart: up to two lines, then cut. */
 .vault-ui .item-link {
   grid-area: link;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--text);
   font-weight: 500;
   text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .vault-ui .item-link::before {

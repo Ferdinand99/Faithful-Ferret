@@ -120,8 +120,18 @@ html:has(#app > .auth-card, .unlock-host) body {
 }
 
 /* The document: what the emergency sheet shows, and prints. */
-#app > .auth-card.sheet {
+/* The setup page puts the sheet inside its own card. The outer card gives way, so the
+   sheet is the one card on the page, with one mark, and wide enough for the keys. */
+#app > .auth-card:has(> .sheet) {
   max-width: 40rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+#app > .auth-card:has(> .sheet)::before {
+  display: none;
 }
 
 .sheet-fields {
@@ -178,18 +188,52 @@ html:has(#app > .auth-card, .unlock-host) body {
   }
 }
 
+/* Print: always the light colours, whatever theme is chosen, so the keys come out
+   dark on white. The recovery key starts a page of its own: it is kept apart from the
+   access page (its secret key and address). */
 @media print {
+  :root,
+  :root[data-theme] {
+    color-scheme: light;
+  }
+
+  html:has(#app > .auth-card, .unlock-host) {
+    background: none;
+  }
+
+  body,
+  #app {
+    display: block;
+  }
+
   .app-foot,
   .account form,
   .account .btn,
   .account .status,
-  .account .error {
+  .account .error,
+  .no-print {
     display: none;
   }
 
+  .auth-card::before {
+    display: none;
+  }
+
+  #app > .auth-card,
+  #app > .auth-card:has(> .sheet) {
+    width: auto;
+    max-width: none;
+    margin: 0;
+  }
+
   .auth-card {
+    padding: 0;
     border: 0;
     box-shadow: none;
+  }
+
+  .sheet-fields[data-role="sheet"] + h2 {
+    break-before: page;
   }
 }
 

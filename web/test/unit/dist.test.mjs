@@ -73,7 +73,7 @@ test("dist_ships_inter_as_a_module_and_the_theme_script_first", () => {
   assert.match(inter, /SIL OPEN FONT LICENSE/);
   const bytes = Buffer.from(/export default "([A-Za-z0-9+/=]+)";/.exec(inter)?.[1] ?? "", "base64");
   assert.equal(bytes.subarray(0, 4).toString("latin1"), "wOF2");
-  assert.ok(bytes.equals(readFileSync(join(web, "fonts", "InterVariable.woff2"))));
+  assert.ok(bytes.equals(readFileSync(join(web, "fonts", "InterVariable-Latin.woff2"))));
   // The theme script is a blocking classic script, ahead of the style sheet, so no frame has the wrong theme.
   const html = readFileSync(join(dist, "index.html"), "utf8");
   const early = html.indexOf('<script src="/app/theme-init.mjs"></script>');

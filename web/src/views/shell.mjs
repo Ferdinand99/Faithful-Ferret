@@ -25,6 +25,7 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {() => boolean} touch marks activity; false when the vault just locked
  * @property {{ run(): void }} scope what to wipe on lock
  * @property {() => HTMLElement} onLocked makes the unlock screen
+ * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
  */
 
 /**
@@ -84,16 +85,17 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
   const lockButton = el("button", { type: "button", class: "btn btn-secondary btn-sm i-lock", "data-role": "lock" }, t("vault.lock"));
+  const navItems = el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items"));
+  const navNew = el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"));
+  const nav = el("nav", { "aria-label": t("vault.nav.label") }, navItems, navNew);
   const bar = el("header", { class: "vault-bar" },
     el("a", { class: "brand", href: "#/items" }, t("app.name")),
-    el("nav", { "aria-label": t("vault.nav.label") },
-      el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items")),
-      el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"))),
+    nav,
     status,
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
@@ -104,7 +106,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   /** @param {string} key @param {string} kind @param {string} text */
   function banner(key, kind, text) {
     const node = el("p", { class: `banner banner-${kind}`, role: kind === "error" ? "alert" : "status", "data-role": "banner", "data-banner": key }, text);
-    const dismiss = el("button", { type: "button", class: "btn btn-plain btn-sm", "data-role": "banner-dismiss" }, t("vault.banner.dismiss"));
+    const dismiss = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "banner-dismiss" }, t("vault.banner.dismiss"));
     dismiss.addEventListener("click", () => {
       node.remove();
       shown.delete(key);
@@ -136,6 +138,24 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     const named = typeof payload?.id === "string" ? engine.list().find((/** @type {any} */ i) => i.id === payload.id) : null;
     const text = describeError(t, { code, reason: payload?.reason });
     banner(`error:${code}:${payload?.id ?? ""}`, "error", named ? t("vault.banner.item", { name: named.name, message: text }) : text);
+  }
+
+  // The link of the screen that is open says so (aria-current), and follows the address.
+  function markCurrent() {
+    const path = String(win?.location?.hash ?? "").replace(/^#/, "");
+    const onNew = path === "/items/new";
+    const onItems = !onNew && (path === "/items" || path.startsWith("/items/"));
+    navItems.setAttribute("aria-current", onItems ? "page" : "false");
+    navNew.setAttribute("aria-current", onNew ? "page" : "false");
+  }
+  markCurrent();
+  if (typeof win?.addEventListener === "function") {
+    const onHash = () => {
+      // A frame that has left the page stops listening.
+      if (/** @type {any} */ (root).isConnected === false) win.removeEventListener?.("hashchange", onHash);
+      else markCurrent();
+    };
+    win.addEventListener("hashchange", onHash);
   }
 
   listenWhileShown(root, engine, "state", onState);

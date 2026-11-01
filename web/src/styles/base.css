@@ -30,7 +30,7 @@
   --text: light-dark(#1d1d1f, #f5f5f7);
   --muted: light-dark(#6e6e73, #a1a1a6);
   --faint: light-dark(#aeaeb2, #6e6e73);
-  --placeholder: light-dark(#8e8e93, #77777c);
+  --placeholder: light-dark(#737378, #8a8a8f);
   --on-inverse: light-dark(#ffffff, #0b0b0d);
 
   /* Brand: links, focus, selection */
@@ -40,19 +40,19 @@
 
   /* Status: base for dots, -text for readable text, -fill for tints */
   --ok: light-dark(#34c759, #30d158);
-  --ok-text: light-dark(#1f7a35, #30d158);
+  --ok-text: light-dark(#1b6e30, #30d158);
   --ok-fill: light-dark(rgba(52, 199, 89, 0.14), rgba(48, 209, 88, 0.15));
   --warn: light-dark(#ffcc00, #ffd60a);
   --warn-text: light-dark(#8f5000, #ffd60a);
   --warn-fill: light-dark(rgba(255, 204, 0, 0.2), rgba(255, 214, 10, 0.14));
   --bad: light-dark(#ff3b30, #ff453a);
-  --bad-text: light-dark(#d70015, #ff6961);
+  --bad-text: light-dark(#c20012, #ff6961);
   --bad-fill: light-dark(rgba(255, 59, 48, 0.11), rgba(255, 69, 58, 0.16));
   --info: light-dark(#007aff, #0a84ff);
   --info-text: light-dark(#0062cc, #409cff);
   --info-fill: light-dark(rgba(0, 122, 255, 0.1), rgba(10, 132, 255, 0.18));
   --neutral: #8e8e93;
-  --neutral-text: light-dark(#6e6e73, #a1a1a6);
+  --neutral-text: light-dark(#5f5f64, #a1a1a6);
   --neutral-fill: light-dark(rgba(118, 118, 128, 0.14), rgba(118, 118, 128, 0.24));
 
   /* Controls and shadows */
@@ -137,6 +137,7 @@
 }
 
 html {
+  scroll-padding-top: 5rem;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   background: var(--bg);
@@ -408,12 +409,20 @@ h2 {
   }
 }
 
-/* A row of actions. */
+/* A row of actions. A long label (a translation) wraps inside its button instead
+   of running out of the card. */
 .actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
+}
+
+.actions .btn {
+  max-width: 100%;
+  padding-block: 8px;
+  white-space: normal;
+  text-align: center;
 }
 
 /* 5. Cards */
@@ -514,7 +523,7 @@ input[type="search"] {
 input:focus,
 select:focus,
 textarea:focus {
-  outline: none;
+  outline: 2px solid transparent; /* shown in forced colours, where the ring below is not */
   border-color: var(--brand);
   box-shadow: 0 0 0 4px var(--brand-ring);
 }
@@ -733,6 +742,12 @@ fieldset {
   margin-top: var(--sp-2);
 }
 
+/* A button inside a tinted notice sits on the card colour, so its text keeps its contrast. */
+.notice .btn {
+  --btn-bg: var(--card);
+  --btn-hover: var(--fill);
+}
+
 /* 8. Segmented control (the theme switch in the footer) */
 .segmented {
   display: inline-grid;
@@ -838,6 +853,11 @@ fieldset {
 }
 
 @media (forced-colors: active) {
+  input[type="checkbox"],
+  input[type="radio"] {
+    forced-color-adjust: none;
+  }
+
   .btn,
   .segmented,
   .card,

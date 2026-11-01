@@ -1,6 +1,6 @@
 // Inter, added to the page by script. The page's policy has no font source, so
 // a stylesheet could not load a font file; a font made from bytes the page
-// already holds needs none. The build puts the bytes of fonts/InterVariable.woff2
+// already holds needs none. The build puts the bytes of fonts/InterVariable-Latin.woff2
 // in app/inter.mjs as base64. Until it is added (and if it never is) the system
 // font stands in, so nothing depends on it.
 
