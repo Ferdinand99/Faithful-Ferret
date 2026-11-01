@@ -73,8 +73,8 @@ point, 9 handle files and paths, 5 have a reason of their own).
 - Nightly run of 31 October 2026, 20 minutes per target, all 18 jobs clean, on commit b787078.
   That commit is before the last change to `login_start`, `prelogin_answer` and the throttle
   keys, so this run did not fuzz the code as shipped.
-- Nightly run of 1 November 2026 on commit baf8aee (the last change to the library code): started
-  07:30 UTC; its result was not known when this page was written.
+- Nightly run of 1 November 2026 on commit baf8aee (the last change to the library code), 20
+  minutes per target, all 18 jobs clean.
 - Longer runs while the targets were written: 10 minutes on three of them, no crash in the
   library. Three crashes in the first runs were mistakes in the fuzz harnesses and were fixed
   before the clean runs.
