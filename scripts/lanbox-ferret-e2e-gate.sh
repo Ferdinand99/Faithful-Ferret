@@ -23,8 +23,7 @@
 #     admin session after 1 hour idle or 12 hours in all.
 #
 # Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
-# (default "chromium firefox webkit"), FERRET_WASM_LOCAL=1 (build against web/wasm.local.tar.gz;
-# the gate says which package it ran against).
+# (default "chromium firefox webkit").
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "$0")/.."
@@ -98,17 +97,6 @@ search_data() { # needles json, state json
   rm -f "$data" "$log"
 }
 
-# Says which WebAssembly package the stack under test was built against.
-note_wasm() {
-  local local_pkg
-  local_pkg="$(dk image inspect -f '{{index .Config.Labels "ferret.wasm.local"}}' "$e2e_image" 2>/dev/null || true)"
-  if [ "$local_pkg" = 1 ]; then
-    say "WebAssembly package: LOCAL (web/wasm.local.tar.gz), not the published one"
-  else
-    say "WebAssembly package: the published one (web/wasm.lock.json)"
-  fi
-}
-
 # ------------------------------------------------------------------ browsers
 
 browsers_phase() {
@@ -116,7 +104,6 @@ browsers_phase() {
   for browser in $browsers; do
     say "scenarios in $browser on a fresh stack"
     e2e_up >&2
-    note_wasm
     if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: scenarios 01 to 09 passed"; else bad "$browser: the scenarios failed"; fi
     state="$(left "$phase_out" state)"
     needles="$(left "$phase_out" needles)"
@@ -208,7 +195,6 @@ limits_phase() {
   browser="$(printf '%s' "$browsers" | awk '{print $1}')"
   say "session_limits at the guard, with the moved clock"
   e2e_up >&2
-  note_wasm
   if ! run_phase limits-setup "$browser" phase-limits; then
     bad "limits: the account was not made"
     return 0
