@@ -18,6 +18,9 @@ services:
       args:
         # Empty: a release build, no test features.
         FEATURES: ""
+        # Empty: the published WebAssembly package. FERRET_WASM_LOCAL=1 (a test build
+        # only, see docker/server.Dockerfile) uses web/wasm.local.tar.gz.
+        WASM_LOCAL: ${FERRET_WASM_LOCAL:-}
       labels:
         owner: ferret-test
     container_name: ferret-test-app
@@ -42,8 +45,8 @@ services:
       - /tmp:size=16m
     # TEST STACK ONLY: host networking. With published ports on a bridge
     # network, Docker's port proxy makes every connection arrive from the
-    # bridge gateway, so the tunnel client of the proxy (Newt, on the default
-    # bridge) and every other client on the host would look the same, and the
+    # bridge gateway, so the tunnel client of the proxy (Newt, on its own
+    # network newt-net) and every other client on the host would look the same, and the
     # server refuses to trust a gateway address. On the host network the server
     # sees the real source address: the tunnel client's own address for the
     # Pangolin traffic (FERRET_TRUSTED_PROXIES) and the client's for

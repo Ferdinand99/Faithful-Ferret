@@ -1,4 +1,4 @@
-// Scenario 5: locking removes every secret from the page and from memory, ends
+// Locking removes every secret from the page and from memory, ends
 // the worker that held the keys, and a password alone opens the vault again.
 import { bodyText, createItem, expect, freshContext, memory, pace, recordWorkers, requireAccount, secrets, signInOn, signOutOn, SLOW, tamperPinnedServerKey, test, unlockWith, workers } from "./support.mjs";
 

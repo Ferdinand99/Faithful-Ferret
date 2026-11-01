@@ -45,7 +45,8 @@ if (!(s.security_opt || []).includes("no-new-privileges:true")) fail("security_o
 if (s.read_only !== true) fail("read_only must be true");
 if (s.privileged) fail("privileged");
 if (s.restart !== "no") fail("restart must be no: only the deploy script starts the stack, after its proxy check");
-if (Object.keys(s.build?.args || {}).join() !== "FEATURES") fail("the only build arg is FEATURES");
+if (Object.keys(s.build?.args || {}).sort().join() !== "FEATURES,WASM_LOCAL") fail("the only build args are FEATURES and WASM_LOCAL");
+if ((s.build.args.WASM_LOCAL ?? "") !== "") fail("WASM_LOCAL must be empty unless FERRET_WASM_LOCAL is set");
 if (s.network_mode !== "host") fail("network_mode must be host");
 if (s.ports && s.ports.length) fail("no published ports on the host network");
 const vols = Object.keys(c.volumes || {});
@@ -112,7 +113,8 @@ const app = e2e.services["ferret-e2e-app"];
 const tls = e2e.services["ferret-e2e-tls"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
-if (Object.keys(app.build?.args || {}).join() !== "FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and nothing else");
+if (Object.keys(app.build?.args || {}).sort().join() !== "FEATURES,WASM_LOCAL" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and WASM_LOCAL, nothing else");
+if ((app.build.args.WASM_LOCAL ?? "") !== "") fail("WASM_LOCAL must be empty unless FERRET_WASM_LOCAL is set");
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("app cap_add");
 if ((app.tmpfs || []).some((t) => t.startsWith("/data"))) fail("the data directory is the named volume, not tmpfs");
 if (!/^caddy:[0-9.]+-alpine@sha256:[0-9a-f]{64}$/.test(tls.image)) fail("the TLS terminator image must be pinned by digest");
@@ -215,6 +217,12 @@ if grep -E '^(FROM|ARG [A-Z_]*IMAGE=)' "$dockerfile" | grep -v '@sha256:[0-9a-f]
   fail "a base image in $dockerfile is not pinned by digest"
 fi
 grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to empty"
+# The local WebAssembly package is opt-in by a build argument, marked on the image, and
+# no workflow sets it: a release build can only use the published package.
+grep -q '^ARG WASM_LOCAL=""$' "$dockerfile" || fail "ARG WASM_LOCAL must default to empty"
+grep -q 'rm -f wasm.local.tar.gz' "$dockerfile" || fail "without WASM_LOCAL the local archive must be deleted before the build"
+grep -qF 'ferret.wasm.local="${WASM_LOCAL:-0}"' "$dockerfile" || fail "the image must carry the label ferret.wasm.local"
+if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github; then fail "no workflow may use the local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
 if grep -E 'type=cache' "$dockerfile" | grep -v 'id=ferret-'; then fail "every cache mount needs an id starting with ferret-"; fi
 grep -q '^\*\*/\.env$' .dockerignore || fail ".dockerignore must list **/.env"

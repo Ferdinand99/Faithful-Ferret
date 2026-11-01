@@ -1,4 +1,4 @@
-// Scenario 3: an item goes through its whole life in the interface: make, view,
+// An item goes through its whole life in the interface: make, view,
 // change, delete. A deleted item does not come back after a reload.
 import { bodyText, createItem, expect, freshContext, openList, requireAccount, rowsNamed, secrets, signInOn, SLOW, test, unlockWith } from "./support.mjs";
 

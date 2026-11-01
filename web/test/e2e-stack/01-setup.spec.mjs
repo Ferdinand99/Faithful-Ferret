@@ -1,4 +1,4 @@
-// Scenario 1: the first administrator makes the account by the path the owner
+// The first administrator makes the account by the path the owner
 // takes: the setup link on the admin origin, the form on the vault origin, the
 // emergency sheet, and the keys typed back before anything is uploaded.
 import { adminUrl, bodyText, confirmSheet, expect, fillSetup, freshContext, memory, readSheet, remember, secrets, setupToken, SLOW, test, vaultUrl } from "./support.mjs";

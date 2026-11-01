@@ -24,3 +24,9 @@ export function configuredAdminUrl(doc = globalThis.document, pageOrigin = globa
     return null;
   }
 }
+
+/**
+ * Where the "Go to the admin pages" buttons land on the admin origin. The admin
+ * origin has no page of its own at `/`, so the landing page is the settings page.
+ */
+export const ADMIN_LANDING = "/settings/general";

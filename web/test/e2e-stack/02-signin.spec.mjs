@@ -1,4 +1,4 @@
-// Scenario 2: sign out and sign in again on a fresh browser context. A new
+// Sign out and sign in again on a fresh browser context. A new
 // device is asked the secret key question, pins the account and seals the key; a
 // device that knows the account asks for the password only.
 import { bodyText, expect, freshContext, pace, readStores, requireAccount, secrets, signInOn, signOutOn, SLOW, test, vaultUrl } from "./support.mjs";
@@ -41,6 +41,9 @@ test("sign_out_and_sign_in_again_on_a_fresh_browser_context", async ({ browser }
   expect(dump).not.toContain(secrets.secretKey);
   expect(dump).not.toContain(secrets.secretKey.replaceAll("-", ""));
   expect(dump).not.toContain(secrets.password);
+  // Bytes are shown as hex in the dump, so look for the hex of the code's text too.
+  expect(dump).not.toContain(Buffer.from(secrets.secretKey, "utf8").toString("hex"));
+  expect(dump).not.toContain(Buffer.from(secrets.secretKey.replaceAll("-", ""), "utf8").toString("hex"));
 
   // Sign out: the session ends, the device keeps its record of the account.
   await signOutOn(page);

@@ -1,4 +1,4 @@
-// Scenario 4: two browsers on the same account see each other's changes within
+// Two browsers on the same account see each other's changes within
 // ten seconds (two contexts of one browser, and two different browsers), and
 // signing out in one leaves the other signed in.
 import { chromium, firefox, webkit } from "@playwright/test";

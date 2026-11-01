@@ -23,7 +23,8 @@
 #     admin session after 1 hour idle or 12 hours in all.
 #
 # Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
-# (default "chromium firefox webkit").
+# (default "chromium firefox webkit"), FERRET_WASM_LOCAL=1 (build against web/wasm.local.tar.gz;
+# the gate says which package it ran against).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 cd "$(dirname "$0")/.."
@@ -68,24 +69,44 @@ run_phase() { # phase name, browser, files...
 
 # --------------------------------------------------------------- data search
 
-# Searches the data directory of the app and its log for each secret of the run.
-# The files are read as bytes: the database file, its write-ahead log, the
-# secrets, the backups.
+# Searches the data directory of the app, and separately its log, for each secret
+# of the run. The files are read as bytes: the database file, its write-ahead log,
+# the secrets, the backups. Each half has a control that must be found, so an empty
+# capture cannot pass.
 search_data() { # needles json, state json
-  local needles="$1" state="$2" tmp name value count
-  tmp="$(mktemp)"
+  local needles="$1" state="$2" data log name value count total=0 line
+  data="$(mktemp)"
+  log="$(mktemp)"
   # As the server user: the secret files are mode 0600 and the container has no capability to override that.
-  dk exec -u 1000:1000 "$e2e_app" tar -c -C / data > "$tmp"
-  dk logs "$e2e_app" >> "$tmp" 2>&1
-  # The control: the account's e-mail is stored in the clear on purpose, so the
-  # search must find it, or it proves nothing.
-  count="$(grep -aFc -- "$(printf '%s' "$state" | jget email)" "$tmp" || true)"
-  if [ "${count:-0}" -ge 1 ]; then ok "data search: the control (the e-mail address) is found"; else bad "data search: the control (the e-mail address) was not found"; fi
-  while IFS=$'\t' read -r name value; do
-    count="$(grep -aFc -- "$value" "$tmp" || true)"
-    check "server_never_sees_plaintext: no $name in the data files or the log" 0 "${count:-0}"
-  done < <(printf '%s' "$needles" | node -e 'for (const n of JSON.parse(require("fs").readFileSync(0, "utf8"))) console.log(n.name + "\t" + n.value);')
-  rm -f "$tmp"
+  dk exec -u 1000:1000 "$e2e_app" tar -c -C / data > "$data"
+  dk logs "$e2e_app" > "$log" 2>&1
+  # The controls: the account's e-mail is stored in the clear on purpose, and the
+  # log names the data directory at start-up.
+  count="$(grep -aFc -- "$(printf '%s' "$state" | jget email)" "$data" || true)"
+  if [ "${count:-0}" -ge 1 ]; then ok "data search: the control in the data files (the e-mail address) is found"; else bad "data search: the control in the data files (the e-mail address) was not found"; fi
+  count="$(grep -aFc -- "data_dir=/data" "$log" || true)"
+  if [ "${count:-0}" -ge 1 ]; then ok "data search: the control in the log (the start-up line) is found"; else bad "data search: the control in the log (the start-up line) was not found"; fi
+  while IFS=$'	' read -r name value; do
+    total=$((total + 1))
+    for line in data log; do
+      count="$(grep -aFc -- "$value" "$([ "$line" = data ] && echo "$data" || echo "$log")" || true)"
+      check "server_never_sees_plaintext: no $name in the $line" 0 "${count:-0}"
+    done
+  done < <(printf '%s' "$needles" | node -e 'for (const n of JSON.parse(require("fs").readFileSync(0, "utf8"))) console.log(n.name + "	" + n.value);')
+  # A list that failed to parse would search for nothing and pass.
+  if [ "$total" -ge 8 ]; then ok "data search: $total secrets searched"; else bad "data search: only $total secrets were searched"; fi
+  rm -f "$data" "$log"
+}
+
+# Says which WebAssembly package the stack under test was built against.
+note_wasm() {
+  local local_pkg
+  local_pkg="$(dk image inspect -f '{{index .Config.Labels "ferret.wasm.local"}}' "$e2e_image" 2>/dev/null || true)"
+  if [ "$local_pkg" = 1 ]; then
+    say "WebAssembly package: LOCAL (web/wasm.local.tar.gz), not the published one"
+  else
+    say "WebAssembly package: the published one (web/wasm.lock.json)"
+  fi
 }
 
 # ------------------------------------------------------------------ browsers
@@ -95,6 +116,7 @@ browsers_phase() {
   for browser in $browsers; do
     say "scenarios in $browser on a fresh stack"
     e2e_up >&2
+    note_wasm
     if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: scenarios 01 to 09 passed"; else bad "$browser: the scenarios failed"; fi
     state="$(left "$phase_out" state)"
     needles="$(left "$phase_out" needles)"
@@ -132,7 +154,7 @@ restart_phase() { # browser, state
     bad "the container did not become healthy after the restart"
     return 0
   fi
-  if FERRET_E2E_STATE="$state" run_phase restart "$browser" phase-restart; then
+  if FERRET_E2E_STATE="$state" run_phase restart "$browser" phase-restart && [ -n "$(left "$phase_out" restart)" ]; then
     ok "restart_container_keeps_data: signed in again, the data is there"
   else
     bad "restart_container_keeps_data: the sign-in or the data check failed"
@@ -172,7 +194,7 @@ probe() { # origin, cookie header
   local pem
   pem="$(e2e_ca)"
   e2e_runner_image
-  dk run --rm -i --init --label "$e2e_label" --network "$e2e_network" --cpus 1 --memory 512m \
+  dk run --rm -i --init --name "ferret-e2e-probe-$$-$RANDOM" --label "$e2e_label" --network "$e2e_network" --cpus 1 --memory 512m \
     -e CA_PEM="$pem" "$runner_image" \
     sh -c 'printf "%s\n" "$CA_PEM" > /tmp/ca.crt; NODE_EXTRA_CA_CERTS=/tmp/ca.crt exec node --input-type=module - "$@"' sh "$1" "$2" \
     < web/test/e2e-stack/probe.mjs
@@ -186,6 +208,7 @@ limits_phase() {
   browser="$(printf '%s' "$browsers" | awk '{print $1}')"
   say "session_limits at the guard, with the moved clock"
   e2e_up >&2
+  note_wasm
   if ! run_phase limits-setup "$browser" phase-limits; then
     bad "limits: the account was not made"
     return 0

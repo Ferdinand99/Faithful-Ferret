@@ -1,4 +1,4 @@
-// Scenario 11: the hand-over of a session from the vault origin to the admin
+// The hand-over of a session from the vault origin to the admin
 // origin. The password is typed on the vault origin and nowhere on the admin
 // origin; the admin origin loads no WASM; the two origins do not share cookies;
 // and a code that was made for another browser does not change an admin session.
@@ -64,25 +64,45 @@ test("admin_handoff_gives_the_admin_origin_a_session", async ({ browser }) => {
   }
   expect((await context.request.get(`${vaultUrl}/api/auth/session`)).status()).toBe(200);
 
-  // A code that another browser's hand-over made does nothing to this admin session.
+  // The button "Go to the admin pages" of the vault lands on a working admin page.
+  const vaultPage = await context.newPage();
+  await vaultPage.goto(`${vaultUrl}/vault/login`);
+  await vaultPage.locator('[data-role="admin"]').click();
+  await vaultPage.locator('[data-role="continue-admin"]').click();
+  await vaultPage.waitForURL((url) => url.origin === adminUrl && !url.pathname.startsWith("/auth/handoff"), { timeout: SLOW });
+  expect(new URL(vaultPage.url()).pathname).toBe("/settings/general");
+  expect(await vaultPage.locator("main").count()).toBeGreaterThan(0);
+  expect(await vaultPage.locator("text=Not Found").count()).toBe(0);
+  await vaultPage.close();
+
+  // A code that another browser's hand-over made does nothing to this admin session. The code is
+  // made for the verifier of the stranger's browser; this browser has a verifier of its own.
   const stranger = await freshContext(browser);
   const other = await stranger.newPage();
   await signInOn(other);
-  const begin = await stranger.request.get(`${adminUrl}/auth/handoff/begin?next=/`, { maxRedirects: 0 });
-  expect(begin.status()).toBe(302);
-  const challenge = new URL(begin.headers().location).searchParams.get("challenge");
-  expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
-  const code = await other.evaluate(async (challenge) => {
-    const response = await fetch("/api/auth/handoff", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "Ferret-Protocol": "1" },
-      body: JSON.stringify({ purpose: "login", next: "/", challenge }),
-    });
-    return (await response.json()).code;
-  }, challenge);
-  expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  /** A code for the hand-over that the stranger's browser started. */
+  const mintForStranger = async () => {
+    const begin = await stranger.request.get(`${adminUrl}/auth/handoff/begin?next=/`, { maxRedirects: 0 });
+    expect(begin.status()).toBe(302);
+    const challenge = new URL(begin.headers().location).searchParams.get("challenge");
+    expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const code = await other.evaluate(async (challenge) => {
+      const response = await fetch("/api/auth/handoff", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "Ferret-Protocol": "1" },
+        body: JSON.stringify({ purpose: "login", next: "/", challenge }),
+      });
+      return (await response.json()).code;
+    }, challenge);
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    return code;
+  };
+  const code = await mintForStranger();
 
+  // This browser starts a hand-over of its own (so it holds a verifier that does not match), then follows the lure.
+  expect((await context.request.get(`${adminUrl}/auth/handoff/begin?next=/`, { maxRedirects: 0 })).status()).toBe(302);
+  expect((await cookiesOf(context, adminUrl)).map((c) => c.name)).toContain("__Host-ferret_handoff");
   const before = await cookiesOf(context, adminUrl);
   const link = await context.newPage();
   await link.goto(`${adminUrl}/auth/handoff#code=${code}`);
@@ -94,10 +114,10 @@ test("admin_handoff_gives_the_admin_origin_a_session", async ({ browser }) => {
   expect(still.status()).toBe(200);
   expect(await still.json()).toEqual(await session.json());
 
-  // The same code with no verifier at all gives a browser with nothing no session either.
+  // A browser with no verifier at all gets no session from a fresh code either.
   const blank = await freshContext(browser);
   const nothing = await blank.newPage();
-  await nothing.goto(`${adminUrl}/auth/handoff#code=${code}`);
+  await nothing.goto(`${adminUrl}/auth/handoff#code=${await mintForStranger()}`);
   await expect(nothing.locator("#handoff-status")).toContainText("did not work", { timeout: 20_000 });
   expect((await blank.request.get(`${adminUrl}/api/auth/session`)).status()).toBe(401);
 

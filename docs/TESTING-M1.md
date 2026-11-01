@@ -58,10 +58,16 @@ scripts/lanbox-wasm.sh                                   # builds bindings/wasm/
 scripts/package-release.sh package 0.1.0 /some/dir       # writes the archive and its checksum
 cp /some/dir/ferret-core-wasm-web-0.1.0.tar.gz web/wasm.local.tar.gz
 # put the archive's SHA-256 into web/wasm.lock.json (do not commit this change)
+FERRET_WASM_LOCAL=1 scripts/lanbox-ferret-e2e-gate.sh    # or ... lanbox-ferret-test.sh up
 ```
 
-The archive is ignored by git, the lock change stays in the working tree, and a
-clean checkout (so a release build) never has either. The vault shows the
+The build argument `WASM_LOCAL=1` (set by `FERRET_WASM_LOCAL=1`) is what switches it
+on. Without it the archive is deleted before the build, so a stray file or a changed
+lock can only fail the checksum of the published package. An image built with it
+prints a warning in the build log and carries the label `ferret.wasm.local=1`, and
+the gate says which package it ran against. The archive is ignored by git, the lock
+change stays in the working tree, no workflow sets the argument (the stack check
+enforces that), and a clean checkout never has either. The vault shows the
 difference at once: without `verify_tombstone` in the package, an item deleted
 on one device comes back on the next sign-in marked "Deletion not checked".
 
@@ -78,13 +84,17 @@ first-administrator link with `scripts/lanbox-ferret-test.sh token`.
 3. Open the same vault in a second browser and watch an item appear (within about
    5 seconds).
 4. Lock the vault, check the lock screen shows nothing, unlock again.
-5. Open the admin pages from the vault and check you land on the admin site
-   without typing a password there.
+5. Open the admin pages from the vault (the button on the sign-in page when you
+   are signed in) and check you land on the admin settings page without typing a
+   password there. The admin site has no page at `/`; that address is a 404.
 6. Sign out in one browser and check the other is still signed in.
 7. `scripts/lanbox-ferret-test.sh peers` shows the Pangolin traffic as
    `trusted=true` from the tunnel client's address.
 
 ## Known gaps in this milestone
+
+The full list, with the security ones, is in the test script for the owner (outside
+the repository). The code-level ones:
 
 - There are two unlock forms (the one on the sign-in page and the one on the
   vault screens). One of them will be chosen later.
@@ -102,3 +112,9 @@ first-administrator link with `scripts/lanbox-ferret-test.sh token`.
   the general "could not be opened, check the e-mail, password and secret key"
   text instead of saying that the setup has to be started again. Open the setup
   link again.
+- The admin origin answers `/` with a 404 (the kit has no page there). The vault's
+  buttons go to `/settings/general`; a Pangolin health check for the admin target
+  must use `/healthz`.
+- No device tokens or DPoP yet: a stolen session cookie works for up to 12 hours
+  idle (vault) until it is revoked. Pangolin's sign-in is not part of Ferret's
+  security. There is no backup of the server's data yet.

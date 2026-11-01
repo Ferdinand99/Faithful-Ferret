@@ -266,7 +266,7 @@ check_stack() {
 
   e2e_down >/dev/null
   expect "e2e-down: nothing of the project is left" "" \
-    "$( { dk ps -a --filter "label=$e2e_label" --format '{{.Names}}'; dk network ls --filter "label=$e2e_label" --format '{{.Name}}'; dk images -q "$e2e_image"; } | tr -d '\n')"
+    "$( { dk ps -a --filter "label=$e2e_label" --format '{{.Names}}'; dk network ls --filter "label=$e2e_label" --format '{{.Name}}'; dk volume ls --filter "label=$e2e_label" --format '{{.Name}}'; dk images -q "$e2e_image"; } | tr -d '\n')"
 }
 
 which="${1:-all}"

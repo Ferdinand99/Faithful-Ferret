@@ -1,4 +1,4 @@
-// Scenario 7, first half: the traffic of the whole run (everything the browsers
+// The traffic of the whole run (everything the browsers
 // sent to the servers and got back) holds none of the secrets of the run. The
 // second half, the same search in the server's database file, is made by the
 // host script (scripts/lanbox-ferret-e2e-gate.sh) from the list this test leaves.
@@ -28,6 +28,8 @@ test("server_never_sees_plaintext", async () => {
   // The capture is real: it holds the sign-ins and the writes of the earlier scenarios.
   const all = findings.traffic.join("\n");
   expect(findings.traffic.length).toBeGreaterThan(100);
+  // Bodies are captured too: the e-mail address travels in the clear on purpose.
+  expect(all).toContain(secrets.email);
   expect(all).toContain("/api/auth/opaque/register/finish");
   expect(all).toContain("/api/auth/opaque/login/finish");
   expect(all).toContain("/api/sync/items/");

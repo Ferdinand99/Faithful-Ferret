@@ -11,6 +11,7 @@
 // click on "Continue to the admin pages" for a session that already exists.
 // It is never started because the page was opened.
 import { AccountError } from "../crypto/errors.mjs";
+import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { el, mount } from "../dom.mjs";
 import { busyState, choice, describeError, field, setText, trustNotice } from "./form.mjs";
 
@@ -118,6 +119,8 @@ export function loginView(deps) {
       question.hidden = !unknown;
       const answeredYes = yes.input.checked === true;
       code.row.hidden = !(device.pinned ? device.skBit === true && !device.skStored : answeredYes);
+      // A code typed for another e-mail address must not outlive its field: it would beat the stored key.
+      if (code.row.hidden) code.input.value = "";
       remembered.hidden = !(device.pinned && device.skBit === true && device.skStored);
       // The choice is offered at the first sign-in on a device that does not know the account.
       rememberRow.hidden = !(mode === "signin" && unknown && answeredYes);
@@ -148,7 +151,7 @@ export function loginView(deps) {
       const answer = yes.input.checked ? true : no.input.checked ? false : undefined;
       const rememberVisible = !rememberRow.hidden;
       /** @type {Record<string, any>} */
-      const args = { password: typedPassword, skCode: typedCode, skBit: device.pinned ? undefined : answer };
+      const args = { password: typedPassword, skCode: code.row.hidden ? "" : typedCode, skBit: device.pinned ? undefined : answer };
       if (rememberVisible) args.rememberSk = remember.input.checked;
       try {
         if (email) {
@@ -210,7 +213,7 @@ export function loginView(deps) {
     if (open) buttons.push(action("account.signedin.open", "open-vault", async () => go("/")));
     if (entry.handoff !== null) buttons.push(action("account.signedin.continue_admin", "continue-admin", continueHandoff));
     else if (adminUrl !== null) {
-      buttons.push(action("account.signedin.admin", "admin", () => handoff.goToAdmin({ adminUrl, next: "/", purpose: "login" })));
+      buttons.push(action("account.signedin.admin", "admin", () => handoff.goToAdmin({ adminUrl, next: ADMIN_LANDING, purpose: "login" })));
     }
     if (open) {
       buttons.push(action("account.signedin.lock", "lock", async () => {

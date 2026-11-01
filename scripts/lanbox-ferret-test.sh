@@ -43,6 +43,9 @@
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
 #   FERRET_LANBOX       address of the LANBox (default 10.0.3.26)
 #   FERRET_PROXY_CONTAINER  name of the tunnel client container (default Newt)
+#   FERRET_WASM_LOCAL   1 builds the web vault against web/wasm.local.tar.gz instead of the
+#                       published WebAssembly package (test builds only; the image is labelled
+#                       ferret.wasm.local=1 and the build prints a warning)
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
@@ -305,8 +308,8 @@ e2e_clock() {
 
 e2e_up() {
   local token
-  # A fresh stack every time: the data is in tmpfs, so removing the container is
-  # what empties the database.
+  # A fresh stack every time: the stack and its data volume are removed first, so the
+  # database starts empty.
   e2e_remove
   token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   FERRET_E2E_SETUP_TOKEN="$token" dce up -d --build --wait

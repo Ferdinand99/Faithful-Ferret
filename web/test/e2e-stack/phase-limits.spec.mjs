@@ -1,4 +1,4 @@
-// Scenario 13, the browser half. The server clock can only be moved from the
+// Session limits, the browser half. The server clock can only be moved from the
 // host (scripts/lanbox-ferret-test.sh e2e-clock), so this scenario is driven by
 // scripts/lanbox-ferret-e2e-gate.sh in steps:
 //

@@ -1,4 +1,4 @@
-// Scenarios 12 and 8: the server fails closed on a connection that is not https
+// The server fails closed on a connection that is not https
 // (and does not believe a forwarded header from a peer it does not trust), and
 // signing out ends the session at the server, not only in the browser.
 import { request as playwrightRequest } from "@playwright/test";

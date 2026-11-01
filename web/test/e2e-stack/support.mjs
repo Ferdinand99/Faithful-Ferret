@@ -193,8 +193,19 @@ export const workers = (page) => page.evaluate(() => /** @type {any} */ (window)
 
 // ----------------------------------------------------------- the pages
 
-/** What a screen shows, as plain text. @param {import("@playwright/test").Page} page */
-export const bodyText = (page) => page.evaluate(() => document.body.innerText + "\n" + document.body.innerHTML);
+/**
+ * What a screen shows: its text, its markup and the values typed into its fields.
+ * @param {import("@playwright/test").Page} page
+ */
+export const bodyText = (page) =>
+  page.evaluate(
+    () =>
+      document.body.innerText +
+      "\n" +
+      document.body.innerHTML +
+      "\n" +
+      Array.from(document.querySelectorAll("input, textarea"), (i) => /** @type {HTMLInputElement} */ (i).value).join("\n"),
+  );
 
 /**
  * Waits until the vault is up (the page's boot has finished).
