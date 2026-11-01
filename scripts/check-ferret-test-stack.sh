@@ -221,6 +221,8 @@ grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to 
 # no workflow sets it: a release build can only use the published package.
 grep -q '^ARG WASM_LOCAL=""$' "$dockerfile" || fail "ARG WASM_LOCAL must default to empty"
 grep -q 'rm -f wasm.local.tar.gz' "$dockerfile" || fail "without WASM_LOCAL the local archive must be deleted before the build"
+# The pattern is literal text of the Dockerfile.
+# shellcheck disable=SC2016
 grep -qF 'ferret.wasm.local="${WASM_LOCAL:-0}"' "$dockerfile" || fail "the image must carry the label ferret.wasm.local"
 if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github; then fail "no workflow may use the local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
