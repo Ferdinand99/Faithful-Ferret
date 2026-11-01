@@ -8,7 +8,7 @@ import { el } from "../dom.mjs";
 export function passwordView({ t }) {
   return el(
     "section",
-    { class: "card account", "data-role": "password-page" },
+    { class: "auth-card account", "data-role": "password-page" },
     el("h1", null, t("account.password.heading")),
     el("p", null, t("account.password.body")),
     el("p", null, el("a", { href: "#/login" }, t("account.password.back"))),

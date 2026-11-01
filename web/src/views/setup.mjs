@@ -24,7 +24,7 @@ import { sheetView } from "./sheet.mjs";
 /** @param {SetupDeps} deps */
 export function setupView(deps) {
   const { t, session, adminUrl, go, handoff } = deps;
-  const root = el("section", { class: "card account", "data-role": "setup-page" });
+  const root = el("section", { class: "auth-card account", "data-role": "setup-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
@@ -34,14 +34,14 @@ export function setupView(deps) {
   const password = field(t, { id: "password", role: "password", label: "account.setup.password", type: "password", autocomplete: "new-password", help: "account.setup.password_help" });
   const repeat = field(t, { id: "password-repeat", role: "password-repeat", label: "account.setup.repeat", type: "password", autocomplete: "new-password" });
   const useSk = choice(t, { id: "use-sk", role: "use-sk", label: "account.setup.use_sk", checked: true });
-  const noSkWarning = el("p", { class: "notice", role: "note", "data-role": "no-sk-warning" }, t("account.setup.no_sk_warning"));
+  const noSkWarning = el("p", { class: "notice notice-warning", role: "note", "data-role": "no-sk-warning" }, t("account.setup.no_sk_warning"));
   noSkWarning.hidden = true;
   const remember = choice(t, { id: "remember", role: "remember", label: "account.remember.label", checked: true });
   const rememberNote = el("small", { class: "help" }, t("account.remember.note"));
   const rememberRow = el("div", { class: "remember", "data-role": "remember-row" }, remember.row, rememberNote);
   const token = deps.setupToken ? null : field(t, { id: "setup-token", role: "setup-token", label: "account.setup.token", autocomplete: "off", required: false, secret: true });
   const tokenNote = deps.setupToken ? el("p", { class: "help", "data-role": "token-received" }, t("account.setup.token_received")) : null;
-  const submit = el("button", { type: "submit", class: "primary", "data-role": "submit" }, t("account.setup.submit"));
+  const submit = el("button", { type: "submit", class: "btn btn-primary btn-block", "data-role": "submit" }, t("account.setup.submit"));
   const form = el("form", { class: "stack", "data-role": "setup-form" });
 
   function layout() {
@@ -72,8 +72,8 @@ export function setupView(deps) {
     try {
       await flow.finish();
     } catch (error) {
-      const retry = el("button", { type: "button", class: "primary", "data-role": "retry" }, t("account.setup.retry"));
-      const cancel = el("button", { type: "button", "data-role": "cancel" }, t("account.setup.cancel"));
+      const retry = el("button", { type: "button", class: "btn btn-primary", "data-role": "retry" }, t("account.setup.retry"));
+      const cancel = el("button", { type: "button", class: "btn btn-secondary", "data-role": "cancel" }, t("account.setup.cancel"));
       retry.addEventListener("click", () => void finishUp(flow));
       cancel.addEventListener("click", () => {
         void flow.abort().finally(() => go("/login"));
@@ -108,12 +108,12 @@ export function setupView(deps) {
   }
 
   function showDone() {
-    const open = el("button", { type: "button", class: "primary", "data-role": "open-vault" }, t("account.setup.done_open"));
+    const open = el("button", { type: "button", class: "btn btn-primary", "data-role": "open-vault" }, t("account.setup.done_open"));
     open.addEventListener("click", () => go("/"));
     const admin =
       adminUrl === null
         ? null
-        : el("button", { type: "button", "data-role": "admin" }, t("account.signedin.admin"));
+        : el("button", { type: "button", class: "btn btn-secondary", "data-role": "admin" }, t("account.signedin.admin"));
     admin?.addEventListener("click", () => {
       if (adminUrl !== null) void handoff.goToAdmin({ adminUrl, next: ADMIN_LANDING, purpose: "login" }).catch(showError);
     });

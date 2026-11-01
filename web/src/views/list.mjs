@@ -33,12 +33,12 @@ export function matches(item, query) {
  * @returns {HTMLElement}
  */
 export function listView({ engine, router, t }) {
-  const root = el("section", { class: "card list", "data-role": "list" });
+  const root = el("section", { class: "list-view", "data-role": "list" });
   const search = /** @type {HTMLInputElement} */ (el("input", {
     id: "vault-search", name: "search", type: "search", autocomplete: "off", "data-role": "search",
     placeholder: t("vault.list.search_placeholder"),
   }));
-  const add = el("button", { type: "button", "data-role": "new-item" }, t("vault.nav.new"));
+  const add = el("button", { type: "button", class: "btn btn-primary i-plus", "data-role": "new-item" }, t("vault.nav.new"));
   add.addEventListener("click", () => router.go("/items/new"));
   const summary = el("p", { class: "count", role: "status", "data-role": "count" });
   const rows = el("ul", { class: "items", "data-role": "items" });

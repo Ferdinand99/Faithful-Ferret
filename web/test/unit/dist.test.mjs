@@ -66,6 +66,27 @@ test("dist_serves_the_files_the_page_and_the_workers_load", () => {
   assert.match(html, /href="\/assets\/app\.css"/);
 });
 
+test("dist_ships_inter_as_a_module_and_the_theme_script_first", () => {
+  const files = manifest();
+  for (const path of ["app/inter.mjs", "app/font.mjs", "app/theme.mjs", "app/theme-init.mjs"]) assert.ok(files[path], path);
+  const inter = readFileSync(join(dist, "app", "inter.mjs"), "utf8");
+  assert.match(inter, /SIL OPEN FONT LICENSE/);
+  const bytes = Buffer.from(/export default "([A-Za-z0-9+/=]+)";/.exec(inter)?.[1] ?? "", "base64");
+  assert.equal(bytes.subarray(0, 4).toString("latin1"), "wOF2");
+  assert.ok(bytes.equals(readFileSync(join(web, "fonts", "InterVariable-Latin.woff2"))));
+  // The theme script is a blocking classic script, ahead of the style sheet, so no frame has the wrong theme.
+  const html = readFileSync(join(dist, "index.html"), "utf8");
+  const early = html.indexOf('<script src="/app/theme-init.mjs"></script>');
+  assert.ok(early > 0 && early < html.indexOf('href="/assets/app.css"'));
+  // The page policy has no font source, so the style sheet loads no font file: the script adds the family.
+  const css = readFileSync(join(dist, "assets", "app.css"), "utf8");
+  assert.doesNotMatch(css, /@font-face/);
+  assert.match(css, /--font: "InterVariable", system-ui/);
+  // Light and dark come from one set of tokens.
+  assert.match(css, /color-scheme: light dark/);
+  assert.ok(css.includes(`:root[data-theme="dark"]`));
+});
+
 test("src_has_no_html_sinks_or_dynamic_code", () => {
   const sinks = [/\.innerHTML\b/, /\.outerHTML\b/, /insertAdjacentHTML/, /document\.write/, /\beval\s*\(/, /new\s+Function\b/, /createContextualFragment/, /DOMParser/, /javascript:/];
   const src = join(web, "src");

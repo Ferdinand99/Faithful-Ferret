@@ -126,3 +126,5 @@ Faithful Ferret is part of [Hedgerow](https://hedgerow.tools/), with [Vigilant V
 ## License
 
 [GNU AGPL-3.0-only](LICENSE)
+
+The Inter font files in `web/fonts` and `site/fonts` are under the [SIL Open Font License 1.1](web/fonts/Inter-LICENSE.txt).

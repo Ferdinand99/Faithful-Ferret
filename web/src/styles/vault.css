@@ -1,251 +1,455 @@
-/* The vault screens: the frame, the list, one item, the form and the dialog.
-   Colours come from base.css. No state is shown by colour alone: every mark and
-   notice also has words. Rules are scoped to .vault-ui, which every vault screen carries. */
+/* The vault screens: the top bar, the list, one item, the edit form and the
+   confirmation dialog. Colours and components come from base.css. No state is
+   shown by colour alone: every mark and notice also has words. */
+
+/* The frame */
 .vault-shell {
-  display: grid;
-  gap: 1rem;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .vault-ui .vault-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 1rem;
+  gap: 0 var(--sp-4);
+  min-height: var(--topbar-h);
+  padding: var(--safe-top) max(var(--gutter), calc((100% - var(--wrap)) / 2)) 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bar);
+  -webkit-backdrop-filter: var(--blur-bar);
+  backdrop-filter: var(--blur-bar);
 }
 
-.vault-ui .vault-bar .brand {
-  font-weight: 600;
+.vault-ui .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.012em;
   text-decoration: none;
+}
+
+.vault-ui .brand::before {
+  content: "";
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--mark) center / cover no-repeat;
 }
 
 .vault-ui .vault-bar nav {
   display: flex;
-  gap: 1rem;
-  margin-right: auto;
+  align-items: center;
+  gap: 2px;
+  margin-inline-end: auto;
 }
 
-.vault-ui .sync-status {
+.vault-ui .vault-bar nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: var(--r-full);
   color: var(--muted);
   font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color var(--dur-ui) ease,
+    background-color var(--dur-ui) ease;
+}
+
+.vault-ui .vault-bar nav a[aria-current="page"] {
+  background: var(--fill);
+  color: var(--text);
+}
+
+@media (pointer: coarse) {
+  .vault-ui .vault-bar nav a {
+    min-height: 44px;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .vault-bar nav a:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+}
+
+/* How sync stands, in words, with a dot that follows the state. */
+.vault-ui .sync-status {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+}
+
+.vault-ui .sync-status[data-state="idle"] {
+  --status: var(--ok);
+  --status-text: var(--ok-text);
+  --status-fill: var(--ok-fill);
+}
+
+.vault-ui .sync-status[data-state="offline"],
+.vault-ui .sync-status[data-state="retrying"] {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.vault-ui .sync-status[data-state="failed"],
+.vault-ui .sync-status[data-state="unauthorized"] {
+  --status: var(--bad);
+  --status-text: var(--bad-text);
+  --status-fill: var(--bad-fill);
+}
+
+/* On a phone the bar takes two rows: the name and Lock, then the links and the state. */
+@media (max-width: 40rem) {
+  html {
+    scroll-padding-top: 8rem;
+  }
+
+  .vault-ui .vault-bar {
+    padding-inline: max(var(--sp-4), var(--safe-left)) max(var(--sp-4), var(--safe-right));
+    padding-bottom: var(--sp-2);
+  }
+
+  .vault-ui .brand {
+    order: 1;
+  }
+
+  .vault-ui .vault-bar > [data-role="lock"] {
+    order: 2;
+    margin-inline-start: auto;
+  }
+
+  .vault-ui .vault-bar nav {
+    order: 3;
+    margin-inline-end: 0;
+  }
+
+  .vault-ui .sync-status {
+    order: 4;
+    margin-inline-start: auto;
+  }
 }
 
 .vault-ui .banners {
   display: grid;
-  gap: 0.5rem;
+  gap: var(--sp-2);
+  padding-inline: max(var(--gutter), calc((100% - var(--wrap)) / 2));
+}
+
+.vault-ui .banners:not(:empty) {
+  padding-top: var(--sp-4);
 }
 
 .vault-ui .banner {
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--line);
-  border-left-width: 0.375rem;
-  border-radius: 0.375rem;
-  background: var(--card);
-}
-
-.vault-ui .banner-warning {
-  border-left-color: #b26b00;
-}
-
-.vault-ui .banner-error {
-  border-left-color: #b3261e;
-}
-
-.vault-ui button,
-.vault-ui .button {
-  display: inline-block;
-  padding: 0.5rem 0.875rem;
-  border: 1px solid var(--accent);
-  border-radius: 0.375rem;
-  background: var(--accent);
-  color: var(--bg);
-  font: inherit;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.vault-ui button.secondary,
-.vault-ui .button.secondary {
-  background: transparent;
-  color: var(--accent);
-}
-
-.vault-ui button.danger {
-  border-color: #b3261e;
-  background: #b3261e;
-  color: #ffffff;
-}
-
-.vault-ui button.link {
-  padding: 0 0 0 0.5rem;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.vault-ui button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.vault-ui input[type="text"],
-.vault-ui input[type="password"],
-.vault-ui input[type="search"],
-.vault-ui select,
-.vault-ui textarea {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 0.375rem;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-}
-
-.vault-ui .field {
-  display: grid;
-  gap: 0.25rem;
-  margin-bottom: 1rem;
-}
-
-.vault-ui .field .help,
-.vault-ui .aside,
-.vault-ui .count,
-.vault-ui .detail {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.vault-ui .choice {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.vault-ui .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1rem 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-4);
+  padding-block: 10px;
 }
 
-.vault-ui .error {
-  color: #b3261e;
+.vault-ui .banner .btn {
+  margin-inline-start: auto;
 }
 
-@media (prefers-color-scheme: dark) {
-  .vault-ui .error {
-    color: #f2b8b5;
+.vault-ui .vault-main {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  gap: var(--sp-6);
+  width: 100%;
+  max-width: calc(var(--wrap) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding: var(--sp-8) max(var(--gutter), var(--safe-right)) var(--sp-10) max(var(--gutter), var(--safe-left));
+}
+
+@media (max-width: 40rem) {
+  .vault-ui .vault-main {
+    padding-block: var(--sp-5) var(--sp-8);
+    padding-inline: max(var(--sp-4), var(--safe-left)) max(var(--sp-4), var(--safe-right));
   }
+
+  .vault-ui .banners {
+    padding-inline: var(--sp-4);
+  }
+}
+
+/* The list */
+.vault-ui .list-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
 }
 
 .vault-ui .toolbar {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
 }
 
-.vault-ui .visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.vault-ui .toolbar > input {
+  flex: 1 1 12rem;
+  width: auto;
+}
+
+.vault-ui .count {
+  padding-inline: 4px;
 }
 
 .vault-ui .items {
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.vault-ui .items:empty {
+  display: none;
 }
 
 .vault-ui .item {
+  position: relative;
   display: grid;
-  gap: 0.125rem;
-  padding: 0.625rem 0;
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  grid-template-areas:
+    "link marks chevron"
+    "detail marks chevron";
+  align-items: center;
+  column-gap: var(--sp-3);
+  min-height: 56px;
+  padding: 10px 16px;
+  transition: background-color 120ms ease;
+}
+
+.vault-ui .item + .item {
   border-top: 1px solid var(--line);
 }
 
+.vault-ui .item::after {
+  content: "";
+  grid-area: chevron;
+  width: 16px;
+  height: 16px;
+  background-color: var(--faint);
+  -webkit-mask: var(--i-chevron) center / contain no-repeat;
+  mask: var(--i-chevron) center / contain no-repeat;
+}
+
+.vault-ui .item:active {
+  background: var(--pressed);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .item:hover {
+    background: var(--hover);
+  }
+}
+
+/* The name is the link, and the link covers the whole row. */
+/* Two names that differ only at the end must stay apart: up to two lines, then cut. */
 .vault-ui .item-link {
-  font-weight: 600;
+  grid-area: link;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.vault-ui .item-link::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.vault-ui .item-link:focus-visible {
+  outline: none;
+}
+
+.vault-ui .item-link:focus-visible::before {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.vault-ui .item .detail {
+  grid-area: detail;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .item .marks {
+  grid-area: marks;
+}
+
+@media (max-width: 40rem) {
+  /* The marks go under the name, so the name keeps the width. */
+  .vault-ui .item {
+    grid-template-columns: minmax(0, 1fr) 16px;
+    grid-template-areas:
+      "link chevron"
+      "detail chevron"
+      "marks chevron";
+  }
+
+  .vault-ui .item .marks {
+    margin-top: 6px;
+  }
+
+  .vault-ui .toolbar > input {
+    flex-basis: 100%;
+  }
+
+  .vault-ui .toolbar > .btn {
+    flex: 1 1 auto;
+  }
 }
 
 .vault-ui .star {
-  margin-right: 0.25rem;
+  margin-inline-end: 0.25rem;
+  color: var(--warn-text);
 }
 
 .vault-ui .marks {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
+  gap: 6px;
 }
 
-.vault-ui .mark {
-  padding: 0 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-  font-size: 0.75rem;
+.vault-ui .marks:empty {
+  display: none;
 }
 
-.vault-ui .mark-damaged,
-.vault-ui .mark-quarantined,
-.vault-ui .mark-blocked,
-.vault-ui .mark-missing {
-  border-color: #b26b00;
+/* One item */
+.vault-ui .item-card > h1,
+.vault-ui .edit > h1 {
+  overflow-wrap: anywhere;
+  font-size: 1.5rem;
+  letter-spacing: -0.019em;
 }
 
-.vault-ui .notice {
-  margin: 1rem 0;
-  padding: 0.625rem 0.75rem;
-  border: 1px solid #b26b00;
-  border-radius: 0.375rem;
+.vault-ui .type {
+  color: var(--muted);
 }
 
-.vault-ui .notice p {
-  margin: 0 0 0.5rem;
+.vault-ui .fields {
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .fields:empty {
+  display: none;
 }
 
 .vault-ui .field-row {
   display: grid;
-  grid-template-columns: minmax(6rem, 1fr) 2fr auto;
+  grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0;
-  border-top: 1px solid var(--line);
+  gap: var(--sp-2) var(--sp-4);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .vault-ui .field-row .label {
   color: var(--muted);
+  font-weight: 500;
 }
 
 .vault-ui .field-row .value {
   overflow-wrap: anywhere;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  letter-spacing: 0;
 }
 
 .vault-ui .field-row .actions {
-  margin: 0;
+  justify-content: flex-end;
+}
+
+.vault-ui .urls ul {
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-ui .urls li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .item-card > .actions {
+  margin-top: var(--sp-5);
 }
 
 @media (max-width: 30rem) {
   .vault-ui .field-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vault-ui .field-row .actions {
+    justify-content: flex-start;
+  }
+
+  .vault-ui .item-card > .actions .btn,
+  .vault-ui .edit .actions .btn {
+    flex: 1 1 auto;
   }
 }
 
+/* The confirmation: a raised card in the page, not a window. */
 .vault-ui .dialog {
-  margin: 1rem 0;
-  padding: 1rem;
-  border: 2px solid var(--fg);
-  border-radius: 0.5rem;
-  background: var(--card);
+  padding: var(--sp-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--card-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.vault-ui .dialog > * + * {
+  margin-top: var(--sp-2);
 }
 
 .vault-ui .dialog h2 {
-  margin-top: 0;
-  font-size: 1.125rem;
+  font-size: 1.0625rem;
+}
+
+.vault-ui .dialog p {
+  color: var(--muted);
+}
+
+.vault-ui .dialog .actions {
+  margin-top: var(--sp-4);
+}
+
+/* The edit form */
+.vault-ui .edit form {
+  margin-top: var(--sp-5);
 }

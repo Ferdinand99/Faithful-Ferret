@@ -43,7 +43,7 @@ export async function prepareUnlock(session) {
  * }} options
  */
 export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
-  const root = el("section", { class: "card unlock vault-ui", "data-role": "unlock" });
+  const root = el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" });
   const password = /** @type {HTMLInputElement} */ (el("input", {
     id: "unlock-password", name: "password", type: "password", autocomplete: "current-password", required: true, "data-role": "password",
   }));
@@ -54,7 +54,7 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
-  const submit = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", "data-role": "submit" }, t("vault.unlock.submit")));
+  const submit = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", class: "btn btn-primary btn-block", "data-role": "submit" }, t("vault.unlock.submit")));
 
   function showSecretKeyField() {
     if (sk) return;
@@ -86,6 +86,7 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
   }
 
   const form = el("form", {
+    class: "stack",
     "data-role": "unlock-form",
     onsubmit: async (/** @type {Event} */ event) => {
       event.preventDefault();
@@ -150,11 +151,11 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
  */
 export function unlockScreen({ session, t, go, onUnlocked }) {
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
-    el("section", { class: "card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
+    el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
   prepareUnlock(session).then(
     (found) => {
       if (!found.signedIn) {
-        mount(box, el("section", { class: "card unlock vault-ui", "data-role": "unlock" },
+        mount(box, el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" },
           el("h1", null, t("vault.unlock.heading")),
           el("p", { role: "alert" }, t("account.error.session_ended")),
           el("p", null, el("a", { href: "#/login" }, t("vault.unlock.sign_in")))));
@@ -164,7 +165,7 @@ export function unlockScreen({ session, t, go, onUnlocked }) {
       mount(box, unlockView({ session, t, go, email: found.email, skRequired: found.skRequired, onUnlocked }));
     },
     (error) => {
-      mount(box, el("section", { class: "card", role: "alert", "data-role": "unlock-error" },
+      mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },
         el("p", null, unlockErrorText(t, error))));
     },
   );

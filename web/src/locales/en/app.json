@@ -3,5 +3,9 @@
   "app.name": "Faithful Ferret",
   "app.notfound.body": "There is nothing at this address.",
   "app.notfound.home": "Go to the start page",
-  "app.notfound.title": "Page not found"
+  "app.notfound.title": "Page not found",
+  "app.theme.auto": "Auto",
+  "app.theme.dark": "Dark",
+  "app.theme.label": "Theme",
+  "app.theme.light": "Light"
 }

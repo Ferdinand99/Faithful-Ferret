@@ -10,7 +10,7 @@ export default {
     if (!session) throw new Error("vault: the account session is missing");
     if (session.current?.()) {
       go("/items");
-      return el("section", { class: "card", role: "status" }, el("p", null, i18n.t("vault.loading")));
+      return el("section", { class: "auth-card", role: "status" }, el("p", null, i18n.t("vault.loading")));
     }
     return unlockScreen({ session, t: i18n.t, go, onUnlocked: () => go("/items") });
   },

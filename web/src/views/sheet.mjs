@@ -17,7 +17,7 @@ import { busyState, describeError, field, setText } from "./form.mjs";
  * @returns {{ root: HTMLElement, wipe(): void }}
  */
 export function sheetView({ t, sheet, useSecretKey, onConfirm, onPrint }) {
-  const root = el("section", { class: "card account sheet", "data-role": "sheet-page" });
+  const root = el("section", { class: "auth-card account sheet", "data-role": "sheet-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
@@ -39,7 +39,7 @@ export function sheetView({ t, sheet, useSecretKey, onConfirm, onPrint }) {
 
   const rk = field(t, { id: "rk-typed", role: "rk-typed", label: "account.sheet.type_recovery", autocomplete: "off", secret: true });
   const sk = useSecretKey ? field(t, { id: "sk-typed", role: "sk-typed", label: "account.sheet.type_secret", autocomplete: "off", secret: true }) : null;
-  const submit = el("button", { type: "submit", class: "primary", "data-role": "confirm" }, t("account.sheet.confirm"));
+  const submit = el("button", { type: "submit", class: "btn btn-primary btn-block", "data-role": "confirm" }, t("account.sheet.confirm"));
   const form = el("form", { class: "stack", "data-role": "confirm-form" }, rk.row, ...(sk ? [sk.row] : []), submit);
   const busy = busyState({ root: form, status, controls: [rk.input, submit, ...(sk ? [sk.input] : [])], t, key: "account.sheet.checking" });
 
@@ -67,21 +67,21 @@ export function sheetView({ t, sheet, useSecretKey, onConfirm, onPrint }) {
       });
   });
 
-  const print = onPrint ? el("button", { type: "button", "data-role": "print" }, t("account.sheet.print")) : null;
+  const print = onPrint ? el("button", { type: "button", class: "btn btn-secondary", "data-role": "print" }, t("account.sheet.print")) : null;
   print?.addEventListener("click", () => onPrint?.());
 
   mount(
     root,
     el("h1", null, t("account.sheet.heading")),
-    el("p", { class: "notice", role: "note" }, t("account.sheet.warning")),
+    el("p", { class: "notice notice-warning", role: "note" }, t("account.sheet.warning")),
     el("h2", null, t("account.sheet.page_access")),
     page,
     el("h2", null, t("account.sheet.page_recovery")),
     el("p", null, t("account.sheet.recovery_note")),
     recovery,
     ...(print ? [print] : []),
-    el("h2", null, t("account.sheet.confirm_heading")),
-    el("p", null, t("account.sheet.confirm_note")),
+    el("h2", { class: "no-print" }, t("account.sheet.confirm_heading")),
+    el("p", { class: "no-print" }, t("account.sheet.confirm_note")),
     form,
     status,
     errorBox,

@@ -92,7 +92,7 @@ const NOT_FOUND = {
   path: "*",
   title: "app.notfound.title",
   load: ({ i18n }) =>
-    el("section", { class: "card" },
+    el("section", { class: "auth-card" },
       el("h1", null, i18n.t("app.notfound.title")),
       el("p", null, i18n.t("app.notfound.body")),
       el("p", null, el("a", { href: "#/" }, i18n.t("app.notfound.home")))),
@@ -128,7 +128,7 @@ export function startApp({ root, routes, serviceDefs, client, i18n, win = window
       });
     } catch {
       // No detail on the page: an error can carry what the user typed.
-      view = el("section", { class: "card", role: "alert" }, el("p", null, i18n.t("app.error.load")));
+      view = el("section", { class: "auth-card", role: "alert" }, el("p", null, i18n.t("app.error.load")));
     }
     if (mine !== token) return;
     win.document.title = `${i18n.t(match.route.title)} · ${i18n.t("app.name")}`;
