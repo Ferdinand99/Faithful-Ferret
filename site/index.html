@@ -7,10 +7,10 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self' 'sha256-WZRJfWvsnNCPcxzZwvyhovnZGqhZaC+8gPGPRbx6wTk='; style-src 'self'; img-src 'self'; font-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'"
     />
-    <title>Faithful Ferret — a self-hosted, zero-knowledge password manager (coming soon)</title>
+    <title>Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)</title>
     <meta
       name="description"
-      content="Faithful Ferret is a self-hosted, zero-knowledge, open source password manager from the Hedgerow family: passkeys, one-time codes, a full web vault, browser extensions and iOS and Android apps. Coming soon: the design is approved and nothing is ready to use yet."
+      content="Faithful Ferret is a self-hosted, zero-knowledge, open source password manager from the Hedgerow family: passkeys, one-time codes, a full web vault, browser extensions and iOS and Android apps. In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit."
     />
     <script>document.documentElement.classList.add("js");</script>
     <link rel="canonical" href="https://hedgerow.tools/Faithful-Ferret/" />
@@ -24,10 +24,10 @@
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://hedgerow.tools/Faithful-Ferret/" />
     <meta property="og:site_name" content="Faithful Ferret" />
-    <meta property="og:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (coming soon)" />
+    <meta property="og:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)" />
     <meta
       property="og:description"
-      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. Coming soon: design approved, not ready to use yet."
+      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit."
     />
     <meta property="og:image" content="https://hedgerow.tools/Faithful-Ferret/icon-512.png" />
     <meta property="og:image:type" content="image/png" />
@@ -35,10 +35,10 @@
     <meta property="og:image:height" content="512" />
     <meta property="og:image:alt" content="The Faithful Ferret logo, a mint ferret silhouette on a dark tile." />
     <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (coming soon)" />
+    <meta name="twitter:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)" />
     <meta
       name="twitter:description"
-      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. Coming soon: design approved, not ready to use yet."
+      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit."
     />
     <meta name="twitter:image" content="https://hedgerow.tools/Faithful-Ferret/icon-512.png" />
     <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
@@ -48,7 +48,7 @@
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Faithful Ferret",
-        "description": "A planned self-hosted, zero-knowledge, open source password manager: passwords, passkeys and one-time codes, a full web vault, browser extensions and iOS and Android apps. In the design phase; not ready to use.",
+        "description": "A self-hosted, zero-knowledge, open source password manager: passwords, passkeys and one-time codes, a full web vault, browser extensions and iOS and Android apps. In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit.",
         "url": "https://hedgerow.tools/Faithful-Ferret/",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "Docker, Unraid (planned)",
@@ -104,17 +104,17 @@
             </div>
             <a class="live-pill" href="#roadmap">
               <span class="dot" aria-hidden="true"></span>
-              <span>Coming soon</span>
+              <span>In development</span>
               <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-right"></use></svg>
             </a>
             <h1 class="display" id="hero-title">Your passwords.<br class="br-wide" /> Only yours.</h1>
             <p class="lead">
-              Faithful Ferret is a planned self-hosted password manager that is designed so it can’t
+              Faithful Ferret is a self-hosted password manager that is designed so it can’t
               read your vault. It is encrypted and decrypted only on your own devices; your server
               stores ciphertext. It will fill in logins, keep your passkeys and one-time codes, and work in your browser, on
               iOS and on Android.
             </p>
-            <p class="hero-fine">Design approved. Nothing to install yet, and please don’t store real passwords in it.</p>
+            <p class="hero-fine">In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit.</p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="https://github.com/Ferdinand99/Faithful-Ferret">
                 <svg class="gh-mark" aria-hidden="true"><use href="#gh"></use></svg>
@@ -173,7 +173,7 @@
                 <span>Synced · no conflicts</span>
               </div>
             </div>
-            <figcaption>Concept illustration with made-up data. Ferret has no interface yet; it will follow the family design system.</figcaption>
+            <figcaption>Concept illustration with made-up data.</figcaption>
           </figure>
         </div>
       </section>
@@ -383,7 +383,7 @@
             <p class="eyebrow">Status</p>
             <h2 class="headline" id="roadmap-title">Where it stands.</h2>
             <p class="sub">
-              Ferret is in the design phase. The phases below are the order the work happens in, not
+              The steps below are the order the work happens in, not
               cuts in scope, and there are no dates: each step is done when it works. Version 1.0 will
               not be released until every planned feature and security check is in place.
             </p>
@@ -398,42 +398,50 @@
                 <p>What Ferret is for, what 1.0 includes, the security goals and how recovery works.</p>
               </div>
             </li>
-            <li class="milestone is-now reveal">
-              <span class="ms-marker" aria-hidden="true"><span class="dot is-live"></span></span>
+            <li class="milestone is-done reveal">
+              <span class="ms-marker" aria-hidden="true"><svg class="icon"><use href="assets/icons.svg#check"></use></svg></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Next</span></p>
+                <p class="ms-status"><span class="pill status-up"><span class="dot"></span>Done</span></p>
                 <h3>Throwaway prototypes</h3>
-                <p>Quick experiments, thrown away afterwards, that answer the risky questions first: biometric unlock from a browser extension, acting as a passkey provider, key derivation speed on every platform, and the sync protocol.</p>
+                <p>Quick experiments, thrown away afterwards, that answered the risky questions first: biometric unlock from a browser extension, acting as a passkey provider, key derivation speed on every platform, and the sync protocol.</p>
               </div>
             </li>
-            <li class="milestone reveal">
-              <span class="ms-marker" aria-hidden="true"></span>
+            <li class="milestone is-done reveal">
+              <span class="ms-marker" aria-hidden="true"><svg class="icon"><use href="assets/icons.svg#check"></use></svg></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill">Then</span></p>
+                <p class="ms-status"><span class="pill status-up"><span class="dot"></span>Done</span></p>
                 <h3>Security design</h3>
-                <p>The published threat model, cryptographic design and sync protocol, reviewed before any production code is written.</p>
+                <p>The published threat model, cryptographic design and sync protocol.</p>
               </div>
             </li>
-            <li class="milestone reveal">
-              <span class="ms-marker" aria-hidden="true"></span>
+            <li class="milestone is-done reveal">
+              <span class="ms-marker" aria-hidden="true"><svg class="icon"><use href="assets/icons.svg#check"></use></svg></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill">Then</span></p>
+                <p class="ms-status"><span class="pill status-up"><span class="dot"></span>First version done</span></p>
                 <h3>Server and cryptographic core</h3>
                 <p>The server (accounts, devices, an encrypted item store with revisions and conflicts, backups) and a shared Rust core for all clients, with test vectors and fuzzing.</p>
               </div>
             </li>
-            <li class="milestone reveal">
-              <span class="ms-marker" aria-hidden="true"></span>
+            <li class="milestone is-now reveal">
+              <span class="ms-marker" aria-hidden="true"><span class="dot is-live"></span></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill">Then</span></p>
+                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>First version done, work continues</span></p>
                 <h3>Web vault</h3>
-                <p>Unlocking, editing, the generator, one-time codes, conflict handling, the recovery key, encrypted export and import.</p>
+                <p>Unlocking, editing, the generator and one-time codes.</p>
               </div>
             </li>
             <li class="milestone reveal">
               <span class="ms-marker" aria-hidden="true"></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill">Then</span></p>
+                <p class="ms-status"><span class="pill">Next</span></p>
+                <h3>Safe sync, recovery and daily use</h3>
+                <p>Conflict handling, the recovery key, encrypted export and import.</p>
+              </div>
+            </li>
+            <li class="milestone reveal">
+              <span class="ms-marker" aria-hidden="true"></span>
+              <div class="ms-body">
+                <p class="ms-status"><span class="pill">Later</span></p>
                 <h3>Browser extension, iOS and Android</h3>
                 <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform.</p>
               </div>
@@ -441,7 +449,7 @@
             <li class="milestone reveal">
               <span class="ms-marker" aria-hidden="true"></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill">Then</span></p>
+                <p class="ms-status"><span class="pill">Later</span></p>
                 <h3>Hardening and 1.0</h3>
                 <p>The internal security programme, measured performance, upgrade and migration tests and documentation. 1.0 is released only when all of it is green.</p>
               </div>
@@ -462,8 +470,8 @@
                 <summary>When can I use it?<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-down"></use></svg></summary>
                 <div class="faq-body">
                   <p>
-                    Not yet. The design is approved and nothing is usable. <strong>Please don’t store
-                    real passwords in it</strong> when early builds appear. There is no release date.
+                    Not yet. In development: the server and web vault work end to end in testing. Not ready for real passwords yet, and there has been no external security audit. <strong>Please don’t store
+                    real passwords in it.</strong> There is no release date.
                     Watch or star the
                     <a href="https://github.com/Ferdinand99/Faithful-Ferret">repository</a> to hear about progress.
                   </p>
@@ -579,8 +587,8 @@
           Docker container updates.
         </p>
         <p>
-          Faithful Ferret is open source under the GNU AGPL-3.0 and is in the design phase: not
-          ready to use. This site uses no cookies and no analytics.
+          Faithful Ferret is open source under the GNU AGPL-3.0 and is in development: not
+          ready for real passwords yet. This site uses no cookies and no analytics.
         </p>
       </div>
     </footer>
