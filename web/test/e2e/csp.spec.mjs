@@ -153,3 +153,74 @@ test("the_browser_enforces_trusted_types_and_the_script_policy", async ({ page }
   // The browser reported what it blocked.
   expect(reported).toBeGreaterThan(0);
 });
+
+test("inter_is_added_by_script_without_a_font_source", async ({ page }) => {
+  const seen = await watch(page);
+  await page.goto("/");
+  await expect(page.locator("#app h1")).toBeVisible();
+  // The family comes from bytes the page ships, not from a file: the policy has no font source.
+  await page.waitForFunction(
+    () => [...document.fonts].some((face) => face.family.includes("InterVariable") && face.status === "loaded"),
+    undefined,
+    { timeout: 15_000 },
+  );
+  expect(await page.evaluate(() => document.fonts.check("16px InterVariable"))).toBe(true);
+  expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain("InterVariable");
+  expect(await violations(page)).toEqual([]);
+  expect(seen.errors).toEqual([]);
+  expect(seen.console).toEqual([]);
+});
+
+test("the_page_follows_the_system_theme_and_a_choice_in_the_footer_wins_and_is_remembered", async ({ page }) => {
+  const seen = await watch(page);
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  const LIGHT = "rgb(245, 245, 247)";
+  const DARK = "rgb(11, 11, 13)";
+
+  // The preference is set after the first load: Firefox ignores it before a page has been shown.
+  await page.goto("/");
+  await expect(page.locator("#app h1")).toBeVisible();
+  await page.emulateMedia({ colorScheme: "dark" });
+  expect(await background()).toBe(DARK);
+  await page.emulateMedia({ colorScheme: "light" });
+  expect(await background()).toBe(LIGHT);
+
+  // Dark, chosen in the footer: set at once and remembered. The only thing stored is the word.
+  await page.locator('[data-theme-set="dark"]').click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect(await background()).toBe(DARK);
+  await expect(page.locator('[data-theme-set="dark"]')).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => Object.entries(localStorage))).toEqual([["ferret-theme", "dark"]]);
+
+  // After a reload the choice is back before the first paint of the page's own script.
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator('[data-theme-set="dark"]')).toHaveAttribute("aria-pressed", "true");
+  expect(await background()).toBe(DARK);
+
+  await page.locator('[data-theme-set="light"]').click();
+  expect(await background()).toBe(LIGHT);
+  await page.emulateMedia({ colorScheme: "dark" });
+  expect(await background()).toBe(LIGHT);
+
+  // Auto: nothing is stored and the system decides again.
+  await page.locator('[data-theme-set="auto"]').click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  expect(await background()).toBe(DARK);
+
+  expect(await violations(page)).toEqual([]);
+  expect(seen.errors).toEqual([]);
+  expect(seen.console).toEqual([]);
+});
+
+test("the_pages_fit_a_phone_without_sideways_scrolling", async ({ page }) => {
+  await watch(page);
+  await page.setViewportSize({ width: 320, height: 640 });
+  for (const hash of ["", "#/does-not-exist"]) {
+    await page.goto(`/${hash}`);
+    await expect(page.locator("#app h1")).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, hash).toBeLessThanOrEqual(0);
+  }
+});

@@ -86,9 +86,9 @@ function trackLock(session, screen) {
  */
 export function shellView({ t, engine, session, content, lock, touch, scope, onLocked }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
-  const status = el("span", { class: "sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
+  const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
-  const lockButton = el("button", { type: "button", class: "secondary", "data-role": "lock" }, t("vault.lock"));
+  const lockButton = el("button", { type: "button", class: "btn btn-secondary btn-sm i-lock", "data-role": "lock" }, t("vault.lock"));
   const bar = el("header", { class: "vault-bar" },
     el("a", { class: "brand", href: "#/items" }, t("app.name")),
     el("nav", { "aria-label": t("vault.nav.label") },
@@ -104,7 +104,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   /** @param {string} key @param {string} kind @param {string} text */
   function banner(key, kind, text) {
     const node = el("p", { class: `banner banner-${kind}`, role: kind === "error" ? "alert" : "status", "data-role": "banner", "data-banner": key }, text);
-    const dismiss = el("button", { type: "button", class: "link", "data-role": "banner-dismiss" }, t("vault.banner.dismiss"));
+    const dismiss = el("button", { type: "button", class: "btn btn-plain btn-sm", "data-role": "banner-dismiss" }, t("vault.banner.dismiss"));
     dismiss.addEventListener("click", () => {
       node.remove();
       shown.delete(key);
@@ -207,9 +207,9 @@ export async function enterVault(ctx) {
   }
   if (!engine) {
     // The vault stays open and the idle lock is running; the card says sync is down and offers the lock.
-    const lockButton = el("button", { type: "button", "data-role": "lock" }, t("vault.lock"));
+    const lockButton = el("button", { type: "button", class: "btn btn-secondary i-lock", "data-role": "lock" }, t("vault.lock"));
     lockButton.addEventListener("click", () => void autoLock.lock());
-    const card = el("section", { class: "card vault-ui", role: "alert", "data-role": "sync-unavailable" },
+    const card = el("section", { class: "auth-card vault-ui", role: "alert", "data-role": "sync-unavailable" },
       el("p", null, t("vault.error.sync_unavailable")), lockButton);
     trackLock(session, { root: card, scope: null, seen: false, wipe: () => mount(card, lockedScreen()) });
     return { locked: card };

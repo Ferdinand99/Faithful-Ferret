@@ -154,8 +154,8 @@ export function askConfirm({ t, host, title, body, confirm, cancel = "vault.dial
   return new Promise((resolve) => {
     const heading = el("h2", { id: "vault-dialog-title" }, t(title, vars));
     const text = el("p", { id: "vault-dialog-body" }, t(body, vars));
-    const no = el("button", { type: "button", class: "secondary", "data-role": "dialog-cancel" }, t(cancel));
-    const yes = el("button", { type: "button", class: "danger", "data-role": "dialog-confirm" }, t(confirm, vars));
+    const no = el("button", { type: "button", class: "btn btn-secondary", "data-role": "dialog-cancel" }, t(cancel));
+    const yes = el("button", { type: "button", class: "btn btn-danger", "data-role": "dialog-confirm" }, t(confirm, vars));
     const dialog = el("div", {
       class: "dialog", role: "alertdialog",
       "aria-labelledby": "vault-dialog-title", "aria-describedby": "vault-dialog-body", "data-role": "dialog",

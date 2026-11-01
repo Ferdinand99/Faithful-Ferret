@@ -32,7 +32,7 @@ import { busyState, choice, describeError, field, setText, trustNotice } from ".
 export function loginView(deps) {
   const { t, session, entry, adminUrl, api, go, handoff, info } = deps;
   const reauthPage = deps.reauth === true;
-  const root = el("section", { class: "card account", "data-role": "account-page" });
+  const root = el("section", { class: "auth-card account", "data-role": "account-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
@@ -135,7 +135,7 @@ export function loginView(deps) {
       layout();
     }
 
-    const submit = el("button", { type: "submit", class: "primary", "data-role": "submit" }, t(mode === "signin" ? "account.login.submit" : "account.unlock.submit"));
+    const submit = el("button", { type: "submit", class: "btn btn-primary btn-block", "data-role": "submit" }, t(mode === "signin" ? "account.login.submit" : "account.unlock.submit"));
     yes.input.addEventListener("change", layout);
     no.input.addEventListener("change", layout);
     email?.input.addEventListener("change", () => void refreshDevice());
@@ -203,7 +203,8 @@ export function loginView(deps) {
      * @param {() => Promise<void>} work
      */
     const action = (label, role, work) => {
-      const button = el("button", { type: "button", "data-role": role }, t(label));
+      const lead = role === "open-vault" || role === "continue-admin";
+      const button = el("button", { type: "button", class: lead ? "btn btn-primary" : "btn btn-secondary", "data-role": role }, t(label));
       controls.push(/** @type {any} */ (button));
       const run = guarded(work, controls, panel);
       button.addEventListener("click", () => void run());
@@ -256,7 +257,7 @@ export function loginView(deps) {
 
   const parts = [
     el("h1", null, t(info && !reauthPage ? "account.signedin.heading" : reauthTitle)),
-    entry.brokenHandoff ? el("p", { class: "notice", role: "note", "data-role": "handoff-broken" }, t("account.handoff.link_broken")) : null,
+    entry.brokenHandoff ? el("p", { class: "notice notice-warning", role: "note", "data-role": "handoff-broken" }, t("account.handoff.link_broken")) : null,
     body,
     status,
     okBox,

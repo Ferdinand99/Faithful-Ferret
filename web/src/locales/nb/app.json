@@ -3,5 +3,9 @@
   "app.name": "Faithful Ferret",
   "app.notfound.body": "Det finnes ingenting på denne adressen.",
   "app.notfound.home": "Gå til startsiden",
-  "app.notfound.title": "Siden finnes ikke"
+  "app.notfound.title": "Siden finnes ikke",
+  "app.theme.auto": "Auto",
+  "app.theme.dark": "Mørk",
+  "app.theme.label": "Tema",
+  "app.theme.light": "Lys"
 }

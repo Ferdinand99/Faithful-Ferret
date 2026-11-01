@@ -131,7 +131,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
-  const loadNotes = el("button", { type: "button", class: "secondary", "data-role": "load-notes" }, t("vault.edit.notes_load"));
+  const loadNotes = el("button", { type: "button", class: "btn btn-secondary", "data-role": "load-notes" }, t("vault.edit.notes_load"));
   if (notesLoaded) {
     mount(notesSlot, notes.row);
   } else {
@@ -160,7 +160,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     errorBox.hidden = false;
   }
 
-  const loginRows = el("div", { class: "login-fields", "data-role": "login-fields" }, username.row, password.row, url.row);
+  const loginRows = el("div", { class: "stack", "data-role": "login-fields" }, username.row, password.row, url.row);
   const showsLogin = () => (id === null ? typeSelect.value === "login" : kind === "login" || oldUsername !== undefined || oldPassword !== undefined);
   const syncRows = () => {
     loginRows.hidden = !showsLogin();
@@ -211,10 +211,11 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     return draft;
   }
 
-  const save = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", "data-role": "save" }, t("vault.edit.save")));
-  const cancel = el("a", { class: "button secondary", href: id === null ? "#/items" : `#/items/${id}`, "data-role": "cancel" }, t("vault.edit.cancel"));
+  const save = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", class: "btn btn-primary", "data-role": "save" }, t("vault.edit.save")));
+  const cancel = el("a", { class: "btn btn-secondary", href: id === null ? "#/items" : `#/items/${id}`, "data-role": "cancel" }, t("vault.edit.cancel"));
 
   const form = el("form", {
+    class: "stack",
     "data-role": "edit-form",
     onsubmit: async (/** @type {Event} */ event) => {
       event.preventDefault();

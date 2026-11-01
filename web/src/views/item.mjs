@@ -40,7 +40,7 @@ export async function itemView({
   engine, sync, client, id, t, go = () => {}, touch = () => true, scope,
   clipboard = globalThis.navigator?.clipboard ?? null,
 }) {
-  const root = el("section", { class: "card item", "data-role": "item" });
+  const root = el("section", { class: "card item-card", "data-role": "item" });
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
   const host = el("div", { class: "dialog-host", "data-role": "dialog-host" });
 
@@ -111,11 +111,11 @@ export async function itemView({
    */
   function valueRow({ key, label, plain, get }) {
     const slot = el("span", { class: "value", "data-role": "value", "data-key": key }, plain ?? DOTS);
-    const copy = el("button", { type: "button", class: "secondary", "data-role": "copy", "data-key": key }, t("vault.item.copy"));
+    const copy = el("button", { type: "button", class: "btn btn-secondary btn-sm i-copy", "data-role": "copy", "data-key": key }, t("vault.item.copy"));
     /** @type {HTMLButtonElement | null} */
     let toggle = null;
     if (plain === null) {
-      toggle = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "secondary", "data-role": "reveal", "data-key": key }, t("vault.item.show")));
+      toggle = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "reveal", "data-key": key }, t("vault.item.show")));
       slots.set(key, { slot, toggle });
       toggle.addEventListener("click", async () => {
         if (!touch()) return;
@@ -174,7 +174,7 @@ export async function itemView({
     if (entry.quarantined) notices.push(notice("quarantined", t("vault.notice.quarantined")));
     if (entry.readOnly) notices.push(notice("read_only", t("vault.notice.read_only")));
     if (entry.missingOnServer) {
-      const discard = el("button", { type: "button", class: "danger", "data-role": "discard-missing" }, t("vault.notice.discard_missing"));
+      const discard = el("button", { type: "button", class: "btn btn-danger btn-sm", "data-role": "discard-missing" }, t("vault.notice.discard_missing"));
       discard.addEventListener("click", async () => {
         if (!touch()) return;
         const yes = await askConfirm({
@@ -191,7 +191,7 @@ export async function itemView({
       notices.push(notice("missing", t("vault.notice.missing"), discard));
     }
     if (entry.blocked) {
-      const discard = el("button", { type: "button", "data-role": "discard-change" }, t("vault.notice.discard_change"));
+      const discard = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "discard-change" }, t("vault.notice.discard_change"));
       discard.addEventListener("click", async () => {
         if (!touch()) return;
         try {
@@ -229,7 +229,7 @@ export async function itemView({
     const editable = canChange(entry);
     const actions = el("div", { class: "actions", "data-role": "actions" });
     if (editable) {
-      const del = el("button", { type: "button", class: "danger", "data-role": "delete" }, t("vault.item.delete"));
+      const del = el("button", { type: "button", class: "btn btn-danger i-trash", "data-role": "delete" }, t("vault.item.delete"));
       del.addEventListener("click", async () => {
         if (!touch()) return;
         const yes = await askConfirm({
@@ -244,7 +244,7 @@ export async function itemView({
           say(describeError(t, error));
         }
       });
-      mount(actions, el("a", { class: "button", href: `#/items/${id}/edit`, "data-role": "edit" }, t("vault.item.edit")), del);
+      mount(actions, el("a", { class: "btn btn-primary i-pencil", href: `#/items/${id}/edit`, "data-role": "edit" }, t("vault.item.edit")), del);
     }
 
     mount(root, ...[

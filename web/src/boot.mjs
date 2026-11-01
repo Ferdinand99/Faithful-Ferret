@@ -3,9 +3,11 @@
 import { createClient } from "../js/client.mjs";
 import { startApp } from "./app.mjs";
 import { consumeEntry } from "./flows/entry.mjs";
+import { loadInter } from "./font.mjs";
 import { SUPPORTED_LANGUAGES, createI18n, negotiate } from "./i18n.mjs";
 import routes from "./routes.gen.mjs";
 import services from "./services.gen.mjs";
+import { mountFooter } from "./theme.mjs";
 import { installTrustedTypes } from "./tt.mjs";
 
 /** @param {string} lang */
@@ -33,7 +35,11 @@ async function boot() {
   document.documentElement.lang = i18n.lang;
   const root = document.getElementById("app");
   if (!root) throw new Error("no #app element");
+  const foot = document.getElementById("foot");
+  if (foot) mountFooter(foot, { t: i18n.t });
   const app = startApp({ root, routes, serviceDefs: services, client, i18n });
+  // Inter is added when its bytes have arrived; the system font stands in until then.
+  void loadInter();
   return { client, i18n, router: app.router, services: app.services, tt };
 }
 

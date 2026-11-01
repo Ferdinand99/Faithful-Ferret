@@ -189,3 +189,26 @@ test("tar_reader_strips_the_top_folder_and_rejects_a_bad_header", () => {
   assert.deepEqual([...files.keys()], ["a/b.txt"]);
   assert.throws(() => readTarGz(Buffer.from("not a tar")), /./);
 });
+
+test("the_font_becomes_a_module_with_its_licence_and_a_bad_font_fails_the_build", async () => {
+  const licence = "Copyright (c) The Inter Project Authors\nSIL OPEN FONT LICENSE Version 1.1\n";
+  const good = makeRoot({ "fonts/InterVariable.woff2": "wOF2 test bytes", "fonts/Inter-LICENSE.txt": licence });
+  const { manifest } = await build({ root: good.root, out: good.out, wasmTar: good.tarPath });
+  assert.equal(manifest["app/inter.mjs"].type, "text/javascript; charset=utf-8");
+  const module = readFileSync(join(good.out, "app", "inter.mjs"), "utf8");
+  assert.ok(module.startsWith("/*\nCopyright (c) The Inter Project Authors"));
+  assert.match(module, /export default "([A-Za-z0-9+/=]+)";\n$/);
+  assert.equal(Buffer.from(/export default "([^"]+)"/.exec(module)[1], "base64").toString("latin1"), "wOF2 test bytes");
+
+  // No font folder: no font module, and the build still works.
+  const none = makeRoot();
+  await build({ root: none.root, out: none.out, wasmTar: none.tarPath });
+  assert.ok(!existsSync(join(none.out, "app", "inter.mjs")));
+
+  const notFont = makeRoot({ "fonts/InterVariable.woff2": "GIF89a", "fonts/Inter-LICENSE.txt": licence });
+  await assert.rejects(build({ root: notFont.root, out: notFont.out, wasmTar: notFont.tarPath }), /not a WOFF2 file/);
+  const noLicence = makeRoot({ "fonts/InterVariable.woff2": "wOF2 test bytes" });
+  await assert.rejects(build({ root: noLicence.root, out: noLicence.out, wasmTar: noLicence.tarPath }), /Inter-LICENSE\.txt is missing/);
+  const closer = makeRoot({ "fonts/InterVariable.woff2": "wOF2 x", "fonts/Inter-LICENSE.txt": "end */ here" });
+  await assert.rejects(build({ root: closer.root, out: closer.out, wasmTar: closer.tarPath }), /no comment end/);
+});
