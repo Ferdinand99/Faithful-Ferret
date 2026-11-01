@@ -16,15 +16,21 @@
 # The results (reports, .wat, dudect output) are streamed back to ct/results/.
 # After a dudect run the script writes ct/results/dudect-lanbox.md, the decisive
 # result with date, commit, host and every t-value, which is the one file of
-# ct/results/ that is committed. Run it again before a release and commit the
-# new file.
+# ct/results/ that is committed with the complete run (the partial runs and the
+# history of a fix have files of their own). Run it again before a release and commit the
+# new file. With CT_ONLY set the file is ct/results/dudect-lanbox-<CT_ONLY>.md
+# instead (for example CT_ONLY=server for the benches of the server library),
+# so a partial run never replaces the complete one.
 #
 # Environment:
-#   FERRET_CT_N     measurements per dudect bench (default 1000000; a bench over 4.5
-#                   is measured again with ten times as many)
+#   FERRET_CT_N     measurements per dudect bench (default 1000000, and 10000000 when
+#                   CT_ONLY=server; a bench over 4.5 is measured again with ten times
+#                   as many, except at 10^7, where it fails)
 #   CT_PIN_CPU      CPU the dudect runs are pinned to with taskset (default "auto":
 #                   the least busy CPU of the last second; a number for a fixed
 #                   one; "" for no pinning)
+#   CT_OPT_LEVEL    opt-level of the dudect build (default: the profile of ct/dudect, "s";
+#                   3 for CT_ONLY=server, the profile the server ships)
 #   CT_ONLY         only the dudect benches whose name contains this
 #   CT_REPEAT       measure each selected bench this often (the spread of t)
 #
@@ -35,20 +41,29 @@ cd "$(dirname "$0")/.."
 
 mode="${1:-all}"
 case "$mode" in
-  all | lock | lock-selftest | analyze | triage | select-asm | select-asm-negative | wasm-selftest | wasm-scan | wasm-allow-check | wasm-allow-baseline | wasm-shipped | dudect-native | dudect-wasm) ;;
+  all | lock | lock-selftest | analyze | triage | select-asm | select-asm-negative | lookup-asm | timed-asm | wasm-selftest | wasm-scan | wasm-allow-check | wasm-allow-baseline | wasm-shipped | dudect-native | dudect-wasm) ;;
   *)
-    echo "usage: scripts/lanbox-ct.sh [all|lock|lock-selftest|analyze|triage|select-asm|select-asm-negative|wasm-selftest|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-shipped|dudect-native|dudect-wasm]" >&2
+    echo "usage: scripts/lanbox-ct.sh [all|lock|lock-selftest|analyze|triage|select-asm|select-asm-negative|lookup-asm|timed-asm|wasm-selftest|wasm-scan|wasm-allow-check|wasm-allow-baseline|wasm-shipped|dudect-native|dudect-wasm]" >&2
     exit 2
     ;;
 esac
 
 export FERRET_EXPORT="ct/results"
 export FERRET_EXPORT_ALWAYS=1
-export FERRET_CT_N="${FERRET_CT_N:-1000000}"
-export CT_PIN_CPU="${CT_PIN_CPU-auto}"
 export CT_ONLY="${CT_ONLY:-}"
+case "$CT_ONLY" in
+  *[!A-Za-z0-9_-]*)
+    echo "lanbox-ct.sh: CT_ONLY may hold letters, digits, _ and - only (it is part of a file name)" >&2
+    exit 2
+    ;;
+esac
+# The server benches are gated at 10^7 measurements; the rest at 10^6.
+default_n=1000000
+if [ "$CT_ONLY" = server ]; then default_n=10000000; fi
+export FERRET_CT_N="${FERRET_CT_N:-$default_n}"
+export CT_PIN_CPU="${CT_PIN_CPU-auto}"
 export CT_REPEAT="${CT_REPEAT:-1}"
-export FERRET_PASS_ENV="FERRET_CT_N CT_PIN_CPU CT_ONLY CT_REPEAT"
+export FERRET_PASS_ENV="FERRET_CT_N CT_PIN_CPU CT_ONLY CT_REPEAT CT_QUIET_LOAD CT_OPT_LEVEL"
 
 case "$mode" in all | dudect-native) rm -f ct/results/dudect-native.txt ;; esac
 case "$mode" in all | dudect-wasm) rm -f ct/results/dudect-wasm.txt ;; esac
@@ -57,19 +72,30 @@ rc=0
 scripts/lanbox.sh --exec ct/run.sh "$mode" || rc=$?
 
 # The decisive result, in a file that is committed.
+result_file="ct/results/dudect-lanbox.md"
+if [ -n "$CT_ONLY" ]; then result_file="ct/results/dudect-lanbox-$CT_ONLY.md"; fi
 if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; then
   commit="$(git rev-parse HEAD)"
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then commit="$commit (with uncommitted changes)"; fi
   {
-    echo "# Decisive dudect run on the LANBox"
+    if [ -n "$CT_ONLY" ]; then
+      echo "# Dudect run on the LANBox: only the benches with \"$CT_ONLY\" in the name"
+    else
+      echo "# Decisive dudect run on the LANBox"
+    fi
     echo
     echo "Written by \`scripts/lanbox-ct.sh $mode\` ($(date -u +%FT%TZ)). The limit is"
-    echo "|t| < 4.5 after 10^6 measurements, a bench over 4.5 measured again with 10^7. Every"
-    echo "line of the two outputs is below, runs and reruns included."
+    echo "|t| < 4.5 after $FERRET_CT_N measurements; a bench over 4.5 is measured again with ten"
+    echo "times as many, except at 10^7 or more, where it fails. Every line of the two outputs is"
+    echo "below, runs and reruns included."
     echo
     echo "- commit: \`$commit\`"
     echo "- exit status of the run: $rc"
     echo "- measurements per bench: $FERRET_CT_N"
+    if grep -q "NOT DECISIVE" ct/results/dudect-native.txt 2>/dev/null; then
+      echo "- **NOT DECISIVE**: the machine was not quiet (1-minute load average above 2 at the start or the end; see the load lines below)"
+    fi
+    if [ "$CT_REPEAT" != 1 ]; then echo "- every selected bench measured $CT_REPEAT times"; fi
     echo
     for f in dudect-native dudect-wasm; do
       [ -f "ct/results/$f.txt" ] || continue
@@ -81,7 +107,7 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
       echo '```'
       echo
     done
-  } > ct/results/dudect-lanbox.md
-  echo "wrote ct/results/dudect-lanbox.md" >&2
+  } > "$result_file"
+  echo "wrote $result_file" >&2
 fi
 exit "$rc"

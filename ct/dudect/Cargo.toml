@@ -31,10 +31,14 @@ required-features = ["bench"]
 default = []
 # The native bench: `dudect-bencher` and its command line. Off for the
 # WebAssembly build, which has no use for either.
-bench = ["dep:dudect-bencher"]
+bench = ["dep:dudect-bencher", "server"]
+# The timing tests of the OPAQUE server library (ferret-server-auth). Native
+# only: the library is not part of the WebAssembly build.
+server = ["dep:ferret-server-auth"]
 
 [dependencies]
 ferret-core = { path = "../../crates/ferret-core", features = ["test-support"] }
+ferret-server-auth = { path = "../../crates/ferret-server-auth", features = ["test-support"], optional = true }
 # The harness files ct_eq.rs and ct_select.rs are included here and need `subtle`.
 subtle = "=2.6.1"
 # Statistics (Welch's t-test with percentile cropping) as in the dudect paper.
@@ -43,7 +47,11 @@ dudect-bencher = { version = "=0.7.0", optional = true }
 
 # A profile only counts in the root of a workspace, and the timing has to be of
 # the code that is shipped: this is a copy of [profile.release] of the root
-# Cargo.toml (ct/check-lock.sh checks that it is still a copy).
+# Cargo.toml (ct/check-lock.sh checks that it is still a copy). That is the
+# profile of the core and of the WebAssembly package (opt-level "s"). The server
+# ships at opt-level 3 (crates/ferret-server/Cargo.toml), so ct/run.sh builds the
+# server benches at 3 (CARGO_PROFILE_RELEASE_OPT_LEVEL; CT_OPT_LEVEL) with the
+# rest of this profile.
 [profile.release]
 opt-level = "s"
 lto = true

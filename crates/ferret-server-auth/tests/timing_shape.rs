@@ -21,9 +21,10 @@ use std::sync::Mutex;
 use ferret_core::{SecureRng, TestRng};
 use ferret_server_auth::testing::{FIXTURE_PASSWORD, LoginFixture};
 use ferret_server_auth::{
-    AccountLookup, AuthError, DenyReason, InMemoryLoginStateStore, LoginFinishRequest,
-    LoginPurpose, LoginStartRequest, LoginStateStore, Malformed, SealedState, StateKey, StoreError,
-    ThrottleCall, ThrottleKey, login_finish, login_start,
+    AccountLookup, AuthError, CredentialId, DenyReason, InMemoryLoginStateStore, InternalKind,
+    LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginStateStore, Malformed, RetryAfter,
+    SealedState, SessionBinding, StateKey, StoreError, ThrottleCall, ThrottleKey, login_finish,
+    login_start,
 };
 
 /// One effect on the outside of the library.
@@ -293,4 +294,149 @@ fn the_documented_draws_and_lifetime() {
             },
         ]
     );
+}
+
+/// A store whose `take` fails, as a database that is down would.
+struct FailingTake;
+
+impl LoginStateStore for FailingTake {
+    fn put(&self, _: StateKey, _: SealedState, _: u64, _: u64) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn take(&self, _: &StateKey, _: u64) -> Result<Option<SealedState>, StoreError> {
+        Err(StoreError::Backend)
+    }
+
+    fn purge_expired(&self, _: u64) -> Result<usize, StoreError> {
+        Ok(0)
+    }
+}
+
+const ADDRESS_ONLY: [&str; 2] = [
+    "admit LoginFinish Ip at 1700000000",
+    "record LoginFinish Ip Failure at 1700000000",
+];
+
+fn finish_with<S: LoginStateStore>(
+    f: &LoginFixture,
+    store: &S,
+    login_id: &[u8],
+    ke3: &[u8],
+    current_session: Option<(SessionBinding, CredentialId)>,
+) -> (AuthError, Vec<String>) {
+    f.throttle.clear();
+    let request = LoginFinishRequest {
+        caller: LoginFixture::caller(),
+        login_id,
+        ke3,
+        current_session,
+    };
+    let error = login_finish(&f.cx(), store, &request).unwrap_err();
+    (error, throttle_shape(f))
+}
+
+/// A finish that is refused before the account is known (a login id or KE3
+/// that is not well formed, no state, a store that fails, a state that is for
+/// another purpose, session or account) is asked of the limiter with the
+/// address alone, and told it failed. The same kinds of key for every one of
+/// them, so what is charged does not tell a real account from a made-up one.
+#[test]
+fn a_finish_refused_before_the_account_is_known_charges_the_address_alone() {
+    let f = LoginFixture::new();
+    let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "client");
+    let session = SessionBinding([0x11; 32]);
+    let other = CredentialId::from_bytes([0x99; 16]);
+    for lookup in lookups(&f) {
+        let store = InMemoryLoginStateStore::new();
+        let seeds = std::cell::Cell::new(0u32);
+        let start = |purpose| {
+            seeds.set(seeds.get() + 1);
+            let request = LoginStartRequest {
+                caller: LoginFixture::caller(),
+                name: &f.name,
+                credential: f.credential,
+                lookup,
+                purpose,
+                session_scope: Some(ferret_server_auth::SessionScope::Full),
+                ke1: &ke1,
+            };
+            let mut rng = TestRng::new(format!("kinds {}", seeds.get()).as_bytes());
+            login_start(&f.cx(), &store, &mut rng, &request).unwrap()
+        };
+
+        // A login id that is not hex, and a KE3 of the wrong length.
+        let (error, shape) = finish_with(&f, &store, b"not a login id", &[5u8; 64], None);
+        assert_eq!(error, AuthError::Malformed(Malformed::LoginId));
+        assert_eq!(shape, ADDRESS_ONLY);
+        let real = start(LoginPurpose::Login).login_id.to_hex();
+        let (error, shape) = finish_with(&f, &store, real.as_bytes(), &[5u8; 63], None);
+        assert_eq!(error, AuthError::Malformed(Malformed::Ke3));
+        assert_eq!(shape, ADDRESS_ONLY);
+
+        // No state under that id (it was never made, or it was used).
+        let (error, shape) = finish_with(&f, &store, &[b'0'; 32], &[5u8; 64], None);
+        assert_eq!(error, AuthError::Denied(DenyReason::StateMissing));
+        assert_eq!(shape, ADDRESS_ONLY);
+
+        // A store that fails: an internal error, charged to the address.
+        let (error, shape) = finish_with(&f, &FailingTake, real.as_bytes(), &[5u8; 64], None);
+        assert_eq!(error, AuthError::Internal(InternalKind::Storage));
+        assert_eq!(shape, ADDRESS_ONLY);
+
+        // A state for a login, asked for as a re-authentication, and one for
+        // the session of another request.
+        let (error, shape) = finish_with(
+            &f,
+            &store,
+            real.as_bytes(),
+            &[5u8; 64],
+            Some((session, f.credential)),
+        );
+        assert_eq!(error, AuthError::Denied(DenyReason::StateInvalid));
+        assert_eq!(shape, ADDRESS_ONLY);
+        let reauth = |account| LoginPurpose::Reauth { session, account };
+        let id = start(reauth(f.credential)).login_id.to_hex();
+        let wrong_session = Some((SessionBinding([0x22; 32]), f.credential));
+        let (error, shape) = finish_with(&f, &store, id.as_bytes(), &[5u8; 64], wrong_session);
+        assert_eq!(error, AuthError::Denied(DenyReason::StateInvalid));
+        assert_eq!(shape, ADDRESS_ONLY);
+
+        // A re-authentication in the right session whose login was for
+        // another account than the one of the session: the compare of the
+        // credential in `login_finish`.
+        let id = start(reauth(other)).login_id.to_hex();
+        let (error, shape) = finish_with(
+            &f,
+            &store,
+            id.as_bytes(),
+            &[5u8; 64],
+            Some((session, other)),
+        );
+        assert_eq!(error, AuthError::Denied(DenyReason::StateInvalid));
+        assert_eq!(shape, ADDRESS_ONLY);
+    }
+}
+
+/// A limiter that refuses ends each of these before any further work, and the
+/// refusal reaches the caller whatever the error would have been.
+#[test]
+fn a_refusing_limiter_decides_a_finish_whose_store_fails() {
+    let f = LoginFixture::new();
+    f.throttle.refuse_with(Some(RetryAfter::new(3)));
+    let request = LoginFinishRequest {
+        caller: LoginFixture::caller(),
+        login_id: &[b'0'; 32],
+        ke3: &[5u8; 64],
+        current_session: None,
+    };
+    let error = login_finish(&f.cx(), &FailingTake, &request).unwrap_err();
+    assert_eq!(
+        error,
+        AuthError::Throttled {
+            retry_after_secs: 3
+        }
+    );
+    // One question to the limiter with the address alone, and no outcome.
+    assert_eq!(throttle_shape(&f), ["admit LoginFinish Ip at 1700000000"]);
 }

@@ -31,6 +31,7 @@
 //! | `base32_decode` | `decode_letters`, 32 letters | all `A` | random letters, mixed case |
 //! | `kek_pw_commit_path` | `unwrap_vk`, whole path | commit: first byte wrong | commit: last byte wrong |
 //! | `info_unwrap_valid_vs_bad_commit` | `unwrap_vk` | intact (AEAD runs) | commit wrong (AEAD skipped) |
+//! | `server_*` | the OPAQUE server library, see [`server`] (feature `server`, native only) | | |
 //! | `control_null` | `commit_eq`, same inputs in both classes | equal | equal |
 //! | `control_leaky` | a comparison that stops at the first difference | equal | first byte wrong |
 //! | `control_unpad_leaky` | a scan of the padding that stops at the marker | marker last | marker first |
@@ -72,7 +73,15 @@ pub mod harness {
     pub mod base32 {
         include!("../../harness/base32.rs");
     }
+    #[cfg(feature = "server")]
+    pub mod ct_select {
+        include!("../../harness/ct_select.rs");
+    }
 }
+
+/// Timing tests of the OPAQUE server library, native only.
+#[cfg(feature = "server")]
+pub mod server;
 
 /// The number of inputs in each class pool. A measurement takes input
 /// `i % POOL`.
@@ -679,7 +688,8 @@ fn unwrap_target(
 /// Every target, with inputs made from `seed`.
 pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
     let mut mix = Mix::new(seed);
-    vec![
+    #[allow(unused_mut)]
+    let mut all: Vec<Box<dyn Target + Send>> = vec![
         Box::new(commit_check(&mut mix)),
         Box::new(mac_verify(&mut mix)),
         Box::new(key_eq(&mut mix)),
@@ -740,7 +750,10 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
         )),
         Box::new(control_null(&mut mix)),
         Box::new(control_leaky(&mut mix)),
-    ]
+    ];
+    #[cfg(feature = "server")]
+    all.extend(server::targets(&mut mix));
+    all
 }
 
 // ------------------------------------------------------- WebAssembly ABI

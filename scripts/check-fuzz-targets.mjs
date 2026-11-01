@@ -79,6 +79,7 @@ const EXEMPT = {
   'secret_file::sync_directory': FILES,
   'prelogin::hmac_with_name': 'private; the secret and the label belong to the server and the name is already normalized, so it is reached through fake_credential_id and fake_prelogin, whose only client input is a name from normalize_login_name',
   'prelogin::permille': REACHED + ' (fake_prelogin); the eight bytes are an HMAC output',
+  'prelogin::pick_account': 'private; chooses between two references the caller already holds (an account id from the lookup, or a fixed zero id), and reads nothing from a request',
   'prelogin::step': 'a trace label that tests record to check the order of effects; no client input',
   'replace::ChallengeKey::new': REACHED + ' (authorize_replacement and authorize_signed); it hashes the session and the nonce, whose lengths are checked before',
   'state::SealedState::from_bytes': 'wraps stored bytes without reading them; the length and the content are checked in open_state, which has a target',
