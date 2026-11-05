@@ -57,7 +57,7 @@ function createSyncSeam() {
  *   store: any,
  *   serverUrl?: string,
  *   now?: () => number,
- *   rand?: (bytes: Uint8Array) => Uint8Array,
+ *   rand?: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>,
  *   sync?: any,
  *   secrets?: import("../flows/deviceSecret.mjs").Env,
  * }} options

@@ -19,7 +19,7 @@ import { deviceSecrets } from "../store/settings.mjs";
 /**
  * @typedef {object} Env
  * @property {SubtleCrypto | undefined} [subtle]
- * @property {(bytes: Uint8Array) => Uint8Array} [rand] fills the bytes with random values
+ * @property {(bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>} [rand] fills the bytes with random values
  */
 
 /** @param {string} serverUrl @param {string} accountId */
@@ -39,7 +39,7 @@ function additionalData(serverUrl, accountId) {
  */
 export async function saveSecretKey(db, serverUrl, accountId, skCode, env = {}) {
   const subtle = env.subtle ?? globalThis.crypto?.subtle;
-  const rand = env.rand ?? ((/** @type {Uint8Array} */ bytes) => globalThis.crypto.getRandomValues(bytes));
+  const rand = env.rand ?? ((/** @type {Uint8Array<ArrayBuffer>} */ bytes) => globalThis.crypto.getRandomValues(bytes));
   try {
     if (!subtle || typeof skCode !== "string" || skCode === "") return "unavailable";
     const key = await subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
