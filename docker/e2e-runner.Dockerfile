@@ -7,7 +7,7 @@
 # The package version is pinned. When Ubuntu replaces it in the noble archive the
 # build fails and this line has to move to the new version (apt-cache policy
 # libnss3-tools in the base image shows it).
-FROM mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends libnss3-tools=2:3.98-1ubuntu0.3 \
     && rm -rf /var/lib/apt/lists/*
