@@ -128,3 +128,5 @@ Hedgerow is built in spare time and is free to use. If you find it useful, you c
 [GNU AGPL-3.0-only](LICENSE)
 
 The Inter font files in `web/fonts` and `site/fonts` are under the [SIL Open Font License 1.1](web/fonts/Inter-LICENSE.txt).
+
+The licence texts of the Rust crates inside the server binary and the WebAssembly module, and of the font, are in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). The Docker image carries the file as `/usr/share/doc/ferret/THIRD-PARTY-NOTICES` (next to `LICENSE`), and every release archive holds it next to the package. The file is made by `scripts/notices.sh` (cargo-about, pinned) and CI fails when it is out of date or when a dependency has a licence that is not on the allowlist in `about.toml`. After changing a dependency, run `scripts/notices.sh` (on the LANBox, like every cargo build) and commit the result.

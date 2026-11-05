@@ -10,7 +10,8 @@
 #
 # It packages what scripts/build-wasm.sh left in bindings/wasm/pkg-web and
 # bindings/wasm/pkg-node (the build without `test-support`). The web package
-# also holds js/, the worker client that loads it. The archives are
+# also holds js/, the worker client that loads it. Both hold LICENSE and
+# THIRD-PARTY-NOTICES (the licences of the Rust crates inside the module). The archives are
 # reproducible: sorted names, a fixed time stamp, root ownership, fixed modes
 # and a gzip header without a name or a time. It needs GNU tar.
 set -euo pipefail
@@ -52,6 +53,7 @@ for flavor in web node; do
   wasm="bindings/wasm/pkg-$flavor/ferret_core_wasm_bg.wasm"
   [ -f "$wasm" ] || { echo "package-release: $wasm is missing; run scripts/build-wasm.sh first" >&2; exit 1; }
 done
+[ -s THIRD-PARTY-NOTICES ] || { echo "package-release: THIRD-PARTY-NOTICES is missing (scripts/notices.sh makes it)" >&2; exit 1; }
 
 mkdir -p "$out"
 stage="$(mktemp -d)"
@@ -67,6 +69,7 @@ pack() {
     cp -R bindings/wasm/js "$root/js"
   fi
   cp LICENSE "$root/LICENSE"
+  cp THIRD-PARTY-NOTICES "$root/THIRD-PARTY-NOTICES"
   find "$root" -type d -exec chmod 0755 {} +
   find "$root" -type f -exec chmod 0644 {} +
   tar --sort=name --mtime='1970-01-01 00:00:00 UTC' --owner=0 --group=0 --numeric-owner \

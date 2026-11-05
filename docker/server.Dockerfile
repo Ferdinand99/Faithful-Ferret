@@ -80,6 +80,9 @@ RUN apk add --no-cache ca-certificates su-exec \
 # World-readable and without file capabilities: the server checks that its
 # secret files belong to the user it runs as, so it must run as that user.
 COPY --from=build --chmod=755 /usr/local/bin/ferret /usr/local/bin/ferret
+# The licence texts travel with the binary: the AGPL text and the licences of the Rust crates
+# and the font inside it (made by scripts/notices.sh, checked in CI).
+COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/
 COPY --chmod=755 docker/ferret-entrypoint.sh /usr/local/bin/ferret-entrypoint.sh
 
 ENV FERRET_DATA_DIR=/data

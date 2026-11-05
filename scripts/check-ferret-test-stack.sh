@@ -218,6 +218,7 @@ grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to 
 # The web vault is always built against the published WebAssembly package of web/wasm.lock.json:
 # the Dockerfile has no switch for another one, and no workflow or compose file may add one.
 if grep -qiE 'WASM_LOCAL|wasm[.]local' "$dockerfile"; then fail "$dockerfile must not offer another WebAssembly package"; fi
+grep -qx 'COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/' "$dockerfile" || fail "the image must carry LICENSE and THIRD-PARTY-NOTICES in /usr/share/doc/ferret/"
 grep -qx 'RUN node scripts/build.mjs' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock"
 if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github docker; then fail "no workflow or compose file may use a local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi

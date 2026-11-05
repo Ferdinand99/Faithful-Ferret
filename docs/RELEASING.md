@@ -54,8 +54,8 @@ on the release, the upload fails, and the maintainer decides what to delete by h
 
 | File | Content |
 |---|---|
-| `ferret-core-wasm-web-<version>.tar.gz` | `pkg-web/` (the WebAssembly module, its JavaScript wrapper and type declarations), `js/` (the worker client that loads it) and the license |
-| `ferret-core-wasm-node-<version>.tar.gz` | `pkg-node/` and the license |
+| `ferret-core-wasm-web-<version>.tar.gz` | `pkg-web/` (the WebAssembly module, its JavaScript wrapper and type declarations), `js/` (the worker client that loads it), the license and `THIRD-PARTY-NOTICES` |
+| `ferret-core-wasm-node-<version>.tar.gz` | `pkg-node/`, the license and `THIRD-PARTY-NOTICES` |
 | `ferret-core-wasm-<version>.cdx.json` | A CycloneDX 1.5 software bill of materials of the release dependency graph (the WebAssembly target, no `test-support`) |
 | `SHA256SUMS` | The SHA-256 of the three files above |
 | `<file>.sigstore.json` | A [cosign](https://docs.sigstore.dev/) bundle (signature, certificate and transparency log entry) for each of the four files above |
@@ -145,6 +145,11 @@ Actions and the base image of the builder. These are not tracked by it:
   downloaded ones also by SHA-256. The same version appears in more than one place
   (`docker/builder.Dockerfile`, `.github/workflows/wasm.yml`, `.github/workflows/release.yml`,
   `.github/workflows/audit.yml`, `.github/workflows/ct.yml`); change all of them.
+- **cargo-about** (`THIRD-PARTY-NOTICES`): version 0.9.3 in `scripts/notices.sh` and the `notices` job of
+  `.github/workflows/ci.yml` (with its SHA-256). After any change to a Rust dependency (a lock file) run
+  `scripts/notices.sh` where cargo is (the LANBox) and commit the result; the job fails when the file is stale,
+  when a crate has a licence that is not on the allowlist in `about.toml`, or when a licence text has no
+  copyright notice (clarify the crate in `about.toml` or add it to `notices-extra.json`).
 - **The base images of the builder** are pinned by digest. To move to a new one, look up the
   digest of the new tag with `docker buildx imagetools inspect <image>:<tag>` and change the tag
   and the digest together.
