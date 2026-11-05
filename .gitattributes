@@ -29,3 +29,7 @@
 /web/**/*.ttf binary
 /web/**/*.otf binary
 /web/**/*.pdf binary
+
+# The notices are compared byte for byte (cmp in CI)
+THIRD-PARTY-NOTICES text eol=lf
+LICENSE text eol=lf

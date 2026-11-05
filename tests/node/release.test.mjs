@@ -58,10 +58,16 @@ test("release_artifact_has_no_test_support_and_matches_sha256", () => {
     const top = join(dir, `ferret-core-wasm-${flavor}-${VERSION}`);
     const files = filesUnder(top);
     // Only the package, the license and (web) the worker client.
-    const allowed = new RegExp(`^(pkg-${flavor}/[^/]+|LICENSE${flavor === "web" ? "|js/[^/]+" : ""})$`);
+    const allowed = new RegExp(`^(pkg-${flavor}/[^/]+|LICENSE|THIRD-PARTY-NOTICES${flavor === "web" ? "|js/[^/]+" : ""})$`);
     for (const f of files) assert.match(f, allowed, `${f} belongs in the ${flavor} archive`);
     assert.ok(!files.some((f) => /-test\b|test-support/.test(f)), "no test build in the archive");
     assert.ok(files.includes("LICENSE"));
+    // The licence texts of the Rust crates inside the module are the file of the repository.
+    assert.ok(files.includes("THIRD-PARTY-NOTICES"));
+    assert.ok(
+      readFileSync(join(top, "THIRD-PARTY-NOTICES")).equals(readFileSync(join(root, "THIRD-PARTY-NOTICES"))),
+      `${flavor}: THIRD-PARTY-NOTICES is the file of the repository`,
+    );
 
     // The module is the release build, byte for byte, and has no test exports.
     const wasmPath = `pkg-${flavor}/ferret_core_wasm_bg.wasm`;
