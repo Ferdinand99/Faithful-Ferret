@@ -50,7 +50,7 @@ export async function deleteSetting(store, key) {
  * characters (the form `register/finish` and `login/finish` take). The read and
  * the first write are one transaction, so two tabs agree on the same id.
  * @param {import("./idb.mjs").Store} store
- * @param {(bytes: Uint8Array) => Uint8Array} [rand] fills the bytes with random values
+ * @param {(bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>} [rand] fills the bytes with random values
  * @returns {Promise<string>}
  */
 export async function deviceId(store, rand = (bytes) => crypto.getRandomValues(bytes)) {

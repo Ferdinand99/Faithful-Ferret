@@ -109,7 +109,7 @@ const realTimers = /** @type {Timers} */ ({
  *   scope: Scope,
  *   now?: () => number,
  *   pollMs?: number,
- *   rand?: (bytes: Uint8Array) => Uint8Array,
+ *   rand?: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>,
  *   timers?: Timers,
  *   win?: any,
  * }} options

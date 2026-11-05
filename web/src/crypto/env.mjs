@@ -18,7 +18,7 @@
  * @property {string} server
  * @property {() => Promise<void>} lock the session's lock: stops the sync engine, forgets the open account, tells the lock listeners and ends the worker
  * @property {() => number} now
- * @property {(bytes: Uint8Array) => Uint8Array} rand
+ * @property {(bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>} rand
  * @property {import("../flows/deviceSecret.mjs").Env} [secrets]
  */
 
