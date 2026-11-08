@@ -4,16 +4,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { restoredView } from "../../src/views/restored.mjs";
 import { click, find, settle, submit, textOf, withDom } from "./vaultHelpers.mjs";
-import { EN, NB, fakeWarningsEngine, textFor, translator } from "./syncWarningsHelpers.mjs";
+import { EN, NB, fakeWarningsEngine, textFor, translator, withFocus } from "./syncWarningsHelpers.mjs";
 
 /** The page for an engine that is stopped because the server was restored. */
 async function page(options = {}, lang = "en") {
   const engine = fakeWarningsEngine({ halted: "server_restored", ...options.start });
   Object.assign(engine, options.engine);
   const went = [];
-  const root = restoredView({ engine, t: translator(lang), router: { go: (path) => went.push(path) } });
+  const reloads = [];
+  const root = restoredView({ engine, t: translator(lang), router: { go: (path) => went.push(path) }, reload: () => reloads.push(1) });
   await settle();
-  return { engine, root, went };
+  return { engine, root, went, reloads };
 }
 
 const type = (root, text) => {
@@ -138,5 +139,153 @@ test("the_page_offers_to_forget_the_server_instead_and_shows_no_item_names", asy
     assert.deepEqual(went, ["/forget", "/items"]);
     // Counts only: the preview gives no names and the page reads none.
     assert.doesNotMatch(textOf(root), /undefined|\[object/);
+  });
+});
+
+const problem = (code, reason = null) => Object.assign(new Error("a detail that must not be shown"), { code, ...(reason ? { reason } : {}) });
+
+test("restore_not_verified_says_the_older_state_does_not_check_out_and_does_not_invite_a_retry", async () => {
+  await withDom(() => withFocus(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      for (const phase of ["accept", "preview"]) {
+        for (const reason of ["no_checkpoint", "checkpoint_bad_mac"]) {
+          const engine = phase === "preview" ? { previewError: problem("restore_not_verified", reason) } : { acceptError: problem("restore_not_verified", reason) };
+          const { engine: e, root, went } = await page({ engine }, lang);
+          if (phase === "accept") {
+            type(root, catalog["syncwarnings.restored.word"]);
+            await submit(find(root, "restored-form"));
+            await settle();
+          }
+          const text = textOf(find(root, "restored-error"));
+          assert.ok(text.includes(catalog["syncwarnings.restored.not_verified"]), `${lang} ${phase} ${reason}`);
+          // The reason has a sentence of its own only when the page knows it; a code is never shown.
+          assert.equal(text.includes(catalog["syncwarnings.restored.not_verified_no_checkpoint"]), reason === "no_checkpoint");
+          assert.doesNotMatch(textOf(root), /checkpoint_bad_mac|a detail that must not be shown/);
+          // Nothing to press again: no form, no retry, no accept. The way on is to leave it stopped or to forget the server.
+          assert.equal(find(root, "restored-form"), null);
+          assert.equal(find(root, "preview-retry"), null);
+          assert.equal(find(root, "restored-accept"), null);
+          const exit = find(find(root, "restored-exits"), "restored-forget");
+          assert.ok(exit);
+          assert.equal(globalThis.document.activeElement, exit, "the focus goes to the way out");
+          await click(exit);
+          assert.deepEqual(went, ["/forget"]);
+          assert.equal(e.calls.filter((call) => call === "acceptOlderState").length, phase === "accept" ? 1 : 0, "asked once, not again");
+        }
+      }
+    }
+  }));
+});
+
+test("invalid_state_offers_to_let_sync_try_again_or_to_reload", async () => {
+  await withDom(() => withFocus(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const { engine, root, reloads } = await page({ engine: { acceptError: problem("invalid_state") } }, lang);
+      type(root, catalog["syncwarnings.restored.word"]);
+      await submit(find(root, "restored-form"));
+      await settle();
+      assert.ok(textOf(find(root, "restored-error")).includes(catalog["syncwarnings.restored.invalid_state"]));
+      assert.equal(find(root, "restored-form"), null);
+      assert.equal(globalThis.document.activeElement, find(root, "restored-resume"));
+      assert.equal(textOf(find(root, "restored-resume")).trim(), catalog["syncwarnings.restored.resume"]);
+      assert.equal(textOf(find(root, "restored-reload")).trim(), catalog["syncwarnings.restored.reload"]);
+      // Reload reloads the page.
+      await click(find(root, "restored-reload"));
+      assert.equal(reloads.length, 1);
+      // Let sync try again: the cause is still there, so it says so and keeps the button and the focus.
+      engine.stillStopped = true;
+      engine.halted = "server_restored";
+      await click(find(root, "restored-resume"));
+      await settle();
+      assert.deepEqual(engine.calls.filter((call) => call === "resumeAfterHalt"), ["resumeAfterHalt"]);
+      assert.ok(textOf(find(root, "restored-error")).includes(catalog["syncwarnings.restored.resume_still"]));
+      assert.equal(globalThis.document.activeElement, find(root, "restored-resume"));
+      // And when the cause is gone, the page says sync runs again.
+      engine.stillStopped = false;
+      engine.halted = "server_restored";
+      await click(find(root, "restored-resume"));
+      await settle();
+      assert.equal(textOf(find(root, "restored-resumed")).trim(), catalog["syncwarnings.restored.resumed"]);
+    }
+  }));
+});
+
+test("busy_says_to_wait_and_keeps_the_form_with_the_focus_in_the_field", async () => {
+  await withDom(() => withFocus(async () => {
+    for (const [lang, catalog, wait] of [["en", EN, /Wait a moment/], ["nb", NB, /Vent litt/]]) {
+      const { engine, root } = await page({ engine: { acceptError: problem("busy") } }, lang);
+      type(root, catalog["syncwarnings.restored.word"]);
+      await submit(find(root, "restored-form"));
+      await settle();
+      assert.match(textOf(find(root, "restored-error")), wait);
+      assert.ok(find(root, "restored-form"), "the form stays");
+      assert.equal(find(root, "restored-accept").disabled, false);
+      assert.equal(globalThis.document.activeElement, find(root, "restored-word"), "the focus is back in the field");
+      // Wait, then it works.
+      engine.acceptError = null;
+      type(root, catalog["syncwarnings.restored.word"]);
+      await submit(find(root, "restored-form"));
+      await settle();
+      assert.ok(find(root, "restored-done"));
+    }
+    // A preview that is busy keeps the retry, with the focus on it.
+    const { root } = await page({ engine: { previewError: problem("busy") } });
+    assert.match(textOf(find(root, "restored-error")), /Wait a moment/);
+    assert.equal(globalThis.document.activeElement, find(root, "preview-retry"));
+  }));
+});
+
+test("a_failed_accept_without_a_name_gives_the_focus_back_to_the_field", async () => {
+  await withDom(() => withFocus(async () => {
+    const { root } = await page({ engine: { acceptError: problem("something_else") } });
+    type(root, "accept");
+    find(root, "restored-word").focus();
+    await submit(find(root, "restored-form"));
+    await settle();
+    assert.match(textOf(find(root, "restored-error")), /could not be accepted/);
+    assert.equal(globalThis.document.activeElement, find(root, "restored-word"));
+    // A locked vault is its own message and has no form to go back to.
+    const stopped = await page({ engine: { acceptError: problem("stopped") } });
+    type(stopped.root, "accept");
+    await submit(find(stopped.root, "restored-form"));
+    await settle();
+    assert.match(textOf(find(stopped.root, "restored-error")), /vault was locked/);
+    assert.equal(find(stopped.root, "restored-form"), null);
+  }));
+});
+
+test("an_older_manifest_is_said_in_the_preview_and_in_the_result_and_conflicts_have_their_own_line", async () => {
+  await withDom(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const { engine, root } = await page({ engine: { previewResult: { reupload: 1, conflicts: 7, manifestOlder: true }, acceptResult: { reuploaded: 1, conflicts: 7, manifestOlder: true } } }, lang);
+      assert.ok(textOf(find(root, "restored-manifest-older")).includes(catalog["syncwarnings.restored.manifest_older"]));
+      assert.ok(textOf(find(root, "restored-conflicts-note")).includes(catalog["syncwarnings.restored.conflicts_note"]), "every existing item comes back as a conflict, and the preview says so");
+      // Unreadable items are counted from the engine's events, by number, never by name.
+      type(root, catalog["syncwarnings.restored.word"]);
+      let release;
+      engine.gate = new Promise((resolve) => (release = resolve));
+      const accepting = submit(find(root, "restored-form"));
+      await settle(2);
+      engine.emit("error", { code: "restore_item_unreadable", id: "ab".repeat(16), name: "Secret bank item" });
+      engine.emit("error", { code: "restore_item_unreadable", id: "cd".repeat(16) });
+      engine.emit("error", { code: "restore_item_unreadable", id: "cd".repeat(16) });
+      release();
+      await accepting;
+      await settle();
+      assert.equal(textOf(find(root, "restored-conflicts")).trim(), textFor(catalog, "syncwarnings.restored.done_conflicts", { count: 7 }), "the count is stated, with the way to the conflicts");
+      assert.equal(textOf(find(root, "restored-unreadable")).trim(), textFor(catalog, "syncwarnings.restored.unreadable", { count: 2 }));
+      assert.ok(find(root, "restored-manifest-older"), "the result says it too");
+      assert.doesNotMatch(textOf(root), /Secret bank item|abab|cdcd/);
+      assert.equal(engine.listening, 0, "the page stops listening when it is done");
+    }
+    // Nothing older, no conflicts, nothing unreadable: none of the lines.
+    const { root } = await page({ engine: { previewResult: { reupload: 1, conflicts: 0 }, acceptResult: { reuploaded: 1, conflicts: 0 } } });
+    assert.equal(find(root, "restored-manifest-older"), null);
+    assert.equal(find(root, "restored-conflicts-note"), null);
+    type(root, "accept");
+    await submit(find(root, "restored-form"));
+    await settle();
+    assert.equal(find(root, "restored-conflicts"), null);
+    assert.equal(find(root, "restored-unreadable"), null);
   });
 });

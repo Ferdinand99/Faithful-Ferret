@@ -35,6 +35,9 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {(event: "state", fn: (state: string) => void) => () => void} on
  */
 
+/** More conflicts than this are shown as one banner with the count. */
+const MAX_CONFLICT_BANNERS = 3;
+
 /** The states of the live-update channel that the frame has a text for. */
 const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
 
@@ -149,10 +152,31 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     }
   }
 
+  /** The items a conflict was reported for, so that many of them become one banner. @type {Set<string>} */
+  const conflictIds = new Set();
   /** @param {any} payload */
   function onError(payload) {
     const code = String(payload?.code ?? "");
     if (warnings !== null && code === "bad_feed") return; // the sync banner shows it, with a way to try again
+    // After an older state is accepted, every item that exists on the server is a conflict: there can be hundreds. The
+    // first few are shown by name as before; past that they are one banner with the count, and no names.
+    if (code === "restore_item_unreadable") {
+      banner("error:restore_item_unreadable", "warning", t("syncwarnings.error.restore_item_unreadable"));
+      return;
+    }
+    if (code === "conflict" && typeof payload?.id === "string") {
+      conflictIds.add(payload.id);
+      if (conflictIds.size > MAX_CONFLICT_BANNERS) {
+        for (const [key, node] of [...shown]) {
+          if (key.startsWith("error:conflict:")) {
+            node.remove();
+            shown.delete(key);
+          }
+        }
+        banner("error:conflicts", "warning", t("syncwarnings.error.conflicts_many", { count: conflictIds.size }));
+        return;
+      }
+    }
     const named = typeof payload?.id === "string" ? engine.list().find((/** @type {any} */ i) => i.id === payload.id) : null;
     const text = describeError(t, { code, reason: payload?.reason });
     banner(`error:${code}:${payload?.id ?? ""}`, "error", named ? t("vault.banner.item", { name: named.name, message: text }) : text);

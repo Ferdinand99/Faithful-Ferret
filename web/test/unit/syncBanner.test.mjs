@@ -8,7 +8,7 @@ import { createWipeScope } from "../../src/views/common.mjs";
 import { shellView } from "../../src/views/shell.mjs";
 import { BANNERS, isBannerCode, syncBanner } from "../../src/views/syncBanner.mjs";
 import { click, all, find, settle, textOf, withDom } from "./vaultHelpers.mjs";
-import { EN, NB, fakeWarningsEngine, translator } from "./syncWarningsHelpers.mjs";
+import { EN, NB, fakeWarningsEngine, textFor, translator, withFocus } from "./syncWarningsHelpers.mjs";
 
 /** What the design table says each code offers, in words of the catalog. */
 const ACTIONS = {
@@ -73,6 +73,7 @@ test("the_actions_do_what_the_table_says", async () => {
       const { engine, root } = bannerFor(code);
       engine.verifyResult = code;
       await click(actionsOf(bannerOf(root, code))[0]);
+      await settle();
       assert.deepEqual(engine.calls, ["verifyNow"], code);
       // It still stands, and the note says so.
       assert.ok(bannerOf(root, code), `${code} stays while the check still finds it`);
@@ -81,11 +82,9 @@ test("the_actions_do_what_the_table_says", async () => {
     // Try again on a stop lifts the stop through the engine.
     for (const code of ["rollback_suspected", "restore_epoch_lowered"]) {
       const { engine, root, went } = bannerFor(code);
-      engine.onResume = () => {
-        engine.halted = null;
-        engine.emit("state", { kind: "syncing" });
-      };
+      engine.stillStopped = false; // the cause is gone: the engine is lifted, says `syncing`, and stays so
       await click(actionsOf(bannerOf(root, code))[0]);
+      await settle();
       assert.deepEqual(engine.calls, ["resumeAfterHalt"], code);
       assert.equal(bannerOf(root, code), null, `${code} is gone once the engine runs`);
       assert.deepEqual(went, []);
@@ -215,7 +214,8 @@ test("an_action_runs_once_at_a_time_says_it_is_working_and_reports_what_it_found
     engine.verifyResult = "not_checked";
     const first = click(button);
     await settle(2);
-    assert.equal(button.disabled, true, "disabled while it runs");
+    assert.equal(button.getAttribute("aria-disabled"), "true", "marked busy while it runs");
+    assert.notEqual(button.disabled, true, "and not disabled, which would take the focus away");
     assert.equal(bannerOf(root, "server_shows_older_state").getAttribute("aria-busy"), "true");
     assert.match(textOf(find(root, "banner-note")), /Working/);
     await click(button); // a second press while it runs does nothing
@@ -223,18 +223,21 @@ test("an_action_runs_once_at_a_time_says_it_is_working_and_reports_what_it_found
     await first;
     await settle();
     assert.deepEqual(engine.calls, ["verifyNow"], "once");
-    assert.equal(button.disabled, false);
+    assert.equal(button.getAttribute("aria-disabled"), "false");
     assert.match(textOf(find(root, "banner-note")), /could not be reached/);
     // A stop that stays says so, and stays.
     const halted = fakeWarningsEngine({ halted: "restore_epoch_lowered" });
+    halted.stillStopped = true;
     const stop = syncBanner({ engine: halted, router: { go() {} }, t: translator("nb") });
     await click(actionsOf(bannerOf(stop, "restore_epoch_lowered"))[0]);
+    await settle();
     assert.deepEqual(halted.calls, ["resumeAfterHalt"]);
     assert.ok(bannerOf(stop, "restore_epoch_lowered"));
     assert.match(textOf(find(stop, "banner-note")), /Årsaken er der fortsatt/);
     // A try that throws says it did not work, and the button is usable again.
     halted.resumeError = new Error("boom");
     await click(actionsOf(bannerOf(stop, "restore_epoch_lowered"))[0]);
+    await settle();
     assert.match(textOf(find(stop, "banner-note")), /Det virket ikke/);
     assert.doesNotMatch(textOf(stop), /boom/);
   });
@@ -269,6 +272,108 @@ test("the_banner_stops_listening_with_its_page", async () => {
     engine.emit("error", { code: "bad_feed" });
     assert.equal(engine.listening, 0);
     assert.equal(banners(root).length, 0);
+  });
+});
+
+test("try_again_keeps_the_banner_its_note_and_its_focus_with_an_engine_that_lifts_the_stop_and_halts_again", async () => {
+  await withDom(() => withFocus(async () => {
+    // The real engine clears the stop and says `syncing` at once, and halts again if the cause is still there.
+    const engine = fakeWarningsEngine({ halted: "restore_epoch_lowered" });
+    engine.stillStopped = true;
+    const root = syncBanner({ engine, router: { go() {} }, t: translator() });
+    const node = bannerOf(root, "restore_epoch_lowered");
+    const button = actionsOf(node)[0];
+    button.focus();
+    assert.equal(globalThis.document.activeElement, button);
+    let release;
+    engine.gate = new Promise((resolve) => (release = resolve));
+    const run = click(button);
+    await settle(2);
+    // While the pass runs the engine says it is not stopped: the banner is still the same node, with the focus in it.
+    assert.equal(engine.health().halted, null);
+    assert.equal(bannerOf(root, "restore_epoch_lowered"), node, "the same banner, not a new one");
+    assert.equal(globalThis.document.activeElement, button, "the focus is still on the button");
+    assert.match(textOf(find(node, "banner-note")), /Working/);
+    release();
+    await run;
+    await settle();
+    // The cause was still there: one banner, the same node and button, the focus, and a note that says it is still stopped.
+    assert.equal(banners(root).length, 1);
+    assert.equal(bannerOf(root, "restore_epoch_lowered"), node);
+    assert.equal(actionsOf(node)[0], button);
+    assert.equal(globalThis.document.activeElement, button);
+    assert.match(textOf(find(node, "banner-note")), /still there, so sync stays stopped/);
+    assert.equal(button.getAttribute("aria-disabled"), "false");
+    // And a second try, with the cause gone, takes the banner away.
+    engine.stillStopped = false;
+    await click(button);
+    await settle();
+    assert.equal(bannerOf(root, "restore_epoch_lowered"), null);
+    assert.deepEqual(engine.calls, ["resumeAfterHalt", "resumeAfterHalt"]);
+  }));
+});
+
+test("a_check_that_ends_with_another_stop_replaces_the_banner_and_a_warning_that_comes_back_keeps_its_note", async () => {
+  await withDom(() => withFocus(async () => {
+    const engine = fakeWarningsEngine({ warnings: ["server_shows_older_state"] });
+    const root = syncBanner({ engine, router: { go() {} }, t: translator() });
+    const node = bannerOf(root, "server_shows_older_state");
+    const button = actionsOf(node)[0];
+    button.focus();
+    engine.verifyResult = "server_shows_older_state";
+    await click(button);
+    assert.equal(bannerOf(root, "server_shows_older_state"), node);
+    assert.equal(globalThis.document.activeElement, button);
+    assert.match(textOf(find(node, "banner-note")), /still stands/);
+  }));
+});
+
+test("a_try_again_on_a_bad_feed_that_fails_again_shows_the_bad_feed_text_and_not_unreachable", async () => {
+  await withDom(async () => {
+    const engine = fakeWarningsEngine();
+    const root = syncBanner({ engine, router: { go() {} }, t: translator("nb") });
+    engine.emit("error", { code: "bad_feed" });
+    const node = bannerOf(root, "bad_feed");
+    // The listing is read again, and it is a bad feed again: the engine reports an error, and no check ran.
+    engine.verifyNow = async () => {
+      engine.calls.push("verifyNow");
+      engine.emit("state", { kind: "syncing" });
+      engine.emit("state", { kind: "failed", code: "bad_feed" });
+      engine.emit("error", { code: "bad_feed" });
+      return "not_checked";
+    };
+    await click(actionsOf(node)[0]);
+    await settle();
+    assert.equal(bannerOf(root, "bad_feed"), node, "the banner stays, and it is the same one");
+    const note = textOf(find(node, "banner-note"));
+    assert.match(note, /Sjekket igjen/);
+    assert.doesNotMatch(note, /kunne ikke nås/);
+    // The server really cannot be reached: that is what the note says then.
+    engine.verifyNow = async () => "not_checked";
+    await click(actionsOf(node)[0]);
+    assert.match(textOf(find(node, "banner-note")), /kunne ikke nås/);
+  });
+});
+
+test("a_stop_with_a_code_the_page_has_no_text_for_gets_a_general_banner_with_the_way_out", async () => {
+  await withDom(async () => {
+    const engine = fakeWarningsEngine();
+    const went = [];
+    const root = syncBanner({ engine, router: { go: (path) => went.push(path) }, t: translator() });
+    engine.halt("brand_new_stop");
+    const node = bannerOf(root, "brand_new_stop");
+    assert.ok(node, "it fails closed: there is a banner");
+    assert.equal(node.getAttribute("data-level"), "stop");
+    assert.ok(textOf(node).includes(EN["syncwarnings.banner.generic_stop"]));
+    assert.deepEqual(actionsOf(node).map((b) => b.getAttribute("data-action")), ["try_again", "forget"]);
+    await click(actionsOf(node)[1]);
+    assert.deepEqual(went, ["/forget"]);
+    // Found halted at the start, too, and in Norwegian; and a code that is not a code is no banner.
+    const later = syncBanner({ engine: fakeWarningsEngine({ halted: "brand_new_stop" }), router: { go() {} }, t: translator("nb") });
+    assert.ok(textOf(bannerOf(later, "brand_new_stop")).includes(NB["syncwarnings.banner.generic_stop"]));
+    engine.emit("state", { kind: "halted", code: "<b>x</b>" });
+    assert.equal(banners(root).length, 1);
+    assert.deepEqual(Object.keys(EN).filter((key) => key.startsWith("syncwarnings.banner.")).includes("syncwarnings.banner.generic_stop"), true);
   });
 });
 
@@ -316,5 +421,35 @@ test("an_engine_without_health_gets_a_frame_without_the_banner", async () => {
     delete engine.health;
     const root = frame(engine);
     assert.equal(find(root, "sync-banners"), null);
+  });
+});
+
+test("many_conflicts_become_one_banner_with_the_count_and_an_unreadable_item_has_its_own_text", async () => {
+  await withDom(async () => {
+    const engine = fakeWarningsEngine();
+    const root = frame(engine);
+    const id = (n) => n.toString(16).padStart(32, "0");
+    for (let n = 1; n <= 3; n += 1) engine.emit("error", { code: "conflict", id: id(n) });
+    assert.equal(all(root, "banner").length, 3, "the first few are shown one by one, as before");
+    engine.emit("error", { code: "conflict", id: id(4) });
+    engine.emit("error", { code: "conflict", id: id(5) });
+    engine.emit("error", { code: "conflict", id: id(5) });
+    const banners = all(root, "banner");
+    assert.equal(banners.length, 1, "past that, one banner");
+    assert.equal(textOf(banners[0]).includes(textFor(EN, "syncwarnings.error.conflicts_many", { count: 5 })), true);
+    assert.equal(banners[0].getAttribute("data-banner"), "error:conflicts");
+    // An item that cannot be opened after an older state was accepted: one text, no matter how many, and no names.
+    for (let n = 1; n <= 40; n += 1) engine.emit("error", { code: "restore_item_unreadable", id: id(n), name: "Bank login" });
+    const unreadable = all(root, "banner").filter((node) => node.getAttribute("data-banner") === "error:restore_item_unreadable");
+    assert.equal(unreadable.length, 1);
+    assert.ok(textOf(unreadable[0]).includes(EN["syncwarnings.error.restore_item_unreadable"]));
+    assert.doesNotMatch(textOf(root), /Bank login/);
+    const nb = frame(fakeWarningsEngine(), "nb");
+    // The same, in Norwegian.
+    const nbEngine = fakeWarningsEngine();
+    const nbRoot = frame(nbEngine, "nb");
+    nbEngine.emit("error", { code: "restore_item_unreadable", id: id(1) });
+    assert.ok(textOf(find(nbRoot, "banner")).includes(NB["syncwarnings.error.restore_item_unreadable"]));
+    assert.ok(nb);
   });
 });

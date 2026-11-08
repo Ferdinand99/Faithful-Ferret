@@ -19,8 +19,8 @@ import { listenWhileShown } from "./common.mjs";
  * @property {() => { halted: string | null, warnings: string[] }} health
  * @property {() => Promise<string>} verifyNow
  * @property {() => Promise<void>} resumeAfterHalt
- * @property {() => Promise<{ reupload: number, conflicts: number }>} restorePreview
- * @property {() => Promise<{ reuploaded: number, conflicts: number }>} acceptOlderState
+ * @property {() => Promise<{ reupload: number, conflicts: number, manifestOlder?: boolean }>} restorePreview
+ * @property {() => Promise<{ reuploaded: number, conflicts: number, manifestOlder?: boolean }>} acceptOlderState
  * @property {(event: string, fn: (payload: any) => void) => () => void} on
  */
 
@@ -49,6 +49,19 @@ export const BANNERS = Object.freeze({
 /** Whether the banner has a text for the code. @param {unknown} code @returns {code is string} */
 export const isBannerCode = (code) => typeof code === "string" && Object.hasOwn(BANNERS, code);
 
+/**
+ * A stop that has no entry in `BANNERS` (a code the engine can halt with and this page was not told
+ * about) still holds sync, so it still gets a banner: a general one, with the way out. It fails closed.
+ * @type {{ level: "stop", actions: readonly ("try_again" | "forget")[] }}
+ */
+const GENERIC_STOP = Object.freeze({ level: "stop", actions: /** @type {readonly ("try_again" | "forget")[]} */ (Object.freeze(["try_again", "forget"])) });
+
+/** A code the engine halted with, as far as it can be put in an attribute and a key: letters, digits, underscore. @param {unknown} code @returns {code is string} */
+const isStopCode = (code) => typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code);
+
+/** @param {string} code */
+const specOf = (code) => (isBannerCode(code) ? BANNERS[code] : GENERIC_STOP);
+
 /** The screens the navigating actions lead to. */
 const SCREENS = Object.freeze({ see_what_happened: "/restored", forget: "/forget" });
 
@@ -60,6 +73,10 @@ export function syncBanner({ engine, router, t }) {
   const root = el("div", { class: "sync-banners", "data-role": "sync-banners" });
   /** What stands now. @type {Set<string>} */
   const active = new Set();
+  /** The codes whose own action is running: their banner stays, with its note and its focus, until the action is over. @type {Set<string>} */
+  const pending = new Set();
+  /** How many bad feeds have come as errors, so that a try can tell whether it met another. */
+  let feedErrors = 0;
   /** The banners on the page, by code. @type {Map<string, HTMLElement>} */
   const shown = new Map();
   /** Notices the user hid. @type {Set<string>} */
@@ -70,7 +87,7 @@ export function syncBanner({ engine, router, t }) {
   /** Puts the page in line with `active`. */
   function settle() {
     for (const [code, node] of [...shown]) {
-      if (!active.has(code) || hidden.has(code)) {
+      if ((!active.has(code) || hidden.has(code)) && !pending.has(code)) {
         node.remove();
         shown.delete(code);
       }
@@ -87,19 +104,19 @@ export function syncBanner({ engine, router, t }) {
   function read() {
     const health = engine.health();
     active.clear();
-    if (isBannerCode(health.halted)) active.add(health.halted);
+    if (isStopCode(health.halted)) active.add(health.halted);
     for (const code of health.warnings) if (isBannerCode(code) && BANNERS[code].level !== "stop") active.add(code);
     if (feedError) active.add("bad_feed");
   }
 
   /** @param {string} code */
   function make(code) {
-    const spec = BANNERS[code];
+    const spec = specOf(code);
     // The message is an alert: it is read out when it appears. The note below it is polite and changes with each try.
     const text = el("p", { class: "sync-banner-text", role: spec.level === "info" ? "status" : "alert", "data-role": "banner-text" },
       el("strong", { class: "sync-banner-kind" }, t(`syncwarnings.kind.${spec.level}`)),
       " ",
-      t(`syncwarnings.banner.${code}`));
+      t(isBannerCode(code) ? `syncwarnings.banner.${code}` : "syncwarnings.banner.generic_stop"));
     const note = el("p", { class: "sync-banner-note", role: "status", "data-role": "banner-note", "data-empty": "true" });
     /** @param {string} key a catalog key, or "" for no note */
     const say = (key) => {
@@ -110,11 +127,16 @@ export function syncBanner({ engine, router, t }) {
     const buttons = [];
     let running = false;
 
-    /** @param {() => Promise<void>} work */
+    /**
+     * One run at a time. The buttons are marked busy, not disabled: a disabled button loses the focus, and the focus
+     * must still be there when the note says what happened. The banner stays until the run is over.
+     * @param {() => Promise<void>} work
+     */
     const guarded = (work) => async () => {
       if (running) return;
       running = true;
-      for (const button of buttons) /** @type {any} */ (button).disabled = true;
+      pending.add(code);
+      for (const button of buttons) button.setAttribute("aria-disabled", "true");
       node.setAttribute("aria-busy", "true");
       say("syncwarnings.action.busy");
       try {
@@ -122,32 +144,35 @@ export function syncBanner({ engine, router, t }) {
       } catch {
         say("syncwarnings.note.failed");
       } finally {
-        for (const button of buttons) /** @type {any} */ (button).disabled = false;
+        for (const button of buttons) button.setAttribute("aria-disabled", "false");
         node.setAttribute("aria-busy", "false");
         running = false;
+        pending.delete(code);
+        // Now that the run is over, what no longer stands goes.
+        read();
+        settle();
       }
     };
 
     /** Reads the feed and checks the checkpoint again. */
     const check = guarded(async () => {
+      const before = feedErrors;
       const result = await engine.verifyNow();
-      if (result === "not_checked") {
+      if (result === "ok") {
+        feedError = false;
+        say("");
+      } else if (result === "not_checked" && feedErrors === before) {
         say("syncwarnings.note.not_checked");
-        return;
+      } else {
+        // It still stands: a bad feed that came again is one of these, though no check ran.
+        say("syncwarnings.note.checked_still");
       }
-      if (result === "ok") feedError = false;
-      read();
-      settle();
-      // The banner may be gone now; if it stands, say so.
-      say(result === "ok" ? "" : "syncwarnings.note.checked_still");
     });
 
     /** Lifts the stop and runs a pass; the stop comes back if its cause is still there. */
     const resume = guarded(async () => {
       await engine.resumeAfterHalt();
-      read();
-      settle();
-      say(engine.health().halted === null ? "" : "syncwarnings.note.resume_still");
+      say(isStopCode(engine.health().halted) ? "syncwarnings.note.resume_still" : "");
     });
 
     for (const action of spec.actions) {
@@ -182,7 +207,7 @@ export function syncBanner({ engine, router, t }) {
       active.delete(code);
       hidden.delete(code);
       if (code === "bad_feed") feedError = false;
-    } else if (kind === "halted" && isBannerCode(code)) {
+    } else if (kind === "halted" && isStopCode(code)) {
       active.add(code);
     } else if (kind === "idle") {
       // A pass that read the whole feed: a listing that was refused before it is behind us.
@@ -199,6 +224,7 @@ export function syncBanner({ engine, router, t }) {
   function onError(payload) {
     if (payload?.code !== "bad_feed") return;
     feedError = true;
+    feedErrors += 1;
     active.add("bad_feed");
     settle();
   }

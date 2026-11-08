@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createI18n } from "../../src/i18n.mjs";
-import { web } from "./helpers.mjs";
+import { FakeElement, FakeNode, web } from "./helpers.mjs";
 
 /** The merged catalog of one language, as the build makes it. @param {string} lang */
 export function catalogOf(lang) {
@@ -40,8 +40,8 @@ export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
     previewError: /** @type {any} */ (null),
     acceptError: /** @type {any} */ (null),
     resumeError: /** @type {any} */ (null),
-    /** What a call of `resumeAfterHalt` does to the engine before it answers. */
-    onResume: /** @type {null | (() => void)} */ (null),
+    /** Whether the cause of the stop is still there when `resumeAfterHalt` has looked (the engine halts again, with the same code). */
+    stillStopped: false,
     gate: /** @type {null | Promise<void>} */ (null),
     health: () => ({ halted: engine.halted, warnings: [...engine.warnings] }),
     async verifyNow() {
@@ -49,11 +49,19 @@ export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
       if (engine.gate) await engine.gate;
       return engine.verifyResult;
     },
+    /** As the real engine does it: the stop is lifted and `syncing` is said at once, then the pass runs, and the engine halts again if the cause remains. */
     async resumeAfterHalt() {
       engine.calls.push("resumeAfterHalt");
-      if (engine.gate) await engine.gate;
       if (engine.resumeError) throw engine.resumeError;
-      engine.onResume?.();
+      const code = engine.halted;
+      engine.halted = null;
+      engine.emit("state", { kind: "syncing" });
+      if (engine.gate) await engine.gate;
+      await Promise.resolve();
+      if (engine.stillStopped && code !== null) {
+        engine.halted = code;
+        engine.emit("state", { kind: "halted", code });
+      }
     },
     async restorePreview() {
       engine.calls.push("restorePreview");
@@ -95,4 +103,54 @@ export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
     },
   };
   return engine;
+}
+
+/** Whether `node` is `root` or below it. @param {any} root @param {any} node */
+function within(root, node) {
+  for (let at = node; at; at = at.parentNode) if (at === root) return true;
+  return false;
+}
+
+/**
+ * Gives the fake DOM a focus, as a browser has it: `focus()` makes an element the active one, and the
+ * active element is lost when it is removed from the page or becomes disabled. Runs `body`
+ * with it and puts everything back. `document.activeElement` is what a test reads.
+ * @template T
+ * @param {() => Promise<T>} body
+ * @returns {Promise<T>}
+ */
+export async function withFocus(body) {
+  const doc = /** @type {any} */ (globalThis.document);
+  doc.activeElement = null;
+  const nodeProto = /** @type {any} */ (FakeNode.prototype);
+  const elementProto = /** @type {any} */ (FakeElement.prototype);
+  const removeChild = nodeProto.removeChild;
+  const hadFocus = Object.getOwnPropertyDescriptor(elementProto, "focus");
+  const hadDisabled = Object.getOwnPropertyDescriptor(elementProto, "disabled");
+  nodeProto.removeChild = function (/** @type {any} */ child) {
+    if (within(child, doc.activeElement)) doc.activeElement = null;
+    return removeChild.call(this, child);
+  };
+  elementProto.focus = function () {
+    if (!this.disabled) doc.activeElement = this;
+  };
+  Object.defineProperty(elementProto, "disabled", {
+    configurable: true,
+    get() {
+      return this._disabled === true;
+    },
+    set(value) {
+      this._disabled = value === true;
+      if (this._disabled && doc.activeElement === this) doc.activeElement = null;
+    },
+  });
+  try {
+    return await body();
+  } finally {
+    nodeProto.removeChild = removeChild;
+    if (hadFocus) Object.defineProperty(elementProto, "focus", hadFocus);
+    else delete elementProto.focus;
+    if (hadDisabled) Object.defineProperty(elementProto, "disabled", hadDisabled);
+    else delete elementProto.disabled;
+  }
 }

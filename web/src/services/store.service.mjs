@@ -7,8 +7,8 @@
 import { cache } from "../store/cache.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
-import { forgetServer, pendingWrites } from "../store/forget.mjs";
-import { forgetPinned, loadPinned, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
+import { forgetServer, pendingWrites, sharedAccount } from "../store/forget.mjs";
+import { forgetPinned, loadPinned, loadPinnedAccount, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../store/syncState.mjs";
 import { trash } from "../store/trash.mjs";
@@ -38,6 +38,8 @@ export default {
       // another device, this hint is null, so a KSF downgrade is caught only at
       // `unlock_password`, after Argon2id has run; it is still refused there.
       pinHintForEmail: loadPinned,
+      // For the screen that forgets a server: what the device holds for an account the server named.
+      loadPinnedAccount,
       savePinned,
       forgetPinned,
       deviceId,
@@ -54,6 +56,7 @@ export default {
       trash,
       forgetServer,
       pendingWrites,
+      sharedAccount,
     };
   },
 };

@@ -2,10 +2,12 @@
 // and account that this tab has open, this tab locks and stops its sync engine:
 // the records it would save to are gone, and it must not write them back.
 //
-// The message is `{ type: "forgotten", serverKey, accountId }` on the page's
-// `BroadcastChannel("ferret")`, which only pages of the same origin can reach. It
-// is checked all the same: the type, this server and the open account must all
-// match, and anything else is ignored.
+// The message is `{ type, serverKey, accountId }` on the page's
+// `BroadcastChannel("ferret")`, which only pages of the same origin can reach. The type
+// is "forgetting" (sent before anything is removed, so that no engine is saving while the
+// records go) and "forgotten" (sent when it is done). Both do the same, and a tab that
+// has locked already does nothing the second time. They are checked all the same: the
+// type, this server and the open account must all match, and anything else is ignored.
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "../store/idb.mjs";
 
@@ -34,7 +36,7 @@ export default {
     /** @param {unknown} data */
     async function onMessage(data) {
       const message = /** @type {any} */ (data);
-      if (message === null || typeof message !== "object" || message.type !== "forgotten") return;
+      if (message === null || typeof message !== "object" || (message.type !== "forgotten" && message.type !== "forgetting")) return;
       if (message.serverKey !== server || !hex16.is(message.accountId)) return;
       const open = session.current?.();
       if (!open || open.accountId !== message.accountId) return;

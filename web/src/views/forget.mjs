@@ -20,13 +20,14 @@ import { askConfirm } from "./common.mjs";
  *   api: any,
  *   serverUrl: string,
  *   accountId: string | null,
+ *   email?: string | null,
  *   go: (path: string) => void,
  *   forget?: typeof forgetServer,
  * }} options
- * `accountId` is the account that is open or signed in, or null.
+ * `accountId` is the account that is open or signed in, or null; `email` is the address of this device's own record of it.
  * @returns {HTMLElement}
  */
-export function forgetView({ t, session, store, api, serverUrl, accountId, go, forget = forgetServer }) {
+export function forgetView({ t, session, store, api, serverUrl, accountId, email = null, go, forget = forgetServer }) {
   const root = el("section", { class: "auth-card account forget", "data-role": "forget-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "forget-status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "forget-error" });
@@ -49,12 +50,16 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, go, f
 
   /** @type {any[]} */
   const controls = [];
+  /** Where the focus goes back to when nothing was done or it failed: the control that started it. @type {any} */
+  let origin = null;
   /** @param {boolean} on */
   const busy = (on) => {
     for (const control of controls) control.disabled = on;
     root.setAttribute("aria-busy", on ? "true" : "false");
     setText(status, on ? t("syncwarnings.forget.working") : "");
   };
+  /** A disabled control loses the focus, so it goes back to where the user started. */
+  const back = () => origin?.focus?.();
 
   /** @param {import("../flows/forgetServer.mjs").ForgetResult} result */
   function showDone(result) {
@@ -66,27 +71,42 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, go, f
     /** @type {any} */ (text).focus?.();
   }
 
-  /** @param {string} id the account to forget */
-  async function run(id) {
+  let asking = false;
+
+  /**
+   * @param {string} id the account to forget
+   * @param {string | null} named the address of the device's own record of it
+   */
+  async function run(id, named) {
+    if (asking) return;
+    asking = true;
     clearMessages();
-    busy(true);
     try {
       const outcome = await forget({
         api, session, store, serverUrl, accountId: id,
-        confirm: ({ pending }) => askConfirm({
-          t, host: root, title: "syncwarnings.forget.dialog_title",
-          body: pending > 0 ? "syncwarnings.forget.dialog_body_pending" : "syncwarnings.forget.dialog_body",
-          confirm: "syncwarnings.forget.dialog_confirm", cancel: "syncwarnings.forget.dialog_cancel", vars: { count: pending },
-        }),
+        // The page says it is working only once the user has said yes: what a screen reader hears while the dialog is open is the dialog.
+        confirm: async ({ pending, shared }) => {
+          const yes = await askConfirm({
+            t, host: root, title: "syncwarnings.forget.dialog_title",
+            body: `syncwarnings.forget.dialog_body${shared ? "_shared" : ""}${pending > 0 ? "_pending" : ""}`,
+            confirm: "syncwarnings.forget.dialog_confirm", cancel: "syncwarnings.forget.dialog_cancel",
+            vars: { count: pending, email: named ?? t("syncwarnings.forget.no_email") },
+          });
+          if (yes) busy(true);
+          return yes;
+        },
         navigate: (_hash, result) => showDone(result),
       });
       if (outcome === "cancelled") {
-        busy(false);
         say(noteBox, "syncwarnings.forget.cancelled");
+        back();
       }
     } catch {
       busy(false);
       say(errorBox, "syncwarnings.forget.error");
+      back();
+    } finally {
+      asking = false;
     }
   }
 
@@ -95,7 +115,10 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, go, f
   if (accountId !== null) {
     const start = el("button", { type: "button", class: "btn btn-danger", "data-role": "forget-start" }, t("syncwarnings.forget.start"));
     controls.push(start);
-    start.addEventListener("click", () => void run(accountId));
+    start.addEventListener("click", () => {
+      origin = start;
+      void run(accountId, email);
+    });
     parts.push(el("div", { class: "actions" }, start));
   } else {
     // Signed out: the account is found by the e-mail address, among this device's own records.
@@ -107,10 +130,10 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, go, f
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       clearMessages();
-      const email = /** @type {any} */ (input).value;
+      const typed = /** @type {any} */ (input).value;
       let found = null;
       try {
-        const record = await store.pinHintForEmail(await store.open(), serverUrl, email);
+        const record = await store.pinHintForEmail(await store.open(), serverUrl, typed);
         const id = record ? hex16.encode(record.account_id) : null;
         found = id !== null && hex16.is(id) ? id : null;
       } catch {
@@ -118,7 +141,10 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, go, f
         return;
       }
       if (found === null) say(noteBox, "syncwarnings.forget.not_found");
-      else await run(found);
+      else {
+        origin = input;
+        await run(found, String(typed).trim());
+      }
     });
     parts.push(form);
   }

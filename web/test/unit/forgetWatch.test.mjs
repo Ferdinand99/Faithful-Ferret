@@ -62,7 +62,7 @@ test("forget_tells_other_tabs_and_they_lock", async () => {
   const result = await forgetServer({
     api: { post: async () => ({}) },
     session: { lock: async () => {}, forgetSecretKey: async () => {} },
-    store: { open: async () => ({}), pendingWrites: async () => 0, forgetServer: async () => ({ removed: {} }) },
+    store: { open: async () => ({}), pendingWrites: async () => 0, sharedAccount: async () => false, forgetServer: async () => ({ removed: {} }) },
     serverUrl: SERVER, accountId: ACCOUNT, confirm: async () => true, navigate() {}, channel: here, locks: null,
   });
   assert.equal(result, "forgotten");
@@ -126,4 +126,22 @@ test("the_watch_ends_with_close_and_needs_no_channel_support", async () => {
   } finally {
     if (saved !== undefined) globalThis.BroadcastChannel = saved;
   }
+});
+
+test("the_tabs_stop_when_the_forgetting_starts_and_the_second_message_does_nothing_more", async () => {
+  const channels = bus();
+  const t = tab(channels);
+  const sender = channels.make();
+  sender.postMessage({ type: "forgetting", serverKey: SERVER, accountId: ACCOUNT });
+  await settle();
+  // The tab is locked and stopped before anything is removed.
+  assert.deepEqual(t.log, ["lock", "stop", ["navigate", "#/login"]]);
+  sender.postMessage({ type: "forgotten", serverKey: SERVER, accountId: ACCOUNT });
+  await settle();
+  assert.deepEqual(t.log, ["lock", "stop", ["navigate", "#/login"]], "locked already: nothing happens again");
+  // A tab that missed the first message stops on the second.
+  const late = tab(channels);
+  sender.postMessage({ type: "forgotten", serverKey: SERVER, accountId: ACCOUNT });
+  await settle();
+  assert.deepEqual(late.log, ["lock", "stop", ["navigate", "#/login"]]);
 });

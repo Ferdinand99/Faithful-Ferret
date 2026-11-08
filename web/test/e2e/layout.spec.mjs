@@ -91,7 +91,7 @@ async function scene(page, which) {
       const halted = name === "restored" ? "server_restored" : "restore_epoch_lowered";
       const health = () => ({ halted, warnings: Object.keys(WARNING_TABLE).filter((code) => WARNING_TABLE[code].kind !== "stop") });
       const eng = { ...engine([]), health, verifyNow: async () => "ok", resumeAfterHalt: async () => {},
-        restorePreview: async () => ({ reupload: 12, conflicts: 3 }), acceptOlderState: async () => ({ reuploaded: 12, conflicts: 3 }) };
+        restorePreview: async () => ({ reupload: 12, conflicts: 3, manifestOlder: true }), acceptOlderState: async () => ({ reuploaded: 12, conflicts: 3 }) };
       let content = document.createElement("div");
       if (name === "restored") {
         const { restoredView } = await import("/app/views/restored.mjs");
