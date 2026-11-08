@@ -1,0 +1,5464 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "url-match",
+  "suite": 1,
+  "spec": "Fase 1 § 10.4, § 10.5",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "see-vectors-version",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "url-match/match/001",
+      "title": "\"https://example.com\" (host) against \"https://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/002",
+      "title": "\"https://example.com\" (host) against \"https://example.com/login?next=/a#top\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com/login?next=/a#top",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e3f6e6578743d2f6123746f70"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/003",
+      "title": "\"https://example.com/a/b\" (host) against \"https://example.com/c\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a/b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f612f62",
+        "match": "host",
+        "page": "https://example.com/c",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f63"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/004",
+      "title": "\"https://example.com\" (host) against \"https://www.example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://www.example.com",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/005",
+      "title": "\"https://www.example.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://www.example.com",
+        "entry_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/006",
+      "title": "\"https://example.com\" (host) against \"https://example.org\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.org",
+        "page_utf8": "68747470733a2f2f6578616d706c652e6f7267"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/007",
+      "title": "\"https://a.example.com\" (host) against \"https://login.a.example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.example.com",
+        "entry_utf8": "68747470733a2f2f612e6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://login.a.example.com",
+        "page_utf8": "68747470733a2f2f6c6f67696e2e612e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/008",
+      "title": "\"HTTPS://EXAMPLE.COM\" (host) against \"https://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "HTTPS://EXAMPLE.COM",
+        "entry_utf8": "48545450533a2f2f4558414d504c452e434f4d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/009",
+      "title": "\"https://example.com.\" (host) against \"https://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com.",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2e",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/010",
+      "title": "\"https://example.com\" (host) against \"https://EXAMPLE.com./\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://EXAMPLE.com./",
+        "page_utf8": "68747470733a2f2f4558414d504c452e636f6d2e2f"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/011",
+      "title": "\"https://example.com\" (host) against \"https://example.com..\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com..",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2e2e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/012",
+      "title": "\"https://example.com\" (host) against \"https://example.com:443\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com:443",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a343433"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/013",
+      "title": "\"https://example.com:0443\" (host) against \"https://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com:0443",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d3a30343433",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/014",
+      "title": "\"https://example.com:8443\" (host) against \"https://example.com:8443/x\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com:8443",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433",
+        "match": "host",
+        "page": "https://example.com:8443/x",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a383434332f78"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/015",
+      "title": "\"https://example.com:8443\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com:8443",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/016",
+      "title": "\"https://example.com\" (host) against \"https://example.com:8443\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com:8443",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/017",
+      "title": "\"https://example.com\" (host) against \"https://example.com:80\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com:80",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3830"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/018",
+      "title": "\"https://example.com\" (host) against \"http://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "http://example.com",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/019",
+      "title": "\"https://example.com/login\" (exact) against \"http://example.com/login\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "http://example.com/login",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d2f6c6f67696e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/020",
+      "title": "\"https://example.com\" (domain) against \"http://www.example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "http://www.example.com",
+        "page_utf8": "687474703a2f2f7777772e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/021",
+      "title": "\"http://example.com\" (host) against \"http://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "http://example.com",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/022",
+      "title": "\"http://example.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/023",
+      "title": "\"http://example.com:80\" (host) against \"http://example.com/x\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com:80",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d3a3830",
+        "match": "host",
+        "page": "http://example.com/x",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d2f78"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/024",
+      "title": "\"http://example.com\" (host) against \"http://example.com:8080\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "http://example.com:8080",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d3a38303830"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/025",
+      "title": "\"http://example.com\" (domain) against \"http://www.example.com\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "http://www.example.com",
+        "page_utf8": "687474703a2f2f7777772e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/026",
+      "title": "\"http://example.com\" (domain) against \"https://www.example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://www.example.com",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/027",
+      "title": "\"http://localhost:3000\" (host) against \"http://localhost:3000/\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://localhost:3000",
+        "entry_utf8": "687474703a2f2f6c6f63616c686f73743a33303030",
+        "match": "host",
+        "page": "http://localhost:3000/",
+        "page_utf8": "687474703a2f2f6c6f63616c686f73743a333030302f"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/028",
+      "title": "\"http://localhost:3000\" (host) against \"http://localhost\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://localhost:3000",
+        "entry_utf8": "687474703a2f2f6c6f63616c686f73743a33303030",
+        "match": "host",
+        "page": "http://localhost",
+        "page_utf8": "687474703a2f2f6c6f63616c686f7374"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/029",
+      "title": "\"https://localhost\" (host) against \"http://localhost\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://localhost",
+        "entry_utf8": "68747470733a2f2f6c6f63616c686f7374",
+        "match": "host",
+        "page": "http://localhost",
+        "page_utf8": "687474703a2f2f6c6f63616c686f7374"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/030",
+      "title": "\"https://example.com\" (host) against \"https://examp1e.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://examp1e.com",
+        "page_utf8": "68747470733a2f2f6578616d7031652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/031",
+      "title": "\"https://example.com\" (host) against \"https://example.com.evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com.evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2e6576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/032",
+      "title": "\"https://example.com\" (domain) against \"https://sub.example.com.evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://sub.example.com.evil.net",
+        "page_utf8": "68747470733a2f2f7375622e6578616d706c652e636f6d2e6576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/033",
+      "title": "\"https://example.com\" (host) against \"https://evil.net/example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://evil.net/example.com",
+        "page_utf8": "68747470733a2f2f6576696c2e6e65742f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/034",
+      "title": "\"https://example.com\" (host) against \"https://example.com@evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com@evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d406576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/035",
+      "title": "\"https://example.com\" (host) against \"https://evil.net#@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://evil.net#@example.com",
+        "page_utf8": "68747470733a2f2f6576696c2e6e657423406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/036",
+      "title": "\"https://example.com\" (host) against \"https://evil.net\\\\@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://evil.net\\@example.com",
+        "page_utf8": "68747470733a2f2f6576696c2e6e65745c406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/037",
+      "title": "\"https://example.com\" (host) against \"https://example-com.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example-com.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652d636f6d2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/038",
+      "title": "\"https://example.com\" (host) against \"https://examplecom\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://examplecom",
+        "page_utf8": "68747470733a2f2f6578616d706c65636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/039",
+      "title": "\"https://example.com\" (host) against \"https://exаmple.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://exаmple.com",
+        "page_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/040",
+      "title": "\"https://example.com\" (domain) against \"https://www.exаmple.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://www.exаmple.com",
+        "page_utf8": "68747470733a2f2f7777772e6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/041",
+      "title": "\"https://exаmple.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://exаmple.com",
+        "entry_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/042",
+      "title": "\"https://exаmple.com\" (host) against \"https://exаmple.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://exаmple.com",
+        "entry_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d",
+        "match": "host",
+        "page": "https://exаmple.com",
+        "page_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/043",
+      "title": "\"https://exаmple.com\" (host) against \"https://xn--exmple-4nf.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://exаmple.com",
+        "entry_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d",
+        "match": "host",
+        "page": "https://xn--exmple-4nf.com",
+        "page_utf8": "68747470733a2f2f786e2d2d65786d706c652d346e662e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/044",
+      "title": "\"https://example.com\" (host) against \"https://example.com\\\\login\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com\\login",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d5c6c6f67696e"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/045",
+      "title": "\"https://example.com\" (host) against \"https://example.com\\\\@evil.net\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com\\@evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d5c406576696c2e6e6574"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/046",
+      "title": "\"https://example.com\" (host) against \"https://exam\\tple.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://exam\tple.com",
+        "page_utf8": "68747470733a2f2f6578616d09706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/047",
+      "title": "\"https://example.com\" (host) against \"ht\\ntps://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "ht\ntps://example.com",
+        "page_utf8": "68740a7470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/048",
+      "title": "\"https://example.com\" (host) against \"https://example.com\\r\\n/x\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com\r\n/x",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d0d0a2f78"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/049",
+      "title": "\"https://example.com\" (host) against \"https://example.com\\t.evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com\t.evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d092e6576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/050",
+      "title": "\"https://example.com\" (host) against \"  https://example.com  \" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "  https://example.com  ",
+        "page_utf8": "202068747470733a2f2f6578616d706c652e636f6d2020"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/051",
+      "title": "\"https://example.com\" (host) against \"https://%65xample.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://%65xample.com",
+        "page_utf8": "68747470733a2f2f25363578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/052",
+      "title": "\"https://example.com\" (host) against \"https://example%2Ecom\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example%2Ecom",
+        "page_utf8": "68747470733a2f2f6578616d706c65253245636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/053",
+      "title": "\"https://example.com\" (host) against \"https://example.com%2F.evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com%2F.evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2532462e6576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/054",
+      "title": "\"https://example.com\" (host) against \"https://ｅｘａｍｐｌｅ。ｃｏｍ\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://ｅｘａｍｐｌｅ。ｃｏｍ",
+        "page_utf8": "68747470733a2f2fefbd85efbd98efbd81efbd8defbd90efbd8cefbd85e38082efbd83efbd8fefbd8d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/055",
+      "title": "\"https://example.com\" (host) against \"https:example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https:example.com",
+        "page_utf8": "68747470733a6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/056",
+      "title": "\"https://example.com\" (host) against \"https:///example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https:///example.com",
+        "page_utf8": "68747470733a2f2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/057",
+      "title": "\"https://example.com\" (host) against \"https://exa mple.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://exa mple.com",
+        "page_utf8": "68747470733a2f2f657861206d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/058",
+      "title": "\"https://example.com\" (host) against \"https://example.com:99999\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com:99999",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3939393939"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/059",
+      "title": "\"https://example.com\" (host) against \"https://example.com:abc\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com:abc",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a616263"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/060",
+      "title": "\"https://example.com\" (host) against \"https://\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://",
+        "page_utf8": "68747470733a2f2f"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/061",
+      "title": "\"https://example.com\" (host) against \"https://[::1\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://[::1",
+        "page_utf8": "68747470733a2f2f5b3a3a31"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/062",
+      "title": "\"https://example.com\" (host) against \"\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "",
+        "page_utf8": ""
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/063",
+      "title": "\"\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "",
+        "entry_utf8": "",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/064",
+      "title": "\"https://a..b\" (host) against \"https://a..b\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a..b",
+        "entry_utf8": "68747470733a2f2f612e2e62",
+        "match": "host",
+        "page": "https://a..b",
+        "page_utf8": "68747470733a2f2f612e2e62"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/065",
+      "title": "\"https://example.com\" (host) against \"https://user@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://user@example.com",
+        "page_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/066",
+      "title": "\"https://example.com\" (host) against \"https://user:pw@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://user:pw@example.com",
+        "page_utf8": "68747470733a2f2f757365723a7077406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/067",
+      "title": "\"https://example.com\" (domain) against \"https://:pw@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://:pw@example.com",
+        "page_utf8": "68747470733a2f2f3a7077406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/068",
+      "title": "\"https://user@example.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://user@example.com",
+        "entry_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/069",
+      "title": "\"https://user@example.com\" (host) against \"https://user@example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://user@example.com",
+        "entry_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://user@example.com",
+        "page_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/070",
+      "title": "\"https://example.com\" (host) against \"data:text/html,<h1>x</h1>\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "data:text/html,<h1>x</h1>",
+        "page_utf8": "646174613a746578742f68746d6c2c3c68313e783c2f68313e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/071",
+      "title": "\"https://example.com\" (host) against \"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10",
+        "page_utf8": "626c6f623a68747470733a2f2f6578616d706c652e636f6d2f32663663316630652d366135322d346635352d396436652d306331623362336639613130"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/072",
+      "title": "\"https://example.com\" (host) against \"file:///etc/passwd\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "file:///etc/passwd",
+        "page_utf8": "66696c653a2f2f2f6574632f706173737764"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/073",
+      "title": "\"https://example.com\" (host) against \"about:blank\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "about:blank",
+        "page_utf8": "61626f75743a626c616e6b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/074",
+      "title": "\"https://example.com\" (host) against \"javascript:alert(1)\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "javascript:alert(1)",
+        "page_utf8": "6a6176617363726970743a616c657274283129"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/075",
+      "title": "\"https://example.com\" (host) against \"ftp://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "ftp://example.com",
+        "page_utf8": "6674703a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/076",
+      "title": "\"https://example.com\" (host) against \"moz-extension://abc/page.html\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "moz-extension://abc/page.html",
+        "page_utf8": "6d6f7a2d657874656e73696f6e3a2f2f6162632f706167652e68746d6c"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/077",
+      "title": "\"about:blank\" (host) against \"about:blank\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "about:blank",
+        "entry_utf8": "61626f75743a626c616e6b",
+        "match": "host",
+        "page": "about:blank",
+        "page_utf8": "61626f75743a626c616e6b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/078",
+      "title": "\"example.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "example.com",
+        "entry_utf8": "6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/079",
+      "title": "\"example.com\" (domain) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "example.com",
+        "entry_utf8": "6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/080",
+      "title": "\"www.example.com/login\" (host) against \"https://www.example.com/login\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "www.example.com/login",
+        "entry_utf8": "7777772e6578616d706c652e636f6d2f6c6f67696e",
+        "match": "host",
+        "page": "https://www.example.com/login",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d2f6c6f67696e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/081",
+      "title": "\"//example.com\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "//example.com",
+        "entry_utf8": "2f2f6578616d706c652e636f6d",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/082",
+      "title": "\"example.com:8080\" (host) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "example.com:8080",
+        "entry_utf8": "6578616d706c652e636f6d3a38303830",
+        "match": "host",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/083",
+      "title": "\"example.com\" (exact) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "example.com",
+        "entry_utf8": "6578616d706c652e636f6d",
+        "match": "exact",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/084",
+      "title": "\"https://example.com\" (regex) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "regex",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/085",
+      "title": "\"https://example.com\" () against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/086",
+      "title": "\"https://example.com\" (HOST) against \"https://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "HOST",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/087",
+      "title": "\"https://login.example.co.uk\" (domain) against \"https://www.example.co.uk\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://login.example.co.uk",
+        "entry_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f2e756b",
+        "match": "domain",
+        "page": "https://www.example.co.uk",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/088",
+      "title": "\"https://example.co.uk\" (domain) against \"https://a.b.example.co.uk\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.co.uk",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f2e756b",
+        "match": "domain",
+        "page": "https://a.b.example.co.uk",
+        "page_utf8": "68747470733a2f2f612e622e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/089",
+      "title": "\"https://example.com\" (domain) against \"https://login.example.com\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://login.example.com",
+        "page_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/090",
+      "title": "\"https://example.com\" (domain) against \"https://example.com\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/091",
+      "title": "\"https://example.com.\" (domain) against \"https://login.example.com\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com.",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2e",
+        "match": "domain",
+        "page": "https://login.example.com",
+        "page_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/092",
+      "title": "\"https://login.example.co.uk\" (host) against \"https://www.example.co.uk\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://login.example.co.uk",
+        "entry_utf8": "68747470733a2f2f6c6f67696e2e6578616d706c652e636f2e756b",
+        "match": "host",
+        "page": "https://www.example.co.uk",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/093",
+      "title": "\"https://example.co.uk\" (domain) against \"https://other.co.uk\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.co.uk",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f2e756b",
+        "match": "domain",
+        "page": "https://other.co.uk",
+        "page_utf8": "68747470733a2f2f6f746865722e636f2e756b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/094",
+      "title": "\"https://example.com\" (domain) against \"https://example.co.uk\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://example.co.uk",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/095",
+      "title": "\"https://example.com\" (domain) against \"https://www.example.com:8443\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://www.example.com:8443",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d3a38343433"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/096",
+      "title": "\"https://a.example.com\" (domain) against \"https://example.com.evil.net\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.example.com",
+        "entry_utf8": "68747470733a2f2f612e6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "https://example.com.evil.net",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2e6576696c2e6e6574"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/097",
+      "title": "\"https://bücher.de\" (domain) against \"https://shop.xn--bcher-kva.de\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://bücher.de",
+        "entry_utf8": "68747470733a2f2f62c3bc636865722e6465",
+        "match": "domain",
+        "page": "https://shop.xn--bcher-kva.de",
+        "page_utf8": "68747470733a2f2f73686f702e786e2d2d62636865722d6b76612e6465"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/098",
+      "title": "\"https://a.github.io\" (domain) against \"https://b.github.io\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.github.io",
+        "entry_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "match": "domain",
+        "page": "https://b.github.io",
+        "page_utf8": "68747470733a2f2f622e6769746875622e696f"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/099",
+      "title": "\"https://a.github.io\" (domain) against \"https://x.a.github.io\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.github.io",
+        "entry_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "match": "domain",
+        "page": "https://x.a.github.io",
+        "page_utf8": "68747470733a2f2f782e612e6769746875622e696f"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/100",
+      "title": "\"https://x.y.vercel.app\" (domain) against \"https://z.y.vercel.app\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://x.y.vercel.app",
+        "entry_utf8": "68747470733a2f2f782e792e76657263656c2e617070",
+        "match": "domain",
+        "page": "https://z.y.vercel.app",
+        "page_utf8": "68747470733a2f2f7a2e792e76657263656c2e617070"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/101",
+      "title": "\"https://x.vercel.app\" (domain) against \"https://y.vercel.app\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://x.vercel.app",
+        "entry_utf8": "68747470733a2f2f782e76657263656c2e617070",
+        "match": "domain",
+        "page": "https://y.vercel.app",
+        "page_utf8": "68747470733a2f2f792e76657263656c2e617070"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/102",
+      "title": "\"https://github.io\" (domain) against \"https://github.io\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://github.io",
+        "entry_utf8": "68747470733a2f2f6769746875622e696f",
+        "match": "domain",
+        "page": "https://github.io",
+        "page_utf8": "68747470733a2f2f6769746875622e696f"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/103",
+      "title": "\"https://github.io\" (domain) against \"https://a.github.io\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://github.io",
+        "entry_utf8": "68747470733a2f2f6769746875622e696f",
+        "match": "domain",
+        "page": "https://a.github.io",
+        "page_utf8": "68747470733a2f2f612e6769746875622e696f"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/104",
+      "title": "\"https://a.foo.ck\" (domain) against \"https://b.foo.ck\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.foo.ck",
+        "entry_utf8": "68747470733a2f2f612e666f6f2e636b",
+        "match": "domain",
+        "page": "https://b.foo.ck",
+        "page_utf8": "68747470733a2f2f622e666f6f2e636b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/105",
+      "title": "\"https://www.ck\" (domain) against \"https://x.www.ck\" is domain",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://www.ck",
+        "entry_utf8": "68747470733a2f2f7777772e636b",
+        "match": "domain",
+        "page": "https://x.www.ck",
+        "page_utf8": "68747470733a2f2f782e7777772e636b"
+      },
+      "expect": {
+        "result": "domain"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/106",
+      "title": "\"https://fritz.box\" (domain) against \"https://fritz.box\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://fritz.box",
+        "entry_utf8": "68747470733a2f2f667269747a2e626f78",
+        "match": "domain",
+        "page": "https://fritz.box",
+        "page_utf8": "68747470733a2f2f667269747a2e626f78"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/107",
+      "title": "\"https://a.fritz.box\" (domain) against \"https://b.fritz.box\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.fritz.box",
+        "entry_utf8": "68747470733a2f2f612e667269747a2e626f78",
+        "match": "domain",
+        "page": "https://b.fritz.box",
+        "page_utf8": "68747470733a2f2f622e667269747a2e626f78"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/108",
+      "title": "\"https://fritz.box\" (domain) against \"https://x.fritz.box\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://fritz.box",
+        "entry_utf8": "68747470733a2f2f667269747a2e626f78",
+        "match": "domain",
+        "page": "https://x.fritz.box",
+        "page_utf8": "68747470733a2f2f782e667269747a2e626f78"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/109",
+      "title": "\"https://router.lan\" (domain) against \"https://router.lan\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://router.lan",
+        "entry_utf8": "68747470733a2f2f726f757465722e6c616e",
+        "match": "domain",
+        "page": "https://router.lan",
+        "page_utf8": "68747470733a2f2f726f757465722e6c616e"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/110",
+      "title": "\"https://a.router.lan\" (domain) against \"https://b.router.lan\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.router.lan",
+        "entry_utf8": "68747470733a2f2f612e726f757465722e6c616e",
+        "match": "domain",
+        "page": "https://b.router.lan",
+        "page_utf8": "68747470733a2f2f622e726f757465722e6c616e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/111",
+      "title": "\"https://nas.home.arpa\" (domain) against \"https://nas.home.arpa\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://nas.home.arpa",
+        "entry_utf8": "68747470733a2f2f6e61732e686f6d652e61727061",
+        "match": "domain",
+        "page": "https://nas.home.arpa",
+        "page_utf8": "68747470733a2f2f6e61732e686f6d652e61727061"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/112",
+      "title": "\"https://nas.home.arpa\" (domain) against \"https://x.nas.home.arpa\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://nas.home.arpa",
+        "entry_utf8": "68747470733a2f2f6e61732e686f6d652e61727061",
+        "match": "domain",
+        "page": "https://x.nas.home.arpa",
+        "page_utf8": "68747470733a2f2f782e6e61732e686f6d652e61727061"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/113",
+      "title": "\"https://intranet\" (domain) against \"https://intranet/login\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://intranet",
+        "entry_utf8": "68747470733a2f2f696e7472616e6574",
+        "match": "domain",
+        "page": "https://intranet/login",
+        "page_utf8": "68747470733a2f2f696e7472616e65742f6c6f67696e"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/114",
+      "title": "\"https://intranet\" (domain) against \"https://other\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://intranet",
+        "entry_utf8": "68747470733a2f2f696e7472616e6574",
+        "match": "domain",
+        "page": "https://other",
+        "page_utf8": "68747470733a2f2f6f74686572"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/115",
+      "title": "\"https://a.example.zzzunknown\" (domain) against \"https://b.example.zzzunknown\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.example.zzzunknown",
+        "entry_utf8": "68747470733a2f2f612e6578616d706c652e7a7a7a756e6b6e6f776e",
+        "match": "domain",
+        "page": "https://b.example.zzzunknown",
+        "page_utf8": "68747470733a2f2f622e6578616d706c652e7a7a7a756e6b6e6f776e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/116",
+      "title": "\"https://a.example\" (domain) against \"https://b.example\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://a.example",
+        "entry_utf8": "68747470733a2f2f612e6578616d706c65",
+        "match": "domain",
+        "page": "https://b.example",
+        "page_utf8": "68747470733a2f2f622e6578616d706c65"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/117",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/login\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/login",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/118",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/login#top\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/login#top",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e23746f70"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/119",
+      "title": "\"https://example.com/login#a\" (exact) against \"https://example.com/login#b\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login#a",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e2361",
+        "match": "exact",
+        "page": "https://example.com/login#b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e2362"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/120",
+      "title": "\"https://example.com\" (exact) against \"https://example.com/\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "match": "exact",
+        "page": "https://example.com/",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/121",
+      "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=1#f\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a?x=1",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f613f783d31",
+        "match": "exact",
+        "page": "https://example.com/a?x=1#f",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f613f783d312366"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/122",
+      "title": "\"https://example.com./a\" (exact) against \"https://EXAMPLE.com/a\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com./a",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2e2f61",
+        "match": "exact",
+        "page": "https://EXAMPLE.com/a",
+        "page_utf8": "68747470733a2f2f4558414d504c452e636f6d2f61"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/123",
+      "title": "\"https://example.com/a/b\" (exact) against \"https://example.com\\\\a\\\\b\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a/b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f612f62",
+        "match": "exact",
+        "page": "https://example.com\\a\\b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d5c615c62"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/124",
+      "title": "\"https://example.com/a/./b/../c\" (exact) against \"https://example.com/a/c\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a/./b/../c",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f612f2e2f622f2e2e2f63",
+        "match": "exact",
+        "page": "https://example.com/a/c",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f612f63"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/125",
+      "title": "\"https://example.com/a b\" (exact) against \"https://example.com/a%20b\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f612062",
+        "match": "exact",
+        "page": "https://example.com/a%20b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6125323062"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/126",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/login/\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/login/",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e2f"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/127",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/Login\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/Login",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f4c6f67696e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/128",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/login?x=1\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/login?x=1",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e3f783d31"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/129",
+      "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=2\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a?x=1",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f613f783d31",
+        "match": "exact",
+        "page": "https://example.com/a?x=2",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f613f783d32"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/130",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com/other\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com/other",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6f74686572"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/131",
+      "title": "\"https://example.com/login\" (exact) against \"https://example.com:8443/login\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://example.com:8443/login",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a383434332f6c6f67696e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/132",
+      "title": "\"https://example.com/login\" (exact) against \"https://www.example.com/login\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/login",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e",
+        "match": "exact",
+        "page": "https://www.example.com/login",
+        "page_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d2f6c6f67696e"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/133",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1/admin\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1.1/admin",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e312f61646d696e"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/134",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.2\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1.2",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e32"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/135",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.10\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1.10",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e3130"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/136",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1",
+        "page_utf8": "687474703a2f2f3139322e3136382e31"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/137",
+      "title": "\"http://192.168.1.1\" (host) against \"https://192.168.1.1\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "https://192.168.1.1",
+        "page_utf8": "68747470733a2f2f3139322e3136382e312e31"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/138",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1:8080\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1.1:8080",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e313a38303830"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/139",
+      "title": "\"http://192.168.1.1\" (host) against \"http://3232235777\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://3232235777",
+        "page_utf8": "687474703a2f2f33323332323335373737"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/140",
+      "title": "\"http://192.168.1.1\" (host) against \"http://0xc0a80101\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://0xc0a80101",
+        "page_utf8": "687474703a2f2f30786330613830313031"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/141",
+      "title": "\"http://192.168.1.1\" (host) against \"http://0300.0250.01.01\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://0300.0250.01.01",
+        "page_utf8": "687474703a2f2f303330302e303235302e30312e3031"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/142",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.257\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.257",
+        "page_utf8": "687474703a2f2f3139322e3136382e323537"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/143",
+      "title": "\"http://3232235777\" (host) against \"http://192.168.1.1\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://3232235777",
+        "entry_utf8": "687474703a2f2f33323332323335373737",
+        "match": "host",
+        "page": "http://192.168.1.1",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e31"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/144",
+      "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1.example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "host",
+        "page": "http://192.168.1.1.example.com",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e312e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/145",
+      "title": "\"http://192.168.1.1\" (domain) against \"http://192.168.1.1\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "match": "domain",
+        "page": "http://192.168.1.1",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e31"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/146",
+      "title": "\"http://10.0.0.1\" (domain) against \"http://10.0.0.2\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://10.0.0.1",
+        "entry_utf8": "687474703a2f2f31302e302e302e31",
+        "match": "domain",
+        "page": "http://10.0.0.2",
+        "page_utf8": "687474703a2f2f31302e302e302e32"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/147",
+      "title": "\"http://192.168.1.1/a\" (exact) against \"http://3232235777/a#f\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://192.168.1.1/a",
+        "entry_utf8": "687474703a2f2f3139322e3136382e312e312f61",
+        "match": "exact",
+        "page": "http://3232235777/a#f",
+        "page_utf8": "687474703a2f2f333233323233353737372f612366"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/148",
+      "title": "\"http://[::1]:3000\" (host) against \"http://[::1]:3000/x\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://[::1]:3000",
+        "entry_utf8": "687474703a2f2f5b3a3a315d3a33303030",
+        "match": "host",
+        "page": "http://[::1]:3000/x",
+        "page_utf8": "687474703a2f2f5b3a3a315d3a333030302f78"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/149",
+      "title": "\"http://[::1]\" (host) against \"http://[0:0:0:0:0:0:0:1]\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://[::1]",
+        "entry_utf8": "687474703a2f2f5b3a3a315d",
+        "match": "host",
+        "page": "http://[0:0:0:0:0:0:0:1]",
+        "page_utf8": "687474703a2f2f5b303a303a303a303a303a303a303a315d"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/150",
+      "title": "\"http://[::1]\" (host) against \"http://[::2]\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://[::1]",
+        "entry_utf8": "687474703a2f2f5b3a3a315d",
+        "match": "host",
+        "page": "http://[::2]",
+        "page_utf8": "687474703a2f2f5b3a3a325d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/001",
+      "title": "origin of \"https://example.com\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/002",
+      "title": "origin of \"https://Example.COM/login?x=1#top\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://Example.COM/login?x=1#top",
+        "page_utf8": "68747470733a2f2f4578616d706c652e434f4d2f6c6f67696e3f783d3123746f70"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/003",
+      "title": "origin of \"http://example.com\" is http://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://example.com",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "http://example.com",
+        "port": 80,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/004",
+      "title": "origin of \"http://example.com:8080/x\" is http://example.com:8080",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://example.com:8080/x",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d3a383038302f78"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "http://example.com:8080",
+        "port": 8080,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/005",
+      "title": "origin of \"https://example.com:443/\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com:443/",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3434332f"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/006",
+      "title": "origin of \"https://example.com:8443\" is https://example.com:8443",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com:8443",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a38343433"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com:8443",
+        "port": 8443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/007",
+      "title": "origin of \"https://a.example:80\" is https://a.example:80",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://a.example:80",
+        "page_utf8": "68747470733a2f2f612e6578616d706c653a3830"
+      },
+      "expect": {
+        "host": "a.example",
+        "origin": "https://a.example:80",
+        "port": 80,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/008",
+      "title": "origin of \"http://a.example:443\" is http://a.example:443",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://a.example:443",
+        "page_utf8": "687474703a2f2f612e6578616d706c653a343433"
+      },
+      "expect": {
+        "host": "a.example",
+        "origin": "http://a.example:443",
+        "port": 443,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/009",
+      "title": "origin of \"https://sub.example.co.uk:8443/a\" is https://sub.example.co.uk:8443",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://sub.example.co.uk:8443/a",
+        "page_utf8": "68747470733a2f2f7375622e6578616d706c652e636f2e756b3a383434332f61"
+      },
+      "expect": {
+        "host": "sub.example.co.uk",
+        "origin": "https://sub.example.co.uk:8443",
+        "port": 8443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/010",
+      "title": "origin of \"http://localhost:3000/x\" is http://localhost:3000",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://localhost:3000/x",
+        "page_utf8": "687474703a2f2f6c6f63616c686f73743a333030302f78"
+      },
+      "expect": {
+        "host": "localhost",
+        "origin": "http://localhost:3000",
+        "port": 3000,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/011",
+      "title": "origin of \"http://192.168.1.1:8080/admin\" is http://192.168.1.1:8080",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://192.168.1.1:8080/admin",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e313a383038302f61646d696e"
+      },
+      "expect": {
+        "host": "192.168.1.1",
+        "origin": "http://192.168.1.1:8080",
+        "port": 8080,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/012",
+      "title": "origin of \"http://3232235777/\" is http://192.168.1.1",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://3232235777/",
+        "page_utf8": "687474703a2f2f333233323233353737372f"
+      },
+      "expect": {
+        "host": "192.168.1.1",
+        "origin": "http://192.168.1.1",
+        "port": 80,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/013",
+      "title": "origin of \"http://0x7f.1/\" is http://127.0.0.1",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://0x7f.1/",
+        "page_utf8": "687474703a2f2f307837662e312f"
+      },
+      "expect": {
+        "host": "127.0.0.1",
+        "origin": "http://127.0.0.1",
+        "port": 80,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/014",
+      "title": "origin of \"https://[2001:DB8::1]:8443/x\" is https://[2001:db8::1]:8443",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://[2001:DB8::1]:8443/x",
+        "page_utf8": "68747470733a2f2f5b323030313a4442383a3a315d3a383434332f78"
+      },
+      "expect": {
+        "host": "[2001:db8::1]",
+        "origin": "https://[2001:db8::1]:8443",
+        "port": 8443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/015",
+      "title": "origin of \"http://[::1]\" is http://[::1]",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://[::1]",
+        "page_utf8": "687474703a2f2f5b3a3a315d"
+      },
+      "expect": {
+        "host": "[::1]",
+        "origin": "http://[::1]",
+        "port": 80,
+        "scheme": "http"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/016",
+      "title": "origin of \"https://EXAMPLE.com./\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://EXAMPLE.com./",
+        "page_utf8": "68747470733a2f2f4558414d504c452e636f6d2e2f"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/017",
+      "title": "origin of \"https://Bücher.example/\" is https://xn--bcher-kva.example",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://Bücher.example/",
+        "page_utf8": "68747470733a2f2f42c3bc636865722e6578616d706c652f"
+      },
+      "expect": {
+        "host": "xn--bcher-kva.example",
+        "origin": "https://xn--bcher-kva.example",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/018",
+      "title": "origin of \"https://пример.рф/\" is https://xn--e1afmkfd.xn--p1ai",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://пример.рф/",
+        "page_utf8": "68747470733a2f2fd0bfd180d0b8d0bcd0b5d1802ed180d1842f"
+      },
+      "expect": {
+        "host": "xn--e1afmkfd.xn--p1ai",
+        "origin": "https://xn--e1afmkfd.xn--p1ai",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/019",
+      "title": "origin of \"https://exаmple.com\" is https://xn--exmple-4nf.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exаmple.com",
+        "page_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "host": "xn--exmple-4nf.com",
+        "origin": "https://xn--exmple-4nf.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/020",
+      "title": "origin of \"https://ｅｘａｍｐｌｅ.com\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://ｅｘａｍｐｌｅ.com",
+        "page_utf8": "68747470733a2f2fefbd85efbd98efbd81efbd8defbd90efbd8cefbd852e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/021",
+      "title": "origin of \"https://exa%6Dple.com\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exa%6Dple.com",
+        "page_utf8": "68747470733a2f2f657861253644706c652e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/022",
+      "title": "origin of \"https://exam\\tple.com\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exam\tple.com",
+        "page_utf8": "68747470733a2f2f6578616d09706c652e636f6d"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/023",
+      "title": "origin of \"https://example.com\\\\login\" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com\\login",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d5c6c6f67696e"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/024",
+      "title": "origin of \"  https://example.com/x  \" is https://example.com",
+      "op": "url.page_origin",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "  https://example.com/x  ",
+        "page_utf8": "202068747470733a2f2f6578616d706c652e636f6d2f782020"
+      },
+      "expect": {
+        "host": "example.com",
+        "origin": "https://example.com",
+        "port": 443,
+        "scheme": "https"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/page_origin/025",
+      "title": "\"https://user@example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://user@example.com",
+        "page_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/026",
+      "title": "\"https://user:pw@example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://user:pw@example.com",
+        "page_utf8": "68747470733a2f2f757365723a7077406578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/027",
+      "title": "\"ftp://example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "ftp://example.com",
+        "page_utf8": "6674703a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/028",
+      "title": "\"ws://example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "ws://example.com",
+        "page_utf8": "77733a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/029",
+      "title": "\"about:blank\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "about:blank",
+        "page_utf8": "61626f75743a626c616e6b"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/030",
+      "title": "\"data:text/html,<h1>x</h1>\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "data:text/html,<h1>x</h1>",
+        "page_utf8": "646174613a746578742f68746d6c2c3c68313e783c2f68313e"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/031",
+      "title": "\"javascript:alert(1)\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "javascript:alert(1)",
+        "page_utf8": "6a6176617363726970743a616c657274283129"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/032",
+      "title": "\"file:///etc/passwd\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "file:///etc/passwd",
+        "page_utf8": "66696c653a2f2f2f6574632f706173737764"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/033",
+      "title": "\"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10",
+        "page_utf8": "626c6f623a68747470733a2f2f6578616d706c652e636f6d2f32663663316630652d366135322d346635352d396436652d306331623362336639613130"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/034",
+      "title": "\"example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "example.com",
+        "page_utf8": "6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/035",
+      "title": "\"//example.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "//example.com",
+        "page_utf8": "2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/036",
+      "title": "\"\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "",
+        "page_utf8": ""
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/037",
+      "title": "\"https://\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://",
+        "page_utf8": "68747470733a2f2f"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/038",
+      "title": "\"https://example.com:0\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com:0",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a30"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/039",
+      "title": "\"https://example.com:65536\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com:65536",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d3a3635353336"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/040",
+      "title": "\"https://a..b\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://a..b",
+        "page_utf8": "68747470733a2f2f612e2e62"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/041",
+      "title": "\"https://exa mple.com\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exa mple.com",
+        "page_utf8": "68747470733a2f2f657861206d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/page_origin/042",
+      "title": "\"https://[::1\" has no origin",
+      "op": "url.page_origin",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://[::1",
+        "page_utf8": "68747470733a2f2f5b3a3a31"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/same_site/001",
+      "title": "\"https://a.example.com\" and \"https://b.example.com\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.example.com",
+        "a_utf8": "68747470733a2f2f612e6578616d706c652e636f6d",
+        "b": "https://b.example.com",
+        "b_utf8": "68747470733a2f2f622e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/002",
+      "title": "\"https://example.com\" and \"https://www.example.com/x?y#z\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://example.com",
+        "a_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "b": "https://www.example.com/x?y#z",
+        "b_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d2f783f79237a"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/003",
+      "title": "\"https://a.example.com\" and \"https://a.example.com\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.example.com",
+        "a_utf8": "68747470733a2f2f612e6578616d706c652e636f6d",
+        "b": "https://a.example.com",
+        "b_utf8": "68747470733a2f2f612e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/004",
+      "title": "\"https://a.example.com:8443\" and \"https://b.example.com\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.example.com:8443",
+        "a_utf8": "68747470733a2f2f612e6578616d706c652e636f6d3a38343433",
+        "b": "https://b.example.com",
+        "b_utf8": "68747470733a2f2f622e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/005",
+      "title": "\"https://a.example.co.uk\" and \"https://b.example.co.uk\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.example.co.uk",
+        "a_utf8": "68747470733a2f2f612e6578616d706c652e636f2e756b",
+        "b": "https://b.example.co.uk",
+        "b_utf8": "68747470733a2f2f622e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/006",
+      "title": "\"https://a.example.co.uk\" and \"https://b.other.co.uk\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.example.co.uk",
+        "a_utf8": "68747470733a2f2f612e6578616d706c652e636f2e756b",
+        "b": "https://b.other.co.uk",
+        "b_utf8": "68747470733a2f2f622e6f746865722e636f2e756b"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/007",
+      "title": "\"http://a.example.com\" and \"https://a.example.com\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://a.example.com",
+        "a_utf8": "687474703a2f2f612e6578616d706c652e636f6d",
+        "b": "https://a.example.com",
+        "b_utf8": "68747470733a2f2f612e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/008",
+      "title": "\"http://a.example.com\" and \"https://b.example.com\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://a.example.com",
+        "a_utf8": "687474703a2f2f612e6578616d706c652e636f6d",
+        "b": "https://b.example.com",
+        "b_utf8": "68747470733a2f2f622e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/009",
+      "title": "\"http://a.example.com\" and \"http://b.example.com\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://a.example.com",
+        "a_utf8": "687474703a2f2f612e6578616d706c652e636f6d",
+        "b": "http://b.example.com",
+        "b_utf8": "687474703a2f2f622e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/010",
+      "title": "\"https://a.github.io\" and \"https://b.github.io\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.github.io",
+        "a_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "b": "https://b.github.io",
+        "b_utf8": "68747470733a2f2f622e6769746875622e696f"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/011",
+      "title": "\"https://a.github.io\" and \"https://x.a.github.io\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.github.io",
+        "a_utf8": "68747470733a2f2f612e6769746875622e696f",
+        "b": "https://x.a.github.io",
+        "b_utf8": "68747470733a2f2f782e612e6769746875622e696f"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/012",
+      "title": "\"https://github.io\" and \"https://github.io\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://github.io",
+        "a_utf8": "68747470733a2f2f6769746875622e696f",
+        "b": "https://github.io",
+        "b_utf8": "68747470733a2f2f6769746875622e696f"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/013",
+      "title": "\"https://github.io\" and \"https://a.github.io\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://github.io",
+        "a_utf8": "68747470733a2f2f6769746875622e696f",
+        "b": "https://a.github.io",
+        "b_utf8": "68747470733a2f2f612e6769746875622e696f"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/014",
+      "title": "\"https://example.com\" and \"https://example.org\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://example.com",
+        "a_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "b": "https://example.org",
+        "b_utf8": "68747470733a2f2f6578616d706c652e6f7267"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/015",
+      "title": "\"https://example.com\" and \"https://example.com.evil.net\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://example.com",
+        "a_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "b": "https://example.com.evil.net",
+        "b_utf8": "68747470733a2f2f6578616d706c652e636f6d2e6576696c2e6e6574"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/016",
+      "title": "\"https://EXAMPLE.com.\" and \"https://www.example.com\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://EXAMPLE.com.",
+        "a_utf8": "68747470733a2f2f4558414d504c452e636f6d2e",
+        "b": "https://www.example.com",
+        "b_utf8": "68747470733a2f2f7777772e6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/017",
+      "title": "\"https://exаmple.com\" and \"https://example.com\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://exаmple.com",
+        "a_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d",
+        "b": "https://example.com",
+        "b_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/018",
+      "title": "\"https://bücher.de\" and \"https://shop.xn--bcher-kva.de\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://bücher.de",
+        "a_utf8": "68747470733a2f2f62c3bc636865722e6465",
+        "b": "https://shop.xn--bcher-kva.de",
+        "b_utf8": "68747470733a2f2f73686f702e786e2d2d62636865722d6b76612e6465"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/019",
+      "title": "\"http://192.168.1.1\" and \"http://192.168.1.1/x\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://192.168.1.1",
+        "a_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "b": "http://192.168.1.1/x",
+        "b_utf8": "687474703a2f2f3139322e3136382e312e312f78"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/020",
+      "title": "\"http://192.168.1.1:80\" and \"http://3232235777:8080\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://192.168.1.1:80",
+        "a_utf8": "687474703a2f2f3139322e3136382e312e313a3830",
+        "b": "http://3232235777:8080",
+        "b_utf8": "687474703a2f2f333233323233353737373a38303830"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/021",
+      "title": "\"http://192.168.1.1\" and \"http://192.168.1.2\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://192.168.1.1",
+        "a_utf8": "687474703a2f2f3139322e3136382e312e31",
+        "b": "http://192.168.1.2",
+        "b_utf8": "687474703a2f2f3139322e3136382e312e32"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/022",
+      "title": "\"https://192.168.1.1\" and \"http://192.168.1.1\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://192.168.1.1",
+        "a_utf8": "68747470733a2f2f3139322e3136382e312e31",
+        "b": "http://192.168.1.1",
+        "b_utf8": "687474703a2f2f3139322e3136382e312e31"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/023",
+      "title": "\"http://[::1]\" and \"http://[0::1]:81\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://[::1]",
+        "a_utf8": "687474703a2f2f5b3a3a315d",
+        "b": "http://[0::1]:81",
+        "b_utf8": "687474703a2f2f5b303a3a315d3a3831"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/024",
+      "title": "\"http://[::1]\" and \"http://[::2]\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://[::1]",
+        "a_utf8": "687474703a2f2f5b3a3a315d",
+        "b": "http://[::2]",
+        "b_utf8": "687474703a2f2f5b3a3a325d"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/025",
+      "title": "\"https://fritz.box\" and \"https://fritz.box\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://fritz.box",
+        "a_utf8": "68747470733a2f2f667269747a2e626f78",
+        "b": "https://fritz.box",
+        "b_utf8": "68747470733a2f2f667269747a2e626f78"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/026",
+      "title": "\"https://a.fritz.box\" and \"https://b.fritz.box\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.fritz.box",
+        "a_utf8": "68747470733a2f2f612e667269747a2e626f78",
+        "b": "https://b.fritz.box",
+        "b_utf8": "68747470733a2f2f622e667269747a2e626f78"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/027",
+      "title": "\"https://intranet\" and \"https://intranet/x\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://intranet",
+        "a_utf8": "68747470733a2f2f696e7472616e6574",
+        "b": "https://intranet/x",
+        "b_utf8": "68747470733a2f2f696e7472616e65742f78"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/028",
+      "title": "\"https://intranet\" and \"https://other\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://intranet",
+        "a_utf8": "68747470733a2f2f696e7472616e6574",
+        "b": "https://other",
+        "b_utf8": "68747470733a2f2f6f74686572"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/029",
+      "title": "\"https://a.router.lan\" and \"https://b.router.lan\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://a.router.lan",
+        "a_utf8": "68747470733a2f2f612e726f757465722e6c616e",
+        "b": "https://b.router.lan",
+        "b_utf8": "68747470733a2f2f622e726f757465722e6c616e"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/030",
+      "title": "\"https://nas.home.arpa\" and \"https://x.nas.home.arpa\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://nas.home.arpa",
+        "a_utf8": "68747470733a2f2f6e61732e686f6d652e61727061",
+        "b": "https://x.nas.home.arpa",
+        "b_utf8": "68747470733a2f2f782e6e61732e686f6d652e61727061"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/031",
+      "title": "\"http://localhost:3000\" and \"http://localhost:4000\" are on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "http://localhost:3000",
+        "a_utf8": "687474703a2f2f6c6f63616c686f73743a33303030",
+        "b": "http://localhost:4000",
+        "b_utf8": "687474703a2f2f6c6f63616c686f73743a34303030"
+      },
+      "expect": {
+        "same_site": true
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/032",
+      "title": "\"https://example.com\" and \"data:text/html,x\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://example.com",
+        "a_utf8": "68747470733a2f2f6578616d706c652e636f6d",
+        "b": "data:text/html,x",
+        "b_utf8": "646174613a746578742f68746d6c2c78"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/033",
+      "title": "\"about:blank\" and \"about:blank\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "about:blank",
+        "a_utf8": "61626f75743a626c616e6b",
+        "b": "about:blank",
+        "b_utf8": "61626f75743a626c616e6b"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/034",
+      "title": "\"\" and \"\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "",
+        "a_utf8": "",
+        "b": "",
+        "b_utf8": ""
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/same_site/035",
+      "title": "\"https://u@example.com\" and \"https://example.com\" are not on the same site",
+      "op": "url.same_site",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "a": "https://u@example.com",
+        "a_utf8": "68747470733a2f2f75406578616d706c652e636f6d",
+        "b": "https://example.com",
+        "b_utf8": "68747470733a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "same_site": false
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/001",
+      "title": "host to show for \"https://example.com/x\" is example.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://example.com/x",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f78"
+      },
+      "expect": {
+        "a_label": "example.com",
+        "unicode": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/002",
+      "title": "host to show for \"https://Bücher.example\" is bücher.example",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://Bücher.example",
+        "page_utf8": "68747470733a2f2f42c3bc636865722e6578616d706c65"
+      },
+      "expect": {
+        "a_label": "xn--bcher-kva.example",
+        "unicode": "bücher.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/003",
+      "title": "host to show for \"https://xn--bcher-kva.example/\" is bücher.example",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://xn--bcher-kva.example/",
+        "page_utf8": "68747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c652f"
+      },
+      "expect": {
+        "a_label": "xn--bcher-kva.example",
+        "unicode": "bücher.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/004",
+      "title": "host to show for \"https://пример.рф\" is пример.рф",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://пример.рф",
+        "page_utf8": "68747470733a2f2fd0bfd180d0b8d0bcd0b5d1802ed180d184"
+      },
+      "expect": {
+        "a_label": "xn--e1afmkfd.xn--p1ai",
+        "unicode": "пример.рф"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/005",
+      "title": "host to show for \"https://exаmple.com\" is exаmple.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exаmple.com",
+        "page_utf8": "68747470733a2f2f6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--exmple-4nf.com",
+        "unicode": "exаmple.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/006",
+      "title": "host to show for \"https://日本語.jp\" is 日本語.jp",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://日本語.jp",
+        "page_utf8": "68747470733a2f2fe697a5e69cace8aa9e2e6a70"
+      },
+      "expect": {
+        "a_label": "xn--wgv71a119e.jp",
+        "unicode": "日本語.jp"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/007",
+      "title": "host to show for \"https://EXAMPLE.com./\" is example.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://EXAMPLE.com./",
+        "page_utf8": "68747470733a2f2f4558414d504c452e636f6d2e2f"
+      },
+      "expect": {
+        "a_label": "example.com",
+        "unicode": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/008",
+      "title": "host to show for \"https://ｅｘａｍｐｌｅ.com\" is example.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://ｅｘａｍｐｌｅ.com",
+        "page_utf8": "68747470733a2f2fefbd85efbd98efbd81efbd8defbd90efbd8cefbd852e636f6d"
+      },
+      "expect": {
+        "a_label": "example.com",
+        "unicode": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/009",
+      "title": "host to show for \"http://3232235777/\" is 192.168.1.1",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://3232235777/",
+        "page_utf8": "687474703a2f2f333233323233353737372f"
+      },
+      "expect": {
+        "a_label": "192.168.1.1",
+        "unicode": "192.168.1.1"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/010",
+      "title": "host to show for \"http://192.168.1.1:8080/\" is 192.168.1.1",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://192.168.1.1:8080/",
+        "page_utf8": "687474703a2f2f3139322e3136382e312e313a383038302f"
+      },
+      "expect": {
+        "a_label": "192.168.1.1",
+        "unicode": "192.168.1.1"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/011",
+      "title": "host to show for \"http://[2001:DB8::1]:8080/\" is [2001:db8::1]",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://[2001:DB8::1]:8080/",
+        "page_utf8": "687474703a2f2f5b323030313a4442383a3a315d3a383038302f"
+      },
+      "expect": {
+        "a_label": "[2001:db8::1]",
+        "unicode": "[2001:db8::1]"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/012",
+      "title": "host to show for \"http://localhost:3000\" is localhost",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "http://localhost:3000",
+        "page_utf8": "687474703a2f2f6c6f63616c686f73743a33303030"
+      },
+      "expect": {
+        "a_label": "localhost",
+        "unicode": "localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/013",
+      "title": "\"ftp://example.com\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "ftp://example.com",
+        "page_utf8": "6674703a2f2f6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/014",
+      "title": "\"about:blank\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "about:blank",
+        "page_utf8": "61626f75743a626c616e6b"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/015",
+      "title": "\"data:text/html,x\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "data:text/html,x",
+        "page_utf8": "646174613a746578742f68746d6c2c78"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/016",
+      "title": "\"https://user@example.com\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://user@example.com",
+        "page_utf8": "68747470733a2f2f75736572406578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/017",
+      "title": "\"example.com\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "example.com",
+        "page_utf8": "6578616d706c652e636f6d"
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/018",
+      "title": "\"\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "",
+        "page_utf8": ""
+      },
+      "expect_error": "malformed_origin"
+    },
+    {
+      "id": "url-match/display_host/019",
+      "title": "\"https://a..b\" has no host to show",
+      "op": "url.display_host",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://a..b",
+        "page_utf8": "68747470733a2f2f612e2e62"
+      },
+      "expect_error": "malformed_origin"
+    }
+  ]
+}

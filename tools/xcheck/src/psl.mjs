@@ -40,3 +40,15 @@ export function registrableDomain(domain) {
   if (labels.length <= ps) return null;
   return labels.slice(labels.length - ps - 1).join('.');
 }
+
+// True when a rule of the list (or an exception) matches the name, as opposed to the implicit "*" rule that
+// only treats the last label of an unknown top-level domain as a suffix.
+export function hasExplicitRule(domain) {
+  const labels = domain.split('.');
+  for (let n = 1; n <= labels.length; n++) {
+    const suffix = labels.slice(labels.length - n).join('.');
+    const wildcard = ['*', ...labels.slice(labels.length - n + 1)].join('.');
+    if (exceptions.has(suffix) || rules.has(suffix) || rules.has(wildcard)) return true;
+  }
+  return false;
+}

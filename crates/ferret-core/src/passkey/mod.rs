@@ -54,6 +54,7 @@ pub use prf::{
     MAX_EVAL_BY_CREDENTIAL, MAX_PRF_INPUT, PrfCreate, PrfEval, PrfRequest, PrfResults, prf_output,
     prf_salt,
 };
+pub(crate) use psl::registrable_domain;
 pub use psl::{snapshot_commit, snapshot_date};
 
 #[cfg(any(test, feature = "test-support"))]

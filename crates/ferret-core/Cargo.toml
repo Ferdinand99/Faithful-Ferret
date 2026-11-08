@@ -52,6 +52,9 @@ sha2_010 = { package = "sha2", version = "=0.10.9", default-features = false }
 # is an embedded snapshot, matched in `passkey::psl`.
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "sha256", "alloc"] }
 idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
+# Page addresses (URL Standard): site matching and the origin of a page, so the
+# address is read exactly as the browser reads it. Same version as the server.
+url = { version = "=2.5.8", default-features = false, features = ["std"] }
 # Only behind `test-support`:
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "=1.0.154", optional = true }

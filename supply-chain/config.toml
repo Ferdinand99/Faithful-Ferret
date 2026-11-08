@@ -233,6 +233,11 @@ version = "0.3.0"
 criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
+[[exemptions.form_urlencoded]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+notes = "Exempted 2026-11-08; review by 2027-05-08. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
+
 [[exemptions.futures-core]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
@@ -397,6 +402,11 @@ notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported s
 version = "0.6.1"
 criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
+
+[[exemptions.percent-encoding]]
+version = "2.3.2"
+criteria = "safe-to-deploy"
+notes = "Exempted 2026-11-08; review by 2027-05-08. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.phc]]
 version = "0.6.1"
@@ -622,6 +632,11 @@ notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported s
 version = "0.6.1"
 criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
+
+[[exemptions.url]]
+version = "2.5.8"
+criteria = "safe-to-deploy"
+notes = "Exempted 2026-11-08; review by 2027-05-08. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.utf8_iter]]
 version = "1.1.0"
