@@ -136,6 +136,10 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     if config.vault_port == config.admin_port {
         return Err("the vault port and the admin port must differ".into());
     }
+    // One process per data directory, taken before the database is touched: a
+    // command that changes the database (`ferret restore-epoch bump`) takes
+    // the same lock, so it cannot run against this server.
+    let _data_lock = crate::data_lock::acquire(&config.data_dir)?;
     let clock = process_clock();
     let state = crate::start(&config, clock).await?;
     // Notifications and other work outside a request use the site language.

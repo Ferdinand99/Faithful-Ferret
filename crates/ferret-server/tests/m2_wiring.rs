@@ -273,7 +273,8 @@ fn restore_epoch_command_is_parsed_and_server_flags_are_left_to_config() {
     assert_eq!(
         parsed,
         Command::RestoreEpochBump {
-            data_dir: PathBuf::from("/srv/ferret")
+            data_dir: PathBuf::from("/srv/ferret"),
+            confirmed: false,
         }
     );
 
@@ -300,9 +301,9 @@ fn restore_epoch_command_is_parsed_and_server_flags_are_left_to_config() {
         assert!(matches!(cli::parse(args(line)), Some(Err(_))), "{line:?}");
     }
 
-    // The stub refuses without panicking.
-    let err = cli::run(parsed).expect_err("not implemented yet");
-    assert!(err.to_string().contains("not implemented"), "{err}");
+    // Without `--yes` the command changes nothing and says so.
+    let err = cli::run(parsed).expect_err("needs --yes");
+    assert!(err.to_string().contains("--yes"), "{err}");
 }
 
 // --------------------------------------------------------------- the envelope
