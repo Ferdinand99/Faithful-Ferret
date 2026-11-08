@@ -21,7 +21,7 @@ use ferret_core::{
     make_checkpoint, make_tombstone, verify_checkpoint,
 };
 use ferret_server::auth::session::Origin;
-use ferret_server::ids::{DeviceId, ItemId, MANIFEST_ITEM_ID, VaultId};
+use ferret_server::ids::{ItemId, MANIFEST_ITEM_ID};
 use ferret_server::vault::rate::RateConfig;
 use ferret_server::wire::{CheckpointJson, b64url, hex16};
 use ferret_server_auth::SessionScope;
@@ -515,15 +515,7 @@ async fn a_burst_of_refused_uploads_ends_in_429() {
         .build()
         .await;
     // The limiter is shared with the item routes and is tested by its own
-    // numbers in tests/rate.rs. While the state still holds a limiter that
-    // admits everything, there is nothing to observe here.
-    let (probe_vault, probe_device) = (VaultId::from_bytes([0xee; 16]), DeviceId([0xee; 16]));
-    let limits = app.state.limits.clone();
-    if (0..4).all(|_| limits.admit(&probe_vault, &probe_device, 1, 0).is_ok()) {
-        eprintln!("skipped: the rate limiter of this build admits everything");
-        return;
-    }
-
+    // numbers in tests/rate.rs.
     let u = user(&app, 1).await;
     write_note(&app, &u, item(1), 1).await; // 1 of 3 operations
     let before = stored(&app, &u).await;
