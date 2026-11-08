@@ -65,7 +65,9 @@ export const MODE_NAMES = Object.freeze([
 export class ModeError extends Error {}
 
 const ID = /^[0-9a-f]{32}$/;
-const SID = /^[A-Za-z0-9_-]{8,200}$/;
+// The value of a cookie as RFC 6265 allows it (printable ASCII but space, double quote, comma, semicolon and backslash): the
+// session cookie is not made of URL safe characters only, so a prefix of it can hold a plus or a slash.
+const SID = /^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]{8,200}$/;
 
 /** @param {string} name @param {unknown} value */
 function item(name, value) {
