@@ -866,6 +866,28 @@ test("uploads_resume_after_a_refused_chain_over_a_tombstone_is_dropped", async (
   await sim.stopAll();
 });
 
+test("a_409_that_says_live_over_a_verified_tombstone_is_settled_by_the_next_feed_pass_not_by_the_409", async () => {
+  // The device holds the verified tombstone, and the server really is at that tombstone, but the first answer to its chain is a lie: "409, the item is
+  // live". The chain is kept for one pass of the feed; the pass brings no live row, so the verified tombstone decides and the chain is dropped. Nothing
+  // may stay hidden or blocked, and the checkpoints go on.
+  const { sim, b, id } = await bothDelete();
+  b.d.api.faults.push({ kind: "status", status: 409, code: "conflict", body: { current_rev: 3, deleted: false } });
+  online(b);
+  await b.engine.syncNow();
+  await pump(b);
+  await pump(b);
+  assert.equal(b.d.api.faults.length, 0, "the lie was told");
+  assert.equal((await queued(b)).length, 0, "the chain was dropped from verified state");
+  assert.equal(shows(b, id), undefined, "the deleted item is on no screen");
+  assert.equal(b.engine.list().some((item) => item.blocked || item.conflict), false);
+  assert.equal(b.d.events.error.some((e) => e.code === "conflict"), false, "no conflict was announced");
+  b.d.timers.advance(11 * 60_000);
+  await b.engine.syncNow();
+  await settle(20);
+  assert.equal(sim.server.checkpoint.seq, sim.server.seq, "the device stores a checkpoint again after the next feed pass");
+  await sim.stopAll();
+});
+
 test("a_chain_that_is_dropped_with_the_deletion_at_its_end_takes_every_edit_before_it", async () => {
   const { sim, a, b, id } = await sharedItem();
   offline(b);

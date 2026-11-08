@@ -24,7 +24,7 @@ async function browser() {
   const client = createFakeClient();
   const tabs = [];
   /** A tab: its own service, api, store (over the shared storage) and window. */
-  async function tab() {
+  async function tab(options = {}) {
     const listeners = new Map();
     const win = {
       addEventListener: (type, fn) => listeners.set(type, fn),
@@ -33,7 +33,7 @@ async function browser() {
     const api = createFakeApi(model);
     const store = await createFakeStore({ db });
     const sync = syncService.create({
-      api, store, client: { vault: client.vault }, serverUrl: SERVER, locks, nav: { userAgent: "" }, win,
+      api, store, client: { vault: client.vault }, serverUrl: SERVER, locks: options.locks ?? locks, nav: { userAgent: "" }, win,
       makeChannel: (name) => channels.channel(name), timers: { setTimeout: clock.set, clearTimeout: clock.clear }, tabId: `tab-${tabs.length + 1}`,
     });
     const standby = [];
@@ -228,6 +228,48 @@ test("a_start_right_after_another_start_is_one_start_and_the_tab_is_not_on_stand
   assert.equal(one.sync.standby(), false);
   assert.equal(one.sync.current(), second ?? first);
   assert.ok(second, "the last start wins");
+  b.stopAll();
+});
+
+test("a_pagehide_while_the_lock_is_asked_for_starts_no_engine_and_use_here_starts_exactly_one", async () => {
+  const b = await browser();
+  // The lock request is answered late, as on a busy page.
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  const slow = { request: async (...args) => { await gate; return b.locks.request(...args); } };
+  const one = await b.tab({ locks: slow });
+  const engines = [];
+  one.sync.onEngine((engine) => engines.push(engine));
+  const starting = one.sync.start(scope);
+  await settle(5);
+  one.win.fire("pagehide", { persisted: true });
+  open();
+  assert.equal(await starting, null, "the start gives no engine to a page that has gone");
+  await settle(10);
+  assert.equal(one.sync.current(), null);
+  assert.equal(one.sync.standby(), true, "the page shows the notice when it comes back");
+  assert.equal(held(b), false, "and holds no lock");
+  assert.deepEqual(engines, [], "no engine ran meanwhile");
+  assert.equal(one.api.gets.length, 0, "nothing was asked of the server");
+  const back = await one.sync.takeOver();
+  assert.ok(back);
+  assert.equal(one.sync.current(), back);
+  assert.deepEqual(engines, [back], "exactly one engine");
+  assert.equal(held(b), true);
+  b.stopAll();
+});
+
+test("use_here_never_leaves_a_running_engine_behind_in_the_same_tab", async () => {
+  const b = await browser();
+  const one = await b.tab();
+  const two = await b.tab();
+  const first = await one.sync.start(scope);
+  await two.sync.start(scope);
+  one.sync.stop(); // the vault is locked in the first tab, the lock is free: the second takes it at once
+  const taken = await two.sync.takeOver();
+  assert.ok(taken && first);
+  await settle(5);
+  assert.equal(two.sync.current(), taken);
   b.stopAll();
 });
 

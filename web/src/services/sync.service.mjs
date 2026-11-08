@@ -194,7 +194,12 @@ export default {
           openScope = scope;
           const role = await made.acquire();
           if (mine !== generation) {
-            if (owner === made) releaseOwner();
+            // Stopped, started again, or the page went away while the lock was asked for: the lock is let go. A tab that is on
+            // standby keeps its lock object, for "Use here".
+            if (owner === made) {
+              if (standbyScope !== null) freed = made.release();
+              else releaseOwner();
+            }
             return null;
           }
           if (role === "standby") {
@@ -227,6 +232,7 @@ export default {
     // comes back it is on standby, with a button that asks for the vault again.
     win?.addEventListener?.("pagehide", () => {
       if (owner === null || openScope === null) return;
+      generation += 1; // a start that is still asking for the lock does not go on to run an engine in a tab that shows the notice
       toStandby(owner);
       freed = owner.release(); // the owner stays: a page that comes back asks for the lock again with "Use here"
     });
@@ -289,6 +295,8 @@ export default {
           }
           standbyScope = null;
           announceStandby(false);
+          engine?.stop(); // never a second engine in this tab
+          engine = null;
           return begin(scope, mine);
         })();
         taking = run;
