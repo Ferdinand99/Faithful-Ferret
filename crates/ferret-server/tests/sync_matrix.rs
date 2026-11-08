@@ -2,7 +2,8 @@
 //! each device a [`SimClient`] with its own session, its own rollback memory
 //! and the real core. Spec: Fase 1 § 8.1 to § 8.6 and § 14.7.
 //!
-//! The first group is the seven scenarios of the phase 0A prototype; the second
+//! The first group is the prototype's seven scenarios, which § 14.7 turns into
+//! integration tests; the second
 //! is the list of § 14.7 (full listing after `410`, batches, a server that
 //! swaps or hides rows, checkpoints, `restore_epoch`, tombstones); the last is
 //! the size test, which is `#[ignore]`d.
@@ -114,7 +115,7 @@ async fn count(world: &World, sql: &'static str) -> i64 {
         .await
 }
 
-// ----------------------------------------------------- phase 0A scenarios
+// ------------------------------------------------ the prototype's scenarios
 
 #[tokio::test]
 async fn concurrent_edit_conflict() {
@@ -908,8 +909,12 @@ async fn restore_epoch_bump_is_seen_and_accept_older_state_resets_the_floors() {
     assert_eq!(report.pushed, 3);
     assert_eq!(world.server_seq().await, 6);
 
-    // The laptop accepts it too, and has nothing newer than what the phone
-    // sent up; it reads the same state and no conflict is shown.
+    // The laptop accepts it too. It has nothing newer than what the phone sent
+    // up, so it reads the same state and no conflict is shown. That is all this
+    // checks: the simulated `accept_older_state` does not compare the server's
+    // current row with the row of the restored checkpoint (see its comment), so
+    // it does not model the case where someone wrote on the server after the
+    // restore and the laptop also has a newer local version of the same item.
     a.accept_older_state().await.expect("an older state");
     assert_eq!(a.memory().max_seq(), 6);
     assert_eq!(a.restore_epoch(), Some(1));
@@ -1008,6 +1013,22 @@ async fn tombstone_without_a_valid_tag_is_refused_by_the_client() {
 
 // ----------------------------------------------------------- the size test
 
+/// How long each step of the size test may take. The release build needs a
+/// few seconds for all of them together; the ceiling is about twenty times
+/// that for the slowest step, so only a real regression (a quadratic loop, a
+/// query that stopped using its index) trips it, not a busy machine.
+const STEP_CEILING: Duration = Duration::from_secs(60);
+
+/// Prints the time of a step and fails when it took longer than the ceiling.
+fn timed(step: &str, started: Instant) {
+    let took = started.elapsed();
+    println!("ten_thousand_items: {step} {took:?}");
+    assert!(
+        took < STEP_CEILING,
+        "{step} took {took:?}, the ceiling is {STEP_CEILING:?}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "10 000 items: run with --release --ignored; prints the times"]
 async fn ten_thousand_items() {
@@ -1043,7 +1064,7 @@ async fn ten_thousand_items() {
     }
     assert_eq!(next, 10_000);
     assert_eq!(world.server_seq().await, 10_000);
-    println!("ten_thousand_items: 100 batches {:?}", started.elapsed());
+    timed("100 batches", started);
 
     // The feed from 0, in pages of 500, checked row by row.
     let started = Instant::now();
@@ -1053,10 +1074,7 @@ async fn ten_thousand_items() {
     assert_eq!(b.live_items().len(), 9_999);
     assert_eq!(b.memory().tracked(), 10_000);
     assert_eq!(b.cursor(), 10_000);
-    println!(
-        "ten_thousand_items: /changes from 0 {:?}",
-        started.elapsed()
-    );
+    timed("/changes from 0", started);
 
     // The full listing, in pages of 500.
     let started = Instant::now();
@@ -1080,10 +1098,7 @@ async fn ten_thousand_items() {
         after = page.next_after;
     }
     assert_eq!((rows, pages), (10_000, 20));
-    println!(
-        "ten_thousand_items: listing {pages} pages {:?}",
-        started.elapsed()
-    );
+    timed("listing in pages of 500", started);
 
     // A checkpoint of 10 000 entries, uploaded, read back and verified at the
     // top by another device.
@@ -1097,7 +1112,7 @@ async fn ten_thousand_items() {
     let mut c = world.client("tablet").await;
     assert!(c.pull().await.warnings.is_empty());
     assert_eq!(c.verify().await, Ok(()));
-    println!("ten_thousand_items: checkpoint {:?}", started.elapsed());
+    timed("checkpoint of 10 000 entries", started);
 
     // One more live row than a vault holds is refused.
     let over = a

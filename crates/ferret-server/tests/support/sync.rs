@@ -1388,11 +1388,16 @@ impl SimClient {
         .await
     }
 
-    /// "Accept older state", after the user has confirmed: list everything,
-    /// verify the stored checkpoint on its own against the listing, replace the
-    /// floors, and turn every local version that is newer than the listing into
-    /// a draft on top of the listing's row (a conflict then shows up as usual
-    /// if someone else has written since).
+    /// "Accept older state", after the user has confirmed. This is an outline of
+    /// what a real client does, not a model of it: it lists everything, checks
+    /// the stored checkpoint on its own against the listing, replaces the
+    /// floors, and turns every local version that is newer than the listing
+    /// into a draft on top of the listing's row (a conflict then shows up as
+    /// usual if someone else has written since). It does not first compare the
+    /// server's current row with the row the restored checkpoint lists, so a
+    /// write made on the server after the restore is not told apart from the
+    /// restored state; a real client must make that comparison and turn such an
+    /// item into a conflict instead of writing over it.
     pub async fn accept_older_state(&mut self) -> Result<(), Warning> {
         let mut report = SyncReport::default();
         let Some(listing) = self.list_all(&mut report).await else {
