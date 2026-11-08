@@ -47,7 +47,7 @@
   "account.error.profile_rejected": "Tjeneren godtar ikke passordstrekkingen i denne versjonen.",
   "account.error.reauth_not_fresh": "Passordkontrollen har gått ut på tid. Bekreft passordet på nytt.",
   "account.error.registration_closed": "Det finnes allerede en første administrator på denne tjeneren. Logg inn i stedet.",
-  "account.error.restored_older_method": "Tjeneren ble gjenopprettet {date}, fra før du sist endret opplåsingsmåte. Denne enheten nekter den eldre måten for å beskytte deg mot et angrep. Er gjenopprettingen din egen, kan du bruke «Glem denne tjeneren» her og logge inn som på en ny enhet med det gamle passordet. Er den ikke det, si fra til den som drifter tjeneren.",
+  "account.error.restored_older_method": "Tjeneren er gjenopprettet fra før du sist endret opplåsingsmåte (gjenoppretting godtatt på denne enheten {date}). Denne enheten nekter den eldre måten for å beskytte deg mot et angrep. Er gjenopprettingen din egen, kan du bruke «Glem denne tjeneren på denne enheten» her og logge inn som på en ny enhet med det gamle passordet. Er den ikke det, si fra til den som drifter tjeneren.",
   "account.error.retry_in": "Prøv igjen om {seconds} sekunder.",
   "account.error.session_ended": "Hvelvøkten din er avsluttet. Logg inn på nytt.",
   "account.error.signout_incomplete": "Du er logget ut på denne enheten, men det var ikke mulig å nå tjeneren for å avslutte økten der.",

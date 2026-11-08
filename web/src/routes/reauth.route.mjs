@@ -1,6 +1,6 @@
 import { configuredAdminUrl } from "../flows/adminUrl.mjs";
 import { getEntry } from "../flows/entry.mjs";
-import { restoreNoteFinder } from "../flows/restoreNote.mjs";
+import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { completeHandoff, goToAdmin } from "../flows/handoff.mjs";
 import { loginView } from "../views/login.mjs";
 
@@ -20,7 +20,7 @@ export default {
       go,
       handoff: { completeHandoff, goToAdmin },
       info,
-      restoreNote: services.store ? restoreNoteFinder({ store: services.store, serverUrl: session.serverUrl }) : undefined,
+      ...restoreNoteTools({ store: services.store, serverUrl: session.serverUrl }),
       locale: i18n.lang,
       reauth: true,
     });

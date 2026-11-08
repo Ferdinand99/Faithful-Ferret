@@ -2,11 +2,11 @@
 // and the two ends of it (written at the accept, found again at a refusal).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { recordAcceptedRestore, restoreNoteFinder } from "../../src/flows/restoreNote.mjs";
+import { recordAcceptedRestore, restoreNoteClearer, restoreNoteFinder } from "../../src/flows/restoreNote.mjs";
 import { StoreError } from "../../src/store/idb.mjs";
 import { loadPinned, savePinned } from "../../src/store/pinned.mjs";
-import { loadRestoreNote, RESTORE_NOTE_TTL_MS, restoreNoteKey, saveRestoreNote } from "../../src/store/restoreNote.mjs";
-import { setSetting } from "../../src/store/settings.mjs";
+import { deleteRestoreNote, loadRestoreNote, RESTORE_NOTE_TTL_MS, restoreNoteKey, saveRestoreNote } from "../../src/store/restoreNote.mjs";
+import { getSetting, setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
 import { ACCOUNT, SERVER, freshStore, pinnedRecord } from "./idbHelpers.mjs";
 
@@ -21,7 +21,7 @@ function serviceOver(store) {
     open: async () => store,
     loadSyncState,
     pinHintForEmail: loadPinned,
-    restoreNote: { save: saveRestoreNote, load: loadRestoreNote },
+    restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
   };
 }
 
@@ -37,10 +37,13 @@ test("restore_note_survives_reload_and_expires_after_30_days", async () => {
   assert.deepEqual(await loadRestoreNote(reopened, `${SERVER}/other/path`, ACCOUNT, T0 + DAY), note(), "the server is its origin");
   assert.equal(RESTORE_NOTE_TTL_MS, 30 * DAY);
   assert.deepEqual(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0 + 30 * DAY), note(), "the 30th day still counts");
-  assert.equal(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0 + 30 * DAY + 1), null, "after 30 days it is gone");
-  assert.equal(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0 + 400 * DAY), null);
-  // A clock that went back by days does not make a note from the future valid.
+  // A clock that went back by days does not make a note from the future valid, and does not delete it either.
   assert.equal(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0 - 3 * DAY), null);
+  assert.deepEqual(await getSetting(reopened, restoreNoteKey(SERVER, ACCOUNT)), note(), "a note from the future is kept");
+  // A note read after it expired is removed, not only ignored.
+  assert.equal(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0 + 30 * DAY + 1), null);
+  assert.equal(await getSetting(reopened, restoreNoteKey(SERVER, ACCOUNT)), undefined, "the expired note is deleted when it is read");
+  assert.equal(await loadRestoreNote(reopened, SERVER, ACCOUNT, T0), null, "and it does not come back");
 });
 
 test("a_note_is_per_server_and_account_and_the_newest_replaces_the_older", async () => {
@@ -75,21 +78,45 @@ test("a_successful_accept_with_manifest_older_saves_the_note_with_the_restore_ep
   await saveSyncState(store, SERVER, ACCOUNT, state(7));
   const service = serviceOver(store);
   const kept = await recordAcceptedRestore({ store: service, serverUrl: SERVER, accountId: ACCOUNT, result: { reuploaded: 1, conflicts: 0, manifestOlder: true }, now: () => T0 });
-  assert.equal(kept, true);
+  assert.equal(kept, "kept");
   assert.deepEqual(await loadRestoreNote(store, SERVER, ACCOUNT, T0), { acceptedAt: T0, restoreEpoch: 7, manifestOlder: true });
 
   // Without manifestOlder there is nothing to say at an unlock, and an earlier note is left as it is.
-  assert.equal(await recordAcceptedRestore({ store: service, serverUrl: SERVER, accountId: ACCOUNT, result: { manifestOlder: false }, now: () => T0 + DAY }), false);
-  assert.equal(await recordAcceptedRestore({ store: service, serverUrl: SERVER, accountId: ACCOUNT, result: {}, now: () => T0 + DAY }), false);
+  assert.equal(await recordAcceptedRestore({ store: service, serverUrl: SERVER, accountId: ACCOUNT, result: { manifestOlder: false }, now: () => T0 + DAY }), "none");
+  assert.equal(await recordAcceptedRestore({ store: service, serverUrl: SERVER, accountId: ACCOUNT, result: {}, now: () => T0 + DAY }), "none");
   assert.equal((await loadRestoreNote(store, SERVER, ACCOUNT, T0)).acceptedAt, T0);
 });
 
-test("a_note_that_cannot_be_kept_or_read_never_throws_and_is_no_note", async () => {
+test("a_note_that_cannot_be_kept_is_reported_never_thrown_and_a_note_that_cannot_be_read_is_no_note", async () => {
   const broken = { open: async () => { throw new StoreError("disk_error", "no"); } };
-  assert.equal(await recordAcceptedRestore({ store: broken, serverUrl: SERVER, accountId: ACCOUNT, result: { manifestOlder: true } }), false);
+  assert.equal(await recordAcceptedRestore({ store: broken, serverUrl: SERVER, accountId: ACCOUNT, result: { manifestOlder: true } }), "not_kept");
   const { store } = await freshStore();
-  assert.equal(await recordAcceptedRestore({ store: serviceOver(store), serverUrl: SERVER, accountId: undefined, result: { manifestOlder: true } }), false);
+  // No account id at the accept is not silent: the answer says the note was not kept (the page shows it).
+  for (const accountId of [undefined, null, "", "nope"]) {
+    assert.equal(await recordAcceptedRestore({ store: serviceOver(store), serverUrl: SERVER, accountId, result: { manifestOlder: true } }), "not_kept", String(accountId));
+  }
+  // A restore without manifestOlder has nothing to keep and nothing to report.
+  assert.equal(await recordAcceptedRestore({ store: serviceOver(store), serverUrl: SERVER, accountId: undefined, result: { manifestOlder: false } }), "none");
   assert.equal(await restoreNoteFinder({ store: broken, serverUrl: SERVER })({ accountId: ACCOUNT }), null);
+});
+
+test("the_clearer_removes_the_note_by_account_id_or_pinned_e_mail_and_never_throws", async () => {
+  const { store } = await freshStore();
+  const service = serviceOver(store);
+  const other = "ffeeddccbbaa99887766554433221100";
+  await savePinned(store, SERVER, ACCOUNT, "ada@example.org", pinnedRecord({ accountId: ACCOUNT, server: SERVER }));
+  for (const account of [ACCOUNT, other]) await saveRestoreNote(store, SERVER, account, note());
+  const clear = restoreNoteClearer({ store: service, serverUrl: SERVER });
+  await clear({ email: "nobody@example.org" });
+  await clear({});
+  assert.deepEqual(await loadRestoreNote(store, SERVER, ACCOUNT, T0), note(), "an unknown address clears nothing");
+  await clear({ accountId: "nope", email: "ada@example.org" });
+  assert.equal(await loadRestoreNote(store, SERVER, ACCOUNT, T0), null, "the pinned address names the account");
+  assert.deepEqual(await loadRestoreNote(store, SERVER, other, T0), note(), "another account keeps its note");
+  await clear({ accountId: other });
+  assert.equal(await loadRestoreNote(store, SERVER, other, T0), null);
+  await clear({ accountId: other }); // nothing left, still fine
+  await restoreNoteClearer({ store: { open: async () => { throw new Error("x"); } }, serverUrl: SERVER })({ accountId: ACCOUNT });
 });
 
 test("the_finder_reads_the_note_by_account_id_or_by_the_e_mail_the_device_has_pinned", async () => {

@@ -9,7 +9,7 @@
 // removes it (see `forget.mjs`).
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "./idb.mjs";
-import { getSetting, setSetting } from "./settings.mjs";
+import { deleteSetting, getSetting, setSetting } from "./settings.mjs";
 
 /** How long the note is kept: 30 days, in milliseconds. */
 export const RESTORE_NOTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -62,8 +62,19 @@ export async function saveRestoreNote(store, serverUrl, accountId, note) {
 }
 
 /**
+ * Removes the note of an account on a server, if there is one.
+ * @param {import("./idb.mjs").Store} store
+ * @param {string} serverUrl
+ * @param {string} accountId
+ * @returns {Promise<void>}
+ */
+export async function deleteRestoreNote(store, serverUrl, accountId) {
+  await deleteSetting(store, restoreNoteKey(serverUrl, accountId));
+}
+
+/**
  * The note for an account on a server, or null when there is none, it is older than 30 days,
- * or what is stored is not a note.
+ * or what is stored is not a note. A note that has expired is removed when it is read.
  * @param {import("./idb.mjs").Store} store
  * @param {string} serverUrl
  * @param {string} accountId
@@ -76,6 +87,13 @@ export async function loadRestoreNote(store, serverUrl, accountId, now) {
   const note = clean(await getSetting(store, key));
   if (note === null) return null;
   if (note.acceptedAt > now + CLOCK_SLACK_MS) return null;
-  if (now - note.acceptedAt > RESTORE_NOTE_TTL_MS) return null;
+  if (now - note.acceptedAt > RESTORE_NOTE_TTL_MS) {
+    try {
+      await deleteSetting(store, key);
+    } catch {
+      // An expired note that cannot be removed now is still no note, and is tried again at the next read.
+    }
+    return null;
+  }
   return note;
 }

@@ -99,10 +99,12 @@ export const KNOWN_ERRORS = Object.freeze([
 ]);
 
 /**
- * The refusals that mean "the server shows an older unlock method than this device has seen". After an
- * accepted restore that took the unlock methods back, they have a text of their own (see `restoreTextApplies`).
+ * The refusals a rollback can explain: the server shows an older unlock method than this device has seen, or
+ * leaves one out. After an accepted restore that took the unlock methods back, they have a text of their own
+ * (see `restoreTextApplies`). `method_list_unknown` is not here on purpose: a rollback only removes methods, so
+ * a method the vault does not know points to one that was injected, and it always keeps the attack text.
  */
-export const OLDER_METHOD_ERRORS = Object.freeze(["pinned_kek_generation", "method_list_changed", "method_list_missing", "method_list_unknown"]);
+export const OLDER_METHOD_ERRORS = Object.freeze(["pinned_kek_generation", "method_list_changed", "method_list_missing"]);
 
 /**
  * Whether a refusal gets the restore text: it is one of `OLDER_METHOD_ERRORS` and a note says that an older

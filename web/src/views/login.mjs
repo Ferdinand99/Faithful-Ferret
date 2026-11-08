@@ -27,6 +27,7 @@ import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, 
  * @property {{ accountId: string, email: string } | null} info the vault session found when the page was opened
  * @property {boolean} [reauth] the page is `/vault/reauth`
  * @property {import("./unlock.mjs").FindRestoreNote} [restoreNote] finds the local note about an accepted restore; asked only after a refusal about an older unlock method, and it only picks the text
+ * @property {import("./unlock.mjs").ClearRestoreNote} [clearRestoreNote] removes that note after a successful sign-in or unlock
  * @property {string} [locale] the language, for the date in the restore text
  */
 
@@ -168,12 +169,20 @@ export function loginView(deps) {
       const args = { password: typedPassword, skCode: code.row.hidden ? "" : typedCode, skBit: device.pinned ? undefined : answer };
       if (rememberVisible) args.rememberSk = remember.input.checked;
       try {
+        /** @type {any} */
+        let opened;
         if (email) {
           args.email = email.input.value;
           triedEmail = args.email;
-          await session.signIn(args);
+          opened = await session.signIn(args);
         } else {
-          await session.unlock(args);
+          opened = await session.unlock(args);
+        }
+        // It worked, so a refusal about an older unlock method no longer stands, and neither does its note.
+        try {
+          await deps.clearRestoreNote?.({ accountId: opened?.accountId ?? info?.accountId ?? null, email: triedEmail ?? info?.email ?? null });
+        } catch {
+          // The note expires by itself.
         }
       } catch (error) {
         const skHint = /** @type {any} */ (error)?.skHint;

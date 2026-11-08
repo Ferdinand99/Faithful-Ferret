@@ -66,6 +66,7 @@
   "syncwarnings.restored.not_applicable": "Det er ingenting å avgjøre her. Synkroniseringen er ikke stoppet på grunn av en gjenopprettet tjener.",
   "syncwarnings.restored.not_verified": "Tjenerens eldre tilstand stemmer ikke med det denne enheten har bekreftet, så den ble ikke godtatt. Ingenting er endret eller slettet. La synkroniseringen stå stoppet, eller glem denne tjeneren. Å prøve igjen hjelper ikke med mindre tjeneren endrer seg.",
   "syncwarnings.restored.not_verified_no_checkpoint": "Tjeneren har ikke noe sjekkpunkt å sammenligne den eldre tilstanden med.",
+  "syncwarnings.restored.note_not_kept": "Denne enheten kunne ikke lagre en påminnelse om gjenopprettingen. Hvis opplåsingsmåtene gikk tilbake, kan neste opplåsing vise den vanlige advarselen om en eldre opplåsingsmåte i stedet for denne forklaringen.",
   "syncwarnings.restored.preview_conflicts": "Elementer som blir konflikter: {count}",
   "syncwarnings.restored.preview_failed": "Tjenerens eldre tilstand kunne ikke leses, så virkningen kan ikke vises ennå. Ingenting er endret.",
   "syncwarnings.restored.preview_loading": "Leser tjenerens eldre tilstand",

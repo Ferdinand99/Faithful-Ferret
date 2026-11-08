@@ -45,7 +45,8 @@ const REASONS = Object.freeze(["no_checkpoint"]);
  *   onAccepted?: (result: { reuploaded: number, conflicts: number, manifestOlder?: boolean }) => unknown,
  * }} options `reload` reloads the page; it is the page's own `location.reload` unless a test gives another.
  * `onAccepted` is called once after the engine has accepted the older state (the route keeps a local note there when the
- * unlock methods went back); what it does or throws never changes what the page shows.
+ * unlock methods went back). If it answers `"not_kept"` the page adds a line saying so; nothing else it does or throws
+ * changes what the page shows.
  * @returns {HTMLElement}
  */
 export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload(), onAccepted = () => {} }) {
@@ -275,9 +276,12 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
       /** @type {any} */ (parts[0]).focus?.();
       void (async () => {
         try {
-          await onAccepted(done);
+          // A note that could not be kept is said on the page; anything else the hook does or throws changes nothing.
+          if ((await onAccepted(done)) === "not_kept") {
+            body.appendChild(el("p", { class: "notice", role: "note", "data-role": "restored-note-not-kept" }, t("syncwarnings.restored.note_not_kept")));
+          }
         } catch {
-          // A note that cannot be kept is no reason to change the result.
+          // The result stays as it is.
         }
       })();
     } catch (error) {

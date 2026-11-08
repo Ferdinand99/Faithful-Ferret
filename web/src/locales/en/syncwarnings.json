@@ -66,6 +66,7 @@
   "syncwarnings.restored.not_applicable": "There is nothing to decide here. Sync is not stopped because of a restored server.",
   "syncwarnings.restored.not_verified": "The server's older state does not check out against what this device has verified, so it was not accepted. Nothing was changed or deleted. Leave sync stopped, or forget this server. Trying again will not help unless the server changes.",
   "syncwarnings.restored.not_verified_no_checkpoint": "The server holds no checkpoint to compare the older state with.",
+  "syncwarnings.restored.note_not_kept": "This device could not save a reminder of this restore. If the unlock methods did go back, the next unlock may show the plain warning about an older unlock method instead of this explanation.",
   "syncwarnings.restored.preview_conflicts": "Items that become conflicts: {count}",
   "syncwarnings.restored.preview_failed": "The server's older state could not be read, so the effect cannot be shown yet. Nothing was changed.",
   "syncwarnings.restored.preview_loading": "Reading the server's older state",

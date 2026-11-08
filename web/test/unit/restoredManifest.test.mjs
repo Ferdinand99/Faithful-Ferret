@@ -3,8 +3,15 @@
 // hands the result on once so that a note can be kept.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import restoredRoute from "../../src/routes/restored.route.mjs";
+import { loadRestoreNote } from "../../src/store/restoreNote.mjs";
 import { restoredView } from "../../src/views/restored.mjs";
-import { find, settle, submit, textOf, withDom } from "./vaultHelpers.mjs";
+import { SERVER, freshStore } from "./idbHelpers.mjs";
+import { autoLockFor } from "../../src/lock.mjs";
+import { fakeClient, fakeEngine, fakeSession, find, settle, submit, textOf, withDom } from "./vaultHelpers.mjs";
+import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
+import { loadPinned } from "../../src/store/pinned.mjs";
+import { deleteRestoreNote, saveRestoreNote } from "../../src/store/restoreNote.mjs";
 import { EN, NB, fakeWarningsEngine, translator } from "./syncWarningsHelpers.mjs";
 
 const KEY = "syncwarnings.restored.manifest_older";
@@ -99,6 +106,86 @@ test("a_failed_accept_keeps_no_note_and_a_note_that_fails_changes_nothing_on_the
       assert.ok(find(root, "restored-done"), "the result is shown although the note could not be kept");
       assert.ok(find(root, "restored-manifest-older"));
       assert.equal(find(root, "restored-error"), null, "no error is shown");
+    }
+  });
+});
+
+/** The restored route over fakes: an open vault whose engine is stopped for a restored server, and a real store. */
+async function routeRig({ info } = {}) {
+  const db = await freshStore();
+  const engine = fakeEngine();
+  Object.assign(engine, {
+    health: () => ({ halted: "server_restored", warnings: [] }),
+    restorePreview: async () => ({ reupload: 0, conflicts: 0, manifestOlder: true }),
+    acceptOlderState: async () => ({ reuploaded: 0, conflicts: 0, manifestOlder: true }),
+  });
+  const client = fakeClient(engine);
+  const session = fakeSession({ client, ...(info === undefined ? {} : { info }) });
+  session.serverUrl = SERVER;
+  const sync = { current: () => engine, start: async () => engine, stop() {}, discard() {}, discardMissing() {} };
+  const store = {
+    open: async () => db.store,
+    loadSyncState,
+    pinHintForEmail: loadPinned,
+    restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
+  };
+  const ctx = {
+    params: {}, path: "/restored", i18n: { t: translator("en"), lang: "en", missing: [] }, client, go() {},
+    services: { crypto: session, sync, store },
+  };
+  return { db, ctx, session, sync, done: () => autoLockFor(session, sync).stop() };
+}
+
+test("the_restored_route_keeps_the_note_for_the_open_account_after_an_accept", async () => {
+  await withDom(async () => {
+    const r = await routeRig();
+    try {
+      await saveSyncState(r.db.store, SERVER, "aa".repeat(16), { memory: new Uint8Array(8), restoreEpoch: 5, verifiedAt: 1, verifiedSeq: 1, uploadedAt: 1, uploadedSeq: 1, hardWarning: null, restore: null });
+      const node = await restoredRoute.load(r.ctx);
+      await settle();
+      await acceptNow(node);
+      assert.ok(find(node, "restored-done"));
+      await settle();
+      const kept = await loadRestoreNote(r.db.store, SERVER, "aa".repeat(16), Date.now());
+      assert.equal(kept?.manifestOlder, true);
+      assert.equal(kept?.restoreEpoch, 5);
+    } finally {
+      r.done();
+    }
+  });
+});
+
+test("the_restored_route_says_so_on_the_page_when_no_account_id_is_there_and_the_accept_still_works", async () => {
+  await withDom(async () => {
+    const r = await routeRig({ info: { accountId: undefined, email: "ada@example.test" } });
+    try {
+      const node = await restoredRoute.load(r.ctx);
+      await settle();
+      assert.equal(find(node, "restored-note-not-kept"), null, "nothing before the accept");
+      await acceptNow(node);
+      await settle();
+      assert.ok(find(node, "restored-done"), "the accept itself is not stopped");
+      assert.equal(textOf(find(node, "restored-note-not-kept")).trim(), EN["syncwarnings.restored.note_not_kept"]);
+    } finally {
+      r.done();
+    }
+  });
+});
+
+test("the_page_says_the_note_was_not_kept_only_when_the_hook_says_so_in_both_languages", async () => {
+  await withDom(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const word = lang === "en" ? "accept" : "godta";
+      const missed = await page({ preview: { manifestOlder: true }, accept: { manifestOlder: true }, onAccepted: () => "not_kept" }, lang);
+      await acceptNow(missed.root, word);
+      await settle();
+      assert.equal(textOf(find(missed.root, "restored-note-not-kept")).trim(), catalog["syncwarnings.restored.note_not_kept"]);
+      for (const answer of ["kept", "none", undefined]) {
+        const fine = await page({ preview: { manifestOlder: true }, accept: { manifestOlder: true }, onAccepted: () => answer }, lang);
+        await acceptNow(fine.root, word);
+        await settle();
+        assert.equal(find(fine.root, "restored-note-not-kept"), null, String(answer));
+      }
     }
   });
 });

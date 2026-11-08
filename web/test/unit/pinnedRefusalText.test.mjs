@@ -31,9 +31,12 @@ test("pinned_refusal_after_an_accepted_restore_shows_the_restore_text_with_the_d
   // The wording the design asks for (the date stands where {date} is).
   assert.equal(
     NB[KEY],
-    "Tjeneren ble gjenopprettet {date}, fra før du sist endret opplåsingsmåte. Denne enheten nekter den eldre måten for å beskytte deg mot et angrep. Er gjenopprettingen din egen, kan du bruke «Glem denne tjeneren» her og logge inn som på en ny enhet med det gamle passordet. Er den ikke det, si fra til den som drifter tjeneren.",
+    "Tjeneren er gjenopprettet fra før du sist endret opplåsingsmåte (gjenoppretting godtatt på denne enheten {date}). Denne enheten nekter den eldre måten for å beskytte deg mot et angrep. Er gjenopprettingen din egen, kan du bruke «Glem denne tjeneren på denne enheten» her og logge inn som på en ny enhet med det gamle passordet. Er den ikke det, si fra til den som drifter tjeneren.",
   );
-  assert.match(EN[KEY], /^The server was restored on \{date\}, from before you last changed an unlock method\./);
+  assert.match(EN[KEY], /^The server was restored from before you last changed an unlock method \(restore accepted on this device \{date\}\)\./);
+  // The date is the day the restore was accepted here, never "the day the server was restored".
+  assert.doesNotMatch(EN[KEY], /restored on/);
+  assert.doesNotMatch(NB[KEY], /gjenopprettet \{date\}|ble gjenopprettet/);
 });
 
 test("pinned_refusal_without_a_note_keeps_the_attack_text", () => {
@@ -59,7 +62,7 @@ test("pinned_refusal_without_a_note_keeps_the_attack_text", () => {
 });
 
 /** The unlock screen over a session that refuses, with a finder that answers from `found`. */
-async function unlockPage({ refuse = "pinned_kek_generation", found = note(), lang = "en", finder } = {}) {
+async function unlockPage({ refuse = "pinned_kek_generation", found = note(), lang = "en", finder, clear } = {}) {
   const session = fakeSession();
   session.unlockError = refuse ? coded(refuse) : null;
   const asked = [];
@@ -67,7 +70,7 @@ async function unlockPage({ refuse = "pinned_kek_generation", found = note(), la
     asked.push(who);
     return found;
   });
-  const host = unlockScreen({ session, t: translator(lang), go() {}, onUnlocked() {}, restoreNote, locale: lang });
+  const host = unlockScreen({ session, t: translator(lang), go() {}, onUnlocked() {}, restoreNote, clearRestoreNote: clear, locale: lang });
   await settle();
   find(host, "password").value = PASSWORD_TYPED;
   await submit(find(host, "unlock-form"));
@@ -126,17 +129,58 @@ test("the_forget_link_goes_away_with_the_next_try", async () => {
   });
 });
 
+test("method_list_unknown_always_keeps_the_attack_text_even_with_a_live_note", async () => {
+  // A rollback only removes methods; a method the vault does not know was put there, so a restore never explains it.
+  assert.ok(!OLDER_METHOD_ERRORS.includes("method_list_unknown"));
+  assert.equal(restoreTextApplies(coded("method_list_unknown"), note()), false);
+  assert.equal(errorKey(coded("method_list_unknown"), { restoreNote: note() }), "account.error.method_list_unknown");
+  for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+    const text = describeError(translator(lang), coded("method_list_unknown"), { restoreNote: note(), locale: lang });
+    assert.equal(text, catalog["account.error.method_list_unknown"]);
+    assert.match(text, lang === "en" ? /can be an attack/ : /Det kan være et angrep/);
+  }
+  await withDom(async () => {
+    const asked = [];
+    const { host } = await unlockPage({ refuse: "method_list_unknown", finder: async (who) => { asked.push(who); return note(); } });
+    assert.equal(textOf(find(host, "error")).trim(), EN["account.error.method_list_unknown"]);
+    assert.equal(find(host, "forget-row").hidden, true, "no restore way out for an injected method");
+    assert.deepEqual(asked, [], "the note is not even looked up");
+  });
+});
+
+test("the_note_is_cleared_after_the_next_successful_unlock_and_not_after_a_refusal", async () => {
+  await withDom(async () => {
+    const cleared = [];
+    const clear = async (who) => { cleared.push(who); };
+    // A refusal keeps the note: the cause still stands.
+    const refused = await unlockPage({ clear });
+    assert.deepEqual(cleared, []);
+    // The next unlock that works clears it, for the account that was unlocked.
+    refused.session.unlockError = null;
+    find(refused.host, "password").value = PASSWORD_TYPED;
+    await submit(find(refused.host, "unlock-form"));
+    await settle();
+    assert.deepEqual(cleared, [{ accountId: "aa".repeat(16), email: "ada@example.test" }]);
+    // A clearer that fails does not stop the unlock.
+    const broken = await unlockPage({ refuse: null, clear: async () => { throw new Error("disk"); } });
+    assert.equal(broken.session.unlocks.length, 1);
+    assert.equal(broken.session.isOpen, true);
+  });
+});
+
 test("the_restore_text_never_offers_to_lower_a_floor_in_place", async () => {
   // The words of a text that would let the user accept, allow or lower something here.
   const offers = {
     en: /\b(accept|allow|lower|ignore|trust this|continue anyway|proceed|override|reset the)\b/i,
-    nb: /\b(godta|tillat|senk|ignorer|stol på|fortsett likevel|overstyr|nullstill)/i,
+    nb: /\b(godta|tillat|senk|ignorer|stol på|fortsett likevel|overstyr|nullstill)\b/i,
   };
   for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
     const text = catalog[KEY];
     assert.doesNotMatch(text, offers[lang], `${lang}: no offer to accept or lower`);
     // The one way out is to forget the server, which removes the record and asks for the secret key again; the other is the operator.
-    assert.match(text, lang === "en" ? /“Forget this server”/ : /«Glem denne tjeneren»/);
+    // The quoted name is the label of the link the screens show.
+    const label = catalog["syncwarnings.forget.link"];
+    assert.ok(text.includes(lang === "en" ? `“${label}”` : `«${label}»`), `${lang}: the text quotes the link label`);
     assert.match(text, lang === "en" ? /sign in as on a new device/ : /logge inn som på en ny enhet/);
     assert.match(text, lang === "en" ? /tell whoever runs the server/ : /si fra til den som drifter tjeneren/);
     assert.match(text, lang === "en" ? /protect you from an attack/ : /beskytte deg mot et angrep/);
@@ -156,7 +200,7 @@ test("the_restore_text_never_offers_to_lower_a_floor_in_place", async () => {
 
 test("texts_exist_in_both_languages", () => {
   const placeholders = (text) => [...text.matchAll(/\{([a-z]+)\}/g)].map((m) => m[1]).sort();
-  for (const key of [KEY, "syncwarnings.restored.manifest_older"]) {
+  for (const key of [KEY, "syncwarnings.restored.manifest_older", "syncwarnings.restored.note_not_kept"]) {
     assert.equal(typeof EN[key], "string", `en: ${key}`);
     assert.equal(typeof NB[key], "string", `nb: ${key}`);
     assert.notEqual(EN[key], NB[key]);
@@ -182,12 +226,18 @@ async function withAccountDom(body) {
 }
 
 /** The sign-in page over a session that refuses with `code`. */
-function loginPage({ info = null, refuse = "pinned_kek_generation", found = note(), lang = "en" } = {}) {
+function loginPage({ info = null, refuse = "pinned_kek_generation", found = note(), lang = "en", clear } = {}) {
   const asked = [];
   const session = {
     deviceStatus: async () => ({ pinned: true, skBit: false, skStored: false }),
-    signIn: async () => { throw accountCoded(refuse); },
-    unlock: async () => { throw accountCoded(refuse); },
+    signIn: async () => {
+      if (refuse === null) return { accountId: ACCOUNT };
+      throw accountCoded(refuse);
+    },
+    unlock: async () => {
+      if (refuse === null) return { accountId: ACCOUNT };
+      throw accountCoded(refuse);
+    },
     current: () => null,
     freshReauth: () => true,
   };
@@ -204,6 +254,7 @@ function loginPage({ info = null, refuse = "pinned_kek_generation", found = note
       asked.push(who);
       return found;
     },
+    clearRestoreNote: clear,
     locale: lang,
   });
   return { root, asked };
@@ -242,5 +293,35 @@ test("the_sign_in_page_asks_for_the_note_of_the_open_account_when_locked", async
     await accountSettle();
     assert.deepEqual(asked, [{ accountId: ACCOUNT, email: null }]);
     assert.equal(accountText(byRole(root, "error")).trim(), EN[KEY].replace("{date}", day("en")));
+  });
+});
+
+test("the_sign_in_page_clears_the_note_after_a_successful_sign_in_or_unlock_and_not_after_a_refusal", async () => {
+  await withAccountDom(async () => {
+    const cleared = [];
+    const clear = async (who) => { cleared.push(who); };
+    // Sign-in with a typed address.
+    const refused = loginPage({ clear });
+    await accountSettle();
+    byRole(refused.root, "email").value = EMAIL;
+    byRole(refused.root, "password").value = PASSWORD;
+    await fire(byRole(refused.root, "credentials"), "submit");
+    await accountSettle();
+    assert.deepEqual(cleared, [], "a refusal keeps the note");
+    const worked = loginPage({ refuse: null, clear });
+    await accountSettle();
+    byRole(worked.root, "email").value = EMAIL;
+    byRole(worked.root, "password").value = PASSWORD;
+    await fire(byRole(worked.root, "credentials"), "submit");
+    await accountSettle();
+    assert.deepEqual(cleared, [{ accountId: ACCOUNT, email: EMAIL }]);
+    // Unlock of the signed-in account.
+    const unlocked = loginPage({ refuse: null, clear, info: { accountId: ACCOUNT, email: EMAIL } });
+    await accountSettle();
+    byRole(unlocked.root, "password").value = PASSWORD;
+    await fire(byRole(unlocked.root, "credentials"), "submit");
+    await accountSettle();
+    assert.deepEqual(cleared.at(-1), { accountId: ACCOUNT, email: EMAIL });
+    assert.equal(cleared.length, 2);
   });
 });

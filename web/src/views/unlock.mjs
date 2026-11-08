@@ -12,6 +12,7 @@ import { codeOf } from "./common.mjs";
 import { describeError as unlockErrorText, OLDER_METHOD_ERRORS, restoreTextApplies } from "./form.mjs";
 
 /** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<import("../store/restoreNote.mjs").RestoreNote | null>} FindRestoreNote */
+/** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<void>} ClearRestoreNote */
 
 /**
  * What the unlock screen needs to know, found without asking the server for
@@ -44,11 +45,12 @@ export async function prepareUnlock(session) {
  *   skRequired: boolean,
  *   onUnlocked: () => void,
  *   restoreNote?: FindRestoreNote,
+ *   clearRestoreNote?: ClearRestoreNote,
  *   locale?: string,
  * }} options `restoreNote` finds the local note about an accepted restore; it is asked only after the core has refused with
- * an older unlock method, and only picks the text (the refusal stands).
+ * an older unlock method, and only picks the text (the refusal stands). `clearRestoreNote` removes the note after a successful unlock.
  */
-export function unlockView({ session, t, go, email, accountId, skRequired, onUnlocked, restoreNote: findRestoreNote, locale }) {
+export function unlockView({ session, t, go, email, accountId, skRequired, onUnlocked, restoreNote: findRestoreNote, clearRestoreNote, locale }) {
   const root = el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" });
   const password = /** @type {HTMLInputElement} */ (el("input", {
     id: "unlock-password", name: "password", type: "password", autocomplete: "current-password", required: true, "data-role": "password",
@@ -142,6 +144,12 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
         return;
       }
       busy(false);
+      // The unlock worked, so the refusal that the note explains is over; the note goes with it.
+      try {
+        await clearRestoreNote?.({ accountId, email });
+      } catch {
+        // The note expires by itself.
+      }
       onUnlocked();
     },
   },
@@ -170,10 +178,11 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
  *   go: (path: string) => void,
  *   onUnlocked: () => void,
  *   restoreNote?: FindRestoreNote,
+ *   clearRestoreNote?: ClearRestoreNote,
  *   locale?: string,
  * }} options
  */
-export function unlockScreen({ session, t, go, onUnlocked, restoreNote, locale }) {
+export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale }) {
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
     el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
   prepareUnlock(session).then(
@@ -186,7 +195,7 @@ export function unlockScreen({ session, t, go, onUnlocked, restoreNote, locale }
         go("/login");
         return;
       }
-      mount(box, unlockView({ session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired, onUnlocked, restoreNote, locale }));
+      mount(box, unlockView({ session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired, onUnlocked, restoreNote, clearRestoreNote, locale }));
     },
     (error) => {
       mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },
