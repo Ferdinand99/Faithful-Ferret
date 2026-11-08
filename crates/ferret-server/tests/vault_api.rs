@@ -911,6 +911,7 @@ async fn changes_response_stops_at_4_MiB() {
                 idem: idem(n),
                 request_hash: [n; 32],
                 resurrect: false,
+                restore_epoch: None,
             };
             put_item(conn, &vault, &device, &req, &Limits::DEFAULT, 1)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;

@@ -89,6 +89,12 @@ pub struct PutRequest<'a> {
     /// row (or a missing one) it changes nothing, and a tombstone body never
     /// resurrects anything.
     pub resurrect: bool,
+    /// The `restore_epoch` the client last saw. `Some(e)` with an `e` that is
+    /// not the vault's epoch gives [`PutOutcome::RestoreEpochChanged`] and
+    /// writes nothing; `None` is no condition (an old client). It is checked
+    /// after the idempotency record (a replay of a stored write stays
+    /// answerable) and before `base_rev`.
+    pub restore_epoch: Option<u64>,
 }
 
 impl std::fmt::Debug for PutRequest<'_> {
@@ -159,6 +165,12 @@ pub enum PutOutcome {
     /// The item is the manifest, which this function never writes (neither a
     /// live body nor a tombstone). Nothing was written.
     ManifestNotWritable,
+    /// The write named a `restore_epoch` that is not the vault's: the server
+    /// was restored since the client last looked. Nothing was written.
+    RestoreEpochChanged {
+        /// The `restore_epoch` of the vault now.
+        current: u64,
+    },
 }
 
 /// The row of an item as the store reads it before a write.
@@ -185,7 +197,9 @@ impl Current {
 /// Writes one item against `req.base_rev`.
 ///
 /// Spec: Fase 1 § 8.1, § 8.3. One write transaction: the idempotency record is
-/// looked up before `base_rev` is compared, then `base_rev`, then the quota;
+/// looked up first, then the `restore_epoch` condition (`req.restore_epoch`, if
+/// it is set, must be the epoch of the vault: Fase 1 § 8.6), then `base_rev`
+/// is compared, then the quota;
 /// the new `rev` is `base_rev + 1` and `seq` comes from the counter row of the
 /// vault. A tombstone is written over only by a resurrection: a live body with
 /// `resurrect` and a `base_rev` equal to the revision of the tombstone gives
@@ -229,6 +243,15 @@ pub fn put_item(
         }
         Lookup::Mismatch => return Ok(PutOutcome::IdemMismatch),
         Lookup::Fresh => {}
+    }
+
+    // The condition on the restore epoch comes after the replay (a write that
+    // is already stored is answered as it was) and before `base_rev`.
+    if let Some(wanted) = req.restore_epoch {
+        let current = vault_restore_epoch(&tx, vault)?;
+        if wanted != current {
+            return Ok(PutOutcome::RestoreEpochChanged { current });
+        }
     }
 
     let new_len = req.body.len();
@@ -393,6 +416,17 @@ pub fn put_item(
     })
 }
 
+/// The `restore_epoch` of a vault. An unknown vault is
+/// [`StoreError::NotFound`].
+fn vault_restore_epoch(conn: &Connection, vault: &VaultId) -> Result<u64, StoreError> {
+    conn.query_row(
+        "SELECT restore_epoch FROM ferret_vaults WHERE vault_id = ?1",
+        [vault.as_bytes()],
+        |row| column_u64(row, 0),
+    )
+    .map_err(missing)
+}
+
 fn vault_exists(conn: &Connection, vault: &VaultId) -> Result<bool, StoreError> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM ferret_vaults WHERE vault_id = ?1)",
@@ -511,6 +545,12 @@ pub enum CheckpointOutcome {
     /// The checkpoint claims a `seq` above the one of the vault. Nothing was
     /// written.
     AboveVault,
+    /// The upload named a `restore_epoch` that is not the vault's. Nothing was
+    /// looked at or written.
+    RestoreEpochChanged {
+        /// The `restore_epoch` of the vault now.
+        current: u64,
+    },
 }
 
 /// What an upload of a checkpoint needs next, decided from the head (`seq`,
@@ -566,14 +606,35 @@ pub fn put_checkpoint(
     vault: &VaultId,
     cp: &StoredCheckpoint,
 ) -> Result<CheckpointOutcome, StoreError> {
+    put_checkpoint_if(conn, vault, cp, None)
+}
+
+/// [`put_checkpoint`] with the condition on the restore epoch: when
+/// `restore_epoch` is `Some(e)` and `e` is not the epoch of the vault, the
+/// answer is [`CheckpointOutcome::RestoreEpochChanged`] and nothing is looked at
+/// or written, before any of the `seq` comparisons. `None` is no condition.
+///
+/// Spec: Fase 1 § 8.6. A checkpoint that a client built on the state before a
+/// restore must not replace the checkpoint of the restored server.
+pub fn put_checkpoint_if(
+    conn: &mut Connection,
+    vault: &VaultId,
+    cp: &StoredCheckpoint,
+    restore_epoch: Option<u64>,
+) -> Result<CheckpointOutcome, StoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let vault_seq: i64 = tx
+    let (vault_seq, current_epoch): (i64, u64) = tx
         .query_row(
-            "SELECT seq FROM ferret_vaults WHERE vault_id = ?1",
+            "SELECT seq, restore_epoch FROM ferret_vaults WHERE vault_id = ?1",
             [vault.as_bytes()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, column_u64(row, 1)?)),
         )
         .map_err(missing)?;
+    if restore_epoch.is_some_and(|wanted| wanted != current_epoch) {
+        return Ok(CheckpointOutcome::RestoreEpochChanged {
+            current: current_epoch,
+        });
+    }
     let vault_seq = u64::try_from(vault_seq).map_err(|_| int_error_signed(vault_seq))?;
     let stored = checkpoint_head(&tx, vault)?.ok_or(StoreError::NotFound)?;
     let incoming = (cp.seq, cp.digest, cp.mac);
@@ -730,6 +791,9 @@ pub struct Changes {
     pub vk_epoch: u64,
     /// How many times the vault was restored.
     pub restore_epoch: u64,
+    /// The `seq` of the vault at the last restore bump; 0 if it never was
+    /// restored. Read in the transaction of the page.
+    pub restore_seq: u64,
     /// Whether there are more rows after this page.
     pub has_more: bool,
 }
@@ -742,6 +806,7 @@ impl std::fmt::Debug for Changes {
             .field("min_valid_since", &self.min_valid_since)
             .field("vk_epoch", &self.vk_epoch)
             .field("restore_epoch", &self.restore_epoch)
+            .field("restore_seq", &self.restore_seq)
             .field("has_more", &self.has_more)
             .finish()
     }
@@ -775,9 +840,9 @@ pub fn changes_with_head(
     max_bytes: usize,
 ) -> Result<(Changes, Option<CheckpointHead>), StoreError> {
     let tx = conn.unchecked_transaction()?;
-    let (latest_seq, min_valid_since, restore_epoch, vk_epoch) = tx
+    let (latest_seq, min_valid_since, restore_epoch, restore_seq, vk_epoch) = tx
         .query_row(
-            "SELECT v.seq, v.min_valid_since, v.restore_epoch, a.vk_epoch \
+            "SELECT v.seq, v.min_valid_since, v.restore_epoch, v.restore_seq, a.vk_epoch \
          FROM ferret_vaults v JOIN ferret_accounts a ON a.account_id = v.account_id \
          WHERE v.vault_id = ?1",
             [vault.as_bytes()],
@@ -787,6 +852,7 @@ pub fn changes_with_head(
                     column_u64(row, 1)?,
                     column_u64(row, 2)?,
                     column_u64(row, 3)?,
+                    column_u64(row, 4)?,
                 ))
             },
         )
@@ -831,6 +897,7 @@ pub fn changes_with_head(
             min_valid_since,
             vk_epoch,
             restore_epoch,
+            restore_seq,
             has_more,
         },
         head,
@@ -1335,6 +1402,7 @@ mod tests {
             idem: [key; 16],
             request_hash: [key; 32],
             resurrect,
+            restore_epoch: None,
         }
     }
 

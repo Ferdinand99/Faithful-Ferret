@@ -220,6 +220,7 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("busy", StatusCode::SERVICE_UNAVAILABLE),
     ("checkpoint_stale", StatusCode::CONFLICT),
     ("checkpoint_invalid", StatusCode::UNPROCESSABLE_ENTITY),
+    ("restore_epoch_changed", StatusCode::CONFLICT),
 ];
 
 /// The status of `code`. A code that is not in the table is a bug of the

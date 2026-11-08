@@ -9,13 +9,13 @@ use std::path::PathBuf;
 use ferret_server::error::ApiError;
 use ferret_server::wire::{
     self, BatchOpForm, BatchOpJson, BatchReq, BatchRes, BatchResultJson, CHECKPOINT_ENTRY_LEN,
-    ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, CheckpointPutRes,
+    ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, CheckpointPutReq, CheckpointPutRes,
     CheckpointStaleRes, ConflictRes, ERROR_CODES, ErrorRes, HandoffRedeemRes, HandoffReq,
     HandoffRes, ItemsRes, LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq,
     LoginStartRes, MAX_BATCH_BYTES, MAX_BATCH_OPS, MAX_CHECKPOINT_ENTRIES, MethodsRes, PutItemForm,
     PutItemReq, PutItemRes, RedeemReq, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
-    RegisterStartRes, SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson, b64url, hex16,
-    parse_handoff_code, refusal_code,
+    RegisterStartRes, RestoreEpochChangedRes, RestoreRowsRes, SealedRowJson, SessionRes,
+    SyncEventJson, WireError, WrapJson, b64url, hex16, parse_handoff_code, refusal_code,
 };
 use ferret_server_auth::{AuthError, DenyReason, Malformed};
 use serde::Serialize;
@@ -97,9 +97,11 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "error_res" => through::<ErrorRes>(text),
         "batch_req" => through::<BatchReq>(text),
         "batch_res" => through::<BatchRes>(text),
-        "checkpoint_put_req" => through::<CheckpointJson>(text),
+        "checkpoint_put_req" => through::<CheckpointPutReq>(text),
         "checkpoint_put_res" => through::<CheckpointPutRes>(text),
         "checkpoint_stale_res" => through::<CheckpointStaleRes>(text),
+        "restore_epoch_changed_res" => through::<RestoreEpochChangedRes>(text),
+        "restore_rows_res" => through::<RestoreRowsRes>(text),
         "items_res" => through::<ItemsRes>(text),
         "sync_event" => through::<SyncEventJson>(text),
         other => panic!("no shape for the fixture kind {other}"),
@@ -136,6 +138,8 @@ const SHAPES: &[&str] = &[
     "checkpoint_put_req",
     "checkpoint_put_res",
     "checkpoint_stale_res",
+    "restore_epoch_changed_res",
+    "restore_rows_res",
     "items_res",
     "sync_event",
 ];
@@ -147,6 +151,8 @@ const M2_SHAPES: &[&str] = &[
     "checkpoint_put_req",
     "checkpoint_put_res",
     "checkpoint_stale_res",
+    "restore_epoch_changed_res",
+    "restore_rows_res",
     "items_res",
     "sync_event",
 ];
@@ -759,6 +765,10 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
             let page: ItemsRes = serde_json::from_str(text).unwrap();
             page.validate().map_err(|e| e.code())
         }
+        "restore_rows_res" => {
+            let page: RestoreRowsRes = serde_json::from_str(text).unwrap();
+            page.validate().map_err(|e| e.code())
+        }
         _ => Ok(()),
     }
 }
@@ -953,11 +963,17 @@ fn m2_fixtures_roundtrip_byte_for_byte() {
         BTreeSet::from([
             "batch_req.json",
             "batch_res.json",
+            "batch_res.restore_epoch_changed.json",
             "checkpoint_put_req.json",
+            "checkpoint_put_req.restore_epoch.json",
             "checkpoint_put_res.json",
             "checkpoint_stale_res.json",
             "items_res.json",
             "items_res.last.json",
+            "restore_epoch_changed_res.json",
+            "restore_rows_res.empty.json",
+            "restore_rows_res.json",
+            "restore_rows_res.last.json",
             "sync_event.json",
         ])
     );
@@ -975,7 +991,8 @@ fn m2_fixtures_roundtrip_byte_for_byte() {
 
 #[test]
 fn a_checkpoint_upload_has_whole_sorted_entries_and_the_digest_of_them() {
-    let upload: CheckpointJson = parse("checkpoint_put_req.json");
+    let upload: CheckpointPutReq = parse("checkpoint_put_req.json");
+    assert_eq!(upload.restore_epoch, None);
     let entries = &upload.entries;
     assert_eq!(entries.len() % CHECKPOINT_ENTRY_LEN, 0);
     assert!(!entries.is_empty() && entries.len() <= MAX_CHECKPOINT_ENTRIES * CHECKPOINT_ENTRY_LEN);
@@ -1438,6 +1455,7 @@ fn new_codes_have_their_status() {
         ("busy", 503),
         ("checkpoint_stale", 409),
         ("checkpoint_invalid", 422),
+        ("restore_epoch_changed", 409),
     ] {
         assert!(ERROR_CODES.contains(&code), "{code}");
         assert_eq!(ferret_server::error::status_of(code).as_u16(), status);
@@ -1448,6 +1466,224 @@ fn new_codes_have_their_status() {
     let at = |code: &str| ERROR_CODES.iter().position(|c| *c == code).unwrap();
     assert!(at("gone") < at("busy") && at("busy") < at("checkpoint_stale"));
     assert!(at("checkpoint_stale") < at("checkpoint_invalid"));
+    assert!(at("checkpoint_invalid") < at("restore_epoch_changed"));
+}
+
+#[test]
+fn restore_epoch_changed_has_status_409_on_both_sides() {
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(&read("error_statuses.json")).unwrap();
+    assert!(ERROR_CODES.contains(&"restore_epoch_changed"));
+    assert_eq!(golden["restore_epoch_changed"], 409);
+    let status = ferret_server::error::status_of("restore_epoch_changed");
+    assert_eq!(status.as_u16(), 409);
+    assert_eq!(ApiError::coded("restore_epoch_changed").status, status);
+    // The answer to a single write and to a checkpoint upload.
+    let answer: RestoreEpochChangedRes = parse("restore_epoch_changed_res.json");
+    assert_eq!(answer, RestoreEpochChangedRes::new(3));
+    assert_eq!(
+        serde_json::to_string(&answer).unwrap(),
+        r#"{"error":"restore_epoch_changed","restore_epoch":3}"#
+    );
+    for bad in [
+        r#"{"error":"conflict","restore_epoch":3}"#,
+        r#"{"error":"","restore_epoch":3}"#,
+        r#"{"error":"restore_epoch_changed"}"#,
+        r#"{"error":"restore_epoch_changed","restore_epoch":-1}"#,
+        r#"{"error":"restore_epoch_changed","restore_epoch":9007199254740992}"#,
+        r#"{"error":"restore_epoch_changed","restore_epoch":3,"x":1}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<RestoreEpochChangedRes>(bad).is_err(),
+            "{bad}"
+        );
+    }
+    // In a batch it is its own form: 409, the code and the epoch, and no field of another form.
+    let batch: BatchRes = parse("batch_res.restore_epoch_changed.json");
+    assert_eq!(batch.validate(), Ok(()));
+    assert_eq!(batch.results[1], BatchResultJson::restore_epoch_changed(3));
+    let value = serde_json::to_value(&batch.results[1]).unwrap();
+    assert_eq!(
+        keys(&value),
+        BTreeSet::from(["status", "error", "restore_epoch"])
+    );
+    assert!(!has_null(&value));
+    let bad = |value: Value| {
+        serde_json::from_value::<BatchResultJson>(value)
+            .unwrap()
+            .validate()
+            .is_err()
+    };
+    assert!(bad(
+        json!({ "status": 422, "error": "restore_epoch_changed", "restore_epoch": 3 })
+    ));
+    assert!(bad(
+        json!({ "status": 200, "error": "restore_epoch_changed", "restore_epoch": 3 })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "error": "restore_epoch_changed" })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "error": "restore_epoch_changed", "restore_epoch": 3, "rev": 2 })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "error": "restore_epoch_changed", "restore_epoch": 3, "current_rev": 2 })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "error": "restore_epoch_changed", "restore_epoch": 3, "deleted": true })
+    ));
+    assert!(bad(
+        json!({ "status": 422, "error": "idem_reuse", "restore_epoch": 3 })
+    ));
+    assert!(bad(
+        json!({ "status": 200, "rev": 2, "seq": 5, "replayed": false, "restore_epoch": 3 })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "current_rev": 5, "deleted": true, "restore_epoch": 3 })
+    ));
+    assert!(bad(json!({ "status": 409, "restore_epoch": 3 })));
+    // A refusal never has the code of this form without its epoch.
+    assert!(bad(
+        json!({ "status": 409, "error": "restore_epoch_changed" })
+    ));
+}
+
+#[test]
+fn m2_fixtures_with_restore_seq_roundtrip_in_rust_and_js() {
+    // `web/test/unit/wire.test.mjs` runs the same checks under the same name.
+    let changes: ChangesRes = parse("changes_res.json");
+    assert_eq!((changes.restore_epoch, changes.restore_seq), (2, 4));
+    let empty: ChangesRes = parse("changes_res.empty.json");
+    assert_eq!((empty.restore_epoch, empty.restore_seq), (0, 0));
+    let listing: ItemsRes = parse("items_res.json");
+    assert_eq!((listing.restore_epoch, listing.restore_seq), (2, 4));
+    let last_page: ItemsRes = parse("items_res.last.json");
+    assert_eq!((last_page.restore_epoch, last_page.restore_seq), (0, 0));
+    // The field sits after restore_epoch, and a missing or bad one is refused.
+    let text = read("changes_res.json");
+    assert!(text.contains(r#""restore_epoch":2,"restore_seq":4"#));
+    for name in ["changes_res.json", "items_res.json"] {
+        let value = json_of(name);
+        let mut without = value.clone();
+        without.as_object_mut().unwrap().remove("restore_seq");
+        let refused = |value: Value| {
+            if name == "changes_res.json" {
+                serde_json::from_value::<ChangesRes>(value).is_err()
+            } else {
+                serde_json::from_value::<ItemsRes>(value).is_err()
+            }
+        };
+        assert!(refused(without), "{name} without restore_seq");
+        for bad in [
+            json!(-1),
+            json!(1.5),
+            json!("4"),
+            json!(9_007_199_254_740_992_u64),
+        ] {
+            let mut changed = value.clone();
+            changed["restore_seq"] = bad.clone();
+            assert!(refused(changed), "{name} {bad}");
+        }
+    }
+
+    // The frozen rows: a live row has a hash, a tombstone has none.
+    let page: RestoreRowsRes = parse("restore_rows_res.json");
+    assert_eq!((page.restore_epoch, page.restore_seq), (2, 4));
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.rows.iter().filter(|row| row.hash.is_some()).count(), 1);
+    assert!(page.rows[0].id < page.rows[1].id, "item id order");
+    assert!(page.rows.iter().all(|row| row.rev >= 1 && row.seq >= 1));
+    assert_eq!(page.next_after, Some(page.rows[1].id));
+    assert!(page.has_more);
+    assert_eq!(page.validate(), Ok(()));
+    let last: RestoreRowsRes = parse("restore_rows_res.last.json");
+    assert_eq!(last.next_after, None);
+    assert!(!serde_json::to_string(&last).unwrap().contains("next_after"));
+    assert_eq!(last.validate(), Ok(()));
+    let never: RestoreRowsRes = parse("restore_rows_res.empty.json");
+    assert_eq!(
+        serde_json::to_string(&never).unwrap(),
+        r#"{"restore_epoch":0,"restore_seq":0,"rows":[],"has_more":false}"#
+    );
+    assert_eq!(never.validate(), Ok(()));
+    let mut more_without_next = page.clone();
+    more_without_next.next_after = None;
+    assert!(more_without_next.validate().is_err());
+    let mut next_on_the_last = last.clone();
+    next_on_the_last.next_after = page.next_after;
+    assert!(next_on_the_last.validate().is_err());
+    // A tombstone's hash is left out when written, and a hash is 32 bytes.
+    let value = json_of("restore_rows_res.json");
+    let rows = value["rows"].as_array().unwrap();
+    assert_eq!(
+        rows.iter().filter(|row| row.get("hash").is_some()).count(),
+        1
+    );
+    assert!(!has_null(&value));
+    for hash in [
+        b64url::encode(&[1; 31]),
+        b64url::encode(&[1; 33]),
+        format!("{}=", b64url::encode(&[1; 32])),
+    ] {
+        let mut changed = value.clone();
+        changed["rows"][0]["hash"] = json!(hash);
+        assert!(serde_json::from_value::<RestoreRowsRes>(changed).is_err());
+    }
+    let mut unknown = value.clone();
+    unknown["rows"][0]["x"] = json!(1);
+    assert!(serde_json::from_value::<RestoreRowsRes>(unknown).is_err());
+}
+
+#[test]
+fn put_batch_and_checkpoint_requests_carry_an_optional_restore_epoch() {
+    let put: PutItemReq = parse("put_item_req.restore_epoch.json");
+    assert_eq!(put.restore_epoch, Some(2));
+    assert!(put.validate().is_ok());
+    let plain: PutItemReq = parse("put_item_req.live.json");
+    assert_eq!(
+        plain.restore_epoch, None,
+        "a client without the condition still works"
+    );
+    assert!(
+        !serde_json::to_string(&plain)
+            .unwrap()
+            .contains("restore_epoch")
+    );
+    // null is a field that is left out.
+    let mut with_null = json_of("put_item_req.live.json");
+    with_null["restore_epoch"] = Value::Null;
+    let read_back: PutItemReq = serde_json::from_value(with_null).unwrap();
+    assert_eq!(read_back.restore_epoch, None);
+
+    let batch: BatchReq = parse("batch_req.json");
+    assert_eq!(batch.ops[0].restore_epoch, Some(2));
+    assert_eq!(batch.ops[1].restore_epoch, None);
+    let upload: CheckpointPutReq = parse("checkpoint_put_req.restore_epoch.json");
+    assert_eq!(upload.restore_epoch, Some(2));
+    let bare: CheckpointPutReq = parse("checkpoint_put_req.json");
+    assert_eq!(bare.restore_epoch, None);
+
+    for bad in [
+        json!(-1),
+        json!(1.5),
+        json!("2"),
+        json!(true),
+        json!([2]),
+        json!(9_007_199_254_740_992_u64),
+    ] {
+        let mut put = json_of("put_item_req.restore_epoch.json");
+        put["restore_epoch"] = bad.clone();
+        assert!(serde_json::from_value::<PutItemReq>(put).is_err(), "{bad}");
+        let mut batch = json_of("batch_req.json");
+        batch["ops"][0]["restore_epoch"] = bad.clone();
+        assert!(serde_json::from_value::<BatchReq>(batch).is_err(), "{bad}");
+        let mut upload = json_of("checkpoint_put_req.restore_epoch.json");
+        upload["restore_epoch"] = bad.clone();
+        assert!(
+            serde_json::from_value::<CheckpointPutReq>(upload).is_err(),
+            "{bad}"
+        );
+    }
 }
 
 #[test]
@@ -1482,8 +1718,10 @@ fn invalid_cases_are_refused_the_same_way_in_rust_and_js() {
 fn debug_of_the_new_types_is_redacted() {
     let batch: BatchReq = parse("batch_req.json");
     let result: BatchRes = parse("batch_res.json");
-    let upload: CheckpointJson = parse("checkpoint_put_req.json");
+    let upload: CheckpointPutReq = parse("checkpoint_put_req.json");
     let page: ItemsRes = parse("items_res.json");
+    let rows: RestoreRowsRes = parse("restore_rows_res.json");
+    let changed: RestoreEpochChangedRes = parse("restore_epoch_changed_res.json");
     let event: SyncEventJson = parse("sync_event.json");
     let stored: CheckpointPutRes = parse("checkpoint_put_res.json");
     let stale: CheckpointStaleRes = parse("checkpoint_stale_res.json");
@@ -1495,8 +1733,11 @@ fn debug_of_the_new_types_is_redacted() {
             format!("{:?}", result.results[2]),
             "BatchResultJson([redacted])",
         ),
-        (format!("{upload:?}"), "CheckpointJson([redacted])"),
+        (format!("{upload:?}"), "CheckpointPutReq([redacted])"),
         (format!("{page:?}"), "ItemsRes([redacted])"),
+        (format!("{rows:?}"), "RestoreRowsRes([redacted])"),
+        (format!("{:?}", rows.rows[0]), "RestoreRowJson([redacted])"),
+        (format!("{changed:?}"), "RestoreEpochChangedRes([redacted])"),
         (format!("{event:?}"), "SyncEventJson([redacted])"),
         (format!("{stored:?}"), "CheckpointPutRes([redacted])"),
         (format!("{stale:?}"), "CheckpointStaleRes([redacted])"),

@@ -21,7 +21,10 @@
 //! 5. the pace of the device: one stored upload per ten minutes (`429
 //!    throttled`). A refused or failed upload does not use up the turn;
 //! 6. a turn at the write gate (`503 busy`);
-//! 7. the write ([`store::put_checkpoint`]): a `seq` above the vault's is
+//! 7. the write ([`store::put_checkpoint_if`]): first the optional
+//!    `restore_epoch` the upload names (another one than the vault's is `409
+//!    restore_epoch_changed`, before any `seq` check); then a `seq` above the
+//!    vault's is
 //!    `422 checkpoint_invalid`, a lower one (or the same `seq` with other
 //!    bytes) is `409 checkpoint_stale` with the stored `seq`, and the same
 //!    bytes again are `200`;
@@ -50,8 +53,8 @@ use crate::error::ApiError;
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::state::VaultDb;
 use crate::wire::{
-    CHECKPOINT_ENTRY_LEN, CheckpointJson, CheckpointPutRes, CheckpointStaleRes,
-    MAX_CHECKPOINT_ENTRIES, refusal_code,
+    CHECKPOINT_ENTRY_LEN, CheckpointJson, CheckpointPutReq, CheckpointPutRes, CheckpointStaleRes,
+    MAX_CHECKPOINT_ENTRIES, RestoreEpochChangedRes, refusal_code,
 };
 
 /// The most bytes of a request body: 50 000 entries are 2 800 000 bytes, about
@@ -90,7 +93,7 @@ where
 ///
 /// Whether `seq` is at most the `seq` of the vault is for the store, in the
 /// transaction that writes.
-pub(crate) fn check_structure(cp: &CheckpointJson) -> Result<(), &'static str> {
+pub(crate) fn check_structure(cp: &CheckpointPutReq) -> Result<(), &'static str> {
     let max_bytes = MAX_CHECKPOINT_ENTRIES.saturating_mul(CHECKPOINT_ENTRY_LEN);
     if cp.entries.len() > max_bytes {
         return Err("too_large");
@@ -123,7 +126,7 @@ async fn put_checkpoint(
             }
         })
         .inspect_err(refused)?;
-    let cp: CheckpointJson = serde_json::from_slice(&raw)
+    let cp: CheckpointPutReq = serde_json::from_slice(&raw)
         .map_err(|e| ApiError::coded(refusal_code(&e.to_string())))
         .inspect_err(refused)?;
     check_structure(&cp)
@@ -148,6 +151,7 @@ async fn put_checkpoint(
         .inspect_err(refused)?;
     let permit = gate.enter().await.map_err(busy).inspect_err(refused)?;
     let seq = cp.seq;
+    let restore_epoch = cp.restore_epoch;
     let stored = StoredCheckpoint {
         seq: cp.seq,
         digest: cp.digest,
@@ -159,7 +163,7 @@ async fn put_checkpoint(
             // The turn moves into the closure: it is held until the write has
             // committed, even if this handler is dropped while it waits.
             let _turn = permit;
-            store::put_checkpoint(conn, &vault, &stored)
+            store::put_checkpoint_if(conn, &vault, &stored, restore_epoch)
         })
         .await
         .map_err(ApiError::from)
@@ -193,6 +197,14 @@ async fn put_checkpoint(
         CheckpointOutcome::AboveVault => {
             tracing::info!(seq, "checkpoint above the vault");
             Err(ApiError::coded("checkpoint_invalid"))
+        }
+        CheckpointOutcome::RestoreEpochChanged { current } => {
+            tracing::info!(seq, "checkpoint upload names another restore epoch");
+            Ok((
+                StatusCode::CONFLICT,
+                Json(RestoreEpochChangedRes::new(current)),
+            )
+                .into_response())
         }
     }
 }

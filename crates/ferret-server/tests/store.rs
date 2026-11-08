@@ -56,6 +56,7 @@ fn live<'a>(item_id: ItemId, base_rev: u64, blob: &'a [u8], n: u8) -> PutRequest
         idem: id16(0xe0, n),
         request_hash: hash(n),
         resurrect: false,
+        restore_epoch: None,
     }
 }
 
@@ -67,6 +68,7 @@ fn tomb<'a>(item_id: ItemId, base_rev: u64, tomb: &'a [u8], n: u8) -> PutRequest
         idem: id16(0xe0, n),
         request_hash: hash(n),
         resurrect: false,
+        restore_epoch: None,
     }
 }
 

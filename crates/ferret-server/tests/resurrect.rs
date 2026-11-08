@@ -392,6 +392,7 @@ async fn resurrect_counts_against_max_items_again() {
             idem: idem(9),
             request_hash: [9; 32],
             resurrect: true,
+            restore_epoch: None,
         };
         let limits = Limits {
             max_items: 1,

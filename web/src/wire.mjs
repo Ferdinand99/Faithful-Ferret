@@ -191,6 +191,11 @@ const change = [
   ["blob", b, true], ["tag", b32, true], ["tomb", bytes(40, "tombstone_invalid"), true],
 ];
 
+/** A checkpoint upload: a checkpoint and the restore epoch it was built on (left out: no condition). @type {Spec} */
+const checkpointPut = [...checkpoint, ["restore_epoch", int(), true]];
+/** One frozen row of a restore: what the vault held for an item at the last restore bump. @type {Spec} */
+const restoreRow = [["id", id], ["rev", int()], ["seq", int()], ["hash", b32, true]];
+
 /** The most operations in one batch. */
 export const MAX_BATCH_OPS = 100;
 
@@ -198,12 +203,13 @@ export const MAX_BATCH_OPS = 100;
 const batchOp = [
   ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
   ["tomb", bytes(40, "tombstone_invalid"), true], ["idem", id], ["resurrect", bool, true],
+  ["restore_epoch", int(), true],
 ];
-/** The result of one operation of a batch, in all three forms (see `checkStep`). @type {Spec} */
+/** The result of one operation of a batch, in all four forms (see `checkStep`). @type {Spec} */
 const batchResult = [
   ["status", int(65535)], ["rev", int(), true], ["seq", int(), true], ["replayed", bool, true],
   ["current_rev", int(), true], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
-  ["error", str, true],
+  ["error", str, true], ["restore_epoch", int(), true],
 ];
 
 /** @type {Readonly<Record<string, Spec>>} */
@@ -246,22 +252,28 @@ export const SHAPES = Object.freeze({
   change,
   changes_res: [
     ["changes", list(change)], ["latest_seq", int()], ["vk_epoch", int()], ["restore_epoch", int()],
-    ["checkpoint", nested(head), true], ["has_more", bool],
+    ["restore_seq", int()], ["checkpoint", nested(head), true], ["has_more", bool],
   ],
   put_item_req: [
     ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
     ["tomb", bytes(40, "tombstone_invalid"), true], ["idem", id], ["resurrect", bool, true],
+    ["restore_epoch", int(), true],
   ],
   put_item_res: [["rev", int()], ["seq", int()], ["replayed", bool]],
   conflict_res: [["current_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool]],
   error_res: [["error", str]],
   batch_req: [["ops", list(batchOp)]],
   batch_res: [["results", list(batchResult)]],
-  checkpoint_put_req: checkpoint,
+  checkpoint_put_req: checkpointPut,
   checkpoint_put_res: [["seq", int()]],
   checkpoint_stale_res: [["error", oneOf("checkpoint_stale")], ["stored_seq", int()]],
+  restore_epoch_changed_res: [["error", oneOf("restore_epoch_changed")], ["restore_epoch", int()]],
   items_res: [
     ["items", list(change)], ["as_of_seq", int()], ["vk_epoch", int()], ["restore_epoch", int()],
+    ["restore_seq", int()], ["next_after", id, true], ["has_more", bool],
+  ],
+  restore_rows_res: [
+    ["restore_epoch", int()], ["restore_seq", int()], ["rows", list(restoreRow)],
     ["next_after", id, true], ["has_more", bool],
   ],
   sync_event: [["seq", int()]],
@@ -353,22 +365,32 @@ export const ERROR_STATUS = Object.freeze({
   profile_rejected: 422, unsupported_envelope: 422, tombstone_invalid: 422, too_large: 413, quota_exceeded: 413,
   idem_reuse: 422, conflict: 409, protocol_header_missing: 400, forbidden_origin: 403, not_found: 404,
   bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
+  restore_epoch_changed: 409,
 });
 
 /**
  * A result of a batch has one form and carries no field of another: stored
  * (200 with rev, seq and replayed), a conflict (409 with current_rev and
- * deleted, and blob and tag when the row is live) or refused (an error code
+ * deleted, and blob and tag when the row is live), refused (an error code
  * with the status of that code; 409 is the conflict form, so a code with that
- * status is never a refusal). A revision starts at 1.
+ * status is never a refusal) or "restore epoch changed" (409 with the code
+ * `restore_epoch_changed` and the vault's `restore_epoch`). A revision starts
+ * at 1.
  * @param {any} result
  */
 function checkBatchResult(result) {
   const stored = ["rev", "seq", "replayed"].some((key) => present(result, key));
   const conflict = ["current_rev", "deleted", "blob", "tag"].some((key) => present(result, key));
   const refused = present(result, "error");
-  const bad = () => refuse("a batch result is stored, a conflict or refused, with the fields and status of its form");
+  const epoch = present(result, "restore_epoch");
+  const bad = () => refuse("a batch result is stored, a conflict, refused or restore_epoch_changed, with the fields and status of its form");
   if (Number(stored) + Number(conflict) + Number(refused) !== 1) bad();
+  if (epoch) {
+    // The one form with a restore_epoch: 409, the code, and nothing else.
+    if (!(refused && !stored && !conflict && result.error === "restore_epoch_changed" && result.status === 409)) bad();
+    return;
+  }
+  if (refused && result.error === "restore_epoch_changed") bad();
   if (stored) {
     if (!(present(result, "rev") && present(result, "seq") && present(result, "replayed") && result.status === 200)) bad();
     if (result.rev < 1) bad();
@@ -412,7 +434,7 @@ export function checkStep(kind, value) {
     if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
     for (const result of value.results) checkBatchResult(result);
   }
-  if (kind === "items_res") {
+  if (kind === "items_res" || kind === "restore_rows_res") {
     // `next_after` is there exactly when more rows follow.
     const next = value.next_after !== undefined && value.next_after !== null;
     if (next !== value.has_more) refuse("next_after is there exactly when has_more is true");

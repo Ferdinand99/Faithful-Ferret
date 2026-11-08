@@ -19,8 +19,11 @@
 //!    and the bytes of the body;
 //! 7. a turn at the write gate (`503 busy`);
 //! 8. the write ([`store::put_item`]), with `SHA-256(item_id || raw body)` as
-//!    the request hash of the idempotency record. A write that is stored (not
-//!    a replay) tells the event streams the new `seq`.
+//!    the request hash of the idempotency record. In the store the order is
+//!    the idempotency record, then the `restore_epoch` the request names (if
+//!    any; another one than the vault's is `409 restore_epoch_changed`), then
+//!    `base_rev`. A write that is stored (not a replay) tells the event
+//!    streams the new `seq`.
 //!
 //! Steps 6 and 7 come after the content checks, so a request that is wrong in
 //! itself costs the device nothing from its bucket and takes no turn.
@@ -51,7 +54,10 @@ use crate::error::{ApiError, StoreError, status_of};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::ids::MANIFEST_ITEM_ID;
 use crate::state::VaultDb;
-use crate::wire::{ConflictRes, PutItemForm, PutItemReq, PutItemRes, hex16, refusal_code};
+use crate::wire::{
+    ConflictRes, PutItemForm, PutItemReq, PutItemRes, RESTORE_EPOCH_CHANGED,
+    RestoreEpochChangedRes, hex16, refusal_code,
+};
 
 /// The most bytes of a request body. An envelope of 64 KiB is about 87 400
 /// characters of base64url, so a full envelope fits with room for the rest.
@@ -194,6 +200,7 @@ async fn put_item(
                 idem: request.idem,
                 request_hash,
                 resurrect,
+                restore_epoch: request.restore_epoch,
             };
             store::put_item(conn, &vault, &device, &put, &Limits::DEFAULT, now)
         })
@@ -216,6 +223,9 @@ async fn put_item(
         PutOutcome::ManifestNotWritable => {
             (status_of("manifest_not_writable"), "manifest_not_writable")
         }
+        PutOutcome::RestoreEpochChanged { .. } => {
+            (status_of(RESTORE_EPOCH_CHANGED), RESTORE_EPOCH_CHANGED)
+        }
     };
     tracing::info!(item_id = %item_hex, status = status.as_u16(), code, "item write");
 
@@ -237,6 +247,9 @@ async fn put_item(
             }),
         )
             .into_response()),
+        PutOutcome::RestoreEpochChanged { current } => {
+            Ok((status, Json(RestoreEpochChangedRes::new(current))).into_response())
+        }
         PutOutcome::IdemMismatch | PutOutcome::QuotaExceeded | PutOutcome::ManifestNotWritable => {
             Err(ApiError::coded(code))
         }
