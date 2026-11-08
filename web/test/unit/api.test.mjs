@@ -331,6 +331,7 @@ test("api_handles_every_error_code_with_the_status_the_server_gives_it", async (
   // The 4xx codes the sync engine must not retry: everything except these.
   const retryable = codes.filter((code) => !TERMINAL.includes(statuses[code]));
   assert.deepEqual(retryable, [
-    "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone",
+    "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone", "busy",
+    "checkpoint_stale",
   ]);
 });

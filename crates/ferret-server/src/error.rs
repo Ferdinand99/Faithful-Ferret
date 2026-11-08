@@ -178,7 +178,8 @@ impl ApiError {
 /// 400 is a request that is wrong in itself; 401, 403 and 429 are the answers
 /// of the sign-in and the guards; 409 is a state that does not allow the call;
 /// 410 is a feed cursor that is too old; 413 is a size or a quota; 422 is
-/// content the server will not store.
+/// content the server will not store; 503 is a write queue that is full, and
+/// the answer carries a `Retry-After`.
 ///
 /// `handoff_invalid` is 400 for every reason a hand-over code does not redeem
 /// (unknown, used, expired, wrong browser, ended parent session, another user's
@@ -216,6 +217,9 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("bad_request", StatusCode::BAD_REQUEST),
     ("internal", StatusCode::INTERNAL_SERVER_ERROR),
     ("gone", StatusCode::GONE),
+    ("busy", StatusCode::SERVICE_UNAVAILABLE),
+    ("checkpoint_stale", StatusCode::CONFLICT),
+    ("checkpoint_invalid", StatusCode::UNPROCESSABLE_ENTITY),
 ];
 
 /// The status of `code`. A code that is not in the table is a bug of the
@@ -331,7 +335,7 @@ mod tests {
         for code in ERROR_CODES {
             let status = status_of(code);
             assert!(
-                status.is_client_error() || *code == "internal",
+                status.is_client_error() || matches!(*code, "internal" | "busy"),
                 "{code} has status {status}"
             );
             assert_eq!(ApiError::coded(code).status, status, "{code}");
@@ -341,6 +345,7 @@ mod tests {
             StatusCode::UNPROCESSABLE_ENTITY
         );
         assert_eq!(status_of("gone"), StatusCode::GONE);
+        assert_eq!(status_of("busy"), StatusCode::SERVICE_UNAVAILABLE);
         // A code that is not listed is a bug of the caller, and reads as 500.
         assert_eq!(status_of("nope"), StatusCode::INTERNAL_SERVER_ERROR);
     }

@@ -86,6 +86,19 @@ pub const HANDOFF_CODE_BYTES: usize = 32;
 /// The longest `next` of a hand-over, in characters.
 pub const NEXT_MAX_CHARS: usize = 512;
 
+/// The most operations in one batch.
+pub const MAX_BATCH_OPS: usize = 100;
+
+/// The largest body of a batch, in bytes.
+pub const MAX_BATCH_BYTES: usize = 6 * 1024 * 1024;
+
+/// The most entries in a checkpoint.
+pub const MAX_CHECKPOINT_ENTRIES: usize = 50_000;
+
+/// The size of one checkpoint entry in bytes: the item id (16), the revision
+/// (8) and the hash of the envelope (32).
+pub const CHECKPOINT_ENTRY_LEN: usize = 56;
+
 /// The code of the answer for a refusal that came out of parsing `message`.
 ///
 /// A field with a fixed size refuses with a message that starts with
@@ -392,6 +405,39 @@ pub mod u53 {
             return Err(de::Error::custom("integer larger than 2^53 - 1"));
         }
         Ok(value)
+    }
+}
+
+/// `deserialize_with = "u53_opt::deserialize"` for `Option<u64>`: a whole
+/// number no larger than [`MAX_JSON_INT`], or `null`. Pair it with `default`
+/// and `skip_serializing_if = "Option::is_none"`.
+pub mod u53_opt {
+    use super::{Deserialize, Deserializer, MAX_JSON_INT, de};
+
+    /// Reads an integer a JavaScript number can hold, or `null`.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u64>, D::Error> {
+        let value = Option::<u64>::deserialize(deserializer)?;
+        if value.is_some_and(|n| n > MAX_JSON_INT) {
+            return Err(de::Error::custom("integer larger than 2^53 - 1"));
+        }
+        Ok(value)
+    }
+}
+
+/// `deserialize_with = "stale_code::deserialize"`: the `error` of a stale
+/// checkpoint answer is the code `checkpoint_stale` and nothing else.
+pub mod stale_code {
+    use super::{Deserialize, Deserializer, de};
+
+    /// Reads the code and refuses any other text.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        if code != "checkpoint_stale" {
+            return Err(de::Error::custom("error is not checkpoint_stale"));
+        }
+        Ok(code)
     }
 }
 
@@ -1020,6 +1066,354 @@ pub struct ConflictRes {
     pub deleted: bool,
 }
 
+/// One operation of a batch: the same as a [`PutItemReq`], with the id of the
+/// item in the body instead of in the path. A live row (`blob` and `tag`) or a
+/// tombstone (`deleted: true` and `tomb`), never both. Call
+/// [`BatchOpJson::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchOpJson {
+    /// The item.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// The revision the client built on; 0 for a new item.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub base_rev: u64,
+    /// The envelope, for a live row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b64_opt"
+    )]
+    pub blob: Option<Vec<u8>>,
+    /// The tag, for a live row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub tag: Option<[u8; 32]>,
+    /// `true` for a tombstone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<bool>,
+    /// The tombstone (40 bytes), for a deleted row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_tomb_opt"
+    )]
+    pub tomb: Option<Vec<u8>>,
+    /// Makes a retry of this operation safe.
+    #[serde(with = "serde_hex16")]
+    pub idem: [u8; 16],
+    /// `true` asks to bring a deleted item back; only a live row may ask.
+    /// Absent and `false` are the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resurrect: Option<bool>,
+}
+
+/// The one form a [`BatchOpJson`] has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BatchOpForm<'a> {
+    /// A live row.
+    Live {
+        /// The envelope.
+        blob: &'a [u8],
+        /// The tag.
+        tag: &'a [u8; 32],
+        /// Whether the row asks to bring a deleted item back.
+        resurrect: bool,
+    },
+    /// A tombstone.
+    Deleted {
+        /// The tombstone.
+        tomb: &'a [u8],
+    },
+}
+
+impl fmt::Debug for BatchOpForm<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            BatchOpForm::Live { .. } => "BatchOpForm::Live([redacted])",
+            BatchOpForm::Deleted { .. } => "BatchOpForm::Deleted([redacted])",
+        })
+    }
+}
+
+impl BatchOpJson {
+    /// Checks that the operation has exactly one form: `blob` and `tag` (and
+    /// neither `tomb` nor `deleted: true`), or `deleted: true` and `tomb` (and
+    /// neither `blob` nor `tag`), and that only the live form asks to bring an
+    /// item back (`resurrect: true`). The size of the tombstone is already
+    /// checked by parsing; the envelope is the caller's to check. Every
+    /// failure is answered with `bad_request`.
+    pub fn validate(&self) -> Result<BatchOpForm<'_>, WireError> {
+        match (&self.blob, &self.tag, self.deleted, &self.tomb) {
+            (Some(blob), Some(tag), None | Some(false), None) => Ok(BatchOpForm::Live {
+                blob,
+                tag,
+                resurrect: self.resurrect == Some(true),
+            }),
+            (None, None, Some(true), Some(tomb)) => {
+                if self.resurrect == Some(true) {
+                    return Err(WireError::Field("resurrect"));
+                }
+                Ok(BatchOpForm::Deleted { tomb })
+            }
+            _ => Err(WireError::Field("blob, tag, deleted, tomb")),
+        }
+    }
+}
+
+/// `POST /api/sync/batch`: 1 to [`MAX_BATCH_OPS`] operations, processed in
+/// order. Call [`BatchReq::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchReq {
+    /// The operations.
+    pub ops: Vec<BatchOpJson>,
+}
+
+impl BatchReq {
+    /// Checks the number of operations: at least one and at most
+    /// [`MAX_BATCH_OPS`]. The form of each operation is checked by
+    /// [`BatchOpJson::validate`], one at a time, because a bad operation is
+    /// answered in its own place and does not stop the others.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.ops.is_empty() || self.ops.len() > MAX_BATCH_OPS {
+            return Err(WireError::Field("ops"));
+        }
+        Ok(())
+    }
+}
+
+/// The result of one operation of a batch. It has exactly one form, and a
+/// field that does not belong to the form is left out (never `null`):
+///
+/// * stored: `status` 200 with `rev`, `seq` and `replayed`;
+/// * conflict: `status` 409 with `current_rev` and `deleted`, and `blob` and
+///   `tag` when the row is live;
+/// * refused: a `status` from 400 to 599 with the `error` code.
+///
+/// Call [`BatchResultJson::validate`] on a result that comes from outside.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchResultJson {
+    /// The HTTP status the same operation would have had as a single write.
+    pub status: u16,
+    /// The new revision (stored).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub rev: Option<u64>,
+    /// The sequence number of the change (stored).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub seq: Option<u64>,
+    /// Whether this result repeats an earlier one for the same `idem`
+    /// (stored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replayed: Option<bool>,
+    /// The revision on the server (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub current_rev: Option<u64>,
+    /// The envelope, when the row on the server is live (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b64_opt"
+    )]
+    pub blob: Option<Vec<u8>>,
+    /// The tag, when the row on the server is live (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub tag: Option<[u8; 32]>,
+    /// Whether the row on the server is a tombstone (conflict).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<bool>,
+    /// One of [`ERROR_CODES`] (refused).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl BatchResultJson {
+    const BLANK: Self = Self {
+        status: 0,
+        rev: None,
+        seq: None,
+        replayed: None,
+        current_rev: None,
+        blob: None,
+        tag: None,
+        deleted: None,
+        error: None,
+    };
+
+    /// The result of a stored operation.
+    pub fn stored(rev: u64, seq: u64, replayed: bool) -> Self {
+        Self {
+            status: 200,
+            rev: Some(rev),
+            seq: Some(seq),
+            replayed: Some(replayed),
+            ..Self::BLANK
+        }
+    }
+
+    /// The result of an operation that met another row on the server.
+    pub fn conflict(c: ConflictRes) -> Self {
+        Self {
+            status: 409,
+            current_rev: Some(c.current_rev),
+            blob: c.blob,
+            tag: c.tag,
+            deleted: Some(c.deleted),
+            ..Self::BLANK
+        }
+    }
+
+    /// The result of an operation the server refused with `code`: the status
+    /// is the one of the code (see [`crate::error::status_of`]).
+    pub fn refused(code: &'static str) -> Self {
+        Self {
+            status: crate::error::status_of(code).as_u16(),
+            error: Some(code.to_owned()),
+            ..Self::BLANK
+        }
+    }
+
+    /// Checks that the result has exactly one form (see the type) with the
+    /// status that goes with it. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        let has_stored = self.rev.is_some() || self.seq.is_some() || self.replayed.is_some();
+        let has_conflict = self.current_rev.is_some()
+            || self.deleted.is_some()
+            || self.blob.is_some()
+            || self.tag.is_some();
+        let ok = match (has_stored, has_conflict, self.error.as_deref()) {
+            // Stored: all three fields, and 200.
+            (true, false, None) => {
+                self.rev.is_some()
+                    && self.seq.is_some()
+                    && self.replayed.is_some()
+                    && self.status == 200
+            }
+            // Conflict: 409, and the row of the server is live (blob and tag)
+            // or deleted (neither).
+            (false, true, None) => {
+                let live = self.blob.is_some() && self.tag.is_some();
+                let neither = self.blob.is_none() && self.tag.is_none();
+                self.current_rev.is_some()
+                    && self.status == 409
+                    && match self.deleted {
+                        Some(true) => neither,
+                        Some(false) => live,
+                        None => false,
+                    }
+            }
+            // Refused: a client or server error with its code.
+            (false, false, Some(code)) => !code.is_empty() && (400..=599).contains(&self.status),
+            _ => false,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(WireError::Field("status, rev, seq, current_rev, error"))
+        }
+    }
+}
+
+/// The `200` answer to [`BatchReq`]: one result for each operation, in the
+/// order of the request.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchRes {
+    /// The results.
+    pub results: Vec<BatchResultJson>,
+}
+
+/// The `200` answer to `PUT /api/sync/checkpoint`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointPutRes {
+    /// The sequence number of the checkpoint now stored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// The `409` answer to `PUT /api/sync/checkpoint` when the stored checkpoint
+/// is newer (or the same `seq` with other bytes).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointStaleRes {
+    /// Always `checkpoint_stale`.
+    #[serde(deserialize_with = "stale_code::deserialize")]
+    pub error: String,
+    /// The sequence number of the checkpoint that is stored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub stored_seq: u64,
+}
+
+impl CheckpointStaleRes {
+    /// The answer for a stored checkpoint at `stored_seq`.
+    pub fn new(stored_seq: u64) -> Self {
+        Self {
+            error: "checkpoint_stale".to_owned(),
+            stored_seq,
+        }
+    }
+}
+
+/// `GET /api/sync/items`: one page of the full listing, in item id order,
+/// tombstones and the manifest included.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemsRes {
+    /// The rows of the page.
+    pub items: Vec<ChangeJson>,
+    /// The sequence number of the vault when the page was read.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub as_of_seq: u64,
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// Changes when the vault is restored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+    /// Where the next page starts: the id of the last row of this page. Left
+    /// out on the last page.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub next_after: Option<[u8; 16]>,
+    /// Whether more rows follow.
+    pub has_more: bool,
+}
+
+/// The data of an event on `GET /api/sync/events` (`hello` and `sync`): the
+/// sequence number of the vault and nothing else.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncEventJson {
+    /// The sequence number of the vault.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
 /// The body of every error: `{"error":"<code>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1052,6 +1446,14 @@ redacted_debug!(
     PutItemReq,
     PutItemRes,
     ConflictRes,
+    BatchOpJson,
+    BatchReq,
+    BatchResultJson,
+    BatchRes,
+    CheckpointPutRes,
+    CheckpointStaleRes,
+    ItemsRes,
+    SyncEventJson,
 );
 
 /// Every code an error body can carry. The list is stable: the web vault
@@ -1088,4 +1490,7 @@ pub const ERROR_CODES: &[&str] = &[
     "bad_request",
     "internal",
     "gone",
+    "busy",
+    "checkpoint_stale",
+    "checkpoint_invalid",
 ];

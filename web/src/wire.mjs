@@ -191,6 +191,21 @@ const change = [
   ["blob", b, true], ["tag", b32, true], ["tomb", bytes(40, "tombstone_invalid"), true],
 ];
 
+/** The most operations in one batch. */
+export const MAX_BATCH_OPS = 100;
+
+/** One operation of a batch: a put request with the item id in the body. @type {Spec} */
+const batchOp = [
+  ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
+  ["tomb", bytes(40, "tombstone_invalid"), true], ["idem", id], ["resurrect", bool, true],
+];
+/** The result of one operation of a batch, in all three forms (see `checkStep`). @type {Spec} */
+const batchResult = [
+  ["status", int(65535)], ["rev", int(), true], ["seq", int(), true], ["replayed", bool, true],
+  ["current_rev", int(), true], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
+  ["error", str, true],
+];
+
 /** @type {Readonly<Record<string, Spec>>} */
 export const SHAPES = Object.freeze({
   sealed_row: sealedRow,
@@ -240,6 +255,16 @@ export const SHAPES = Object.freeze({
   put_item_res: [["rev", int()], ["seq", int()], ["replayed", bool]],
   conflict_res: [["current_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool]],
   error_res: [["error", str]],
+  batch_req: [["ops", list(batchOp)]],
+  batch_res: [["results", list(batchResult)]],
+  checkpoint_put_req: checkpoint,
+  checkpoint_put_res: [["seq", int()]],
+  checkpoint_stale_res: [["error", oneOf("checkpoint_stale")], ["stored_seq", int()]],
+  items_res: [
+    ["items", list(change)], ["as_of_seq", int()], ["vk_epoch", int()], ["restore_epoch", int()],
+    ["next_after", id, true], ["has_more", bool],
+  ],
+  sync_event: [["seq", int()]],
 });
 
 /**
@@ -293,14 +318,67 @@ export function handoffCode(code) {
 }
 
 /**
+ * Whether a field of a value is there: a field that is left out and one that
+ * is `null` are the same.
+ * @param {any} value
+ * @param {string} key
+ */
+const present = (value, key) => value[key] !== undefined && value[key] !== null;
+
+/**
+ * An operation of a batch has one form: a live row (blob and tag, with
+ * `deleted` false or left out and no tomb), or a tombstone (`deleted` true and
+ * tomb, with no blob and no tag). Only a live row may ask to bring an item
+ * back.
+ * @param {any} op
+ */
+function checkBatchOp(op) {
+  const live = present(op, "blob") && present(op, "tag") && !present(op, "tomb") && op.deleted !== true;
+  const gone = !present(op, "blob") && !present(op, "tag") && present(op, "tomb") && op.deleted === true;
+  if (!live && !gone) refuse("a batch operation is a live row or a tombstone, never both");
+  if (gone && op.resurrect === true) refuse("only a live row asks to bring an item back");
+}
+
+/**
+ * A result of a batch has one form and carries no field of another: stored
+ * (200 with rev, seq and replayed), a conflict (409 with current_rev and
+ * deleted, and blob and tag when the row is live) or refused (400 to 599 with
+ * the error code).
+ * @param {any} result
+ */
+function checkBatchResult(result) {
+  const stored = ["rev", "seq", "replayed"].some((key) => present(result, key));
+  const conflict = ["current_rev", "deleted", "blob", "tag"].some((key) => present(result, key));
+  const refused = present(result, "error");
+  const bad = () => refuse("a batch result is stored, a conflict or refused, with the fields and status of its form");
+  if (Number(stored) + Number(conflict) + Number(refused) !== 1) bad();
+  if (stored) {
+    if (!(present(result, "rev") && present(result, "seq") && present(result, "replayed") && result.status === 200)) bad();
+  } else if (conflict) {
+    const rows = present(result, "blob") && present(result, "tag");
+    const neither = !present(result, "blob") && !present(result, "tag");
+    if (!present(result, "current_rev") || !present(result, "deleted") || result.status !== 409) bad();
+    if (result.deleted ? !neither : !rows) bad();
+  } else if (result.error === "" || result.status < 400 || result.status > 599) {
+    bad();
+  }
+}
+
+/**
  * The checks that come with a shape once it is read: a hand-over code, the two
- * forms of an item write (a live row, or a tombstone, never both) and the two
- * forms of a conflict answer.
+ * forms of an item write (a live row, or a tombstone, never both), the two
+ * forms of a conflict answer, and for a batch the number of operations and the
+ * form of each operation and result.
  * @param {string} kind
  * @param {any} value
  */
 export function checkStep(kind, value) {
   if (kind === "redeem_req") handoffCode(value.code);
+  if (kind === "batch_req") {
+    if (value.ops.length < 1 || value.ops.length > MAX_BATCH_OPS) refuse("a batch has 1 to 100 operations");
+    for (const op of value.ops) checkBatchOp(op);
+  }
+  if (kind === "batch_res") for (const result of value.results) checkBatchResult(result);
   if (kind === "conflict_res") {
     // The current row of an item: a live row has its blob and tag, a deleted one neither.
     const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
