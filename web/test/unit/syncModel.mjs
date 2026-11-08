@@ -637,8 +637,15 @@ export class Sim {
     const ids = new Set();
     for (const dev of this.devices) {
       const db = dev.d.store.database.store;
-      for (const row of await cache.getRows(db, scope())) ids.add(row.itemId);
+      const cached = new Set();
+      for (const row of await cache.getRows(db, scope())) {
+        ids.add(row.itemId);
+        cached.add(row.itemId);
+      }
       for (const entry of await outbox.all(db, scope())) ids.add(entry.itemId);
+      // What the device wrote and the server took, but the device has not read back yet (its feed has been failing): the engine still
+      // knows the item by its own write, though no row of it is stored.
+      for (const write of this.writes) if (write.dev === dev.label && !cached.has(write.id)) ids.add(write.id);
     }
     return ids;
   }
