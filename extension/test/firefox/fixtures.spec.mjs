@@ -290,8 +290,8 @@ test("a_page_full_of_forged_events_changes_nothing_by_itself", async () => {
 });
 
 test("the_homograph_hosts_are_served_as_their_a_labels", async () => {
-  // A host name typed with a Cyrillic o, with an all-Cyrillic label or with a
-  // Devanagari digit goes over the wire as its A-label. This checks the sites and
+  // A host name typed with a Cyrillic a in the registrable label, with an
+  // all-Cyrillic registrable label or with a Devanagari digit goes over the wire as its A-label. This checks the sites and
   // the browser's own parser; the popup's display rules are the core's
   // display_host (see expect.display of the sites), which a later test of the
   // extension compares against.

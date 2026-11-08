@@ -18,18 +18,23 @@
 // Test-only: nothing under test/ is ever packaged (the release check refuses it),
 // and the host names are internal hosts the release check refuses as well.
 
-/** The name a person types for the mixed-script homograph: a Cyrillic small o (U+043E) for the Latin one in "login". */
-export const HOMOGRAPH_UNICODE_HOST = "lоgin.example.net";
+// The deceptive character sits in the registrable label (as in a real attack: a
+// name under example.net itself would be reachable only by whoever owns
+// example.net), so these are other registrable domains and a domain entry for
+// login.example.net does not match them either.
+
+/** The name a person types for the mixed-script homograph: a Cyrillic small a (U+0430) for the Latin one in "example". The label mixes scripts, so the core keeps its A-label. */
+export const HOMOGRAPH_UNICODE_HOST = "login.exаmple.net";
 /** Its A-label form, which is what the browser sends and what the fixture server's certificate names. */
-export const HOMOGRAPH_A_LABEL_HOST = "xn--lgin-55d.example.net";
+export const HOMOGRAPH_A_LABEL_HOST = "login.xn--exmple-4nf.net";
 
-/** A label written entirely in Cyrillic that looks like "apple" (one script, so it is shown in Unicode). */
-export const CONFUSABLE_UNICODE_HOST = "аррӏе.example.net";
-export const CONFUSABLE_A_LABEL_HOST = "xn--80ak6aa92e.example.net";
+/** A registrable label written entirely in Cyrillic that looks like "apple": one script, so the core shows it in Unicode (with the A-label beside it). */
+export const CONFUSABLE_UNICODE_HOST = "login.аррӏе.net";
+export const CONFUSABLE_A_LABEL_HOST = "login.xn--80ak6aa92e.net";
 
-/** "login" with a Devanagari digit zero for the o: digits do not count as a script, so the label is shown in Unicode. */
-export const DIGIT_UNICODE_HOST = "l०gin.example.net";
-export const DIGIT_A_LABEL_HOST = "xn--lgin-qkj.example.net";
+/** "example" with a Devanagari digit zero for the o: a digit of another script counts as a letter of its script, so the label mixes scripts and the core keeps the A-label. */
+export const DIGIT_UNICODE_HOST = "login.ex०mple.net";
+export const DIGIT_A_LABEL_HOST = "login.xn--exmple-x9m.net";
 
 /**
  * @typedef {"https" | "alt" | "http"} Listener
@@ -50,8 +55,8 @@ export const ORIGINS = Object.freeze({
   loginAlt: { scheme: "https", host: "login.example.net", listener: "alt" },
   wwwHttp: { scheme: "http", host: "www.example.net", listener: "http" },
   // Look-alikes: a dash for the dot, the real host as the left part of a foreign
-  // one, another top-level domain, a mixed-script homograph (Cyrillic o in
-  // login), an all-Cyrillic label and a label with a Devanagari digit.
+  // one, another top-level domain, a mixed-script homograph (Cyrillic a in
+  // example), an all-Cyrillic registrable label and a label with a Devanagari digit.
   dash: { scheme: "https", host: "login-example.net", listener: "https" },
   suffix: { scheme: "https", host: "login.example.net.evil.test", listener: "https" },
   tld: { scheme: "https", host: "login.example.org", listener: "https" },

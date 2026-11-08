@@ -148,7 +148,7 @@ add({
 
 add({
   id: "lookalike-homograph", origin: "homograph", path: "/",
-  summary: "A valid mixed-script homograph: a Cyrillic o in login. The browser turns it into an xn-- host. The core keeps the A-label for a label that mixes scripts, so the popup shows the A-label only.",
+  summary: "A valid mixed-script homograph in the registrable label: login.example.net with a Cyrillic a in example. The browser turns it into an xn-- host. The core keeps the A-label for a label that mixes scripts, so the popup shows the A-label only. Another registrable domain, so a domain entry does not match.",
   expect: {
     ...NO_OFFER,
     typed: HOMOGRAPH_UNICODE_HOST,
@@ -162,7 +162,7 @@ add({
 
 add({
   id: "lookalike-confusable", origin: "confusable", path: "/",
-  summary: "A label written entirely in Cyrillic that looks like apple: one script, so the core shows the Unicode form, and the popup must show the A-label beside it.",
+  summary: "login under a registrable label written entirely in Cyrillic that looks like apple: one script, so the core shows the Unicode form, and the popup must show the A-label beside it. Its own registrable domain, so no entry matches.",
   expect: {
     ...NO_OFFER,
     typed: CONFUSABLE_UNICODE_HOST,
@@ -176,11 +176,11 @@ add({
 
 add({
   id: "lookalike-digit", origin: "digit", path: "/",
-  summary: "login with a Devanagari digit zero for the o: digits do not count as a script, so the core shows the Unicode form, and the popup must show the A-label beside it.",
+  summary: "login.example.net with a Devanagari digit zero for the o in example: a digit of another script counts as a letter of its script, so the label mixes scripts and the core keeps the A-label, so the popup shows the A-label only. Another registrable domain, so a domain entry does not match.",
   expect: {
     ...NO_OFFER,
     typed: DIGIT_UNICODE_HOST,
-    display: { a_label: DIGIT_A_LABEL_HOST, unicode: DIGIT_UNICODE_HOST },
+    display: { a_label: DIGIT_A_LABEL_HOST, unicode: DIGIT_A_LABEL_HOST },
   },
   render: () => page({
     id: "lookalike-digit",
@@ -230,7 +230,7 @@ add({
 
 add({
   id: "http-top-https-frame", origin: "wwwHttp", path: "/t/https-frame.html",
-  summary: "An http page that frames the entry's own https page: the frame's origin matches, but an ancestor is http, so nothing is offered in the frame.",
+  summary: "An http page that frames the entry's own https page: the frame's origin matches, but an ancestor is http, so nothing is offered in the frame. It is also refused by the schemeful same-site check (http and https are not the same site); http-framed-same-site is the case that isolates the ancestor rule.",
   expect: { outcome: "no_offer_in_frame", domain_entry: "no_offer_in_frame", http_entry: "no_offer_in_frame", frame: "login-frame", frameOrigin: "login" },
   render: ({ url }) => page({
     id: "http-top-https-frame",

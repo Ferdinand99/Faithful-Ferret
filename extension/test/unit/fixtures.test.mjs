@@ -46,25 +46,33 @@ test("the_example_family_is_under_names_the_public_suffix_list_knows", () => {
 });
 
 test("the_homograph_hosts_have_the_a_labels_the_standard_gives", () => {
-  assert.equal(HOMOGRAPH_UNICODE_HOST.codePointAt(1), 0x043e, "the second character is a Cyrillic small o");
+  assert.equal(HOMOGRAPH_UNICODE_HOST.codePointAt(8), 0x0430, "the third letter of example is a Cyrillic small a");
+  assert.equal(DIGIT_UNICODE_HOST.codePointAt(8), 0x0966, "the o of example is a Devanagari digit zero");
   assert.equal(domainToASCII(HOMOGRAPH_UNICODE_HOST), HOMOGRAPH_A_LABEL_HOST);
   assert.equal(domainToASCII(CONFUSABLE_UNICODE_HOST), CONFUSABLE_A_LABEL_HOST);
   assert.equal(domainToASCII(DIGIT_UNICODE_HOST), DIGIT_A_LABEL_HOST);
   assert.equal(domainToUnicode(CONFUSABLE_A_LABEL_HOST), CONFUSABLE_UNICODE_HOST);
   assert.equal(domainToUnicode(DIGIT_A_LABEL_HOST), DIGIT_UNICODE_HOST);
+  // The deceptive character is in the registrable label: each is another
+  // registrable domain than example.net, so a domain entry cannot match it.
+  for (const host of [HOMOGRAPH_A_LABEL_HOST, CONFUSABLE_A_LABEL_HOST, DIGIT_A_LABEL_HOST]) {
+    assert.notEqual(host.split(".").slice(-2).join("."), "example.net", host);
+    assert.ok(host.split(".").slice(-2)[0].startsWith("xn--"), `${host}: the registrable label is the A-label`);
+  }
   assert.equal(ORIGINS.homograph.host, HOMOGRAPH_A_LABEL_HOST);
   assert.equal(ORIGINS.confusable.host, CONFUSABLE_A_LABEL_HOST);
   assert.equal(ORIGINS.digit.host, DIGIT_A_LABEL_HOST);
-  // The mixed-script label (Latin letters with a Cyrillic o) is shown as the
-  // A-label only; the all-Cyrillic label and the digit label are shown in Unicode
-  // with the A-label beside it.
-  const { display } = /** @type {any} */ (siteById("lookalike-homograph").expect);
-  assert.equal(display.unicode, display.a_label);
-  for (const id of ["lookalike-confusable", "lookalike-digit"]) {
-    const shown = /** @type {any} */ (siteById(id).expect).display;
-    assert.notEqual(shown.unicode, shown.a_label, id);
-    assert.ok(shown.a_label.startsWith("xn--"), id);
+  // A label that mixes scripts (Latin letters with a Cyrillic letter, or with a
+  // digit of another script, which counts as a letter of its script) is shown as
+  // the A-label only; the all-Cyrillic label is shown in Unicode with the
+  // A-label beside it.
+  for (const id of ["lookalike-homograph", "lookalike-digit"]) {
+    const { display } = /** @type {any} */ (siteById(id).expect);
+    assert.equal(display.unicode, display.a_label, id);
   }
+  const shown = /** @type {any} */ (siteById("lookalike-confusable").expect).display;
+  assert.notEqual(shown.unicode, shown.a_label);
+  assert.ok(shown.a_label.includes("xn--"));
 });
 
 test("the_site_table_covers_every_case_and_is_well_formed", () => {

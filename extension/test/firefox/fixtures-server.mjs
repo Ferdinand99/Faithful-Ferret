@@ -98,7 +98,7 @@ export function makeCertificates(dir, hosts) {
  *
  * `port`, `altPort` and `httpPort` are the three listeners; 0 picks a free port.
  * The runner uses 443, 8443 and 80, so the test sites have the same origins as
- * a real site (https://login.example.test/ has no port in it). Two listeners
+ * a real site (https://login.example.net/ has no port in it). Two listeners
  * cannot share a port.
  * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string }} [options]
  * @returns {Promise<Fixtures>}

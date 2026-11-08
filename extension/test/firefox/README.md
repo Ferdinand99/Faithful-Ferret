@@ -52,7 +52,7 @@ same-site and `domain` matches would never hold there).
 
 The fixture server serves them on three listeners (https on 443, a second https
 port 8443 and http on 80 in the runner; the container allows unprivileged
-processes to bind them), so `https://login.example.test/` is an ordinary origin
+processes to bind them), so `https://login.example.net/` is an ordinary origin
 without a port. `server.siteUrl(id)` and `server.origin(name)` give the
 addresses of a run. Every host is in `test/fixtures/hosts.json`, so the runner
 maps it to the server and the release check refuses it in a release. Nothing
