@@ -6,6 +6,7 @@ import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache, rowOfChange } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
+import { setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState } from "../../src/store/syncState.mjs";
 import { createSyncEngine, MANIFEST_ID, SyncError } from "../../src/sync/engine.mjs";
 import { memoryStore, unavailableMemory } from "../../src/sync/memory.mjs";
@@ -570,5 +571,187 @@ test("idle_is_emitted_after_every_pass", async () => {
   setRow(model, client, ID_A, 1, "A");
   await t.engine.syncNow();
   assert.equal(idles(), 3);
+  t.engine.stop();
+});
+
+// ------------------------------------------------------------ two tabs on one server
+
+/** An engine whose next page is held back after the server has answered, until `release()`. */
+function holdNextPage(t) {
+  const real = t.api.get;
+  let armed = true;
+  let reached;
+  let release;
+  const arrived = new Promise((resolve) => { reached = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.api.get = async (path) => {
+    const page = await real(path);
+    if (armed) {
+      armed = false;
+      reached();
+      await gate;
+    }
+    return page;
+  };
+  return { arrived, release };
+}
+
+test("a_page_that_another_tab_has_overtaken_is_fetched_again_and_does_not_halt", async () => {
+  const client = createFakeClient();
+  const db = await freshStore();
+  const locks = new FakeLocks();
+  const model = new Model();
+  const a = await tab({ model, client, db, locks, seed: 1 });
+  const b = await tab({ model, client, db, locks, seed: 2 });
+  await a.engine.start();
+  await b.engine.start();
+
+  // The top seq: the page of the first tab says 100; before it is given to the memory, the second tab has taken 101.
+  setRow(model, client, ID_X, 1, "X", { seq: 100 });
+  const held = holdNextPage(a);
+  const pass = a.engine.syncNow();
+  await held.arrived;
+  setRow(model, client, ID_Y, 1, "Y", { seq: 101 });
+  await b.engine.syncNow();
+  const gets = a.api.gets.length;
+  held.release();
+  await pass;
+  assert.equal(a.engine.health().halted, null, "no halt");
+  assert.deepEqual(warnings(a), [], "and no warning");
+  assert.deepEqual(a.engine.list().map((i) => i.id).sort(), [ID_X, ID_Y], "the page was fetched again and taken");
+  assert.equal(a.api.gets.length, gets + 1, "once");
+  assert.equal((await floorsOf(a)).maxSeq, 101);
+
+  // A revision: the page of the first tab has X at 5 and the top 171, and the second tab has taken X at 6 under the same top.
+  setRow(model, client, ID_X, 5, "X five", { seq: 171 });
+  const second = holdNextPage(a);
+  const again = a.engine.syncNow();
+  await second.arrived;
+  setRow(model, client, ID_X, 6, "X six", { seq: 171 });
+  await b.engine.syncNow();
+  second.release();
+  await again;
+  assert.equal(a.engine.health().halted, null);
+  assert.deepEqual(warnings(a), [], "no false warning for a row that another tab has overtaken");
+  assert.equal(a.engine.list().find((i) => i.id === ID_X).rev, 6);
+  a.engine.stop();
+  b.engine.stop();
+});
+
+test("a_server_that_really_lies_still_halts", async () => {
+  const client = createFakeClient();
+  // No other tab: a top below the remembered one halts at the first answer, with no second fetch.
+  {
+    const model = new Model();
+    const a = await tab({ model, client, seed: 1 });
+    await a.engine.start();
+    setRow(model, client, ID_X, 1, "X", { seq: 100 });
+    await a.engine.syncNow();
+    model.latestSeqLie = 40;
+    setRow(model, client, ID_Y, 1, "Y", { seq: 101 });
+    const gets = a.api.gets.length;
+    await a.engine.syncNow();
+    assert.equal(a.engine.health().halted, "rollback_suspected");
+    assert.equal(a.api.gets.length, gets + 1, "not fetched again: nothing had moved");
+    a.engine.stop();
+  }
+  // Another tab did move the memory, but the server says the same low top the second time: it halts then.
+  {
+    const model = new Model();
+    const c = await tab({ model, client, seed: 3 });
+    const d = await tab({ model, client, db: c.store.database, locks: c.locks, seed: 4 });
+    await c.engine.start();
+    await d.engine.start();
+    setRow(model, client, ID_X, 1, "X", { seq: 100 });
+    const held = holdNextPage(c);
+    const pass = c.engine.syncNow();
+    await held.arrived;
+    setRow(model, client, ID_Y, 1, "Y", { seq: 101 });
+    await d.engine.syncNow();
+    model.latestSeqLie = 100; // still below what the other tab stored
+    const before = c.api.gets.length;
+    held.release();
+    await pass;
+    assert.equal(c.engine.health().halted, "rollback_suspected");
+    assert.equal(c.api.gets.length, before + 1, "fetched again once, no more");
+    assert.deepEqual(c.engine.list(), [], "nothing of either page was used");
+    c.engine.stop();
+    d.engine.stop();
+  }
+});
+
+// ------------------------------------------------------------ what a halted page leaves behind
+
+test("a_page_that_halts_the_engine_leaves_no_mark_placeholder_or_warning", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A", { seq: 5 });
+  const t = await tab({ model, client });
+  await t.engine.start();
+  const flagsKey = `sync.flags.${ACCOUNT}.${scope().vaultId}.${scope().vkEpoch}`;
+  // The page has an item that cannot be opened, a tombstone that does not verify and a row below a local one, under a top that is too low.
+  model.set(ID_C, { rev: 1, blob: b64u.encode(new Uint8Array(64).fill(3)), tag: b64u.encode(new Uint8Array(32).fill(4)), seq: 6 });
+  model.set(ID_B, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40).fill(1)), seq: 7 });
+  model.latestSeqLie = 3;
+  const heard = t.events.changed.length;
+  await t.engine.syncNow();
+  assert.equal(t.engine.health().halted, "rollback_suspected");
+  assert.deepEqual(t.engine.list().map((i) => i.id), [ID_A], "no placeholder for the item that could not be opened");
+  assert.deepEqual(warnings(t), [], "no warning of the page that was thrown away");
+  assert.equal(await t.store.getSetting(t.store.database.store, flagsKey), undefined, "no mark was saved");
+  assert.equal(t.events.changed.length, heard);
+  t.engine.stop();
+});
+
+// ------------------------------------------------------------ the first contact and the first start
+
+test("a_restored_server_at_the_first_contact_is_a_restore_and_stores_no_epoch", async () => {
+  const client = createFakeClient();
+  const model = new Model();
+  setRow(model, client, ID_A, 2, "A two", { seq: 2 });
+  model.restoreEpoch = 1;
+  const db = await freshStore();
+  await cache.putRows(db.store, scope(), [rowOfChange({ id: ID_A, rev: 3, seq: 7, deleted: false, ...client.wireRow(ID_A, 3, { item_type: "login", name: "A three" }) })]);
+  const t = await tab({ model, client, db });
+  await t.engine.start();
+  assert.equal(t.engine.health().halted, "server_restored", "not a plain rollback");
+  assert.equal((await stateOf(t)).restoreEpoch, null, "nothing was stored from a page that was not accepted");
+  assert.equal(t.engine.list()[0].rev, 3);
+  t.engine.stop();
+});
+
+test("seeding_leaves_out_items_that_were_uploaded_again_and_drops_cached_rows_the_core_refuses", async () => {
+  const client = createFakeClient();
+  const model = new Model();
+  const db = await freshStore();
+  await cache.putRows(db.store, scope(), [
+    rowOfChange({ id: ID_A, rev: 3, seq: 7, deleted: false, ...client.wireRow(ID_A, 3, { item_type: "login", name: "A" }) }),
+    rowOfChange({ id: ID_B, rev: 1, seq: 5, deleted: false, ...client.wireRow(ID_B, 1, { item_type: "login", name: "B again" }) }),
+    rowOfChange({ id: ID_C, rev: 1, seq: 6, deleted: false, blob: b64u.encode(new Uint8Array(64).fill(3)), tag: b64u.encode(new Uint8Array(32).fill(4)) }),
+  ]);
+  const flagsKey = `sync.flags.${ACCOUNT}.${scope().vaultId}.${scope().vkEpoch}`;
+  await setSetting(db.store, flagsKey, { v: 1, marks: { [ID_B]: { kind: "reuploaded", rev: 5 } }, blocked: {} });
+  setRow(model, client, ID_A, 3, "A", { seq: 7 });
+  const t = await tab({ model, client, db });
+  await t.engine.start();
+  const floors = await floorsOf(t);
+  assert.deepEqual(floors.revs, { [ID_A]: 3 }, "no floor from the copy of the item that was uploaded again, none from the row that does not verify");
+  assert.ok(!(await rowsOf(t)).some((r) => r.itemId === ID_C), "the row that was refused is gone from the cache");
+  assert.ok((await rowsOf(t)).some((r) => r.itemId === ID_B), "the other copy is kept");
+  assert.deepEqual(warnings(t, "cached_row_dropped").map((w) => [w.id, w.reason]), [[ID_C, "decrypt"]]);
+  assert.match(t.api.gets[0], /since=0&/, "the feed is read from the start again");
+  assert.equal(t.engine.list().some((i) => i.id === ID_C), false);
+  t.engine.stop();
+});
+
+test("a_device_name_that_cannot_be_worked_out_does_not_stop_the_engine", async () => {
+  const model = new Model();
+  const t = await tab({ model, deviceName: async () => { throw new Error("no name"); } });
+  await t.engine.start();
+  assert.equal(t.engine.health().halted, null);
+  const id = await t.engine.create(DRAFT);
+  const open = await t.engine.open(id);
+  assert.equal(open.view.device, null);
+  await open.close();
   t.engine.stop();
 });

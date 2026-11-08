@@ -174,8 +174,9 @@ export function createSyncEngine({
    * and stays the floor of the item. `reuploaded`: the copy was uploaded again
    * (the server numbers it from 1) and the old floor is kept. `sent` lists the
    * writes of this device made since (`<rev>:<r|t>:<digest>`): they are the only
-   * rows below the floor that are accepted, byte for byte.
-   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server" | "reuploaded", rev: number, sent?: string[] }>}
+   * rows below the floor that are accepted, byte for byte. `fresh` (only on a mark that was made again) lists
+   * the ones made since that mark.
+   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server" | "reuploaded", rev: number, sent?: string[], fresh?: string[] }>}
    */
   const flags = new Map();
   /** Items whose upload has been answered by the server in this session. @type {Set<string>} */
@@ -230,6 +231,7 @@ export function createSyncEngine({
   function halt(code) {
     if (halted !== null) return;
     halted = code;
+    listing = null; // a listing that was under way is not finished: the ids it has seen so far say nothing about what is missing
     if (pollTimer !== null) timers.clear(pollTimer);
     pollTimer = null;
     runner.hold();
@@ -355,8 +357,13 @@ export function createSyncEngine({
     let since = cursor;
     let restarted = false;
     /** What this pass has learned about the restore epoch of the server. @type {PassState} */
-    const pass = { stored: (await memory.load()).restoreEpoch, raised: null, lower: false };
+    const pass = { stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false };
+    /** The page was fetched again once, because another tab had moved the memory since the first fetch. */
+    let refetched = false;
     for (;;) {
+      // What the memory held before this page was asked for. If it has moved by the time the page is given to
+      // it, another tab saved in between, and a page that now looks too old may only be older than that.
+      const snapshot = (await memory.load()).memory;
       /** @type {any} */
       let page;
       try {
@@ -374,7 +381,12 @@ export function createSyncEngine({
       if (stopped) return;
       checkPage(page, since);
       await checkEpoch(pass, page.restore_epoch);
-      await applyPage(db, page, pass);
+      const outcome = await applyPage(db, page, pass, { snapshot, mayRefetch: !refetched });
+      if (outcome === "refetch") {
+        refetched = true; // once: a server that is really lying says the same again, and the engine halts then
+        continue;
+      }
+      refetched = false;
       if (stopped) return;
       if (page.changes.length > 0) {
         since = page.changes[page.changes.length - 1].seq; // the last row, not latest_seq
@@ -389,8 +401,9 @@ export function createSyncEngine({
 
   /**
    * @typedef {object} PassState what one pass over the feed has learned about the restore epoch
-   * @property {number | null} stored the highest epoch this device has accepted (null: none yet)
-   * @property {number | null} raised the highest epoch the server showed that is above `stored`
+   * @property {number | null} stored the highest epoch this device has accepted (null: none yet, a first contact)
+   * @property {number | null} first on a first contact: the epoch the server shows, to be stored when the pass has gone well
+   * @property {number | null} raised the highest epoch the server showed that is above `stored` (on a first contact: above zero)
    * @property {boolean} lower something the server showed is below what this device remembers
    */
 
@@ -425,29 +438,43 @@ export function createSyncEngine({
   }
 
   /**
-   * The restore epoch of a page against the one this device has accepted. The
-   * first one is stored. A lower one halts. A higher one is not stored until the
-   * pass has seen nothing below what the device remembers (`finishEpoch`).
+   * The restore epoch of a page against the one this device has accepted. A lower one
+   * halts. A higher one is not stored until the pass has seen nothing below what the
+   * device remembers (`finishEpoch`). With none stored yet (a first contact) the epoch
+   * is stored only when the pass has gone well, and any epoch above zero counts as
+   * raised, so a server that was restored before this device ever stored one is told
+   * apart from a plain rollback.
    * @param {PassState} pass @param {number} epoch
    */
   async function checkEpoch(pass, epoch) {
     if (pass.stored === null) {
-      pass.stored = await saveEpoch(epoch);
-    } else if (epoch < pass.stored) {
+      if (pass.first === null || epoch > pass.first) pass.first = epoch;
+      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+      return;
+    }
+    if (epoch < pass.stored) {
       throw new SyncError("restore_epoch_lowered", "The server shows an older restore epoch than this device has seen.");
     }
-    if (pass.stored !== null && epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
   }
 
   /**
    * The end of a pass. A higher epoch with something lower on the server means the
    * server was restored from a backup: the engine halts and the user decides. A
-   * higher epoch without it is stored, with a message.
+   * higher epoch without it is stored, with a message (a first contact stores it
+   * without one: there was nothing to compare with).
    * @param {PassState} pass
    */
   async function finishEpoch(pass) {
+    if (pass.raised === null && pass.first === null) return;
+    if (pass.raised !== null && pass.lower) throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    if (pass.stored === null) {
+      pass.stored = await saveEpoch(/** @type {number} */ (pass.first));
+      pass.first = null;
+      pass.raised = null;
+      return;
+    }
     if (pass.raised === null) return;
-    if (pass.lower) throw new SyncError("server_restored", "The server was restored to an earlier state.");
     const from = pass.stored;
     await saveEpoch(pass.raised);
     pass.stored = pass.raised;
@@ -458,11 +485,19 @@ export function createSyncEngine({
   /**
    * One page of the feed. First every row is judged without changing anything
    * (the core opens it, the tombstone is verified, the floors of this device are
-   * compared); then the rows that stand are given to the sync memory; only the
-   * rows the memory takes change the rows, the index, the overlay and the marks.
+   * compared); what the judging would do besides (marks, warnings, the list of ids a
+   * listing has shown) is kept and done only when the page is used. Then the rows
+   * that stand are given to the sync memory; only the rows the memory takes change
+   * the rows, the index, the overlay and the marks. A page that halts the engine, or
+   * that is fetched again, has therefore changed nothing.
+   *
+   * Answers "refetch" when the memory refused something that another tab's save may
+   * explain (see `acceptPage`) and the page has not been fetched again yet.
    * @param {any} db @param {any} page @param {PassState} pass
+   * @param {{ snapshot: Uint8Array, mayRefetch: boolean }} again
+   * @returns {Promise<"done" | "refetch" | undefined>}
    */
-  async function applyPage(db, page, pass) {
+  async function applyPage(db, page, pass, { snapshot, mayRefetch }) {
     const changes = /** @type {any[]} */ (page.changes);
     /**
      * A row that stands, and what it does to the engine once the memory has it.
@@ -473,6 +508,12 @@ export function createSyncEngine({
     const staged = new Map();
     /** @type {Set<string>} */
     const touched = new Set();
+    /** What judging a row would do besides planning it: marks, warnings. Done only when the page is used. @type {Array<() => void>} */
+    const later = [];
+    /** The ids of this page, for the list of a full listing. @type {string[]} */
+    const shown = [];
+    /** Something on this page is below what this device remembers. */
+    let lowerHere = false;
     /** Marks that end with this page; they go only after the rows are in the cache. @type {Map<string, "clear" | "drop">} */
     const ending = new Map();
     /** The rows this page replaced, to put back when the cache write fails. @type {Map<string, CachedRow | undefined>} */
@@ -484,13 +525,20 @@ export function createSyncEngine({
     };
     /** A row below what this device remembers. @param {string} code @param {Record<string, any>} extra */
     const lowerSeen = (code, extra) => {
-      pass.lower = true;
-      warn(code, extra);
+      lowerHere = true;
+      later.push(() => warn(code, extra));
+    };
+    /** @param {string} id @param {number} rev @param {string} reason */
+    const damaged = (id, rev, reason) => {
+      later.push(() => {
+        markDamaged(id, rev, reason);
+        touched.add(id);
+      });
     };
     for (const change of changes) {
       if (stopped) return;
       const id = /** @type {string} */ (change.id);
-      listing?.add(id);
+      shown.push(id);
       if (abandoned.has(id)) continue;
       /** @type {CachedRow} */
       let row;
@@ -504,8 +552,7 @@ export function createSyncEngine({
           lowerSeen("rev_lower_than_local", { id, rev: change.rev, localRev: floor });
           continue;
         }
-        markDamaged(id, change.rev, "malformed");
-        touched.add(id);
+        damaged(id, change.rev, "malformed");
         continue;
       }
       let local = staged.get(id) ?? rows.get(id);
@@ -517,9 +564,13 @@ export function createSyncEngine({
         alive();
         if (mark.sent?.includes(key)) {
           ours = true;
-          // Only the row that replaces the old copy (at or below the floor) skips the check against the local row; a replay of an own
-          // earlier version still has to be above what this device has now. The first copy was at the floor itself; after a second loss it is below it.
-          if (mark.kind === "missing_on_server" && local && local.rev <= mark.rev) local = undefined;
+          // The row that replaces the old copy skips the check against the local row; a replay of an own earlier version
+          // still has to be above what this device has now. The first copy was at the floor itself. After the item was
+          // left out a second time, the copy uploaded after the new mark is below the floor: that is why the keys of
+          // writes made since the mark are listed apart (`fresh`), and only they get the wider rule. A key that was kept
+          // from before (a write still queued when the mark was made again) is held to the narrow one.
+          const replaces = local !== undefined && (local.rev === mark.rev || (mark.fresh?.includes(key) === true && local.rev <= mark.rev));
+          if (mark.kind === "missing_on_server" && replaces) local = undefined;
         } else if (row.rev < mark.rev) {
           lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
           continue;
@@ -561,13 +612,15 @@ export function createSyncEngine({
           await client.vault.verify_tombstone(hex16.decode(id), row.rev, /** @type {Uint8Array} */ (row.tomb));
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
-          // A mark that keeps a floor is not replaced: the floor would go with it.
-          if (!keepsFloor(id)) {
-            flags.set(id, { kind: "quarantined", rev: row.rev });
-            flagsDirty = true;
-          }
-          touched.add(id);
-          warn("tombstone_unverified", { id, rev: row.rev });
+          later.push(() => {
+            // A mark that keeps a floor is not replaced: the floor would go with it.
+            if (!keepsFloor(id)) {
+              flags.set(id, { kind: "quarantined", rev: row.rev });
+              flagsDirty = true;
+            }
+            touched.add(id);
+            warn("tombstone_unverified", { id, rev: row.rev });
+          });
           continue;
         }
         alive();
@@ -603,32 +656,47 @@ export function createSyncEngine({
         staged.set(id, row);
       } catch (error) {
         if (stopped || isFatal(error)) throw error;
-        markDamaged(id, row.rev, codeOf(error));
-        touched.add(id);
+        damaged(id, row.rev, codeOf(error));
       }
     }
     // The memory, even for a page without rows: its top `seq` is checked and remembered. The rows this device wrote
     // itself for an item that was uploaded again are not given to it (they are below its floor, by design).
     /** @type {Set<CachedRow>} */
     let refusedRows = new Set();
+    /** @type {Array<{ row: CachedRow, code: string }>} */
+    let refused = [];
     try {
-      const verdict = await acceptPage({ client, memory, rows: plan.filter((p) => !p.ours).map((p) => p.row), topSeq: page.latest_seq });
+      const verdict = await acceptPage({
+        client, memory, rows: plan.filter((p) => !p.ours).map((p) => p.row), topSeq: page.latest_seq, since: snapshot,
+      });
       alive();
-      refusedRows = new Set(verdict.refused.map((r) => r.row));
-      for (const { row, code } of verdict.refused) {
-        const id = row.itemId;
-        if (code === REV_BELOW_REMEMBERED) lowerSeen("rev_below_remembered", { id, rev: row.rev });
-        else warn("row_damaged", { id, rev: row.rev, reason: code });
-      }
+      refused = verdict.refused;
+      refusedRows = new Set(refused.map((r) => r.row));
+      // Below the remembered revision, and another tab has saved since the page was asked for: it may only be older than that.
+      if (mayRefetch && verdict.moved && refused.some((r) => r.code === REV_BELOW_REMEMBERED)) return "refetch";
     } catch (error) {
+      if (mayRefetch && /** @type {any} */ (error)?.code === "rollback_suspected" && /** @type {any} */ (error).memoryMoved === true) {
+        return "refetch";
+      }
       // A top `seq` below the remembered one, while the server also shows a higher restore epoch, is a restore.
       if (pass.raised !== null && /** @type {any} */ (error)?.code === "rollback_suspected") {
         throw new SyncError("server_restored", "The server was restored to an earlier state.");
       }
       throw error;
     }
+    const refusedBelow = refused.some((r) => r.code === REV_BELOW_REMEMBERED);
     // Something lower than this device remembers, on a server that now shows a higher epoch: a restore. Nothing of this page is used.
-    if (pass.raised !== null && pass.lower) throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    if (pass.raised !== null && (pass.lower || lowerHere || refusedBelow)) {
+      throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    }
+    // The page is used: now what judging it kept for later is done.
+    if (lowerHere || refusedBelow) pass.lower = true;
+    for (const id of shown) listing?.add(id);
+    for (const step of later) step();
+    for (const { row, code } of refused) {
+      if (code === REV_BELOW_REMEMBERED) warn("rev_below_remembered", { id: row.itemId, rev: row.rev });
+      else warn("row_damaged", { id: row.itemId, rev: row.rev, reason: code });
+    }
     /** @type {CachedRow[]} */
     const accepted = [];
     for (const step of plan) {
@@ -657,6 +725,7 @@ export function createSyncEngine({
     }
     await saveFlags(db);
     changed(touched);
+    return "done";
   }
 
   /** @param {string} id @param {number} rev @param {string} reason */
@@ -744,10 +813,25 @@ export function createSyncEngine({
     for (const [id, row] of rows) {
       if (seen.has(id) || id === MANIFEST_ID || row.deleted) continue;
       // Another mark stays as it is. An item that was uploaded again and is left out once more is marked again, with
-      // the floor it already has and no list of own writes: the old list belongs to the copy the server has dropped.
-      const kind = flags.get(id)?.kind;
-      if (kind !== undefined && kind !== "reuploaded") continue;
-      flags.set(id, { kind: "missing_on_server", rev: floorOf(id) ?? row.rev });
+      // the floor it already has. The keys of its own writes are kept only for writes that are still queued or in
+      // flight (their echo must still be taken as ours); the others belong to a copy the server has dropped. Keys
+      // of writes made from now on are listed apart, in `fresh`: the wider rule for the copy that replaces the old
+      // one applies to them only.
+      const mark = flags.get(id);
+      if (mark !== undefined && mark.kind !== "reuploaded") continue;
+      /** @type {string[]} */
+      let kept = [];
+      if (mark !== undefined) {
+        const queued = await Promise.all(runner.entriesOf(id).map((entry) => ownKeyOfBody(entry.baseRev + 1, entry.body)));
+        alive();
+        kept = (mark.sent ?? []).filter((key) => queued.includes(key));
+      }
+      flags.set(id, {
+        kind: "missing_on_server",
+        rev: floorOf(id) ?? row.rev,
+        ...(kept.length > 0 ? { sent: kept } : {}),
+        ...(mark !== undefined ? { fresh: [] } : {}),
+      });
       acked.delete(id); // the earlier upload was answered, but the server has lost that copy: it is uploaded again
       flagsDirty = true;
       missing.push(id);
@@ -1033,7 +1117,9 @@ export function createSyncEngine({
     const mark = flags.get(id);
     if (key !== null && mark && (mark.kind === "missing_on_server" || mark.kind === "reuploaded")) {
       const previousSent = mark.sent;
+      const previousFresh = mark.fresh;
       mark.sent = [...(previousSent ?? []), key].slice(-256);
+      if (previousFresh !== undefined) mark.fresh = [...previousFresh, key].slice(-256);
       flagsDirty = true;
       try {
         // Saved before the write is stored, and a failed save stops the write: without its key the row would be
@@ -1041,6 +1127,7 @@ export function createSyncEngine({
         await saveFlags(await store.open());
       } catch (error) {
         mark.sent = previousSent;
+        mark.fresh = previousFresh;
         throw error;
       }
       alive();
@@ -1083,36 +1170,57 @@ export function createSyncEngine({
       if (started || stopped) throw new SyncError("invalid_state");
       started = true;
       const db = await store.open();
-      const cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
+      let cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
       const saved = await store.getSetting(db, flagsKey);
-      if (typeof deviceName === "function") device = await deviceName();
+      if (typeof deviceName === "function") {
+        try {
+          device = await deviceName();
+        } catch {
+          device = undefined; // a name that cannot be worked out does not stop the engine; the service gives a default of its own
+        }
+      }
       alive();
       for (const row of cached) {
         rows.set(row.itemId, row);
         cursor = Math.max(cursor, row.seq);
       }
-      // The sync memory: a first start with no stored state makes it from the rows that are cached (they were checked
-      // when they were cached), so a device that had them before the memory existed gets floors too. A halt here (no Web
-      // Locks, a full memory) leaves the local data to be read, and nothing to be pulled or sent.
-      try {
-        const state = await seedMemory({ client, memory, rows: cached, topSeq: cursor });
-        alive();
-        if (state.hardWarning !== null) raiseWarning(state.hardWarning);
-      } catch (error) {
-        if (!(error instanceof SyncError && HALT_CODES.includes(error.code))) throw error;
-        halt(error.code);
-      }
       const savedMarks = saved?.v === 1 && saved.marks && typeof saved.marks === "object" ? saved.marks : {};
       for (const [id, flag] of Object.entries(savedMarks)) {
         const kinds = ["damaged", "quarantined", "missing_on_server", "reuploaded"];
         if (hex16.is(id) && kinds.includes(flag?.kind) && Number.isSafeInteger(flag.rev)) {
-          const sent = Array.isArray(flag.sent) ? flag.sent.filter((/** @type {unknown} */ k) => typeof k === "string").slice(-256) : [];
-          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(sent.length > 0 ? { sent } : {}) });
+          const keys = (/** @type {unknown} */ list) => (Array.isArray(list) ? list.filter((/** @type {unknown} */ k) => typeof k === "string").slice(-256) : []);
+          const sent = keys(flag.sent);
+          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(sent.length > 0 ? { sent } : {}), ...(Array.isArray(flag.fresh) ? { fresh: keys(flag.fresh) } : {}) });
         }
       }
       const savedBlocked = saved?.v === 1 && saved.blocked && typeof saved.blocked === "object" ? saved.blocked : {};
       for (const [id, code] of Object.entries(savedBlocked)) {
         if (hex16.is(id) && typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code)) blocked.set(id, code);
+      }
+      // The sync memory: a first start with no stored state makes it from the rows that are cached (they were checked
+      // when they were cached), so a device that had them before the memory existed gets floors too. Rows of an item
+      // that was uploaded again are left out: the copy is below the floor the item had, which this device no longer
+      // knows, and a floor made from it would be too low to mean anything. A cached row the core refuses is dropped
+      // from the cache (and the feed is read again from the start, so an honest server shows it afresh). A halt here
+      // (no Web Locks, a full memory) leaves the local data to be read, and nothing to be pulled or sent.
+      try {
+        const seeded = await seedMemory({ client, memory, rows: cached.filter((row) => !keepsFloor(row.itemId)), topSeq: cursor });
+        alive();
+        if (seeded.state.hardWarning !== null) raiseWarning(seeded.state.hardWarning);
+        if (seeded.refused.length > 0) {
+          const dropped = new Set(seeded.refused.map(({ row }) => row.itemId));
+          await store.cache.removeRows(db, scope, [...dropped]);
+          alive();
+          for (const { row, code } of seeded.refused) {
+            rows.delete(row.itemId);
+            warn("cached_row_dropped", { id: row.itemId, rev: row.rev, reason: code });
+          }
+          cached = cached.filter((row) => !dropped.has(row.itemId));
+          cursor = 0;
+        }
+      } catch (error) {
+        if (!(error instanceof SyncError && HALT_CODES.includes(error.code))) throw error;
+        halt(error.code);
       }
       for (const row of cached) {
         if (row.deleted || row.itemId === MANIFEST_ID) continue;

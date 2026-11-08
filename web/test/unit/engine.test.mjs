@@ -1228,3 +1228,36 @@ test("reuploaded_item_missing_from_a_later_listing_is_marked_again", async () =>
   await until(() => d.model.items.has(ID_B) && itemB(d)?.missingOnServer === false, "the copy is back again");
   d.engine.stop();
 });
+
+test("an_offline_edit_queued_when_the_item_is_left_out_again_is_still_taken_as_ours", async () => {
+  const d = await hideItemB();
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const marks = async () => (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the copy is back and the mark says so");
+  const copy = { ...d.model.items.get(ID_B) };
+
+  // An edit made offline waits for a retry; meanwhile a new listing leaves the item out again.
+  d.api.faults.push({ kind: "network", only: ID_B });
+  await d.engine.update(ID_B, { name: "Offline edit" }, 1);
+  await settle();
+  assert.equal(itemB(d).pending, true);
+  d.model.items.delete(ID_B);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.set(ID_A, { rev: 3, ...d.client.wireRow(ID_A, 3, { item_type: "login", name: "A3" }) });
+  await d.engine.syncNow();
+  const mark = (await marks())[ID_B];
+  assert.deepEqual([mark.kind, mark.rev], ["missing_on_server", 3], "marked again, with its floor");
+  assert.equal(mark.sent.length, 1, "the key of the write that is still queued is kept");
+  assert.deepEqual(mark.fresh, [], "and no write has been made since the mark");
+  assert.equal(itemB(d).pending, true, "the edit is still waiting, so no second upload was queued");
+
+  // The server has the copy again and now takes the edit: its echo is ours, though it is below the floor.
+  d.model.set(ID_B, { rev: 1, blob: copy.blob, tag: copy.tag });
+  d.timers.advance(1_000);
+  await until(() => d.model.items.get(ID_B)?.rev === 2 && itemB(d)?.rev === 2 && !itemB(d).pending, "the edit is on the server and on the screen");
+  assert.equal(itemB(d).name, "Offline edit");
+  assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local" || w.code === "rev_same_row_changed").length, 0, "the echo was not refused");
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the mark is back to reuploaded");
+  d.engine.stop();
+});

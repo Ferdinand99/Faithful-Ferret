@@ -26,6 +26,7 @@
   "sync.state.retrying": "Venter med å sende på nytt",
   "sync.state.syncing": "Synkroniserer",
   "sync.state.unauthorized": "Logg inn på nytt for å fortsette",
+  "sync.warning.cached_row_dropped": "Et lagret element kunne ikke kontrolleres og ble fjernet fra denne enheten. Det hentes på nytt fra tjeneren.",
   "sync.warning.missing_on_server": "Tjenerens liste viste ikke noen elementer. De er beholdt på denne enheten og lastes opp på nytt. Ingenting ble slettet.",
   "sync.warning.rev_lower_than_local": "Tjeneren viste en eldre versjon av et element enn denne enheten har. Den ble ignorert.",
   "sync.warning.rev_below_remembered": "Tjeneren viste en eldre versjon av et element enn denne enheten har sett før. Den ble ignorert.",

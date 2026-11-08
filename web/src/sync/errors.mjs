@@ -11,6 +11,8 @@ export class SyncError extends Error {
     this.code = code;
     /** @type {string | null} */
     this.reason = reason;
+    /** Set by `acceptPage`: the stored memory had changed since the caller took its snapshot (another tab saved in between). @type {boolean} */
+    this.memoryMoved = false;
   }
 }
 

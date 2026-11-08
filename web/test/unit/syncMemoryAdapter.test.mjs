@@ -91,6 +91,27 @@ test("accept_page_isolates_a_row_below_its_floor_and_a_row_that_does_not_verify"
   assert.equal(memoryOf((await stored()).memory).maxSeq, 9);
 });
 
+test("accept_page_says_whether_the_memory_moved_since_the_snapshot", async () => {
+  const { client, memory, stored } = await rig();
+  await acceptPage({ client, memory, rows: [live(client, ID_A, 5)], topSeq: 9 });
+  const snapshot = (await stored()).memory;
+  const same = await acceptPage({ client, memory, rows: [live(client, ID_B, 1, 10)], topSeq: 10, since: snapshot });
+  assert.equal(same.moved, false);
+  const moved = await acceptPage({ client, memory, rows: [live(client, ID_A, 4, 11)], topSeq: 11, since: snapshot });
+  assert.equal(moved.moved, true, "the memory is not what it was when the snapshot was taken");
+  assert.deepEqual(moved.refused.map(({ code }) => code), ["checkpoint_rev_below_remembered"]);
+  assert.equal((await acceptPage({ client, memory, rows: [], topSeq: 11 })).moved, false, "without a snapshot there is nothing to compare");
+  await assert.rejects(
+    acceptPage({ client, memory, rows: [], topSeq: 2, since: snapshot }),
+    (error) => error instanceof SyncError && error.code === "rollback_suspected" && error.memoryMoved === true,
+  );
+  const fresh = (await stored()).memory;
+  await assert.rejects(
+    acceptPage({ client, memory, rows: [], topSeq: 2, since: fresh }),
+    (error) => error instanceof SyncError && error.code === "rollback_suspected" && error.memoryMoved === false,
+  );
+});
+
 test("accept_page_stores_nothing_when_the_memory_is_full", async () => {
   const { client, memory, stored } = await rig({ memoryLimit: 1 });
   await acceptPage({ client, memory, rows: [live(client, ID_A, 1)], topSeq: 1 });
@@ -114,10 +135,11 @@ test("accept_page_does_not_answer_when_the_store_fails", async () => {
 test("seed_memory_makes_the_state_once_from_the_rows_it_is_given", async () => {
   const { client, memory, stored } = await rig();
   const first = await seedMemory({ client, memory, rows: [live(client, ID_A, 3, 5)], topSeq: 5 });
-  assert.equal(memoryOf(first.memory).revs[ID_A], 3);
+  assert.equal(memoryOf(first.state.memory).revs[ID_A], 3);
+  assert.deepEqual(first.refused, []);
   assert.equal(memoryOf((await stored()).memory).maxSeq, 5);
   const second = await seedMemory({ client, memory, rows: [live(client, ID_B, 9, 9)], topSeq: 9 });
-  assert.deepEqual(memoryOf(second.memory).revs, { [ID_A]: 3 }, "a stored state is not touched");
+  assert.deepEqual(memoryOf(second.state.memory).revs, { [ID_A]: 3 }, "a stored state is not touched");
 });
 
 test("memory_store_reads_again_inside_the_lock_and_stores_nothing_for_null", async () => {

@@ -45,11 +45,18 @@ export function defaultDeviceName(nav = /** @type {any} */ (globalThis).navigato
 }
 
 /**
- * The name this device writes into items: the setting, else the default.
+ * The name this device writes into items: the setting, else the default. A setting that cannot be read
+ * is no reason to stop: the default is used.
  * @param {{ open(): Promise<any>, getSetting(db: any, key: string): Promise<unknown> }} store
  * @param {Parameters<typeof defaultDeviceName>[0]} [nav]
  */
 export async function deviceNameFor(store, nav) {
-  const saved = cleanDeviceName(await store.getSetting(await store.open(), DEVICE_NAME_SETTING));
+  /** @type {string | null} */
+  let saved = null;
+  try {
+    saved = cleanDeviceName(await store.getSetting(await store.open(), DEVICE_NAME_SETTING));
+  } catch {
+    // the default below
+  }
   return saved ?? defaultDeviceName(nav);
 }

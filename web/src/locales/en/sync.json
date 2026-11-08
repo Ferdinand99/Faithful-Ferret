@@ -26,6 +26,7 @@
   "sync.state.retrying": "Waiting to send again",
   "sync.state.syncing": "Syncing",
   "sync.state.unauthorized": "Sign in again to go on",
+  "sync.warning.cached_row_dropped": "A cached item could not be checked and was dropped from this device. It is read from the server again.",
   "sync.warning.missing_on_server": "The server's list did not show some items. They are kept on this device and uploaded again. Nothing was deleted.",
   "sync.warning.rev_lower_than_local": "The server showed an older version of an item than this device has. It was ignored.",
   "sync.warning.rev_below_remembered": "The server showed an older version of an item than this device has seen before. It was ignored.",

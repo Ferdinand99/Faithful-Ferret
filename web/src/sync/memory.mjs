@@ -107,16 +107,27 @@ async function remember({ client, bytes, rows, topSeq }) {
  * A top `seq` below the remembered one rejects with `SyncError("rollback_suspected")`;
  * a full memory with `SyncError("sync_memory_full")`; in both nothing is stored.
  * A row the core refuses is returned in `refused` with the core's code, and is not remembered.
- * @param {{ client: any, memory: MemoryStore, rows: CachedRow[], topSeq: number }} options
- * @returns {Promise<{ accepted: CachedRow[], refused: Refused[] }>}
+ *
+ * `since` is the memory bytes the caller read before it fetched the page. `moved` says whether the stored
+ * memory (read again inside the lock) differs from them: another tab saved in between, so a refusal may
+ * be only that the page is older than what the other tab stored. A `SyncError` from here carries the same
+ * answer as `memoryMoved`.
+ * @param {{ client: any, memory: MemoryStore, rows: CachedRow[], topSeq: number, since?: Uint8Array }} options
+ * @returns {Promise<{ accepted: CachedRow[], refused: Refused[], moved: boolean }>}
  */
-export async function acceptPage({ client, memory, rows, topSeq }) {
-  /** @type {{ accepted: CachedRow[], refused: Refused[] }} */
-  let result = { accepted: [], refused: [] };
+export async function acceptPage({ client, memory, rows, topSeq, since }) {
+  /** @type {{ accepted: CachedRow[], refused: Refused[], moved: boolean }} */
+  let result = { accepted: [], refused: [], moved: false };
   await memory.withLock(async (state) => {
-    const done = await remember({ client, bytes: state.memory, rows, topSeq });
-    result = { accepted: done.accepted, refused: done.refused };
-    return sameBytes(done.bytes, state.memory) ? null : { ...state, memory: done.bytes };
+    const moved = since !== undefined && !sameBytes(state.memory, since);
+    try {
+      const done = await remember({ client, bytes: state.memory, rows, topSeq });
+      result = { accepted: done.accepted, refused: done.refused, moved };
+      return sameBytes(done.bytes, state.memory) ? null : { ...state, memory: done.bytes };
+    } catch (error) {
+      if (error instanceof SyncError) error.memoryMoved = moved;
+      throw error;
+    }
   });
   return result;
 }
@@ -124,21 +135,23 @@ export async function acceptPage({ client, memory, rows, topSeq }) {
 /**
  * The first start after the memory was introduced: there is no stored state, so
  * it is made from the rows this device already holds (they were checked when
- * they were cached). Does nothing when a state is stored. Under the lock.
+ * they were cached). Does nothing when a state is stored. Under the lock. Rows the core
+ * refuses are returned in `refused` and not remembered.
  * @param {{ client: any, memory: MemoryStore, rows: CachedRow[], topSeq: number }} options
- * @returns {Promise<SyncState>} the state that is stored now
+ * @returns {Promise<{ state: SyncState, refused: Refused[] }>} the state that is stored now
  */
 export async function seedMemory({ client, memory, rows, topSeq }) {
-  /** @type {{ state: SyncState | null }} */
-  const seen = { state: null };
+  /** @type {{ state: SyncState | null, refused: Refused[] }} */
+  const seen = { state: null, refused: [] };
   await memory.withLock(async (state, info) => {
     seen.state = state;
     if (info.existed) return null;
     const done = await remember({ client, bytes: state.memory, rows, topSeq });
     seen.state = { ...state, memory: done.bytes };
+    seen.refused = done.refused;
     return seen.state;
   });
-  return /** @type {SyncState} */ (seen.state);
+  return { state: /** @type {SyncState} */ (seen.state), refused: seen.refused };
 }
 
 /**
