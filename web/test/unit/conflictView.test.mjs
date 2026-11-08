@@ -303,6 +303,32 @@ test("a_refused_choice_says_so_and_can_be_tried_again", async () => {
 });
 
 
+test("the_choice_carries_the_server_row_that_was_shown_and_a_changed_row_shows_both_versions_again", async () => {
+  await withDom(async () => {
+    const spec = bankConflict();
+    const { root, engine, moves } = await open({ spec });
+    // The version of the server is deleted by the time the choice reaches the engine: it refuses, and nothing is written.
+    engine.onResolve = () => {
+      spec.server = { rev: 5, deleted: true, view: null };
+    };
+    engine.failWith = coded("conflict_changed");
+    await choose(root, "keep-mine");
+    assert.deepEqual(engine.seenArgs, [{ rev: 4, deleted: false }], "the choice names the row that was shown");
+    assert.deepEqual(moves, [], "nothing was decided");
+    assert.equal(engine.calls.filter((c) => c[0] === "conflict").length, 2, "the item is read again");
+    assert.ok(textOf(all(root, "side")[1]).includes("conflict.deleted_server"), "and both versions are shown again, the one of the server now deleted");
+    assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.choice.restore");
+    assert.ok(textOf(find(root, "message")).includes("sync.error.conflict_changed"), "with the reason");
+    assert.notEqual(find(root, "keep-mine").getAttribute("aria-disabled"), "true", "and the choice is open again");
+    // The user chooses again, now against the row that is shown.
+    engine.onResolve = null;
+    engine.failWith = null;
+    await choose(root, "keep-mine");
+    assert.deepEqual(engine.seenArgs.at(-1), { rev: 5, deleted: true });
+    assert.deepEqual(moves, [`/items/${ID}`]);
+  });
+});
+
 test("a_deleted_server_side_offers_restore_and_accept_deletion", async () => {
   await withDom(async () => {
     const spec = bankConflict();

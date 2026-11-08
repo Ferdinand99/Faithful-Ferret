@@ -27,6 +27,17 @@ const short = (id) => `${id.slice(0, 4)}..${id.slice(-2)}`;
 /** The top of the call stack, for a report: function names and line numbers, no paths. */
 const frames = () => (new Error().stack ?? "").split("\n").slice(3, 10).map((line) => line.trim().replace("at ", "").split("/").at(-1)).join(" < ");
 
+/**
+ * The gaps of the engine that the runs still tolerate (each has a todo test in `syncMatrix.test.mjs`): `tabs` (two tabs of one browser that both
+ * write; the outbox and the marks are stored once and kept per tab) and `purge` (a purged tombstone can look like a rollback). All of them are
+ * tolerated by default. `FERRET_MATRIX_STRICT=1` tolerates none; `FERRET_MATRIX_TOLERATE=tabs,purge` names the ones that are still let through
+ * (to see what a strict run finds besides them).
+ */
+export const KNOWN_GAPS = Object.freeze(["tabs", "purge"]);
+const tolerated = () => (process.env.FERRET_MATRIX_STRICT
+  ? new Set((process.env.FERRET_MATRIX_TOLERATE ?? "").split(",").map((name) => name.trim()).filter(Boolean))
+  : new Set(KNOWN_GAPS));
+
 /** The text every secret the matrix writes starts with: a store or a request that holds it has leaked a secret. */
 export const SECRET = "SECRET-";
 
@@ -199,7 +210,7 @@ export const ACTIONS = [
 /** Changes by the user and the engine's own pace, with nothing going wrong: no faults, nothing off the network, no restart, no purge. */
 export const CALM_ACTIONS = [["create", 14], ["update", 22], ["remove", 6], ["sync", 14], ["poll", 10], ["resolve", 8], ["trash", 3]];
 
-const EXPECTED = new Set(["conflict_unsettled", "invalid_state", "item_changed", "not_found", "blocked", "busy", "damaged", "quarantined", "missing_on_server", "reuploaded"]);
+const EXPECTED = new Set(["conflict_unsettled", "conflict_changed", "invalid_state", "item_changed", "not_found", "blocked", "busy", "damaged", "quarantined", "missing_on_server", "reuploaded"]);
 
 /** @param {unknown} error */
 const codeOf = (error) => (error && typeof error === "object" && "code" in error ? String(error.code) : String(error));
@@ -249,18 +260,21 @@ export class Sim {
     this.floors = new Map(); // group label -> the last sync memory read
     this.problems = [];
     this.step = 0;
-    this.hiddenDrafts = 0; // known gap, hidden draft: how many refused deletions were found left behind
     this.seen = new Map(); // browser label -> Set of "id:rev": the rows its engines were shown by the feed and the listing, and wrote themselves
     this.keptMine = new Set(); // "browser:id": the user chose "keep mine" for the item in that browser
     this.tallied = false;
-    this.knownGaps = !process.env.FERRET_MATRIX_STRICT; // the known gaps are not asserted against (the todo tests hold them); FERRET_MATRIX_STRICT=1 asserts against them too
+    this.tolerated = tolerated(); // the known gaps that are not asserted against (the todo tests hold them); FERRET_MATRIX_STRICT=1 asserts against them too
     this.stats = {}; // how often each thing happened, to see that a run does what it is meant to
     this.restoredAt = null; // the write index of the server when it was restored
-    this.watching = false; // after a restore: a write from a device that remembers a higher top than the server shows is a failure
     this.ghosts = new Map(); // id -> rev of the rows that the model wrote itself (a device that is not one of ours)
     this.accepted = new Set(); // devices that have accepted an older state
     this.restoreMark = new Map(); // device -> how many error events it had when the server was restored
     this.restoreWrites = 0; // how many writes the users had made when the server was restored
+  }
+
+  /** Whether a known gap (`KNOWN_GAPS`) is let through in this run. @param {string} gap */
+  tolerates(gap) {
+    return this.tolerated.has(gap);
   }
 
   fail(message) {
@@ -360,11 +374,9 @@ export class Sim {
       // The model takes a request the moment it is made (nothing is awaited before), so whether it took this one is known here, and
       // whether it took it after the restore too, whatever happens to the answer.
       const writes = this.server.writes.length + this.server.checkpointPuts.length;
-      const top = this.server.seq;
       const answer = put(path, body, ...rest);
       if (this.server.writes.length + this.server.checkpointPuts.length > writes) {
         dev.landed.push(path);
-        this.onLanded(dev, path, top);
         this.checkBuiltOnSeen(dev, path, body);
       }
       return answer;
@@ -387,19 +399,6 @@ export class Sim {
     rows.add(`${id}:${request.base_rev + 1}`);
   }
 
-  /** A write or a checkpoint of a device was taken by the server. */
-  onLanded(dev, path, top) {
-    // Strict: a device that remembers more than the backup holds, and has not accepted, writes nothing. With the known gap: the floors are the
-    // ones read after the last step (the real ones are not lower), so a floor above the top of the server is surely one.
-    if (!this.knownGaps && this.watching && this.restoredAt !== null && this.mustHalt.has(dev.label) && !this.accepted.has(dev.label)) {
-      this.fail(`${dev.label} landed ${path.split("/").slice(-2).join("/")} on a restored server it remembers more than and had not accepted`);
-      return;
-    }
-    const remembered = this.floors.get(dev.group.label)?.memory.maxSeq ?? 0;
-    if (this.knownGaps && this.watching && this.restoredAt !== null && remembered > top && !this.accepted.has(dev.label)) {
-      this.fail(`${dev.label} landed ${path.split("/").slice(-2).join("/")} on a restored server (seq ${top}) that shows less than it remembers (${remembered}) and that it had not accepted`);
-    }
-  }
 
   /** Stops the engine of a device and starts a new one over the same storage (the page was closed and opened). */
   async restart(dev) {
@@ -491,13 +490,13 @@ export class Sim {
       await shown.close();
       const pick = choice ?? this.rng.pick(["mine", "theirs"]);
       if (pick === "mine") this.keptMine.add(`${dev.group.label}:${item.id}`); // before the write can leave
-      await dev.engine.resolve(item.id, pick);
+      await dev.engine.resolve(item.id, pick, shown.seen);
       const key = this.keyOf(dev, item.id);
       this.conflicted.add(key);
       if (pick === "theirs") this.discarded.add(key);
-      // "Keep mine" is the one choice that can bring a deleted item back. It counts whatever the screen showed: the server row can turn into a
-      // tombstone between the moment the user looked and the moment the choice is made, and the engine builds the write on what it knows then.
-      else if (this.knownGaps || serverDeleted) this.choices.set(item.id, (this.choices.get(item.id) ?? 0) + 1);
+      // "Keep mine" is the one choice that can bring a deleted item back, and only over a row the user was shown deleted: the choice carries the row it
+      // was made against, and the engine refuses it (`conflict_changed`) when the row has changed since.
+      else if (serverDeleted) this.choices.set(item.id, (this.choices.get(item.id) ?? 0) + 1);
       this.note(`${dev.label} resolve ${short(item.id)} ${pick}${serverDeleted ? " over a deleted row" : ""}`);
       return true;
     });
@@ -550,10 +549,10 @@ export class Sim {
   /**
    * Whether the user changes things in this tab. Two tabs of one browser share the outbox and the marks of the store, while each keeps its
    * own copy of both in memory; when both tabs change things, a tab can drop or hide what the other has queued (known gap, writing tabs, the todo test
-   * `two_tabs_that_both_write_can_lose_a_queued_write`). So in a browser with several tabs only the first one writes.
+   * `two_tabs_that_both_write_keep_every_write`). So in a browser with several tabs only the first one writes.
    */
   writer(dev) {
-    return !this.knownGaps || this.tabsWrite || dev.tab === 0;
+    return !this.tolerates("tabs") || this.tabsWrite || dev.tab === 0;
   }
 
   /**
@@ -666,13 +665,13 @@ export class Sim {
         // No waiting from here to the purge: no device reads the tombstone in between.
         this.server.set(id, { rev: 2, deleted: true, tomb: this.client.wireTomb(id, 2) });
         this.server.pinCheckpoint();
-        const gone = this.server.purgeTombstones((other) => held.has(other), this.knownGaps);
+        const gone = this.server.purgeTombstones((other) => held.has(other), this.tolerates("purge"));
         this.note(`retention: ${gone} tombstones purged, min_valid_since ${this.server.minValidSince}`);
         break;
       }
       case "purge": {
         const held = await this.heldIds();
-        const gone = this.server.purgeTombstones((id) => held.has(id), this.knownGaps);
+        const gone = this.server.purgeTombstones((id) => held.has(id), this.tolerates("purge"));
         this.note(`server purged ${gone} tombstones, min_valid_since ${this.server.minValidSince}`);
         break;
       }
@@ -804,15 +803,23 @@ export class Sim {
   }
 
   /**
-   * After a restore nobody has accepted: a device the restored server shows less than it remembers stops, and is still stopped. (With the known
-   * gap, late restore contact: only a device that is shown a top below what it remembers; one that first meets a server whose seq has passed what
-   * it remembers finds nothing lower.) Strict: every device that remembered more than the backup holds.
+   * After a restore, a device that has not accepted the older state and has not stopped holds nothing the restored server lacks or shows lower,
+   * however far the seq of the server has come since: every live row it caches is on the server at the same or a higher revision (and at the
+   * same revision with the same bytes). A device that goes on without asking has missed the restore. Tabs of one browser share the cache and the
+   * epoch but each decides alone from what it has read itself: a tab that goes on while the cache holds a row another tab stopped for is let
+   * through (known gap, tabs).
    */
   async checkStopped() {
     for (const dev of this.devices) {
-      const remembered = (await this.floorsOf(dev)).maxSeq;
-      const must = this.knownGaps ? remembered > this.server.seq : this.mustHalt.has(dev.label) && !this.accepted.has(dev.label);
-      if (must && dev.engine.health().halted !== "server_restored") this.fail(`${dev.label} has seen more than the restored server shows and is ${dev.engine.health().halted ?? "not stopped"}`);
+      if (this.accepted.has(dev.label) || dev.engine.health().halted !== null) continue;
+      if (this.tolerates("tabs") && this.devices.some((other) => other !== dev && other.group === dev.group)) continue;
+      for (const row of await cache.getRows(dev.d.store.database.store, scope())) {
+        if (row.deleted) continue;
+        const server = this.server.items.get(row.itemId);
+        if (!server || server.rev < row.rev || (server.rev === row.rev && (server.deleted || server.blob !== b64u.encode(row.envelope)))) {
+          this.fail(`${dev.label} goes on without a question and holds ${short(row.itemId)} at rev ${row.rev}, which the restored server ${server ? `shows at rev ${server.rev}${server.deleted ? " deleted" : ""}` : "does not have"}`);
+        }
+      }
     }
   }
 
@@ -836,7 +843,7 @@ export class Sim {
   async checkConverged({ readers = false } = {}) {
     const live = await this.serverLive();
     for (const dev of this.devices) {
-      if (this.knownGaps && !readers && !this.writer(dev)) continue; // known gap, writing tabs: the other tab of a browser shows what the first one stored, with a delay
+      if (this.tolerates("tabs") && !readers && !this.writer(dev)) continue; // known gap, writing tabs: the other tab of a browser shows what the first one stored, with a delay
       const shown = new Map(dev.engine.list().map((item) => [item.id, item]));
       for (const [id, row] of live) {
         const item = shown.get(id);
@@ -849,29 +856,14 @@ export class Sim {
           this.fail(`${dev.label} still has ${short(id)} pending=${item.pending} blocked=${item.blockedReason} conflict=${item.conflict} damaged=${item.damaged} quarantined=${item.quarantined} missing=${item.missingOnServer}`);
         }
       }
-      const everything = await outbox.all(dev.d.store.database.store, scope());
-      // known gap, hidden draft (todo test `a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no_blocked_draft`): a deletion
-      // that waits in the outbox when the feed brings the tombstone of its item is refused with 409 afterwards and stays as a blocked draft that is
-      // not on any screen. Only that shape is let through: the last write waiting for the item is a deletion and this device holds a deleted row.
-      const rows = new Map((await cache.getRows(dev.d.store.database.store, scope())).map((row) => [row.itemId, row]));
-      const last = new Map(everything.map((e) => [e.itemId, e]));
-      const stuck = (e) => "tomb" in last.get(e.itemId).body && rows.get(e.itemId)?.deleted === true;
-      const queued = everything.filter((e) => !(this.knownGaps && stuck(e)));
-      if (queued.length !== everything.length) {
-        this.hiddenDrafts += everything.length - queued.length;
-        this.count("known:hidden_blocked_draft", everything.length - queued.length);
-      }
+      const queued = await outbox.all(dev.d.store.database.store, scope());
       if (queued.length > 0) this.fail(`${dev.label} still has ${queued.length} writes in the outbox: ${queued.map((e) => `${short(e.itemId)} base ${e.baseRev} ${"tomb" in e.body ? "tombstone" : "live"}`).join(", ")}; last errors ${JSON.stringify(dev.d.events.error.slice(-4))}; server has ${JSON.stringify(queued.map((e) => { const row = this.server.items.get(e.itemId); return row ? { rev: row.rev, deleted: row.deleted } : null; }))}`);
     }
   }
 
   /**
    * Checkpoints stay alive: when everything is at rest, more than ten minutes pass and every device reads once more, the checkpoint the server
-   * holds is for the `seq` the server is at. A device that was reloaded within a day of its last verification does not verify in its new session
-   * and so stores no checkpoint (known gap, checkpoint waits for a verification, todo test
-   * `a_device_that_was_reloaded_stores_a_checkpoint_within_minutes`): with the known gaps that is let through when a day later every device has
-   * verified and the checkpoint is there (the clock is set a day on without running the polls in between). Also let through are the gaps that
-   * keep a device from storing one: a refused deletion left behind, and two tabs over one storage.
+   * holds is for the `seq` the server is at. Let through is the gap that keeps a device from storing one: two tabs over one storage (known gap, tabs).
    */
   async checkCheckpointLive() {
     const held = () => (this.server.checkpoint === "auto" ? this.server.seq : (this.server.checkpoint?.seq ?? 0));
@@ -886,23 +878,16 @@ export class Sim {
     };
     await readAgain(0);
     if (held() === this.server.seq) return;
-    if (this.knownGaps) {
-      if (this.tabs || this.hiddenDrafts > 0) {
-        this.count("known:checkpoint_not_live");
-        return;
-      }
-      await readAgain(25 * 3_600_000);
-      if (held() === this.server.seq) {
-        this.count("known:checkpoint_waits_for_verification");
-        return;
-      }
+    if (this.tolerates("tabs") && this.tabs) {
+      this.count("known:checkpoint_not_live");
+      return;
     }
     const states = [];
     for (const dev of this.devices) {
       const state = await loadSyncState(dev.group.db.store, SERVER, ACCOUNT);
       states.push(`${dev.label}: ${JSON.stringify(dev.engine.health())} stored ${JSON.stringify({ verifiedAt: state?.verifiedAt, uploadedAt: state?.uploadedAt, uploadedSeq: state?.uploadedSeq, hardWarning: state?.hardWarning })} last errors ${JSON.stringify(dev.d.events.error.slice(-3))} marks ${JSON.stringify(dev.engine.list().filter((i) => i.pending || i.blocked || i.missingOnServer).map((i) => short(i.id)))}`);
     }
-    this.fail(`the checkpoint of the server is at seq ${held()} and the server at ${this.server.seq}, though every device has read the feed to its end more than ten minutes after the last change${this.knownGaps ? " and a day later" : ""}; ${states.join("; ")}`);
+    this.fail(`the checkpoint of the server is at seq ${held()} and the server at ${this.server.seq}, though every device has read the feed to its end more than ten minutes after the last change; ${states.join("; ")}`);
   }
 
   /** Every write a user made is on the server, unless the user dropped it; and a deletion is on the server too. */
@@ -977,10 +962,7 @@ export class Sim {
     }
     await settle(40);
     for (const dev of [...this.devices, ...this.retired]) {
-      // known gap, request after stop (todo test `a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server`): a feed read can still go out when
-      // `stop()` comes while the pass reads the sync memory. A write or a checkpoint upload after `stop()` is never let through.
-      const late = dev.lateCalls.filter((call) => !(this.knownGaps && (call.startsWith("get /api/sync/changes") || call.startsWith("get /api/sync/items"))));
-      if (late.length < dev.lateCalls.length) this.count("known:get_after_stop", dev.lateCalls.length - late.length);
+      const late = dev.lateCalls;
       if (late.length > 0) this.fail(`${dev.label} asked the server after stop(): ${late.slice(0, 3).join(", ")}`);
     }
   }
@@ -988,19 +970,12 @@ export class Sim {
   // ------------------------------------------------------------ a restored server
 
   /** The database of the server is put back from `backup` and the restore is recorded (`ferret restore-epoch bump`). */
-  async restoreServer(backup, { watch = true } = {}) {
-    this.watching = watch;
-    this.mustHalt = new Set();
-    if (watch) {
-      for (const group of this.groups) {
-        if ((await this.floorsOfGroup(group)).maxSeq > backup.seq) for (const dev of this.devices.filter((d) => d.group === group)) this.mustHalt.add(dev.label);
-      }
-    }
+  async restoreServer(backup) {
     this.restoredAt = this.server.writes.length;
     this.restoreWrites = this.writes.length;
     this.restoreMark = new Map([...this.devices, ...this.retired].map((dev) => [dev, dev.d.events.error.length]));
     this.server.restoreFrom(backup);
-    this.note(`server restored to seq ${backup.seq}, restore epoch ${this.server.restoreEpoch}; ${watch ? "a device that is shown a top below what it remembers must stop" : "no device is watched"}`);
+    this.note(`server restored to seq ${backup.seq}, restore epoch ${this.server.restoreEpoch}`);
   }
 
   /** The user of a device that has stopped for a restored server accepts the older state. Answers what the engine did, or null when it is not stopped. */

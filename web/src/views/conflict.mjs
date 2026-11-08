@@ -31,12 +31,13 @@ const MAX_ROWS = 200;
  * @property {ConflictSide} local the version on this device
  * @property {ConflictSide} server the version on the server
  * @property {Array<{ key: string, label: string, kind: string, same: boolean | null }>} fields `same` is null when a value is hidden and so not compared
+ * @property {{ rev: number, deleted: boolean }} [seen] the server row these versions were shown against; given back with the choice
  * @property {() => Promise<void>} close
  *
  * The engine as this view needs it. A narrow structural type: the real engine has more.
  * @typedef {object} ConflictEngine
  * @property {(id: string) => Promise<any>} conflict
- * @property {(id: string, choice: "mine" | "theirs") => Promise<void>} resolve
+ * @property {(id: string, choice: "mine" | "theirs", seen?: { rev: number, deleted: boolean }) => Promise<void>} resolve
  * @property {(id: string) => Promise<void>} keepMine
  * @property {() => Promise<Array<{ id: string, name: string, deletedAt: number }>>} trash
  * @property {(id: string) => Promise<void>} restoreFromTrash
@@ -47,6 +48,9 @@ const MAX_ROWS = 200;
 
 /** @param {unknown} error */
 const isNotFound = (error) => /** @type {any} */ (error)?.code === "not_found";
+
+/** The server's version changed after it was shown (the engine refused the choice, and did nothing). @param {unknown} error */
+const isChanged = (error) => /** @type {any} */ (error)?.code === "conflict_changed";
 
 /**
  * Which rows show first: the ones that differ, then the ones that could not be compared.
@@ -371,14 +375,21 @@ export async function conflictView({ engine, client, id, t, router, locale, touc
     hideAll();
     say(t("conflict.saving"));
     const where = target(choice);
+    const shownSeen = /** @type {ConflictData} */ (data).seen;
     try {
-      await engine.resolve(id, choice);
+      await engine.resolve(id, choice, shownSeen);
     } catch (error) {
       busy = false;
       root.setAttribute("aria-busy", "false");
       if (isNotFound(error)) {
         // Another tab or another pass has settled the conflict already: read the item again, which says so.
         await load();
+        return;
+      }
+      if (isChanged(error)) {
+        // The server's version is another one than the user looked at: nothing was done, both versions are shown again, and the user chooses again.
+        await load();
+        say(describeError(t, error));
         return;
       }
       for (const b of chooseButtons) b.setAttribute("aria-disabled", "false");

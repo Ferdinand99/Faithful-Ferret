@@ -4,6 +4,7 @@
   "sync.error.blocked": "A change to this item was refused. Discard that change to edit the item again.",
   "sync.error.busy": "An older state of the server is being accepted. Try again in a moment.",
   "sync.error.conflict": "This item was changed somewhere else. Your change was not saved and is kept as a draft.",
+  "sync.error.conflict_changed": "The server's version of this item changed while you were looking at it. Nothing was done. Both versions are shown again, so you can choose again.",
   "sync.error.conflict_unsettled": "The server's version of this item has not arrived yet. Try again in a moment.",
   "sync.error.damaged": "This item cannot be opened. The last good version is kept.",
   "sync.error.draft_unreadable": "A saved change could not be read.",

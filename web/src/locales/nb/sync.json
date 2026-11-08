@@ -4,6 +4,7 @@
   "sync.error.blocked": "En endring av dette elementet ble avvist. Forkast den endringen for å kunne redigere elementet igjen.",
   "sync.error.busy": "En eldre tilstand av tjeneren godtas akkurat nå. Prøv igjen om et øyeblikk.",
   "sync.error.conflict": "Dette elementet ble endret et annet sted. Endringen din ble ikke lagret og er beholdt som utkast.",
+  "sync.error.conflict_changed": "Tjenerens versjon av dette elementet ble endret mens du så på den. Ingenting ble gjort. Begge versjonene vises på nytt, så du kan velge på nytt.",
   "sync.error.conflict_unsettled": "Tjenerens versjon av dette elementet har ikke kommet ennå. Prøv igjen om et øyeblikk.",
   "sync.error.damaged": "Dette elementet kan ikke åpnes. Siste gode versjon er beholdt.",
   "sync.error.draft_unreadable": "En lagret endring kunne ikke leses.",

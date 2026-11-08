@@ -54,6 +54,7 @@ export function fakeConflictEngine({ conflicts = {}, trash = [] } = {}) {
   const engine = {
     handles,
     calls: [],
+    seenArgs: [], // the third argument of every resolve
     closed: 0,
     items: [],
     trashed: trash.map((e) => ({ ...e })),
@@ -88,6 +89,7 @@ export function fakeConflictEngine({ conflicts = {}, trash = [] } = {}) {
       return {
         ...sides,
         fields: spec.fields ?? FIELDS,
+        seen: spec.seen ?? { rev: spec.server.rev ?? 1, deleted: spec.server.deleted === true },
         async close() {
           if (closedOnce) return;
           closedOnce = true;
@@ -96,8 +98,9 @@ export function fakeConflictEngine({ conflicts = {}, trash = [] } = {}) {
         },
       };
     },
-    async resolve(id, choice) {
+    async resolve(id, choice, seen) {
       engine.calls.push(["resolve", id, choice]);
+      engine.seenArgs.push(seen);
       if (engine.onResolve) await engine.onResolve(id, choice);
       if (engine.failWith) throw engine.failWith;
     },
