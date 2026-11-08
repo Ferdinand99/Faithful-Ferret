@@ -100,8 +100,10 @@ test("fill_on_the_fixture_login_page_puts_both_values_in_and_the_page_sees_them"
       for (const { id } of report.body.fields) assert.match(id, /^[0-9a-f]{32}$/);
       assert.equal(report.frameId, 0);
 
-      // A second injection finds the same engine and reports again.
-      await probe("inject", { tabId, frameId: 0, requestId: "req-fill-2" });
+      // A second injection finds the same engine and reports again. This one names the
+      // document the first report came from, so it tries the documentIds target too.
+      assert.equal(typeof report.documentId, "string");
+      await probe("inject", { tabId, frameId: 0, documentId: report.documentId, requestId: "req-fill-2" });
       await session.waitFor(async () => (await probe("reports")).some((r) => r.body?.request_id === "req-fill-2"), 10_000, "the second report");
 
       // The replaced request id no longer fills.

@@ -96,7 +96,14 @@ test("finds_username_and_password_fields_in_common_login_forms", () => {
     addInput(document, document.body, { type: "text", name: "totp_code" }, { top: 220 });
     return {};
   });
-  assert.deepEqual(kinds(t.begin()), ["password", "totp", "totp"]);
+  assert.deepEqual(kinds(t.begin()), ["password", "totp"], "the first code field of the group");
+
+  // A page with a code field only (the second step of a sign-in).
+  t = setup({}, (document) => {
+    addInput(document, document.body, { type: "text", autocomplete: "one-time-code" }, { top: 100 });
+    return {};
+  });
+  assert.deepEqual(kinds(t.begin()), ["totp"]);
 
   // A form inside an open shadow root.
   t = setup({}, (document) => {
@@ -568,7 +575,7 @@ test("fills_with_the_native_setter_and_fires_input_and_change", () => {
   assert.equal(nativeValue(late.pass), "s3cret");
 });
 
-test("fills_one_value_at_a_time_into_the_first_field_of_the_kind", () => {
+test("fills_one_value_at_a_time_and_a_second_password_field_is_left_alone", () => {
   const t = setup({}, (document) => {
     const form = document.body.append(document.createElement("form"));
     const user = addInput(document, form, { type: "text", name: "username" }, { top: 100 });
@@ -577,11 +584,191 @@ test("fills_one_value_at_a_time_into_the_first_field_of_the_kind", () => {
     user.form = pass.form = again.form = form;
     return { user, pass, again };
   });
-  assert.deepEqual(kinds(t.begin()), ["username", "password", "password"]);
+  assert.deepEqual(kinds(t.begin()), ["username", "password"]);
   assert.equal(t.fill()?.ok, true);
   assert.equal(nativeValue(t.pass), "s3cret");
   assert.equal(nativeValue(t.again), "");
   assert.equal(nativeValue(t.user), "");
+});
+
+/** A form with a user name and a password at `top`, under `parent`. */
+function formAt(/** @type {any} */ document, /** @type {any} */ parent, /** @type {string} */ prefix, /** @type {number} */ top, /** @type {Record<string, string>} */ userAttrs = { autocomplete: "username" }) {
+  const form = parent.append(document.createElement("form", { id: `${prefix}-form` }));
+  const user = addInput(document, form, { type: "text", name: `${prefix}-user`, ...userAttrs }, { top });
+  const pass = addInput(document, form, { type: "password", name: `${prefix}-pass`, autocomplete: "current-password" }, { top: top + 60 });
+  user.form = pass.form = form;
+  return { form, user, pass };
+}
+
+/** Fills the kinds in turn and says where the values went. */
+function fillBoth(/** @type {any} */ t, /** @type {Record<string, any>} */ elements) {
+  assert.equal(t.fill(fillMessage({ field: "username", value: "alice" }))?.ok, true);
+  assert.equal(t.fill(fillMessage({ field: "password", value: "pw-1" }))?.ok, true);
+  return Object.fromEntries(Object.entries(elements).map(([name, element]) => [name, nativeValue(element)]));
+}
+
+test("a_hostile_form_with_a_visible_user_name_and_a_covered_password_gets_nothing", () => {
+  // The layout of the overlay test page: the first form has its password under a
+  // transparent cover and a visible user name; a clear form follows.
+  const t = setup({}, (document) => {
+    const bad = formAt(document, document.body, "bad", 100);
+    const cover = document.createElement("div");
+    document.body.append(cover);
+    cover.rect = { left: 90, top: 150, width: 260, height: 52 };
+    cover.z = 10;
+    const ok = formAt(document, document.body, "ok", 300);
+    return { bad, ok };
+  });
+  assert.deepEqual(kinds(t.begin()), ["username", "password"]);
+  const placed = fillBoth(t, { badUser: t.bad.user, badPass: t.bad.pass, okUser: t.ok.user, okPass: t.ok.pass });
+  assert.deepEqual(placed, { badUser: "", badPass: "", okUser: "alice", okPass: "pw-1" });
+});
+
+test("a_newsletter_box_before_the_sign_in_form_gets_nothing", () => {
+  // With a form around the sign-in fields.
+  const withForm = setup({}, (document) => {
+    const header = document.body.append(document.createElement("header"));
+    const news = addInput(document, header, { type: "email", name: "email", placeholder: "Your e-mail" }, { top: 20 });
+    const login = formAt(document, document.body, "login", 100, { name: "q1" });
+    return { news, login };
+  });
+  assert.deepEqual(kinds(withForm.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(withForm, { news: withForm.news, user: withForm.login.user, pass: withForm.login.pass }), { news: "", user: "alice", pass: "pw-1" });
+
+  // Without any form: the sign-in fields share a container, the newsletter box is outside it.
+  const loose = setup({}, (document) => {
+    const header = document.body.append(document.createElement("header"));
+    const news = addInput(document, header, { type: "email", name: "email" }, { top: 20 });
+    const main = document.body.append(document.createElement("main"));
+    const user = addInput(document, main, { type: "text", name: "q1" }, { top: 100 });
+    const pass = addInput(document, main, { type: "password" }, { top: 160 });
+    // A code field in another part of the page is not part of this sign-in.
+    const aside = document.body.append(document.createElement("aside"));
+    addInput(document, aside, { type: "text", autocomplete: "one-time-code" }, { top: 400 });
+    return { news, user, pass };
+  });
+  assert.deepEqual(kinds(loose.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(loose, { news: loose.news, user: loose.user, pass: loose.pass }), { news: "", user: "alice", pass: "pw-1" });
+
+  // Everything directly under the body: the text field nearest the password is the user name.
+  const flat = setup({}, (document) => {
+    const news = addInput(document, document.body, { type: "email", name: "email" }, { top: 20 });
+    const user = addInput(document, document.body, { type: "text", name: "q1" }, { top: 100 });
+    const pass = addInput(document, document.body, { type: "password" }, { top: 160 });
+    return { news, user, pass };
+  });
+  assert.deepEqual(kinds(flat.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(flat, { news: flat.news, user: flat.user, pass: flat.pass }), { news: "", user: "alice", pass: "pw-1" });
+});
+
+test("a_change_password_page_fills_the_current_password_and_never_a_new_one", () => {
+  const t = setup({}, (document) => {
+    const form = document.body.append(document.createElement("form"));
+    const user = addInput(document, form, { type: "text", name: "username", autocomplete: "username" }, { top: 100 });
+    const current = addInput(document, form, { type: "password", name: "old", autocomplete: "current-password" }, { top: 160 });
+    const fresh = addInput(document, form, { type: "password", name: "new", autocomplete: "new-password" }, { top: 220 });
+    const again = addInput(document, form, { type: "password", name: "new2", autocomplete: "new-password" }, { top: 280 });
+    for (const input of [user, current, fresh, again]) input.form = form;
+    return { user, current, fresh, again };
+  });
+  assert.deepEqual(kinds(t.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(t, { user: t.user, current: t.current, fresh: t.fresh, again: t.again }), { user: "alice", current: "pw-1", fresh: "", again: "" });
+
+  // A page whose first password field sets a new one: the stored password goes into the other.
+  const firstNew = setup({}, (document) => {
+    const form = document.body.append(document.createElement("form"));
+    const fresh = addInput(document, form, { type: "password", autocomplete: "new-password" }, { top: 160 });
+    const current = addInput(document, form, { type: "password", autocomplete: "current-password" }, { top: 220 });
+    fresh.form = current.form = form;
+    return { fresh, current };
+  });
+  assert.deepEqual(kinds(firstNew.begin()), ["password"]);
+  assert.equal(firstNew.fill()?.ok, true);
+  assert.equal(nativeValue(firstNew.fresh), "");
+  assert.equal(nativeValue(firstNew.current), "s3cret");
+
+  // A sign-up page: only new-password fields, so no password is reported and none is filled.
+  const signUp = setup({}, (document) => {
+    const form = document.body.append(document.createElement("form"));
+    const fresh = addInput(document, form, { type: "password", autocomplete: "new-password" }, { top: 160 });
+    fresh.form = form;
+    return { fresh };
+  });
+  assert.deepEqual(signUp.begin(), []);
+  assert.deepEqual(signUp.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(signUp.fresh), "");
+});
+
+test("a_second_form_and_a_loose_code_field_outside_the_group_are_not_reported", () => {
+  const t = setup({}, (document) => {
+    const login = formAt(document, document.body, "login", 100);
+    const other = formAt(document, document.body, "other", 300);
+    const code = addInput(document, document.body, { type: "text", autocomplete: "one-time-code" }, { top: 500 });
+    return { login, other, code };
+  });
+  assert.deepEqual(kinds(t.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(t, { a: t.login.user, b: t.login.pass, c: t.other.user, d: t.other.pass }), { a: "alice", b: "pw-1", c: "", d: "" });
+  assert.equal(t.fill(fillMessage({ field: "totp", value: "123456" }))?.reason, "wrong_kind");
+  assert.equal(nativeValue(t.code), "");
+
+  // The code field of the same form is part of the group.
+  const same = setup({}, (document) => {
+    const form = document.body.append(document.createElement("form"));
+    const pass = addInput(document, form, { type: "password" }, { top: 100 });
+    const code = addInput(document, form, { type: "text", autocomplete: "one-time-code" }, { top: 160 });
+    pass.form = code.form = form;
+    return { pass, code };
+  });
+  assert.deepEqual(kinds(same.begin()), ["password", "totp"]);
+});
+
+test("an_input_in_a_disabled_fieldset_is_not_filled", () => {
+  const build = (/** @type {any} */ document) => {
+    const fieldset = document.body.append(document.createElement("fieldset"));
+    const pass = addInput(document, fieldset, { type: "password" }, { top: 100 });
+    return { fieldset, pass };
+  };
+  const after = setup({}, build);
+  assert.deepEqual(kinds(after.begin()), ["password"]);
+  after.fieldset.setAttribute("disabled", "");
+  assert.deepEqual(after.fill(), { request_id: "req-1", ok: false, reason: "hidden" });
+  assert.equal(nativeValue(after.pass), "");
+  const before = setup({}, build);
+  before.fieldset.setAttribute("disabled", "");
+  assert.deepEqual(before.begin(), []);
+});
+
+test("a_cover_that_hit_testing_cannot_see_is_not_detected_today", () => {
+  // The hit test sees what a click would reach. It does not see a cover with
+  // pointer-events: none, nor paint outside a box (a box-shadow spread, an
+  // outline, a drop-shadow). This test pins that limit, which the design
+  // document states; a later change that closes it should change this test on purpose.
+  const t = setup();
+  t.begin();
+  const cover = t.document.createElement("div");
+  t.document.body.append(cover);
+  cover.rect = { left: 90, top: 150, width: 260, height: 52 };
+  cover.z = 10;
+  cover.style["pointer-events"] = "none";
+  const painter = t.document.createElement("div");
+  t.document.body.append(painter);
+  painter.style["box-shadow"] = "0 0 0 9999px white";
+  painter.style.outline = "9999px solid white";
+  painter.style.filter = "drop-shadow(0 0 9999px white)";
+  assert.deepEqual(t.fill(), { request_id: "req-1", ok: true });
+  assert.equal(nativeValue(t.pass), "s3cret");
+});
+
+test("a_report_has_at_most_three_fields_and_nothing_is_sent_before_begin", () => {
+  const many = setup({}, (document) => {
+    // 80 fields that all pass: 4 columns, 20 rows, none over another.
+    for (let i = 0; i < 80; i += 1) {
+      addInput(document, document.body, { type: "password" }, { left: (i % 4) * 300, top: 10 + Math.floor(i / 4) * 38, width: 240, height: 30 });
+    }
+    return {};
+  });
+  assert.deepEqual(many.sent, [], "creating an engine reports nothing");
+  assert.deepEqual(kinds(many.begin()), ["password"]);
 });
 
 test("field_ids_are_random_per_injection_and_never_page_supplied", () => {
@@ -609,18 +796,6 @@ test("field_ids_are_random_per_injection_and_never_page_supplied", () => {
   // A second engine on the same page makes other ids.
   const other = setup();
   assert.equal([...other.begin().map((f) => f.id)].some((id) => seen.has(id)), false);
-});
-
-test("a_report_lists_at_most_64_fields_and_nothing_is_sent_before_begin", () => {
-  const many = setup({}, (document) => {
-    // 80 fields that all pass: 4 columns, 20 rows, none over another.
-    for (let i = 0; i < 80; i += 1) {
-      addInput(document, document.body, { type: "password" }, { left: (i % 4) * 300, top: 10 + Math.floor(i / 4) * 38, width: 240, height: 30 });
-    }
-    return {};
-  });
-  assert.deepEqual(many.sent, [], "creating an engine reports nothing");
-  assert.equal(many.begin().length, 64);
 });
 
 test("the_content_script_imports_no_crypto_and_no_shared_store", () => {

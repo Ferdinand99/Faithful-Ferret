@@ -21,7 +21,7 @@
 // A field passes only when it is a visible, enabled, writable input that the
 // user can see and nothing covers:
 //
-// - it is in the page, not `disabled`, not `readonly`, and neither it nor an
+// - it is in the page, not `:disabled` (also through a disabled fieldset), not `readonly`, and neither it nor an
 //   ancestor has `aria-hidden="true"` or is `inert`;
 // - from the field up to the root of the document, through shadow roots and
 //   slots, nothing has `opacity` below 1, a `visibility` other than `visible`,
@@ -31,14 +31,23 @@
 // - the topmost element at the centre and four more points of the field is the
 //   field itself, asked of the document and of every shadow root on the way.
 //
-// Messages: a field id is only a handle for this report. A `fill_field` names
-// the kind, and the engine fills the first field of that kind that the report
-// listed. The engine answers only to a message that the extension itself sent.
+// Limit of the last check: it asks the browser what a click at those points
+// would hit, so it does not see a cover that a click passes through or that
+// paints outside its own box: an element with `pointer-events: none`, a
+// `box-shadow` with a large spread, an `outline`, a `filter: drop-shadow()`
+// or a `border-image-outset` that another element draws over the field. The
+// design document (section on clickjacking) states this limit too, and a test
+// pins it, so that a later change is deliberate.
+//
+// Which field: one request fills one group (see `scan`): the password field of
+// a form, the user name before it and the one-time code in the same form, and
+// never a field that sets a new password. A field id is only a handle for the
+// report. A `fill_field` names the kind, and the engine fills the field of that
+// kind in the group. The engine answers only to a message that the extension
+// itself sent.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 
-/** The most fields a report lists (the schema's bound). */
-const MAX_FIELDS = 64;
 /** The smallest width and height, in CSS pixels, of a field the engine fills. */
 export const MIN_SIDE = 8;
 /** The share of a field that must lie inside the viewport. */
@@ -178,6 +187,42 @@ function autocompleteTokens(element) {
 }
 
 /**
+ * @typedef {{ element: any, role: "password" | "totp" | "username" | "text", order: number }} Candidate
+ */
+
+/**
+ * Whether `node` is `container` or lies inside it, in the flat tree.
+ * @param {any} container
+ * @param {any} node
+ */
+function isInside(container, node) {
+  for (let n = node, depth = 0; n && n !== UNRENDERED && depth <= MAX_DEPTH; n = flatParent(n), depth += 1) {
+    if (n === container) return true;
+  }
+  return false;
+}
+
+/**
+ * The candidates that belong with the anchor: those of its form, or, without a
+ * form, those without a form inside the nearest container of the anchor that
+ * holds a candidate of another kind (the anchor alone when there is none).
+ *
+ * @param {Candidate} anchor
+ * @param {Candidate[]} candidates
+ * @returns {Candidate[]}
+ */
+function groupOf(anchor, candidates) {
+  const form = anchor.element.form;
+  if (form) return candidates.filter((c) => c.element.form === form);
+  const loose = candidates.filter((c) => !c.element.form);
+  for (let node = flatParent(anchor.element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
+    const inside = loose.filter((c) => isInside(node, c.element));
+    if (inside.some((c) => c.role !== anchor.role)) return inside;
+  }
+  return [anchor];
+}
+
+/**
  * Makes the engine. Everything the engine touches comes in through `deps`, so a
  * test can run it on a fake page.
  *
@@ -190,7 +235,9 @@ function autocompleteTokens(element) {
  * }} deps `send` delivers a message to the extension; `runtimeId` and `extensionBase` (`moz-extension://<uuid>/`) say who may talk to the engine
  */
 export function createFillEngine({ window, document, send, runtimeId, extensionBase }) {
-  // The native setter, taken before any later page script could replace it.
+  // The native setter. In Firefox the content script reads the page through
+  // Xray wrappers, so this is the browser's own setter whatever the page has
+  // replaced; taking it once here is only a second line of defence.
   const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
   const random = window.crypto;
 
@@ -205,7 +252,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   function inspect(element) {
     if (!isElement(element) || element.localName !== "input") return "gone";
     if (element.ownerDocument !== document || element.isConnected !== true) return "gone";
-    if (element.disabled === true || element.readOnly === true) return "hidden";
+    // :disabled also covers an input inside a disabled fieldset.
+    if (element.matches(":disabled") || element.readOnly === true) return "hidden";
 
     // From the field up to the root, through shadow roots and slots.
     /** @type {any} */
@@ -277,60 +325,71 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
-   * The kinds of the inputs that pass `inspect`, in document order. A text
-   * field is a user name when it says so (autocomplete, name, label) or is the
-   * last text field before a password field of the same form.
+   * The group of fields that one request fills, found in four steps:
+   *
+   * 1. Every input that passes `inspect` is a candidate. A password field with
+   *    autocomplete "new-password" is not (a stored password never goes into a
+   *    field that sets a new one).
+   * 2. The anchor is the first candidate password field. A page with no password
+   *    field (the first step of a two-step sign-in) anchors on the first user
+   *    name field, then on the first one-time-code field.
+   * 3. The group is the anchor's form. Without a form it is the nearest
+   *    container of the anchor that also holds a candidate of another kind.
+   * 4. The group gives at most one field per kind: the password, the user name
+   *    (the last text field before the password, else the first user name field
+   *    after it) and the first one-time-code field.
+   *
+   * Nothing outside the group is reported, so no kind can land in another form
+   * than the one that gets the password.
    *
    * @returns {Field[]}
    */
   function scan() {
-    /** @type {Field[]} */
-    const found = [];
-    /** @type {Map<any, any>} the last unclaimed text field per form (or root) */
-    const lastText = new Map();
-    /** @type {Set<any>} */
-    const claimed = new Set();
-    /** @type {Array<{ element: any, kind: Kind }>} */
-    const picked = [];
-    for (const element of allInputs()) {
+    /** @type {Candidate[]} */
+    const candidates = [];
+    allInputs().forEach((element, order) => {
       const type = String(element.type ?? "").toLowerCase();
-      const scope = element.form ?? element.getRootNode();
-      if (type === "password") {
-        if (inspect(element) !== null) continue;
-        const previous = lastText.get(scope);
-        if (previous && !claimed.has(previous)) {
-          claimed.add(previous);
-          picked.push({ element: previous, kind: "username" });
-        }
-        picked.push({ element, kind: "password" });
-        continue;
-      }
-      if (!TEXT_TYPES.has(type)) continue;
       const tokens = autocompleteTokens(element);
-      const hints = hintsOf(element);
-      if (tokens.includes("one-time-code") || TOTP_HINT.test(hints)) {
-        if (inspect(element) === null) picked.push({ element, kind: "totp" });
-        continue;
+      if (type === "password") {
+        if (tokens.includes("new-password") || inspect(element) !== null) return;
+        candidates.push({ element, role: "password", order });
+        return;
       }
-      if (!USERNAME_TYPES.has(type)) continue;
-      if (inspect(element) !== null) continue;
-      if (tokens.includes("username") || tokens.includes("email") || USERNAME_HINT.test(hints)) {
-        if (!claimed.has(element)) {
-          claimed.add(element);
-          picked.push({ element, kind: "username" });
-        }
-      } else {
-        lastText.set(scope, element);
+      if (!TEXT_TYPES.has(type)) return;
+      if (tokens.includes("one-time-code") || TOTP_HINT.test(hintsOf(element))) {
+        if (inspect(element) === null) candidates.push({ element, role: "totp", order });
+        return;
       }
+      if (!USERNAME_TYPES.has(type) || inspect(element) !== null) return;
+      const named = tokens.includes("username") || tokens.includes("email") || USERNAME_HINT.test(hintsOf(element));
+      candidates.push({ element, role: named ? "username" : "text", order });
+    });
+
+    const anchor =
+      candidates.find((c) => c.role === "password") ??
+      candidates.find((c) => c.role === "username" && autocompleteTokens(c.element).includes("username")) ??
+      candidates.find((c) => c.role === "username") ??
+      candidates.find((c) => c.role === "totp");
+    if (!anchor) return [];
+    const group = groupOf(anchor, candidates);
+
+    /** @type {Candidate[]} */
+    const chosen = [anchor];
+    if (anchor.role === "password") {
+      const before = group.filter((c) => (c.role === "username" || c.role === "text") && c.order < anchor.order);
+      const user = before.at(-1) ?? group.find((c) => c.role === "username" && c.order > anchor.order);
+      if (user) chosen.push(user);
     }
-    // Document order again (a claimed field may come before later password fields).
-    const order = new Map(allInputs().map((element, i) => [element, i]));
-    picked.sort((a, b) => (order.get(a.element) ?? 0) - (order.get(b.element) ?? 0));
-    for (const { element, kind } of picked) {
-      if (found.length >= MAX_FIELDS) break;
-      found.push({ kind, id: newFieldId(random), element });
+    if (anchor.role !== "totp") {
+      const code = group.find((c) => c.role === "totp");
+      if (code) chosen.push(code);
     }
-    return found;
+    chosen.sort((x, y) => x.order - y.order);
+    return chosen.map(({ element, role }) => ({
+      kind: /** @type {Kind} */ (role === "text" ? "username" : role),
+      id: newFieldId(random),
+      element,
+    }));
   }
 
   /** @returns {string} */

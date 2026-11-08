@@ -170,6 +170,15 @@ export class FakeElement extends FakeNode {
     this.attributes.set(name, value);
   }
 
+  /** Only `:disabled`: the element itself, or a fieldset with the disabled attribute above it. @param {string} selector */
+  matches(selector) {
+    if (selector !== ":disabled") throw new Error(`the fake page does not know ${selector}`);
+    for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+      if (node.disabled === true || (node.localName === "fieldset" && node.hasAttribute("disabled"))) return true;
+    }
+    return false;
+  }
+
   get parentElement() {
     return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null;
   }

@@ -58,7 +58,7 @@ export function onConnect(port, { runtime }) {
     try {
       if (message?.op === "inject") {
         if (!index(a.tabId) || !index(a.frameId)) throw new Error("bad_target");
-        await injectFill({ scripting: browser.scripting, tabId: a.tabId, frameId: a.frameId, requestId: a.requestId });
+        await injectFill({ scripting: browser.scripting, tabId: a.tabId, frameId: a.frameId, requestId: a.requestId, documentId: a.documentId });
         port.postMessage({ id, ok: true });
       } else if (message?.op === "fill") {
         if (!index(a.tabId) || !index(a.frameId)) throw new Error("bad_target");

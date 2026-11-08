@@ -33,7 +33,7 @@ function readSources() {
 
 const SMALL = {
   "content/entry.mjs": 'import { run } from "./b.mjs";\n\nglobalThis.answer = run();\n',
-  "content/b.mjs": 'import {\n  one,\n  two,\n} from "../shared/protocol.mjs";\nimport "./c.mjs";\nexport function run() { return one + two + c; }\nexport { run };\n',
+  "content/b.mjs": 'import {\n  one,\n  two,\n} from "../shared/protocol.mjs";\nimport { c } from "./c.mjs";\nexport function run() { return one + two + c; }\nexport { run };\n',
   "content/c.mjs": "export const c = 3;\n",
   "shared/protocol.mjs": "export const one = 1;\nexport const two = 2;\n",
 };
@@ -44,7 +44,7 @@ test("joins_the_closure_in_dependency_order_without_import_or_export", () => {
   const order = [...out.matchAll(/^\/\/ ---- (.+)$/gm)].map((m) => m[1]);
   assert.deepEqual(order, ["shared/protocol.mjs", "content/c.mjs", "content/b.mjs", "content/entry.mjs"]);
   assert.match(out, /^\/\/ Files: shared\/protocol\.mjs, content\/c\.mjs, content\/b\.mjs, content\/entry\.mjs$/m);
-  // It runs in order and in one scope: the entry calls what the others declared.
+  // It runs in order: the entry calls what the others export.
   const context = vm.createContext({});
   vm.runInContext(out, context);
   assert.equal(context.answer, 6);
@@ -55,7 +55,7 @@ test("joins_the_closure_in_dependency_order_without_import_or_export", () => {
 test("refuses_what_it_cannot_join_instead_of_guessing", () => {
   /** @type {Array<[string, Record<string, string>, RegExp]>} */
   const cases = [
-    ["an alias", { "content/entry.mjs": 'import { a as b } from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /plain named imports/],
+    ["an alias", { "content/entry.mjs": 'import { a as b } from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /plain names/],
     ["a default import", { "content/entry.mjs": 'import a from "./x.mjs";\n', "content/x.mjs": "export default 1;\n" }, /not supported/],
     ["a namespace import", { "content/entry.mjs": 'import * as a from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /not supported/],
     ["a re-export", { "content/entry.mjs": 'export { a } from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /not supported/],
@@ -69,7 +69,12 @@ test("refuses_what_it_cannot_join_instead_of_guessing", () => {
     ["a page of the extension", { "content/entry.mjs": 'import "../pages/el.mjs";\n', "pages/el.mjs": "export const x = 1;\n" }, /not allowed in a content script/],
     ["a missing file", { "content/entry.mjs": 'import "./gone.mjs";\n' }, /is not in the package/],
     ["a cycle", { "content/entry.mjs": 'import "./a.mjs";\n', "content/a.mjs": 'import "./b.mjs";\n', "content/b.mjs": 'import "./a.mjs";\n' }, /cycle/],
-    ["a name declared in two files", { "content/entry.mjs": 'import "./a.mjs";\nexport const same = 1;\n', "content/a.mjs": "export const same = 2;\n" }, /declared in/],
+    ["a name that is not exported", { "content/entry.mjs": 'import { missing } from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /does not export/],
+    ["export let", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "export let a = 1;\n" }, /export let/],
+    ["an import after code on the same line", { "content/entry.mjs": 'globalThis.x = 1; import "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /not supported/],
+    ["an import form inside a block comment, with the real one missing", { "content/entry.mjs": '/*\nimport "./x.mjs";\n*/\nimport "./y.mjs";\n', "content/x.mjs": "export const a = 1;\n", "content/y.mjs": "export const b = 1;\n" }, /not supported/],
+    ["an export with an alias", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "const a = 1;\nexport { a as b };\n" }, /plain names/],
+    ["a script that does not parse", { "content/entry.mjs": "const = ;\n" }, /does not parse/],
   ];
   for (const [label, files, message] of cases) {
     assert.throws(() => classicScript("content/entry.mjs", pack(files)), message, label);
@@ -143,4 +148,29 @@ test("the_real_content_script_runs_as_one_classic_script_and_starts_once", () =>
   sent.length = 0;
   listeners[0](fillMessage({ field: "username", value: "u" }), { id: RUNTIME_ID, url: "https://example.com/" });
   assert.deepEqual(sent, []);
+});
+
+test("each_module_keeps_its_own_scope_and_a_name_in_two_files_is_fine", () => {
+  const out = classicScript("content/entry.mjs", pack({
+    "content/entry.mjs": 'import { one } from "./a.mjs";\nimport { two } from "./b.mjs";\nglobalThis.result = [one(), two(), typeof origin];\n',
+    "content/a.mjs": 'const same = 1;\nconst origin = { not: "the global" };\nexport function one() { return same; }\n',
+    "content/b.mjs": 'const same = 2;\nexport function two() { return same; }\n',
+  }));
+  // The context has a global origin; the entry does not see the one declared in a.mjs.
+  const context = vm.createContext({ origin: "https://example.com" });
+  vm.runInContext(out, context);
+  assert.deepEqual([...context.result], [1, 2, "string"]);
+  // Nothing of a module leaks to the global scope.
+  assert.equal(vm.runInContext("typeof same + typeof one + typeof __m0", context), "undefinedundefinedundefined");
+});
+
+test("an_imported_name_is_read_from_the_module_that_exports_it", () => {
+  const out = classicScript("content/entry.mjs", pack({
+    "content/entry.mjs": 'import { b } from "./a.mjs";\nglobalThis.result = b;\n',
+    "content/a.mjs": 'import { a } from "./c.mjs";\nexport const b = a + 1;\n',
+    "content/c.mjs": "export const a = 41;\n",
+  }));
+  const context = vm.createContext({});
+  vm.runInContext(out, context);
+  assert.equal(context.result, 42);
 });
