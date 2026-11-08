@@ -1,12 +1,16 @@
 # The Faithful Ferret test stack on the LANBox, behind the Pangolin proxy
 # (which does TLS and single sign-on and forwards to these two ports):
 #
-#   https://ferret-test.opland.net  ->  http://10.0.3.26:3040   admin pages and API
-#   https://vault-test.opland.net   ->  http://10.0.3.26:3041   web vault
+#   https://ferret-test.opland.net  ->  http://10.0.3.152:3040   admin pages and API
+#   https://vault-test.opland.net   ->  http://10.0.3.152:3041   web vault
 #
 # Use scripts/lanbox-ferret-test.sh; it makes docker/.env (not in git) with the
 # setup token and the proxy addresses, and runs everything through the Docker
-# context `unraid`. The data is throwaway test data.
+# context `lanbox` (alias `unraid`), on the build VM. The data is throwaway test data.
+#
+# Newt, the tunnel client, runs outside Docker (Proxmox CT 130, 10.0.3.169): set
+# FERRET_TRUSTED_PROXIES=10.0.3.169 in docker/.env. The script accepts one valid
+# IPv4 address there, or the address of a Docker container named Newt.
 name: ferret-test
 
 services:
