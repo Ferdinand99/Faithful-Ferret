@@ -1,0 +1,201 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { CORE_OPS, CoreError, LOCK_REASONS, createCoreHost } from "../../src/background/coreHost.mjs";
+import { ops as testOps } from "../../src/background/testHooks.mjs";
+import { AAGUID, createClock, createFakeClient } from "./backgroundHelpers.mjs";
+
+/** Operations that only the tests have: one that needs the vault and one that opens it. */
+const probes = Object.freeze({
+  vault_probe: { vault: true, run: async (/** @type {any} */ client) => client.vault.item_list() },
+  unlock_probe: {
+    vault: false,
+    run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
+      ctx.setUnlocked();
+      return { ok: true };
+    },
+  },
+});
+const names = [...CORE_OPS, "vault_probe", "unlock_probe"];
+
+/** @param {Record<string, (...args: any[]) => any>} [methods] */
+function setup(methods = {}) {
+  const client = createFakeClient({
+    vault: { ferret_aaguid: () => Uint8Array.from(AAGUID), item_list: () => ["a"], ...methods },
+    job: { argon2_export_key: () => new Uint8Array(32).fill(7) },
+  });
+  let made = 0;
+  const clock = createClock();
+  const host = createCoreHost({
+    createClient: () => {
+      made += 1;
+      return client;
+    },
+    now: clock.now,
+    ops: probes,
+    names,
+  });
+  return { client, host, clock, made: () => made };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("lock_ends_the_worker_and_a_later_call_reports_vault_locked", async () => {
+  const { client, host } = setup();
+  assert.equal(host.state(), "locked");
+  await host.call("unlock_probe");
+  assert.equal(host.state(), "unlocked");
+  assert.deepEqual(await host.call("vault_probe"), ["a"]);
+
+  await host.lock("manual");
+  assert.equal(client.locks, 1, "client.lock() ends the worker");
+  assert.equal(host.state(), "locked");
+  const before = client.calls.length;
+  await assert.rejects(host.call("vault_probe"), { code: "vault_locked" });
+  assert.equal(client.calls.length, before, "a locked host does not touch the client");
+  // An op that needs no key still works, and does not unlock.
+  assert.equal(/** @type {any} */ (await host.call("ping")).ok, true);
+  assert.equal(host.state(), "locked");
+});
+
+test("a_call_that_is_waiting_when_the_vault_locks_is_refused_as_vault_locked", async () => {
+  const { host } = setup({ item_list: () => new Promise(() => {}) });
+  await host.call("unlock_probe");
+  const waiting = host.call("vault_probe");
+  await tick();
+  await host.lock("idle");
+  await assert.rejects(waiting, { code: "vault_locked" });
+});
+
+test("a_result_that_arrives_after_a_lock_is_not_handed_out", async () => {
+  /** @type {() => void} */
+  let release = () => {};
+  const { host, client } = setup();
+  // A client that does not reject the waiting call (the real one does): the host still refuses.
+  client.lock = async () => {
+    client.locks += 1;
+  };
+  client.vault = /** @type {any} */ ({
+    item_list: () => new Promise((resolve) => {
+      release = () => resolve(["late"]);
+    }),
+  });
+  await host.call("unlock_probe");
+  const waiting = host.call("vault_probe");
+  await tick();
+  await host.lock("timeout");
+  release();
+  await assert.rejects(waiting, { code: "vault_locked" });
+});
+
+test("unknown_core_op_is_refused", async () => {
+  const { host, made } = setup();
+  for (const op of ["", "nope", "__proto__", "constructor", "toString", "hasOwnProperty", "lock", "vault.lock", "PING", "ping ", 7, null, undefined, {}, ["ping"]]) {
+    await assert.rejects(host.call(/** @type {any} */ (op)), { code: "unknown_core_op" }, String(op));
+  }
+  assert.equal(made(), 0, "a refused name never starts the client");
+  // A name that is not in the list is refused even when an implementation is given for it.
+  const plain = createCoreHost({ createClient: () => createFakeClient(), ops: probes });
+  await assert.rejects(plain.call("vault_probe"), { code: "unknown_core_op" });
+  assert.throws(() => plain.addOps(probes), { code: "unknown_core_op" });
+});
+
+test("core_ops_is_a_frozen_list_and_the_release_has_no_argon2_bench", async () => {
+  assert.equal(Object.isFrozen(CORE_OPS), true);
+  assert.deepEqual([...CORE_OPS], ["ping", "argon2_bench"]);
+  // Without the test build's implementation the name is in the list but refused.
+  const release = createCoreHost({ createClient: () => createFakeClient() });
+  await assert.rejects(release.call("argon2_bench", { m_kib: 8, t: 1, p: 1 }), { code: "unknown_core_op" });
+});
+
+test("ping_answers_from_the_wasm_client_and_starts_it_once", async () => {
+  const { host, made } = setup();
+  assert.deepEqual(await host.call("ping"), { ok: true, aaguid: "dc704a44b994410ca689ed8d71a84ac3" });
+  await host.call("ping");
+  assert.equal(made(), 1);
+});
+
+test("a_client_that_fails_to_start_is_tried_again_and_lock_still_works", async () => {
+  let attempts = 0;
+  const host = createCoreHost({
+    createClient: () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("secret-looking text that must not leave");
+      return createFakeClient({ vault: { ferret_aaguid: () => Uint8Array.from(AAGUID) } });
+    },
+  });
+  await assert.rejects(host.call("ping"), (/** @type {any} */ error) => error instanceof CoreError && error.code === "internal" && !/secret/.test(error.message));
+  await host.lock("manual");
+  assert.equal(/** @type {any} */ (await host.call("ping")).ok, true);
+});
+
+test("an_error_of_the_client_leaves_as_its_code_only", async () => {
+  const { host } = setup({
+    ferret_aaguid: () => {
+      throw Object.assign(new Error("password=hunter2"), { code: "kdf_out_of_memory" });
+    },
+  });
+  await assert.rejects(host.call("ping"), (/** @type {any} */ error) => error.code === "kdf_out_of_memory" && !/hunter2/.test(error.message));
+  const odd = setup({
+    ferret_aaguid: () => {
+      throw Object.assign(new Error("x"), { code: "Not A Code!" });
+    },
+  });
+  await assert.rejects(odd.host.call("ping"), { code: "internal" });
+  const wrongShape = setup({ ferret_aaguid: () => new Uint8Array(3) });
+  await assert.rejects(wrongShape.host.call("ping"), { code: "internal" });
+});
+
+test("a_reply_is_plain_data_and_never_a_key", async () => {
+  const { host } = setup();
+  const value = await host.call("ping");
+  assert.deepEqual(JSON.parse(JSON.stringify(value)), value);
+});
+
+test("lock_refuses_a_reason_it_does_not_know_and_tells_its_listeners", async () => {
+  const { host, client } = setup();
+  assert.deepEqual([...LOCK_REASONS], ["timeout", "idle", "manual", "sign_out", "restart"]);
+  await assert.rejects(host.lock(/** @type {any} */ ("because")), { code: "bad_reason" });
+  assert.equal(client.locks, 0);
+  /** @type {string[]} */
+  const heard = [];
+  const stop = host.onLocked((reason) => heard.push(reason));
+  host.onLocked(() => {
+    throw new Error("a listener that fails");
+  });
+  await host.lock("sign_out");
+  await host.call("ping");
+  await host.lock("restart");
+  stop();
+  await host.lock("manual");
+  assert.deepEqual(heard, ["sign_out", "restart"]);
+  assert.equal(host.state(), "locked");
+});
+
+test("a_lock_before_any_call_needs_no_client", async () => {
+  const { host, made } = setup();
+  await host.lock("restart");
+  assert.equal(made(), 0);
+});
+
+test("argon2_bench_runs_in_the_job_worker_wipes_the_key_and_returns_only_the_time", async () => {
+  const key = new Uint8Array(32).fill(7);
+  const client = createFakeClient({ job: { argon2_export_key: () => key } });
+  const clock = createClock(0);
+  const host = createCoreHost({
+    createClient: () => client,
+    now: () => {
+      clock.advance(25);
+      return clock.now();
+    },
+  });
+  host.addOps(testOps);
+  assert.deepEqual(await host.call("argon2_bench", { m_kib: 65_536, t: 3, p: 1 }), { ok: true, ms: 25, key_length: 32 });
+  assert.ok(key.every((b) => b === 0), "the key is wiped");
+  const call = client.calls.find((c) => c.method === "argon2_export_key");
+  assert.equal(call?.target, "job");
+  assert.deepEqual(call?.args.slice(2), [{ m_kib: 65_536, t: 3, p: 1 }, "open", null]);
+  assert.equal(client.calls.filter((c) => c.target === "vault").length, 0, "the vault worker is not used");
+  for (const bad of [undefined, {}, { m_kib: 0, t: 1, p: 1 }, { m_kib: 1e9, t: 1, p: 1 }, { m_kib: 8, t: 1.5, p: 1 }, { m_kib: 8, t: 1, p: 9 }, { m_kib: "8", t: 1, p: 1 }]) {
+    await assert.rejects(host.call("argon2_bench", bad), { code: "invalid_input" });
+  }
+});

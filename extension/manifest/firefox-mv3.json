@@ -5,7 +5,7 @@
     "default_popup": "pages/about.html"
   },
   "background": {
-    "scripts": ["background/compat.mjs"],
+    "scripts": ["background/main.mjs"],
     "type": "module"
   },
   "content_security_policy": {
