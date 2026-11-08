@@ -334,6 +334,11 @@ pub fn still_valid(
         _ => return Ok(false),
     }
     if origin == Origin::Vault {
+        // Only that the user has an account with a vault, as the extractor
+        // reads it: a user has one account and so one vault, and the vault of
+        // a stream is the one the extractor found with this same join. A caller
+        // that needs the vault itself reads it by id (the event stream reads
+        // its sequence number from it in the same call).
         let account: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM ferret_accounts a

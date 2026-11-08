@@ -152,6 +152,9 @@ pub async fn run(config: Config) -> Result<(), StartError> {
         config.admin_addr()
     );
 
+    // The event streams end when the server stops: a graceful shutdown waits
+    // for every answer in flight, and a stream has no end of its own for an hour.
+    let streams = state.streams.clone();
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let stopped = move || {
         let mut rx = stop_rx.clone();
@@ -173,6 +176,7 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     tokio::spawn(async move {
         shutdown_signal().await;
         let _ = stop_tx.send(true);
+        streams.shutdown();
     });
     let (a, b) = tokio::join!(vault, admin);
     a?;

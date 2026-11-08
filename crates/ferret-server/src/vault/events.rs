@@ -43,7 +43,7 @@ use axum::response::Response;
 use axum::routing::get;
 use futures_util::stream;
 use rusqlite::{OptionalExtension as _, params};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::{Instant, MissedTickBehavior};
 use vole_kit::http::live::Changes;
 
@@ -80,6 +80,8 @@ pub struct EventStreams {
     per_vault: usize,
     total: usize,
     counts: Arc<Mutex<Counts>>,
+    /// Becomes `true` when the server stops: every stream ends then.
+    stop: watch::Sender<bool>,
 }
 
 /// The streams open now. An entry exists only while it counts a stream, so the
@@ -112,7 +114,16 @@ impl EventStreams {
             per_vault,
             total,
             counts: Arc::new(Mutex::new(Counts::default())),
+            stop: watch::channel(false).0,
         }
+    }
+
+    /// Ends every open stream, and every one that opens later: the server is
+    /// stopping. A graceful shutdown waits for the answers in flight, and a
+    /// stream would otherwise be one until its hour is out. The places are free
+    /// when the tasks have ended.
+    pub fn shutdown(&self) {
+        self.stop.send_replace(true);
     }
 
     /// A place for a new stream of this device in this vault, or `None` when a
@@ -139,6 +150,10 @@ impl EventStreams {
             vault: *vault,
             device: *device,
         })
+    }
+
+    fn stop_signal(&self) -> watch::Receiver<bool> {
+        self.stop.subscribe()
     }
 
     /// Streams open now, in all.
@@ -219,6 +234,8 @@ fn frame(event: &str, seq: u64) -> Option<Bytes> {
 /// What one stream's task holds besides the two receivers.
 struct Open {
     tx: mpsc::Sender<Bytes>,
+    /// `true` when the server stops.
+    stop: watch::Receiver<bool>,
     db: VaultDb,
     session: VaultSession,
     /// The place; freed when the task ends.
@@ -261,6 +278,7 @@ async fn get_events(
     tx.try_send(hello).map_err(|_| ApiError::internal())?;
     let open = Open {
         tx,
+        stop: streams.stop_signal(),
         db,
         session,
         _slot: slot,
@@ -320,13 +338,30 @@ fn vault_seq(conn: &rusqlite::Connection, vault: &VaultId) -> Result<u64, StoreE
     u64::try_from(seq).map_err(|_| StoreError::Invalid("seq"))
 }
 
+/// Returns when the server stops (or its signal is gone, which is the same).
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    // The guard the wait returns is not held past this line.
+    let _ = stop.wait_for(|stopped| *stopped).await;
+}
+
 impl Open {
     /// Sends a frame; `false` when the client is gone or does not read.
+    ///
+    /// While this waits for a client that does not read (at most
+    /// [`SEND_PATIENCE`]), revocations and heartbeats are not looked at; the
+    /// stop of the server is. That is fine: nothing more is sent to that client
+    /// in the meantime, since its channel is full, and when the wait is over the
+    /// stream either ends (the client did not read) or goes on to the next look
+    /// at them.
     async fn send(&self, frame: Bytes) -> bool {
-        matches!(
-            tokio::time::timeout(SEND_PATIENCE, self.tx.send(frame)).await,
-            Ok(Ok(()))
-        )
+        let mut stop = self.stop.clone();
+        tokio::select! {
+            biased;
+            () = stopped(&mut stop) => false,
+            sent = tokio::time::timeout(SEND_PATIENCE, self.tx.send(frame)) => {
+                matches!(sent, Ok(Ok(())))
+            }
+        }
     }
 
     /// Whether the session still counts. A database that fails closes the
@@ -348,6 +383,7 @@ async fn run(
         .unwrap_or_else(Instant::now);
     let mut heartbeat = tokio::time::interval_at(first, HEARTBEAT);
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut stop = open.stop.clone();
     loop {
         // The wait for a change is kept across the other wake-ups: a change
         // that was heard and waits for the quiet period must not be lost to a
@@ -357,6 +393,7 @@ async fn run(
         loop {
             tokio::select! {
                 biased;
+                () = stopped(&mut stop) => return,
                 () = open.tx.closed() => return,
                 revoked = revocations.recv() => match revoked {
                     Ok(sid) if sid == open.session.sid => return,

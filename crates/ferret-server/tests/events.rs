@@ -511,6 +511,53 @@ async fn a_login_that_replaces_the_session_ends_its_stream_at_once() {
 }
 
 #[tokio::test]
+async fn a_sign_in_that_ends_no_session_announces_no_revocation() {
+    let app = TestApp::builder().proxies(proxies()).build().await;
+    seed_login(&app, 1, "alice@example.com").await;
+    let mut laptop = Jar::default();
+    assert_eq!(
+        sign_in(&app, &mut laptop, "alice@example.com", 1)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // The session the browser presents is over already: nothing is ended now.
+    sql(
+        &app,
+        "UPDATE ferret_sessions SET revoked_at = ?1",
+        vec![i64::try_from(app.clock.now_unix()).expect("a time")],
+    )
+    .await;
+    let mut heard = app.sync_events().subscribe_revocations();
+    let again = sign_in(&app, &mut laptop, "alice@example.com", 1).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text());
+    assert!(matches!(
+        heard.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn shutdown_ends_open_streams_and_frees_their_slots() {
+    let w = world().await;
+    let mut first = open(&w).await;
+    let mut second = open(&w).await;
+    assert_eq!(live_streams(&w.app).await, 2);
+    // The server is stopping: a graceful shutdown waits for every answer, so
+    // the streams end now and not when their hour is out.
+    w.app.state.streams.shutdown();
+    first.end(SECOND * 2).await;
+    second.end(SECOND * 2).await;
+    wait_until(SECOND * 2, || w.app.state.streams.open() == 0).await;
+    // One that opens after the stop says hello and ends.
+    let mut late = w.app.events(&w.issued.jar).await;
+    assert_eq!(late.status, StatusCode::OK);
+    let (frames, ended) = late.frames(SECOND).await;
+    assert!(ended, "{frames:?}");
+    wait_until(SECOND * 2, || w.app.state.streams.open() == 0).await;
+}
+
+#[tokio::test]
 async fn revoked_or_expired_session_ends_the_stream_at_the_next_heartbeat() {
     // Revoked in the database without a notification (an administrator, or an
     // earlier version of the code): the next heartbeat finds it.

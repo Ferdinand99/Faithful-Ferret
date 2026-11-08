@@ -887,8 +887,9 @@ struct SignedIn {
 
 /// How the database side of an ordinary sign-in ended.
 enum Opened {
-    /// A new session.
-    Session(SignedIn),
+    /// A new session, and the vault session it ended (the one the browser
+    /// presented), if a live one was ended.
+    Session(SignedIn, Option<SidHash>),
     /// The user is gone or was disabled since the first step.
     Refused,
     /// The kit's second factor is on for the user and this server cannot ask
@@ -966,10 +967,11 @@ async fn login_finish_route(
                 })
                 .await?;
             let signed_in = match opened {
-                Opened::Session(signed_in) => {
+                Opened::Session(signed_in, ended) => {
                     // The session the new one replaced is over: its event
-                    // stream closes now, not at the next heartbeat.
-                    if let Some(previous) = presented {
+                    // stream closes now, not at the next heartbeat. Only a
+                    // session that was really ended is announced.
+                    if let Some(previous) = ended {
                         state.events.session_revoked(previous);
                     }
                     signed_in
@@ -1052,20 +1054,25 @@ fn open_session(
     insert_session(&tx, &session)?;
     // The browser's cookies are replaced by the new ones, so the row they
     // named would be left live and unreachable; it ends here, for any user.
+    let mut ended = None;
     if let Some(previous) = presented
         && let Some(row) = lookup(&tx, &previous)?
         && row.origin == Origin::Vault
+        && revoke(&tx, &previous, now)?
     {
-        revoke(&tx, &previous, now)?;
+        ended = Some(previous);
     }
     tx.commit()?;
-    Ok(Opened::Session(SignedIn {
-        secret,
-        claims,
-        account: AccountId::from_bytes(account),
-        vault: VaultId::from_bytes(vault),
-        vk_epoch,
-    }))
+    Ok(Opened::Session(
+        SignedIn {
+            secret,
+            claims,
+            account: AccountId::from_bytes(account),
+            vault: VaultId::from_bytes(vault),
+            vk_epoch,
+        },
+        ended,
+    ))
 }
 
 // ------------------------------------------------------------------ logout
