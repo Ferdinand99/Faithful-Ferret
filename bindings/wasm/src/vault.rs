@@ -549,7 +549,15 @@ impl Vault {
     /// open it with `open_item` when it is needed.
     ///
     /// `new_item_id` must be 16 bytes, differ from the id of the open item
-    /// and not be the id of the manifest (`invalid_input`). An item from a
+    /// and not be the id of the manifest (`invalid_input`). It must be fresh
+    /// bytes from a CSPRNG (`crypto.getRandomValues`): the binding cannot
+    /// tell a fresh id from one that is already in use. The server's
+    /// create-only check (`base_rev` 0 on an id that exists is a conflict) is
+    /// the backstop against a clash, not a reason to pick ids any other way.
+    /// `device` is an optional public device name: when it is given the copy
+    /// carries it as its `device` (through the same path as an edit with a
+    /// draft that sets only `device`); without it the copy keeps the `device`
+    /// of the open item. An item from a
     /// newer schema is `read_only_schema`. An item that holds a passkey is
     /// `invalid_state`: a copy would be a second item with the same
     /// credential id, and the relying party has one credential for it. The
@@ -563,6 +571,7 @@ impl Vault {
         handle: u32,
         new_item_id: Vec<u8>,
         now_ms: f64,
+        device: Option<String>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let new_id = ItemId::from_bytes(arr(&new_item_id)?);
@@ -574,7 +583,7 @@ impl Vault {
             }
             // A read-only item is refused here (`read_only_schema`), before
             // anything else is read from it.
-            let body = build_body(&DraftDto::default(), Some(&open.body), now)?;
+            let body = build_body(&DraftDto::with_device(device), Some(&open.body), now)?;
             if body.passkey.is_some() {
                 return Err(Error::InvalidState.into());
             }

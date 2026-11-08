@@ -193,6 +193,19 @@ pub(crate) struct DraftDto {
     remove_passkey: bool,
 }
 
+impl DraftDto {
+    /// A draft that sets only the device name (or nothing, for `None`).
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "a struct update would move fields out of a type that wipes itself on drop"
+    )]
+    pub(crate) fn with_device(device: Option<String>) -> Self {
+        let mut draft = Self::default();
+        draft.device = device;
+        draft
+    }
+}
+
 fn field_kind(text: Option<&String>, previous: Option<&FieldKind>) -> FieldKind {
     match (text, previous) {
         (Some(t), _) => FieldKind::from_text(t.clone()),

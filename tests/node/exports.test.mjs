@@ -65,7 +65,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
   ];
   assert.deepEqual([...exportsOf.keys()].sort(), [...documented].sort());
   // The copy of an item is a method of the vault that returns the sealed row, not bytes.
-  assert.match(dts, /copy_item\(handle: number, new_item_id: Uint8Array, now_ms: number\): any;/);
+  assert.match(dts, /copy_item\(handle: number, new_item_id: Uint8Array, now_ms: number, device\?: string \| null\): any;/);
 });
 
 test("wasm_exports_have_no_test_support", () => {

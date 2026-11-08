@@ -1271,6 +1271,37 @@ test("copy_item_opens_under_the_new_id_at_rev_1_with_the_same_view", () => {
   assert.equal(vault.item_view(ch).name, "Edited", "the copy is its own item");
 });
 
+test("copy_item_stamps_the_device_name_when_given_and_keeps_the_old_one_when_not", () => {
+  const { vault } = newAccount("copy-device");
+  const first = vault.encrypt_item(ITEM, 1, { ...LOGIN_DRAFT, device: "Firefox on Windows" }, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  assert.equal(vault.item_view(h).device, "Firefox on Windows");
+
+  // With a name: the copy carries it, `modified` is the time of the copy, the rest is the same.
+  const stamped = open(vault, COPY, vault.copy_item(h, COPY, COPY_AT, "Safari on iPhone"));
+  const view = vault.item_view(stamped);
+  assert.equal(view.device, "Safari on iPhone");
+  assert.equal(view.modified, COPY_AT);
+  const before = vault.item_view(h);
+  assert.deepEqual({ ...view, device: "", modified: 0 }, { ...before, device: "", modified: 0 });
+  assert.equal(vault.item_view(h).device, "Firefox on Windows", "the open item keeps its own");
+
+  // Without a name (left out, undefined or null): the device of the original stays.
+  for (const [n, args] of [[0x71, []], [0x72, [undefined]], [0x73, [null]]]) {
+    const id = fill(16, n);
+    const kept = open(vault, id, vault.copy_item(h, id, COPY_AT, ...args));
+    const keptView = vault.item_view(kept);
+    assert.equal(keptView.device, "Firefox on Windows", `argument ${JSON.stringify(args)}`);
+    assert.equal(keptView.modified, COPY_AT);
+  }
+
+  // An item with no device stays without one.
+  const bare = vault.encrypt_item(fill(16, 0x74), 1, { item_type: "note", name: "n" }, undefined, NOW);
+  const bh = open(vault, fill(16, 0x74), bare);
+  const bareCopy = open(vault, fill(16, 0x75), vault.copy_item(bh, fill(16, 0x75), COPY_AT));
+  assert.equal(vault.item_view(bareCopy).device, null);
+});
+
 test("copy_has_a_new_item_key", () => {
   const { vault } = newAccount("copy-key");
   const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);

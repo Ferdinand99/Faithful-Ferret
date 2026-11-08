@@ -66,10 +66,12 @@ test("verify_checkpoint_of_10000_rows_within_3_s", () => {
   );
   assert.ok(ms < 3000, `${ms.toFixed(1)} ms is over 3 s`);
   assert.equal(memory.length, 21 + 24 * rows.length);
-  // A row that is not what the checkpoint says is still found among that many.
+  // A row that is not what the checkpoint says is still found among that many:
+  // the row at 5 000 carries the envelope and tag of its neighbour, and the tag
+  // does not fit the id, which is the one code `decrypt`.
   const swapped = rows.slice();
   swapped[5_000] = { ...swapped[5_000], envelope: swapped[5_001].envelope, tag: swapped[5_001].tag };
-  assert.throws(() => vault.verify_checkpoint(checkpoint, swapped, 10_001, wasm.sync_memory_new()), (e) => e.code === "decrypt" || /^checkpoint_|tag/.test(e.code));
+  assert.throws(() => vault.verify_checkpoint(checkpoint, swapped, 10_001, wasm.sync_memory_new()), { code: "decrypt" });
 });
 
 test("make_checkpoint_of_10000_entries", () => {
@@ -82,7 +84,7 @@ test("make_checkpoint_of_10000_entries", () => {
   assert.equal(checkpoint.mac.length, 32);
   assert.deepEqual(checkpoint.digest, sha256(checkpoint.entries), "the digest is the SHA-256 of the entries");
   // Two entries for the same id are not a checkpoint.
-  assert.throws(() => vault.make_checkpoint(1, [entries[0], entries[0]]));
+  assert.throws(() => vault.make_checkpoint(1, [entries[0], entries[0]]), { code: "malformed_entries" });
 });
 
 test("sync_memory_with_10000_items_is_21_plus_24_bytes_per_item", () => {

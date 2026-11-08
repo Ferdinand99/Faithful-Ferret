@@ -630,22 +630,32 @@ test("client_validates_copy_item_argument_types", async () => {
   for (const v of [null, undefined, "5", "", false, true, NaN, Infinity, -1, {}, [], 5e13]) {
     assert.equal((await rejection(client.vault.copy_item(1, id, v))).code, "invalid_input", `time ${String(v)}`);
   }
+  // The device name is a string, or left out.
+  for (const v of [7, true, {}, [], fill(2, 1)]) {
+    assert.equal((await rejection(client.vault.copy_item(1, id, 1, v))).code, "invalid_input", `device ${String(v)}`);
+  }
+  assert.equal((await rejection(client.vault.copy_item(1, id, 1, "bad\uD800"))).code, "invalid_input", "lone surrogate");
   assert.equal(made.length, 0, "nothing was sent, no worker started");
   // The id is public and is not wiped; the call goes out as it is.
   const copy = id.slice();
   assert.equal(await client.vault.copy_item(4294967295, id, 4e13), null);
+  assert.equal(await client.vault.copy_item(4294967295, id, 4e13, "Firefox on Windows"), null);
+  assert.equal(await client.vault.copy_item(4294967295, id, 4e13, null), null);
   assert.deepEqual(id, copy);
-  assert.equal(made[0].received.length, 1);
+  assert.equal(made[0].received.length, 3);
 
   // A real client: valid types reach the vault check, and the dispatcher says the same.
   const real = setup().client;
   assert.equal((await rejection(real.vault.copy_item(1, id, 1))).code, "vault_locked");
+  assert.equal((await rejection(real.vault.copy_item(1, id, 1, "Firefox"))).code, "vault_locked");
   const dispatch = createDispatcher(wasm);
   const send = (args) => dispatch({ id: 1, target: "vault", method: "copy_item", args }).reply;
   assert.equal(send(["x".repeat(16), 1, 1]).code, "invalid_input");
   assert.equal(send([1, id, "1"]).code, "invalid_input");
   assert.equal(send(["1", id, 1]).code, "invalid_input");
   assert.equal(send([1, id, 1]).code, "vault_locked");
+  assert.equal(send([1, id, 1, 5]).code, "invalid_input");
+  assert.equal(send([1, id, 1, "name"]).code, "vault_locked");
 });
 
 test("lock_also_ends_the_job_workers", async () => {
