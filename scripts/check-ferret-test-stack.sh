@@ -436,11 +436,11 @@ same_files() { # a folder, another folder: the same files and the same bytes (th
 fresh_folders
 STUB_VOLUMES="$good_e2e"
 guard_run e2e_snapshot || guard_fail "real jobs: a good snapshot failed"
-[ -f "$vols/snap/.snapshot-complete" ] && same_files "$vols/data" "$vols/snap" || guard_fail "real jobs: the snapshot is not a copy of the data with the marker"
+{ [ -f "$vols/snap/.snapshot-complete" ] && same_files "$vols/data" "$vols/snap"; } || guard_fail "real jobs: the snapshot is not a copy of the data with the marker"
 # a good restore of it: the data is the snapshot again, with no marker in the data
 printf 'newer' > "$vols/data/ferret.sqlite"; printf 'junk' > "$vols/data/junk"
 guard_run e2e_restore_snapshot || guard_fail "real jobs: a good restore failed"
-same_files "$vols/snap" "$vols/data" && [ ! -e "$vols/data/.snapshot-complete" ] || guard_fail "real jobs: the restored data is not the snapshot"
+{ same_files "$vols/snap" "$vols/data" && [ ! -e "$vols/data/.snapshot-complete" ]; } || guard_fail "real jobs: the restored data is not the snapshot"
 # a cp that fails, or a copy that differs: no marker, the old snapshot stays, the app of a snapshot is started again
 for broken in STUB_CP_FAIL STUB_CP_CORRUPT; do
   fresh_folders
@@ -448,7 +448,7 @@ for broken in STUB_CP_FAIL STUB_CP_CORRUPT; do
   STUB_VOLUMES="$good_e2e"
   if guard_run e2e_snapshot; then guard_fail "real jobs: $broken: a snapshot went through"; fi
   [ ! -e "$vols/new/.snapshot-complete" ] || guard_fail "real jobs: $broken: a marker was written for a copy that failed or differs"
-  [ "$(cat "$vols/snap/ferret.sqlite")" = "old database" ] && [ -f "$vols/snap/.snapshot-complete" ] || guard_fail "real jobs: $broken: the old snapshot was changed"
+  { [ "$(cat "$vols/snap/ferret.sqlite")" = "old database" ] && [ -f "$vols/snap/.snapshot-complete" ]; } || guard_fail "real jobs: $broken: the old snapshot was changed"
   if logged "volume rm ferret-e2e-snapshot$|MODE=move"; then guard_fail "real jobs: $broken: the old snapshot was removed or replaced"; fi
   logged " start ferret-e2e-app" || guard_fail "real jobs: $broken: the app was not started after a failed copy"
   # the same in a restore, for both stacks: it does not go on to the bump or the start
