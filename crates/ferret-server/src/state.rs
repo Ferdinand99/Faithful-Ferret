@@ -26,6 +26,10 @@ use crate::error::{StartError, StoreError};
 use crate::http::extract::SessionAuth;
 use crate::http::proxy_guard::ProxyList;
 use crate::product;
+use crate::vault::events::EventStreams;
+use crate::vault::notify::SyncEvents;
+use crate::vault::rate::{RateConfig, SyncLimits, WriteGate};
+use crate::vault::retention;
 
 /// The database, as the vault modules see it: a pool and one way to use it.
 #[derive(Clone)]
@@ -74,6 +78,14 @@ pub struct FerretState {
     /// How the made-up answers for unknown names are spread; renewed in the
     /// background from the real accounts.
     pub prelogin: Arc<RwLock<PreloginPolicy>>,
+    /// Wake-ups for the event streams: vault changes and revoked sessions.
+    pub events: SyncEvents,
+    /// The rate limits of the write routes.
+    pub limits: Arc<SyncLimits>,
+    /// The queue in front of the write transactions.
+    pub write_gate: WriteGate,
+    /// The open event streams, counted.
+    pub streams: Arc<EventStreams>,
 }
 
 impl FromRef<FerretState> for Core {
@@ -122,8 +134,33 @@ impl FromRef<FerretState> for SessionAuth {
     }
 }
 
+impl FromRef<FerretState> for SyncEvents {
+    fn from_ref(state: &FerretState) -> SyncEvents {
+        state.events.clone()
+    }
+}
+
+impl FromRef<FerretState> for Arc<SyncLimits> {
+    fn from_ref(state: &FerretState) -> Arc<SyncLimits> {
+        state.limits.clone()
+    }
+}
+
+impl FromRef<FerretState> for WriteGate {
+    fn from_ref(state: &FerretState) -> WriteGate {
+        state.write_gate.clone()
+    }
+}
+
+impl FromRef<FerretState> for Arc<EventStreams> {
+    fn from_ref(state: &FerretState) -> Arc<EventStreams> {
+        state.streams.clone()
+    }
+}
+
 /// Starts the background jobs: purging login states, renewing the pre-login
-/// policy and purging hand-over codes. Call it once, inside the runtime.
+/// policy, purging hand-over codes and the retention of old rows. Call it once,
+/// inside the runtime.
 pub fn spawn_background(state: &FerretState) {
     state_store::spawn_purge(state.login_states.clone(), state.clock.clone());
     login::spawn_prelogin_refresh(
@@ -132,6 +169,7 @@ pub fn spawn_background(state: &FerretState) {
         state.clock.clone(),
     );
     handoff::spawn_purge(state.vault_db.clone(), state.clock.clone());
+    retention::spawn(state.vault_db.clone(), state.clock.clone());
 }
 
 /// Builds the state from the kit's `Core` (whose database is migrated) and the
@@ -165,6 +203,7 @@ pub async fn build_state(
         .with_conn(|conn| Ok(login::load_prelogin_policy(conn)))
         .await?;
     let throttle: Arc<dyn Throttle> = Arc::new(KitThrottle::new(clock.clone()));
+    let limits = Arc::new(SyncLimits::new(RateConfig::DEFAULT, clock.clone()));
 
     Ok(FerretState {
         core,
@@ -176,5 +215,9 @@ pub async fn build_state(
         throttle,
         login_states,
         prelogin: Arc::new(RwLock::new(prelogin)),
+        events: SyncEvents::new(1024),
+        limits,
+        write_gate: WriteGate::new(8, 64),
+        streams: Arc::new(EventStreams::new(2, 40, 256)),
     })
 }

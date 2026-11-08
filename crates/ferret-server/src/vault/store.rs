@@ -84,6 +84,9 @@ pub struct PutRequest<'a> {
     /// `SHA-256(item_id || raw body)`, so a replay can never return the `rev`
     /// and `seq` of another item.
     pub request_hash: [u8; 32],
+    /// Whether the write asks to replace a tombstone. Not read yet: the store
+    /// treats every write as if this were `false`.
+    pub resurrect: bool,
 }
 
 impl std::fmt::Debug for PutRequest<'_> {
@@ -1022,4 +1025,152 @@ fn int_error(_value: u64) -> StoreError {
 
 fn int_error_signed(value: i64) -> StoreError {
     StoreError::Sql(rusqlite::Error::IntegralValueOutOfRange(0, value))
+}
+
+#[cfg(test)]
+mod tests {
+    use ferret_server_auth::testing::LoginFixture;
+
+    use super::*;
+
+    const NOW: i64 = 1_793_491_200;
+
+    fn id16(kind: u8) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        bytes[0] = kind;
+        bytes
+    }
+
+    /// An in-memory database with every migration and one account.
+    fn with_account() -> (Connection, VaultId, DeviceId) {
+        crate::product::install();
+        let mut conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .expect("pragma");
+        vole_kit::db::migrate::apply_migrations(&mut conn).expect("migrations apply");
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES ('a@example.com', 'x', 'editor')",
+            [],
+        )
+        .expect("a user");
+        let user_id = conn.last_insert_rowid();
+        let vault = VaultId::from_bytes(id16(0xb0));
+        let rows = NewAccountRows {
+            account_id: AccountId::from_bytes(id16(0xa0)),
+            user_id,
+            vault_id: vault,
+            record: LoginFixture::new().record,
+            sk_hint: true,
+            pk_a: [0x11; 32],
+            pk_r: [0x22; 32],
+            methods: vec![MethodRow {
+                method_id: MethodId::from_bytes(id16(0xc1)),
+                method_type: 1,
+                wrap: vec![0x31; 60],
+                kek_generation: 1,
+                credential_id: None,
+                prf_salt: None,
+                aaguid: None,
+            }],
+            manifest: ManifestIn {
+                rev: 1,
+                envelope: vec![0x4d; 40],
+                tag: [0x7a; 32],
+            },
+            checkpoint: CheckpointIn {
+                seq: 1,
+                digest: vec![0x41; 32],
+                mac: vec![0x42; 32],
+                entries: vec![0x43; 20],
+            },
+            now: NOW,
+        };
+        let tx = conn.transaction().expect("a transaction");
+        create_account(&tx, &rows).expect("create_account");
+        tx.commit().expect("commit");
+        (conn, vault, DeviceId(id16(0xd0)))
+    }
+
+    #[test]
+    fn put_request_resurrect_is_ignored_by_the_store_for_now() {
+        let (mut conn, vault, device) = with_account();
+        let item = ItemId::from_bytes(id16(0x10));
+        let write = |body: PutBody<'static>, base_rev: u64, n: u8, resurrect: bool| PutRequest {
+            item_id: item,
+            base_rev,
+            body,
+            idem: [n; 16],
+            request_hash: [n; 32],
+            resurrect,
+        };
+        let limits = Limits::DEFAULT;
+        let created = put_item(
+            &mut conn,
+            &vault,
+            &device,
+            &write(
+                PutBody::Live {
+                    blob: b"one",
+                    tag: [1; 32],
+                },
+                0,
+                1,
+                false,
+            ),
+            &limits,
+            NOW,
+        )
+        .expect("create");
+        assert!(
+            matches!(created, PutOutcome::Stored { rev: 1, .. }),
+            "{created:?}"
+        );
+        let deleted = put_item(
+            &mut conn,
+            &vault,
+            &device,
+            &write(PutBody::Deleted { tomb: b"gone" }, 1, 2, false),
+            &limits,
+            NOW,
+        )
+        .expect("delete");
+        assert!(
+            matches!(deleted, PutOutcome::Stored { rev: 2, .. }),
+            "{deleted:?}"
+        );
+
+        // Written against the tombstone's revision and asking to replace it:
+        // the store still reads the flag as `false` and answers with the
+        // conflict of a row that is deleted.
+        let attempt = put_item(
+            &mut conn,
+            &vault,
+            &device,
+            &write(
+                PutBody::Live {
+                    blob: b"back",
+                    tag: [3; 32],
+                },
+                2,
+                3,
+                true,
+            ),
+            &limits,
+            NOW,
+        )
+        .expect("the write is answered");
+        let PutOutcome::Conflict(conflict) = attempt else {
+            panic!("expected a conflict, got {attempt:?}");
+        };
+        assert!(conflict.deleted);
+        assert_eq!(conflict.current_rev, 2);
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2 AND deleted = 1",
+                params![vault.as_bytes(), item.as_bytes()],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(rows, 1, "the tombstone is still the row");
+    }
 }

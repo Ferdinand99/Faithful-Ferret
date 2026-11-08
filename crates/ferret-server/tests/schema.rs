@@ -40,7 +40,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0001_vault.sql",
             "0002_auth.sql",
             "0003_sessions.sql",
-            "0004_handoff_links.sql"
+            "0004_handoff_links.sql",
+            "0005_sync.sql"
         ]
     );
     let mut sorted = names.clone();
