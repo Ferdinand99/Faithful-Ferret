@@ -194,7 +194,7 @@ for (const locale of ["en", "nb-NO"]) {
             const button = document.querySelector('[data-role="reveal"][data-key="local.password"]');
             const box = button.getBoundingClientRect();
             const sideways = document.documentElement.scrollWidth > document.documentElement.clientWidth + 1;
-            return { top: Math.round(box.top), left: Math.round(box.left), page: document.documentElement.scrollHeight, sideways };
+            return { top: Math.round(box.top + window.scrollY), left: Math.round(box.left + window.scrollX), page: document.documentElement.scrollHeight, sideways };
           });
         const before = await measure();
         await page.locator('[data-role="reveal"][data-key="local.password"]').click();
