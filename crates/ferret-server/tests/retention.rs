@@ -369,7 +369,8 @@ fn run_once_on_an_empty_database_moves_nothing() {
         RetentionReport {
             vaults: 1,
             tombstones_removed: 0,
-            idem_removed: 0
+            idem_removed: 0,
+            failed_vaults: 0
         }
     );
     assert_eq!(counters(&conn), before);
@@ -508,6 +509,102 @@ async fn a_failed_pass_is_tried_again_in_ten_minutes() {
     );
     clock.advance(1);
     assert!(job.poll(&db, clock.as_ref()).await.is_some());
+    assert_eq!(tombstones(&app).await, 0);
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
+}
+
+fn block_one_vault_sql(vault: &VaultId) -> String {
+    format!(
+        "CREATE TRIGGER block_one_vault BEFORE DELETE ON ferret_items \
+         WHEN hex(old.vault_id) = '{}' \
+         BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        hex(vault.as_bytes())
+    )
+}
+
+#[test]
+fn a_vault_that_fails_does_not_keep_the_next_vault_from_being_purged() {
+    let mut conn = migrated();
+    let a = add_account(&mut conn, 1, NOW);
+    let b = add_account(&mut conn, 2, NOW);
+    for who in [&a, &b] {
+        put(&mut conn, who, &live(item(1), 0, 1), NOW);
+        put(&mut conn, who, &tomb(item(1), 1, 2), NOW);
+    }
+    // Only the purge of the vault that comes first in the order of the pass fails.
+    let (first, second) = if a.vault_id.as_bytes() < b.vault_id.as_bytes() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    conn.execute_batch(&block_one_vault_sql(&first.vault_id))
+        .expect("a trigger");
+    let report = run_once(&mut conn, NOW + 401 * DAY).expect("a pass that reports the failure");
+    assert_eq!(report.vaults, 2);
+    assert_eq!(report.failed_vaults, 1, "the failure is reported");
+    assert_eq!(
+        report.tombstones_removed, 1,
+        "the vault after the failing one was purged"
+    );
+    let rows = |who: &TestAccount| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1",
+            [who.vault_id.as_bytes()],
+            |r| r.get(0),
+        )
+        .expect("count")
+    };
+    assert_eq!(rows(first), 1, "the failing vault keeps its tombstone");
+    assert_eq!(rows(second), 0);
+    assert_eq!(floor(&conn, first), 0, "its floor did not move");
+    assert!(floor(&conn, second) > 0);
+    // Nothing failing any more: the next pass reports no failure.
+    conn.execute_batch("DROP TRIGGER block_one_vault;")
+        .expect("drop");
+    let again = run_once(&mut conn, NOW + 402 * DAY).expect("a pass");
+    assert_eq!(again.failed_vaults, 0);
+    assert_eq!(again.tombstones_removed, 1);
+}
+
+#[tokio::test]
+async fn a_pass_with_one_failed_vault_is_tried_again_in_ten_minutes() {
+    let app = TestApp::new().await;
+    let a = support::accounts::add_account_to_app(&app, 1).await;
+    let b = support::accounts::add_account_to_app(&app, 2).await;
+    let clock = app.clock.clone();
+    let db = app.state.vault_db.clone();
+    let blocked = block_one_vault_sql(&a.vault_id);
+    db.with_conn(move |conn| {
+        for who in [&a, &b] {
+            put(conn, who, &live(item(1), 0, 1), 1_000);
+            put(conn, who, &tomb(item(1), 1, 2), 1_000);
+        }
+        conn.execute_batch(&blocked)?;
+        Ok(())
+    })
+    .await
+    .expect("seed");
+    let mut job = Job::new(clock.as_ref());
+    clock.advance(600);
+    assert!(
+        job.poll(&db, clock.as_ref()).await.is_none(),
+        "a failed vault makes the pass a failure"
+    );
+    assert_eq!(tombstones(&app).await, 1, "the other vault was purged");
+    db.with_conn(|conn| Ok(conn.execute_batch("DROP TRIGGER block_one_vault;")?))
+        .await
+        .expect("drop");
+    clock.advance(599);
+    assert!(
+        job.poll(&db, clock.as_ref()).await.is_none(),
+        "not before 10 minutes"
+    );
+    clock.advance(1);
+    let report = job.poll(&db, clock.as_ref()).await.expect("the retry");
+    assert_eq!(report.failed_vaults, 0);
     assert_eq!(tombstones(&app).await, 0);
 }
 

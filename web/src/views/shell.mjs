@@ -145,6 +145,12 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
 
   /** @param {any} payload */
   function onState(payload) {
+    if (payload?.kind === "warning_cleared" && payload.code === "checkpoint_upload_failed") {
+      // A later upload went through: the notice that it failed is withdrawn.
+      shown.get("error:checkpoint_upload_failed")?.remove();
+      shown.delete("error:checkpoint_upload_failed");
+      return;
+    }
     if (payload?.kind === "warning") {
       const code = String(payload.code ?? "");
       if (warnings !== null && isBannerCode(code)) return; // the sync banner shows it
@@ -175,6 +181,11 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     }
     if (code === "restore_item_unreadable") {
       banner("error:restore_item_unreadable", "warning", t("syncwarnings.error.restore_item_unreadable"));
+      return;
+    }
+    if (code === "checkpoint_upload_failed") {
+      // Harmless: the upload is tried again later. A calm notice, one for all failures, and no code or reason on screen.
+      banner("error:checkpoint_upload_failed", "warning", describeError(t, { code }));
       return;
     }
     if (code === "restore_epoch_refused") {

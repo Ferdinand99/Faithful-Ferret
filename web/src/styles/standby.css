@@ -26,3 +26,8 @@
   display: grid;
   gap: var(--sp-2);
 }
+
+/* Nothing to say yet: no empty callout. The place keeps its height through the min-block-size above. */
+.standby .standby-message > p:empty {
+  display: none;
+}

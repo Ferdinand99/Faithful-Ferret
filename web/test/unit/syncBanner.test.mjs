@@ -497,3 +497,29 @@ test("a_refused_write_after_a_restore_and_a_skipped_trash_copy_have_texts_and_sh
     assert.match(NB["sync.error.restore_epoch_refused"], /^Tjeneren er gjenopprettet/);
   });
 });
+
+test("a_failed_checkpoint_upload_shows_one_calm_notice_that_says_it_is_tried_again", async () => {
+  await withDom(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const engine = fakeWarningsEngine();
+      const root = frame(engine, lang);
+      engine.emit("error", { code: "checkpoint_upload_failed", reason: "busy" });
+      engine.emit("error", { code: "checkpoint_upload_failed", reason: "internal" });
+      const banners = all(root, "banner");
+      assert.deepEqual(banners.map((node) => node.getAttribute("data-banner")), ["error:checkpoint_upload_failed"], `${lang}: one banner`);
+      const [notice] = banners;
+      assert.equal(notice.getAttribute("role"), "status", `${lang}: a notice, not an alert`);
+      assert.ok(textOf(notice).includes(catalog["sync.error.checkpoint_upload_failed"]), `${lang}: the text of the code`);
+      assert.doesNotMatch(textOf(root), /unknown|ukjent|busy|internal|checkpoint_upload_failed/i, `${lang}: no code and no generic error text`);
+    }
+    // A later upload that goes through withdraws the notice.
+    const engine = fakeWarningsEngine();
+    const root = frame(engine, "en");
+    engine.emit("error", { code: "checkpoint_upload_failed", reason: "busy" });
+    assert.equal(all(root, "banner").length, 1);
+    engine.emit("state", { kind: "warning_cleared", code: "checkpoint_upload_failed" });
+    assert.equal(all(root, "banner").length, 0, "the notice is gone");
+    assert.match(EN["sync.error.checkpoint_upload_failed"], /tried again/);
+    assert.match(NB["sync.error.checkpoint_upload_failed"], /prøves på nytt/);
+  });
+});

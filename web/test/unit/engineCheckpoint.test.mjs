@@ -565,6 +565,10 @@ test("an_upload_that_fails_for_another_reason_is_reported_and_tried_again_later"
   await until(() => d.timers.pending > 0);
   d.timers.advance(310_000);
   await until(() => model.checkpointPuts.length === 1, "tried again after a wait");
+  await until(
+    () => d.events.state.some((s) => s.kind === "warning_cleared" && s.code === "checkpoint_upload_failed"),
+    "the notice about the failed upload is withdrawn when a later upload goes through",
+  );
   d.engine.stop();
 });
 

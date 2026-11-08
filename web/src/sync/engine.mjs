@@ -1835,6 +1835,9 @@ export function createSyncEngine({
     return state;
   }
 
+  /** Whether a failed checkpoint upload was reported and no later upload has gone through. */
+  let uploadFailureShown = false;
+
   /**
    * Signs what this device holds and uploads it, when every condition holds (see the head of this file). A `409` that says
    * the stored checkpoint is newer counts as done; a `429` waits for the time the server named.
@@ -1871,6 +1874,7 @@ export function createSyncEngine({
         return;
       } else {
         uploadNotBefore = now() + VERIFY_RETRY_MS;
+        uploadFailureShown = true;
         emit("error", { code: "checkpoint_upload_failed", reason: code });
         return;
       }
@@ -1880,6 +1884,11 @@ export function createSyncEngine({
       uploadedAt: now(),
       uploadedSeq: Math.max(current.uploadedSeq ?? 0, seq),
     }));
+    // A later upload that went through withdraws the notice about the failed one.
+    if (uploadFailureShown) {
+      uploadFailureShown = false;
+      emit("state", { kind: "warning_cleared", code: "checkpoint_upload_failed" });
+    }
   }
 
   /** What a failure of a pass shows: a stop, a pause for the session, or a status and an event. @param {unknown} error */
