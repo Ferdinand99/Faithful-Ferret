@@ -42,10 +42,14 @@ const REASONS = Object.freeze(["no_checkpoint"]);
  *   t: Translate,
  *   router?: { go(path: string): void },
  *   reload?: () => void,
+ *   onAccepted?: (result: { reuploaded: number, conflicts: number, manifestOlder?: boolean }) => unknown,
  * }} options `reload` reloads the page; it is the page's own `location.reload` unless a test gives another.
+ * `onAccepted` is called once after the engine has accepted the older state (the route keeps a local note there when the
+ * unlock methods went back). If it answers `"not_kept"` the page adds a line saying so; nothing else it does or throws
+ * changes what the page shows.
  * @returns {HTMLElement}
  */
-export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload() }) {
+export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload(), onAccepted = () => {} }) {
   const root = el("section", { class: "card restored", "data-role": "restored" });
   const body = el("div", { class: "stack" });
   const status = el("p", { class: "status", role: "status", "data-role": "restored-status" });
@@ -270,6 +274,16 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
       mount(body, ...parts);
       // Focus moves to the result: the form it was typed in is gone.
       /** @type {any} */ (parts[0]).focus?.();
+      void (async () => {
+        try {
+          // A note that could not be kept is said on the page; anything else the hook does or throws changes nothing.
+          if ((await onAccepted(done)) === "not_kept") {
+            body.appendChild(el("p", { class: "notice", role: "note", "data-role": "restored-note-not-kept" }, t("syncwarnings.restored.note_not_kept")));
+          }
+        } catch {
+          // The result stays as it is.
+        }
+      })();
     } catch (error) {
       problem(error, "accept");
     } finally {

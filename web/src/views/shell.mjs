@@ -7,6 +7,7 @@
 // locks is registered in a wipe scope, and the shell runs the scope before it
 // puts the unlock screen in place of everything else.
 import { el, mount } from "../dom.mjs";
+import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
 import { createWipeScope, describeError, listenWhileShown } from "./common.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
@@ -277,7 +278,8 @@ export async function enterVault(ctx) {
 
   const open = session.current?.() ?? null;
   const onUnlocked = () => go(path);
-  const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked });
+  const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
+  const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
   if (!open) return { locked: lockedScreen() };
 
   // An open vault always has an idle lock, whatever else fails below (Spec: Fase 1 section 7.1).
