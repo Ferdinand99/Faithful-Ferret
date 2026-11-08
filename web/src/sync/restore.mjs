@@ -13,20 +13,26 @@
 // into an overwrite of another device's later write: the same class as the writes since the last checkpoint, which no
 // check on the client closes).
 //
-// First, a local version that is byte for byte the server's row needs nothing (honest case only), and a deletion on both
-// sides needs nothing. Then, for the server's row now (S), the frozen row at the restore (F) and the local version (L):
+// First, a deletion on both sides needs nothing, an item that was blocked as a conflict stays one (it is never settled by
+// itself), and a version that is byte for byte the server's row needs nothing (honest case only). Then, for the server's row now
+// (S), the frozen row at the restore (F) and the local version (L):
 //
-//   S has `seq` <= restore_seq (untouched)       L is higher than S, or L is a write waiting in the outbox: made again over S
-//                                                (`base_rev` is S's revision); otherwise skipped
-//   S has `seq` > restore_seq (written after)    L is a row version with a revision <= F's: skipped (older on the same line);
-//                                                otherwise a conflict
+//   S has `seq` <= restore_seq (untouched)       a row version: higher than S: made again over S (`base_rev` is S's revision);
+//                                                lower than S: skipped; the same revision with other bytes: a conflict
+//                                                (another line of history)
+//                                                a write waiting in the outbox: made again over S only when it was built on S or on
+//                                                a later revision the restore lost (`base_rev` >= S's revision); built on an older
+//                                                one it is a conflict, as it would have been a 409 without the restore. A write
+//                                                that is byte for byte S at `base_rev` + 1 = S's revision is this device's own
+//                                                and counts as done
+//   S has `seq` > restore_seq (written after)    a row version with a revision below F's, or equal to it with F's bytes: skipped
+//                                                (older on the same line); anything else, and every write in the outbox: a conflict
 //   S exists and F does not                      a conflict
 //   S does not exist                             the item is new (`base_rev` 0); a deletion of nothing is skipped
 //
-// A write that waits in the outbox is a change made on this device and never sent: it is made again over an untouched row,
-// becomes a conflict over a changed one, and is never dropped. Without frozen rows (an older server, `restore_seq` 0) the
-// interim rules apply: only an item the server has no row for is sent by itself; a version that differs from the server's
-// row is kept as a draft that is not sent, whatever its revision.
+// A write that waits in the outbox is a change made on this device and never sent: it is never dropped. Without frozen rows
+// (an older server, `restore_seq` 0) the interim rules apply: only an item the server has no row for is sent by itself; a
+// version that differs from the server's row is kept as a draft that is not sent, whatever its revision.
 //
 // Spec: Fase 1 section 8.6 ("Legitimate rollbacks": accept older state, and the local changes the server is missing
 // are uploaded), section 8.3 (a write over a row that has changed is a conflict).
@@ -53,8 +59,20 @@
  * @property {number} localRev the revision of that version
  */
 
+import { b64u } from "../b64.mjs";
+
 /** The all-zero id of the unlock-method manifest: a row, never an item, never sent from here. */
 const MANIFEST = "0".repeat(32);
+
+/**
+ * The hash a frozen row has for a row: the SHA-256 of the envelope of a live row, base64url, and null for a tombstone.
+ * @param {CachedRow} row
+ * @returns {Promise<string | null>}
+ */
+export async function rowHash(row) {
+  if (row.deleted || row.envelope === null) return null;
+  return b64u.encode(new Uint8Array(await crypto.subtle.digest("SHA-256", /** @type {BufferSource} */ (row.envelope))));
+}
 
 /** @param {Uint8Array | null} a @param {Uint8Array | null} b */
 const sameBytes = (a, b) => (a === null || b === null ? a === b : a.length === b.length && a.every((n, i) => n === b[i]));
@@ -118,15 +136,26 @@ export async function restoreItems({ listing, restore = null, rows, outbox, bloc
       decide("skip", false); // deleted on both sides
       continue;
     }
-    // First of all: a version byte for byte the server's row is nothing to do (the honest case: the server has what this device has).
-    const identical = local.from === "row" && !blockedIds.has(id) && !local.deleted && row !== undefined && !server.deleted &&
+    /** @type {Kind} */
+    const kind = local.deleted ? "tombstone" : server.deleted ? "resurrect" : "reseal";
+    if (blockedIds.has(id)) {
+      decide(kind, true); // blocked as a conflict: it stays one until the user chooses
+      continue;
+    }
+    // A version byte for byte the server's row is nothing to do (the honest case: the server has what this device has).
+    const identical = local.from === "row" && !local.deleted && row !== undefined && !server.deleted &&
       sameBytes(row.envelope, server.envelope) && sameBytes(row.tag, server.tag);
-    if (identical) {
+    // A write in the outbox that is the very row the server holds, one revision above its base: this device's own write, which got
+    // there (the answer was lost).
+    const own = local.from === "outbox" && last !== undefined && last.baseRev + 1 === server.rev && (
+      "tomb" in last.body
+        ? server.deleted && sameBytes(last.body.tomb, server.tomb)
+        : !server.deleted && sameBytes(last.body.blob, server.envelope) && sameBytes(last.body.tag, server.tag)
+    );
+    if (identical || own) {
       decide("skip", false);
       continue;
     }
-    /** @type {Kind} */
-    const kind = local.deleted ? "tombstone" : server.deleted ? "resurrect" : "reseal";
     if (restore === null) {
       // No frozen rows. After a restore the revisions no longer form one line: a lower revision here than on the server can be a
       // version this device wrote before the restore against a row another device wrote after it, and nothing on this device
@@ -138,10 +167,17 @@ export async function restoreItems({ listing, restore = null, rows, outbox, bloc
     if (frozen === undefined) {
       decide(kind, true); // the server shows a row that did not exist at the restore: someone wrote it since
     } else if (server.seq <= restore.restoreSeq) {
-      // Not written since the restore: what is here is the restored row. A change of this device goes over it; a lower or
-      // equal version is what the restore lost or kept, and the server's row stands.
-      decide(local.from === "outbox" || local.rev > server.rev ? kind : "skip", false);
-    } else if (local.from === "row" && local.rev <= frozen.rev) {
+      // Not written since the restore: what is here is the restored row.
+      if (local.from === "outbox") {
+        // A change made here and never sent. Over the restored row only when it was built on that row or on a later revision the
+        // restore lost; built on an older one the server would have refused it, and so does the restore.
+        decide(kind, /** @type {OutboxEntry} */ (last).baseRev < server.rev);
+      } else if (local.rev > server.rev) {
+        decide(kind, false); // a version the restore lost
+      } else {
+        decide(local.rev === server.rev ? kind : "skip", local.rev === server.rev); // the same revision with other bytes: another line
+      }
+    } else if (local.from === "row" && (local.rev < frozen.rev || (local.rev === frozen.rev && (await rowHash(/** @type {CachedRow} */ (row))) === frozen.hash))) {
       decide("skip", false); // written after the restore, and this device's version is older on the same line
     } else {
       decide(kind, true); // written after the restore, and this device has a change the server has not seen

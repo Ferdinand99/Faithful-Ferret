@@ -147,7 +147,7 @@ async function senderOf({ model = new Model() } = {}) {
       onRestoreEpochChanged: (entry, error) => log.epoch.push([entry.itemId, error.body?.restore_epoch]),
     },
   });
-  return { run, api, model, log, stored: () => outbox.all(store.database.store, scope()) };
+  return { run, api, model, log, store, stored: () => outbox.all(store.database.store, scope()) };
 }
 
 test("restore_epoch_changed_is_classified_before_the_status_and_is_no_conflict", () => {
@@ -225,4 +225,37 @@ test("a_retry_of_a_stored_write_is_a_replay_even_after_the_epoch_has_moved", asy
   assert.deepEqual(again.log.epoch, []);
   assert.equal(model.writes.length, 1, "stored once");
   again.run.stop();
+});
+
+test("restamp_replaces_only_the_writes_that_were_queued_when_it_began", async () => {
+  const model = new Model();
+  const t = await senderOf({ model });
+  t.run.hold();
+  const first = writeFor(1, { idem: 8101, restoreEpoch: 0 });
+  const second = writeFor(1, { idem: 8102, baseRev: 1, restoreEpoch: 0 });
+  await t.run.enqueue(first);
+  await t.run.enqueue(second);
+  // The swap is slow; a write of the same item is queued meanwhile.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const swap = t.store.outbox.swap;
+  t.store.outbox.swap = async (...args) => {
+    await gate;
+    return swap(...args);
+  };
+  const remade = (old) => writeFor(1, { idem: 9000 + old.baseRev, baseRev: old.baseRev, restoreEpoch: 1 });
+  const restamping = t.run.restamp(first.itemId, remade);
+  await settle(10);
+  const later = writeFor(1, { idem: 8103, baseRev: 2, restoreEpoch: 0 });
+  await t.run.enqueue(later);
+  release();
+  const gone = await restamping;
+  assert.deepEqual(gone.sort(), [first.idem, second.idem].sort());
+  assert.deepEqual(t.run.entriesOf(first.itemId).map((e) => e.baseRev), [0, 1, 2], "the write queued meanwhile is still in the lane, last");
+  assert.equal(t.run.entriesOf(first.itemId).at(-1).idem, later.idem);
+  assert.ok(!t.run.entriesOf(first.itemId).some((e) => gone.includes(e.idem)));
+  const stored = await t.stored();
+  assert.ok(stored.some((e) => e.idem === later.idem), "and in the store");
+  assert.ok(!stored.some((e) => gone.includes(e.idem)));
+  t.run.stop();
 });

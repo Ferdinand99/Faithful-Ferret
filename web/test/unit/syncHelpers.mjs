@@ -5,6 +5,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
+import { readWire } from "../../src/wire.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { trash } from "../../src/store/trash.mjs";
@@ -327,7 +328,13 @@ export function createFakeApi(model, { order = [] } = {}) {
       }
       if (url.pathname === "/api/sync/restore-rows") {
         api.restoreRowGets.push(path);
-        return model.restoreRows(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
+        const answer = model.restoreRows(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
+        // The answer goes through the shape of the wire, as the real client reads it: a shape that cannot be read is a 200 that is no answer.
+        try {
+          return readWire("restore_rows_res", JSON.stringify(answer));
+        } catch {
+          throw new ApiError(200, "bad_response");
+        }
       }
       api.gets.push(path);
       if (api.failFeed && api.failFeedTimes > 0) {
@@ -638,6 +645,17 @@ export async function createFakeStore({ order = [], db = null } = {}) {
           throw new Error("the disk is full");
         }
         return outbox.remove(store, scope, idem);
+      },
+      swap: async (store, scope, remove, entries) => {
+        if (service.failEnqueue > 0) {
+          service.failEnqueue -= 1;
+          throw new Error("the disk is full");
+        }
+        for (const entry of entries) {
+          spy.log.push("outbox.enqueue");
+          spy.enqueued.push(entry);
+        }
+        return outbox.swap(store, scope, remove, entries);
       },
       enqueue: async (store, scope, entry) => {
         if (service.failEnqueue > 0) {

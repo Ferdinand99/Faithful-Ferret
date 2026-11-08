@@ -26,6 +26,7 @@
 // Nothing here reads or writes a decrypted field: an entry is ciphertext and
 // public numbers.
 import { b64u } from "../b64.mjs";
+import { SyncError } from "./errors.mjs";
 
 /**
  * @typedef {import("../store/outbox.mjs").OutboxEntry} OutboxEntry
@@ -269,12 +270,19 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
      * Makes `entry` the only queued write of its item. The new entry is stored first and the old ones are removed after,
      * so a crash in between leaves the newest write (never none): the next start sees both and the last one wins. The lane
      * is not blocked afterwards, and nothing is sent while the runner is held.
+     * With `expect` (the keys of the writes the caller has looked at) nothing is done when the store holds other writes of the item
+     * than those (another tab queued one meanwhile): it throws `SyncError("outbox_changed")`, and the caller decides again.
      * @param {OutboxEntry} entry
+     * @param {string[] | null} [expect]
      * @returns {Promise<string[]>} the idempotency keys of the writes that were dropped
      */
-    async replace(entry) {
+    async replace(entry, expect = null) {
       await this.whenIdle();
       const db = await store.open();
+      if (expect !== null) {
+        const present = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem);
+        if (present.length !== expect.length || !present.every((stored) => expect.includes(stored.idem))) throw new SyncError("outbox_changed");
+      }
       await store.outbox.enqueue(db, scope, entry);
       const old = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem);
       for (const stored of old) await store.outbox.remove(db, scope, stored.idem);
@@ -293,8 +301,10 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     /**
      * Puts new entries in the place of the queued writes of an item, one for one and in the same order (the same writes made again,
      * for example with a new idempotency key and a new restore epoch). Only for writes the server has certainly not stored (it
-     * refused them with `restore_epoch_changed`). The new entries are stored first and the old ones removed after, so a crash in
-     * between leaves the writes (twice, never none). The lane is not blocked afterwards, and nothing is sent while the runner is held.
+     * refused them with `restore_epoch_changed`) or that were never sent. The old entries leave the store and the new ones enter it
+     * in one transaction. Only the entries that were queued when it began are replaced: one that is queued meanwhile stays where it is
+     * (the caller should keep writes of the item from being made meanwhile, so the order in the store is the order of the lane). The
+     * lane is not blocked afterwards, and nothing is sent while the runner is held.
      * @param {string} itemId
      * @param {(entry: OutboxEntry) => OutboxEntry} remake
      * @returns {Promise<string[]>} the idempotency keys of the writes that were taken out
@@ -306,13 +316,12 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
       if (old.length === 0) return [];
       const next = old.map(remake);
       const db = await store.open();
-      for (const entry of next) await store.outbox.enqueue(db, scope, entry);
-      for (const entry of old) await store.outbox.remove(db, scope, entry.idem);
+      await store.outbox.swap(db, scope, old.map((entry) => entry.idem), next);
       if (stopped) return [];
       const now = lanes.get(itemId);
       if (now === undefined) return [];
       cancelWait(now);
-      now.entries.splice(0, now.entries.length, ...next);
+      now.entries.splice(0, old.length, ...next);
       now.attempt = 0;
       void pump(itemId);
       return old.map((entry) => entry.idem);
@@ -341,14 +350,17 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     },
 
     /**
-     * Removes every queued write of an item (from the store too) and lets the item be written again.
+     * Removes every queued write of an item (from the store too) and lets the item be written again. With `expect` (the keys of the
+     * writes the caller has looked at) nothing is done when the store holds other writes of the item: it throws `SyncError("outbox_changed")`.
      * @param {string} itemId
+     * @param {string[] | null} [expect]
      * @returns {Promise<string[]>} the idempotency keys of the writes that were dropped
      */
-    async discard(itemId) {
+    async discard(itemId, expect = null) {
       // The store first, read by item (the lane may be gone already): if that fails, nothing in memory has changed.
       const db = await store.open();
       const stored = (await store.outbox.all(db, scope)).filter((entry) => entry.itemId === itemId);
+      if (expect !== null && (stored.length !== expect.length || !stored.every((entry) => expect.includes(entry.idem)))) throw new SyncError("outbox_changed");
       for (const entry of stored) await store.outbox.remove(db, scope, entry.idem);
       const lane = lanes.get(itemId);
       const idems = new Set([...stored, ...(lane?.entries ?? [])].map((entry) => entry.idem));

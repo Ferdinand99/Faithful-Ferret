@@ -10,6 +10,7 @@ import { outbox } from "../../src/store/outbox.mjs";
 import { getSetting, setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState } from "../../src/store/syncState.mjs";
 import { checkRestoreRowsPage } from "../../src/sync/checkpoint.mjs";
+import { encodeWireBytes } from "../../src/wire.mjs";
 import { planRestore, restoreItems } from "../../src/sync/restore.mjs";
 import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
 import { createFakeClient, memoryOf, Model, settle, signCheckpoint, syncDevice, until } from "./syncHelpers.mjs";
@@ -1048,8 +1049,11 @@ test("resume_after_halt_keeps_the_queued_writes_held_until_a_pass_ends_well", as
 
 // ------------------------------------------------------------------ the restore sequence number and the frozen rows
 
-/** What the server froze: its `seq` at the restore and a row `[id, rev, seq]` for each item. */
-const frozenOf = (restoreSeq, ...rows) => ({ restoreSeq, frozen: new Map(rows.map(([id, rev, seq = 1]) => [id, { rev, seq, hash: null }])) });
+/** What the server froze: its `seq` at the restore and a row `[id, rev, seq, n]` for each item (`n`: the bytes of `live(id, rev, n)`, left out for a tombstone). */
+const frozenOf = (restoreSeq, ...rows) => ({
+  restoreSeq,
+  frozen: new Map(rows.map(([id, rev, seq = 1, n]) => [id, { rev, seq, hash: n === undefined ? null : b64u.encode(sha(bytes(n))) }])),
+});
 const kindsOf = (items) => items.map(({ id, kind, baseRev, conflict }) => ({ id, kind, baseRev, conflict }));
 
 test("a_byte_identical_version_is_skipped_before_the_table", async () => {
@@ -1086,11 +1090,11 @@ test("a_lost_version_over_an_untouched_row_is_resealed_without_a_conflict", asyn
 });
 
 test("a_lower_version_over_an_untouched_row_is_skipped", async () => {
-  const restore = frozenOf(5, [ID_A, 3, 1], [ID_B, 3, 2]);
+  const restore = frozenOf(5, [ID_A, 3, 1, 1], [ID_B, 3, 2, 2]);
   const items = await restoreItems({
     listing: [live(ID_A, 3, 1, 1), live(ID_B, 3, 2, 2)],
     restore,
-    rows: [live(ID_A, 2, 7), live(ID_B, 3, 9)], // lower, and equal with other bytes: the restored row stands for both
+    rows: [live(ID_A, 2, 7), live(ID_B, 1, 9)], // lower than the restored row: the restored row stands
     outbox: [],
   });
   assert.deepEqual(kindsOf(items), [
@@ -1099,37 +1103,124 @@ test("a_lower_version_over_an_untouched_row_is_skipped", async () => {
   ]);
 });
 
-test("a_row_written_after_the_restore_is_skipped_for_an_older_version_and_a_conflict_for_a_newer_one", async () => {
-  const restore = frozenOf(5, [ID_A, 5, 1], [ID_B, 5, 2]);
+test("the_same_revision_with_other_bytes_over_an_untouched_row_is_a_conflict_and_not_a_skip", async () => {
+  // Another line of history: a version at the very revision of the restored row, with other bytes.
+  const restore = frozenOf(5, [ID_A, 3, 1, 1], [ID_B, 3, 2, 2]);
   const items = await restoreItems({
-    listing: [live(ID_A, 6, 1, 9), live(ID_B, 6, 2, 9)],
+    listing: [live(ID_A, 3, 1, 1), live(ID_B, 3, 2, 2)],
     restore,
-    rows: [live(ID_A, 5, 7), live(ID_B, 7, 7)], // A: not above the frozen row, older on the same line. B: above it
+    rows: [live(ID_A, 3, 7), live(ID_B, 3, 2)], // A: other bytes. B: the same bytes (nothing to do)
+    outbox: [],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "reseal", baseRev: 3, conflict: true },
+    { id: ID_B, kind: "skip", baseRev: 3, conflict: false },
+  ]);
+});
+
+test("a_row_written_after_the_restore_is_skipped_for_an_older_version_and_a_conflict_for_a_newer_one", async () => {
+  const restore = frozenOf(5, [ID_A, 5, 1, 7], [ID_B, 5, 2, 7], [ID_C, 5, 3, 7], [ID_D, 5, 4, 7]);
+  const items = await restoreItems({
+    listing: [live(ID_A, 6, 1, 9), live(ID_B, 6, 2, 9), live(ID_C, 6, 3, 9), live(ID_D, 6, 4, 9)],
+    restore,
+    // A: at the frozen revision with the frozen bytes: older on the same line. B: above the frozen revision. C: below it.
+    // D: at the frozen revision with other bytes: another line of history.
+    rows: [live(ID_A, 5, 7), live(ID_B, 7, 7), live(ID_C, 4, 7), live(ID_D, 5, 8)],
     outbox: [],
   });
   assert.deepEqual(kindsOf(items), [
     { id: ID_A, kind: "skip", baseRev: 6, conflict: false },
     { id: ID_B, kind: "reseal", baseRev: 6, conflict: true },
+    { id: ID_C, kind: "skip", baseRev: 6, conflict: false },
+    { id: ID_D, kind: "reseal", baseRev: 6, conflict: true },
   ]);
 });
 
-test("an_unsent_local_edit_over_an_untouched_row_is_resealed_and_over_a_changed_row_is_a_conflict", async () => {
-  const restore = frozenOf(5, [ID_A, 2, 1], [ID_B, 2, 2], [ID_C, 2, 3]);
+test("an_unsent_local_edit_built_on_the_restored_row_or_a_later_revision_is_resealed_over_an_untouched_row", async () => {
+  const restore = frozenOf(5, [ID_A, 5, 1, 1], [ID_B, 5, 2, 1], [ID_C, 5, 3, 1], [ID_D, 5, 4, 1]);
   const items = await restoreItems({
-    // A: untouched, and the edit was built on a revision below the server's: still made again, never dropped.
-    // B: written after the restore: a conflict even though the edit is not above the frozen revision.
-    // C: a pending deletion over an untouched row.
-    listing: [live(ID_A, 5, 1, 1), live(ID_B, 6, 2, 9), live(ID_C, 2, 3, 3)],
+    listing: [live(ID_A, 5, 1, 1), live(ID_B, 5, 1, 2), live(ID_C, 5, 1, 3), dead(ID_D, 5, 4)],
     restore,
-    rows: [live(ID_A, 1, 7), live(ID_B, 1, 7), live(ID_C, 2, 3)],
-    outbox: [write(ID_A, 1), write(ID_B, 0), write(ID_C, 2, true)],
+    // A: built on the restored row (base 5). B: built on a later revision the restore lost (base 7). C: a pending deletion built on
+    // the restored row. D: a pending edit of an item the restored server holds as a tombstone, built on its revision.
+    rows: [live(ID_A, 5, 1), live(ID_B, 7, 1), live(ID_C, 5, 1), dead(ID_D, 5)],
+    outbox: [write(ID_A, 5), write(ID_B, 7), write(ID_C, 5, true), write(ID_D, 5)],
   });
   assert.deepEqual(kindsOf(items), [
     { id: ID_A, kind: "reseal", baseRev: 5, conflict: false },
-    { id: ID_B, kind: "reseal", baseRev: 6, conflict: true },
-    { id: ID_C, kind: "tombstone", baseRev: 2, conflict: false },
+    { id: ID_B, kind: "reseal", baseRev: 5, conflict: false },
+    { id: ID_C, kind: "tombstone", baseRev: 5, conflict: false },
+    { id: ID_D, kind: "resurrect", baseRev: 5, conflict: false },
   ]);
-  assert.deepEqual(items.map((i) => i.source), ["outbox", "outbox", "outbox"]);
+  assert.deepEqual(items.map((i) => i.source), ["outbox", "outbox", "outbox", "outbox"]);
+});
+
+test("an_unsent_local_edit_built_below_the_restored_row_is_a_conflict_over_an_untouched_row_and_never_dropped", async () => {
+  // Another device took the item to revision 5 before the backup; this device's offline edit was built on revision 1. Without a
+  // restore the server would have refused it (409), and so it is a conflict now: it must not silently overwrite revisions 2 to 5.
+  const restore = frozenOf(5, [ID_A, 5, 1, 1], [ID_B, 5, 2, 1], [ID_C, 5, 3, 1], [ID_D, 5, 4, 1]);
+  const items = await restoreItems({
+    listing: [live(ID_A, 5, 1, 1), live(ID_B, 5, 1, 2), dead(ID_C, 5, 3), live(ID_D, 5, 1, 4)],
+    restore,
+    // A: an edit built on 1. B: a pending deletion built on 4. C: an edit built on 1 over a tombstone at 5 (a resurrection).
+    // D: an edit built on 0 (a creation that collides with a row the restore holds).
+    rows: [live(ID_A, 1, 1), live(ID_B, 4, 1), dead(ID_C, 1), live(ID_D, 1, 1)],
+    outbox: [write(ID_A, 1), write(ID_B, 4, true), write(ID_C, 1), write(ID_D, 0)],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "reseal", baseRev: 5, conflict: true },
+    { id: ID_B, kind: "tombstone", baseRev: 5, conflict: true },
+    { id: ID_C, kind: "resurrect", baseRev: 5, conflict: true },
+    { id: ID_D, kind: "reseal", baseRev: 5, conflict: true },
+  ]);
+  const plan = await planRestore({ listing: [live(ID_A, 5, 1, 1)], restore: frozenOf(5, [ID_A, 5, 1, 1]), rows: [live(ID_A, 1, 1)], outbox: [write(ID_A, 1)] });
+  assert.deepEqual(plan, { upload: [], conflicts: [ID_A], unchanged: 0 });
+});
+
+test("an_unsent_local_edit_over_a_row_written_after_the_restore_is_a_conflict_whatever_its_base", async () => {
+  const restore = frozenOf(5, [ID_A, 2, 1, 1], [ID_B, 2, 2, 1]);
+  const items = await restoreItems({
+    listing: [live(ID_A, 6, 2, 9), live(ID_B, 6, 3, 9)],
+    restore,
+    rows: [live(ID_A, 1, 7), live(ID_B, 6, 7)],
+    outbox: [write(ID_A, 0), write(ID_B, 6, true)],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "reseal", baseRev: 6, conflict: true },
+    { id: ID_B, kind: "tombstone", baseRev: 6, conflict: true },
+  ]);
+});
+
+test("an_item_already_blocked_as_a_conflict_stays_a_conflict_even_over_an_untouched_row", async () => {
+  const restore = frozenOf(5, [ID_A, 2, 1, 1]);
+  const input = { listing: [live(ID_A, 2, 1, 1)], restore, rows: [live(ID_A, 2, 1)], outbox: [write(ID_A, 2)] };
+  assert.deepEqual(kindsOf(await restoreItems(input)), [{ id: ID_A, kind: "reseal", baseRev: 2, conflict: false }], "built on the restored row: sent");
+  assert.deepEqual(kindsOf(await restoreItems({ ...input, blocked: [ID_A] })), [{ id: ID_A, kind: "reseal", baseRev: 2, conflict: true }], "but not when it was blocked as a conflict");
+});
+
+test("an_unsent_write_that_is_the_servers_row_at_base_plus_1_is_this_devices_own_write_and_counts_as_done", async () => {
+  const restore = frozenOf(5, [ID_A, 4, 1, 9], [ID_B, 4, 2, 9]);
+  const mine = (n) => ({ blob: bytes(n), tag: bytes(n + 1) });
+  const tombstone = { itemId: ID_B, rev: 4, seq: 2, deleted: true, envelope: null, tag: null, tomb: new Uint8Array(40).fill(3) };
+  const items = await restoreItems({
+    listing: [live(ID_A, 4, 5, 1), tombstone],
+    restore,
+    rows: [live(ID_A, 3, 1), live(ID_B, 3, 1)],
+    outbox: [
+      { idem: "cd".repeat(16), itemId: ID_A, baseRev: 3, bytes: new Uint8Array(0), body: mine(5) },
+      { idem: "ef".repeat(16), itemId: ID_B, baseRev: 3, bytes: new Uint8Array(0), body: { tomb: new Uint8Array(40).fill(3) } },
+    ],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "skip", baseRev: 4, conflict: false },
+    { id: ID_B, kind: "skip", baseRev: 4, conflict: false },
+  ]);
+  // The same bytes at another revision are not its own write.
+  const other = await restoreItems({
+    listing: [live(ID_A, 4, 5, 1)], restore: frozenOf(5, [ID_A, 4, 1, 5]),
+    rows: [live(ID_A, 2, 1)], outbox: [{ idem: "cd".repeat(16), itemId: ID_A, baseRev: 1, bytes: new Uint8Array(0), body: mine(5) }],
+  });
+  assert.deepEqual(kindsOf(other), [{ id: ID_A, kind: "reseal", baseRev: 4, conflict: true }]);
 });
 
 test("an_item_without_a_frozen_row_is_new_when_the_server_has_no_row_and_a_conflict_when_it_has_one", async () => {
@@ -1266,6 +1357,10 @@ test("restore_rows_that_cannot_be_right_are_bad_feed_and_nothing_is_stored", asy
     "another restore_seq than the listing": (answer) => ({ ...answer, restore_seq: answer.restore_seq - 1 }),
     "more rows claimed and no next_after": (answer) => ({ ...answer, has_more: true }),
     "a next_after that is not the last id": (answer) => ({ ...answer, has_more: true, next_after: "ff".repeat(16) }),
+    "a frozen revision that is not the one of an untouched row": (answer) => ({ ...answer, rows: answer.rows.map((row, i) => (i === 0 ? { ...row, rev: row.rev + 1 } : row)) }),
+    "a frozen hash that is not the one of an untouched row": (answer) => ({ ...answer, rows: answer.rows.map((row, i) => (i === 0 ? { ...row, hash: b64u.encode(new Uint8Array(32).fill(1)) } : row)) }),
+    "no frozen row for an untouched row": (answer) => ({ ...answer, rows: answer.rows.slice(1) }),
+    "a list that is not the shape of the wire (a 200 that is no answer)": (answer) => ({ ...answer, rows: [{ id: "not an id", rev: 1, seq: 1, hash: null }] }),
     "more rows than were asked for": (answer) => ({ ...answer, rows: Array.from({ length: 501 }, (_, i) => ({ id: i.toString(16).padStart(32, "0"), rev: 1, seq: 1, hash: null })) }),
   };
   for (const [name, tamper] of Object.entries(cases)) {
@@ -1337,7 +1432,7 @@ test("every_new_write_and_checkpoint_upload_carries_the_restore_epoch", async ()
   d.engine.stop();
 });
 
-test("a_device_that_has_stored_no_epoch_yet_writes_without_a_condition", async () => {
+test("a_device_that_has_stored_no_epoch_yet_writes_without_a_condition_and_names_it_once_the_first_contact_has_stored_one", async () => {
   const model = new Model();
   const d = await syncDevice({ model });
   d.api.failFeed = new ApiError(0, "network"); // no first contact yet
@@ -1345,7 +1440,16 @@ test("a_device_that_has_stored_no_epoch_yet_writes_without_a_condition", async (
   await d.engine.start();
   await d.engine.create(DRAFT);
   const [entry] = await queued(d);
-  assert.equal("restore_epoch" in requestOf(entry), false);
+  assert.equal("restore_epoch" in requestOf(entry), false, "no epoch is stored: no condition");
+  assert.equal(d.api.puts.length, 0, "and it has not been sent");
+  await d.engine.syncNow(); // the first contact: the epoch is stored
+  await until(() => model.writes.length === 1, "the write goes out");
+  assert.equal((await stateOf(d)).restoreEpoch, 0);
+  const [put] = sent(d);
+  assert.equal(sent(d).length, 1, "once");
+  assert.equal(put.restore_epoch, 0, "naming the epoch that has been stored");
+  assert.notEqual(put.idem, entry.idem, "a new key: it is a new request");
+  await until(async () => (await queued(d)).length === 0, "done");
   d.engine.stop();
 });
 
@@ -1491,5 +1595,169 @@ test("a_restore_epoch_changed_answer_to_a_checkpoint_upload_halts_server_restore
   assert.equal(model.checkpointPuts.length, 0, "nothing was stored");
   assert.equal(d.engine.health().halted, "server_restored", "the feed is read again at once and the user decides");
   assert.equal((await stateOf(d)).restoreEpoch, 0);
+  d.engine.stop();
+});
+
+// ------------------------------------------------------------------ fix round: an edit built below the restored row, many lanes, a failing pass
+
+test("an_offline_edit_built_below_the_restored_row_is_a_conflict_and_does_not_overwrite_the_revisions_between", async () => {
+  // The device holds A at revision 3 and an edit built on it that never reached the server. Another device took the item to
+  // revision 5 before the backup. Without a restore the server would have refused the edit (409): after the restore it must not
+  // be sent over revisions 4 and 5 either.
+  const d = await withUnsentEdit();
+  d.model.items.clear();
+  setRow(d.model, d.client, ID_A, 5, "A five from another device", { seq: 1 });
+  d.model.seq = 1;
+  d.model.bumpRestore();
+  const before = d.model.items.get(ID_A);
+  const again = await reload(d);
+  await again.engine.start();
+  assert.equal(again.engine.health().halted, "server_restored");
+  assert.deepEqual(await again.engine.restorePreview(), { reupload: 0, conflicts: 1, manifestOlder: false });
+  assert.deepEqual(await again.engine.acceptOlderState(), { reuploaded: 0, conflicts: 1, manifestOlder: false });
+  await settle(80);
+  assert.deepEqual(sentFor(again, ID_A), [], "nothing is sent over the restored row");
+  assert.equal(d.model.items.get(ID_A), before);
+  const item = again.engine.list().find((entry) => entry.id === ID_A);
+  assert.equal(item.blockedReason, "conflict");
+  assert.equal(item.name, "A five from another device", "the screen shows the server's version");
+  const [draft] = await queued(again);
+  assert.equal(draft.baseRev, 5, "the edit is kept as a draft on top of the restored row, never dropped");
+  const handle = await again.client.vault.open_item(hex16.decode(ID_A), 6, draft.body.blob, draft.body.tag);
+  assert.equal((await again.client.vault.item_view(handle)).name, "A edited offline");
+  await again.client.vault.close_item(handle);
+  again.engine.stop();
+});
+
+test("an_offline_edit_built_on_the_restored_row_is_made_again_over_it", async () => {
+  const d = await withUnsentEdit(); // an edit built on revision 3
+  d.model.items.clear();
+  setRow(d.model, d.client, ID_A, 3, "A as restored", { seq: 1 });
+  d.model.seq = 1;
+  d.model.bumpRestore();
+  const again = await reload(d);
+  await again.engine.start();
+  assert.deepEqual(await again.engine.acceptOlderState(), { reuploaded: 1, conflicts: 0, manifestOlder: false });
+  await until(() => d.model.items.get(ID_A).rev === 4, "the edit is on the server, on top of the restored row");
+  const [put] = sentFor(again, ID_A);
+  assert.equal(put.base_rev, 3);
+  assert.equal(put.restore_epoch, 1);
+  again.engine.stop();
+});
+
+test("writes_in_many_lanes_that_name_an_old_epoch_are_all_made_again_once_the_epoch_is_accepted", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A", { seq: 1 });
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  for (let i = 0; i < 5; i += 1) d.api.faults.push({ kind: "network" }); // every first try is lost: five lanes wait for their retry
+  const ids = [];
+  for (let i = 0; i < 5; i += 1) ids.push(await d.engine.create({ item_type: "login", name: `Item ${i}` }));
+  await until(() => d.api.puts.length === 5 && d.timers.pending >= 5, "all five wait for their retry");
+  model.restoreEpoch = 1; // restored with nothing lower: the epoch is accepted with a notice
+  await d.engine.syncNow();
+  assert.equal((await stateOf(d)).restoreEpoch, 1);
+  d.timers.advance(1_000); // the retries: five refusals, one per lane
+  await until(() => model.writes.length === 5, "all five are made again and stored");
+  await settle(60);
+  assert.equal(d.engine.health().halted, null);
+  assert.deepEqual(errors(d, "restore_epoch_refused"), []);
+  assert.deepEqual(errors(d, "conflict"), []);
+  for (const id of ids) {
+    const puts = sentFor(d, id);
+    assert.deepEqual(puts.map((put) => put.restore_epoch), [0, 0, 1], "the lost try, the refused retry, the new write");
+    assert.equal(puts[0].idem, puts[1].idem);
+    assert.notEqual(puts[2].idem, puts[0].idem);
+  }
+  assert.deepEqual(await queued(d), []);
+  d.engine.stop();
+});
+
+test("a_pass_that_fails_after_a_restore_epoch_changed_answer_does_not_lose_the_stop", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A", { seq: 1 });
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  model.restoreEpoch = 1; // restored while this device is open, with nothing lower
+  d.api.failFeed = new ApiError(0, "network"); // the pass that follows the refusal cannot read the feed
+  d.api.failFeedTimes = 1;
+  await d.engine.create(DRAFT);
+  await until(() => states(d, "offline").length > 0, "the pass after the refusal fails");
+  await settle(60);
+  assert.equal(d.engine.health().halted, null);
+  assert.equal(d.api.puts.length, 1, "one try, refused: the lanes stay held");
+  assert.equal(model.writes.length, 0);
+  assert.equal((await stateOf(d)).restoreEpoch, 0, "the epoch is not accepted");
+  const [entry] = await queued(d);
+  // A pass that ends well now must still stop the engine: the server refused a write for its epoch, and nothing has shown since
+  // that it holds no more than this device has.
+  await d.engine.syncNow();
+  assert.equal(d.engine.health().halted, "server_restored", "the stop, not a quiet notice and a made again write");
+  assert.equal((await stateOf(d)).restoreEpoch, 0);
+  assert.deepEqual(states(d, "warning", "restore_epoch_raised"), []);
+  assert.equal(d.api.puts.length, 1, "nothing was sent again");
+  assert.deepEqual((await queued(d)).map((e) => e.idem), [entry.idem], "and the write is as it was");
+  d.engine.stop();
+});
+
+test("a_refused_checkpoint_upload_that_no_raised_epoch_follows_does_not_turn_a_later_epoch_into_a_stop", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A", { seq: 1 });
+  setRow(model, client, ID_B, 1, "B", { seq: 2 });
+  model.pinCheckpoint();
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  setRow(model, client, ID_C, 1, "C"); // something to sign
+  // A refusal that the server's own epoch does not back up (it shows the epoch this device has accepted).
+  d.api.checkpointPutFaults.push({ kind: "status", status: 409, code: "restore_epoch_changed", body: { error: "restore_epoch_changed", restore_epoch: 0 } });
+  await d.engine.syncNow();
+  await settle(40);
+  assert.equal(d.engine.health().halted, null);
+  assert.equal(model.checkpointPuts.length, 0);
+  // The pass that followed found no higher epoch: the mark is gone, so a write goes out ...
+  const id = await d.engine.create(DRAFT);
+  await until(() => model.items.has(id), "the write goes out");
+  // ... and a later restore with nothing lower is a notice and not a stop.
+  model.restoreEpoch = 1;
+  await d.engine.syncNow();
+  assert.equal(d.engine.health().halted, null);
+  assert.equal((await stateOf(d)).restoreEpoch, 1);
+  assert.equal(states(d, "warning", "restore_epoch_raised").length, 1);
+  d.engine.stop();
+});
+
+test("a_write_another_tab_queues_while_an_older_state_is_accepted_is_not_dropped", async () => {
+  const d = await restoredWorld();
+  const db = d.store.database;
+  const cachedA = (await cache.getRows(db.store, scope())).find((row) => row.itemId === ID_A);
+  let injected = false;
+  const real = d.client.vault.encrypt_item;
+  // While the first item is being sealed again, another tab of the browser queues an edit of it (the stores are shared).
+  d.client.vault.encrypt_item = async (...args) => {
+    if (!injected && hex16.encode(args[0]) === ID_A) {
+      injected = true;
+      const handle = await d.client.vault.open_item(hex16.decode(ID_A), 3, cachedA.envelope, cachedA.tag);
+      const sealed = await real(hex16.decode(ID_A), 4, { name: "A edited by another tab" }, handle);
+      await d.client.vault.close_item(handle);
+      const idem = "7a".repeat(16);
+      const bytesOf = encodeWireBytes("put_item_req", { base_rev: 3, blob: b64u.encode(sealed.envelope), tag: b64u.encode(sealed.tag), idem, restore_epoch: 0 });
+      await outbox.enqueue(db.store, scope(), { idem, itemId: ID_A, baseRev: 3, body: { blob: sealed.envelope, tag: sealed.tag }, bytes: bytesOf });
+    }
+    return real(...args);
+  };
+  assert.deepEqual(await d.engine.acceptOlderState(), { reuploaded: 4, conflicts: 0, manifestOlder: false });
+  assert.equal(injected, true);
+  await untilDSent(d);
+  await settle(60);
+  const [a] = sentFor(d, ID_A);
+  assert.equal(a.base_rev, 2, "built on the restored row");
+  const handle = await d.client.vault.open_item(hex16.decode(ID_A), 3, b64u.decode(a.blob), b64u.decode(a.tag));
+  assert.equal((await d.client.vault.item_view(handle)).name, "A edited by another tab", "the edit of the other tab is what was made again");
+  await d.client.vault.close_item(handle);
+  assert.equal(sentFor(d, ID_A).length, 1, "once");
+  assert.deepEqual(await queued(d), []);
   d.engine.stop();
 });

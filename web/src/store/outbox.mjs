@@ -96,6 +96,37 @@ export const outbox = Object.freeze({
   },
 
   /**
+   * Puts `entries` at the end of the queue and takes the entries with the keys `remove` out, in one transaction: a crash leaves
+   * the queue as it was or as it is meant to be, never both sets. The same `idem` twice in a scope is refused (`outbox_duplicate`).
+   * @param {import("./idb.mjs").Store} store
+   * @param {import("./cache.mjs").Scope} scope
+   * @param {string[]} remove idempotency keys of the entries to take out
+   * @param {OutboxEntry[]} entries
+   * @returns {Promise<void>}
+   */
+  async swap(store, scope, remove, entries) {
+    checkScope(scope);
+    for (const idem of remove) if (!hex16.is(idem)) throw new TypeError("idem is 32 lower-case hex characters");
+    const values = entries.map(clean);
+    try {
+      await run(store, ["outbox"], "readwrite", async ([table]) => {
+        for (const value of values) {
+          await req(table.add({ accountId: scope.accountId, vaultId: scope.vaultId, vkEpoch: scope.vkEpoch, ...value }));
+        }
+        for (const idem of remove) {
+          const key = await req(table.index("by_idem").getKey([...prefix(scope), idem]));
+          if (key !== undefined) await req(table.delete(key));
+        }
+      });
+    } catch (error) {
+      if (/** @type {any} */ (error)?.name === "ConstraintError") {
+        throw new StoreError("outbox_duplicate", "that idempotency key is already queued");
+      }
+      throw error;
+    }
+  },
+
+  /**
    * The queued writes of the scope, oldest first, with their exact bytes.
    * @param {import("./idb.mjs").Store} store
    * @param {import("./cache.mjs").Scope} scope

@@ -87,7 +87,7 @@ import {
 import { compareFields, TRASH_MS } from "./conflict.mjs";
 import { acceptPage, coreRow, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
 import { createOutboxRunner, isRestoreEpochChanged } from "./outbox.mjs";
-import { planRestore, restoreItems } from "./restore.mjs";
+import { planRestore, restoreItems, rowHash } from "./restore.mjs";
 
 export { SyncError };
 
@@ -237,10 +237,18 @@ export function createSyncEngine({
   let epochPending = false;
   /** The focus and online listeners are registered. */
   let listening = false;
-  /** The server refused a write or a checkpoint for its restore epoch: a higher epoch the next pass sees is a restore, whatever else it shows. */
-  let epochMoved = false;
-  /** Answers `restore_epoch_changed` since the last write that was done: a server that keeps refusing the epoch it announces is not trusted with more. */
-  let epochRefusals = 0;
+  /** The number of the last pass that began (a pass takes the next one). */
+  let passes = 0;
+  /**
+   * The server refused a write or a checkpoint for its restore epoch (the number is the pass that was last begun then): a higher epoch
+   * a pass sees is a restore, whatever else it shows, until a pass that began later has found none (null: nothing was refused).
+   * @type {number | null}
+   */
+  let epochMovedAt = null;
+  /** Answers `restore_epoch_changed` per item since its last write that was done: a server that keeps refusing the epoch it announces is not trusted with more. @type {Map<string, number>} */
+  const epochRefusals = new Map();
+  /** The keys of writes made before a restore epoch was stored (they name none): they have never been sent, since nothing is sent before the first pass has ended well. @type {Set<string>} */
+  const unconditioned = new Set();
   /** Writes refused for the restore epoch that are being looked at: the runner is not let go until they have been dealt with. */
   let epochHolds = 0;
   /** No release of the runner before this time (ms): a server kept refusing an epoch it shows, and the polls try again, not a loop. */
@@ -405,7 +413,7 @@ export function createSyncEngine({
     hooks: {
       onRestoreEpochChanged: (entry, error) => void onEpochChanged(entry, error),
       onDone: (entry, answer) => {
-        epochRefusals = 0;
+        epochRefusals.delete(entry.itemId);
         if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return; // given up or dropped while it was being sent
         if (flags.get(entry.itemId)?.kind === "missing_on_server") acked.add(entry.itemId);
         if (answer.rev !== entry.baseRev + 1) {
@@ -497,8 +505,8 @@ export function createSyncEngine({
   async function onEpochChanged(entry, error) {
     if (stopped || abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return;
     epochHolds += 1;
-    epochRefusals += 1;
-    epochMoved = true;
+    epochRefusals.set(entry.itemId, (epochRefusals.get(entry.itemId) ?? 0) + 1);
+    epochMovedAt = passes;
     try {
       await syncNow();
       await madeAgainAfterEpoch(entry, error.body?.restore_epoch);
@@ -506,35 +514,65 @@ export function createSyncEngine({
       if (!stopped) emit("error", { code: "storage", reason: codeOf(failure) });
     } finally {
       epochHolds -= 1;
-      if (epochHolds === 0) epochMoved = false;
     }
     releaseIfClear();
   }
 
   /**
-   * After the pass that follows `restore_epoch_changed`: when nothing stops the engine, the epoch the server showed is one this device
-   * has accepted, and the refused write (certain not to be stored) is made again with a new key and that epoch.
+   * The same write made again: the same body, a new key, and `epoch` (null: none) named in the request.
+   * @param {import("../store/outbox.mjs").OutboxEntry} old @param {number | null} epoch
+   * @returns {import("../store/outbox.mjs").OutboxEntry}
+   */
+  function remade(old, epoch) {
+    const asked = JSON.parse(new TextDecoder().decode(old.bytes));
+    const idem = randomId();
+    return {
+      idem, itemId: old.itemId, baseRev: old.baseRev, body: old.body,
+      bytes: writeBytes({ baseRev: old.baseRev, body: old.body, idem, resurrect: asked.resurrect === true, restoreEpoch: epoch }),
+    };
+  }
+
+  /**
+   * After the pass that follows `restore_epoch_changed`: when that pass has ended well and found no higher epoch (nothing stops
+   * the engine), the epoch the server showed is one this device has accepted, and the refused write (certain not to be stored) is made
+   * again with a new key and that epoch, together with the writes queued behind it. A pass that did not end well settles nothing.
    * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {unknown} served the epoch the server named
    */
   async function madeAgainAfterEpoch(entry, served) {
-    if (stopped || halted !== null || epochPending || restorePending || restoring) return;
+    if (stopped || halted !== null || epochPending || restorePending || restoring || epochMovedAt !== null) return;
     const stored = await acceptedEpoch();
     if (!Number.isSafeInteger(served) || stored === null || /** @type {number} */ (served) > stored) return; // the server is ahead of this device: a pass has to see it first
-    if (epochRefusals > 3) {
+    if ((epochRefusals.get(entry.itemId) ?? 0) > 3) {
       epochRetryAt = now() + pollMs;
       emit("error", { code: "restore_epoch_refused", id: entry.itemId });
       return;
     }
-    const gone = await runner.restamp(entry.itemId, (old) => {
-      const asked = JSON.parse(new TextDecoder().decode(old.bytes));
-      const idem = randomId();
-      return {
-        idem, itemId: old.itemId, baseRev: old.baseRev, body: old.body,
-        bytes: writeBytes({ baseRev: old.baseRev, body: old.body, idem, resurrect: asked.resurrect === true, restoreEpoch: stored }),
-      };
-    });
+    // Under the item: a write of it that is made meanwhile waits, so the order of the lane and of the store stays the same.
+    const gone = await withItem(entry.itemId, () => runner.restamp(entry.itemId, (old) => remade(old, stored)));
     for (const idem of gone) droppedIdems.add(idem);
     alive();
+  }
+
+  /**
+   * Writes made before the first contact stored a restore epoch name none. Now that one is stored, the lanes that hold only such
+   * writes (never sent: nothing is sent before a pass has ended well, and that pass stores the epoch) are made again naming it.
+   */
+  async function conditionAfterFirstContact() {
+    if (unconditioned.size === 0) return;
+    const epoch = await acceptedEpoch();
+    if (epoch === null) return;
+    for (const itemId of runner.itemsWithEntries()) {
+      await withItem(itemId, async () => {
+        const entries = runner.entriesOf(itemId);
+        if (entries.length === 0 || blocked.has(itemId) || !entries.every((entry) => unconditioned.has(entry.idem))) return;
+        const gone = await runner.restamp(itemId, (old) => remade(old, epoch));
+        for (const idem of gone) {
+          droppedIdems.add(idem);
+          unconditioned.delete(idem);
+        }
+      });
+      alive();
+    }
   }
 
   /**
@@ -583,7 +621,7 @@ export function createSyncEngine({
     let since = cursor;
     let restarted = false;
     /** What this pass has learned about the restore epoch of the server. @type {PassState} */
-    const pass = { stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false, refused: false };
+    const pass = { id: (passes += 1), stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false, refused: false };
     /** The page was fetched again once, because another tab had moved the memory since the first fetch. */
     let refetched = false;
     /** The last page of the feed that was used. @type {any} */
@@ -624,6 +662,10 @@ export function createSyncEngine({
       if (!page.has_more) break;
     }
     const raised = await finishEpoch(pass);
+    if (stopped) return;
+    // A pass that began after the server refused something for its restore epoch, and found no higher one, has settled it.
+    if (epochMovedAt !== null && pass.id > epochMovedAt) epochMovedAt = null;
+    await conditionAfterFirstContact();
     if (stopped) return;
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
@@ -693,6 +735,7 @@ export function createSyncEngine({
 
   /**
    * @typedef {object} PassState what one pass over the feed has learned about the restore epoch
+   * @property {number} id the number of the pass
    * @property {number | null} stored the highest epoch this device has accepted (null: none yet, a first contact)
    * @property {number | null} first on a first contact: the epoch the server shows, to be stored when the pass has gone well
    * @property {number | null} raised the highest epoch the server showed that is above `stored` (on a first contact: above zero)
@@ -770,9 +813,9 @@ export function createSyncEngine({
    */
   async function finishEpoch(pass) {
     if (pass.raised === null && pass.first === null) return null;
-    if (pass.raised !== null && (pass.lower || epochMoved)) {
-      // Something lower than this device remembers, or the server has just refused a write for its restore epoch: the user decides.
-      epochMoved = false;
+    if (pass.raised !== null && (pass.lower || epochMovedAt !== null)) {
+      // Something lower than this device remembers, or the server has refused a write for its restore epoch and no pass has shown
+      // since that nothing is higher: the user decides. The mark stays until the older state is accepted.
       throw new SyncError("server_restored", "The server was restored to an earlier state.");
     }
     if (pass.stored === null) {
@@ -1332,6 +1375,11 @@ export function createSyncEngine({
     return { serverRev: row?.rev ?? 0, serverDeleted: row?.deleted === true };
   }
 
+  /** The items that are blocked with the code `conflict`: they stay conflicts when an older state is accepted. */
+  function conflictIds() {
+    return [...blocked].filter(([, code]) => code === "conflict").map(([id]) => id);
+  }
+
   async function persistFlags() {
     if (stopped) return;
     try {
@@ -1615,7 +1663,7 @@ export function createSyncEngine({
       } else if (isRestoreEpochChanged(error)) {
         // The vault was restored since this device last looked. Nothing was stored. The feed is read again at once: a higher epoch is a
         // restore and stops the engine; the upload waits a while in any case, so a server that keeps saying this cannot make a loop.
-        epochMoved = true;
+        epochMovedAt = passes;
         uploadNotBefore = now() + VERIFY_RETRY_MS;
         again = true;
         return;
@@ -1738,7 +1786,7 @@ export function createSyncEngine({
    * of a pass that read the feed to its end: a pass that fails (offline, a bad answer) lets nothing go.
    */
   function releaseIfClear() {
-    if (stopped || halted !== null || restorePending || epochPending || epochHolds > 0 || now() < epochRetryAt) return;
+    if (stopped || halted !== null || restorePending || epochPending || epochHolds > 0 || epochMovedAt !== null || now() < epochRetryAt) return;
     runner.release();
   }
 
@@ -1810,7 +1858,9 @@ export function createSyncEngine({
    */
   async function queue(id, baseRev, body, next, summary, resurrect = false) {
     const idem = randomId();
-    const bytes = writeBytes({ baseRev, body, idem, resurrect, restoreEpoch: await acceptedEpoch() });
+    const restoreEpoch = await acceptedEpoch();
+    const bytes = writeBytes({ baseRev, body, idem, resurrect, restoreEpoch });
+    if (restoreEpoch === null) unconditioned.add(idem);
     const kept = flags.get(id)?.kind;
     const key = kept === "missing_on_server" || kept === "reuploaded" ? await ownKeyOfBody(baseRev + 1, body) : null;
     alive();
@@ -1937,6 +1987,7 @@ export function createSyncEngine({
     if (asOf === null || seen.epoch === null) throw new SyncError("stopped");
     const epoch = seen.epoch;
     const restore = await readRestoreRows({ restoreEpoch: epoch, restoreSeq: seen.restoreSeq, asOfSeq: asOf });
+    if (restore !== null) await crossCheckRestoreRows(listed, restore);
     /** @type {import("./checkpoint.mjs").Checkpoint | null} */
     let checkpoint = null;
     if (withCheckpoint) {
@@ -1951,6 +2002,23 @@ export function createSyncEngine({
       alive();
     }
     return { rows: listed, asOf, epoch, checkpoint, restore };
+  }
+
+  /**
+   * The frozen rows against the listing: a row of the listing that has not been written since the restore (its `seq` is at or below
+   * `restore_seq`) was there when the rows were frozen, and is the very row that was frozen (the same revision and the same hash).
+   * Anything else is a list that cannot be right.
+   * @param {CachedRow[]} listed @param {import("./restore.mjs").Restore} restore
+   */
+  async function crossCheckRestoreRows(listed, restore) {
+    for (const row of listed) {
+      if (row.seq > restore.restoreSeq) continue;
+      const frozen = restore.frozen.get(row.itemId);
+      if (frozen === undefined || frozen.rev !== row.rev || frozen.hash !== (await rowHash(row))) {
+        throw new SyncError("bad_feed", "The server's list of rows at the restore does not fit its listing.");
+      }
+      alive();
+    }
   }
 
   /**
@@ -2104,19 +2172,26 @@ export function createSyncEngine({
     const stored = await store.outbox.all(db, scope);
     alive();
     const decisions = await restoreItems({
-      listing: inputs.rows, restore: inputs.restore, rows: rows.values(), outbox: stored, blocked: blocked.keys(), marks: flags,
+      listing: inputs.rows, restore: inputs.restore, rows: rows.values(), outbox: stored, blocked: conflictIds(), marks: flags,
     });
     const served = new Map(inputs.rows.map((row) => [row.itemId, row]));
-    let reuploaded = 0;
-    let conflicts = 0;
-    for (const decision of decisions) {
+
+    /**
+     * Carries out one decision. Throws `outbox_changed` when the store holds writes of the item that the decision was not made
+     * from (another tab queued one meanwhile): nothing has been dropped then.
+     * @param {import("./restore.mjs").Decision} decision
+     * @param {import("../store/outbox.mjs").OutboxEntry[]} waiting the queued writes of the item the decision was made from
+     * @returns {Promise<"skipped" | "conflict" | "again" | "unreadable">}
+     */
+    async function carryOut(decision, waiting) {
       const id = decision.id;
-      const waiting = stored.filter((entry) => entry.itemId === id);
+      const seen = waiting.map((entry) => entry.idem);
       if (decision.kind === "skip") {
-        // Nothing to send. An old write waiting for this item belonged to the old history (the server has the newer version, or both are deleted).
-        if (waiting.length > 0) for (const idem of await runner.discard(id)) droppedIdems.add(idem);
+        // Nothing to send. An old write waiting for this item belonged to the old history (the server has the newer version, or
+        // both are deleted), or is this device's own write that the server already has.
+        if (waiting.length > 0) for (const idem of await runner.discard(id, seen)) droppedIdems.add(idem);
         if (blocked.delete(id)) flagsDirty = true;
-        continue;
+        return "skipped";
       }
       /** @type {{ blob: Uint8Array, tag: Uint8Array } | { tomb: Uint8Array }} */
       let body;
@@ -2125,7 +2200,7 @@ export function createSyncEngine({
       } catch (error) {
         if (stopped || isFatal(error)) throw error;
         emit("error", { code: "restore_item_unreadable", id }); // no copy of it can be opened: nothing can be sent for it
-        continue;
+        return "unreadable";
       }
       alive();
       // A new key, and the epoch that is being accepted: the epoch is part of what the server hashes under the key, so a write
@@ -2141,15 +2216,44 @@ export function createSyncEngine({
       } else if (blocked.delete(id)) {
         flagsDirty = true;
       }
-      for (const gone of await runner.replace({ idem, itemId: id, baseRev: decision.baseRev, body, bytes })) droppedIdems.add(gone);
+      for (const gone of await runner.replace({ idem, itemId: id, baseRev: decision.baseRev, body, bytes }, seen)) droppedIdems.add(gone);
       alive();
-      if (decision.conflict) {
-        runner.block(id);
-        conflicts += 1;
-        const row = served.get(id);
-        emit("error", { code: "conflict", id, currentRev: row?.rev ?? 0, deleted: row?.deleted === true });
-      } else {
-        reuploaded += 1;
+      if (!decision.conflict) return "again";
+      runner.block(id);
+      const row = served.get(id);
+      emit("error", { code: "conflict", id, currentRev: row?.rev ?? 0, deleted: row?.deleted === true });
+      return "conflict";
+    }
+
+    let reuploaded = 0;
+    let conflicts = 0;
+    for (const first of decisions) {
+      const id = first.id;
+      let decision = first;
+      let waiting = stored.filter((entry) => entry.itemId === id);
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const done = await carryOut(decision, waiting);
+          if (done === "conflict") conflicts += 1;
+          else if (done === "again") reuploaded += 1;
+          break;
+        } catch (error) {
+          if (!(error instanceof SyncError) || error.code !== "outbox_changed") throw error;
+          if (attempt >= 4) throw new SyncError("busy", "The writes of an item keep changing while an older state is accepted.");
+          // Another tab queued a write of this item meanwhile: it is decided again from what the store holds now, so that edit is
+          // neither dropped nor left behind.
+          /** @type {import("../store/outbox.mjs").OutboxEntry[]} */
+          const nowStored = await store.outbox.all(db, scope);
+          waiting = nowStored.filter((entry) => entry.itemId === id);
+          alive();
+          const mine = rows.get(id);
+          const [again] = await restoreItems({
+            listing: inputs.rows.filter((row) => row.itemId === id), restore: inputs.restore, rows: mine ? [mine] : [], outbox: waiting,
+            blocked: conflictIds().filter((one) => one === id), marks: flags,
+          });
+          if (again === undefined) break;
+          decision = again;
+        }
       }
     }
     await saveFlags(db);
@@ -2263,9 +2367,9 @@ export function createSyncEngine({
     deferredAt = null;
     retryPending = false;
     verifyRequested = true;
-    epochRefusals = 0;
+    epochRefusals.clear();
     epochRetryAt = 0;
-    epochMoved = false;
+    epochMovedAt = null;
   }
 
   /**
@@ -2708,6 +2812,8 @@ export function createSyncEngine({
       sealing.clear();
       abandoned.clear();
       droppedIdems.clear();
+      unconditioned.clear();
+      epochRefusals.clear();
       standing.clear();
       lastDrain = null;
       verifyRequested = false;
@@ -2765,7 +2871,7 @@ export function createSyncEngine({
       const db = await store.open();
       const plan = await planRestore({
         listing: inputs.rows, restore: inputs.restore, rows: rows.values(), outbox: await store.outbox.all(db, scope),
-        blocked: blocked.keys(), marks: flags,
+        blocked: conflictIds(), marks: flags,
       });
       alive();
       return { reupload: plan.upload.length, conflicts: plan.conflicts.length, manifestOlder: manifestOlder(inputs.rows) };
