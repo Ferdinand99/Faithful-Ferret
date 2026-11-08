@@ -161,6 +161,16 @@ export async function itemView({
       view = await withOpen(async ({ view: v }) => v);
     } catch (error) {
       const known = engine.list().find((/** @type {any} */ i) => i.id === id);
+      if (known?.conflict) {
+        // The server deleted the item while this device changed it: there is nothing to open, but the conflict is there to settle.
+        const open = el("a", { class: "btn btn-primary btn-sm", href: `#/items/${id}/conflict`, "data-role": "open-conflict" }, t("conflict.open"));
+        mount(root,
+          el("h1", null, String(known.name ?? "") === "" ? t("vault.item.unnamed") : String(known.name)),
+          el("div", { class: "marks" }, ...markBadges(t, known)),
+          notice("conflict", t("conflict.notice"), open),
+          el("p", { class: "aside" }, el("a", { href: "#/items", "data-role": "back" }, t("vault.item.back"))));
+        return;
+      }
       mount(root, el("p", { role: "alert", "data-role": "unavailable" },
         t(isNotFound(error) && !known ? "vault.item.not_found" : "vault.item.cannot_open")),
       el("p", null, el("a", { href: "#/items" }, t("vault.item.back"))));

@@ -125,7 +125,7 @@ async function scene(page, which) {
         }),
         resolve: async () => {},
       };
-      const client = { vault: { reveal_item_field: async () => "correct-horse-battery-1", reveal_item_notes: async () => "notes" } };
+      const client = { vault: { reveal_item_field: async () => window.__secret ?? "correct-horse-battery-1", reveal_item_notes: async () => "notes" } };
       mount(root, await frame(eng, await conflictView({ engine: eng, client, id: "a1", t, router: { go() {} }, locale: i18n.lang, touch: () => true })));
     } else if (name === "trash") {
       const { trashView } = await import("/app/views/trash.mjs");
@@ -185,6 +185,35 @@ for (const locale of ["en", "nb-NO"]) {
     }
 
     for (const width of [320, 360, 1100]) {
+      test(`a_long_value_in_the_conflict_view_does_not_move_its_button_at_${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await pageIsReady(page, locale);
+        await scene(page, "conflict");
+        await page.evaluate(() => {
+          window.__secret = "x".repeat(64);
+        });
+        const measure = () =>
+          page.evaluate(() => {
+            const button = document.querySelector('[data-role="reveal"][data-key="local.password"]');
+            const box = button.getBoundingClientRect();
+            const value = document.querySelector('[data-role="value"][data-key="local.password"]');
+            return {
+              top: Math.round(box.top + window.scrollY), left: Math.round(box.left + window.scrollX), width: Math.round(box.width),
+              cut: value.scrollWidth > value.clientWidth + 1,
+              sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+            };
+          });
+        const before = await measure();
+        await page.locator('[data-role="reveal"][data-key="local.password"]').click();
+        await expect(page.locator('[data-role="value"][data-key="local.password"]')).toHaveText("x".repeat(64));
+        const shown = await measure();
+        expect(shown.top, "the button stays where it was").toBe(before.top);
+        expect(shown.left).toBe(before.left);
+        expect(shown.cut, "the value wraps inside its cell").toBe(false);
+        expect(shown.sideways).toBe(false);
+        expect(await clipped(page)).toEqual([]);
+      });
+
       test(`showing_a_secret_in_the_conflict_view_moves_nothing_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         await pageIsReady(page, locale);
@@ -209,6 +238,11 @@ for (const locale of ["en", "nb-NO"]) {
         await page.locator('[data-role="reveal"][data-key="server.password"]').click();
         await expect(page.locator('[data-role="value"]', { hasText: "correct-horse-battery-1" })).toHaveCount(1);
         expect((await measure()).page).toBe(before.page);
+        // The question before a choice fits the card too.
+        await page.locator('[data-role="keep-mine"]').click();
+        await expect(page.locator('[data-role="dialog"]')).toBeVisible();
+        expect(await clipped(page)).toEqual([]);
+        await page.locator('[data-role="dialog-cancel"]').click();
       });
 
       test(`the_live_field_keeps_the_bar_and_its_own_width_the_same_in_every_state_at_${width}px`, async ({ page }) => {

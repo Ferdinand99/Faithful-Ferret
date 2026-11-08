@@ -4,7 +4,7 @@
 // the page never reads the store and never shows more than a name and a date.
 // "Restore" writes the item back to the server. "Remove for good" asks first.
 import { el, mount } from "../dom.mjs";
-import { askConfirm, describeError, formatMoment } from "./common.mjs";
+import { askConfirm, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 
 /**
  * @param {{
@@ -25,9 +25,12 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
   /** One action at a time: a second click while one runs is ignored. */
   let busy = false;
   let wiped = false;
+  /** A newer reading makes an older answer stale. */
+  let reading = 0;
 
   /** @param {string} text */
   function say(text) {
+    if (wiped) return;
     mount(message, document.createTextNode(text));
   }
 
@@ -55,15 +58,17 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
 
   /** Reads the trash again and shows it. */
   async function refresh() {
+    if (wiped) return;
+    const mine = (reading += 1);
     /** @type {Array<{ id: string, name: string, deletedAt: number }>} */
     let entries;
     try {
       entries = await engine.trash();
     } catch (error) {
-      if (!wiped) say(describeError(t, error));
+      if (mine === reading) say(describeError(t, error));
       return;
     }
-    if (wiped) return;
+    if (wiped || mine !== reading) return;
     const sorted = [...entries].sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
     mount(list, ...sorted.map(row));
     mount(empty, document.createTextNode(sorted.length === 0 ? t("conflict.trash.empty") : t("conflict.trash.count", { count: sorted.length })));
@@ -107,5 +112,7 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
   mount(root, heading, el("p", { class: "cf-intro" }, t("conflict.trash.intro")), empty, list, message, host,
     el("p", { class: "aside" }, el("a", { href: "#/items", "data-role": "back" }, t("conflict.trash.back"))));
   await refresh();
+  // A deletion or a restore on another device, or a purge, changes what the trash holds.
+  if (typeof engine.on === "function") listenWhileShown(root, /** @type {any} */ (engine), "changed", () => void refresh());
   return root;
 }

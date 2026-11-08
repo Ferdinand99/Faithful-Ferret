@@ -146,6 +146,15 @@
   letter-spacing: 0;
 }
 
+.vault-ui .cf-urls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .vault-ui .cf-absent {
   color: var(--muted);
   font-style: italic;

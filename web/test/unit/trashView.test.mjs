@@ -139,3 +139,46 @@ test("the_trash_leaves_the_page_when_the_vault_locks_and_ignores_actions_after_t
     assert.equal(find(idle.root, "dialog"), null);
   });
 });
+
+test("the_trash_reads_again_when_the_engine_says_something_changed", async () => {
+  await withDom(async () => {
+    const { root, engine, scope } = await open();
+    assert.equal(names(root).length, 3);
+    // Another device deleted one more item, and the engine says so.
+    engine.trashed.push({ id: id(4), name: "Laptop", deletedAt: NOW });
+    engine.emit("changed", { ids: [id(4)] });
+    await settle();
+    assert.equal(names(root).length, 4);
+    assert.equal(names(root)[0], "Laptop");
+    // An item restored somewhere else leaves the list.
+    engine.trashed = engine.trashed.filter((e) => e.id !== id(2));
+    engine.emit("changed", { ids: [id(2)] });
+    await settle();
+    assert.ok(!names(root).includes("Bank"));
+    // After the lock it reads nothing: the names stay where they are.
+    scope.run();
+    const reads = engine.calls.length;
+    engine.emit("changed", { ids: [] });
+    await settle();
+    assert.equal(engine.calls.length, reads);
+    assert.equal(root.childNodes.length, 0);
+  });
+});
+
+test("a_failure_after_the_lock_writes_to_no_node", async () => {
+  await withDom(async () => {
+    const { root, engine, scope } = await open();
+    const message = find(root, "message");
+    let fail;
+    engine.restoreFromTrash = () => new Promise((_, reject) => {
+      fail = reject;
+    });
+    const pending = click(find(all(root, "trash-item")[0], "restore"));
+    await settle(3);
+    scope.run();
+    fail(coded("storage"));
+    await pending;
+    await settle();
+    assert.equal(textOf(message).trim(), "");
+  });
+});

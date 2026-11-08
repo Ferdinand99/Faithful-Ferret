@@ -47,7 +47,8 @@ export const FIELDS = Object.freeze([
  * `secrets` maps "local" or "server" to the hidden values of that version by field id.
  */
 export function fakeConflictEngine({ conflicts = {}, trash = [] } = {}) {
-  const listeners = { changed: new Set() };
+  /** @type {Record<string, Set<Function>>} */
+  const listeners = {};
   const handles = new Map();
   let next = 100;
   const engine = {
@@ -61,11 +62,11 @@ export function fakeConflictEngine({ conflicts = {}, trash = [] } = {}) {
     onResolve: null,
     list: () => engine.items,
     on(event, fn) {
-      listeners[event].add(fn);
+      (listeners[event] ??= new Set()).add(fn);
       return () => void listeners[event].delete(fn);
     },
     emit(event, payload) {
-      for (const fn of [...listeners[event]]) fn(payload);
+      for (const fn of [...(listeners[event] ?? [])]) fn(payload);
     },
     listeners,
     async conflict(id) {

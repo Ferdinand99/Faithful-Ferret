@@ -4,6 +4,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
+import conflictRoute from "../../src/routes/conflict.route.mjs";
+import trashRoute from "../../src/routes/trash.route.mjs";
+import { autoLockFor } from "../../src/lock.mjs";
 import { createWipeScope, formatMoment } from "../../src/views/common.mjs";
 import { conflictView } from "../../src/views/conflict.mjs";
 import { itemView } from "../../src/views/item.mjs";
@@ -12,7 +15,7 @@ import {
   ID, MINE_NOTES, MINE_PASSWORD, MINE_PIN, MODIFIED_MINE, MODIFIED_THEIRS, OTHER, THEIR_NOTES, THEIR_PASSWORD, THEIR_PIN,
   bankConflict, fakeConflictEngine, fakeReveal, loginView,
 } from "./conflictHelpers.mjs";
-import { all, click, coded, fakeClient, fakeEngine, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { all, click, coded, fakeClient, fakeEngine, fakeSession, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
 
 const SECRETS = [MINE_PASSWORD, THEIR_PASSWORD, MINE_PIN, THEIR_PIN, MINE_NOTES, THEIR_NOTES];
 
@@ -31,6 +34,14 @@ async function open({ spec = bankConflict(), touch, extra = {} } = {}) {
 const cellKey = (side, key) => `${side}.${key}`;
 const reveal = (root, side, key) => click(find(root, "reveal", cellKey(side, key)));
 const value = (root, side, key) => textOf(find(root, "value", cellKey(side, key)));
+/** Presses a choice and answers the question that comes first with yes. */
+async function choose(root, role) {
+  const pending = click(find(root, role));
+  await settle();
+  if (find(root, "dialog")) await click(find(root, "dialog-confirm"));
+  await pending;
+  await settle();
+}
 const noSecretIn = (root, except = []) => {
   const text = textOf(root);
   for (const secret of SECRETS) if (!except.includes(secret)) assert.ok(!text.includes(secret), `${secret} is not on the page`);
@@ -90,7 +101,7 @@ test("rows_that_differ_come_first_and_a_version_without_the_field_says_so", asyn
     ], modified: MODIFIED_THEIRS });
     const { root } = await open({ spec });
     const keys = all(root, "conflict-field").map((n) => n.getAttribute("data-key"));
-    assert.deepEqual(keys, ["extra", "password", "notes", "username"]);
+    assert.deepEqual(keys, ["extra", "password", "notes", "username", "~urls"]);
     assert.equal(value(root, "local", "extra").trim(), "one");
     assert.ok(textOf(find(find(root, "conflict-field", "extra"), "absent")).includes("conflict.absent"));
   });
@@ -101,14 +112,15 @@ test("only_one_secret_is_revealed_at_a_time_across_both_sides", async () => {
     const { root, client, engine } = await open();
     await reveal(root, "local", "password");
     assert.ok(textOf(root).includes(MINE_PASSWORD));
-    assert.equal(find(root, "reveal", cellKey("local", "password")).getAttribute("aria-pressed"), "true");
+    assert.equal(find(root, "reveal", cellKey("local", "password")).getAttribute("aria-pressed"), null, "one pattern: the label is swapped, nothing is pressed");
+    assert.match(find(root, "reveal", cellKey("local", "password")).getAttribute("aria-label"), /conflict\.hide_label/);
     noSecretIn(root, [MINE_PASSWORD]);
 
     // The same field on the other side: the first goes, the second shows.
     await reveal(root, "server", "password");
     assert.ok(textOf(root).includes(THEIR_PASSWORD));
     assert.ok(!textOf(root).includes(MINE_PASSWORD));
-    assert.equal(find(root, "reveal", cellKey("local", "password")).getAttribute("aria-pressed"), "false");
+    assert.match(find(root, "reveal", cellKey("local", "password")).getAttribute("aria-label"), /conflict\.show_label/);
     assert.equal(value(root, "local", "password").trim(), "••••••••");
 
     // Another field, on the first side again.
@@ -168,7 +180,7 @@ test("revealed_values_leave_the_dom_on_hide_resolve_and_lock", async () => {
       engine.onResolve = async () => {
         seen = textOf(root);
       };
-      await click(find(root, "keep-mine"));
+      await choose(root, "keep-mine");
       assert.ok(seen !== null && !seen.includes(THEIR_PIN), "gone while the engine works");
       noSecretIn(root);
     }
@@ -204,14 +216,19 @@ test("a_reveal_that_finishes_after_a_lock_never_reaches_the_page", async () => {
   });
 });
 
+
 test("keep_mine_and_keep_theirs_call_resolve_once_and_return_to_the_item", async () => {
   await withDom(async () => {
-    for (const [role, choice] of [["keep-mine", "mine"], ["keep-theirs", "theirs"]]) {
+    for (const choice of ["mine", "theirs"]) {
       const { root, engine, moves } = await open();
-      const button = find(root, "keep-" + choice);
-      assert.equal(button, find(root, role));
-      // Two quick presses are one choice.
-      await Promise.all([click(button), click(button)]);
+      const button = find(root, `keep-${choice}`);
+      // Two quick presses are one question and one choice.
+      const both = Promise.all([click(button), click(button)]);
+      await settle();
+      assert.equal(all(root, "dialog").length, 1);
+      assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [], "nothing is written before the yes");
+      await click(find(root, "dialog-confirm"));
+      await both;
       await settle();
       assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, choice]]);
       assert.deepEqual(moves, [`/items/${ID}`]);
@@ -221,21 +238,70 @@ test("keep_mine_and_keep_theirs_call_resolve_once_and_return_to_the_item", async
   });
 });
 
+test("every_choice_asks_first_and_names_what_is_dropped_for_good", async () => {
+  await withDom(async () => {
+    const cases = [
+      ["keep_mine", bankConflict()],
+      ["restore", { ...bankConflict(), server: { rev: 4, deleted: true, view: null } }],
+      ["delete_mine", { ...bankConflict(), local: { rev: 3, deleted: true, view: null } }],
+    ];
+    for (const [mine, spec] of cases) {
+      const theirs = { keep_mine: "keep_theirs", restore: "accept_deletion", delete_mine: "keep_server_version" }[mine];
+      for (const [role, choice, name] of [["keep-mine", "mine", mine], ["keep-theirs", "theirs", theirs]]) {
+        const { root, engine, moves } = await open({ spec });
+        const first = click(find(root, role));
+        await settle();
+        const dialog = find(root, "dialog");
+        assert.ok(dialog, `${name}: a question is on the page`);
+        assert.ok(textOf(dialog).includes(`conflict.dialog.${name}_title`));
+        assert.ok(textOf(dialog).includes(`conflict.dialog.${name}_body`));
+        assert.ok(textOf(dialog).includes(`conflict.dialog.${name}_confirm`));
+        assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), []);
+        // Cancel: nothing is written, the view is as it was and a choice can be made again.
+        await click(find(root, "dialog-cancel"));
+        await first;
+        assert.equal(find(root, "dialog"), null);
+        assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), []);
+        assert.deepEqual(moves, []);
+        assert.equal(engine.handles.size, 2);
+        // Yes: one choice.
+        const second = click(find(root, role));
+        await settle();
+        await click(find(root, "dialog-confirm"));
+        await second;
+        await settle();
+        assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, choice]]);
+      }
+    }
+  });
+});
+
+test("the_questions_say_which_version_is_lost", () => {
+  const en = JSON.parse(readFileSync(new URL("../../src/locales/en/conflict.json", import.meta.url), "utf8"));
+  // Keeping mine drops the server's version; keeping the server's drops this device's version.
+  assert.match(en["conflict.dialog.keep_mine_body"], /server's version.*dropped for good/);
+  assert.match(en["conflict.dialog.keep_theirs_body"], /Your version on this device is dropped for good/);
+  assert.match(en["conflict.dialog.accept_deletion_body"], /Your version on this device is dropped for good/);
+  assert.match(en["conflict.dialog.delete_mine_body"], /server's version.*dropped for good/);
+});
+
+
 test("a_refused_choice_says_so_and_can_be_tried_again", async () => {
   await withDom(async () => {
     const { root, engine, moves } = await open();
     engine.failWith = coded("conflict");
-    await click(find(root, "keep-mine"));
+    await choose(root, "keep-mine");
     assert.deepEqual(moves, []);
     assert.ok(textOf(find(root, "message")).includes("sync.error.conflict"));
     assert.equal(find(root, "keep-mine").getAttribute("aria-disabled"), "false");
     assert.equal(engine.handles.size, 2, "the versions stay open for the next try");
     engine.failWith = null;
-    await click(find(root, "keep-mine"));
+    await choose(root, "keep-mine");
     assert.deepEqual(moves, [`/items/${ID}`]);
     assert.equal(engine.calls.filter((c) => c[0] === "resolve").length, 2);
   });
 });
+
 
 test("a_deleted_server_side_offers_restore_and_accept_deletion", async () => {
   await withDom(async () => {
@@ -244,24 +310,25 @@ test("a_deleted_server_side_offers_restore_and_accept_deletion", async () => {
     {
       const { root, engine, moves } = await open({ spec });
       assert.ok(textOf(all(root, "side")[1]).includes("conflict.deleted_server"));
-      assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.restore_mine");
-      assert.equal(textOf(find(root, "keep-theirs")).trim(), "conflict.accept_deletion");
-      assert.ok(textOf(root).includes("conflict.restore_help"));
-      assert.ok(textOf(root).includes("conflict.accept_deletion_help"));
+      assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.choice.restore");
+      assert.equal(textOf(find(root, "keep-theirs")).trim(), "conflict.choice.accept_deletion");
+      assert.ok(textOf(root).includes("conflict.help.restore"));
+      assert.ok(textOf(root).includes("conflict.help.accept_deletion"));
       // The deleted side has no values to show: every cell says so.
       assert.equal(all(root, "reveal", cellKey("server", "password")).length, 0);
-      await click(find(root, "keep-mine"));
+      await choose(root, "keep-mine");
       assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, "mine"]]);
       assert.deepEqual(moves, [`/items/${ID}`], "a restored item is shown");
     }
     {
       const { root, engine, moves } = await open({ spec });
-      await click(find(root, "keep-theirs"));
+      await choose(root, "keep-theirs");
       assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, "theirs"]]);
       assert.deepEqual(moves, ["/items"], "an accepted deletion leaves the item, which is gone, for the list");
     }
   });
 });
+
 
 test("a_local_deletion_against_a_server_edit_has_its_own_choices", async () => {
   await withDom(async () => {
@@ -269,14 +336,34 @@ test("a_local_deletion_against_a_server_edit_has_its_own_choices", async () => {
     spec.local = { rev: 3, deleted: true, view: null };
     const { root, moves, engine } = await open({ spec });
     assert.ok(textOf(all(root, "side")[0]).includes("conflict.deleted_local"));
-    assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.delete_mine");
-    assert.equal(textOf(find(root, "keep-theirs")).trim(), "conflict.keep_server_version");
+    assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.choice.delete_mine");
+    assert.equal(textOf(find(root, "keep-theirs")).trim(), "conflict.choice.keep_server_version");
     // The server's version can still be read.
     await reveal(root, "server", "password");
     assert.ok(textOf(root).includes(THEIR_PASSWORD));
-    await click(find(root, "keep-mine"));
+    await choose(root, "keep-mine");
     assert.deepEqual(moves, ["/items"], "a deletion that is kept leaves the item for the list");
     assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, "mine"]]);
+  });
+});
+
+test("a_deletion_on_both_sides_says_the_item_stays_deleted_and_asks_nothing", async () => {
+  await withDom(async () => {
+    const spec = bankConflict();
+    spec.local = { rev: 3, deleted: true, view: null };
+    spec.server = { rev: 4, deleted: true, view: null };
+    for (const [role, choice] of [["keep-mine", "mine"], ["keep-theirs", "theirs"]]) {
+      const { root, engine, moves } = await open({ spec });
+      assert.ok(find(root, "both-deleted-note"));
+      assert.ok(textOf(find(root, "both-deleted-note")).includes("conflict.both_deleted"));
+      assert.equal(textOf(find(root, "keep-mine")).trim(), "conflict.choice.delete_both_mine");
+      assert.equal(textOf(find(root, "keep-theirs")).trim(), "conflict.choice.delete_both_theirs");
+      await click(find(root, role));
+      await settle();
+      assert.equal(find(root, "dialog"), null, "nothing is lost, so nothing is asked");
+      assert.deepEqual(engine.calls.filter((c) => c[0] === "resolve"), [["resolve", ID, choice]]);
+      assert.deepEqual(moves, ["/items"]);
+    }
   });
 });
 
@@ -493,6 +580,9 @@ test("conflict_and_trash_texts_exist_in_both_languages", () => {
     "conflict.keep_mine_damaged", "conflict.keep_mine_quarantined",
     "conflict.dialog.keep_mine_damaged_body", "conflict.dialog.keep_mine_quarantined_body",
   ];
+  const names = ["keep_mine", "keep_theirs", "restore", "accept_deletion", "delete_mine", "keep_server_version", "delete_both_mine", "delete_both_theirs"];
+  for (const name of names) dynamic.push(`conflict.choice.${name}`, `conflict.help.${name}`);
+  for (const name of names.slice(0, 6)) dynamic.push(`conflict.dialog.${name}_title`, `conflict.dialog.${name}_body`, `conflict.dialog.${name}_confirm`);
   const wanted = new Set(dynamic);
   for (const file of ["conflict.mjs", "trash.mjs", "item.mjs", "list.mjs"]) {
     const source = readFileSync(new URL(`../../src/views/${file}`, import.meta.url), "utf8");
@@ -505,11 +595,255 @@ test("conflict_and_trash_texts_exist_in_both_languages", () => {
   for (const key of Object.keys(en)) assert.ok(wanted.has(key) || routes.includes(`"${key}"`) || sources.includes(`"${key}"`), `${key} is used`);
 });
 
-test("the_conflict_and_trash_routes_are_registered_and_only_plain_ids_reach_the_view", async () => {
-  const conflict = (await import("../../src/routes/conflict.route.mjs")).default;
-  const trash = (await import("../../src/routes/trash.route.mjs")).default;
-  assert.equal(conflict.path, "/items/:id/conflict");
-  assert.equal(trash.path, "/trash");
-  assert.equal(conflict.title, "conflict.title");
-  assert.equal(trash.title, "conflict.trash.title");
+// ------------------------------------------------------------ the second round
+
+/** A page context over fakes, as the route modules get it. */
+function rig(spec = bankConflict()) {
+  const engine = fakeConflictEngine({ conflicts: { [ID]: spec } });
+  engine.stop = () => {};
+  const client = fakeReveal(engine);
+  const session = fakeSession({ client });
+  const sync = { current: () => engine, start: async () => engine, stop() {} };
+  const moves = [];
+  const ctx = (path, params = {}) => ({
+    params, path, i18n: { t, lang: "en", missing: [] }, client, services: { crypto: session, sync }, go: (p) => moves.push(p),
+  });
+  return { engine, ctx, done: () => autoLockFor(session, sync).stop() };
+}
+
+test("the_routes_are_in_the_build_and_the_conflict_route_loads_in_the_frame_and_refuses_a_non_hex_id", async () => {
+  await withDom(async () => {
+    assert.equal(conflictRoute.path, "/items/:id/conflict");
+    assert.equal(trashRoute.path, "/trash");
+    assert.equal(conflictRoute.title, "conflict.title");
+    assert.equal(trashRoute.title, "conflict.trash.title");
+    const r = rig();
+    try {
+      for (const bad of ["not-an-id", "11".repeat(15), "zz".repeat(16), "../x"]) {
+        const node = await conflictRoute.load(r.ctx("/items/x/conflict", { id: bad }));
+        assert.ok(find(node, "message"), `${bad}: a message, not a view`);
+        assert.equal(find(node, "conflict"), null);
+      }
+      assert.deepEqual(r.engine.calls, [], "the engine is not asked about an id that is not an id");
+      const node = await conflictRoute.load(r.ctx(`/items/${ID}/conflict`, { id: ID }));
+      assert.ok(find(node, "shell"));
+      assert.ok(find(node, "conflict"));
+      assert.deepEqual(r.engine.calls, [["conflict", ID]]);
+      const page = await trashRoute.load(r.ctx("/trash"));
+      assert.ok(find(page, "trash"));
+    } finally {
+      r.done();
+    }
+  });
+});
+
+test("the_routes_are_files_the_build_picks_up", () => {
+  for (const file of ["conflict.route.mjs", "trash.route.mjs"]) {
+    assert.ok(readdirSync(new URL("../../src/routes/", import.meta.url)).includes(file));
+  }
+  assert.ok(readdirSync(new URL("../../src/styles/", import.meta.url)).includes("conflict.css"));
+});
+
+test("an_item_the_server_deleted_while_it_is_in_conflict_links_to_the_conflict", async () => {
+  await withDom(async () => {
+    const entry = {
+      id: ID, name: "Bank", type: "login", favorite: false, urls: [], username: "", rev: 2,
+      pending: true, damaged: false, quarantined: false, missingOnServer: false, blocked: true, blockedReason: "conflict",
+      readOnly: false, conflict: true,
+    };
+    // The engine cannot open the item: there is no live version to show.
+    const engine = fakeEngine({ items: [entry], views: {} });
+    const root = await itemView({ engine, sync: engine, client: fakeClient(engine), id: ID, t });
+    assert.equal(find(root, "unavailable"), null, "not the dead end");
+    assert.equal(find(root, "open-conflict").getAttribute("href"), `#/items/${ID}/conflict`);
+    assert.ok(textOf(find(root, "notice")).includes("conflict.notice"));
+    assert.ok(textOf(root).includes("Bank"));
+    assert.ok(find(root, "back"));
+    // Without a conflict mark the item is still not found.
+    const plain = fakeEngine({ items: [{ ...entry, conflict: false }], views: {} });
+    const dead = await itemView({ engine: plain, sync: plain, client: fakeClient(plain), id: ID, t });
+    assert.ok(find(dead, "unavailable"));
+    assert.equal(find(dead, "open-conflict"), null);
+  });
+});
+
+test("addresses_and_the_one_time_password_are_compared_as_text", async () => {
+  await withDom(async () => {
+    const spec = bankConflict();
+    spec.local.view = loginView({ urls: [{ url: "https://bank.example", matching: "host" }, { url: "https://b.example", matching: "host" }], has_totp: true });
+    spec.server.view = loginView({ urls: [{ url: "https://bank.example", matching: "host" }], has_totp: false, modified: MODIFIED_THEIRS });
+    const { root } = await open({ spec });
+    const urls = find(root, "conflict-field", "~urls");
+    assert.equal(urls.getAttribute("data-same"), "differs");
+    assert.deepEqual(all(urls, "url").map((n) => textOf(n).trim()).sort(), ["https://b.example", "https://bank.example", "https://bank.example"]);
+    const totp = find(root, "conflict-field", "~totp");
+    assert.equal(totp.getAttribute("data-same"), "differs");
+    assert.deepEqual(all(totp, "totp").map((n) => textOf(n).trim()), ["conflict.totp_yes", "conflict.totp_no"]);
+    // Differing rows come before the rows that agree.
+    const keys = all(root, "conflict-field").map((n) => n.getAttribute("data-key"));
+    assert.ok(keys.indexOf("~urls") < keys.indexOf("username"));
+    assert.ok(keys.indexOf("~totp") < keys.indexOf("username"));
+
+    // Equal addresses, in another order, agree; a version without any says so.
+    const same = bankConflict();
+    same.local.view = loginView({ urls: [{ url: "https://a.example", matching: "host" }, { url: "https://b.example", matching: "host" }] });
+    same.server.view = loginView({ urls: [{ url: "https://b.example", matching: "host" }, { url: "https://a.example", matching: "host" }] });
+    const two = await open({ spec: same });
+    assert.equal(find(two.root, "conflict-field", "~urls").getAttribute("data-same"), "same");
+    assert.equal(find(two.root, "conflict-field", "~totp"), null, "no row when neither version has a one-time password");
+    const none = bankConflict();
+    none.local.view = loginView({ urls: [] });
+    const three = await open({ spec: none });
+    assert.equal(find(three.root, "conflict-field", "~urls").getAttribute("data-same"), "differs");
+    assert.ok(find(find(three.root, "conflict-field", "~urls"), "none"));
+    // A deleted side has neither.
+    const gone = bankConflict();
+    gone.server = { rev: 4, deleted: true, view: null };
+    const four = await open({ spec: gone });
+    assert.equal(find(four.root, "conflict-field", "~urls").getAttribute("data-same"), "differs");
+    assert.ok(find(find(four.root, "conflict-field", "~urls"), "absent"));
+  });
+});
+
+test("the_next_conflict_is_the_one_after_this_in_the_list_and_the_list_wraps", async () => {
+  await withDom(async () => {
+    const [a, b, c] = ["aa".repeat(16), "bb".repeat(16), "cc".repeat(16)];
+    const conflicts = Object.fromEntries([a, b, c].map((id) => [id, bankConflict()]));
+    const engine = fakeConflictEngine({ conflicts });
+    engine.items = [{ id: a, conflict: true }, { id: "dd".repeat(16), conflict: false }, { id: b, conflict: true }, { id: c, conflict: true }];
+    const next = async (id) => {
+      const root = await conflictView({ engine, client: fakeReveal(engine), id, t, router: { go() {} } });
+      const note = find(root, "more-conflicts");
+      assert.ok(textOf(note).includes('"count":2'));
+      return find(note, "next-conflict").getAttribute("href");
+    };
+    assert.equal(await next(a), `#/items/${b}/conflict`);
+    assert.equal(await next(b), `#/items/${c}/conflict`, "from the second to the third, not back to the first");
+    assert.equal(await next(c), `#/items/${a}/conflict`, "and round again");
+  });
+});
+
+test("the_button_comes_before_the_value_and_a_long_value_is_only_text", async () => {
+  await withDom(async () => {
+    const { root, engine } = await open();
+    const long = "L".repeat(64);
+    for (const handle of engine.handles.values()) handle.secrets.password = long;
+    const cell = find(root, "cell", cellKey("local", "password"));
+    const order = (node) => [...node.childNodes].map((n) => n.getAttribute("data-role") ?? "side");
+    assert.deepEqual(order(cell), ["side", "reveal", "value"], "the button sits above the value");
+    await reveal(root, "local", "password");
+    assert.equal(value(root, "local", "password").trim(), long);
+    assert.deepEqual(order(cell), ["side", "reveal", "value"], "showing changes the value's text only");
+  });
+});
+
+test("rows_are_groups_named_by_their_label", async () => {
+  await withDom(async () => {
+    const { root } = await open();
+    for (const row of all(root, "conflict-field")) {
+      assert.equal(row.getAttribute("role"), "group");
+      const id = row.getAttribute("aria-labelledby");
+      const label = [...row.childNodes].find((n) => n.getAttribute("id") === id);
+      assert.ok(label, `${row.getAttribute("data-key")}: the label has the id the group names`);
+      assert.ok(textOf(label).trim() !== "");
+      assert.notEqual(row.tagName, "section");
+    }
+    assert.equal(all(root, "conflict-field").length, new Set(all(root, "conflict-field").map((n) => n.getAttribute("aria-labelledby"))).size);
+  });
+});
+
+test("rows_that_differ_are_kept_when_the_list_is_cut_and_the_cut_is_said", async () => {
+  await withDom(async () => {
+    const many = Array.from({ length: 205 }, (_, i) => ({ id: `f${i}`, label: `Field ${i}`, kind: "text", value: `v${i}` }));
+    const spec = bankConflict({
+      fields: many.map((f, i) => ({ key: f.id, label: f.label, kind: "text", same: i >= 202 ? false : true })),
+    });
+    spec.local.view = loginView({ fields: many, urls: [] });
+    spec.server.view = loginView({ fields: many, urls: [] });
+    const { root } = await open({ spec });
+    const keys = all(root, "conflict-field").map((n) => n.getAttribute("data-key"));
+    assert.equal(keys.length, 200);
+    assert.deepEqual(keys.slice(0, 3), ["f202", "f203", "f204"], "the rows that differ are shown first and survive the cut");
+    assert.ok(textOf(find(root, "rows-cut")).includes('"count":6'), "205 fields and the notes row make 206; six are left out");
+    // Under the limit there is no line.
+    const small = await open();
+    assert.equal(find(small.root, "rows-cut"), null);
+  });
+});
+
+test("leaving_the_view_wipes_the_values_and_closes_the_handles_at_once", async () => {
+  await withDom(async () => {
+    for (const type of ["hashchange", "pagehide"]) {
+      const listeners = new Map();
+      const win = {
+        addEventListener: (event, fn) => listeners.set(event, fn),
+        removeEventListener: (event, fn) => listeners.get(event) === fn && listeners.delete(event),
+      };
+      const { root, engine } = await open({ extra: { win } });
+      await reveal(root, "local", "password");
+      assert.ok(textOf(root).includes(MINE_PASSWORD));
+      assert.ok(listeners.has(type));
+      listeners.get(type)();
+      await settle();
+      assert.equal(root.childNodes.length, 0);
+      assert.equal(engine.handles.size, 0, `${type}: both handles closed`);
+      assert.equal(listeners.size, 0, "the listeners are gone");
+    }
+  });
+});
+
+test("a_view_that_is_found_detached_closes_its_handles_and_never_reopens_them", async () => {
+  await withDom(async () => {
+    const { root, engine } = await open();
+    root.isConnected = true;
+    engine.emit("changed", { ids: [OTHER] });
+    assert.equal(engine.handles.size, 2, "on the page, nothing changes");
+    root.isConnected = false; // the page moved on without telling the view
+    const calls = engine.calls.length;
+    engine.emit("changed", { ids: [ID] });
+    await settle();
+    assert.equal(engine.calls.length, calls, "the conflict is not read again");
+    assert.equal(engine.handles.size, 0);
+    assert.equal(root.childNodes.length, 0);
+
+    // A reading that finishes after the view has been left is closed, not shown.
+    const second = await open();
+    second.root.isConnected = true;
+    second.engine.emit("changed", { ids: [OTHER] });
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const original = second.engine.conflict;
+    second.engine.conflict = async (id) => {
+      await gate;
+      return original.call(second.engine, id);
+    };
+    second.engine.emit("changed", { ids: [ID] });
+    await settle();
+    second.root.isConnected = false;
+    release();
+    await settle();
+    assert.equal(second.engine.handles.size, 0, "the handles that came late are closed");
+    assert.equal(second.root.childNodes.length, 0);
+  });
+});
+
+test("a_failure_after_the_lock_writes_to_no_node", async () => {
+  await withDom(async () => {
+    const { root, client, scope, engine } = await open();
+    const message = find(root, "message");
+    let fail;
+    client.delay = new Promise((_, reject) => {
+      fail = reject;
+    });
+    const pending = reveal(root, "local", "password");
+    await settle(3);
+    scope.run();
+    fail(coded("reveal_failed"));
+    await pending;
+    await settle();
+    assert.equal(textOf(message).trim(), "", "the detached message node stays empty");
+    assert.equal(engine.handles.size, 0);
+  });
 });
