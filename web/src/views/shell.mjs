@@ -26,7 +26,15 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {{ run(): void }} scope what to wipe on lock
  * @property {() => HTMLElement} onLocked makes the unlock screen
  * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
+ * @property {LiveSource} [live] the live-update channel (`state`, `on`); without it the frame has no live field
+ *
+ * @typedef {object} LiveSource
+ * @property {() => string} state
+ * @property {(event: "state", fn: (state: string) => void) => () => void} on
  */
+
+/** The states of the live-update channel that the frame has a text for. */
+const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
 
 /**
  * @typedef {object} LiveScreen a frame (or a notice) that is built and may still be on the page
@@ -85,7 +93,7 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -93,10 +101,13 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   const navItems = el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items"));
   const navNew = el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"));
   const nav = el("nav", { "aria-label": t("vault.nav.label") }, navItems, navNew);
+  // The live-update field: a second pill beside the sync state, only when the page has the channel.
+  const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
   const bar = el("header", { class: "vault-bar" },
     el("a", { class: "brand", href: "#/items" }, t("app.name")),
     nav,
     status,
+    ...(liveStatus ? [liveStatus] : []),
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
   mount(root, bar, banners, main);
@@ -156,6 +167,18 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       else markCurrent();
     };
     win.addEventListener("hashchange", onHash);
+  }
+
+  /** @param {unknown} state */
+  function onLive(state) {
+    if (!liveStatus) return;
+    const name = typeof state === "string" && LIVE_STATES.includes(state) ? state : "offline";
+    mount(liveStatus, document.createTextNode(t(`live.state.${name}`)));
+    liveStatus.setAttribute("data-state", name);
+  }
+  if (live && liveStatus) {
+    onLive(live.state());
+    listenWhileShown(root, live, "state", onLive);
   }
 
   listenWhileShown(root, engine, "state", onState);
@@ -248,7 +271,7 @@ export async function enterVault(ctx) {
     page: (content) => {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
-      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen });
+      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync });
     },
   };
 }

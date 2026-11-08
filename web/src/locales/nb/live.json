@@ -1,0 +1,7 @@
+{
+  "live.state.connecting": "Kobler til for direkte oppdateringer",
+  "live.state.fallback": "Henter hvert 5. minutt",
+  "live.state.live": "Direkte",
+  "live.state.offline": "Direkte oppdateringer er av",
+  "live.state.unauthorized": "Direkte oppdateringer er stoppet"
+}

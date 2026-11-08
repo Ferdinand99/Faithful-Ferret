@@ -1,0 +1,33 @@
+/* The state of the live-update channel, in words, next to the sync state. The
+   dot follows the state, and the words say it too: nothing is shown by colour
+   alone. */
+.vault-ui .live-status {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+}
+
+.vault-ui .live-status[data-state="live"] {
+  --status: var(--ok);
+  --status-text: var(--ok-text);
+  --status-fill: var(--ok-fill);
+}
+
+.vault-ui .live-status[data-state="fallback"],
+.vault-ui .live-status[data-state="offline"] {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.vault-ui .live-status[data-state="unauthorized"] {
+  --status: var(--bad);
+  --status-text: var(--bad-text);
+  --status-fill: var(--bad-fill);
+}
+
+@media (max-width: 40rem) {
+  .vault-ui .live-status {
+    order: 4;
+  }
+}
