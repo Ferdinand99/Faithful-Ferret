@@ -684,8 +684,10 @@ test("a_409_on_a_deleted_item_is_checked_through_the_feed", async () => {
   await until(() => d.events.error.some((e) => e.code === "conflict"), "the conflict");
   const conflict = d.events.error.find((e) => e.code === "conflict");
   assert.deepEqual([conflict.id, conflict.currentRev, conflict.deleted], [ID_A, 2, true]);
-  await until(() => d.engine.list().length === 0, "the deletion arrives through /changes and is verified");
-  assert.ok(d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 2));
+  await until(() => d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 2), "the deletion arrives through /changes and is verified");
+  // The refused edit is a conflict with a deleted server: it stays on screen as the draft, for the user to choose.
+  await until(() => d.engine.list()[0]?.conflict === true && d.engine.list()[0]?.name === "Late edit", "the draft is shown as a conflict");
+  assert.equal(d.engine.list().length, 1);
   d.engine.stop();
 
   // The same with a tombstone that does not verify: the item is quarantined, not removed.
@@ -1055,9 +1057,11 @@ test("a_saved_mark_behind_the_cache_does_not_let_an_own_replay_roll_the_item_bac
   await until(async () => ((await marksOf(d))[ID_B]?.sent ?? []).length >= 2, "the keys of rev 1 and rev 2 are saved");
   const older = (await marksOf(d))[ID_B];
   await editB(d, "Mine 3", 3);
-  await until(async () => !(ID_B in (await marksOf(d))), "the mark ended");
+  assert.equal((await marksOf(d))[ID_B]?.kind, "reuploaded", "a row at the old floor itself does not end the mark");
+  await editB(d, "Mine 4", 4);
+  await until(async () => !(ID_B in (await marksOf(d))), "the mark ended above the floor");
   d.engine.stop();
-  // A lock or a crash left the older mark in storage while the cache holds rev 3 (the old floor itself).
+  // A lock or a crash left the older mark in storage while the cache holds rev 4 (above the old floor).
   const saved = (await d.store.getSetting(db.store, settingsKey())) ?? { v: 1, marks: {}, blocked: {} };
   saved.marks[ID_B] = older;
   await d.store.setSetting(db.store, settingsKey(), saved);
@@ -1067,8 +1071,8 @@ test("a_saved_mark_behind_the_cache_does_not_let_an_own_replay_roll_the_item_bac
   await back.engine.start();
   d.model.set(ID_B, { rev: 2, blob: rev2.blob, tag: rev2.tag });
   await back.engine.syncNow();
-  assert.ok(warnings(back).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 3));
-  assert.deepEqual([itemB(back).name, itemB(back).rev], ["Mine 3", 3]);
+  assert.ok(warnings(back).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 4));
+  assert.deepEqual([itemB(back).name, itemB(back).rev], ["Mine 4", 4]);
   back.engine.stop();
 });
 
@@ -1076,8 +1080,9 @@ test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => 
   const d = await hideItemB({ floor: 3 });
   await copyIsBack(d);
   await editB(d, "Mine 2", 2);
+  await editB(d, "Mine 3", 3); // a row at the old floor itself does not end the mark
   d.store.failPutRows = 1;
-  await d.engine.update(ID_B, { name: "Mine 3" }, currentRev(d.engine, ID_B)); // its row reaches the old floor and would end the mark
+  await d.engine.update(ID_B, { name: "Mine 4" }, currentRev(d.engine, ID_B)); // its row passes the old floor and ends the mark
   await until(() => d.events.state.some((s) => s.kind === "failed"), "the cache write fails");
   // Another flag save follows (an unrelated item is refused); it must still carry the mark of B.
   d.api.faults.push({ kind: "status", status: 413, code: "too_large" });
@@ -1087,8 +1092,8 @@ test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => 
   assert.equal((await marksOf(d))[ID_B]?.kind, "reuploaded", "the saved mark is still there");
   await d.engine.syncNow(); // the cache works again: the same row is processed again and ends the mark
   await until(async () => !(ID_B in (await marksOf(d))), "the mark ends once the row is cached");
-  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 3);
-  assert.equal(itemB(d).name, "Mine 3");
+  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 4);
+  assert.equal(itemB(d).name, "Mine 4");
   d.engine.stop();
 });
 
@@ -1115,7 +1120,7 @@ test("the_heal_also_finishes_an_item_that_was_never_edited", async () => {
   const db = await freshStore();
   const d = await hideItemB({ floor: 1, db });
   await copyIsBack(d);
-  await until(async () => !(ID_B in (await marksOf(d))) && (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 1, "the copy is cached and the mark ended");
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded" && (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 1, "the copy is cached and the mark is reuploaded");
   const row = (await rowsOf(d)).find((r) => r.itemId === ID_B);
   d.engine.stop();
   // A crash between caching the copy and saving the mark: the mark is still "missing" in storage.
@@ -1130,7 +1135,8 @@ test("the_heal_also_finishes_an_item_that_was_never_edited", async () => {
   await settle(30);
   assert.equal(back.api.puts.length, 0, "no second upload");
   assert.deepEqual([itemB(back).missingOnServer, itemB(back).blocked], [false, false]);
-  await until(async () => !(ID_B in (await marksOf(back))), "the mark is gone");
+  // The copy sits at the old floor itself (revision 1): the mark is finished as "reuploaded" and stays until a row above the floor comes.
+  await until(async () => (await marksOf(back))[ID_B]?.kind === "reuploaded", "the mark is finished");
   back.engine.stop();
 });
 

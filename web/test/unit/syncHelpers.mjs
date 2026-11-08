@@ -7,6 +7,7 @@ import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
+import { trash } from "../../src/store/trash.mjs";
 import { deleteSetting, getSetting, setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
 import { createSyncEngine } from "../../src/sync/engine.mjs";
@@ -522,7 +523,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
  */
 export async function createFakeStore({ order = [], db = null } = {}) {
   const database = db ?? (await freshStore());
-  const spy = { putRows: [], enqueued: [], settings: [], states: [], log: [] }; // log: "state.save" and "cache.putRows" in the order they happened
+  const spy = { putRows: [], enqueued: [], settings: [], states: [], trashed: [], log: [] }; // log: "state.save", "trash.put" and "cache.putRows" in the order they happened
   const service = {
     spy,
     database,
@@ -564,6 +565,19 @@ export async function createFakeStore({ order = [], db = null } = {}) {
         spy.putRows.push(rows);
         spy.log.push("cache.putRows");
         return cache.putRows(store, scope, rows);
+      },
+    },
+    failTrashPut: 0, // the next this many writes into the trash fail
+    trash: {
+      ...trash,
+      put: async (store, scope, entry) => {
+        if (service.failTrashPut > 0) {
+          service.failTrashPut -= 1;
+          throw new Error("the disk is full");
+        }
+        spy.trashed.push(entry);
+        spy.log.push("trash.put");
+        return trash.put(store, scope, entry);
       },
     },
     failRemove: 0, // the next this many removals from the outbox fail

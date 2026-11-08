@@ -72,9 +72,10 @@ export function codeOf(error) {
 
 /** Codes with a text under `sync.error.`. */
 const SYNC_ERRORS = new Set([
-  "bad_feed", "bad_request", "blocked", "conflict", "damaged", "draft_unreadable", "epoch_mismatch", "forbidden",
-  "gone", "idem_reuse", "manifest_not_writable", "missing_on_server", "not_found", "quarantined", "quota_exceeded",
-  "read_only", "storage", "tombstone_invalid", "too_large", "unsupported_envelope", "upload_again_failed",
+  "bad_feed", "bad_request", "blocked", "busy", "conflict", "conflict_unsettled", "damaged", "draft_unreadable", "epoch_mismatch",
+  "forbidden", "gone", "idem_reuse", "invalid_state", "manifest_not_writable", "missing_on_server", "not_found", "quarantined",
+  "quota_exceeded", "read_only", "reupload_refused", "storage", "tombstone_invalid", "too_large", "unsupported_envelope",
+  "upload_again_failed",
 ]);
 
 /** Codes with a text under `vault.error.`. */
