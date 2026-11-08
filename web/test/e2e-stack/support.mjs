@@ -736,16 +736,16 @@ export async function shot(page, name) {
 }
 
 /**
- * Whether a policy violation is one that these scenarios leave out. Two kinds, neither a fault of what is tested here:
- * the inline style attribute that the item form sets (dom.mjs), which is the known failure of ruling K50 (Firefox, and
- * WebKit shows it too); and the style element that Playwright itself puts in a page to take a screenshot (it has no source
- * file, and is blocked by the policy in WebKit).
+ * Whether a policy violation is one that these scenarios leave out. Two kinds, neither a fault of what is tested here, and
+ * both narrow: the inline style attribute that the item form sets (`style-src-attr`, blocked `inline`, from /app/dom.mjs:79),
+ * the known failure of ruling K50, which Firefox and WebKit show; and, in WebKit only, the style element that Playwright
+ * itself puts in a page to take a screenshot (blocked `inline`, no source file). Any other violation fails the test. This is
+ * to be replaced by the per-select mechanism of PR #83 when that lands.
  * @param {string} browserName @param {string} violation
  */
 function leftOut(browserName, violation) {
-  if (browserName === "firefox" && /^style-src-attr /.test(violation)) return true;
-  if (browserName === "webkit" && /^style-src-attr .*\/app\/dom\.mjs:79 /.test(violation)) return true;
-  return /^style-src-elem inline +:\d+ in /.test(violation);
+  if ((browserName === "firefox" || browserName === "webkit") && /^style-src-attr inline .*\/app\/dom\.mjs:79 in /.test(violation)) return true;
+  return browserName === "webkit" && /^style-src-elem inline +:\d+ in /.test(violation);
 }
 
 /**
@@ -770,17 +770,36 @@ export function noViolations() {
 export const existsHost = () => existsSync("/tmp/host-ready");
 
 /**
+ * Whether the host is there. In the phase that the gate script runs with a host (`m2-restore`) the tests fail when it is not,
+ * they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
+ */
+export async function hostAvailable() {
+  if (process.env.FERRET_E2E_PHASE !== "m2-restore") return existsHost();
+  const until = Date.now() + 120_000;
+  while (!existsHost()) {
+    if (Date.now() > until) throw new Error("the gate script did not make the host ready: the restore scenarios cannot run");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return true;
+}
+
+/**
  * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`
  * or `clock-<seconds>`. The host script (scripts/lanbox-ferret-e2e-gate.sh m2) watches for the request file in the
- * runner container, does the step and answers with a done file. The test is skipped when the run has no host script.
+ * runner container, does the step and answers with a done file, or with a failed file when the step failed (the test then
+ * fails). The test is skipped when the run has no host script, except in the phase that the gate script runs with one.
  * @param {string} step
  */
 export async function hostStep(step) {
-  if (!existsHost()) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
-  rmSync(`/tmp/host-done-${step}`, { force: true }); // the answer to an earlier request for the same step
+  if (!(await hostAvailable())) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
+  // The answers to an earlier request for the same step.
+  rmSync(`/tmp/host-done-${step}`, { force: true });
+  rmSync(`/tmp/host-failed-${step}`, { force: true });
   writeFileSync(`/tmp/host-request-${step}`, "");
   const until = Date.now() + 600_000;
-  while (!existsSync(`/tmp/host-done-${step}`)) {
+  for (;;) {
+    if (existsSync(`/tmp/host-failed-${step}`)) throw new Error(`the host failed the step ${step}`);
+    if (existsSync(`/tmp/host-done-${step}`)) return;
     if (Date.now() > until) throw new Error(`the host did not do ${step} within 10 minutes`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   }

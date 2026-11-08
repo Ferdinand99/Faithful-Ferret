@@ -38,9 +38,9 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
     await expect(first.locator('[data-role="dialog-confirm"]')).toBeVisible();
     await shot(first, "16-forget-the-question");
     await first.locator('[data-role="dialog-confirm"]').click();
-    // The tab that forgot ends on the sign-in page. (It should show the page that says what was forgotten first: see the
-    // test below that is marked fixme.)
-    await expect(first.locator('[data-role="credentials"]')).toBeVisible({ timeout: 60_000 });
+    // The tab that forgot shows the page that says what was forgotten, or (the fault in the test marked fixme below) the
+    // sign-in page that replaces it at once. Either is fine here: what this test asks for is what is left on the device.
+    await expect(first.locator('[data-role="forget-done"], [data-role="credentials"]').first()).toBeVisible({ timeout: 60_000 });
     await shot(first, "16-forget-done");
 
     // The other tab locked and shows no items.
@@ -48,10 +48,11 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
     await expect(second.locator('[data-role="unlock"], [data-role="credentials"], [data-role="account-page"]').first()).toBeVisible();
     await shot(second, "16-forget-the-other-tab");
 
-    // Nothing of the account is left on this device.
-    const after = await readStores(first);
+    // Nothing of the account is left on this device (the removal has finished when the other tab has locked).
     for (const store of ["rows", "outbox", "pinned", "device_secrets", "sync_state", "trash"]) {
-      expect(/** @type {any} */ (after)[store]?.count ?? 0, `${store} is empty after forgetting`).toBe(0);
+      await expect
+        .poll(async () => /** @type {any} */ (await readStores(first))[store]?.count ?? 0, { timeout: 30_000, message: `${store} is empty after forgetting` })
+        .toBe(0);
     }
 
     // The next sign-in is the first one here: the secret key is asked for again, and the server's items come back.
@@ -69,10 +70,10 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
   }
 });
 
-// Known fault, found by this run (task-37-report.md, "Forget this server: the confirmation page is replaced"): the tab that
-// forgets locks itself through its own listener for the message it sends to the other tabs, so the page that says what was
-// forgotten is replaced by the sign-in page within a few milliseconds and the person never reads it. Nothing is lost by it:
-// the data is gone and the sign-in is first use, as the test above shows.
+// Known fault: the page that says what was forgotten is replaced by the sign-in page about 8 ms after the confirmation, so the
+// person never reads it. The tab that forgets seems to lock itself through its own listener for the message that it sends to
+// the other tabs (the watch of the forget messages reacts to a message that this tab made itself). Nothing is lost by it: the
+// data is gone and the next sign-in is first use, as the test above shows. Remove the fixme when the page stays.
 test.fixme("forget_shows_what_was_forgotten_on_the_tab_that_forgot", async ({ browser }) => {
   useAccount();
   const context = await freshContext(browser);

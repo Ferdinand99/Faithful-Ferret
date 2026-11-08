@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createRecorder } from "../e2e-stack/evil/recorder.mjs";
-import { ModeError, MODE_NAMES, flipByte, parseMode } from "../e2e-stack/evil/modes.mjs";
+import { ModeError, MODE_NAMES, flipByte, parseMode, sessionMatches } from "../e2e-stack/evil/modes.mjs";
 import { createProxy } from "../e2e-stack/evil/proxy.mjs";
 
 // ---------------------------------------------------------------- fixtures
@@ -784,6 +784,21 @@ describe("evil modes", () => {
     const refused = await call(r.ports.control, "POST", "/mode", { headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "swap_blobs", a: A }) });
     assert.equal(refused.status, 400);
     assert.deepEqual(r.proxy.mode(), { mode: "honest", params: {} });
+  });
+
+  it("a_fork_session_is_named_by_any_cookie_character_in_a_prefix_of_8_or_more", () => {
+    // The session cookie is not made of URL safe characters only: a prefix of it can start with a plus or a slash.
+    for (const sid of ["+abcdefg", "/abcdefg", "ab+cdefgh=", "ab.cd/ef+gh==", "ab%2Bcdefg", "~abcdefg", "abcdefg-_"]) {
+      assert.deepEqual(parseMode({ mode: "fork", sid }).params, { sid }, sid);
+      assert.equal(sessionMatches(`${sid}rest-of-the-cookie`, sid), true, sid);
+    }
+    // What a cookie value cannot hold, or too short a prefix, is still refused.
+    const backslash = String.fromCharCode(92);
+    const newline = String.fromCharCode(10);
+    for (const sid of ["abc+def", "abcdefg;h", "abcdefg,h", "abcdefg h", 'abcdefg"h', `abcdefg${backslash}h`, `abcdefg${newline}h`, "abcdefg" + String.fromCharCode(233) + "h", "a".repeat(201)]) {
+      assert.throws(() => parseMode({ mode: "fork", sid }), ModeError, JSON.stringify(sid));
+    }
+    assert.equal(sessionMatches("other-session-cookie", "+abcdefg"), false);
   });
 
   it("the_recorder_keeps_the_first_and_the_newest_version_and_only_valid_rows", () => {

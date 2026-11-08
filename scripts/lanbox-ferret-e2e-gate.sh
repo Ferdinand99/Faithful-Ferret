@@ -297,42 +297,88 @@ run_m2() { # phase name, state, browser, files...
   return "$rc"
 }
 
-# The same, with the browsers kept open while this script does the steps that the tests ask for
+# What the hosted phase below leaves behind if the script ends in the middle of it (a failure, Ctrl-C): the
+# background phase, its output file and the runner container are removed.
+hosted_pid=""
+hosted_out=""
+hosted_cleanup() {
+  [ -z "$hosted_pid" ] || kill "$hosted_pid" 2>/dev/null || true
+  [ -z "$hosted_out" ] || rm -f "$hosted_out"
+  dk rm -f ferret-e2e-playwright > /dev/null 2>&1 || true
+  hosted_pid=""
+  hosted_out=""
+}
+
+# One step the tests asked for, in a subshell of its own: a step that fails ends the subshell (the helpers of the stack
+# script call exit), never the gate, and is reported to the test as a failure.
+host_step() { # step
+  local rc
+  set +e
+  case "$1" in
+    snapshot) (set -e; e2e_snapshot) >&2 ;;
+    restore) (set -e; e2e_restore_snapshot) >&2 ;;
+    clock-[0-9]*) (set -e; e2e_clock "${1#clock-}") >&2 ;;
+    *)
+      echo "the tests asked for a step the host does not know: $1" >&2
+      false
+      ;;
+  esac
+  rc=$?
+  set -e
+  return "$rc"
+}
+
+# The same as run_m2, with the browsers kept open while this script does the steps that the tests ask for
 # (a snapshot of the server's data, putting it back, moving the server's clock). A test asks by
-# writing /tmp/host-request-<step> in the runner container and waits for /tmp/host-done-<step>.
+# writing /tmp/host-request-<step> in the runner container and waits for /tmp/host-done-<step>, or
+# /tmp/host-failed-<step> when the step failed (the test then fails). The tests of this phase fail, and
+# do not skip, when this script is not there.
 run_m2_hosted() { # phase name, state, browser, files...
-  local phase="$1" state="$2" browser="$3" rc=0 out pid requests request step
+  local phase="$1" state="$2" browser="$3" rc=0 requests request step
   shift 3
-  out="$(mktemp)"
-  (FERRET_E2E_STATE="$state" FERRET_E2E_PHASE="$phase" e2e_run "--project=$browser" "$@" > "$out") &
-  pid=$!
+  hosted_out="$(mktemp)"
+  trap 'hosted_cleanup' EXIT INT TERM
+  (FERRET_E2E_STATE="$state" FERRET_E2E_PHASE="$phase" e2e_run "--project=$browser" "$@" > "$hosted_out") &
+  hosted_pid=$!
   # The runner container has a fixed name (scripts/lanbox-ferret-test.sh, e2e_run).
   for _ in $(seq 1 600); do
     [ "$(dk inspect -f '{{.State.Running}}' ferret-e2e-playwright 2>/dev/null || true)" = true ] && break
-    kill -0 "$pid" 2>/dev/null || break
+    kill -0 "$hosted_pid" 2>/dev/null || break
     sleep 1
   done
-  dk exec ferret-e2e-playwright touch /tmp/host-ready 2>/dev/null || true
-  while kill -0 "$pid" 2>/dev/null; do
+  if ! dk exec ferret-e2e-playwright touch /tmp/host-ready; then
+    bad "$browser: the runner container did not come up, so the tests have no host"
+    hosted_cleanup
+    trap - EXIT INT TERM
+    return 1
+  fi
+  while kill -0 "$hosted_pid" 2>/dev/null; do
     requests="$(dk exec ferret-e2e-playwright sh -c 'ls /tmp/host-request-* 2>/dev/null' 2>/dev/null || true)"
     for request in $requests; do
       step="${request#/tmp/host-request-}"
-      dk exec ferret-e2e-playwright rm -f "$request"
+      dk exec ferret-e2e-playwright rm -f "$request" > /dev/null 2>&1 || true
       say "host step for the tests: $step"
-      case "$step" in
-        snapshot) e2e_snapshot >&2 ;;
-        restore) e2e_restore_snapshot >&2 ;;
-        clock-[0-9]*) e2e_clock "${step#clock-}" >&2 ;;
-        *) bad "the tests asked for a step the host does not know: $step" ;;
-      esac
-      dk exec ferret-e2e-playwright touch "/tmp/host-done-$step" 2>/dev/null || true
+      if host_step "$step"; then
+        dk exec ferret-e2e-playwright touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
+      else
+        bad "the host step $step failed"
+        dk exec ferret-e2e-playwright touch "/tmp/host-failed-$step" > /dev/null 2>&1 || true
+      fi
     done
     sleep 2
   done
-  wait "$pid" || rc=$?
-  phase_out="$(cat "$out")"
-  rm -f "$out"
+  wait "$hosted_pid" || rc=$?
+  phase_out="$(cat "$hosted_out")"
+  rm -f "$hosted_out"
+  hosted_pid=""
+  hosted_out=""
+  trap - EXIT INT TERM
   save_shots "$phase_out"
+  # Playwright exits 0 when every test of the file was skipped: the tests leave a marker when they have run.
+  if [ "$rc" = 0 ] && [ -z "$(left "$phase_out" m2-restore)" ]; then
+    echo "the restore scenarios left no marker: they did not run" >&2
+    rc=1
+  fi
   return "$rc"
 }
 

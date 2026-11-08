@@ -3,7 +3,7 @@
 // `hostStep`). Both browsers say the server was restored and offer to accept the older state. The first to accept sends
 // what the server lost without a conflict, over rows nobody changed since; the second gets a conflict where the first
 // wrote. A write saved while the server is restored is refused by the server, and nothing lands in silence.
-import { createItem, editItem, evilNow, existsHost, expect, feedOf, hostStep, itemIdOf, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, shot, synced, syncBanner, test, useAccount } from "./support.mjs";
+import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, shot, synced, syncBanner, test, useAccount } from "./support.mjs";
 
 const SEEN = 20_000;
 const WARNED = 150_000;
@@ -19,7 +19,8 @@ let b;
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(400_000);
-  test.skip(!existsHost(), "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
+  // In the phase that the gate script runs with a host, a missing host is a failure here, not a skip.
+  test.skip(!(await hostAvailable()), "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
   useAccount();
   a = await newDevice(browser);
   b = await newDevice(browser);
@@ -104,8 +105,9 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   const quietId = await itemIdOf(a.page, `${quiet}-a`);
   await expect.poll(async () => serverRev(a.context, quietId), { timeout: 60_000, message: "A's version is on the server again" }).toBeGreaterThan(1);
 
-  // The second browser accepts. A wrote after the restore, so every item A sent gives a conflict here, and nothing that
-  // nobody changed does. Nothing of A's is overwritten.
+  // The second browser accepts. Its copies of the two items that were changed after the backup are not the rows that A has
+  // written since (the copies are sealed one by one, so two that say the same differ as bytes), so each is a conflict, and the
+  // item that nobody changed after the backup is not. Nothing of A's is overwritten.
   await openRestoredPage(b.page);
   await expect(b.page.locator('[data-role="preview-conflicts"]')).toContainText("2");
   await shot(b.page, "15-restored-preview-b");
@@ -181,4 +183,9 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   await shot(b.page, "15-restored-write-refused");
   expect(await serverRev(b.context, id), "still not on the server").toBe(rev);
   await expect(rowsNamed(b.page, `${target}-saved-during-restore`)).toHaveCount(1);
+  // The way out is the stop, which the person can read and act on; the banner that says a write was refused again and again
+  // for a restore number the server does not show (the repeated refusal) is not the one that appears here.
+  await expect(b.page.locator('[data-role="banner"][data-banner="error:restore_epoch_refused"]')).toHaveCount(0);
+  // The gate script requires this marker: Playwright exits 0 when every test of a file is skipped.
+  leave("m2-restore", { ok: true });
 });

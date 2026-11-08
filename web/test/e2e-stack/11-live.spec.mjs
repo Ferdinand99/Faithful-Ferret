@@ -1,7 +1,7 @@
 // Live updates: a change in one browser shows in the other within two seconds, the event stream is closed by the server
 // when the session ends, and a third tab of the same browser (the server gives a device two streams) falls back to
 // reading now and then without breaking the sync or the record of what the server showed before.
-import { createItem, expect, newDevice, noViolations, openList, rowsNamed, shot, synced, test, unlockWith, secrets, useAccount, vaultUrl, signOutOn } from "./support.mjs";
+import { createItem, expect, newDevice, noViolations, openList, readStores, rowsNamed, shot, synced, test, unlockWith, secrets, useAccount, vaultUrl, signOutOn } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -12,6 +12,30 @@ const live = (page) => page.locator('[data-role="live-status"]');
 test.beforeAll(() => {
   useAccount();
 });
+
+/**
+ * What the device keeps of what the server showed before, read from the browser's store: how much the memory holds (it only
+ * grows with the items seen) and the numbers that only go up.
+ * @param {import("@playwright/test").Page} page
+ */
+async function memoryOfServer(page) {
+  const record = (await readStores(page)).sync_state?.values?.[0];
+  if (!record) throw new Error("the device keeps no record of what the server showed");
+  return { memory: String(record.memory).length, restoreEpoch: record.restoreEpoch, verifiedSeq: record.verifiedSeq, uploadedSeq: record.uploadedSeq };
+}
+
+/**
+ * Nothing was lowered between two readings: the memory is not smaller, and a number is not lower or gone.
+ * @param {Awaited<ReturnType<typeof memoryOfServer>>} before @param {Awaited<ReturnType<typeof memoryOfServer>>} after @param {string} when
+ */
+function expectMonotonic(before, after, when) {
+  expect(after.memory, `the memory is not smaller ${when}`).toBeGreaterThanOrEqual(before.memory);
+  for (const key of /** @type {const} */ (["restoreEpoch", "verifiedSeq", "uploadedSeq"])) {
+    if (before[key] === null) continue;
+    expect(after[key], `${key} is not lower or gone ${when}`).not.toBeNull();
+    expect(after[key], `${key} is not lower ${when}`).toBeGreaterThanOrEqual(before[key]);
+  }
+}
 
 test("a_change_in_one_browser_shows_in_the_other_within_2_seconds", async ({ browser }) => {
   test.setTimeout(400_000);
@@ -78,10 +102,13 @@ test("a_third_tab_falls_back_without_breaking_sync_or_lowering_a_floor", async (
     const second = await tab();
     await expect(live(first)).toHaveAttribute("data-state", "live", { timeout: 30_000 });
     await expect(live(second)).toHaveAttribute("data-state", "live", { timeout: 30_000 });
+    const recordOne = await memoryOfServer(first);
     const third = await tab();
     // The third stream is refused, tried again a few times and then given up: the tab says so.
     await expect(live(third)).toHaveAttribute("data-state", "fallback", { timeout: 240_000 });
     await shot(third, "11-live-third-tab-fallback");
+    const recordTwo = await memoryOfServer(first);
+    expectMonotonic(recordOne, recordTwo, "after the third tab came up");
 
     // The sync goes on in every tab. A change in the first tab reaches the second by its stream.
     const fromFirst = `Third-first-${Date.now()}`;
@@ -102,6 +129,8 @@ test("a_third_tab_falls_back_without_breaking_sync_or_lowering_a_floor", async (
     await openList(second);
     await expect(rowsNamed(second, fromThird)).toHaveCount(1, { timeout: 15_000 });
 
+    // The record of what the server showed, read straight from the store: three engines wrote it, and it was never lowered.
+    expectMonotonic(recordTwo, await memoryOfServer(first), "after three tabs wrote");
     // Three engines wrote the record of what the server showed, and none of them lowered it: no tab shows a warning.
     for (const page of [first, second, third]) {
       await expect(page.locator('[data-role="sync-banner"]')).toHaveCount(0);
