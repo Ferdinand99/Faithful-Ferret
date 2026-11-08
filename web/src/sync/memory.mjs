@@ -27,6 +27,8 @@ import { codeOf, isFatal, SyncError } from "./errors.mjs";
  *   Under the lock: reads the state again, calls `fn` with it, stores what `fn` returns (null stores nothing), and releases the lock.
  *   `existed` is false when nothing was stored yet and `state` is a new one.
  * @property {() => Promise<SyncState>} load the stored state (a new one when nothing is stored), for a read that changes nothing
+ * @property {<T>(fn: () => Promise<T>) => Promise<T>} [withRestoreLock] runs `fn` under the Web Lock of the account's restore
+ *   (`ferret-sync-restore:<server>:<account>`): accepting an older state, or resuming one, is one at a time across tabs
  */
 
 /** The code of the core for a row below the highest revision this device has seen of its item. */
@@ -176,6 +178,7 @@ export function memoryStore({ store, serverUrl, accountId, locks = /** @type {an
   const server = serverKey(serverUrl);
   if (!hex16.is(accountId)) throw new TypeError("an account id is 32 lower-case hex characters");
   const name = `ferret-sync-memory:${server}:${accountId}`;
+  const restoreName = `ferret-sync-restore:${server}:${accountId}`;
 
   /** @returns {Promise<SyncState>} */
   async function fresh() {
@@ -196,6 +199,9 @@ export function memoryStore({ store, serverUrl, accountId, locks = /** @type {an
     async load() {
       const db = await store.open();
       return (await store.loadSyncState(db, serverUrl, accountId)) ?? fresh();
+    },
+    async withRestoreLock(fn) {
+      return /** @type {any} */ (await locks.request(restoreName, async () => fn()));
     },
   };
 }

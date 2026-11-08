@@ -5,17 +5,15 @@
 // This file only decides. It reads rows, entries and revision numbers; it opens nothing and writes nothing. The engine
 // does the sealing, the queueing and the replacing of rows (see engine.mjs, `acceptOlderState`).
 //
-// A local version is "newer" than the server's row when it has a higher revision, and a write built on it is then
-// numbered `server rev + 1`. A write is never sent over a row the server changed after the restore: the server's row is
-// compared with the entry of the restored checkpoint, and a row that is not the one the checkpoint lists (another
-// revision, other bytes, or written after the checkpoint) makes the item a conflict. The same holds for a row with the
-// revision this device has but other bytes: two histories met, and nobody can say which is newer. A conflict keeps the
-// local version as a draft that is not sent; the user chooses.
+// A local version is "newer" than the server's row when it has a higher revision. Only an item the server has no row for
+// is sent by itself (revision 0, nothing can be overwritten). A local version over a row the server does have is never
+// sent by itself: it is kept as a draft that is not sent and the user chooses (a conflict). This is on purpose and
+// conservative: the server may hold a write that another device made after the restore, a checkpoint that device uploaded
+// covers that write (so the row looks as the checkpoint says), and a client alone cannot tell it from the restored state.
+// A version the server has newer, the same bytes, or a deletion on both sides needs nothing.
 //
 // Spec: Fase 1 section 8.6 ("Legitimate rollbacks": accept older state, and the local changes the server is missing
 // are uploaded), section 8.3 (a write over a row that has changed is a conflict).
-import { hex16 } from "../b64.mjs";
-import { SyncError } from "./errors.mjs";
 
 /**
  * @typedef {import("../store/cache.mjs").CachedRow} CachedRow
@@ -24,60 +22,25 @@ import { SyncError } from "./errors.mjs";
  *   `reseal` the item is live on both sides, the write is the local version numbered `server rev + 1`;
  *   `resurrect` the server holds a tombstone and the local version is live: it comes back (`base_rev` is the tombstone's);
  *   `tombstone` the local version is a deletion of an item the server still has;
- *   `new` the server has no row for the item: the write is built on revision 0
+ *   `new` the server has no row for the item: the write is built on revision 0.
+ *   Only `new` is sent by itself; the other three are kept as drafts (conflicts), see above
  * @typedef {{ id: string, baseRev: number, kind: Kind }} Plan
  *
  * @typedef {object} Decision what to do with one item
  * @property {string} id
  * @property {Kind | "skip"} kind `skip`: nothing to send (the server has the same or a newer version, or both are deleted)
  * @property {number} baseRev the revision the write builds on (the server's, or 0)
- * @property {boolean} conflict the write is kept as a draft that is not sent
+ * @property {boolean} conflict the write is kept as a draft that is not sent (every kind but `new` and `skip`)
  * @property {"row" | "outbox"} source where the newest local version is: the row this device holds, or the last write
  *   that was waiting in the outbox (it exists only here)
  * @property {number} localRev the revision of that version
  */
 
-/** The bytes of one entry of a checkpoint: 16 for the id, 8 for the revision, 32 for the hash. */
-const ENTRY_LEN = 16 + 8 + 32;
-
 /** The all-zero id of the unlock-method manifest: a row, never an item, never sent from here. */
 const MANIFEST = "0".repeat(32);
 
-/** @param {Uint8Array} bytes */
-async function sha256(bytes) {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", /** @type {BufferSource} */ (bytes)));
-}
-
 /** @param {Uint8Array | null} a @param {Uint8Array | null} b */
 const sameBytes = (a, b) => (a === null || b === null ? a === b : a.length === b.length && a.every((n, i) => n === b[i]));
-
-/**
- * The entries of a checkpoint by item id. A hash of 32 zero bytes is a tombstone (`null`).
- * @param {Uint8Array} entries
- * @returns {Map<string, { rev: number, hash: Uint8Array | null }>}
- */
-export function entriesById(entries) {
-  if (entries.length % ENTRY_LEN !== 0) throw new SyncError("bad_feed", "The checkpoint cannot be read.");
-  /** @type {Map<string, { rev: number, hash: Uint8Array | null }>} */
-  const byId = new Map();
-  const view = new DataView(entries.buffer, entries.byteOffset, entries.byteLength);
-  for (let at = 0; at < entries.length; at += ENTRY_LEN) {
-    const hash = entries.subarray(at + 24, at + ENTRY_LEN);
-    byId.set(hex16.encode(entries.subarray(at, at + 16)), { rev: Number(view.getBigUint64(at + 16)), hash: hash.every((n) => n === 0) ? null : hash });
-  }
-  return byId;
-}
-
-/**
- * Whether the row of the server is the one the restored checkpoint lists for the item: the same revision and the same
- * bytes (or a tombstone on both sides), and not written after the checkpoint was made. A row the checkpoint does not list
- * is a row that came later.
- * @param {CachedRow} row @param {{ rev: number, hash: Uint8Array | null } | undefined} entry @param {number} checkpointSeq
- */
-async function isAsCheckpointed(row, entry, checkpointSeq) {
-  if (entry === undefined || row.seq > checkpointSeq || entry.rev !== row.rev) return false;
-  return sameBytes(entry.hash, row.deleted ? null : await sha256(/** @type {Uint8Array} */ (row.envelope)));
-}
 
 /**
  * Decides, for every item this device holds a version of, what happens to it. The manifest is left out: it changes only
@@ -89,20 +52,20 @@ async function isAsCheckpointed(row, entry, checkpointSeq) {
  * (at the revision it had before it was lost, which the mark keeps).
  * @param {{
  *   listing: Iterable<CachedRow>,
- *   checkpoint: { seq: number, entries: Uint8Array },
+ *   checkpoint?: { seq: number, entries: Uint8Array },
  *   rows: Iterable<CachedRow>,
  *   outbox: Iterable<OutboxEntry>,
  *   blocked?: ReadonlySet<string> | Iterable<string>,
  *   marks?: ReadonlyMap<string, { kind: string, rev: number }>,
  * }} input
- *   `listing` is what the server shows now, `checkpoint` the restored one, `rows` what this device holds, `outbox` what
+ *   `listing` is what the server shows now, `checkpoint` the restored one (not used for the decision: see the head of this
+ *   file), `rows` what this device holds, `outbox` what
  *   it has queued, `blocked` the items whose earlier write was refused (they stay conflicts), `marks` the marks of items
  *   that were uploaded again.
  * @returns {Promise<Decision[]>} in the order of the item ids
  */
-export async function restoreItems({ listing, checkpoint, rows, outbox, blocked = new Set(), marks = new Map() }) {
+export async function restoreItems({ listing, rows, outbox, blocked = new Set(), marks = new Map() }) {
   const served = new Map([...listing].map((row) => [row.itemId, row]));
-  const entries = entriesById(checkpoint.entries);
   const held = new Map([...rows].map((row) => [row.itemId, row]));
   /** @type {Map<string, OutboxEntry[]>} */
   const queued = new Map();
@@ -150,17 +113,12 @@ export async function restoreItems({ listing, checkpoint, rows, outbox, blocked 
       if (local.rev === server.rev) {
         const identical = !local.deleted && row !== undefined && !server.deleted &&
           sameBytes(row.envelope, server.envelope) && sameBytes(row.tag, server.tag);
-        // The same revision with other bytes: another device wrote there after the restore. Neither is the newer.
         decide(identical ? "skip" : kind, !identical);
         continue;
       }
-      decide(kind, !(await isAsCheckpointed(server, entries.get(id), checkpoint.seq)));
-      continue;
     }
-    // A write that exists only here, or an earlier refusal: it is never sent over a row it was not built on.
-    const newer = local.rev > server.rev;
-    const settled = newer && !blockedIds.has(id) && (await isAsCheckpointed(server, entries.get(id), checkpoint.seq));
-    decide(kind, !settled);
+    // A local version over a row the server has: a draft, never a write (a write that waits in the outbox is never dropped either).
+    decide(kind, true);
   }
   return out;
 }
