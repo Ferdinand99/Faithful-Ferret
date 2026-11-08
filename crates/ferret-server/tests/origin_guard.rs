@@ -570,6 +570,9 @@ async fn the_admin_listener_sends_no_referrer_from_the_hand_over_and_the_api_and
         "/auth/signed-out",
         "/api/auth/session",
         "/vault/login",
+        // The setup token is in its query.
+        "/setup",
+        "/setup?token=abc",
     ] {
         let res = app.call(Which::Admin, Req::get(path).build()).await;
         assert_eq!(res.header("referrer-policy"), "no-referrer", "{path}");

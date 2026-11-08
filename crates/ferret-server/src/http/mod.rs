@@ -70,16 +70,18 @@ async fn vault_headers(
 
 /// The `Referrer-Policy` of an admin response, by path.
 ///
-/// The hand-over pages, the API and the redirect stubs send no referrer at all.
+/// The hand-over pages, the API, the redirect stubs and `/setup` (whose query
+/// carries the setup token) send no referrer at all.
 /// The kit's pages send one to their own origin only (`same-origin`, the kit's
 /// policy): the kit's forms are posted with `Origin` and `Referer` as proof that
 /// they come from its own pages (a plain form post is sent with `Origin: null`
 /// under `no-referrer`, and the kit, like `origin_guard`, refuses that). No
 /// referrer ever leaves the origin.
 fn admin_referrer_policy(path: &str) -> &'static str {
-    if ["/auth/", "/api/", "/vault/"]
-        .iter()
-        .any(|prefix| path.starts_with(prefix))
+    if path == "/setup"
+        || ["/auth/", "/api/", "/vault/"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
     {
         "no-referrer"
     } else {
@@ -123,4 +125,49 @@ pub fn admin_layers(router: Router, state: &FerretState) -> Router {
         .layer(from_fn_with_state(listener, origin_guard))
         .layer(from_fn(admin_headers))
         .layer(from_fn_with_state(state.proxies.clone(), proxy_guard))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::admin_referrer_policy;
+    use crate::product::FEATURES;
+
+    #[test]
+    fn the_setup_page_sends_no_referrer() {
+        for path in [
+            "/setup",
+            "/auth/handoff",
+            "/api/auth/session",
+            "/vault/login",
+        ] {
+            assert_eq!(admin_referrer_policy(path), "no-referrer", "{path}");
+        }
+        // The kit's pages keep the kit's policy.
+        for path in ["/settings/general", "/login", "/setup/other", "/setups"] {
+            assert_eq!(admin_referrer_policy(path), "same-origin", "{path}");
+        }
+    }
+
+    /// An invitation link and a sign-in code travel in the path of the page that
+    /// takes them. Turning either feature on needs a strict policy for its page
+    /// first: add the path to `admin_referrer_policy` and make it
+    /// `strict-origin` (the origin only, and nothing to a less safe one), then
+    /// this test passes again. The features are off now.
+    #[test]
+    fn a_feature_with_a_secret_in_its_path_needs_a_strict_referrer_policy() {
+        if FEATURES.invites {
+            assert_eq!(
+                admin_referrer_policy("/invite/token"),
+                "strict-origin",
+                "FEATURES.invites is on but /invite/ has no strict referrer policy"
+            );
+        }
+        if FEATURES.sign_in_codes {
+            assert_eq!(
+                admin_referrer_policy("/sign-in-code"),
+                "strict-origin",
+                "FEATURES.sign_in_codes is on but /sign-in-code has no strict referrer policy"
+            );
+        }
+    }
 }
