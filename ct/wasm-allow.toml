@@ -609,7 +609,7 @@ reason = "Reading the server address the user typed or scanned: scheme, host and
 [[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
 instruction = "i32\\.load\\(indexed\\)"
-max = 9
+max = 8
 reason = "Reading the server address the user typed or scanned: scheme, host and port checks, and the IPv4 form, on public text; the index is the loop counter. The emergency sheet carries the key as a Crockford code that codes.rs reads, not through this function."
 
 [[allow]]
