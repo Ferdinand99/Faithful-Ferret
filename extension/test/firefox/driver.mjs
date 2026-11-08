@@ -223,6 +223,24 @@ ${this.log.slice(-4000)}`);
     return value.handle;
   }
 
+  /** @returns {Promise<string[]>} the handles of all open tabs */
+  async windowHandles() {
+    return wire("GET", `${this.#s()}/window/handles`);
+  }
+
+  /**
+   * Closes the selected tab and selects another one. Never closes the last tab (the
+   * browser would quit).
+   * @returns {Promise<string[]>} the handles of the tabs that are left
+   */
+  async closeTab() {
+    const before = await this.windowHandles();
+    if (before.length < 2) throw new Error("driver: closeTab would close the last tab");
+    const left = await wire("DELETE", `${this.#s()}/window`);
+    await wire("POST", `${this.#s()}/window`, { handle: left[0] });
+    return left;
+  }
+
   /** Makes a tab the selected one, so a shortcut and a click reach it. @param {string} handle */
   async switchTo(handle) {
     await wire("POST", `${this.#s()}/window`, { handle, focus: true });
@@ -443,6 +461,20 @@ ${this.log.slice(-4000)}`);
         backgroundState: policy?.extension ? policy.extension.backgroundState ?? null : null,
       };
     }, id);
+  }
+
+  /**
+   * The state of the background of an add-on ("running", "stopped", "starting",
+   * "suspending"), read in the chrome context. Reading it does not wake the
+   * background and does not touch it.
+   * @param {string} addonId
+   * @returns {Promise<string | null>}
+   */
+  async backgroundState(addonId) {
+    return this.chrome((/** @type {string} */ id) => {
+      const policy = WebExtensionPolicy.getByID(id);
+      return policy?.extension ? policy.extension.backgroundState ?? null : null;
+    }, addonId);
   }
 
   /**

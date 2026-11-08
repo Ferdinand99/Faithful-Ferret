@@ -1,0 +1,105 @@
+# Signs the extension's test variant (the measurement build) with Mozilla (AMO,
+# unlisted channel) so it can be installed permanently in an ordinary Firefox, and
+# keeps the signed .xpi as an artifact of the run.
+#
+# Manual only: `workflow_dispatch`, never on a push, a tag or a pull request. A run
+# signs one build; AMO refuses the same version twice, so the build gets a version
+# of its own (0.0.1.<run number>). The manifest version (mv3, the plan, or mv2, the
+# fallback) is an input of the run. The signed file is the TEST variant (add-on id
+# ferret-test@hedgerow.tools, with the measure page and test bridge). It is made for
+# the lifetime measurement and is not a release: a release is built and checked by
+# extension.yml, which never signs anything.
+#
+# AMO_JWT_ISSUER and AMO_JWT_SECRET are repository secrets. They are read by the
+# signing step only, through the environment (web-ext reads WEB_EXT_API_KEY and
+# WEB_EXT_API_SECRET), never as command-line flags and never printed. The input
+# reaches the shell through the environment as well, never spliced into a command
+# line. The workflow has read access to the repository and nothing else; third-party
+# actions are pinned by commit SHA.
+name: Extension sign measurement build
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: Manifest version of the build to sign (mv3 is the plan; mv2 is the fallback to measure against it)
+        type: choice
+        options: [mv3, mv2]
+        default: mv3
+
+concurrency:
+  group: extension-sign-measure
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    name: Build and sign the measurement build
+    runs-on: ubuntu-24.04
+    # web-ext waits up to 15 minutes for Mozilla's answer.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the locked packages
+        working-directory: extension
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build the test variant (fetches the published WASM package and checks its SHA-256)
+        working-directory: extension
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+        run: node scripts/build.mjs --browser firefox --manifest "$MANIFEST" --variant test
+      # AMO wants a version it has not seen. The manifest of this one build gets a
+      # fourth number from the run; the source tree is not changed.
+      - name: Give the build its own version
+        working-directory: extension
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          dir="dist/ferret-firefox-${MANIFEST}-test"
+          version="0.0.1.${RUN_NUMBER}"
+          node -e '
+            const fs = require("fs");
+            const file = process.argv[1] + "/manifest.json";
+            const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+            manifest.version = process.argv[2];
+            fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
+          ' "$dir" "$version"
+          echo "Signing version $version of $(node -p "require('./$dir/manifest.json').browser_specific_settings.gecko.id")"
+      - name: Sign with Mozilla (unlisted)
+        working-directory: extension
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npm exec --no -- web-ext sign \
+            --source-dir "dist/ferret-firefox-${MANIFEST}-test" \
+            --artifacts-dir "$RUNNER_TEMP/signed" \
+            --channel unlisted \
+            --approval-timeout 900000
+      - name: Name the signed file
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+        run: |
+          count="$(find "$RUNNER_TEMP/signed" -maxdepth 1 -name '*.xpi' | wc -l)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected one signed .xpi, found $count."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/out"
+          mv "$RUNNER_TEMP/signed"/*.xpi "$RUNNER_TEMP/out/ferret-measure-${MANIFEST}-signed.xpi"
+          sha256sum "$RUNNER_TEMP/out/ferret-measure-${MANIFEST}-signed.xpi"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ferret-measure-${{ inputs.manifest }}-signed
+          path: ${{ runner.temp }}/out/ferret-measure-${{ inputs.manifest }}-signed.xpi
+          if-no-files-found: error
+          retention-days: 14

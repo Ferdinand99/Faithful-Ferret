@@ -165,3 +165,43 @@ test("an_empty_channel_list_fails_the_run", () => {
   }
   assert.equal(run("esr").stdout.trim(), "esr");
 });
+
+test("the_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_one_step", () => {
+  const text = read(".github/workflows/extension-sign-measure.yml");
+  const code = text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  // Only a manual run: no push, tag, pull request or schedule.
+  assert.match(code, /^on:\n {2}workflow_dispatch:\n/m);
+  for (const trigger of ["push:", "pull_request", "schedule:", "tags:", "workflow_run", "release:"]) {
+    assert.equal(code.includes(trigger), false, trigger);
+  }
+  assert.match(code, /^permissions:\n {2}contents: read\n/m);
+  assert.equal(/contents: write|id-token|packages:/.test(code), false);
+  // Every third-party action is pinned by a full commit SHA.
+  const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+  assert.ok(uses.length >= 3);
+  for (const use of uses) assert.match(use, /@[0-9a-f]{40}$/, use);
+  // The secrets: two names, in the environment of the signing step only, never on a command line or echoed.
+  const secretUses = [...code.matchAll(/secrets\.(\w+)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(secretUses, ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]);
+  const steps = code.split(/\n {6}- /);
+  const holders = steps.filter((step) => step.includes("secrets."));
+  assert.equal(holders.length, 1);
+  assert.match(holders[0], /name: Sign with Mozilla \(unlisted\)/);
+  assert.match(holders[0], /WEB_EXT_API_KEY: \$\{\{ secrets\.AMO_JWT_ISSUER \}\}/);
+  assert.match(holders[0], /WEB_EXT_API_SECRET: \$\{\{ secrets\.AMO_JWT_SECRET \}\}/);
+  assert.match(holders[0], /--channel unlisted/);
+  assert.equal(/--api-key|--api-secret/.test(code), false, "no secret as a flag");
+  assert.equal(/echo[^\n]*(WEB_EXT|AMO_JWT)/.test(code), false, "no secret echoed");
+  // It signs the test variant (MV3 or MV2 by the input), and nothing else of ours signs anything.
+  assert.match(code, /--variant test/);
+  assert.equal(/--variant release/.test(code), false);
+  assert.match(code, /--source-dir "dist\/ferret-firefox-\$\{MANIFEST\}-test"/);
+  assert.match(code, /type: choice\n\s+options: \[mv3, mv2\]/);
+  // The input reaches the shell through the environment only, never spliced into a command line.
+  const shellLines = code.split("\n").filter((line) => !/^\s*(?:name|path|description):/.test(line) && !/^\s*MANIFEST:/.test(line));
+  assert.equal(shellLines.some((line) => /\$\{\{\s*inputs\./.test(line)), false, "an input is used outside an env value or a name or path");
+  for (const name of ["extension.yml", "extension-firefox.yml", "release.yml", "ci.yml"]) {
+    const other = read(`.github/workflows/${name}`);
+    assert.equal(/web-ext sign|AMO_JWT|WEB_EXT_API/.test(other), false, `${name} must not sign`);
+  }
+});

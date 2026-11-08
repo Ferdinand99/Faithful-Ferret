@@ -15,7 +15,9 @@ cat > "$work/bin/docker" <<'STUB'
 # One file per call: the arguments, one per line. `run` reads its input from stdin
 # (drain it); the fetch step answers with a few bytes, as the real one answers
 # with the WASM archive. `image inspect` answers "present" unless told otherwise.
-n=$(( $(ls "$DOCKER_STUB_DIR" 2>/dev/null | wc -l) + 1 ))
+# The number is taken atomically (mkdir): two containers can start at the same moment.
+n=1
+until mkdir "$DOCKER_STUB_DIR/.taken-$n" 2> /dev/null; do n=$((n + 1)); done
 printf '%s\n' "$@" > "$DOCKER_STUB_DIR/call-$n"
 for arg in "$@"; do
   case "$arg" in
@@ -71,7 +73,8 @@ for id in "${bad_ids[@]}"; do
 done
 
 # Options that do not exist stop the script before docker.
-for bad in "firefox --channel nightly" "firefox --manifest mv4" "firefox --nope" "unit --channel release" "lint --grep x" "firefox --no-up" "other"; do
+for bad in "firefox --channel nightly" "firefox --manifest mv4" "firefox --nope" "unit --channel release" "lint --grep x" "firefox --no-up" "other" \
+  "measure --scenario nope" "measure --scenario idle,nope" "measure --window-minutes 1" "measure --window-minutes x" "measure --grep x" "measure --headed" "firefox --scenario idle" "firefox --window-minutes 20"; do
   # shellcheck disable=SC2086
   if run_ext scripts/lanbox-ext.sh $bad; then fail "'$bad' was accepted"; fi
   [ "$(calls)" -eq 0 ] || fail "'$bad' reached docker"
@@ -109,6 +112,34 @@ for mode in unit lint; do
   grep -qx 'dev.run=ext-probe-unit' "$work/calls/call-1" || fail "$mode: dev.run label is missing"
   grep -qxE 'ferret-ext-probe-unit-[0-9]+' "$work/calls/call-1" || fail "$mode: container name is wrong"
 done
+
+# measure: the fetch step and one container per channel (two Firefox side by side),
+# each named for its channel, labelled and removed on exit; the options reach the
+# container; the reports are unpacked into the folder named by FERRET_EXT_OUT_DIR.
+run_ext FERRET_EXT_OUT_DIR="$work/out-dir" DEV_RUN=ext-probe-m DEV_TITLE="Measure probe" \
+  scripts/lanbox-ext.sh measure --manifest mv2 --scenario idle,sse --window-minutes 3 \
+  || { cat "$work/out" >&2; fail "measure run failed"; }
+[ "$(grep -lx run "$work"/calls/call-* | wc -l)" -eq 3 ] || fail "measure: expected the fetch step and two containers"
+for ch in release esr; do
+  f=$(grep -lx "FERRET_CHANNELS=$ch" "$work"/calls/call-*) || fail "measure: no container for $ch"
+  [ "$(echo "$f" | wc -l)" -eq 1 ] || fail "measure: two containers for $ch"
+  grep -qx 'owner=ferret-core' "$f" || fail "measure $ch: owner label is missing"
+  grep -qx 'dev.run=ext-probe-m' "$f" || fail "measure $ch: dev.run label is missing"
+  grep -qxE "ferret-ext-probe-m-measure-$ch-[0-9]+" "$f" || fail "measure $ch: container name is wrong"
+  grep -qx -e '--rm' "$f" || fail "measure $ch: --rm is missing"
+  grep -qx 'FERRET_EXT_STEP=measure' "$f" || fail "measure $ch: step is not passed on"
+  grep -qx 'FERRET_MEASURE_MANIFESTS=mv2' "$f" || fail "measure $ch: manifest is not passed on"
+  grep -qx 'FERRET_MEASURE_SCENARIOS=idle,sse' "$f" || fail "measure $ch: scenarios are not passed on"
+  grep -qx 'FERRET_MEASURE_MINUTES=3' "$f" || fail "measure $ch: window is not passed on"
+  grep -qx 'none' "$f" || fail "measure $ch: the test step has a network"
+done
+[ -d "$work/out-dir" ] || fail "measure: the report folder was not made"
+# One channel only, and both manifest versions by default.
+run_ext FERRET_EXT_OUT_DIR="$work/out-dir" scripts/lanbox-ext.sh measure --channel esr \
+  || { cat "$work/out" >&2; fail "measure --channel esr failed"; }
+[ "$(grep -lx run "$work"/calls/call-* | wc -l)" -eq 2 ] || fail "measure --channel esr: expected the fetch step and one container"
+grep -qx 'FERRET_MEASURE_MANIFESTS=mv3,mv2' "$work"/calls/call-* || fail "measure: both manifest versions are not the default"
+! grep -qx 'FERRET_CHANNELS=release' "$work"/calls/call-* || fail "measure --channel esr started the other channel"
 
 # Without DEV_RUN nothing changes, even if DEV_TITLE is set, and the owner label stays.
 run_ext DEV_TITLE=ignored scripts/lanbox-ext.sh firefox || fail "run without DEV_RUN failed"

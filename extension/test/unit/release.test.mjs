@@ -16,8 +16,8 @@ const MEASURE_HTML = '<!doctype html><html><head><script type="module" src="meas
 const PLANTED = {
   "test/bridge.html": '<!doctype html><script type="module" src="bridge.mjs"></script>\n',
   "test/bridge.mjs": "export {};\n",
-  "src/pages/measure.html": MEASURE_HTML,
-  "src/pages/measure.mjs": "export {};\n",
+  "src/pages/test-only/measure.html": MEASURE_HTML,
+  "src/pages/test-only/measure.mjs": "export {};\n",
 };
 
 /** @param {string} target @returns {{ status: number | null, output: string }} */
@@ -35,7 +35,7 @@ test("release_variant_contains_no_test_files_and_no_fixed_uuid", async () => {
 
     // The release leaves the planted test files out; the test variant has them.
     assert.deepEqual([...release.files.keys()].filter((p) => /(?:^|\/)(?:test|bridge|measure)/.test(p)), []);
-    for (const path of ["test/bridge.html", "test/bridge.mjs", "pages/measure.html", "pages/measure.mjs"]) {
+    for (const path of ["test/bridge.html", "test/bridge.mjs", "pages/test-only/measure.html", "pages/test-only/measure.mjs"]) {
       assert.ok(test.files.has(path), path);
     }
     assert.deepEqual(releaseProblems(release.files, HOSTS), []);
@@ -52,7 +52,7 @@ test("release_variant_contains_no_test_files_and_no_fixed_uuid", async () => {
     assert.match(bad.output, /the add-on id is "ferret-test@hedgerow\.tools"/);
 
     // A test file planted into a release folder, in several places, fails the check.
-    for (const path of ["test/bridge.html", "test/anything.mjs", "pages/bridge.html", "pages/measure.mjs"]) {
+    for (const path of ["test/bridge.html", "test/anything.mjs", "pages/bridge.html", "pages/test-only/measure.mjs"]) {
       const file = join(release.dir, ...path.split("/"));
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, "export {};\n");

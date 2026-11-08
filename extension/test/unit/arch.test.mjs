@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { build, handlerRegister, isTestOnlyPath, readInternalHosts, releaseProblems } from "../../scripts/build.mjs";
+import { build, handlerRegister, isTestOnlyPath, readInternalHosts, releaseProblems, WASM_FILES } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 import { createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 import { createPort } from "./backgroundHelpers.mjs";
@@ -30,8 +30,8 @@ async function built({ manifest = "mv3", variant = "release", extra = {} } = {})
   }
 }
 
-/** @param {string} path */
-const insideWasmPackage = (path) => path.startsWith("js/") || path.startsWith("pkg-web/");
+/** Only the exact files of the WASM package: a look-alike path (our own file under js/) is not part of it. @param {string} path */
+const insideWasmPackage = (path) => WASM_FILES.includes(path);
 
 /**
  * What breaks "only the core host imports the WASM client": an import of the
@@ -286,10 +286,13 @@ async function boot(dir) {
       getManifest: () => ({ manifest_version: 3, browser_specific_settings: { gecko: { id: fake.runtime.id } } }),
       onConnect: { addListener: (/** @type {any} */ fn) => onConnect.push(fn) },
       onMessage: { addListener: (/** @type {any} */ fn) => onMessage.push(fn) },
+      onSuspend: { addListener() {} },
+      onSuspendCanceled: { addListener() {} },
     },
-    alarms: { create() {}, clear() {}, onAlarm: { addListener: () => { counts.alarm += 1; } } },
+    alarms: { create() {}, clear() {}, get: async () => undefined, onAlarm: { addListener: () => { counts.alarm += 1; } } },
     idle: { onStateChanged: { addListener: () => { counts.idle += 1; } } },
     storage: {
+      local: new Proxy({}, { get: () => async () => ({}) }),
       session: {
         get: async (/** @type {string} */ key) => (session.has(key) ? { [key]: session.get(key) } : {}),
         set: async (/** @type {Record<string, unknown>} */ items) => { for (const [k, v] of Object.entries(items)) session.set(k, v); },
@@ -312,9 +315,10 @@ test("background_exposes_nothing_on_globalThis", async () => {
 
       // It is wired: every listener is registered, and the start locked the vault.
       assert.equal(onConnect.length, variant === "test" ? 2 : 1);
-      // The test build also listens for the content script's reports, for the fill probe.
-      assert.equal(onMessage.length, variant === "test" ? 2 : 1);
-      assert.deepEqual(counts, { alarm: 1, idle: 1 });
+      // The test build also listens for the content script's reports (the fill probe) and for its own
+      // content-script probe, and the lifetime log listens for the heartbeat.
+      assert.equal(onMessage.length, variant === "test" ? 3 : 1);
+      assert.deepEqual(counts, { alarm: variant === "test" ? 2 : 1, idle: 1 });
       assert.equal(session.has("lock_at"), false, "a new page starts locked");
 
       // And it routes: the UI port is accepted from an extension page, with no handler yet.
@@ -358,14 +362,14 @@ test("a_release_has_no_trace_of_the_test_build", async () => {
       }
       assert.equal([...files.keys()].some((p) => p.includes("test-only")), false);
       const variantText = /** @type {Buffer} */ (files.get("background/variant.gen.mjs")).toString("utf8");
-      assert.match(variantText, /export const loadHooks = null;/);
+      assert.match(variantText, /export const variantHooks = null;/);
       const main = /** @type {Buffer} */ (files.get("background/main.mjs")).toString("utf8");
       assert.deepEqual(importsOf(main).specifiers.filter((s) => s.includes("variant")), ["./variant.gen.mjs"]);
     } finally {
       env.cleanup();
     }
   }
-  // The test build loads its hooks through the same switch.
+  // The test build imports its hooks through the same switch, statically, so the page sets them up in its first turn.
   const { env, files } = await built({ variant: "test" });
   try {
     const text = /** @type {Buffer} */ (files.get("background/variant.gen.mjs")).toString("utf8");
@@ -430,4 +434,17 @@ test("a_release_build_fails_on_an_import_or_script_that_points_outside_the_packa
   }
   // And a package that is whole builds, in both variants.
   for (const variant of VARIANTS) (await built({ variant })).env.cleanup();
+});
+
+test("the_wasm_exemption_covers_only_the_files_of_the_package", async () => {
+  // The build refuses a source file of ours under the package's folders, whatever its name.
+  for (const path of ["src/js/spy.mjs", "src/pkg-web/spy.mjs", "src/js/client.mjs", "src/pkg-web/ferret_core_wasm.js"]) {
+    for (const variant of VARIANTS) {
+      await assert.rejects(built({ variant, extra: { [path]: "export {};\n" } }), /js\/ and pkg-web\/ are the WASM package's folders/, `${variant}: ${path}`);
+    }
+  }
+  // A package file that is not one of the shipped files is not exempt: it is read like any other file.
+  assert.equal(insideWasmPackage("js/client.mjs"), true);
+  assert.equal(insideWasmPackage("js/other.mjs"), false);
+  assert.equal(insideWasmPackage("pkg-web/other.js"), false);
 });
