@@ -33,3 +33,9 @@
 # The notices are compared byte for byte (cmp in CI)
 THIRD-PARTY-NOTICES text eol=lf
 LICENSE text eol=lf
+
+# The extension sources (the build compares and hashes them byte for byte)
+/extension/**/*.html text eol=lf
+/extension/**/*.css text eol=lf
+/extension/**/*.wasm binary
+/extension/**/*.png binary

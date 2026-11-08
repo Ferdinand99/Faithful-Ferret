@@ -1,0 +1,13 @@
+{
+  "name": "Faithful Ferret",
+  "description": "Faithful Ferret password manager",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "ferret@hedgerow.tools",
+      "strict_min_version": "153.0",
+      "data_collection_permissions": {
+        "required": ["authenticationInfo"]
+      }
+    }
+  }
+}
