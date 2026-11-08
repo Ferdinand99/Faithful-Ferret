@@ -22,6 +22,7 @@ function rig(options = {}) {
     onHint: (seq) => hints.push(seq),
     onState: (state) => states.push(state),
     win: page,
+    random: () => 0.5, // no jitter, unless a test asks for it
     ...options.channel,
   });
   /** Moves the clock and lets what the timers started finish. */
@@ -106,7 +107,6 @@ test("a_stream_that_breaks_the_line_limit_is_dropped_and_tried_again", async () 
   api.last.push(`data: ${"a".repeat(70_000)}\n`);
   await settle();
   assert.equal(api.connections[0].signal.aborted, true);
-  assert.equal(channel.state(), "connecting");
   await tick(1000);
   assert.equal(api.calls.length, 2);
   assert.deepEqual(hints, [1]);
@@ -176,9 +176,11 @@ test("sixty_seconds_of_silence_aborts", async () => {
   assert.equal(api.last.signal.aborted, false);
   await tick(1);
   assert.equal(api.connections[0].signal.aborted, true);
-  assert.equal(channel.state(), "connecting", "tried again, not given up");
+  assert.equal(channel.state(), "live", "a quick reconnect is not announced");
   await tick(1000);
-  assert.equal(api.calls.length, 2);
+  assert.equal(api.calls.length, 2, "tried again, not given up");
+  await tick(4000);
+  assert.equal(channel.state(), "connecting", "but five seconds without a new hello are");
 });
 
 test("a_stream_the_server_closes_after_a_hello_is_opened_again", async () => {
@@ -190,7 +192,6 @@ test("a_stream_the_server_closes_after_a_hello_is_opened_again", async () => {
   // The server ends the stream (its lifetime, a restart): no failure, a new stream after a second.
   api.connections[0].end();
   await settle();
-  assert.equal(channel.state(), "connecting");
   await tick(1000);
   assert.equal(api.calls.length, 2);
   api.last.hello(2);
@@ -269,7 +270,6 @@ test("three_failures_without_hello_fall_back_and_retry_every_five_minutes", asyn
   assert.deepEqual(hints.at(-1), 3);
   api.last.end();
   await settle();
-  assert.equal(channel.state(), "connecting");
   await tick(1000);
   assert.equal(api.calls.length, 6);
 });
@@ -530,4 +530,168 @@ test("the_request_carries_the_protocol_header_and_no_store", async () => {
   channel.stop();
   assert.equal(init.signal.aborted, true);
   void controller;
+});
+
+test("a_quick_reconnect_after_a_hello_is_not_announced", async () => {
+  const { api, states, channel, tick } = rig();
+  channel.start();
+  await settle();
+  api.last.hello(1);
+  await settle();
+  assert.deepEqual(states, ["connecting", "live"]);
+  // The server closes the stream (the hour is up); the next one says hello within a second or two.
+  api.last.end();
+  await settle();
+  await tick(1000);
+  assert.equal(api.calls.length, 2);
+  await tick(2000);
+  api.last.hello(2);
+  await settle();
+  await tick(10_000);
+  assert.deepEqual(states, ["connecting", "live"], "the screen was told nothing");
+
+  // A reconnect that fails at once is told: there is no live stream any more.
+  api.script.push(new ApiError(0, "network"));
+  api.last.end();
+  await settle();
+  await tick(2000); // the second quick drop waits 2 s
+  assert.equal(channel.state(), "connecting");
+  assert.deepEqual(states, ["connecting", "live", "connecting"]);
+
+  // Nor is a lost network kept quiet.
+  const rigged = rig();
+  rigged.channel.start();
+  await settle();
+  rigged.api.last.hello(1);
+  await settle();
+  rigged.page.navigator.onLine = false;
+  rigged.api.last.end();
+  await settle();
+  assert.equal(rigged.channel.state(), "offline");
+
+  // And a stop in the grace time leaves no timer.
+  const quiet = rig();
+  quiet.channel.start();
+  await settle();
+  quiet.api.last.hello(1);
+  await settle();
+  quiet.api.last.end();
+  await settle();
+  quiet.channel.stop();
+  assert.equal(quiet.clock.pending, 0);
+});
+
+test("focus_and_online_do_not_cut_a_429_or_a_backoff_short", async () => {
+  // 429 with Retry-After 45: a focus at 5 s sends nothing.
+  const busy = rig();
+  busy.api.script.push(new ApiError(429, "throttled", 45));
+  busy.channel.start();
+  await settle();
+  await busy.tick(5000);
+  busy.page.fire("focus");
+  busy.page.fire("online");
+  await settle();
+  assert.equal(busy.api.calls.length, 1);
+  await busy.tick(39_999);
+  busy.page.fire("focus");
+  await settle();
+  assert.equal(busy.api.calls.length, 1);
+  await busy.tick(1);
+  assert.equal(busy.api.calls.length, 2, "the wait ran out on its own");
+
+  // A backoff of 2 s binds as well.
+  const failing = rig();
+  failing.api.script.push(new ApiError(0, "network"), new ApiError(0, "network"));
+  failing.channel.start();
+  await settle();
+  await failing.tick(1000);
+  assert.equal(failing.api.calls.length, 2);
+  await failing.tick(500);
+  failing.page.fire("focus");
+  await settle();
+  assert.equal(failing.api.calls.length, 2);
+  await failing.tick(1500);
+  assert.equal(failing.api.calls.length, 3);
+
+  // A 429 that ends in the fallback binds too, and then the fallback's own rule is back.
+  const always = rig();
+  always.api.script.push(...Array.from({ length: 3 }, () => new ApiError(429, "throttled", 30)));
+  always.channel.start();
+  await settle();
+  await always.tick(30_000);
+  await always.tick(30_000);
+  assert.equal(always.channel.state(), "fallback");
+  await always.tick(6000);
+  always.page.fire("focus");
+  await settle();
+  assert.equal(always.api.calls.length, 3);
+  await always.tick(24_000);
+  always.page.fire("focus");
+  await settle();
+  assert.equal(always.api.calls.length, 4);
+});
+
+test("the_backoff_and_a_429_wait_vary_by_twenty_percent_either_way", async () => {
+  for (const [random, backoffMs, throttledMs] of [[0, 800, 36_000], [0.5, 1000, 45_000], [1, 1200, 54_000]]) {
+    const failing = rig({ channel: { random: () => random } });
+    failing.api.script.push(new ApiError(0, "network"));
+    failing.channel.start();
+    await settle();
+    await failing.tick(backoffMs - 1);
+    assert.equal(failing.api.calls.length, 1, `backoff at ${random}`);
+    await failing.tick(1);
+    assert.equal(failing.api.calls.length, 2, `backoff at ${random}`);
+
+    const busy = rig({ channel: { random: () => random } });
+    busy.api.script.push(new ApiError(429, "throttled", 45));
+    busy.channel.start();
+    await settle();
+    await busy.tick(throttledMs - 1);
+    assert.equal(busy.api.calls.length, 1, `429 at ${random}`);
+    await busy.tick(1);
+    assert.equal(busy.api.calls.length, 2, `429 at ${random}`);
+  }
+  // The real source of numbers stays inside the same bounds.
+  for (let i = 0; i < 20; i += 1) {
+    const one = rig({ channel: { random: Math.random } });
+    one.api.script.push(new ApiError(0, "network"));
+    one.channel.start();
+    await settle();
+    await one.tick(799);
+    assert.equal(one.api.calls.length, 1);
+    await one.tick(401);
+    assert.equal(one.api.calls.length, 2);
+  }
+});
+
+test("a_seq_that_is_not_a_safe_whole_number_is_no_seq", async () => {
+  const { api, hints, channel } = rig();
+  channel.start();
+  await settle();
+  api.last.hello(2);
+  await settle();
+  const odd = ["9007199254740992", "9007199254740993", "18446744073709551616", "1e400", "null", "true", "[]", "{}", "-0.5"];
+  for (const seq of odd) api.last.push(`event: sync\ndata: {"seq":${seq}}\n\n`);
+  api.last.push("event: sync\ndata: null\n\n");
+  api.last.push("event: sync\ndata: 7\n\n");
+  await settle();
+  assert.deepEqual(hints, [2, ...Array(odd.length + 2).fill(null)], "a hint with no seq, never a wrong one");
+  // 2^53 - 1 is the largest the engine could be told.
+  api.last.push('event: sync\ndata: {"seq":9007199254740991}\n\n');
+  await settle();
+  assert.equal(hints.at(-1), 9007199254740991);
+
+  // A hello with any of them is no hello.
+  for (const seq of ["9007199254740992", "null"]) {
+    const bad = rig();
+    bad.channel.start();
+    await settle();
+    bad.api.last.push(`event: hello\ndata: {"seq":${seq}}\n\n`);
+    await settle();
+    assert.equal(bad.channel.state(), "connecting", seq);
+    assert.deepEqual(bad.hints, [], seq);
+    assert.equal(bad.api.last.signal.aborted, true, seq);
+    await bad.tick(1000);
+    assert.equal(bad.api.calls.length, 2, seq);
+  }
 });

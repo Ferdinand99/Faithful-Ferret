@@ -11,7 +11,7 @@ import { fakeEngine, find, textOf, withDom } from "./vaultHelpers.mjs";
 const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "live.json"), "utf8"));
 const en = catalog("en");
 /** The text of a key as the English catalog has it; a key it lacks shows as itself. */
-const fromCatalog = (key) => en[key] ?? key;
+const fromCatalog = (key, vars = {}) => (en[key] ?? key).replace(/{([a-z]+)}/g, (whole, name) => vars[name] ?? whole);
 
 /** A live source the test moves by hand. */
 function fakeLive(state = "connecting") {
@@ -63,9 +63,10 @@ test("status_field_shows_live_fallback_and_offline_from_the_catalog", async () =
     live.set("live");
     assert.equal(textOf(field()).trim(), "Live");
     assert.equal(field().getAttribute("data-state"), "live");
+    assert.equal(field().getAttribute("aria-label"), "Live updates: Live", "the short word has its subject for a screen reader");
 
     live.set("fallback");
-    assert.equal(textOf(field()).trim(), "Checking every 5 minutes");
+    assert.equal(textOf(field()).trim(), "Every 5 min");
     assert.equal(field().getAttribute("data-state"), "fallback");
 
     live.set("offline");
@@ -118,7 +119,11 @@ test("live_texts_exist_in_both_languages", () => {
   const nb = catalog("nb");
   assert.deepEqual(Object.keys(en), Object.keys(nb));
   const states = ["connecting", "live", "fallback", "offline", "unauthorized"];
-  assert.deepEqual(Object.keys(en).sort(), states.map((state) => `live.state.${state}`).sort());
+  assert.deepEqual(Object.keys(en).sort(), ["live.label", ...states.map((state) => `live.state.${state}`)].sort());
+  // Short words: the field has one width for all of them.
+  for (const catalogOf of [en, nb]) {
+    for (const state of states) assert.ok(catalogOf[`live.state.${state}`].length <= 12, state);
+  }
   const names = (s) => [...s.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((m) => m[1]).sort();
   for (const [key, value] of Object.entries(en)) {
     assert.ok(key.startsWith("live."), key);
@@ -127,10 +132,41 @@ test("live_texts_exist_in_both_languages", () => {
     assert.deepEqual(names(nb[key]), names(value), key);
   }
   assert.equal(nb["live.state.live"], "Direkte");
-  assert.equal(nb["live.state.fallback"], "Henter hvert 5. minutt");
+  assert.equal(nb["live.state.fallback"], "Hvert 5. min");
 
   // The frame knows exactly these states.
   const source = readFileSync(join(web, "src", "views", "shell.mjs"), "utf8");
   const listed = /const LIVE_STATES = Object\.freeze\(\[([^\]]*)\]\)/.exec(source)?.[1] ?? "";
   assert.deepEqual([...listed.matchAll(/"([a-z]+)"/g)].map((m) => m[1]), states);
+});
+
+test("a_lock_ends_the_live_listener_of_every_frame_even_one_that_was_never_shown", async () => {
+  await withDom(async () => {
+    const live = fakeLive("live");
+    let lock = () => {};
+    const session = { onLock: (fn) => void (lock = fn) };
+    const build = () =>
+      shellView({
+        t: (key, vars) => (key.startsWith("live.") ? fromCatalog(key, vars) : key),
+        engine: fakeEngine(),
+        session,
+        content: globalThis.document.createElement("div"),
+        lock: async () => {},
+        touch: () => true,
+        scope: createWipeScope(),
+        onLocked: () => globalThis.document.createElement("div"),
+        win: undefined,
+        live,
+      });
+    const first = build();
+    assert.equal(live.listening, 1);
+    first.isConnected = true; // on the page when the next one is built
+    build(); // never put on the page (a route that finished late)
+    first.isConnected = false; // and gone again
+    build();
+    // The first frame was on the page and has left it: its listener went when the third was built.
+    assert.equal(live.listening, 2);
+    lock();
+    assert.equal(live.listening, 0, "a lock leaves no listener on a frame, shown or not");
+  });
 });

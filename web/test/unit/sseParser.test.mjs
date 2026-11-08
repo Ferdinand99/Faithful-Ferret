@@ -83,3 +83,22 @@ test("parser_caps_line_length_and_never_evaluates_data", () => {
   // An event name that names a prototype key is just a name.
   assert.deepEqual(read("event: __proto__\ndata: 1\n\n"), [{ event: "__proto__", data: "1" }]);
 });
+
+test("a_long_line_that_arrives_a_byte_at_a_time_is_read_in_linear_time", () => {
+  const LIMIT = 64 * 1024;
+  const parser = parseEventStream();
+  const text = `data: ${"a".repeat(LIMIT - 8)}\n\n`;
+  const started = performance.now();
+  const items = [];
+  for (const byte of bytes(text)) items.push(...parser.push(Uint8Array.of(byte)));
+  const took = performance.now() - started;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].data.length, LIMIT - 8);
+  // 64 K single-byte chunks: a scan from the start of the line at every chunk would take seconds.
+  assert.ok(took < 1000, `took ${took} ms`);
+  // The same with CRLF line ends between chunks.
+  const crlf = parseEventStream();
+  const got = [];
+  for (const byte of bytes("event: sync\r\ndata: 1\r\n\r\n")) got.push(...crlf.push(Uint8Array.of(byte)));
+  assert.deepEqual(got, [{ event: "sync", data: "1" }]);
+});

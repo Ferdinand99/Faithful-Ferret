@@ -23,7 +23,7 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {HTMLElement} content the screen
  * @property {() => Promise<unknown>} lock locks the vault (the idle lock's `lock`)
  * @property {() => boolean} touch marks activity; false when the vault just locked
- * @property {{ run(): void }} scope what to wipe on lock
+ * @property {{ add(fn: () => void): () => void, run(): void }} scope what to wipe on lock
  * @property {() => HTMLElement} onLocked makes the unlock screen
  * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
  * @property {LiveSource} [live] the live-update channel (`state`, `on`); without it the frame has no live field
@@ -106,8 +106,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   const bar = el("header", { class: "vault-bar" },
     el("a", { class: "brand", href: "#/items" }, t("app.name")),
     nav,
-    status,
-    ...(liveStatus ? [liveStatus] : []),
+    // With the live field, the two states share one group, so that on a phone they stack in the second row of the bar.
+    liveStatus ? el("span", { class: "vault-status", "data-role": "status-group" }, status, liveStatus) : status,
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
   mount(root, bar, banners, main);
@@ -173,12 +173,16 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   function onLive(state) {
     if (!liveStatus) return;
     const name = typeof state === "string" && LIVE_STATES.includes(state) ? state : "offline";
-    mount(liveStatus, document.createTextNode(t(`live.state.${name}`)));
+    const text = t(`live.state.${name}`);
+    mount(liveStatus, document.createTextNode(text));
+    liveStatus.setAttribute("aria-label", t("live.label", { state: text })); // the short word needs its subject
     liveStatus.setAttribute("data-state", name);
   }
   if (live && liveStatus) {
     onLive(live.state());
-    listenWhileShown(root, live, "state", onLive);
+    // Removed with the screen: a frame that was never put on the page (a route that finished late) must not stay
+    // listening, since the listener keeps the frame, and the list it holds, alive.
+    scope.add(listenWhileShown(root, live, "state", onLive));
   }
 
   listenWhileShown(root, engine, "state", onState);

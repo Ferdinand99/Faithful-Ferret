@@ -1,7 +1,8 @@
 {
-  "live.state.connecting": "Connecting for live updates",
-  "live.state.fallback": "Checking every 5 minutes",
+  "live.label": "Live updates: {state}",
+  "live.state.connecting": "Connecting",
+  "live.state.fallback": "Every 5 min",
   "live.state.live": "Live",
-  "live.state.offline": "Live updates off",
-  "live.state.unauthorized": "Live updates stopped"
+  "live.state.offline": "Off",
+  "live.state.unauthorized": "Stopped"
 }

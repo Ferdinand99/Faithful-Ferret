@@ -27,8 +27,8 @@ const MAX_LINE_BYTES = 64 * 1024;
  */
 export function parseEventStream() {
   const decoder = new TextDecoder("utf-8");
-  /** The text of the line that has not ended yet. */
-  let pending = "";
+  /** The pieces of the line that has not ended yet (a long line that arrives in small chunks is joined once, not at every chunk). @type {string[]} */
+  let pending = [];
   /** A CR ended the last line: an LF at the start of the next chunk belongs to it. */
   let skipLf = false;
   /** Bytes of the line that has not ended yet. */
@@ -78,33 +78,30 @@ export function parseEventStream() {
         skipLf = false;
         if (text.startsWith("\n")) text = text.slice(1);
       }
-      pending += text;
       /** @type {StreamItem[]} */
       const out = [];
+      // Each character is looked at once: only the new text is scanned.
       let from = 0;
-      for (;;) {
-        let end = -1;
-        for (let i = from; i < pending.length; i += 1) {
-          const ch = pending.charCodeAt(i);
-          if (ch === 0x0a || ch === 0x0d) {
-            end = i;
-            break;
-          }
-        }
-        if (end === -1) break;
-        const one = pending.slice(from, end);
-        const cr = pending.charCodeAt(end) === 0x0d;
-        from = end + 1;
-        if (cr) {
-          if (from < pending.length) {
-            if (pending.charCodeAt(from) === 0x0a) from += 1;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text.charCodeAt(i);
+        if (ch !== 0x0a && ch !== 0x0d) continue;
+        pending.push(text.slice(from, i));
+        const one = pending.length === 1 ? pending[0] : pending.join("");
+        pending = [];
+        from = i + 1;
+        if (ch === 0x0d) {
+          if (from < text.length) {
+            if (text.charCodeAt(from) === 0x0a) {
+              from += 1;
+              i += 1;
+            }
           } else {
             skipLf = true;
           }
         }
         onLine(one, out);
       }
-      pending = pending.slice(from);
+      if (from < text.length) pending.push(text.slice(from));
       return out;
     },
   };
@@ -141,6 +138,10 @@ const THROTTLED_DEFAULT_S = 30;
 const THROTTLED_LONGEST_S = 300;
 /** In the fallback, a return to the page asks for a new try at most this often. */
 const WAKE_GAP_MS = 5_000;
+/** A stream that ends after its hello keeps the state "live" this long, so a quick reconnect is not announced. */
+const LIVE_GRACE_MS = 5_000;
+/** The backoff and a 429 wait vary by this share either way, so clients that were cut together do not return together. */
+const JITTER = 0.2;
 
 /** @param {number} step */
 const backoff = (step) => Math.min(BACKOFF_LONGEST_MS, BACKOFF_FIRST_MS * 2 ** Math.min(step, 16));
@@ -173,7 +174,11 @@ function seqOf(data) {
  *   again at the same times. A `hello` ends the fallback.
  * - 401 stops the channel for good (the session is over); 429 waits for the
  *   `Retry-After` of the server; a stream that ends after a `hello` (the
- *   server closes after an hour, or at a restart) is opened again.
+ *   server closes after an hour, or at a restart) is opened again, and the
+ *   state stays "live" for a few seconds meanwhile.
+ * - The wait after a failure or a 429 binds: the page being shown again or the
+ *   network returning does not start a try before it has passed. (The wait in
+ *   the fallback, and the wait with no network, do not bind.)
  *
  * @param {{
  *   api: { stream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStreamDefaultReader<Uint8Array>> },
@@ -186,8 +191,10 @@ function seqOf(data) {
  *   maxFailures?: number,
  *   fallbackRetryMs?: number,
  *   win?: any,
+ *   random?: () => number,
  * }} options
- *   `timers`, `now` and `win` are for tests (a fake clock; a target for `focus` and `online`).
+ *   `timers`, `now`, `win` and `random` are for tests (a fake clock; a target for `focus` and
+ *   `online`; the source of the jitter, a number from 0 up to 1).
  * @returns {{ start(): void, stop(): void, state(): LiveState }}
  */
 export function createLiveChannel({
@@ -201,6 +208,7 @@ export function createLiveChannel({
   maxFailures = 3,
   fallbackRetryMs = 300_000,
   win = globalThis,
+  random = Math.random,
 }) {
   /** @type {LiveState} */
   let state = "offline";
@@ -213,9 +221,22 @@ export function createLiveChannel({
   let step = 0;
   let liveSince = 0;
   let lastTryAt = 0;
+  /** No try is started by `focus` or `online` before this time. */
+  let notBefore = 0;
+  /** @type {unknown} */
+  let graceTimer = null;
+
+  /** @param {number} ms */
+  const jitter = (ms) => Math.round(ms * (1 - JITTER + 2 * JITTER * random()));
+
+  function clearGrace() {
+    if (graceTimer !== null) timers.clear(graceTimer);
+    graceTimer = null;
+  }
 
   /** @param {LiveState} next */
   function setState(next) {
+    if (next !== "live") clearGrace();
     if (state === next) return;
     state = next;
     try {
@@ -260,9 +281,14 @@ export function createLiveChannel({
     if (attempt === one) attempt = null;
   }
 
-  /** @param {number} ms */
-  function later(ms) {
+  /**
+   * Starts a new try after `ms`. `binding`: the wait cannot be cut short by `focus` or `online`.
+   * @param {number} ms
+   * @param {boolean} binding
+   */
+  function later(ms, binding) {
     clearRetry();
+    notBefore = binding ? now() + ms : 0;
     retryTimer = timers.set(() => {
       retryTimer = null;
       if (state === "fallback") hint(null);
@@ -291,44 +317,56 @@ export function createLiveChannel({
     if (status === 429) {
       failures += 1;
       const seconds = Math.min(THROTTLED_LONGEST_S, Math.max(1, (error instanceof ApiError ? error.retryAfter : null) ?? THROTTLED_DEFAULT_S));
-      if (failures >= maxFailures) fallback();
+      const wait = jitter(seconds * 1000);
+      if (failures >= maxFailures) fallback(wait);
       else {
         setState("connecting");
-        later(seconds * 1000);
+        later(wait, true);
       }
       return;
     }
     if (hadHello) {
       failures = 0;
       if (now() - liveSince >= silenceMs) step = 0;
-      setState(offline() ? "offline" : "connecting");
-      later(backoff(step));
+      if (offline()) setState("offline");
+      else if (state === "live" && graceTimer === null) {
+        // Quick reconnects are not announced: the state goes on saying "live" for a few seconds.
+        graceTimer = timers.set(() => {
+          graceTimer = null;
+          if (state === "live") setState("connecting");
+        }, LIVE_GRACE_MS);
+      } else if (state !== "live") setState("connecting");
+      const wait = jitter(backoff(step));
+      later(wait, true);
       step += 1;
       return;
     }
     if (offline()) {
       // No network is not the server's fault: wait for the network (the `online` event) or the next try.
       setState("offline");
-      later(backoff(step));
+      later(jitter(backoff(step)), false);
       step += 1;
       return;
     }
     failures += 1;
     if (failures >= maxFailures) {
-      fallback();
+      fallback(0);
       return;
     }
     setState("connecting");
-    later(backoff(step));
+    const wait = jitter(backoff(step));
+    later(wait, true);
     step += 1;
   }
 
-  function fallback() {
+  /** @param {number} hold how long a `focus` or `online` must still wait (the `Retry-After` of a 429) */
+  function fallback(hold) {
     const entering = state !== "fallback";
     step = 0; // after minutes of waiting, the quick failures before are forgotten
     setState("fallback");
     if (entering) hint(null);
-    later(fallbackRetryMs);
+    later(fallbackRetryMs, false);
+    notBefore = hold > 0 ? now() + hold : 0;
   }
 
   /** @param {Attempt} one */
@@ -344,7 +382,9 @@ export function createLiveChannel({
     /** @type {Attempt} */
     const one = { ctrl: new AbortController(), over: false, hello: false, reader: null, helloTimer: null, silenceTimer: null };
     attempt = one;
-    // The wait for the answer and the wait for the hello each get the same time.
+    // Avvik: K1 counts the ten seconds from the answer's headers. This timer starts with the request,
+    // so a request that never gets an answer fails too (stricter than K1); it is started again when the
+    // headers arrive, so the hello still has the full time.
     one.helloTimer = timers.set(() => ended(one, new Error("no_hello")), helloTimeoutMs);
     /** @type {ReadableStreamDefaultReader<Uint8Array>} */
     let reader;
@@ -378,6 +418,7 @@ export function createLiveChannel({
               one.hello = true;
               if (one.helloTimer !== null) timers.clear(one.helloTimer);
               one.helloTimer = null;
+              clearGrace();
               failures = 0;
               liveSince = now();
               setState("live");
@@ -398,6 +439,7 @@ export function createLiveChannel({
   /** The page is shown again, or the network is back: try now instead of waiting. */
   function wake() {
     if (!running || attempt || retryTimer === null) return;
+    if (now() < notBefore) return; // a 429 or a backoff has not run out
     if (state === "fallback" && now() - lastTryAt < WAKE_GAP_MS) return;
     clearRetry();
     void connect();
@@ -420,6 +462,8 @@ export function createLiveChannel({
       running = false;
       for (const name of WAKE_EVENTS) win?.removeEventListener?.(name, wake);
       clearRetry();
+      clearGrace();
+      notBefore = 0;
       if (attempt) finish(attempt);
       // A stopped channel is not connected; nobody is told (the screen it served is gone).
       state = "offline";
