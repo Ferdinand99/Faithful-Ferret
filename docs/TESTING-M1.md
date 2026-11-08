@@ -36,6 +36,7 @@ What it covers, in the order it runs:
 | Two browsers (also two different browser engines) see each other's changes within 10 seconds; signing out in one leaves the other signed in | `04-sync` |
 | Lock and unlock: no secret in the page, no item index in memory, the key worker is ended, the password alone unlocks; a changed pinned server key is a loud warning, not "wrong password" | `05-lock` |
 | Hand-over of a session to the admin origin: no password field, no WASM, separate cookies, a code made for another browser changes nothing | `06-admin` |
+| Sign-out of the admin pages ends on a page of the admin origin that empties htmx's history cache; Back then shows no admin page | `06-admin-signout` |
 | Plain http fails closed, a forged forwarding header from an untrusted peer is ignored; sign-out ends the session at the server | `07-transport` |
 | The traffic of the whole run, and then the data files and the log of the server, hold none of the passwords, keys, titles or user names | `08-plaintext` and the gate script |
 | No content security policy or Trusted Types violation, and no page error, in the whole run | `09-csp` |

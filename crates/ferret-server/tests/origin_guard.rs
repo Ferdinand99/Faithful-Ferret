@@ -560,11 +560,29 @@ async fn preflight_gets_no_allow_origin() {
 }
 
 #[tokio::test]
-async fn the_admin_listener_keeps_no_referrer_and_nosniff() {
+async fn the_admin_listener_sends_no_referrer_from_the_hand_over_and_the_api_and_nosniff() {
     let app = TestApp::new().await;
-    for path in ["/healthz", "/login", "/nope"] {
+    // The hand-over, the API and the redirect stubs send no referrer.
+    for path in [
+        "/auth/handoff",
+        "/auth/handoff.mjs",
+        "/auth/handoff/begin",
+        "/auth/signed-out",
+        "/api/auth/session",
+        "/vault/login",
+        // The setup token is in its query.
+        "/setup",
+        "/setup?token=abc",
+    ] {
         let res = app.call(Which::Admin, Req::get(path).build()).await;
         assert_eq!(res.header("referrer-policy"), "no-referrer", "{path}");
+        assert_eq!(res.header("x-content-type-options"), "nosniff", "{path}");
+    }
+    // The kit's pages send one to their own origin only: a plain form post of
+    // theirs (the sign-out) then carries `Origin`, which the kit's check wants.
+    for path in ["/healthz", "/login", "/settings/general", "/nope"] {
+        let res = app.call(Which::Admin, Req::get(path).build()).await;
+        assert_eq!(res.header("referrer-policy"), "same-origin", "{path}");
         assert_eq!(res.header("x-content-type-options"), "nosniff", "{path}");
     }
 }

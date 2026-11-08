@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { codeFromHash, run, safeTarget } from "../../admin/handoff.mjs";
+import { clearHistoryCache, codeFromHash, HISTORY_CACHE_KEY, run, safeTarget } from "../../admin/handoff.mjs";
 import { completeHandoff, goToAdmin } from "../../src/flows/handoff.mjs";
 import { web } from "./helpers.mjs";
 
@@ -163,4 +163,44 @@ test("the_admin_page_has_one_script_no_password_field_and_no_wasm", () => {
   // The script is plain: no WASM, no framework, no dynamic code.
   const script = readFileSync(join(web, "admin", "handoff.mjs"), "utf8");
   assert.doesNotMatch(script, /\bimport\b\s*[("'{*\w]|WebAssembly|\beval\s*\(|new\s+Function|innerHTML|document\.write/);
+});
+
+test("the_history_cache_of_an_earlier_session_is_dropped_by_its_kit_key", () => {
+  // The key is the one the kit's app.js removes on its sign-in pages.
+  assert.equal(HISTORY_CACHE_KEY, "htmx-history-cache");
+  const store = new Map([
+    [HISTORY_CACHE_KEY, '[{"url":"/settings/users","content":"private"}]'],
+    ["other", "kept"],
+  ]);
+  const storage = { removeItem: (key) => store.delete(key) };
+  clearHistoryCache(() => storage);
+  assert.equal(store.has(HISTORY_CACHE_KEY), false);
+  // Only that key goes.
+  assert.equal(store.get("other"), "kept");
+  // No storage, or storage that throws, is not an error.
+  clearHistoryCache(() => undefined);
+  clearHistoryCache(() => ({
+    removeItem: () => {
+      throw new Error("blocked");
+    },
+  }));
+});
+
+test("blocked_site_storage_does_not_stop_the_hand_over", async () => {
+  // A browser that blocks site storage throws a SecurityError on the read of sessionStorage itself.
+  const blocked = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
+  assert.doesNotThrow(() => clearHistoryCache(blocked));
+  // The hand-over that follows still runs and navigates.
+  const { env, log } = browser();
+  assert.equal(await run(env), true);
+  assert.deepEqual(log.navigated, [`${ORIGIN}/settings`]);
+});
+
+test("the_hand_over_page_starts_by_clearing_the_cache", () => {
+  const source = readFileSync(join(web, "admin", "handoff.mjs"), "utf8");
+  const start = source.indexOf("clearHistoryCache(() => globalThis.sessionStorage)");
+  assert.ok(start > 0);
+  assert.ok(start < source.indexOf("run({ location"), "the cache is cleared before the hand-over runs");
 });
