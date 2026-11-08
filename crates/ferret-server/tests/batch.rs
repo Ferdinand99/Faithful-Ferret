@@ -811,49 +811,116 @@ async fn busy_on_batch_is_503_with_retry_after() {
     results_ok(&batch(&app, &u.jar, &more).await);
 }
 
+/// What the SQL function `test_hold` talks to: it tells the test that it is
+/// running, and then waits until the test lets it go.
+struct Hold {
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+/// Registers `test_hold()` on every connection of the pool of the app (the pool
+/// is held by as many tasks as it has connections, so each connection is seen
+/// once). Returns the ends the test keeps.
+async fn hold_function(
+    app: &TestApp,
+) -> (
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (entered_tx, entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let hold = Arc::new(Hold {
+        entered: entered_tx,
+        release: Mutex::new(release_rx),
+    });
+    let pool = app.state.core.db.clone();
+    let size = pool.status().max_size;
+    let all_hold_one = Arc::new(tokio::sync::Barrier::new(size));
+    let mut tasks = Vec::new();
+    for _ in 0..size {
+        let pool = pool.clone();
+        let hold = hold.clone();
+        let all_hold_one = all_hold_one.clone();
+        tasks.push(tokio::spawn(async move {
+            let conn = pool.get().await.expect("a connection");
+            conn.interact(move |c| {
+                let hold = std::panic::AssertUnwindSafe(hold);
+                c.create_scalar_function(
+                    "test_hold",
+                    0,
+                    rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+                    move |_| {
+                        let hold: &Arc<Hold> = &hold;
+                        let _ = hold.entered.send(());
+                        hold.release
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .recv()
+                            .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                        Ok(1i64)
+                    },
+                )
+            })
+            .await
+            .expect("the connection ran it")
+            .expect("the function is registered");
+            // Keep this connection until all of them have one, so the next
+            // task cannot get the same connection again.
+            all_hold_one.wait().await;
+        }));
+    }
+    for task in tasks {
+        task.await.expect("a registering task");
+    }
+    (entered_rx, release_tx)
+}
+
 #[tokio::test]
 async fn a_batch_dropped_mid_run_keeps_its_gate_turn_until_the_run_ends() {
     let app = TestApp::builder().gate(1, 0).build().await;
     let u = user(&app, 1).await;
     let mut events = app.sync_events().subscribe();
 
-    // Make the insert of a row take a while (a second or two of work in the
-    // database), so the batch is still writing on its blocking thread when its
-    // request goes away.
+    // The insert of a row waits for the test: the batch is writing, on its
+    // blocking thread, until the test lets it go.
+    let (mut entered, release) = hold_function(&app).await;
     db(&app, |c| {
         c.execute_batch(
-            "CREATE TRIGGER slow_insert BEFORE INSERT ON ferret_items BEGIN
-               SELECT length(randomblob(500000000));
-               SELECT length(randomblob(500000000));
-               SELECT length(randomblob(500000000));
-               SELECT length(randomblob(500000000));
-             END;",
+            "CREATE TRIGGER hold_insert BEFORE INSERT ON ferret_items
+             BEGIN SELECT test_hold(); END;",
         )
     })
     .await;
 
+    // The request runs until the write has started, and is dropped there. (The
+    // batch cannot answer while the function waits, so the other branch wins.)
     let ops = [op(item(1), 0, &seal(&u, item(1), 1, "one"), idem(1))];
-    let waited = tokio::time::timeout(Duration::from_millis(300), batch(&app, &u.jar, &ops)).await;
-    assert!(waited.is_err(), "the batch is still running");
-    // The request is gone (its future was dropped), but the writes are not done:
-    // the turn is not free.
-    assert!(matches!(app.state.write_gate.enter().await, Err(Busy)));
-
-    // The batch finishes on its own and gives the turn back.
-    let mut turn = None;
-    for _ in 0..400 {
-        if let Ok(t) = app.state.write_gate.enter().await {
-            turn = Some(t);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::select! {
+        res = batch(&app, &u.jar, &ops) => panic!("answered while writing: {}", res.status),
+        started = entered.recv() => assert!(started.is_some()),
     }
-    assert!(turn.is_some(), "the turn comes back after the run");
-    // The write went in, and its wake-up was sent although nobody waits for the
-    // answer any more.
-    assert_eq!(vault_seq(&app, &u).await, 2);
-    let change = events.try_recv().expect("the batch notified");
+    // The request is gone, but the writes are not done: the turn is not free.
+    assert!(matches!(app.state.write_gate.enter().await, Err(Busy)));
+    assert_eq!(vault_seq(&app, &u).await, 1, "nothing is committed yet");
+
+    // Let the write go. The batch finishes on its own, tells the streams, and
+    // gives the turn back.
+    release.send(()).expect("the function is waiting");
+    let change = events.recv().await.expect("the batch notified");
     assert_eq!(change.seq, 2);
+    let turn = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(turn) = app.state.write_gate.enter().await {
+                break turn;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the turn comes back after the run");
+    drop(turn);
+    assert_eq!(vault_seq(&app, &u).await, 2);
+    assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
 }
 
 #[tokio::test]

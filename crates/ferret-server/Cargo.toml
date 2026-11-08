@@ -95,6 +95,9 @@ tower = "0.5.3"
 # `tokio::time::pause` and `advance`: the heartbeat and lifetime tests of the
 # event stream move the clock by hand.
 tokio = { version = "1.53.1", features = ["test-util"] }
+# A SQL function in a test that waits for the test (the write of a batch that
+# is dropped half way).
+rusqlite = { version = "0.40", features = ["bundled", "backup", "functions"] }
 # The architecture test reads the source files of the vault modules.
 syn = { version = "3", features = ["full", "visit"] }
 
