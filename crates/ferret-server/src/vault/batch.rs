@@ -17,11 +17,21 @@
 //!    `403`, an envelope or tombstone that is not stored here is `422` (or
 //!    `413`), anything else goes to [`store::put_item`]. A refusal or a
 //!    conflict of one operation does not stop the others;
-//! 8. one notification for the batch, with the highest `seq` it wrote.
+//! 8. one notification for the batch, with the highest `seq` it wrote, sent
+//!    after the last operation has committed.
 //!
 //! The answer is `200` with one result for each operation, in the order of
 //! the request. The server never opens an envelope or checks a tag or a
 //! tombstone: it has no key.
+//!
+//! A failure of the store inside one operation (not a conflict or a quota,
+//! but a database error) is `internal` (500) in that operation's place of the
+//! `200` answer, and the batch goes on. The operations that did commit are
+//! recorded with their `idem`, so a retry of the whole batch answers them with
+//! `replayed: true` and tries the rest again.
+//!
+//! The write turn is held for the whole run of the writes, also when the
+//! request is dropped half way (see the comment in the handler).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -358,16 +368,27 @@ async fn post_batch(
     let vault = session.vault;
     let device = session.device;
     let now = session.now;
+    // The turn, the writes and the wake-up all live in the closure that runs on
+    // the blocking thread. A request that is dropped (the client went away)
+    // does not stop that closure, so the turn must not be freed with the
+    // request: it is freed when the writes are done. The wake-up is sent there
+    // too, after the last transaction of the batch has committed, so a dropped
+    // request cannot lose it.
     let results = db
         .with_conn(move |conn| {
-            Ok(run_batch(
-                conn,
-                &vault,
-                &device,
-                &ops,
-                &Limits::DEFAULT,
-                now,
-            ))
+            let _turn = permit;
+            let results = run_batch(conn, &vault, &device, &ops, &Limits::DEFAULT, now);
+            // One wake-up for the batch: the highest `seq` it wrote. A batch
+            // that only repeated earlier writes changed nothing.
+            let highest = results
+                .iter()
+                .filter(|r| r.replayed == Some(false))
+                .filter_map(|r| r.seq)
+                .max();
+            if let Some(seq) = highest {
+                events.notify(vault, seq);
+            }
+            Ok(results)
         })
         .await
         .map_err(ApiError::from)
@@ -378,18 +399,6 @@ async fn post_batch(
                 "batch write failed"
             );
         })?;
-    drop(permit);
-
-    // One wake-up for the batch: the highest `seq` it wrote. A batch that
-    // only repeated earlier writes changed nothing.
-    let highest = results
-        .iter()
-        .filter(|r| r.replayed == Some(false))
-        .filter_map(|r| r.seq)
-        .max();
-    if let Some(seq) = highest {
-        events.notify(vault, seq);
-    }
     let stored = results.iter().filter(|r| r.status == 200).count();
     let conflicts = results.iter().filter(|r| r.status == 409).count();
     tracing::info!(

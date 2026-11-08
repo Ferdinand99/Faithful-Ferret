@@ -12,6 +12,7 @@ mod support;
 
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -21,7 +22,7 @@ use ferret_core::{
 };
 use ferret_server::auth::session::Origin;
 use ferret_server::ids::ItemId;
-use ferret_server::vault::rate::RateConfig;
+use ferret_server::vault::rate::{Busy, RateConfig};
 use ferret_server::wire::{BatchRes, b64url, hex16};
 use ferret_server_auth::SessionScope;
 use serde_json::{Value, json};
@@ -419,26 +420,31 @@ async fn zero_or_101_ops_is_400_and_a_body_over_6_MiB_is_413() {
 }
 
 #[tokio::test]
-async fn a_batch_close_to_the_size_limit_is_read() {
+async fn a_batch_of_several_MiB_is_read_and_stored() {
     let app = TestApp::new().await;
     let u = user(&app, 1).await;
-    let sealed = seal(&u, item(1), 1, "big");
-    // Many envelopes of about 60 KiB: the body is several MiB.
-    let mut envelope = sealed.envelope.clone();
-    envelope.resize(60_000, 0);
-    let big = ferret_core::SealedItem {
-        envelope,
-        tag: sealed.tag,
-        rev: 1,
-    };
-    let ops: Vec<Value> = (1..=60u8).map(|k| op(item(k), 0, &big, idem(k))).collect();
+    // Real envelopes of tens of KiB each: the body is well over the 2 MiB that a
+    // body limit has by default, and under 6 MiB.
+    let ops: Vec<Value> = (1..=50u8)
+        .map(|k| {
+            let mut body = ItemBody::new(ItemType::Note, "big", 1);
+            body.notes = Some(format!("{k:03}").repeat(10_000));
+            let sealed = encrypt_item(&mut TestRng::new(&[k]), &u.vault, item(k), 1, &body, None)
+                .expect("an item");
+            op(item(k), 0, &sealed, idem(k))
+        })
+        .collect();
     let body = batch_body(&ops);
-    assert!(body.len() > 4 * 1024 * 1024 && body.len() < 6 * 1024 * 1024);
-    let res = post(&app, &u.jar, body).await;
-    // The server stores what it is given without opening it; a body that is not
-    // a real envelope is refused in its place, never the batch as a whole.
-    let results = results(&res);
-    assert_eq!(results.as_array().expect("an array").len(), 60);
+    assert!(
+        body.len() > 2 * 1024 * 1024 && body.len() < 6 * 1024 * 1024,
+        "{} bytes",
+        body.len()
+    );
+    let results = results(&post(&app, &u.jar, body).await);
+    assert_eq!(statuses(&results), vec![200; 50]);
+    // Fifty transactions, fifty numbers, after the one of the manifest.
+    assert_eq!(results[49]["seq"], 51);
+    assert_eq!(vault_seq(&app, &u).await, 51);
 }
 
 #[tokio::test]
@@ -805,6 +811,51 @@ async fn busy_on_batch_is_503_with_retry_after() {
     results_ok(&batch(&app, &u.jar, &ops).await);
     let more = [op(item(2), 0, &seal(&u, item(2), 1, "two"), idem(2))];
     results_ok(&batch(&app, &u.jar, &more).await);
+}
+
+#[tokio::test]
+async fn a_batch_dropped_mid_run_keeps_its_gate_turn_until_the_run_ends() {
+    let app = TestApp::builder().gate(1, 0).build().await;
+    let u = user(&app, 1).await;
+    let mut events = app.sync_events().subscribe();
+
+    // Make the insert of a row take a while (a second or two of work in the
+    // database), so the batch is still writing on its blocking thread when its
+    // request goes away.
+    db(&app, |c| {
+        c.execute_batch(
+            "CREATE TRIGGER slow_insert BEFORE INSERT ON ferret_items BEGIN
+               SELECT length(randomblob(500000000));
+               SELECT length(randomblob(500000000));
+               SELECT length(randomblob(500000000));
+               SELECT length(randomblob(500000000));
+             END;",
+        )
+    })
+    .await;
+
+    let ops = [op(item(1), 0, &seal(&u, item(1), 1, "one"), idem(1))];
+    let waited = tokio::time::timeout(Duration::from_millis(300), batch(&app, &u.jar, &ops)).await;
+    assert!(waited.is_err(), "the batch is still running");
+    // The request is gone (its future was dropped), but the writes are not done:
+    // the turn is not free.
+    assert!(matches!(app.state.write_gate.enter().await, Err(Busy)));
+
+    // The batch finishes on its own and gives the turn back.
+    let mut turn = None;
+    for _ in 0..400 {
+        if let Ok(t) = app.state.write_gate.enter().await {
+            turn = Some(t);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(turn.is_some(), "the turn comes back after the run");
+    // The write went in, and its wake-up was sent although nobody waits for the
+    // answer any more.
+    assert_eq!(vault_seq(&app, &u).await, 2);
+    let change = events.try_recv().expect("the batch notified");
+    assert_eq!(change.seq, 2);
 }
 
 #[tokio::test]

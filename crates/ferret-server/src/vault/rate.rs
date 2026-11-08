@@ -212,7 +212,8 @@ fn refused(secs: u64) -> Refused {
 /// of the vault. At most `max_keys` buckets exist in all: when a new one is
 /// needed at the cap, the one used longest ago is dropped (an idle bucket has
 /// refilled, so dropping it takes nothing back). The time of the last stored
-/// checkpoint of a device is kept with its bucket, and goes with it.
+/// checkpoint of a device is kept with its bucket, so dropping a bucket also
+/// clears the pace of that device's checkpoints: it may upload again at once.
 pub struct SyncLimits {
     config: RateConfig,
     clock: Arc<dyn Clock>,
@@ -235,6 +236,7 @@ impl SyncLimits {
     }
 
     /// How many buckets are in memory now; never more than `max_keys`.
+    #[doc(hidden)]
     pub fn tracked_keys(&self) -> usize {
         self.table().entries.len()
     }
@@ -287,6 +289,10 @@ impl SyncLimits {
         let Some(at) = table.entries.get(&key).and_then(|e| e.checkpoint_at) else {
             return Ok(());
         };
+        // A clock that went back since the store gives the device its turn.
+        if now < at {
+            return Ok(());
+        }
         let waited = now.saturating_sub(at);
         if waited >= cfg.checkpoint_every_secs {
             return Ok(());

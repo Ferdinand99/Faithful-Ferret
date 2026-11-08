@@ -296,6 +296,19 @@ fn checkpoint_allowed_does_not_use_the_slot_and_checkpoint_stored_does() {
 }
 
 #[test]
+fn a_clock_that_goes_back_gives_a_device_its_checkpoint_turn() {
+    let (limits, clock) = make(RateConfig::DEFAULT);
+    let (v, d) = (vault(1), device(1));
+    limits.checkpoint_stored(&v, &d);
+    assert!(limits.checkpoint_allowed(&v, &d).is_err());
+    clock.set(START - 1000);
+    assert_eq!(limits.checkpoint_allowed(&v, &d), Ok(()));
+    // The pace starts again from the time of the next store.
+    limits.checkpoint_stored(&v, &d);
+    assert_eq!(retry(limits.checkpoint_allowed(&v, &d)), 600);
+}
+
+#[test]
 fn a_checkpoint_does_not_use_up_operations() {
     let (limits, _) = make(RateConfig::DEFAULT);
     let (v, d) = (vault(1), device(1));
