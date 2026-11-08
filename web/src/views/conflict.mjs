@@ -376,6 +376,11 @@ export async function conflictView({ engine, client, id, t, router, locale, touc
     } catch (error) {
       busy = false;
       root.setAttribute("aria-busy", "false");
+      if (isNotFound(error)) {
+        // Another tab or another pass has settled the conflict already: read the item again, which says so.
+        await load();
+        return;
+      }
       for (const b of chooseButtons) b.setAttribute("aria-disabled", "false");
       say(describeError(t, error));
       /** @type {any} */ (button).focus?.();

@@ -847,3 +847,19 @@ test("a_failure_after_the_lock_writes_to_no_node", async () => {
     assert.equal(engine.handles.size, 0);
   });
 });
+
+test("a_choice_the_engine_answers_with_not_found_reads_the_item_again_and_says_it_is_settled", async () => {
+  await withDom(async () => {
+    const { root, engine, moves } = await open();
+    // Another tab chose already: the engine has no conflict for the item any more.
+    engine.onResolve = async () => {
+      engine.failConflict = coded("not_found");
+    };
+    engine.failWith = coded("not_found");
+    await choose(root, "keep-mine");
+    assert.deepEqual(moves, []);
+    assert.ok(textOf(find(root, "no-conflict")).includes("conflict.not_in_conflict"));
+    assert.equal(all(root, "keep-mine").length, 0);
+    assert.equal(engine.handles.size, 0, "the old handles were closed");
+  });
+});
