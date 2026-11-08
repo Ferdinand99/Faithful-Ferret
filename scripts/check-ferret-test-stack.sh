@@ -300,12 +300,39 @@ case "$*" in
   *"inspect -f {{.State.Running}}"*) echo "${STUB_RUNNING:-true}" ;;
   *"inspect -f"*Health*) echo healthy ;;
   *compose*" run "*) exit "${STUB_BUMP_RC:-0}" ;;
-  *" run "*"MODE=verify"*) exit "${STUB_VERIFY_RC:-0}" ;;
-  *" run "*"MODE="*) exit "${STUB_JOB_RC:-0}" ;;
+  *" run "*"MODE="*)
+    if [ -n "${STUB_REAL_JOBS:-}" ]; then
+      # The job script of the stack script runs for real, on folders, with the folders as /from and /to.
+      mode=""
+      for a in "$@"; do case "$a" in MODE=*) mode="${a#MODE=}" ;; esac; done
+      case "$mode" in
+        verify) from="$STUB_SNAP"; to="" ;;
+        make) from="$STUB_DATA"; to="$STUB_NEW" ;;
+        move) from="$STUB_NEW"; to="$STUB_SNAP" ;;
+        restore) from="$STUB_SNAP"; to="$STUB_DATA" ;;
+      esac
+      FROM="$from" TO="$to" MODE="$mode" sh -c "$last"
+      exit $?
+    fi
+    case "$*" in *MODE=verify*) exit "${STUB_VERIFY_RC:-0}" ;; esac
+    exit "${STUB_JOB_RC:-0}" ;;
 esac
 exit 0
 STUB
 chmod +x "$tmp/bin/docker"
+# A cp that fails, or that copies and then damages the database, when asked to (the job script uses cp -a).
+cat > "$tmp/bin/cp" <<'STUB'
+#!/usr/bin/env bash
+if [ "${STUB_CP_FAIL:-}" = 1 ]; then echo "cp: stand-in failure" >&2; exit 1; fi
+"$STUB_REAL_CP" "$@" || exit $?
+if [ "${STUB_CP_CORRUPT:-}" = 1 ]; then
+  last="${*: -1}"
+  [ -f "${last}ferret.sqlite" ] && printf x >> "${last}ferret.sqlite"
+fi
+exit 0
+STUB
+chmod +x "$tmp/bin/cp"
+real_cp="$(command -v cp)"
 guard_log="$PWD/$tmp/guard.log"
 guard_fail() { echo "check-ferret-test-stack: snapshot guard: $1" >&2; exit 1; }
 # guard_run <function> [vars...]: runs a function of the script against the stand-in; the exit code is its own.
@@ -313,7 +340,7 @@ guard_run() {
   : > "$guard_log"
   (
     export PATH="$PWD/$tmp/bin:$PATH" STUB_LOG="$guard_log" FERRET_DOCKER_ARGS="--context stub" FERRET_ENV_FILE="$tmp/plain.env"
-    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING
+    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP STUB_CP_FAIL STUB_CP_CORRUPT STUB_REAL_CP="$real_cp"
     # shellcheck disable=SC1091
     source scripts/lanbox-ferret-test.sh
     "$@"
@@ -323,7 +350,7 @@ logged() { grep -qE -- "$1" "$guard_log"; }
 first_line() { grep -nE -- "$1" "$guard_log" | head -n 1 | cut -d: -f1; }
 good_e2e="ferret-e2e-data=ferret-e2e ferret-e2e-snapshot=ferret-e2e"
 good_test="ferret-test-data=ferret-test ferret-test-snapshot=ferret-test"
-unset STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING
+unset STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_CP_FAIL STUB_CP_CORRUPT
 
 # --- restore refuses, and changes nothing, when the snapshot is not good
 for kind in e2e test; do
@@ -388,6 +415,66 @@ for kind in e2e test; do
   { [ -n "$make" ] && [ -n "$started" ] && [ -n "$removed" ] && [ -n "$moved" ] && [ "$make" -lt "$started" ] && [ "$started" -lt "$removed" ] && [ "$removed" -lt "$moved" ]; } \
     || guard_fail "$kind: the order must be copy, start, swap (got $make $started $removed $moved)"
 done
+# --- the job script itself, run for real on folders: a cp that fails, or a copy that differs, writes
+# no marker and the restore does not go on; a good copy is the same files with the marker last
+vols="$PWD/$tmp/vols"
+STUB_REAL_JOBS=1 STUB_DATA="$vols/data" STUB_NEW="$vols/new" STUB_SNAP="$vols/snap"
+fresh_folders() {
+  rm -rf "$vols"
+  mkdir -p "$vols/data/sub" "$vols/new" "$vols/snap"
+  printf 'database' > "$vols/data/ferret.sqlite"
+  printf 'log' > "$vols/data/ferret.sqlite-wal"
+  printf 'x' > "$vols/data/sub/file"
+  printf 'old database' > "$vols/snap/ferret.sqlite"
+  : > "$vols/snap/.snapshot-complete"
+}
+same_files() { # a folder, another folder: the same files and the same bytes (the marker aside)
+  [ "$(cd "$1" && find . -mindepth 1 ! -name .snapshot-complete | sort)" = "$(cd "$2" && find . -mindepth 1 ! -name .snapshot-complete | sort)" ] \
+    && (cd "$1" && find . -type f ! -name .snapshot-complete) | while read -r f; do cmp -s "$1/$f" "$2/$f" || exit 1; done
+}
+# a good snapshot: the files, the same bytes, the marker in the swapped-in snapshot
+fresh_folders
+STUB_VOLUMES="$good_e2e"
+guard_run e2e_snapshot || guard_fail "real jobs: a good snapshot failed"
+[ -f "$vols/snap/.snapshot-complete" ] && same_files "$vols/data" "$vols/snap" || guard_fail "real jobs: the snapshot is not a copy of the data with the marker"
+# a good restore of it: the data is the snapshot again, with no marker in the data
+printf 'newer' > "$vols/data/ferret.sqlite"; printf 'junk' > "$vols/data/junk"
+guard_run e2e_restore_snapshot || guard_fail "real jobs: a good restore failed"
+same_files "$vols/snap" "$vols/data" && [ ! -e "$vols/data/.snapshot-complete" ] || guard_fail "real jobs: the restored data is not the snapshot"
+# a cp that fails, or a copy that differs: no marker, the old snapshot stays, the app of a snapshot is started again
+for broken in STUB_CP_FAIL STUB_CP_CORRUPT; do
+  fresh_folders
+  export "$broken=1"
+  STUB_VOLUMES="$good_e2e"
+  if guard_run e2e_snapshot; then guard_fail "real jobs: $broken: a snapshot went through"; fi
+  [ ! -e "$vols/new/.snapshot-complete" ] || guard_fail "real jobs: $broken: a marker was written for a copy that failed or differs"
+  [ "$(cat "$vols/snap/ferret.sqlite")" = "old database" ] && [ -f "$vols/snap/.snapshot-complete" ] || guard_fail "real jobs: $broken: the old snapshot was changed"
+  if logged "volume rm ferret-e2e-snapshot$|MODE=move"; then guard_fail "real jobs: $broken: the old snapshot was removed or replaced"; fi
+  logged " start ferret-e2e-app" || guard_fail "real jobs: $broken: the app was not started after a failed copy"
+  # the same in a restore, for both stacks: it does not go on to the bump or the start
+  for kind in e2e test; do
+    if [ "$kind" = e2e ]; then fn=e2e_restore_snapshot; app=ferret-e2e-app; good="$good_e2e"; arg=(); else fn=test_restore_snapshot; app=ferret-test-app; good="$good_test"; arg=(--yes-ferret-test); fi
+    fresh_folders
+    STUB_VOLUMES="$good"
+    if guard_run "$fn" "${arg[@]}"; then guard_fail "real jobs: $broken: $kind: a restore went through"; fi
+    [ ! -e "$vols/data/.snapshot-complete" ] || guard_fail "real jobs: $broken: $kind: a marker is in the data"
+    if logged "restore-epoch bump| start $app"; then guard_fail "real jobs: $broken: $kind: the restore went on after a failed copy"; fi
+  done
+  unset "$broken"
+done
+# a snapshot without its marker or database: refused by the real check, nothing stopped
+fresh_folders
+rm "$vols/snap/.snapshot-complete"
+STUB_VOLUMES="$good_e2e"
+if guard_run e2e_restore_snapshot; then guard_fail "real jobs: a snapshot without a marker was restored"; fi
+if logged " stop |restore-epoch bump"; then guard_fail "real jobs: a snapshot without a marker stopped the app"; fi
+# an earlier snapshot that was never swapped in may hold the only finished copy: it is not deleted, and nothing is stopped
+fresh_folders
+STUB_VOLUMES="$good_e2e ferret-e2e-snapshot-new=ferret-e2e"
+if guard_run e2e_snapshot; then guard_fail "a snapshot went on although an unfinished one is still there"; fi
+if logged " stop |volume rm ferret-e2e-snapshot-new"; then guard_fail "the volume of an unfinished snapshot was removed or the app stopped"; fi
+unset STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP
+
 # the app of the owner's stack that was stopped before stays stopped
 STUB_VOLUMES="$good_test"
 STUB_RUNNING=false

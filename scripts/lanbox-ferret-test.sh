@@ -368,25 +368,37 @@ wait_container_healthy() { # container
 # database file that is not empty; a source that is not good is never copied, and a target is
 # emptied only after the source is known to be good.
 #   verify   the snapshot has the marker and a database (mounted read-only, nothing is written)
-#   make     the data -> a fresh volume, then the marker
+#   make     the data -> a fresh volume, then the marker. Every job removes a marker in the target first,
+#            and checks the copy before the marker is written: the same files on both sides and every
+#            file equal (cmp); a copy that fails or differs ends the job with a failure.
 #   move     a complete snapshot -> a fresh volume, then the marker
 #   restore  a complete snapshot -> the data (no marker in the data)
 # The apps must be stopped for make and restore.
 # shellcheck disable=SC2016
 volume_script='set -e
+from="${FROM:-/from}"
+to="${TO:-/to}"
 good() { [ -f "$1/.snapshot-complete" ] && [ -s "$1/ferret.sqlite" ]; }
 case "$MODE" in
-  verify | move | restore) good /from || { echo "the snapshot has no completion marker or no database" >&2; exit 3; } ;;
-  make) [ -s /from/ferret.sqlite ] || { echo "the data holds no database" >&2; exit 3; } ;;
+  verify | move | restore) good "$from" || { echo "the snapshot has no completion marker or no database" >&2; exit 3; } ;;
+  make) [ -s "$from/ferret.sqlite" ] || { echo "the data holds no database" >&2; exit 3; } ;;
   *) exit 2 ;;
 esac
 if [ "$MODE" = verify ]; then exit 0; fi
-find /to -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-find /from -mindepth 1 -maxdepth 1 ! -name .snapshot-complete -exec cp -a {} /to/ \;
-[ -s /to/ferret.sqlite ] || { echo "the copy holds no database" >&2; exit 4; }
+rm -f "$to/.snapshot-complete"
+find "$to" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+[ -z "$(ls -A "$to")" ] || { echo "the target was not emptied" >&2; exit 4; }
+cp -a "$from/." "$to/"
+rm -f "$to/.snapshot-complete"
+[ -s "$to/ferret.sqlite" ] || { echo "the copy holds no database" >&2; exit 4; }
+list() { (cd "$1" && find . -mindepth 1 ! -name .snapshot-complete | sort); }
+[ "$(list "$from")" = "$(list "$to")" ] || { echo "the copy has other files than the source" >&2; exit 4; }
+(cd "$from" && find . -type f ! -name .snapshot-complete) | while read -r f; do
+  cmp -s "$from/$f" "$to/$f" || { echo "the copy of $f differs from the source" >&2; exit 4; }
+done
 case "$MODE" in
-  make) date > /to/.snapshot-complete ;;
-  move) cp -a /from/.snapshot-complete /to/ ;;
+  make) date > "$to/.snapshot-complete" ;;
+  move) cp -a "$from/.snapshot-complete" "$to/" ;;
 esac
 sync'
 
@@ -419,8 +431,13 @@ take_snapshot() { # data volume, snapshot volume, label, name prefix, stop funct
   local data="$1" snap="$2" lbl="$3" prefix="$4" stop="$5" start="$6" tmp rc=0
   tmp="$snap-new"
   require_ours "$snap" "$lbl" || exit 1
-  require_ours "$tmp" "$lbl" || exit 1
-  dk volume rm "$tmp" >/dev/null 2>&1 || true
+  # A temporary volume that is still there holds a copy of an earlier snapshot whose swap did not
+  # finish: it may be the only finished copy, so it is never deleted here.
+  if dk volume inspect "$tmp" >/dev/null 2>&1; then
+    echo "lanbox-ferret-test: the volume $tmp exists: an earlier snapshot was not swapped in and it may hold the only finished copy." >&2
+    echo "Remove it (docker volume rm $tmp) to start over, or swap it in by hand, and run the snapshot again." >&2
+    exit 1
+  fi
   dk volume create --label "$lbl" "$tmp" >/dev/null
   "$stop"
   volume_job make "$data" "$tmp" "$lbl" "$prefix-copy" || rc=$?
