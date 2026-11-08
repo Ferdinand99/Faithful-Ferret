@@ -42,10 +42,13 @@ const REASONS = Object.freeze(["no_checkpoint"]);
  *   t: Translate,
  *   router?: { go(path: string): void },
  *   reload?: () => void,
+ *   onAccepted?: (result: { reuploaded: number, conflicts: number, manifestOlder?: boolean }) => unknown,
  * }} options `reload` reloads the page; it is the page's own `location.reload` unless a test gives another.
+ * `onAccepted` is called once after the engine has accepted the older state (the route keeps a local note there when the
+ * unlock methods went back); what it does or throws never changes what the page shows.
  * @returns {HTMLElement}
  */
-export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload() }) {
+export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload(), onAccepted = () => {} }) {
   const root = el("section", { class: "card restored", "data-role": "restored" });
   const body = el("div", { class: "stack" });
   const status = el("p", { class: "status", role: "status", "data-role": "restored-status" });
@@ -270,6 +273,13 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
       mount(body, ...parts);
       // Focus moves to the result: the form it was typed in is gone.
       /** @type {any} */ (parts[0]).focus?.();
+      void (async () => {
+        try {
+          await onAccepted(done);
+        } catch {
+          // A note that cannot be kept is no reason to change the result.
+        }
+      })();
     } catch (error) {
       problem(error, "accept");
     } finally {

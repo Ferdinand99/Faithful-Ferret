@@ -62,7 +62,7 @@
   "syncwarnings.restored.intro_safe": "The server now shows an older state than this device has seen before. This usually happens when the server is restored from a backup. Nothing on this device was deleted, and sync is stopped until you decide.",
   "syncwarnings.restored.intro_warn": "Accept only if you know the server was restored. Accepting makes the older state this device's new starting point, and other devices will show the same notice. If you did not expect this, leave sync stopped or forget this server.",
   "syncwarnings.restored.invalid_state": "This page is out of date: the older state may already have been accepted, for example in another tab. Nothing was deleted. Reload the page, or let sync try again.",
-  "syncwarnings.restored.manifest_older": "The server's account settings are older too. The unlock methods (password, recovery key, passkeys) may have reverted to an earlier state. Check them after you accept.",
+  "syncwarnings.restored.manifest_older": "The server was restored from before you last changed your unlock methods. Methods you added after the backup are gone, methods you removed are back, and the old password works again on the server. This device will refuse the older password at the next unlock.",
   "syncwarnings.restored.not_applicable": "There is nothing to decide here. Sync is not stopped because of a restored server.",
   "syncwarnings.restored.not_verified": "The server's older state does not check out against what this device has verified, so it was not accepted. Nothing was changed or deleted. Leave sync stopped, or forget this server. Trying again will not help unless the server changes.",
   "syncwarnings.restored.not_verified_no_checkpoint": "The server holds no checkpoint to compare the older state with.",

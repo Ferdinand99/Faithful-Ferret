@@ -8,6 +8,7 @@ import { forgetServer, pendingWrites } from "../../src/store/forget.mjs";
 import { StoreError } from "../../src/store/idb.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { loadPinnedByAccount, savePinned } from "../../src/store/pinned.mjs";
+import { loadRestoreNote, restoreNoteKey, saveRestoreNote } from "../../src/store/restoreNote.mjs";
 import { deviceId, deviceSecrets, getSetting, setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
 import { trash } from "../../src/store/trash.mjs";
@@ -222,4 +223,37 @@ test("pending_writes_counts_the_outbox_entries_of_the_account", async () => {
   await assert.rejects(() => pendingWrites(db.store, "nope"), TypeError);
   await assert.rejects(() => forgetServer(db.store, SERVER, "nope"), TypeError);
   await assert.rejects(() => forgetServer(db.store, "nonsense", ACCOUNT), TypeError);
+});
+
+const NOTE_AT = Date.UTC(2026, 10, 8, 12);
+const restoreNote = () => ({ acceptedAt: NOTE_AT, restoreEpoch: 3, manifestOlder: true });
+
+test("forget_removes_the_restore_note", async () => {
+  const { store } = await freshStore();
+  const other = "ffeeddccbbaa99887766554433221100";
+  await saveRestoreNote(store, SERVER, ACCOUNT, restoreNote());
+  await saveRestoreNote(store, SERVER, other, restoreNote());
+  await saveRestoreNote(store, "https://other.example", ACCOUNT, restoreNote());
+  const result = await forgetServer(store, SERVER, ACCOUNT);
+  assert.equal(result.removed.settings, 1, "the note is counted with the settings");
+  assert.equal(await loadRestoreNote(store, SERVER, ACCOUNT, NOTE_AT), null, "the note of this server and account is gone");
+  assert.deepEqual(await loadRestoreNote(store, SERVER, other, NOTE_AT), restoreNote(), "another account keeps its note");
+  assert.deepEqual(await loadRestoreNote(store, "https://other.example", ACCOUNT, NOTE_AT), restoreNote(), "another server keeps its note");
+  assert.equal(await getSetting(store, restoreNoteKey(SERVER, ACCOUNT)), undefined);
+  // Forgetting again finds nothing to remove.
+  assert.equal((await forgetServer(store, SERVER, ACCOUNT)).removed.settings, 0);
+});
+
+test("forget_removes_the_note_also_when_the_account_is_shared_with_another_origin", async () => {
+  const { store } = await freshStore();
+  const alias = "https://alias.example";
+  await savePinned(store, alias, ACCOUNT, "alias@example.org", pinnedRecord({ accountId: ACCOUNT, server: alias }));
+  await saveSyncState(store, alias, ACCOUNT, syncState(1));
+  await saveRestoreNote(store, SERVER, ACCOUNT, restoreNote());
+  await saveRestoreNote(store, alias, ACCOUNT, restoreNote());
+  const result = await forgetServer(store, SERVER, ACCOUNT);
+  assert.equal(result.shared, true);
+  assert.equal(await loadRestoreNote(store, SERVER, ACCOUNT, NOTE_AT), null);
+  assert.deepEqual(await loadRestoreNote(store, alias, ACCOUNT, NOTE_AT), restoreNote());
+  assert.ok(await loadSyncState(store, alias, ACCOUNT), "the other origin keeps its records");
 });

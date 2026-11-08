@@ -5,8 +5,10 @@
 // Everything of the account goes in one transaction, so a failure leaves all of
 // it where it was and never a pinned record without its sync state, or the
 // reverse. What goes: the pinned record, the sync state, the cached rows, the
-// queued writes, the trash, the sync flags in the settings (`sync.flags.<account>.…`)
-// and the device secrets. What stays: this browser's device id, and everything
+// queued writes, the trash, the sync flags in the settings (`sync.flags.<account>.…`),
+// the note about an accepted restore (`restore.note.<server>.<account>`, one per
+// server, so it goes even when the other records are shared) and the device
+// secrets. What stays: this browser's device id, and everything
 // that belongs to another account or another server.
 //
 // Rows, the outbox, the trash and the sync flags are kept per account, not per
@@ -21,6 +23,7 @@
 // like every other write of the sync state, so no tab is saving it meanwhile.
 import { hex16 } from "../b64.mjs";
 import { req, run, serverKey } from "./idb.mjs";
+import { restoreNoteKey } from "./restoreNote.mjs";
 
 /** The stores this removes from, in the order the report lists them. */
 export const FORGET_STORES = Object.freeze(["pinned", "sync_state", "rows", "outbox", "trash", "settings", "device_secrets"]);
@@ -47,6 +50,7 @@ export async function forgetServer(store, serverUrl, accountId) {
   const ofAccount = store.keyRange.bound([accountId], [accountId, []]);
   const flags = `sync.flags.${accountId}.`;
   const ofFlags = store.keyRange.bound(flags, `${flags}\uffff`);
+  const noteKey = restoreNoteKey(serverUrl, accountId);
 
   return run(store, FORGET_STORES, "readwrite", async ([pinned, syncState, rows, outbox, trash, settings, secrets]) => {
     /** @type {Record<string, number>} */
@@ -76,6 +80,11 @@ export async function forgetServer(store, serverUrl, accountId) {
       const keys = await req(table.getAllKeys(range));
       if (keys.length > 0) await req(table.delete(range));
       removed[name] = keys.length;
+    }
+    // The restore note belongs to this server alone, shared account or not.
+    if ((await req(settings.getKey(noteKey))) !== undefined) {
+      await req(settings.delete(noteKey));
+      removed.settings += 1;
     }
     // The outbox is keyed by a counter; its entries of the account are found by the scope index.
     const queued = shared ? [] : await req(outbox.index("by_scope").getAllKeys(ofAccount));

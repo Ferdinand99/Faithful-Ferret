@@ -10,10 +10,10 @@
 // click on "Sign in" or "Confirm" that has just checked the password, or the
 // click on "Continue to the admin pages" for a session that already exists.
 // It is never started because the page was opened.
-import { AccountError } from "../crypto/errors.mjs";
+import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { el, mount } from "../dom.mjs";
-import { busyState, choice, describeError, field, setText, trustNotice } from "./form.mjs";
+import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, trustNotice } from "./form.mjs";
 
 /**
  * @typedef {object} LoginDeps
@@ -26,6 +26,8 @@ import { busyState, choice, describeError, field, setText, trustNotice } from ".
  * @property {{ completeHandoff: (options: any) => Promise<void>, goToAdmin: (options: any) => Promise<void> }} handoff
  * @property {{ accountId: string, email: string } | null} info the vault session found when the page was opened
  * @property {boolean} [reauth] the page is `/vault/reauth`
+ * @property {import("./unlock.mjs").FindRestoreNote} [restoreNote] finds the local note about an accepted restore; asked only after a refusal about an older unlock method, and it only picks the text
+ * @property {string} [locale] the language, for the date in the restore text
  */
 
 /** @param {LoginDeps} deps */
@@ -40,9 +42,21 @@ export function loginView(deps) {
   okBox.hidden = true;
   const trust = trustNotice(t);
 
+  /** The e-mail the last sign-in was tried with: after a refusal it names the account whose restore note to look for. @type {string | null} */
+  let triedEmail = null;
+
   /** @param {unknown} error */
-  function showError(error) {
-    setText(errorBox, describeError(t, error));
+  async function showError(error) {
+    // The core has refused an older unlock method: say so differently when this device accepted a restore lately.
+    let restoreNote = null;
+    if (deps.restoreNote && OLDER_METHOD_ERRORS.includes(codeOf(error))) {
+      try {
+        restoreNote = await deps.restoreNote({ accountId: info?.accountId ?? null, email: triedEmail });
+      } catch {
+        restoreNote = null;
+      }
+    }
+    setText(errorBox, describeError(t, error, { restoreNote, locale: deps.locale }));
     errorBox.hidden = false;
   }
   function clearError() {
@@ -81,7 +95,7 @@ export function loginView(deps) {
       try {
         await work();
       } catch (error) {
-        showError(error);
+        await showError(error);
       } finally {
         busy.set(false);
         running = false;
@@ -156,6 +170,7 @@ export function loginView(deps) {
       try {
         if (email) {
           args.email = email.input.value;
+          triedEmail = args.email;
           await session.signIn(args);
         } else {
           await session.unlock(args);

@@ -99,24 +99,63 @@ export const KNOWN_ERRORS = Object.freeze([
 ]);
 
 /**
+ * The refusals that mean "the server shows an older unlock method than this device has seen". After an
+ * accepted restore that took the unlock methods back, they have a text of their own (see `restoreTextApplies`).
+ */
+export const OLDER_METHOD_ERRORS = Object.freeze(["pinned_kek_generation", "method_list_changed", "method_list_missing", "method_list_unknown"]);
+
+/**
+ * Whether a refusal gets the restore text: it is one of `OLDER_METHOD_ERRORS` and a note says that an older
+ * state was accepted with the unlock methods gone back. The note only picks the text; the refusal stands.
+ * @param {unknown} error
+ * @param {import("../store/restoreNote.mjs").RestoreNote | null | undefined} restoreNote
+ * @returns {boolean}
+ */
+export function restoreTextApplies(error, restoreNote) {
+  return OLDER_METHOD_ERRORS.includes(codeOf(error)) && restoreNote?.manifestOlder === true && Number.isSafeInteger(restoreNote.acceptedAt);
+}
+
+/**
  * The i18n key of the text for an error. A code the pages have no text for
  * gets the general one; the text never contains anything the user typed.
  * @param {unknown} error
+ * @param {{ restoreNote?: import("../store/restoreNote.mjs").RestoreNote | null }} [options]
  * @returns {string}
  */
-export function errorKey(error) {
+export function errorKey(error, { restoreNote = null } = {}) {
+  if (restoreTextApplies(error, restoreNote)) return "account.error.restored_older_method";
   const code = codeOf(error);
   return KNOWN_ERRORS.includes(code) ? `account.error.${code}` : "account.error.unknown";
 }
 
 /**
- * @param {Translate} t
- * @param {unknown} error
+ * The day an accepted restore was recorded, in the user's language.
+ * @param {number} ms
+ * @param {string | undefined} locale
  * @returns {string}
  */
-export function describeError(t, error) {
-  const key = errorKey(error);
-  let text = t(key);
+function dayOf(ms, locale) {
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * The text for an error. With `restoreNote`, a refusal about an older unlock method says that the cause can be
+ * the restore the user accepted, and names the way out ("Forget this server"); without one it is the plain
+ * warning. No refusal is ever turned into something the user can accept here.
+ * @param {Translate} t
+ * @param {unknown} error
+ * @param {{ restoreNote?: import("../store/restoreNote.mjs").RestoreNote | null, locale?: string }} [options]
+ * @returns {string}
+ */
+export function describeError(t, error, { restoreNote = null, locale } = {}) {
+  const key = errorKey(error, { restoreNote });
+  let text = key === "account.error.restored_older_method" && restoreNote
+    ? t(key, { date: dayOf(restoreNote.acceptedAt, locale) })
+    : t(key);
   const code = codeOf(error);
   if (key === "account.error.unknown" && code !== "unknown") text = `${text} (${code})`;
   const retry = /** @type {any} */ (error)?.retryAfter;
