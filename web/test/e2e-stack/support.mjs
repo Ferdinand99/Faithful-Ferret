@@ -518,3 +518,43 @@ export function requireAccount() {
     throw new Error("no account yet: run 01-setup.spec.mjs first (the scenarios share the account it makes)");
   }
 }
+
+// ------------------------------------------------- the malicious server
+
+/** The control port of the malicious server (web/test/e2e-stack/evil), on the network of the stack only. */
+export const evilUrl = process.env.FERRET_E2E_EVIL_URL ?? "";
+
+/** @param {string} path @param {RequestInit} [init] */
+async function evilCall(path, init) {
+  if (evilUrl === "") throw new Error("FERRET_E2E_EVIL_URL is not set: run the scenarios with scripts/lanbox-ferret-test.sh e2e-run");
+  const response = await fetch(`${evilUrl}${path}`, init);
+  const body = await response.json();
+  if (!response.ok) throw new Error(`the malicious server answered ${response.status} for ${path}: ${JSON.stringify(body)}`);
+  return body;
+}
+
+/**
+ * Switches the malicious server to a mode, for example `evil("hide", { id })`,
+ * `evil("rollback", { at })`, `evil("honest")`. The modes and their parameters are
+ * in web/test/e2e-stack/evil/modes.mjs.
+ * @param {string} mode
+ * @param {Record<string, unknown>} [params]
+ */
+export function evil(mode, params = {}) {
+  return evilCall("/mode", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...params, mode }) });
+}
+
+/** The clock of the malicious server in milliseconds, for `rollback {at}`. */
+export async function evilNow() {
+  return (await evilCall("/recorded")).now;
+}
+
+/**
+ * The session cookie of a context on the vault host, for `fork {sid}`.
+ * @param {import("@playwright/test").BrowserContext} context
+ */
+export async function evilSession(context) {
+  const cookie = (await context.cookies(vaultUrl)).find((c) => c.name === "__Host-ferret_sid");
+  if (!cookie) throw new Error("this context has no vault session");
+  return cookie.value;
+}
