@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
+import { trash } from "../../src/store/trash.mjs";
 import { compareFields } from "../../src/sync/conflict.mjs";
 import { ACCOUNT, scope, SERVER } from "./idbHelpers.mjs";
 import { loadSyncState } from "../../src/store/syncState.mjs";
@@ -587,4 +588,97 @@ test("the_sync_state_of_the_account_is_not_touched_by_a_choice", async () => {
   const after = await loadSyncState(d.store.database.store, SERVER, ACCOUNT);
   assert.deepEqual(after, before, "a choice changes no floor and no warning");
   d.engine.stop();
+});
+
+// ------------------------------------------------------------------ fix round 1
+
+test("keep_theirs_over_a_deleted_server_row_keeps_the_users_version_in_the_trash", async () => {
+  const d = await conflictWorld({ deletedThere: true });
+  await d.engine.resolve(ID_A, "theirs");
+  assert.deepEqual(await queued(d), []);
+  assert.equal(itemOf(d), undefined);
+  // The newest version of the user's is in the trash (sealed below the tombstone: the store wants a live row under its tombstone).
+  const entries = await trash.all(d.store.database.store, scope());
+  assert.deepEqual(entries.map((e) => [e.itemId, e.rev, e.tombRev]), [[ID_A, 1, 2]]);
+  assert.deepEqual((await d.engine.trash()).map((e) => [e.id, e.name]), [[ID_A, "Local name"]]);
+  // And it comes back like any other entry.
+  await d.engine.restoreFromTrash(ID_A);
+  await until(() => d.model.items.get(ID_A).deleted === false, "restored");
+  const sent = JSON.parse(d.model.writes.at(-1).body);
+  assert.deepEqual([sent.base_rev, sent.resurrect], [2, true]);
+  assert.equal((await serverView(d)).name, "Local name");
+  d.engine.stop();
+});
+
+test("a_failed_trash_write_keeps_the_draft_when_keeping_theirs", async () => {
+  const d = await conflictWorld({ deletedThere: true });
+  d.store.failTrashPut = 1;
+  await assert.rejects(() => d.engine.resolve(ID_A, "theirs"), /disk is full/);
+  assert.equal((await queued(d)).length, 1, "the draft is still there");
+  assert.equal(itemOf(d).conflict, true);
+  await d.engine.resolve(ID_A, "theirs");
+  assert.equal((await trash.all(d.store.database.store, scope())).length, 1);
+  d.engine.stop();
+});
+
+test("keep_theirs_in_a_conflict_that_accept_older_state_made_keeps_the_local_version_in_the_trash", async () => {
+  // This device holds A at revision 3; the restored server has it deleted at revision 2: phase 3 writes no trash copy (the
+  // local row is above the tombstone), so the draft is the only copy of the newest version.
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 3, body("A newest"), { seq: 5 });
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  model.items.clear();
+  setTomb(model, client, ID_A, 2, { seq: 1 });
+  model.restoreEpoch = 1;
+  await d.engine.syncNow();
+  assert.equal(d.engine.health().halted, "server_restored");
+  assert.deepEqual(await d.engine.acceptOlderState(), { reuploaded: 0, conflicts: 1, manifestOlder: false });
+  assert.deepEqual(await trash.all(d.store.database.store, scope()), [], "phase 3 wrote no copy");
+  await d.engine.resolve(ID_A, "theirs");
+  const entries = await trash.all(d.store.database.store, scope());
+  assert.deepEqual(entries.map((e) => [e.rev, e.tombRev]), [[1, 2]]);
+  assert.deepEqual((await d.engine.trash()).map((e) => e.name), ["A newest"]);
+  await d.engine.restoreFromTrash(ID_A);
+  await until(() => model.items.get(ID_A).deleted === false);
+  assert.equal(JSON.parse(model.writes.at(-1).body).base_rev, 2);
+  d.engine.stop();
+});
+
+test("a_409_with_a_revision_the_feed_never_confirms_still_lets_the_user_keep_mine", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, body("Original"));
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  // A lying server: it says the row is at revision 999, and the feed shows revision 1.
+  d.api.faults.push({ kind: "status", status: 409, code: "conflict", body: { current_rev: 999, deleted: false, blob: b64u.encode(new Uint8Array(48).fill(1)), tag: b64u.encode(new Uint8Array(32).fill(2)) } });
+  await d.engine.update(ID_A, { name: "Mine" }, 1);
+  await until(() => itemOf(d)?.conflict === true, "a conflict");
+  assert.deepEqual((await savedFlags(d)).conflicts, { [ID_A]: { serverRev: 999, serverDeleted: false } });
+  const shown = await d.engine.conflict(ID_A);
+  assert.deepEqual([shown.server.rev, shown.local.view.name, shown.server.view.name], [1, "Mine", "Original"], "the verified row is shown");
+  await shown.close();
+  await d.engine.resolve(ID_A, "mine");
+  await until(() => model.items.get(ID_A).rev === 2, "written on top of the verified revision");
+  assert.equal(JSON.parse(model.writes.at(-1).body).base_rev, 1);
+  assert.equal((await serverView(d)).name, "Mine");
+  d.engine.stop();
+});
+
+test("a_second_tab_with_a_stale_conflict_cannot_choose_again", async () => {
+  const d = await conflictWorld();
+  const other = await syncDevice({ model: d.model, client: d.client, db: d.store.database, locks: d.locks, seed: 7 });
+  await other.engine.start();
+  assert.equal(itemOf(other).conflict, true, "the other tab sees the same conflict");
+  await d.engine.resolve(ID_A, "mine");
+  await until(() => d.model.items.get(ID_A).rev === 3, "this tab's choice is written");
+  const writes = d.model.writes.length;
+  await assert.rejects(() => other.engine.resolve(ID_A, "mine"), { code: "not_found" });
+  await assert.rejects(() => other.engine.resolve(ID_A, "theirs"), { code: "not_found" });
+  assert.equal(d.model.writes.length, writes, "nothing was written by the stale tab");
+  assert.ok((await savedFlags(d)) === undefined || (await savedFlags(d)).blocked?.[ID_A] === undefined, "the cleared conflict was not written back");
+  d.engine.stop();
+  other.engine.stop();
 });

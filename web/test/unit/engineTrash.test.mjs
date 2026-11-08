@@ -1,6 +1,7 @@
 // The local trash: a verified tombstone moves the last live row of an item here for 30 days, and only a verified one; the
 // user can bring the item back (a resurrection at the tombstone's revision + 1) or throw the copy away. Ciphertext only.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
@@ -269,5 +270,74 @@ test("a_pending_edit_when_the_tombstone_arrives_is_not_lost_and_the_trash_has_th
   const [entry] = await trashed(d);
   assert.deepEqual([entry.rev, entry.tombRev], [1, 2], "the last server version is in the trash");
   assert.equal(itemOf(d).name, "Edit after the deletion", "and the edit is still on screen, as the draft");
+  d.engine.stop();
+});
+
+// ------------------------------------------------------------------ fix round 1
+
+test("a_resurrection_that_is_refused_and_then_discarded_keeps_the_version_in_the_trash", async () => {
+  const { d, model } = await deletedElsewhere();
+  d.api.faults.push({ kind: "status", status: 413, code: "too_large" });
+  await d.engine.restoreFromTrash(ID_A);
+  await until(() => itemOf(d)?.blockedReason === "too_large", "the write is refused for good");
+  assert.deepEqual(await trashed(d), [], "the entry left the trash when the write was stored");
+  await d.engine.discard(ID_A);
+  const [entry] = await trashed(d);
+  assert.deepEqual([entry.itemId, entry.tombRev], [ID_A, 3], "the draft is in the trash again");
+  assert.ok(entry.rev < entry.tombRev);
+  assert.deepEqual((await d.engine.trash()).map((e) => e.name), [MARKER]);
+  await d.engine.restoreFromTrash(ID_A);
+  await until(() => model.items.get(ID_A).deleted === false, "and it can be restored");
+  d.engine.stop();
+});
+
+test("restore_from_trash_goes_on_top_of_a_newer_tombstone_and_the_entry_is_kept", async () => {
+  const { d, model, client } = await deletedElsewhere();
+  // Brought back and deleted again elsewhere: the server's tombstone is at revision 5 now, above the entry's 3.
+  setRow(model, client, ID_A, 4, "Back elsewhere");
+  setTomb(model, client, ID_A, 5);
+  await d.engine.syncNow();
+  assert.equal((await d.engine.trash()).length, 1, "the entry is not dropped: the row is not live above its tombstone");
+  await d.engine.restoreFromTrash(ID_A);
+  await until(() => model.items.get(ID_A).deleted === false, "restored");
+  const sent = JSON.parse(model.writes.at(-1).body);
+  assert.deepEqual([sent.base_rev, sent.resurrect], [5, true]);
+  assert.equal(model.items.get(ID_A).rev, 6);
+  d.engine.stop();
+});
+
+test("the_trash_listing_goes_by_the_stored_rows_and_not_by_this_tabs_memory", async () => {
+  const { d, model, client } = await deletedElsewhere();
+  // Another tab brought the item back (live at revision 4) and stored it; this tab has not read it yet.
+  const other = await syncDevice({ model, client, db: d.store.database, locks: d.locks, seed: 9 });
+  setRow(model, client, ID_A, 4, "Back");
+  await other.engine.start();
+  await until(() => itemOf(other)?.rev === 4, "the other tab has the live row");
+  assert.equal(itemOf(d), undefined, "this tab still has the tombstone in memory");
+  assert.deepEqual(await d.engine.trash(), [], "the stale entry is dropped by what is stored");
+  other.engine.stop();
+  d.engine.stop();
+});
+
+test("an_own_delete_of_a_reuploaded_item_below_the_floor_keeps_a_trash_copy", async () => {
+  // B was held at revision 3 and the server lost it; this device uploaded it again and deleted it (revision 2, below the
+  // floor of 3). The cached old copy is the last live row, and it is above the tombstone: it is sealed again below it.
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_B, 3, MARKER);
+  const first = await syncDevice({ model, client });
+  await first.engine.start();
+  first.engine.stop();
+  const tomb = client.wireTomb(ID_B, 2);
+  const digest = createHash("sha256").update(Buffer.concat([Buffer.from([2]), Buffer.from(b64u.decode(tomb))])).digest("base64url");
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  await first.store.setSetting(first.store.database.store, key, { v: 1, marks: { [ID_B]: { kind: "missing_on_server", rev: 3, sent: [`2:t:${digest}`] } }, blocked: {} });
+  model.set(ID_B, { rev: 2, deleted: true, tomb });
+  const d = await reload(first);
+  await d.engine.start();
+  await until(async () => (await trashed(d)).length === 1, "the copy is in the trash");
+  const [entry] = await trashed(d);
+  assert.deepEqual([entry.itemId, entry.rev, entry.tombRev], [ID_B, 1, 2]);
+  assert.deepEqual((await d.engine.trash()).map((e) => e.name), [MARKER]);
   d.engine.stop();
 });

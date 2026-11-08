@@ -83,7 +83,7 @@ export function classify(error) {
  * Whether a 409 only shows that the write is already on the server. The server keeps an idempotency key for 30 days; a
  * write that is sent again after that (the answer was lost) is judged against the row as it is now, and the row may be
  * the very one this write made. Two cases count as done:
- * - a live write, when the row in the 409 has the blob and the tag this write sent, byte for byte;
+ * - a live write, when the row in the 409 has the blob and the tag this write sent, byte for byte, at the revision it would have made;
  * - a tombstone, when the 409 says deleted at the revision this tombstone would have made (the tombstone itself is not in
  *   the 409, so nothing is compared here; the engine removes nothing locally until the feed brings a tombstone that verifies).
  * Anything else is a conflict.
@@ -97,6 +97,7 @@ export function alreadyDone(entry, error) {
   const done = { rev: /** @type {number} */ (body.current_rev), seq: 0, replayed: true };
   if ("tomb" in entry.body) return body.deleted === true && body.current_rev === entry.baseRev + 1 ? done : null;
   if (body.deleted === true || typeof body.blob !== "string" || typeof body.tag !== "string") return null;
+  if (body.current_rev !== entry.baseRev + 1) return null; // our write made that revision, and no other
   return body.blob === b64u.encode(entry.body.blob) && body.tag === b64u.encode(entry.body.tag) ? done : null;
 }
 

@@ -65,7 +65,7 @@
 //   row from the feed, and the user chooses (`conflict`, `resolve`): keep mine
 //   writes the local version on top of the server's revision (over a deleted row
 //   as a resurrection, the one place a client does that, and only on that choice),
-//   keep theirs drops the draft. Nothing is merged. A 409 that shows our own write
+//   keep theirs drops the draft (over a deleted server row the draft goes to the trash first). Nothing is merged. A 409 that shows our own write
 //   (same blob and tag, or deleted at the revision our tombstone makes) is done.
 // * A verified tombstone that replaces a live row puts that row in the local trash
 //   for 30 days (ciphertext only; `trash`, `restoreFromTrash`). Nothing is removed
@@ -758,6 +758,7 @@ export function createSyncEngine({
         continue;
       }
       let local = staged.get(id) ?? rows.get(id);
+      const lastLive = local; // the live row this one may replace, for the trash (`local` can be dropped below)
       const mark = flags.get(id);
       let ours = false;
       if ((mark?.kind === "missing_on_server" || mark?.kind === "reuploaded") && row.rev <= mark.rev) {
@@ -843,7 +844,7 @@ export function createSyncEngine({
         plan.push({
           id, row, ours, touch: true,
           // The last live row, kept in the local trash when this tombstone is used (and the memory has taken it).
-          trash: local && !local.deleted && row.rev > local.rev ? local : null,
+          trash: lastLive && !lastLive.deleted ? lastLive : null,
           apply: () => {
             settleMark(id, row.rev, ours, ending);
             setRow(id, row);
@@ -922,10 +923,9 @@ export function createSyncEngine({
     for (const step of plan) {
       const last = step.trash;
       if (!last || (!step.ours && refusedRows.has(step.row))) continue;
-      await store.trash.put(db, scope, {
-        itemId: step.id, rev: last.rev, envelope: /** @type {Uint8Array} */ (last.envelope), tag: /** @type {Uint8Array} */ (last.tag),
-        tombRev: step.row.rev, deletedAt: now(),
-      });
+      const entry = await trashCopy(step.id, last.rev, /** @type {Uint8Array} */ (last.envelope), /** @type {Uint8Array} */ (last.tag), step.row.rev);
+      alive();
+      if (entry) await store.trash.put(db, scope, entry);
       alive();
     }
     // The page is used: now what judging it kept for later is done.
@@ -2161,24 +2161,54 @@ export function createSyncEngine({
   }
 
   /**
-   * The server's version of an item in conflict: the verified row from the feed. When the conflict says the server holds a
-   * higher revision than the rows here, the feed is read first; if the row has still not come, there is nothing to choose
-   * between yet.
+   * The server's version of an item in conflict: the verified row from the feed. The revision a 409 names is not verified (a
+   * server can say any number), so it is never a reason to refuse the user's choice: when it is above the rows here the feed is
+   * read first, and then the verified row that is held is used as it is. A wrong base revision is refused by the server with
+   * another 409, which makes a new conflict. Only when no row is held at all is there nothing to choose between.
    * @param {string} id
    * @returns {Promise<CachedRow>}
    */
   async function settledServerRow(id) {
-    const need = conflictOf(id)?.serverRev ?? 0;
+    const noted = conflictOf(id)?.serverRev ?? 0;
     let row = rows.get(id);
-    if (row === undefined || row.rev < need) {
+    if (row === undefined || row.rev < noted) {
       await syncNow();
       alive();
       row = rows.get(id);
-      if (row === undefined || row.rev < need) {
-        throw new SyncError("conflict_unsettled", "The server's version of this item has not arrived yet.");
-      }
     }
+    if (row === undefined) throw new SyncError("conflict_unsettled", "The server's version of this item has not arrived yet.");
     return row;
+  }
+
+  /**
+   * The saved record of the flags, read again from the store just before a choice is written: another tab of this browser may have
+   * made the same choice already, and this tab's memory would be stale. Unsaved changes of this tab are saved first.
+   * @returns {Promise<any>}
+   */
+  async function savedFlags() {
+    const db = await store.open();
+    if (flagsDirty) await saveFlags(db);
+    alive();
+    return store.getSetting(db, flagsKey);
+  }
+
+  /**
+   * An entry for the local trash: the live version `rev` of an item that a tombstone at `tombRev` deletes. An entry is a live
+   * row below its tombstone (the store insists), and its tag binds the revision; a version that is not below the tombstone (a
+   * draft sealed at the tombstone's own revision or above) is sealed again at `tombRev - 1`, from the same content.
+   * @param {string} id @param {number} rev @param {Uint8Array} envelope @param {Uint8Array} tag @param {number} tombRev
+   * @returns {Promise<import("../store/trash.mjs").TrashEntry | null>}
+   */
+  async function trashCopy(id, rev, envelope, tag, tombRev) {
+    if (tombRev < 2) return null;
+    if (rev < tombRev) return { itemId: id, rev, envelope, tag, tombRev, deletedAt: now() };
+    const handle = await client.vault.open_item(hex16.decode(id), rev, envelope, tag);
+    try {
+      const sealed = await client.vault.encrypt_item(hex16.decode(id), tombRev - 1, {}, handle, now());
+      return { itemId: id, rev: tombRev - 1, envelope: sealed.envelope, tag: sealed.tag, tombRev, deletedAt: now() };
+    } finally {
+      await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+    }
   }
 
   /**
@@ -2187,6 +2217,16 @@ export function createSyncEngine({
    * @param {string} id
    */
   async function dropDraft(id) {
+    // The server has deleted the item and the draft is the user's newest version of it: it goes to the local trash first, so
+    // dropping it (keeping the server's deletion) does not lose it, and it can be restored like any other entry.
+    const gone = rows.get(id);
+    const draft = gone?.deleted ? liveDraftOf(id) : null;
+    if (gone && draft) {
+      const entry = await trashCopy(id, draft.baseRev + 1, draft.body.blob, draft.body.tag, gone.rev);
+      alive();
+      if (entry) await store.trash.put(await store.open(), scope, entry);
+      alive();
+    }
     for (const idem of await runner.discard(id)) droppedIdems.add(idem);
     alive();
     blocked.delete(id);
@@ -2848,6 +2888,9 @@ export function createSyncEngine({
       return exclusive(() => withItem(id, async () => {
         notWhileRestoring();
         if (conflictOf(id) === null) throw new SyncError("not_found");
+        // Another tab of this browser may have chosen already: the saved record is read again, and a conflict that is not in it
+        // any more is over (this tab's memory is stale and must not write it back).
+        if ((await savedFlags())?.blocked?.[id] !== "conflict") throw new SyncError("not_found");
         if (choice === "theirs") await dropDraft(id);
         else await keepMineInConflict(id);
       }));
@@ -2870,6 +2913,7 @@ export function createSyncEngine({
         if (blocked.has(id)) throw new SyncError("blocked", "blocked", blocked.get(id));
         if (runner.entriesOf(id).length > 0) throw new SyncError("busy", "A change of this item is waiting to be sent.");
         const flag = flags.get(id);
+        if (flag !== undefined && (await savedFlags())?.marks?.[id]?.kind !== flag.kind) throw new SyncError("not_found"); // another tab has dealt with it
         if (flag?.kind === "damaged") await keepMineDamaged(id, flag.rev);
         else if (flag?.kind === "quarantined") await keepMineQuarantined(id, flag.rev);
         else throw new SyncError("not_found");
@@ -2889,12 +2933,15 @@ export function createSyncEngine({
       alive();
       const entries = await store.trash.all(db, scope);
       alive();
+      // What the store holds decides whether an item is alive again (another tab may have written rows this tab has not read).
+      const stored = entries.length > 0 ? new Map(/** @type {CachedRow[]} */ (await store.cache.getRows(db, scope)).map((row) => [row.itemId, row])) : new Map();
+      alive();
       /** @type {Array<{ id: string, name: string, deletedAt: number }>} */
       const out = [];
       for (const entry of entries) {
-        const row = rows.get(entry.itemId);
-        if (row !== undefined && !row.deleted) {
-          await store.trash.remove(db, scope, entry.itemId); // the item is alive again: a copy of its old row is of no use
+        const row = stored.get(entry.itemId);
+        if (row !== undefined && !row.deleted && row.rev > entry.tombRev) {
+          await store.trash.remove(db, scope, entry.itemId); // the item is alive again above its deletion: a copy of its old row is of no use
           continue;
         }
         let name = "";
@@ -2915,9 +2962,9 @@ export function createSyncEngine({
     },
 
     /**
-     * Brings an item back from the trash: the last live version is sealed again at the tombstone's revision + 1 and written with
-     * `base_rev` = the tombstone's revision and `resurrect: true`. Only while the server's row is that tombstone, and nothing else
-     * waits for the item. The entry leaves the trash once the write is stored in the outbox.
+     * Brings an item back from the trash: the saved version is sealed again at the revision above the tombstone the server shows
+     * now and written with `base_rev` = that tombstone's revision and `resurrect: true`. Only while the server's row is a tombstone
+     * (the entry's or a newer one), and nothing else waits for the item. The entry leaves the trash once the write is stored in the outbox.
      * Spec: Fase 1 section 8.4 ("Local trash", "No resurrection without an active choice").
      * @param {string} id
      * @returns {Promise<void>}
@@ -2932,14 +2979,15 @@ export function createSyncEngine({
         alive();
         if (entry === null) throw new SyncError("not_found");
         const row = rows.get(id);
-        if (!row?.deleted || row.rev !== entry.tombRev) throw new SyncError("invalid_state", "The server no longer shows this item as deleted at that version.");
+        // On top of the tombstone the server shows now (it may be a newer one than the entry's: the item was brought back and deleted again).
+        if (!row?.deleted || row.rev < entry.tombRev) throw new SyncError("invalid_state", "The server no longer shows this item as deleted.");
         if (blocked.has(id)) throw new SyncError("blocked", "blocked", blocked.get(id));
         if (runner.entriesOf(id).length > 0) throw new SyncError("busy", "A change of this item is waiting to be sent.");
         const handle = await client.vault.open_item(hex16.decode(id), entry.rev, entry.envelope, entry.tag);
         try {
-          const rev = entry.tombRev + 1;
+          const rev = row.rev + 1;
           const { sealed, summary } = await seal(id, rev, {}, handle);
-          await queue(id, entry.tombRev, { blob: sealed.envelope, tag: sealed.tag }, { rev, deleted: false, envelope: sealed.envelope, tag: sealed.tag }, summary, true);
+          await queue(id, row.rev, { blob: sealed.envelope, tag: sealed.tag }, { rev, deleted: false, envelope: sealed.envelope, tag: sealed.tag }, summary, true);
         } finally {
           await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
         }

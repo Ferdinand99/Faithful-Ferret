@@ -27,6 +27,7 @@ test("already_done_reads_the_blob_and_tag_or_the_revision_of_a_tombstone", () =>
   const same = { current_rev: 4, deleted: false, blob: b64u.encode(entry.body.blob), tag: b64u.encode(entry.body.tag) };
   assert.deepEqual(alreadyDone(entry, conflict(same)), { rev: 4, seq: 0, replayed: true });
   assert.equal(alreadyDone(entry, conflict({ ...same, blob: b64u.encode(new Uint8Array(48).fill(8)) })), null, "another blob is a conflict");
+  assert.equal(alreadyDone(entry, conflict({ ...same, current_rev: 9 })), null, "the same bytes at another revision are not our write");
   assert.equal(alreadyDone(entry, conflict({ ...same, tag: b64u.encode(new Uint8Array(32).fill(9)) })), null, "another tag is a conflict");
   assert.equal(alreadyDone(entry, conflict({ current_rev: 4, deleted: true })), null, "a deleted row is not our live write");
   assert.equal(alreadyDone(entry, conflict({ current_rev: 4, deleted: false })), null, "a body without a row says nothing");
