@@ -1153,6 +1153,42 @@ test("a_raised_epoch_is_listed_once_and_the_feed_goes_on_from_the_first_page_of_
   await sim.stopAll();
 });
 
+test("a_listing_left_behind_by_a_failed_pass_is_not_reused_for_a_raised_epoch", async () => {
+  const sim = await world([1]);
+  const [a] = sim.devices;
+  const backup = sim.server.backup(); // an empty vault
+  const lost = await a.engine.create(draft("written after the backup"));
+  await untilServerRev(sim, lost, 1);
+  const other = await a.engine.create(draft("and another"));
+  await untilServerRev(sim, other, 1);
+  await a.engine.syncNow();
+  await settle(20);
+  assert.equal(shows(a, lost)?.rev, 1);
+  // A pass lists the vault after a 410 (the epoch is still 0), and the feed fails after it: the listing is left behind.
+  const get = a.d.api.get;
+  let reads = 0;
+  a.d.api.get = async (path, ...rest) => {
+    if (path.startsWith("/api/sync/changes")) {
+      reads += 1;
+      if (reads === 1) throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 1 });
+      if (reads === 2) throw new ApiError(0, "network");
+    }
+    return get(path, ...rest);
+  };
+  await a.engine.syncNow();
+  await settle(20);
+  assert.equal(reads, 2, "the pass listed, then failed on the feed");
+  // The server is restored, and someone else writes past the cursor of the device.
+  await sim.restoreServer(backup);
+  writeUntil(sim, 4);
+  const asked = a.d.api.gets.length;
+  await a.engine.syncNow();
+  assert.ok(a.d.api.gets.slice(asked).some((path) => path.startsWith("/api/sync/items")), "the vault is listed again for the raised epoch");
+  assert.equal(a.engine.health().halted, "server_restored", "the device holds items the restored server lacks");
+  assert.equal(shows(a, lost)?.rev, 1, "and keeps them");
+  await sim.stopAll();
+});
+
 test("a_device_that_was_reloaded_stores_a_checkpoint_within_minutes", async () => {
   // A device that has verified stores a checkpoint ten minutes after the vault changed, in the session that verified (the control). After
   // a reload within a day of that verification the new session verifies when it has a checkpoint to store, and stores it.

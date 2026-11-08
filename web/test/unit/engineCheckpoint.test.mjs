@@ -395,6 +395,33 @@ test("no_upload_before_a_successful_verify", async () => {
   idle.engine.stop();
 });
 
+test("a_reload_that_verifies_because_it_has_a_checkpoint_to_store_stores_nothing_when_the_verification_does_not_succeed", async () => {
+  // A reload within 24 hours, with something to store: it verifies first. If the checkpoint cannot be read, or does not verify, nothing is uploaded.
+  {
+    const { model, client } = withNewerRow();
+    const d = await syncDevice({ model, client });
+    await seed(d, { verifiedAt: T0 - 3_600_000 });
+    d.api.checkpointFaults.push({ kind: "network" });
+    await d.engine.start();
+    await d.engine.syncNow();
+    assert.equal(d.api.checkpointGets.length, 1, "the checkpoint was asked for because there is something to store");
+    assert.equal(model.checkpointPuts.length, 0, "and it could not be read, so nothing is signed");
+    d.engine.stop();
+  }
+  {
+    const { model, client } = withNewerRow();
+    const d = await syncDevice({ model, client });
+    await seed(d, { verifiedAt: T0 - 3_600_000 });
+    failWith(d, "checkpoint_lower_rev");
+    await d.engine.start();
+    await d.engine.syncNow();
+    assert.equal(d.api.checkpointGets.length, 1);
+    assert.equal(model.checkpointPuts.length, 0, "a checkpoint that does not verify is not followed by an upload");
+    assert.deepEqual(standing(d), ["server_shows_older_state"]);
+    d.engine.stop();
+  }
+});
+
 test("upload_happens_only_when_drained_with_an_empty_outbox_and_no_marks", async () => {
   // Not drained: the feed breaks after the first page.
   {

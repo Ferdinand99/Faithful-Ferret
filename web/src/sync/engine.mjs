@@ -218,6 +218,9 @@ export function createSyncEngine({
   let relistFirst = false;
   /** The highest restore epoch for which a full listing has been made in this session and found nothing lower. */
   let listedEpoch = -1;
+  /** The restore epoch the pages of `listing` carried (one value for the whole listing), and the pass that made it. */
+  let listingEpoch = -1;
+  let listingPass = -1;
   /**
    * What the last pass that read the whole feed found, for the checkpoint step: the `latest_seq` of its last page (`seq`),
    * the head of the checkpoint that page showed (`head`), whether a full listing was part of it, whether it refused rows, and
@@ -758,15 +761,15 @@ export function createSyncEngine({
     if (epochMovedAt !== null && pass.id > epochMovedAt) epochMovedAt = null;
     await conditionAfterFirstContact();
     if (stopped) return;
-    await clearListingNote(db); // the feed after the listing (if there was one) has been read to its end
-    if (stopped) return;
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
     lastDrain = {
       seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
       refused: pass.refused, memory: (await memory.load()).memory, epoch: raised === null ? null : { from: pass.stored, to: raised },
     };
-    if (listing !== null) await finishListing(db);
+    if (listing !== null) await finishListing(db); // the marks of what the listing did not show are saved first
+    if (stopped) return;
+    await clearListingNote(db); // the feed after the listing (if there was one) has been read to its end
   }
 
   /**
@@ -819,6 +822,8 @@ export function createSyncEngine({
       await noteListing(db); // before a row of it is cached: a page closed from here on lists again, it never reads on from the cached rows
       const first = await readListing(async (page, again) => {
         await checkEpoch(pass, page.restore_epoch);
+        listingEpoch = page.restore_epoch;
+        listingPass = pass.id;
         return applyPage(db, { changes: page.items, latest_seq: page.as_of_seq }, pass, again);
       });
       if (first !== null) cursor = first;
@@ -856,7 +861,9 @@ export function createSyncEngine({
   async function listForRaisedEpoch(db, pass) {
     if (pass.raised === null || pass.lower || epochMovedAt !== null || listedEpoch >= pass.raised) return false;
     let listedNow = false;
-    if (listing === null) {
+    // A listing made earlier in this pass (after a 410, or the one a start owed) counts only when its pages carried the raised epoch; one left
+    // behind by a pass that failed says nothing about the server as it is now (it is still finished for the items it did not show).
+    if (listing === null || listingPass !== pass.id || listingEpoch < pass.raised) {
       await relist(db, pass);
       if (stopped) return false;
       listedNow = true;
@@ -2600,6 +2607,11 @@ export function createSyncEngine({
     return row;
   }
 
+  /** Whether the server's row has nothing to show: a tombstone, or a row without its sealed body. The one rule `conflict` and `resolve` share. @param {CachedRow} row */
+  function isGone(row) {
+    return row.deleted || !row.envelope || !row.tag;
+  }
+
   /**
    * A choice is made against the server row the user was shown, and no other: a row with another revision, or one that is deleted
    * where the user saw a live one (or the reverse), is a different conflict.
@@ -2607,7 +2619,7 @@ export function createSyncEngine({
    * @throws {SyncError} `conflict_changed`
    */
   function assertSeen(row, seen) {
-    if (row.rev !== seen.rev || row.deleted !== seen.deleted) {
+    if (row.rev !== seen.rev || isGone(row) !== seen.deleted) {
       throw new SyncError("conflict_changed", "The server's version of this item changed after it was shown.");
     }
   }
@@ -3313,11 +3325,11 @@ export function createSyncEngine({
         const mine = "tomb" in last.body
           ? { rev: last.baseRev + 1, deleted: true, view: null, handle: null }
           : await side(last.baseRev + 1, last.body.blob, last.body.tag);
-        const theirs = server.deleted || !server.envelope || !server.tag
+        const theirs = isGone(server)
           ? { rev: server.rev, deleted: true, view: null, handle: null }
-          : await side(server.rev, server.envelope, server.tag);
+          : await side(server.rev, /** @type {Uint8Array} */ (server.envelope), /** @type {Uint8Array} */ (server.tag));
         if (stopped) throw new SyncError("stopped");
-        return { local: mine, server: theirs, fields: compareFields(mine.view, theirs.view), seen: { rev: server.rev, deleted: server.deleted }, close: closeAll };
+        return { local: mine, server: theirs, fields: compareFields(mine.view, theirs.view), seen: { rev: server.rev, deleted: isGone(server) }, close: closeAll };
       } catch (error) {
         await closeAll();
         throw error;
