@@ -652,15 +652,12 @@ async fn both_blob_and_tomb_is_400() {
     let neither = json!({ "base_rev": 0, "idem": hex16::encode(&idem(1)) });
     let mut no_tag = live(0, &sealed, idem(1));
     no_tag.as_object_mut().unwrap().remove("tag");
-    let mut resurrect = live(0, &sealed, idem(1));
-    resurrect["resurrect"] = json!(true);
     for (name, body) in [
         ("blob and tomb", both),
         ("tomb and blob", deleted_with_blob),
         ("blob and deleted", live_marked_deleted),
         ("neither", neither),
         ("no tag", no_tag),
-        ("resurrect", resurrect),
     ] {
         let res = send(
             &router,
@@ -675,11 +672,7 @@ async fn both_blob_and_tomb_is_400() {
         );
         assert_eq!(error(&res), "bad_request", "{name}");
     }
-    // `resurrect: false` is the same as leaving it out.
-    let mut explicit = live(0, &sealed, idem(1));
-    explicit["resurrect"] = json!(false);
-    let res = put(&app, &u.jar, item(1), &explicit).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    // `resurrect` has its own tests in `tests/resurrect.rs`.
 }
 
 #[tokio::test]
@@ -1431,4 +1424,70 @@ async fn a_bad_path_parameter_is_the_json_400() {
     let res = send(&router, put_raw("%FF", &u.jar, body)).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(res.json(), json!({ "error": "bad_request" }));
+}
+
+// ---------------------------------------------------------------------------
+// Waking the event streams.
+
+#[tokio::test]
+async fn item_write_notifies_once_with_the_new_seq_and_a_replay_does_not() {
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    let app = TestApp::new().await;
+    let u = user(&app, 1).await;
+    let vault = u.account.vault_id;
+    let mut heard = app.sync_events().subscribe();
+    let id = item(1);
+    let sealed = seal(&u, id, 1, "first");
+
+    let res = put(&app, &u.jar, id, &live(0, &sealed, idem(1))).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let seq = res.json()["seq"].as_u64().unwrap();
+    assert_eq!(seq, 2);
+    let change = heard.try_recv().expect("the write is announced");
+    assert_eq!((change.vault, change.seq), (vault, seq));
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)), "once");
+
+    // A replay changed nothing, a conflict and a refusal neither.
+    let replay = put(&app, &u.jar, id, &live(0, &sealed, idem(1))).await;
+    assert_eq!(replay.json()["replayed"], true);
+    let stale = seal(&u, id, 2, "stale");
+    let conflict = put(&app, &u.jar, id, &live(0, &stale, idem(2))).await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT);
+    let refused = put(&app, &u.jar, id, &json!({ "nope": 1 })).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+
+    // The next write is announced with its own seq.
+    let second = seal(&u, id, 2, "second");
+    let res = put(&app, &u.jar, id, &live(1, &second, idem(3))).await;
+    assert_eq!(res.json()["seq"], 3);
+    let change = heard.try_recv().expect("the second write is announced");
+    assert_eq!((change.vault, change.seq), (vault, 3));
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+
+    // A deletion and the resurrection after it are writes like any other.
+    let t = make_tombstone(&mut OsRng, &u.vault, id, 3).expect("a tombstone");
+    let res = put(&app, &u.jar, id, &tomb(2, &t.tomb, idem(4))).await;
+    assert_eq!(res.json()["seq"], 4);
+    let change = heard.try_recv().expect("the deletion is announced");
+    assert_eq!((change.vault, change.seq), (vault, 4));
+    let back = seal(&u, id, 4, "back");
+    let mut resurrect = live(3, &back, idem(5));
+    resurrect["resurrect"] = json!(true);
+    let res = put(&app, &u.jar, id, &resurrect).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json(), json!({ "rev": 4, "seq": 5, "replayed": false }));
+    let change = heard.try_recv().expect("the resurrection is announced");
+    assert_eq!((change.vault, change.seq), (vault, 5));
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)), "once");
+
+    // Its replay, and a resurrection against an old basis, announce nothing.
+    let replay = put(&app, &u.jar, id, &resurrect).await;
+    assert_eq!(replay.json()["replayed"], true);
+    let mut old_basis = live(2, &back, idem(6));
+    old_basis["resurrect"] = json!(true);
+    let refused = put(&app, &u.jar, id, &old_basis).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT);
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
 }
