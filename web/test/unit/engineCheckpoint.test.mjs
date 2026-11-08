@@ -256,18 +256,103 @@ test("a_later_successful_verify_clears_the_warning_with_warning_cleared", async 
   d.engine.stop();
 });
 
-test("a_different_failure_replaces_the_warning_that_stood", async () => {
+/**
+ * A device that has verified before, a newer row on the server than its head, and a state warning that a failed
+ * verification left in the state: what the next failures may and may not do to it.
+ */
+async function withStoredOlderState() {
+  const { model, client } = withNewerRow();
+  const d = await syncDevice({ model, client });
+  await seed(d, { verifiedAt: T0 - 2 * DAY });
+  const real = d.client.vault.verify_checkpoint;
+  failWith(d, "checkpoint_lower_rev");
+  await d.engine.start();
+  assert.deepEqual(standing(d), ["server_shows_older_state"]);
+  assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state");
+  d.client.vault.verify_checkpoint = real;
+  d.events.state.length = 0;
+  return { d, model, client };
+}
+
+const cleared = (d) => d.events.state.filter((s) => s.kind === "warning_cleared");
+
+test("a_junk_checkpoint_does_not_wipe_a_stored_state_warning_or_unlock_uploads", async () => {
+  const { d, model } = await withStoredOlderState();
+  model.checkpoint = junk(1); // the server now shows a checkpoint nobody with the key made
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state", "the most serious warning still stands");
+  assert.deepEqual(standing(d).sort(), ["checkpoint_forged", "server_shows_older_state"], "the junk is shown next to it");
+  assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state", "and is not stored over it");
+  assert.deepEqual(cleared(d), [], "nothing was cleared");
+  assert.equal(d.api.checkpointPuts.length, 0, "a device with a state warning signs nothing, whatever else the server shows");
+  assert.deepEqual(model.checkpoint, junk(1));
+  // It stays so after a reload of the engine (the state is what is kept).
+  d.engine.stop();
+});
+
+test("a_checkpoint_that_is_not_there_does_not_wipe_a_stored_state_warning_or_unlock_uploads", async () => {
+  const { d, model } = await withStoredOlderState();
+  model.checkpoint = null; // a 404 on the checkpoint
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state");
+  assert.deepEqual(standing(d).sort(), ["bad_feed", "server_shows_older_state"]);
+  assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state");
+  assert.deepEqual(cleared(d), []);
+  assert.equal(d.api.checkpointPuts.length, 0);
+  d.engine.stop();
+});
+
+test("a_pause_does_not_lower_a_stored_state_warning", async () => {
+  const d = await hiddenB();
+  assert.deepEqual(standing(d), []);
+  await seed(d, { hardWarning: "server_shows_older_state" }); // what another failed check left
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state", "the check would only be a pause, and does not lower the warning");
+  assert.deepEqual(standing(d), ["server_shows_older_state"]);
+  assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state");
+  assert.deepEqual(cleared(d), []);
+  d.engine.stop();
+});
+
+test("a_later_successful_verify_clears_what_a_failure_could_not", async () => {
+  const { d, model } = await withStoredOlderState();
+  model.checkpoint = junk(1);
+  await d.engine.verifyNow();
+  assert.equal(standing(d).length, 2);
+  model.checkpoint = "auto";
+  assert.equal(await d.engine.verifyNow(), "ok");
+  assert.deepEqual(standing(d), []);
+  assert.deepEqual(cleared(d).map((e) => e.code).sort(), ["checkpoint_forged", "server_shows_older_state"]);
+  assert.equal((await stateOf(d)).hardWarning, null);
+  d.engine.stop();
+});
+
+test("a_forged_checkpoint_replaces_nothing_but_information", async () => {
+  // Information (forged, bad feed) is replaced by the other information, and a state warning replaces it.
   const model = new Model();
   const client = createFakeClient();
   setRow(model, client, ID_A, 1, "A");
   const d = await syncDevice({ model, client });
-  failWith(d, "checkpoint_lower_rev");
-  await d.engine.start();
   failWith(d, "checkpoint_bad_mac");
-  assert.equal(await d.engine.verifyNow(), "checkpoint_forged");
-  assert.deepEqual(standing(d), ["checkpoint_forged"]);
-  assert.deepEqual(d.events.state.filter((s) => s.kind === "warning_cleared").map((s) => s.code), ["server_shows_older_state"]);
-  assert.equal((await stateOf(d)).hardWarning, "checkpoint_forged");
+  await d.engine.start();
+  failWith(d, "checkpoint_seq_above_top");
+  assert.equal(await d.engine.verifyNow(), "bad_feed");
+  assert.deepEqual(standing(d), ["bad_feed"]);
+  failWith(d, "checkpoint_lower_rev");
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state");
+  assert.deepEqual(standing(d), ["server_shows_older_state"]);
+  assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state");
+  d.engine.stop();
+});
+
+test("a_403_on_the_checkpoint_is_the_session_and_not_a_bad_feed", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A");
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  d.api.checkpointFaults.push({ kind: "status", status: 403, code: "forbidden" });
+  assert.equal(await d.engine.verifyNow(), "not_checked");
+  assert.deepEqual(standing(d), [], "no warning about the server");
+  assert.equal((await stateOf(d)).hardWarning, null);
+  assert.ok(d.events.state.some((s) => s.kind === "unauthorized"), "the pass stops like it does for a refused session");
   d.engine.stop();
 });
 
@@ -497,17 +582,23 @@ test("a_fresh_device_never_uploads_over_a_junk_checkpoint", async () => {
  * one pass lists the vault again: B is marked and uploaded again as revision 1. With `rolledBackC`, the checkpoint also lists C at
  * revision 2, which this device has only ever seen at revision 1.
  */
-async function hiddenB({ rolledBackC = false } = {}) {
+async function hiddenB({ rolledBackC = false, oldB = false } = {}) {
   const model = new Model();
   const client = createFakeClient();
   setRow(model, client, ID_A, 1, "A");
-  setRow(model, client, ID_B, 3, "Hidden B");
+  setRow(model, client, ID_B, oldB ? 1 : 3, "Hidden B");
   const rowC = client.wireRow(ID_C, 1, { item_type: "login", name: "C" });
   if (rolledBackC) model.set(ID_C, { rev: 1, ...rowC });
   const d = await syncDevice({ model, client });
   await d.engine.start();
+  if (oldB) {
+    // The checkpoint was made when B was at revision 1; B has been changed twice since, and this device has seen that.
+    model.pinCheckpoint();
+    setRow(model, client, ID_B, 3, "Hidden B");
+    await d.engine.syncNow();
+  }
   if (rolledBackC) setRow(model, client, ID_C, 2, "C two");
-  model.pinCheckpoint(); // B at 3 (and C at 2)
+  if (!oldB) model.pinCheckpoint(); // B at 3 (and C at 2)
   if (rolledBackC) model.set(ID_C, { rev: 1, ...rowC }); // the server shows the old C again
   model.items.delete(ID_B);
   model.seq += 4;
@@ -537,6 +628,60 @@ test("a_rollback_of_an_unmarked_item_is_hard_even_while_marks_exist", async () =
   assert.equal(await d.engine.verifyNow(), "server_shows_older_state", "B explains its own disagreement, not C's");
   assert.deepEqual(standing(d), ["server_shows_older_state"]);
   assert.equal((await stateOf(d)).hardWarning, "server_shows_older_state");
+  d.engine.stop();
+});
+
+test("a_checkpoint_that_lists_the_old_hash_of_a_hidden_item_at_its_old_revision_is_deferred", async () => {
+  const d = await hiddenB({ oldB: true });
+  assert.deepEqual(standing(d), [], "the listing pass still held the old copy of B");
+  // The copy that was uploaded again is revision 1 with a new envelope; the checkpoint has revision 1 with the hash of the old one.
+  assert.equal(await d.engine.verifyNow(), "verify_deferred");
+  assert.deepEqual(standing(d), ["verify_deferred"]);
+  d.engine.stop();
+});
+
+test("a_row_below_its_floor_with_an_unrelated_mark_is_hard_and_not_deferred", async () => {
+  // B was uploaded again (marked); the checkpoint of this moment lists the copy, so only the memory objects to B's old floor.
+  const marked = await hiddenB();
+  marked.model.pinCheckpoint();
+  assert.equal(await marked.engine.verifyNow(), "verify_deferred", "the copy of the marked item alone is a pause");
+  marked.engine.stop();
+
+  // The same, and A, which has no mark, is below the floor the memory holds for it: no mark can explain that.
+  const d = await hiddenB();
+  d.model.pinCheckpoint();
+  await d.memory.withLock(async (state) => {
+    const floors = memoryOf(state.memory);
+    floors.revs[ID_A] = 9;
+    return { ...state, memory: new TextEncoder().encode(JSON.stringify(floors)) };
+  });
+  assert.equal(await d.engine.verifyNow(), "checkpoint_rolled_back");
+  assert.deepEqual(standing(d), ["checkpoint_rolled_back"]);
+  assert.equal(d.engine.health().halted, null);
+  d.engine.stop();
+});
+
+test("a_pause_is_not_tried_again_until_the_feed_has_moved_or_a_day_has_passed", async () => {
+  const d = await hiddenB();
+  assert.equal(await d.engine.verifyNow(), "verify_deferred");
+  const asked = d.api.checkpointGets.length;
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(400_000);
+  await settle(60);
+  await d.engine.syncNow();
+  assert.equal(d.api.checkpointGets.length, asked, "nothing has moved: the checkpoint is not asked for again");
+  // The server's top moves (another device wrote): it is looked at again.
+  setRow(d.model, d.client, ID_D, 1, "D");
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(400_000);
+  await until(() => d.api.checkpointGets.length === asked + 1, "a change in the feed makes it try again");
+  await settle(60);
+  const again = d.api.checkpointGets.length;
+  // And after a day without a change.
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(DAY + 10_000);
+  await until(() => d.api.checkpointGets.length === again + 1, "a day later it tries again");
+  assert.deepEqual(standing(d), ["verify_deferred"]);
   d.engine.stop();
 });
 

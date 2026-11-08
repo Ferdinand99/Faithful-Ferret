@@ -3,6 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
+import { b64u } from "../../src/b64.mjs";
+import { cache } from "../../src/store/cache.mjs";
+import { scope } from "./idbHelpers.mjs";
 import { createFakeClient, Model, settle, syncDevice, until } from "./syncHelpers.mjs";
 
 const IDS = ["11", "22", "33", "44", "55"].map((n) => n.repeat(16));
@@ -194,4 +197,56 @@ test("a_listing_never_deletes_what_it_does_not_show", async () => {
   assert.ok(c, "still there, with its name");
   assert.equal(c.name, "Item 3");
   d.engine.stop();
+});
+
+test("a_tombstone_in_the_listing_is_verified_and_the_item_leaves_the_list", async () => {
+  const { d, model, client } = await aMovedFloor();
+  model.set(ID_C, { rev: 2, deleted: true, tomb: client.wireTomb(ID_C, 2) }); // another device deleted C
+  model.set(ID_LATE, { rev: 4, deleted: true, tomb: client.wireTomb(ID_LATE, 4) }); // and a deletion of an item this device never had
+  await d.engine.syncNow();
+  assert.ok(feedPaths(d).some((p) => p.startsWith("items")), "through the listing");
+  assert.equal(d.events.error.length, 0);
+  assert.deepEqual(d.engine.list().map((i) => i.id).sort(), [ID_A, ID_B, ID_D, ID_E]);
+  const rows = await cache.getRows(d.store.database.store, scope());
+  assert.deepEqual(rows.filter((r) => r.deleted).map((r) => [r.itemId, r.rev]).sort(), [[ID_C, 2], [ID_LATE, 4]], "kept as rows");
+  assert.deepEqual(d.engine.health(), { halted: null, warnings: [] }, "the checkpoint lists them as tombstones and agrees");
+  d.engine.stop();
+
+  // A tombstone that does not verify: quarantine, and the local copy stays.
+  const second = await aMovedFloor();
+  second.model.set(ID_D, { rev: 2, deleted: true, tomb: b64u.encode(new Uint8Array(40)) });
+  await second.d.engine.syncNow();
+  const item = second.d.engine.list().find((i) => i.id === ID_D);
+  assert.equal(item?.quarantined, true);
+  assert.ok(second.d.events.state.some((s) => s.kind === "warning" && s.code === "tombstone_unverified"));
+  second.d.engine.stop();
+});
+
+test("a_page_with_more_rows_than_were_asked_for_is_refused", async () => {
+  // The listing: 501 rows on one page.
+  const { d, real } = await listingWith((page, n) => {
+    if (n !== 1) return null;
+    const items = Array.from({ length: 501 }, (_, i) => ({ ...page.items[0], id: (i + 1).toString(16).padStart(32, "0") }));
+    return { ...page, items, has_more: false, next_after: undefined, as_of_seq: 99 };
+  });
+  assert.ok(isBadFeed(d), JSON.stringify(d.events.error));
+  assert.ok(d.engine.list().every((item) => !item.missingOnServer));
+  d.api.get = real;
+  d.events.error.length = 0;
+  await d.engine.syncNow();
+  assert.equal(d.events.error.length, 0, "an honest answer next time");
+  d.engine.stop();
+
+  // The feed: 501 changes on one page.
+  const { d: e } = await aMovedFloor();
+  const feed = e.api.get;
+  e.api.get = async (path) => {
+    const answer = await feed(path);
+    if (!path.includes("/changes")) return answer;
+    const change = answer.changes[0] ?? { id: ID_A, rev: 1, seq: 1, deleted: false };
+    return { ...answer, changes: Array.from({ length: 501 }, (_, i) => ({ ...change, seq: i + 1 })) };
+  };
+  await e.engine.syncNow();
+  assert.ok(isBadFeed(e), JSON.stringify(e.events.error));
+  e.engine.stop();
 });

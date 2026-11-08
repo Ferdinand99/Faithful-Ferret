@@ -26,6 +26,9 @@ export const UPLOAD_EVERY_MS = 10 * 60_000;
 /** The least time between two automatic tries to verify while the last one did not succeed. */
 export const VERIFY_RETRY_MS = 5 * 60_000;
 
+/** The most rows the client asks for in one page of the feed or the listing (the server's maximum). */
+export const MAX_PAGE = 500;
+
 /** The bytes of one entry: 16 for the id, 8 for the revision, 32 for the hash. */
 const ENTRY_LEN = 16 + 8 + 32;
 
@@ -61,8 +64,30 @@ export const VERIFY_WARNINGS = Object.freeze(
   ["server_shows_older_state", "checkpoint_rolled_back", "checkpoint_forged", "bad_feed", "verify_deferred"],
 );
 
-/** @param {string} code */
-export const suspendsUpload = (code) => WARNING_TABLE[code]?.suspendsUpload === true;
+/** How serious a warning of a verification is: 1 is information, 2 is a pause, 3 is a state warning. */
+const RANK = Object.freeze({ checkpoint_forged: 1, bad_feed: 1, verify_deferred: 2 });
+
+/**
+ * The rank of a stored warning (0 for none). A code nobody named ranks as a state warning.
+ * @param {string | null | undefined} code
+ */
+export function warningRank(code) {
+  if (code === null || code === undefined) return 0;
+  return Object.hasOwn(RANK, code) ? RANK[/** @type {keyof typeof RANK} */ (code)] : 3;
+}
+
+/**
+ * What is kept in the state after a failed verification: a failure may raise the warning that is stored, or replace one of
+ * the same rank, but never lower it. A forged checkpoint or a bad feed does not wipe a state warning; a pause does not wipe
+ * one either. Only a verification that succeeds clears.
+ * @param {string | null} stored @param {string} incoming
+ */
+export function escalate(stored, incoming) {
+  return warningRank(incoming) >= warningRank(stored) ? incoming : /** @type {string} */ (stored);
+}
+
+/** @param {string | null | undefined} code */
+export const suspendsUpload = (code) => typeof code === "string" && Object.hasOwn(WARNING_TABLE, code) && WARNING_TABLE[code].suspendsUpload;
 
 /** The failures of the core that the table names; a code that is not here is not known. @type {Readonly<Record<string, string>>} */
 const FROM_CORE = Object.freeze({
@@ -84,6 +109,15 @@ const FROM_CORE = Object.freeze({
 /**
  * The failures that a mark of an item that was uploaded again can explain: that
  * copy is below the floor the item had, so rows and entries disagree about it.
+ *
+ * Deviation from the design: the design does not know that this device uploads an
+ * item again under its old id. When the server hides an item at revision 1 and the
+ * device uploads it again, the copy is a new envelope at revision 1, and the
+ * checkpoint of another device, which lists the old hash for that revision, shows
+ * "same revision, different hash" (`checkpoint_same_rev_different_hash`). Without
+ * it in this list an honest server would give a hard warning for something this
+ * device did itself. It counts only when every entry the checkpoint disagrees on
+ * belongs to a marked item.
  */
 const DEFERRABLE = new Set([
   "checkpoint_lower_rev",
@@ -226,11 +260,16 @@ export async function failingIds(entries, rows, atTop) {
  * `as_of_seq` holds for its own page: it is at least the highest `seq` on the page
  * and it never falls from one page to the next. It is not compared with the `seq`
  * of rows on other pages: an honest server takes writes while a listing goes on.
+ *
+ * A page holds at most `limit` rows (the number the client asked for): more is a server that ignores the request, and is
+ * refused before any row is looked at.
  * @param {{ items: Array<{ id: string, seq: number }>, as_of_seq: number, vk_epoch: number, restore_epoch: number, next_after?: string | null, has_more: boolean }} page
  * @param {typeof page | null} [previous] the page before this one, or null for the first
+ * @param {number} [limit] the most rows a page may hold
  */
-export function checkListingPage(page, previous = null) {
+export function checkListingPage(page, previous = null, limit = MAX_PAGE) {
   const bad = () => new SyncError("bad_feed", "The server's listing cannot be right.");
+  if (page.items.length > limit) throw bad();
   if (previous !== null) {
     if (!previous.has_more) throw bad(); // a page after the last one
     if (page.vk_epoch !== previous.vk_epoch || page.restore_epoch !== previous.restore_epoch) throw bad();

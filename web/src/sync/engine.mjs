@@ -59,8 +59,8 @@ import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
 import {
-  checkListingPage, checkpointBody, entriesOf, failingIds, fetchCheckpoint, hardWarningOf, STOP_CODES, suspendsUpload, UPLOAD_EVERY_MS,
-  VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS,
+  checkListingPage, checkpointBody, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES, suspendsUpload,
+  UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
 } from "./checkpoint.mjs";
 import { acceptPage, coreRow, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
 import { createOutboxRunner } from "./outbox.mjs";
@@ -94,7 +94,7 @@ export { SyncError };
 export const MANIFEST_ID = "00000000000000000000000000000000";
 
 /** Rows asked for in one page of the feed (the server's maximum). */
-const PAGE_LIMIT = 500;
+const PAGE_LIMIT = MAX_PAGE;
 
 /**
  * The codes that stop the engine: nothing is pulled or sent until the user acts.
@@ -197,6 +197,8 @@ export function createSyncEngine({
   let verifyNotBefore = 0;
   /** No upload of a checkpoint before this time (ms): the server asked for a wait. */
   let uploadNotBefore = 0;
+  /** The last verification ended in a pause: what the feed showed then, so it is not tried again until that moves (or a day passes). @type {{ seq: number, head: number | null, at: number } | null} */
+  let deferredAt = null;
   /** The next verification is the second try of a round (another tab had moved the memory, or the checkpoint was newer than the feed). */
   let retryPending = false;
 
@@ -513,7 +515,7 @@ export function createSyncEngine({
       const after = previous === null ? "" : `&after=${previous.next_after}`;
       const page = await api.get(`/api/sync/items?limit=${PAGE_LIMIT}${after}`, { shape: "items_res" });
       if (stopped) return null;
-      checkListingPage(page, previous);
+      checkListingPage(page, previous, PAGE_LIMIT);
       if (page.vk_epoch !== scope.vkEpoch) throw new SyncError("epoch_mismatch");
       if ((await use(page, { snapshot, mayRefetch: !refetched })) === "refetch") {
         refetched = true; // once, as for the feed
@@ -564,6 +566,7 @@ export function createSyncEngine({
    */
   function checkPage(page, since) {
     if (page.vk_epoch !== scope.vkEpoch) throw new SyncError("epoch_mismatch");
+    if (page.changes.length > PAGE_LIMIT) throw new SyncError("bad_feed"); // more than was asked for
     let last = since;
     for (const change of page.changes) {
       if (change.seq <= last) throw new SyncError("bad_feed"); // not strictly rising: the loop could never end
@@ -1136,8 +1139,9 @@ export function createSyncEngine({
    * Spec: Fase 1 section 8.6 ("What a recipient checks").
    * @param {string} code the failure of the core
    * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
+   * @param {Uint8Array} remembered the sync memory the verification ran against
    */
-  async function explainedByMarks(code, checkpoint, topSeq) {
+  async function explainedByMarks(code, checkpoint, topSeq, remembered) {
     if (hardWarningOf(code, { deferred: true }) !== "verify_deferred") return false;
     /** @type {Set<string>} */
     const marked = new Set();
@@ -1148,7 +1152,19 @@ export function createSyncEngine({
     // A row below what this device remembers (the copy that was uploaded again is below its old floor, by design) is not
     // a disagreement between entries and rows: it is explained when nothing unmarked disagrees.
     if (code !== REV_BELOW_REMEMBERED && failing.size === 0) return false;
-    return [...failing].every((id) => marked.has(id));
+    if (![...failing].every((id) => marked.has(id))) return false;
+    if (code === REV_BELOW_REMEMBERED) {
+      // The memory refused a row. Only the copy of a marked item may be the one. Ask the core about the unmarked rows alone
+      // (the answer is thrown away): if it refuses one of them, a row is below its floor for no reason a mark can give.
+      const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
+      try {
+        await client.vault.accept_rows(unmarked, topSeq, remembered);
+      } catch (error) {
+        if (isFatal(error)) throw error;
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -1170,12 +1186,20 @@ export function createSyncEngine({
       checkpoint = await fetchCheckpoint(api);
     } catch (error) {
       const status = /** @type {any} */ (error)?.status;
-      if (status === 401) throw error;
+      if (status === 401 || status === 403) {
+        // The session, not the checkpoint: the pass handles it like any other refused session.
+        /** @type {any} */ (error).sessionProblem = true;
+        throw error;
+      }
       if (typeof status !== "number" || status === 0 || status === 408 || status === 429 || status >= 500) return null; // not reachable now
-      // The server answers, and not with a checkpoint it can have: nothing can be verified.
-      await memory.withLock(async (state) => (state.hardWarning === "bad_feed" ? null : { ...state, hardWarning: "bad_feed" }));
+      // The server answers, and not with a checkpoint it can have: nothing can be verified. A warning that is stored stays.
+      let kept = "bad_feed";
+      await memory.withLock(async (state) => {
+        kept = escalate(state.hardWarning, "bad_feed");
+        return kept === state.hardWarning ? null : { ...state, hardWarning: kept };
+      });
       alive();
-      return settleFailure("bad_feed", before);
+      return settleFailure("bad_feed", kept, before, drain);
     }
     alive();
     drain.head = Math.max(drain.head ?? 0, checkpoint.seq);
@@ -1183,7 +1207,7 @@ export function createSyncEngine({
     if (checkpoint.seq > drain.seq && mayRetry) return "retry";
     const rowsNow = [...rows.values()];
     const coreRows = rowsNow.map(coreRow);
-    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string }} Verdict */
+    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string }} Verdict */
     /** @type {{ verdict: Verdict | null }} */
     const box = { verdict: null };
     await memory.withLock(async (state) => {
@@ -1196,13 +1220,15 @@ export function createSyncEngine({
         if (isFatal(error)) throw error;
         const code = codeOf(error);
         if (moved && mayRetry && TAB_RACE.has(code)) {
-          box.verdict = { ok: false, code, moved, warning: "" };
+          box.verdict = { ok: false, code, moved, warning: "", kept: "" };
           return null; // the other tab has seen more: nothing is said before the feed has been read again
         }
-        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq) });
-        box.verdict = { ok: false, code, moved, warning };
-        if (STOP_CODES.includes(warning) || state.hardWarning === warning) return null;
-        return { ...state, hardWarning: warning };
+        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state.memory) });
+        // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
+        const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
+        box.verdict = { ok: false, code, moved, warning, kept };
+        if (STOP_CODES.includes(warning) || state.hardWarning === kept) return null;
+        return { ...state, hardWarning: kept };
       }
     });
     alive();
@@ -1211,6 +1237,7 @@ export function createSyncEngine({
       verifiedInSession = true;
       forgedUnlock = false;
       verifyNotBefore = 0;
+      deferredAt = null;
       for (const code of VERIFY_WARNINGS) clearWarning(code);
       return "ok";
     }
@@ -1220,20 +1247,28 @@ export function createSyncEngine({
         ? "The server shows a state older than this device has seen."
         : "This device cannot remember more items from this server. Forget the server to start again.");
     }
-    return settleFailure(verdict.warning, before);
+    return settleFailure(verdict.warning, verdict.kept, before, drain);
   }
 
   /**
-   * A verification that did not succeed: the warning stands (and the one it replaces is cleared), uploads may be unlocked by
-   * the exception for a forged checkpoint or a bad feed on a device that has verified before, and the next automatic try waits.
-   * @param {string} warning @param {import("../store/syncState.mjs").SyncState} before
+   * A verification that did not succeed. `warning` is what this attempt found and `kept` what is stored now (the warning
+   * that stood, when it is more serious). A failure never clears a state warning or a pause: those go only when a
+   * verification succeeds. What stands afterwards is `kept`, and the warning of this attempt next to it when it is only
+   * information (a forged checkpoint, a bad feed). Uploads may be unlocked by the exception for those two on a device that has
+   * verified before, but never while a state warning or a pause stands. The next automatic try waits.
+   * @param {string} warning @param {string} kept @param {import("../store/syncState.mjs").SyncState} before
+   * @param {{ seq: number, head: number | null }} drain
+   * @returns {string} the most serious warning that stands
    */
-  function settleFailure(warning, before) {
-    for (const code of VERIFY_WARNINGS) if (code !== warning) clearWarning(code);
-    raiseWarning(warning);
-    forgedUnlock = (warning === "checkpoint_forged" || warning === "bad_feed") && before.verifiedAt !== null;
+  function settleFailure(warning, kept, before, drain) {
+    const wanted = new Set([kept]);
+    if (warningRank(warning) === 1) wanted.add(warning);
+    for (const code of VERIFY_WARNINGS) if (!wanted.has(code)) clearWarning(code);
+    for (const code of wanted) raiseWarning(code);
+    forgedUnlock = warningRank(warning) === 1 && warningRank(kept) < 2 && before.verifiedAt !== null;
     verifyNotBefore = now() + VERIFY_RETRY_MS;
-    return warning;
+    deferredAt = kept === "verify_deferred" ? { seq: drain.seq, head: drain.head, at: now() } : null;
+    return warningRank(kept) > warningRank(warning) ? kept : warning;
   }
 
   /**
@@ -1253,7 +1288,10 @@ export function createSyncEngine({
     // Due: never verified, a day old (or from the future), a warning to look at again, a listing, or asked for. The automatic
     // tries wait a while after a failure; a listing and a request do not.
     const due = before.verifiedAt === null || age < 0 || age >= VERIFY_AFTER_MS || before.hardWarning !== null;
-    if (verifyRequested || drain.listed || (due && at >= verifyNotBefore)) {
+    // While only a pause stands, the checkpoint is not asked for again until the feed has moved (its top or the head of the
+    // checkpoint), or a day has passed: nothing but a change can end a pause.
+    const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.head && at - deferredAt.at < VERIFY_AFTER_MS;
+    if (verifyRequested || drain.listed || (due && at >= verifyNotBefore && !unchanged)) {
       verifyRequested = false;
       const result = await verifyStep(drain, before, mayRetry);
       if (result === "retry") {
@@ -1283,6 +1321,7 @@ export function createSyncEngine({
     const seq = drain.seq;
     const state = await memory.load();
     alive();
+    if (suspendsUpload(state.hardWarning)) return; // another tab may have stored one that this engine has not shown
     const since = state.uploadedAt === null ? Infinity : at - state.uploadedAt;
     if (since >= 0 && since < UPLOAD_EVERY_MS) return;
     if (state.uploadedSeq !== null && seq <= state.uploadedSeq) return; // nothing new since the last upload
@@ -1341,7 +1380,7 @@ export function createSyncEngine({
       const status = /** @type {any} */ (error)?.status;
       if (error instanceof SyncError && HALT_CODES.includes(code)) {
         halt(code);
-      } else if (status === 401) {
+      } else if (status === 401 || /** @type {any} */ (error)?.sessionProblem === true) {
         paused = true;
         setStatus("unauthorized");
       } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {

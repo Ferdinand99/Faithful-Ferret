@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { HALT_CODES, SyncError } from "../../src/sync/engine.mjs";
 import {
+  escalate, warningRank, MAX_PAGE,
   checkListingPage, checkpointBody, entriesOf, failingIds, hardWarningOf, STOP_CODES, suspendsUpload, UPLOAD_EVERY_MS, VERIFY_AFTER_MS,
   WARNING_TABLE,
 } from "../../src/sync/checkpoint.mjs";
@@ -175,4 +176,27 @@ test("as_of_seq_holds_per_page_and_never_falls_from_one_page_to_the_next", () =>
   checkListingPage(page([item(2, 3)], { as_of_seq: 6 }), first);
   // An honest server takes writes while it lists: a later page may hold a row above the first page's as_of_seq.
   checkListingPage(page([item(2, 12)], { as_of_seq: 12 }), first);
+});
+
+test("a_page_may_hold_no_more_rows_than_were_asked_for", () => {
+  const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: (i + 1).toString(16).padStart(32, "0"), seq: 1 }));
+  checkListingPage(page(rows(MAX_PAGE)), null, MAX_PAGE);
+  bad(() => checkListingPage(page(rows(MAX_PAGE + 1)), null, MAX_PAGE));
+  bad(() => checkListingPage(page(rows(3)), null, 2));
+});
+
+test("a_failure_can_raise_a_warning_but_never_lower_it", () => {
+  assert.equal(escalate(null, "checkpoint_forged"), "checkpoint_forged");
+  assert.equal(escalate(null, "verify_deferred"), "verify_deferred");
+  assert.equal(escalate("checkpoint_forged", "bad_feed"), "bad_feed", "information is replaced by information");
+  assert.equal(escalate("checkpoint_forged", "verify_deferred"), "verify_deferred");
+  assert.equal(escalate("verify_deferred", "checkpoint_forged"), "verify_deferred");
+  assert.equal(escalate("verify_deferred", "server_shows_older_state"), "server_shows_older_state");
+  assert.equal(escalate("server_shows_older_state", "checkpoint_forged"), "server_shows_older_state");
+  assert.equal(escalate("server_shows_older_state", "bad_feed"), "server_shows_older_state");
+  assert.equal(escalate("server_shows_older_state", "verify_deferred"), "server_shows_older_state");
+  assert.equal(escalate("checkpoint_rolled_back", "verify_deferred"), "checkpoint_rolled_back");
+  assert.equal(escalate("verify_deferred", "a_code_nobody_named"), "a_code_nobody_named", "an unknown code ranks as a state warning");
+  assert.equal(escalate("a_code_nobody_named", "checkpoint_forged"), "a_code_nobody_named");
+  assert.deepEqual(["checkpoint_forged", "verify_deferred", "server_shows_older_state", null].map(warningRank), [1, 2, 3, 0]);
 });
