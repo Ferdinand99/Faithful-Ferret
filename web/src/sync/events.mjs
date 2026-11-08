@@ -163,7 +163,7 @@ function seqOf(data) {
 
 /**
  * Keeps one event stream open for as long as it is started, and says each time
- * the server has something new (`onHint`). Ruling K1:
+ * the server has something new (`onHint`). The rules:
  *
  * - No `hello` within `helloTimeoutMs` of the answer, or no bytes for
  *   `silenceMs`, ends the stream and counts as a failure of the connection.
@@ -382,9 +382,9 @@ export function createLiveChannel({
     /** @type {Attempt} */
     const one = { ctrl: new AbortController(), over: false, hello: false, reader: null, helloTimer: null, silenceTimer: null };
     attempt = one;
-    // Avvik: K1 counts the ten seconds from the answer's headers. This timer starts with the request,
-    // so a request that never gets an answer fails too (stricter than K1); it is started again when the
-    // headers arrive, so the hello still has the full time.
+    // Deviation from the design: the design counts the ten seconds from the answer's headers. This timer
+    // starts with the request, so a request that never gets an answer fails too (stricter than the design).
+    // It is started again when the headers arrive, so the hello still has the full time.
     one.helloTimer = timers.set(() => ended(one, new Error("no_hello")), helloTimeoutMs);
     /** @type {ReadableStreamDefaultReader<Uint8Array>} */
     let reader;
