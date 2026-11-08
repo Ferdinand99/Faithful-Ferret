@@ -359,6 +359,7 @@ test("a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row", (
 
 const M2_SHAPES = [
   "batch_req", "batch_res", "checkpoint_put_req", "checkpoint_put_res", "checkpoint_stale_res", "items_res", "sync_event",
+  "restore_epoch_changed_res", "restore_rows_res",
 ];
 const m2Fixtures = () => fixtures().filter((name) => M2_SHAPES.includes(kindOf(name)));
 
@@ -368,8 +369,10 @@ const hasNull = (value) =>
 
 test("m2_fixtures_decode_and_reencode_identically", () => {
   assert.deepEqual(m2Fixtures(), [
-    "batch_req.json", "batch_res.json", "checkpoint_put_req.json", "checkpoint_put_res.json",
-    "checkpoint_stale_res.json", "items_res.json", "items_res.last.json", "sync_event.json",
+    "batch_req.json", "batch_res.json", "batch_res.restore_epoch_changed.json", "checkpoint_put_req.json",
+    "checkpoint_put_req.restore_epoch.json", "checkpoint_put_res.json", "checkpoint_stale_res.json",
+    "items_res.json", "items_res.last.json", "restore_epoch_changed_res.json", "restore_rows_res.empty.json",
+    "restore_rows_res.json", "restore_rows_res.last.json", "sync_event.json",
   ]);
   for (const name of m2Fixtures()) {
     const kind = kindOf(name);
@@ -584,7 +587,129 @@ test("new_codes_have_their_status", () => {
     assert.equal(STATUS_OF[code], status, code);
   }
   // They come after the codes of the first version, so that list is unchanged.
-  assert.deepEqual(codes.slice(-4), ["gone", "busy", "checkpoint_stale", "checkpoint_invalid"]);
+  assert.deepEqual(codes.slice(-4), ["busy", "checkpoint_stale", "checkpoint_invalid", "restore_epoch_changed"]);
+});
+
+test("restore_epoch_changed_has_status_409_on_both_sides", () => {
+  const statuses = parseFile("error_statuses.json");
+  assert.ok(errorCodes().includes("restore_epoch_changed"));
+  assert.equal(statuses.restore_epoch_changed, 409);
+  assert.equal(STATUS_OF.restore_epoch_changed, 409);
+  assert.equal(ERROR_STATUS.restore_epoch_changed, 409);
+  // The answer to a single write, a checkpoint upload and (in a result) to an operation of a batch.
+  const answer = readWire("restore_epoch_changed_res", read("restore_epoch_changed_res.json"));
+  assert.deepEqual({ ...answer }, { error: "restore_epoch_changed", restore_epoch: 3 });
+  for (const bad of [
+    '{"error":"conflict","restore_epoch":3}',
+    '{"error":"","restore_epoch":3}',
+    '{"error":"restore_epoch_changed"}',
+    '{"error":"restore_epoch_changed","restore_epoch":-1}',
+    '{"error":"restore_epoch_changed","restore_epoch":9007199254740992}',
+    '{"error":"restore_epoch_changed","restore_epoch":3,"x":1}',
+  ]) {
+    assert.equal(refusalOf(() => readWire("restore_epoch_changed_res", bad)), "bad_request", bad);
+  }
+  // In a batch it is its own form: 409, the code and the epoch, never mixed with another form.
+  const batch = readWire("batch_res", read("batch_res.restore_epoch_changed.json"));
+  checkStep("batch_res", batch);
+  const [stored, changed] = batch.results;
+  assert.deepEqual({ ...changed }, { status: 409, error: "restore_epoch_changed", restore_epoch: 3 });
+  for (const bad of [
+    { ...changed, status: 422 },
+    { ...changed, status: 200 },
+    { status: 409, error: "restore_epoch_changed" },
+    { ...changed, rev: 2 },
+    { ...changed, current_rev: 2 },
+    { ...changed, deleted: true },
+    { status: 422, error: "idem_reuse", restore_epoch: 3 },
+    { ...stored, restore_epoch: 3 },
+    { status: 409, current_rev: 5, deleted: true, restore_epoch: 3 },
+    { status: 409, restore_epoch: 3 },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("batch_res", { results: [stored, bad] })), "bad_request", JSON.stringify(bad));
+  }
+});
+
+test("m2_fixtures_with_restore_seq_roundtrip_in_rust_and_js", () => {
+  const changes = readWire("changes_res", read("changes_res.json"));
+  assert.equal(changes.restore_seq, 4);
+  assert.deepEqual(Object.keys(changes).slice(2, 5), ["vk_epoch", "restore_epoch", "restore_seq"]);
+  const empty = readWire("changes_res", read("changes_res.empty.json"));
+  assert.deepEqual([empty.restore_epoch, empty.restore_seq], [0, 0]);
+  const listing = readWire("items_res", read("items_res.json"));
+  assert.deepEqual([listing.restore_epoch, listing.restore_seq], [2, 4]);
+  const lastPage = readWire("items_res", read("items_res.last.json"));
+  assert.deepEqual([lastPage.restore_epoch, lastPage.restore_seq], [0, 0]);
+  // Both answers refuse a missing restore_seq and a number that is not a wire integer.
+  for (const [kind, value] of [["changes_res", changes], ["items_res", listing]]) {
+    const { restore_seq: dropped, ...without } = value;
+    assert.equal(dropped, 4);
+    assert.equal(refusalOf(() => shape(SHAPES[kind], without)), "bad_request", kind);
+    for (const bad of [-1, 1.5, "4", 2 ** 53]) {
+      assert.equal(refusalOf(() => shape(SHAPES[kind], { ...value, restore_seq: bad })), "bad_request", `${kind} ${bad}`);
+    }
+  }
+  // The frozen rows: a live row has a hash, a tombstone has none.
+  const page = readWire("restore_rows_res", read("restore_rows_res.json"));
+  assert.equal(page.rows.length, 2);
+  assert.deepEqual(page.rows.map((row) => "hash" in row).sort(), [false, true]);
+  for (const row of page.rows) {
+    if ("hash" in row) assert.equal(decode(row.hash).length, 32);
+    assert.ok(row.rev >= 1 && row.seq >= 1);
+  }
+  assert.match(page.next_after, /^[0-9a-f]{32}$/);
+  assert.equal(page.next_after, page.rows[1].id);
+  assert.ok(page.rows[0].id < page.rows[1].id, "item id order");
+  checkStep("restore_rows_res", page);
+  const last = readWire("restore_rows_res", read("restore_rows_res.last.json"));
+  assert.equal("next_after" in last, false);
+  checkStep("restore_rows_res", last);
+  checkStep("restore_rows_res", { ...last, next_after: null });
+  const never = readWire("restore_rows_res", read("restore_rows_res.empty.json"));
+  assert.deepEqual({ ...never }, { restore_epoch: 0, restore_seq: 0, rows: [], has_more: false });
+  checkStep("restore_rows_res", never);
+  assert.equal(refusalOf(() => checkStep("restore_rows_res", { ...page, next_after: undefined })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("restore_rows_res", { ...last, next_after: page.next_after })), "bad_request");
+  const tombstone = page.rows.find((row) => !("hash" in row));
+  const hashed = page.rows.find((row) => "hash" in row);
+  for (const bad of [
+    { ...hashed, extra: 1 },
+    { ...tombstone, hash: b64u.encode(new Uint8Array(31)) },
+    { ...tombstone, hash: b64u.encode(new Uint8Array(33)) },
+    { ...tombstone, id: tombstone.id.toUpperCase() },
+    { id: tombstone.id, seq: 1 },
+    { id: tombstone.id, rev: 1 },
+  ]) {
+    assert.equal(refusalOf(() => shape(SHAPES.restore_rows_res, { ...page, rows: [bad] })), "bad_request", JSON.stringify(bad));
+  }
+  assert.equal(refusalOf(() => shape(SHAPES.restore_rows_res, { ...page, x: 1 })), "bad_request");
+  // `null` is a field that is left out (a tombstone has no hash).
+  shape(SHAPES.restore_rows_res, { ...page, rows: [{ ...tombstone, hash: null }] });
+});
+
+test("put_batch_and_checkpoint_requests_carry_an_optional_restore_epoch", () => {
+  const put = readWire("put_item_req", read("put_item_req.restore_epoch.json"));
+  assert.equal(put.restore_epoch, 2);
+  assert.deepEqual(Object.keys(put).at(-1), "restore_epoch");
+  checkStep("put_item_req", put);
+  assert.equal(encodeWire("put_item_req", put), read("put_item_req.restore_epoch.json").trimEnd());
+  const plain = readWire("put_item_req", read("put_item_req.live.json"));
+  assert.equal("restore_epoch" in plain, false, "a client without the condition still works");
+  checkStep("put_item_req", plain);
+  checkStep("put_item_req", { ...plain, restore_epoch: null });
+  const batch = readWire("batch_req", read("batch_req.json"));
+  assert.equal(batch.ops[0].restore_epoch, 2);
+  assert.equal("restore_epoch" in batch.ops[1], false);
+  const upload = readWire("checkpoint_put_req", read("checkpoint_put_req.restore_epoch.json"));
+  assert.equal(upload.restore_epoch, 2);
+  assert.equal(encodeWire("checkpoint_put_req", upload), read("checkpoint_put_req.restore_epoch.json").trimEnd());
+  const bare = readWire("checkpoint_put_req", read("checkpoint_put_req.json"));
+  assert.equal("restore_epoch" in bare, false);
+  for (const bad of [-1, 1.5, "2", true, [2], 2 ** 53]) {
+    assert.equal(refusalOf(() => shape(SHAPES.put_item_req, { ...put, restore_epoch: bad })), "bad_request", String(bad));
+    assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ops: [{ ...batch.ops[0], restore_epoch: bad }] })), "bad_request", String(bad));
+    assert.equal(refusalOf(() => shape(SHAPES.checkpoint_put_req, { ...upload, restore_epoch: bad })), "bad_request", String(bad));
+  }
 });
 
 test("error_statuses_json_matches_code_status", () => {

@@ -50,6 +50,7 @@ fn live(id: ItemId, base_rev: u64, n: u8) -> PutRequest<'static> {
         idem: id16(0xe0, n),
         request_hash: [n; 32],
         resurrect: false,
+        restore_epoch: None,
     }
 }
 
@@ -61,6 +62,7 @@ fn tomb(id: ItemId, base_rev: u64, n: u8) -> PutRequest<'static> {
         idem: id16(0xe0, n),
         request_hash: [n; 32],
         resurrect: false,
+        restore_epoch: None,
     }
 }
 

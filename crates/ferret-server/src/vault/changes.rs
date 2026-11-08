@@ -9,6 +9,10 @@
 //! and must list the vault again. `since=0` is never refused: a client with no
 //! state has nothing to miss.
 //!
+//! The answer carries `restore_epoch` and `restore_seq` (the `seq` of the vault
+//! at its last restore bump, 0 if it never was restored), read in the same
+//! transaction as the page.
+//!
 //! The answer carries the head of the stored checkpoint (`seq`, digest and
 //! MAC), never its entries: those are fetched with `GET /api/sync/checkpoint`
 //! when a client needs them. Spec: Fase 1 § 8.2, § 8.6.
@@ -108,6 +112,7 @@ fn changes_res(page: Changes, head: Option<CheckpointHead>) -> ChangesRes {
         latest_seq: page.latest_seq,
         vk_epoch: page.vk_epoch,
         restore_epoch: page.restore_epoch,
+        restore_seq: page.restore_seq,
         checkpoint: head.map(|(seq, digest, mac)| CheckpointHeadJson { seq, digest, mac }),
         has_more: page.has_more,
     }

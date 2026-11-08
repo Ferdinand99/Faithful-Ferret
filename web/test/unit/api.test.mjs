@@ -332,7 +332,7 @@ test("api_handles_every_error_code_with_the_status_the_server_gives_it", async (
   const retryable = codes.filter((code) => !TERMINAL.includes(statuses[code]));
   assert.deepEqual(retryable, [
     "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone", "busy",
-    "checkpoint_stale",
+    "checkpoint_stale", "restore_epoch_changed",
   ]);
 });
 

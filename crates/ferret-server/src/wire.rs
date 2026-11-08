@@ -99,6 +99,10 @@ pub const MAX_CHECKPOINT_ENTRIES: usize = 50_000;
 /// (8) and the hash of the envelope (32).
 pub const CHECKPOINT_ENTRY_LEN: usize = 56;
 
+/// The code of the `409` answer to a write that names another `restore_epoch`
+/// than the one the vault has.
+pub const RESTORE_EPOCH_CHANGED: &str = "restore_epoch_changed";
+
 /// The code of the answer for a refusal that came out of parsing `message`.
 ///
 /// A field with a fixed size refuses with a message that starts with
@@ -423,6 +427,21 @@ pub mod u53_opt {
             return Err(de::Error::custom("integer larger than 2^53 - 1"));
         }
         Ok(value)
+    }
+}
+
+/// `deserialize_with = "epoch_changed_code::deserialize"`: the `error` of a
+/// `restore_epoch_changed` answer is that code and nothing else.
+pub mod epoch_changed_code {
+    use super::{Deserialize, Deserializer, RESTORE_EPOCH_CHANGED, de};
+
+    /// Reads the code and refuses any other text.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        if code != RESTORE_EPOCH_CHANGED {
+            return Err(de::Error::custom("error is not restore_epoch_changed"));
+        }
+        Ok(code)
     }
 }
 
@@ -930,6 +949,10 @@ pub struct ChangesRes {
     /// Changes when the vault is restored.
     #[serde(deserialize_with = "u53::deserialize")]
     pub restore_epoch: u64,
+    /// The `seq` of the vault when it was last restored; 0 if it never was.
+    /// Read in the same transaction as the page.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
     /// The head of the newest checkpoint, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<CheckpointHeadJson>,
@@ -977,6 +1000,15 @@ pub struct PutItemReq {
     /// `bad_request`). Absent and `false` are the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resurrect: Option<bool>,
+    /// The `restore_epoch` the client last saw. When it is not the epoch of the
+    /// vault the write is refused with `409 restore_epoch_changed`. Absent
+    /// means no condition (clients from before this field work as they did).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
 }
 
 /// The one form a [`PutItemReq`] has.
@@ -1155,6 +1187,15 @@ pub struct BatchOpJson {
     /// Absent and `false` are the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resurrect: Option<bool>,
+    /// The `restore_epoch` the client last saw, as in [`PutItemReq`]. A
+    /// different one gives this operation `409 restore_epoch_changed` in its
+    /// own place; the other operations are not affected.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
 }
 
 /// The one form a [`BatchOpJson`] has.
@@ -1240,7 +1281,9 @@ impl BatchReq {
 ///   `tag` when the row is live (`current_rev` of at least 1, not deleted); a
 ///   deleted row (`current_rev` of at least 1), and a row that is not there
 ///   (`current_rev` 0, not deleted), have neither;
-/// * refused: a `status` from 400 to 599 with the `error` code.
+/// * refused: a `status` from 400 to 599 with the `error` code;
+/// * restore epoch changed: `status` 409 with `error` `restore_epoch_changed`
+///   and the vault's `restore_epoch` now (the operation named another one).
 ///
 /// Call [`BatchResultJson::validate`] on a result that comes from outside.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1290,9 +1333,16 @@ pub struct BatchResultJson {
     /// Whether the row on the server is a tombstone (conflict).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<bool>,
-    /// One of [`ERROR_CODES`] (refused).
+    /// One of [`ERROR_CODES`] (refused, and `restore_epoch_changed`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The `restore_epoch` of the vault now (`restore_epoch_changed`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
 }
 
 impl BatchResultJson {
@@ -1306,7 +1356,19 @@ impl BatchResultJson {
         tag: None,
         deleted: None,
         error: None,
+        restore_epoch: None,
     };
+
+    /// The result of an operation that named another `restore_epoch` than the
+    /// one the vault has (`current`): `409 restore_epoch_changed`.
+    pub fn restore_epoch_changed(current: u64) -> Self {
+        Self {
+            status: 409,
+            error: Some(RESTORE_EPOCH_CHANGED.to_owned()),
+            restore_epoch: Some(current),
+            ..Self::BLANK
+        }
+    }
 
     /// The result of a stored operation.
     pub fn stored(rev: u64, seq: u64, replayed: bool) -> Self {
@@ -1334,7 +1396,9 @@ impl BatchResultJson {
     /// The result of an operation the server refused with `code`: the status
     /// is the one of the code (see [`crate::error::status_of`]). The code must
     /// be one of [`ERROR_CODES`] and not have the status 409, which always
-    /// means a conflict (a debug build panics otherwise).
+    /// means a conflict (a debug build panics otherwise); a stale
+    /// `restore_epoch` has its own constructor,
+    /// [`BatchResultJson::restore_epoch_changed`].
     pub fn refused(code: &'static str) -> Self {
         let result = Self {
             status: crate::error::status_of(code).as_u16(),
@@ -1354,7 +1418,13 @@ impl BatchResultJson {
             || self.deleted.is_some()
             || self.blob.is_some()
             || self.tag.is_some();
+        let has_epoch = self.restore_epoch.is_some();
         let ok = match (has_stored, has_conflict, self.error.as_deref()) {
+            // Restore epoch changed: 409, the code and the epoch now, and no
+            // field of another form.
+            (false, false, Some(RESTORE_EPOCH_CHANGED)) => has_epoch && self.status == 409,
+            // Every other form has no `restore_epoch`.
+            _ if has_epoch => false,
             // Stored: all three fields (a revision starts at 1), and 200.
             (true, false, None) => {
                 self.rev.is_some_and(|rev| rev >= 1)
@@ -1447,6 +1517,117 @@ impl CheckpointStaleRes {
     }
 }
 
+/// `PUT /api/sync/checkpoint`: a checkpoint ([`CheckpointJson`]) and an optional
+/// condition on the `restore_epoch` of the vault.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointPutReq {
+    /// The sequence number the checkpoint covers.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+    /// The digest of `entries`.
+    #[serde(with = "serde_b32")]
+    pub digest: [u8; 32],
+    /// The MAC over the checkpoint.
+    #[serde(with = "serde_b32")]
+    pub mac: [u8; 32],
+    /// The entries: 56 bytes for each row.
+    #[serde(with = "serde_b64")]
+    pub entries: Vec<u8>,
+    /// The `restore_epoch` the client last saw. When it is not the epoch of the
+    /// vault the upload is refused with `409 restore_epoch_changed`, before
+    /// anything about `seq` is looked at. Absent means no condition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
+}
+
+/// The `409` answer to a write that names another `restore_epoch` than the one
+/// the vault has: the code and the epoch the vault has now.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreEpochChangedRes {
+    /// Always `restore_epoch_changed`.
+    #[serde(deserialize_with = "epoch_changed_code::deserialize")]
+    pub error: String,
+    /// The `restore_epoch` of the vault now.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+}
+
+impl RestoreEpochChangedRes {
+    /// The answer for a vault at `restore_epoch`.
+    pub fn new(restore_epoch: u64) -> Self {
+        Self {
+            error: RESTORE_EPOCH_CHANGED.to_owned(),
+            restore_epoch,
+        }
+    }
+}
+
+/// One row of the frozen list in `GET /api/sync/restore-rows`: what the vault
+/// held for an item at the last restore bump.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreRowJson {
+    /// The item.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// Its revision at the bump.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub rev: u64,
+    /// Its sequence number at the bump.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+    /// The SHA-256 of its envelope; left out for a tombstone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub hash: Option<[u8; 32]>,
+}
+
+/// `GET /api/sync/restore-rows`: one page of the list the server froze at the
+/// last restore bump, in item id order. A vault that was never restored has
+/// `restore_seq` 0 and no rows. The list has no MAC.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreRowsRes {
+    /// Changes when the vault is restored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+    /// The `seq` of the vault at the last restore bump; 0 if it never was.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
+    /// The rows of the page.
+    pub rows: Vec<RestoreRowJson>,
+    /// Where the next page starts: the id of the last row of this page. Left
+    /// out on the last page.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub next_after: Option<[u8; 16]>,
+    /// Whether more rows follow.
+    pub has_more: bool,
+}
+
+impl RestoreRowsRes {
+    /// Checks that `next_after` is there exactly when `has_more` is true, as
+    /// for the listing. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.next_after.is_some() != self.has_more {
+            return Err(WireError::Field("next_after, has_more"));
+        }
+        Ok(())
+    }
+}
+
 /// `GET /api/sync/items`: one page of the full listing, in item id order,
 /// tombstones and the manifest included.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1463,6 +1644,10 @@ pub struct ItemsRes {
     /// Changes when the vault is restored.
     #[serde(deserialize_with = "u53::deserialize")]
     pub restore_epoch: u64,
+    /// The `seq` of the vault when it was last restored; 0 if it never was.
+    /// Read in the same transaction as the page.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
     /// Where the next page starts: the id of the last row of this page. Left
     /// out on the last page.
     #[serde(
@@ -1535,6 +1720,10 @@ redacted_debug!(
     BatchRes,
     CheckpointPutRes,
     CheckpointStaleRes,
+    CheckpointPutReq,
+    RestoreEpochChangedRes,
+    RestoreRowJson,
+    RestoreRowsRes,
     ItemsRes,
     SyncEventJson,
 );
@@ -1576,4 +1765,5 @@ pub const ERROR_CODES: &[&str] = &[
     "busy",
     "checkpoint_stale",
     "checkpoint_invalid",
+    "restore_epoch_changed",
 ];

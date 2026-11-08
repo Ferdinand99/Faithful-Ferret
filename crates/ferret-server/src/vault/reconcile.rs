@@ -21,7 +21,13 @@
 //!
 //! Also here: `restore_epoch`, the counter that tells clients the server was
 //! restored from an older copy (spec § 8.6, "Legitimate rollbacks"). Only the
-//! command `ferret restore-epoch bump` raises it.
+//! command `ferret restore-epoch bump` raises it. The same command records
+//! `restore_seq` (the `seq` of the vault at the bump) and freezes one row for
+//! each item the vault then had (`item_id`, `rev`, `seq`, SHA-256 of the
+//! envelope, NULL for a tombstone). `GET /api/sync/restore-rows` pages that
+//! list. The server has no key, so the list has no MAC: a client uses it to
+//! tell a write made after the restore from one that came before it, in the
+//! honest case, and never as proof.
 
 use std::sync::Arc;
 
@@ -33,6 +39,7 @@ use axum::{Json, Router};
 use rusqlite::types::Type;
 use rusqlite::{Connection, Row, TransactionBehavior, params};
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 
 use super::changes::{MAX_LIMIT, PAGE_BYTES};
 use super::events::EventStreams;
@@ -43,7 +50,7 @@ use crate::error::{ApiError, StoreError};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::ids::{ItemId, VaultId};
 use crate::state::VaultDb;
-use crate::wire::{ChangeJson, ItemsRes, MAX_JSON_INT, hex16};
+use crate::wire::{ChangeJson, ItemsRes, MAX_JSON_INT, RestoreRowJson, RestoreRowsRes, hex16};
 
 /// The rows in an answer when `limit` is left out.
 const DEFAULT_LIMIT: u32 = MAX_LIMIT;
@@ -59,6 +66,9 @@ pub struct ItemsPage {
     pub vk_epoch: u64,
     /// How many times the vault was restored.
     pub restore_epoch: u64,
+    /// The `seq` of the vault at the last restore bump; 0 if it never was
+    /// restored.
+    pub restore_seq: u64,
     /// The id of the last row of the page, when more rows follow.
     pub next_after: Option<ItemId>,
     /// Whether there are more rows after this page.
@@ -72,6 +82,7 @@ impl std::fmt::Debug for ItemsPage {
             .field("as_of_seq", &self.as_of_seq)
             .field("vk_epoch", &self.vk_epoch)
             .field("restore_epoch", &self.restore_epoch)
+            .field("restore_seq", &self.restore_seq)
             .field("has_more", &self.has_more)
             .finish_non_exhaustive()
     }
@@ -96,9 +107,9 @@ pub fn list_items(
     max_bytes: usize,
 ) -> Result<ItemsPage, StoreError> {
     let tx = conn.unchecked_transaction()?;
-    let (as_of_seq, restore_epoch, vk_epoch) = tx
+    let (as_of_seq, restore_epoch, restore_seq, vk_epoch) = tx
         .query_row(
-            "SELECT v.seq, v.restore_epoch, a.vk_epoch \
+            "SELECT v.seq, v.restore_epoch, v.restore_seq, a.vk_epoch \
              FROM ferret_vaults v JOIN ferret_accounts a ON a.account_id = v.account_id \
              WHERE v.vault_id = ?1",
             [vault.as_bytes()],
@@ -107,6 +118,7 @@ pub fn list_items(
                     column_u64(row, 0)?,
                     column_u64(row, 1)?,
                     column_u64(row, 2)?,
+                    column_u64(row, 3)?,
                 ))
             },
         )
@@ -149,6 +161,7 @@ pub fn list_items(
         as_of_seq,
         vk_epoch,
         restore_epoch,
+        restore_seq,
         next_after,
         has_more,
     })
@@ -192,6 +205,12 @@ pub struct Bumped {
 /// Raises the restore epoch of every vault by one, in one transaction, and
 /// says how many vaults it was and what the highest epoch is now.
 ///
+/// In the same transaction each vault records `restore_seq` (its `seq` at the
+/// bump) and the frozen rows of the previous bump are replaced by one row for
+/// every row of `ferret_items` as it is now: `(item_id, rev, seq, SHA-256 of
+/// the envelope)`, with a NULL hash for a tombstone. Nothing is signed: the
+/// server has no key. Writes after the bump never touch the frozen rows.
+///
 /// A vault that already holds the largest number a JSON integer can carry
 /// refuses the whole bump (nothing changes).
 ///
@@ -209,10 +228,14 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
     if at_the_limit != 0 {
         return Err(StoreError::Invalid("restore_epoch is at its largest value"));
     }
+    // `restore_seq` takes the `seq` the row has now, before the same statement
+    // is done, and the frozen rows below are read in this same transaction.
     let vaults = tx.execute(
-        "UPDATE ferret_vaults SET restore_epoch = restore_epoch + 1",
+        "UPDATE ferret_vaults SET restore_epoch = restore_epoch + 1, restore_seq = seq",
         [],
     )?;
+    tx.execute("DELETE FROM ferret_restore_rows", [])?;
+    freeze_rows(&tx)?;
     let highest: i64 = tx.query_row(
         "SELECT COALESCE(MAX(restore_epoch), 0) FROM ferret_vaults",
         [],
@@ -231,6 +254,171 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
 /// value now. See [`bump_all_vaults`].
 pub fn bump_restore_epoch(conn: &mut Connection) -> Result<u64, StoreError> {
     Ok(bump_all_vaults(conn)?.restore_epoch)
+}
+
+/// Writes the frozen rows of every vault: one for each row of `ferret_items`,
+/// under the vault's `restore_epoch` as it is now. The caller has emptied the
+/// table and holds the write transaction.
+fn freeze_rows(tx: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
+    let vaults: Vec<(Vec<u8>, i64)> = tx
+        .prepare("SELECT vault_id, restore_epoch FROM ferret_vaults")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut read =
+        tx.prepare("SELECT item_id, rev, seq, blob FROM ferret_items WHERE vault_id = ?1")?;
+    let mut put = tx.prepare(
+        "INSERT INTO ferret_restore_rows (vault_id, item_id, restore_epoch, rev, seq, blob_sha256) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    for (vault, epoch) in &vaults {
+        let mut rows = read.query([vault])?;
+        while let Some(row) = rows.next()? {
+            let item: Vec<u8> = row.get(0)?;
+            let rev: i64 = row.get(1)?;
+            let seq: i64 = row.get(2)?;
+            // A tombstone has no envelope, and so no hash.
+            let hash: Option<[u8; 32]> = row
+                .get::<_, Option<Vec<u8>>>(3)?
+                .map(|blob| Sha256::digest(&blob).into());
+            put.execute(params![
+                vault,
+                item,
+                epoch,
+                rev,
+                seq,
+                hash.as_ref().map(<[u8; 32]>::as_slice)
+            ])?;
+        }
+    }
+    Ok(())
+}
+
+/// The most rows in one page of the frozen list.
+pub const MAX_RESTORE_ROWS: u32 = 2000;
+
+/// One frozen row: what the vault held for an item when it was last restored.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct RestoreRow {
+    /// The item.
+    pub item_id: ItemId,
+    /// Its revision at the bump.
+    pub rev: u64,
+    /// Its `seq` at the bump.
+    pub seq: u64,
+    /// The SHA-256 of its envelope; `None` for a tombstone.
+    pub blob_sha256: Option<[u8; 32]>,
+}
+
+impl std::fmt::Debug for RestoreRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RestoreRow")
+            .field("item_id", &self.item_id)
+            .field("rev", &self.rev)
+            .field("seq", &self.seq)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A page of the frozen list.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RestoreRowsPage {
+    /// How many times the vault was restored.
+    pub restore_epoch: u64,
+    /// The `seq` of the vault at the last bump; 0 if it never was restored.
+    pub restore_seq: u64,
+    /// The rows after `after`, in `item_id` order.
+    pub rows: Vec<RestoreRow>,
+    /// The id of the last row of the page, when more rows follow.
+    pub next_after: Option<ItemId>,
+    /// Whether there are more rows after this page.
+    pub has_more: bool,
+}
+
+impl std::fmt::Debug for RestoreRowsPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RestoreRowsPage")
+            .field("rows", &self.rows.len())
+            .field("restore_epoch", &self.restore_epoch)
+            .field("restore_seq", &self.restore_seq)
+            .field("has_more", &self.has_more)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The frozen rows of a vault with an id above `after` (from the start when
+/// `None`), in id order: at most `limit` of them (0 is read as 1, more than
+/// [`MAX_RESTORE_ROWS`] as that many).
+///
+/// A vault that was never restored has `restore_seq` 0 and no rows. The epochs
+/// and the page are read in one transaction. An unknown vault is
+/// [`StoreError::NotFound`].
+///
+/// Spec: Fase 1 § 8.6, "Legitimate rollbacks". The list is information for the
+/// honest case: it has no MAC.
+pub fn restore_rows(
+    conn: &Connection,
+    vault: &VaultId,
+    after: Option<&ItemId>,
+    limit: u32,
+) -> Result<RestoreRowsPage, StoreError> {
+    let tx = conn.unchecked_transaction()?;
+    let (restore_epoch, restore_seq) = tx
+        .query_row(
+            "SELECT restore_epoch, restore_seq FROM ferret_vaults WHERE vault_id = ?1",
+            [vault.as_bytes()],
+            |row| Ok((column_u64(row, 0)?, column_u64(row, 1)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound,
+            other => StoreError::Sql(other),
+        })?;
+    let limit = usize::try_from(limit.clamp(1, MAX_RESTORE_ROWS)).unwrap_or(usize::MAX);
+    let start: Vec<u8> = after.map(|id| id.as_bytes().to_vec()).unwrap_or_default();
+    // One more than the page, to know whether anything follows.
+    let fetch = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+    let mut stmt = tx.prepare(
+        "SELECT item_id, rev, seq, blob_sha256 FROM ferret_restore_rows \
+         WHERE vault_id = ?1 AND restore_epoch = ?2 AND item_id > ?3 \
+         ORDER BY item_id LIMIT ?4",
+    )?;
+    let mut found = stmt.query(params![
+        vault.as_bytes(),
+        i64::try_from(restore_epoch).unwrap_or(i64::MAX),
+        start,
+        fetch
+    ])?;
+    let mut rows: Vec<RestoreRow> = Vec::new();
+    let mut has_more = false;
+    while let Some(row) = found.next()? {
+        if rows.len() >= limit {
+            has_more = true;
+            break;
+        }
+        rows.push(RestoreRow {
+            item_id: ItemId::from_bytes(fixed::<16>(row, 0)?),
+            rev: column_u64(row, 1)?,
+            seq: column_u64(row, 2)?,
+            blob_sha256: row
+                .get::<_, Option<Vec<u8>>>(3)?
+                .map(|bytes| array_of::<32>(&bytes, 3))
+                .transpose()?,
+        });
+    }
+    drop(found);
+    drop(stmt);
+    tx.finish()?;
+    let next_after = if has_more {
+        rows.last().map(|last| last.item_id)
+    } else {
+        None
+    };
+    Ok(RestoreRowsPage {
+        restore_epoch,
+        restore_seq,
+        rows,
+        next_after,
+        has_more,
+    })
 }
 
 /// The query of the listing call.
@@ -254,7 +442,67 @@ where
     WriteGate: FromRef<S>,
     Arc<EventStreams>: FromRef<S>,
 {
-    Router::new().route("/api/sync/items", get(get_items))
+    Router::new()
+        .route("/api/sync/items", get(get_items))
+        .route("/api/sync/restore-rows", get(get_restore_rows))
+}
+
+/// The query of the restore-rows call.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreRowsQuery {
+    /// Rows with an id above this one: 32 lower-case hexadecimal characters.
+    after: Option<String>,
+    /// At most this many rows, 1 to 2000 (a larger number is read as 2000, 0
+    /// as 1).
+    limit: Option<u32>,
+}
+
+/// A page of the frozen rows of the session's vault.
+async fn get_restore_rows(
+    session: VaultSession,
+    query: Result<Query<RestoreRowsQuery>, QueryRejection>,
+    State(db): State<VaultDb>,
+) -> Result<Response, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::coded("bad_request"))?;
+    let after = query
+        .after
+        .as_deref()
+        .map(|text| hex16::decode(text).map(ItemId::from_bytes))
+        .transpose()
+        .map_err(|_| ApiError::coded("bad_request"))?;
+    let limit = query
+        .limit
+        .unwrap_or(MAX_RESTORE_ROWS)
+        .clamp(1, MAX_RESTORE_ROWS);
+    let vault = session.vault;
+    let page = db
+        .with_conn(move |conn| restore_rows(conn, &vault, after.as_ref(), limit))
+        .await?;
+    // Counts only: ids and hashes never reach the log.
+    tracing::info!(
+        rows = page.rows.len(),
+        has_more = page.has_more,
+        "restore rows page"
+    );
+    let res = RestoreRowsRes {
+        restore_epoch: page.restore_epoch,
+        restore_seq: page.restore_seq,
+        rows: page
+            .rows
+            .into_iter()
+            .map(|row| RestoreRowJson {
+                id: *row.item_id.as_bytes(),
+                rev: row.rev,
+                seq: row.seq,
+                hash: row.blob_sha256,
+            })
+            .collect(),
+        next_after: page.next_after.map(|id| *id.as_bytes()),
+        has_more: page.has_more,
+    };
+    debug_assert!(res.validate().is_ok());
+    Ok(Json(res).into_response())
 }
 
 /// A page of the listing of the session's vault.
@@ -293,6 +541,7 @@ fn items_res(page: ItemsPage) -> ItemsRes {
         as_of_seq: page.as_of_seq,
         vk_epoch: page.vk_epoch,
         restore_epoch: page.restore_epoch,
+        restore_seq: page.restore_seq,
         next_after: page.next_after.map(|id| *id.as_bytes()),
         has_more: page.has_more,
     }

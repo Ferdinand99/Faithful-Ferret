@@ -41,7 +41,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0002_auth.sql",
             "0003_sessions.sql",
             "0004_handoff_links.sql",
-            "0005_sync.sql"
+            "0005_sync.sql",
+            "0006_restore_seq.sql"
         ]
     );
     let mut sorted = names.clone();
@@ -191,6 +192,7 @@ fn schema_matches_section_7() {
             "ferret_login_states",
             "ferret_meta",
             "ferret_registrations",
+            "ferret_restore_rows",
             "ferret_sessions",
             "ferret_unlock_methods",
             "ferret_vaults",

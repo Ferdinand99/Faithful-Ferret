@@ -15,8 +15,11 @@
 //!    `Retry-After` when the queue is full);
 //! 7. each operation in turn, in its own transaction: the manifest id is
 //!    `403`, an envelope or tombstone that is not stored here is `422` (or
-//!    `413`), anything else goes to [`store::put_item`]. A refusal or a
-//!    conflict of one operation does not stop the others;
+//!    `413`), anything else goes to [`store::put_item`], which checks the
+//!    idempotency record, then the `restore_epoch` the operation names (another
+//!    one than the vault's is `409 restore_epoch_changed` in its place), then
+//!    `base_rev`. A refusal or a conflict of one operation does not stop the
+//!    others;
 //! 8. one notification for the batch, with the highest `seq` it wrote, sent
 //!    after the last operation has committed.
 //!
@@ -110,6 +113,8 @@ pub(crate) struct PreparedOp {
     pub(crate) base_rev: u64,
     pub(crate) idem: [u8; 16],
     pub(crate) resurrect: bool,
+    /// The `restore_epoch` the operation names, if it does.
+    pub(crate) restore_epoch: Option<u64>,
     /// `SHA-256("ferret/v1/batch-op" || item_id || JSON of the operation)`.
     /// A single write hashes the item id and its raw body instead, so the same
     /// `idem` in a batch and in a single write is `idem_reuse`.
@@ -135,6 +140,7 @@ fn blank(id: [u8; 16]) -> BatchOpJson {
         tomb: None,
         idem: [0; 16],
         resurrect: None,
+        restore_epoch: None,
     }
 }
 
@@ -242,6 +248,7 @@ fn prepare_op(op: &BatchOpJson) -> Result<PreparedOp, &'static str> {
         base_rev: op.base_rev,
         idem: op.idem,
         resurrect,
+        restore_epoch: op.restore_epoch,
         request_hash,
     })
 }
@@ -299,6 +306,7 @@ fn run_op(
         idem: op.idem,
         request_hash: op.request_hash,
         resurrect: op.resurrect,
+        restore_epoch: op.restore_epoch,
     };
     match store::put_item(conn, vault, device, &put, limits, now) {
         Ok(PutOutcome::Stored { rev, seq, replayed }) => {
@@ -313,6 +321,9 @@ fn run_op(
         Ok(PutOutcome::IdemMismatch) => BatchResultJson::refused("idem_reuse"),
         Ok(PutOutcome::QuotaExceeded) => BatchResultJson::refused("quota_exceeded"),
         Ok(PutOutcome::ManifestNotWritable) => BatchResultJson::refused("manifest_not_writable"),
+        Ok(PutOutcome::RestoreEpochChanged { current }) => {
+            BatchResultJson::restore_epoch_changed(current)
+        }
         Err(StoreError::NotFound) => BatchResultJson::refused("not_found"),
         Err(e) => {
             tracing::error!(error = %e, "batch operation failed");

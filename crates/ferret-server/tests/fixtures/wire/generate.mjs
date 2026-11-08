@@ -117,6 +117,16 @@ const deletedChange = () => ({
   tomb: b64("item two tomb", 40),
 });
 
+/**
+ * The frozen rows of a restore, in item id order: a live item (with the
+ * SHA-256 of its envelope) and a tombstone (no hash).
+ */
+const frozenRows = () =>
+  [
+    { id: id("item one"), rev: 2, seq: 3, hash: b64("item one hash", 32) },
+    { id: id("item two"), rev: 3, seq: 4 },
+  ].sort((x, y) => (x.id < y.id ? -1 : 1));
+
 /** Changes in item id order, as the listing writes them. */
 const listed = () => [liveChange(), deletedChange()].sort((x, y) => (x.id < y.id ? -1 : 1));
 
@@ -127,6 +137,7 @@ const batchLive = () => ({
   blob: envelope("item one", 1, 200),
   tag: b64("item one tag", 32),
   idem: id("idem one"),
+  restore_epoch: 2,
 });
 const batchResurrect = () => ({
   id: id("item three"),
@@ -267,7 +278,8 @@ export function fixtures() {
       changes: [liveChange(), deletedChange()],
       latest_seq: 7,
       vk_epoch: 1,
-      restore_epoch: 0,
+      restore_epoch: 2,
+      restore_seq: 4,
       checkpoint: head(),
       has_more: true,
     },
@@ -276,6 +288,7 @@ export function fixtures() {
       latest_seq: 0,
       vk_epoch: 1,
       restore_epoch: 0,
+      restore_seq: 0,
       has_more: false,
     },
     "change.live.json": liveChange(),
@@ -300,6 +313,14 @@ export function fixtures() {
       tag: b64("item two tag", 32),
       idem: id("idem three"),
       resurrect: true,
+    },
+    // A live row written on the condition that the vault is at restore epoch 2.
+    "put_item_req.restore_epoch.json": {
+      base_rev: 1,
+      blob: envelope("item one", 1, 200),
+      tag: b64("item one tag", 32),
+      idem: id("idem one"),
+      restore_epoch: 2,
     },
     "put_item_res.json": { rev: 2, seq: 5, replayed: false },
     "put_item_res.replayed.json": { rev: 2, seq: 5, replayed: true },
@@ -331,13 +352,44 @@ export function fixtures() {
       ],
     },
     "checkpoint_put_req.json": checkpointPut(),
+    "checkpoint_put_req.restore_epoch.json": { ...checkpointPut(), restore_epoch: 2 },
+    // The answer to a write that names another restore epoch than the vault's.
+    "restore_epoch_changed_res.json": { error: "restore_epoch_changed", restore_epoch: 3 },
+    // An operation of a batch that named another restore epoch, in its own place.
+    "batch_res.restore_epoch_changed.json": {
+      results: [
+        { status: 200, rev: 2, seq: 5, replayed: false },
+        { status: 409, error: "restore_epoch_changed", restore_epoch: 3 },
+      ],
+    },
+    "restore_rows_res.json": {
+      restore_epoch: 2,
+      restore_seq: 4,
+      rows: frozenRows(),
+      next_after: frozenRows()[1].id,
+      has_more: true,
+    },
+    "restore_rows_res.last.json": {
+      restore_epoch: 2,
+      restore_seq: 4,
+      rows: [frozenRows()[1]],
+      has_more: false,
+    },
+    // A vault that was never restored.
+    "restore_rows_res.empty.json": {
+      restore_epoch: 0,
+      restore_seq: 0,
+      rows: [],
+      has_more: false,
+    },
     "checkpoint_put_res.json": { seq: 7 },
     "checkpoint_stale_res.json": { error: "checkpoint_stale", stored_seq: 9 },
     "items_res.json": {
       items: listed(),
       as_of_seq: 7,
       vk_epoch: 1,
-      restore_epoch: 0,
+      restore_epoch: 2,
+      restore_seq: 4,
       next_after: listed()[1].id,
       has_more: true,
     },
@@ -346,6 +398,7 @@ export function fixtures() {
       as_of_seq: 7,
       vk_epoch: 1,
       restore_epoch: 0,
+      restore_seq: 0,
       has_more: false,
     },
     "sync_event.json": { seq: 7 },
@@ -387,6 +440,7 @@ export const ERROR_CODES = [
   "busy",
   "checkpoint_stale",
   "checkpoint_invalid",
+  "restore_epoch_changed",
 ];
 
 /**
@@ -428,6 +482,7 @@ export const STATUS_OF = {
   busy: 503,
   checkpoint_stale: 409,
   checkpoint_invalid: 422,
+  restore_epoch_changed: 409,
 };
 
 /**
@@ -615,6 +670,10 @@ export function invalidCases() {
   parse("login_start_req without ke1", "login_start_req", with_("login_start_req.json", { ke1: undefined }), "ke1 is required", "bad_request");
   parse("session_res without email", "session_res", with_("session_res.json", { email: undefined }), "email is required");
   parse("changes_res without has_more", "changes_res", with_("changes_res.json", { has_more: undefined }), "has_more is required");
+  parse("changes_res without restore_seq", "changes_res", with_("changes_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("changes_res restore_seq 2^53", "changes_res", with_("changes_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("changes_res restore_seq negative", "changes_res", with_("changes_res.json", { restore_seq: -1 }), "an integer is not negative");
+  parse("changes_res restore_seq is a string", "changes_res", with_("changes_res.json", { restore_seq: "4" }), "restore_seq is a number");
   parse("conflict_res without deleted", "conflict_res", with_("conflict_res.live.json", { deleted: undefined }), "deleted is required");
 
   // Wrong types.
@@ -858,6 +917,30 @@ export function invalidCases() {
   validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");
   validate("batch results: 101", "batch_res", manyResults(101), "a batch answer has 1 to 100 results");
 
+  // The condition on the restore epoch: the same number rules in the three requests.
+  for (const [what, shape, file] of [
+    ["put_item_req", "put_item_req", "put_item_req.restore_epoch.json"],
+    ["batch_req operation", "batch_req", "batch_req.json"],
+    ["checkpoint_put_req", "checkpoint_put_req", "checkpoint_put_req.restore_epoch.json"],
+  ]) {
+    const withEpoch = (literal) => {
+      const raw = text(all[file]);
+      const marked = raw.replace('"restore_epoch":2', `"restore_epoch":${literal}`);
+      if (marked === raw) throw new Error(`no restore_epoch in ${what}`);
+      return marked;
+    };
+    for (const [name, literal] of [
+      ["2^53", "9007199254740992"],
+      ["negative", "-1"],
+      ["a fraction", "1.5"],
+      ["a string", '"2"'],
+      ["true", "true"],
+      ["an array", "[2]"],
+    ]) {
+      parse(`${what} restore_epoch ${name}`, shape, withEpoch(literal), "restore_epoch is a whole number from 0 to 2^53 - 1");
+    }
+  }
+
   // A checkpoint upload, the answers, the listing and an event.
   parse("checkpoint_put_req digest 31 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { digest: b64("short digest", 31) }), "a digest is 32 bytes");
   parse("checkpoint_put_req mac 33 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { mac: b64("long mac", 33) }), "a MAC is 32 bytes");
@@ -876,6 +959,9 @@ export function invalidCases() {
   parse("items_res next_after is a number", "items_res", with_("items_res.json", { next_after: 5 }), "an id is a string");
   parse("items_res without as_of_seq", "items_res", with_("items_res.json", { as_of_seq: undefined }), "as_of_seq is required");
   parse("items_res without restore_epoch", "items_res", with_("items_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("items_res without restore_seq", "items_res", with_("items_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("items_res restore_seq 2^53", "items_res", with_("items_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("items_res restore_seq 1.5", "items_res", with_("items_res.json", { restore_seq: 1.5 }), "an integer is whole");
   parse("items_res without has_more", "items_res", with_("items_res.json", { has_more: undefined }), "has_more is required");
   parse("items_res has_more is a string", "items_res", with_("items_res.json", { has_more: "true" }), "has_more is a boolean");
   validate("items_res: more rows without next_after", "items_res", with_("items_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
@@ -884,6 +970,63 @@ export function invalidCases() {
   parse("items_res as_of_seq 2^53", "items_res", with_("items_res.json", { as_of_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
   nested("items_res: unknown field in an item", "items_res", "items_res.json", ["items", 0], "an unknown field is refused inside a part");
   nested("batch_req: unknown field in an operation", "batch_req", "batch_req.json", ["ops", 0], "an unknown field is refused inside a part");
+  // The answer to a write that names another restore epoch.
+  parse("restore_epoch_changed_res with another code", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { error: "conflict" }), "the code is restore_epoch_changed");
+  parse("restore_epoch_changed_res with an empty code", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { error: "" }), "the code is restore_epoch_changed");
+  parse("restore_epoch_changed_res without restore_epoch", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("restore_epoch_changed_res restore_epoch 2^53", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_epoch_changed_res restore_epoch negative", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: -1 }), "an integer is not negative");
+  // A batch result that names the epoch has its own form.
+  const epochResult = { status: 409, error: "restore_epoch_changed", restore_epoch: 3 };
+  for (const [name, result] of [
+    ["restore_epoch_changed with status 422", { ...epochResult, status: 422 }],
+    ["restore_epoch_changed with status 200", { ...epochResult, status: 200 }],
+    ["restore_epoch_changed without restore_epoch", { status: 409, error: "restore_epoch_changed" }],
+    ["restore_epoch_changed with rev", { ...epochResult, rev: 2 }],
+    ["restore_epoch_changed with current_rev", { ...epochResult, current_rev: 2 }],
+    ["restore_epoch_changed with deleted", { ...epochResult, deleted: true }],
+    ["restore_epoch on a refusal", { status: 422, error: "idem_reuse", restore_epoch: 3 }],
+    ["restore_epoch on a stored result", { ...stored, restore_epoch: 3 }],
+    ["restore_epoch on a conflict", { ...conflictDeleted, restore_epoch: 3 }],
+    ["restore_epoch alone", { status: 409, restore_epoch: 3 }],
+  ]) {
+    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result that names the restore epoch has status 409, the code restore_epoch_changed and the epoch, and no field of another form");
+  }
+  parse("batch result restore_epoch 2^53", "batch_res", results({ ...epochResult, restore_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+
+  // The frozen rows of a restore.
+  parse("restore_rows_res without restore_epoch", "restore_rows_res", with_("restore_rows_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("restore_rows_res without restore_seq", "restore_rows_res", with_("restore_rows_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("restore_rows_res without rows", "restore_rows_res", with_("restore_rows_res.json", { rows: undefined }), "rows is required");
+  parse("restore_rows_res without has_more", "restore_rows_res", with_("restore_rows_res.json", { has_more: undefined }), "has_more is required");
+  parse("restore_rows_res has_more is a string", "restore_rows_res", with_("restore_rows_res.json", { has_more: "true" }), "has_more is a boolean");
+  parse("restore_rows_res rows is an object", "restore_rows_res", with_("restore_rows_res.json", { rows: {} }), "rows is a list");
+  parse("restore_rows_res rows holds a string", "restore_rows_res", with_("restore_rows_res.json", { rows: ["x"] }), "a row is an object");
+  parse("restore_rows_res restore_seq 2^53", "restore_rows_res", with_("restore_rows_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_rows_res next_after upper case", "restore_rows_res", with_("restore_rows_res.json", { next_after: frozenRows()[1].id.toUpperCase() }), "an id is lower case");
+  parse("restore_rows_res next_after short", "restore_rows_res", with_("restore_rows_res.json", { next_after: frozenRows()[1].id.slice(1) }), "an id is 32 characters");
+  validate("restore_rows_res: more rows without next_after", "restore_rows_res", with_("restore_rows_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
+  validate("restore_rows_res: the last page with next_after", "restore_rows_res", with_("restore_rows_res.last.json", { next_after: frozenRows()[1].id }), "next_after is there exactly when has_more is true");
+  const rowsWith = (index, fields) => {
+    const value = clone("restore_rows_res.json");
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete value.rows[index][key];
+      else value.rows[index][key] = v;
+    }
+    return text(value);
+  };
+  const live = frozenRows().findIndex((row) => row.hash !== undefined);
+  parse("restore_rows_res row hash 31 bytes", "restore_rows_res", rowsWith(live, { hash: b64("short hash", 31) }), "a hash is 32 bytes");
+  parse("restore_rows_res row hash 33 bytes", "restore_rows_res", rowsWith(live, { hash: b64("long hash", 33) }), "a hash is 32 bytes");
+  parse("restore_rows_res row hash with padding", "restore_rows_res", rowsWith(live, { hash: `${b64("hash", 32)}=` }), "not strict base64url");
+  parse("restore_rows_res row id upper case", "restore_rows_res", rowsWith(0, { id: frozenRows()[0].id.toUpperCase() }), "an id is lower case");
+  parse("restore_rows_res row without id", "restore_rows_res", rowsWith(0, { id: undefined }), "id is required");
+  parse("restore_rows_res row without rev", "restore_rows_res", rowsWith(0, { rev: undefined }), "rev is required");
+  parse("restore_rows_res row without seq", "restore_rows_res", rowsWith(0, { seq: undefined }), "seq is required");
+  parse("restore_rows_res row rev 2^53", "restore_rows_res", rowsWith(0, { rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_rows_res row seq negative", "restore_rows_res", rowsWith(0, { seq: -1 }), "an integer is not negative");
+  nested("restore_rows_res: unknown field in a row", "restore_rows_res", "restore_rows_res.json", ["rows", 0], "an unknown field is refused inside a part");
+
   parse("sync_event seq is a string", "sync_event", with_("sync_event.json", { seq: "7" }), "seq is a number");
   parse("sync_event without seq", "sync_event", "{}", "seq is required");
   parse("sync_event seq 2^53", "sync_event", with_("sync_event.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
