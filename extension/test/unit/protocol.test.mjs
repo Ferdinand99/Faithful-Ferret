@@ -255,3 +255,20 @@ test("a_frame_id_of_the_size_firefox_gives_to_sub_frames_is_accepted", () => {
   refuses(() => encode("fill", { ref: "h1", tab_id: 1, frame_id: Number.MAX_SAFE_INTEGER + 2 }), "bad_shape");
   refuses(() => encode("fill", { ref: "h1", tab_id: 1, frame_id: -1 }), "bad_shape");
 });
+
+test("the_frame_id_bounds_are_exact_and_only_whole_numbers_pass", () => {
+  const max = Number.MAX_SAFE_INTEGER;
+  for (const ok of [0, 1, 2_147_483_648, 17_179_869_185, max]) {
+    assert.equal(decode(encode("candidates", { tab_id: 1, frame_id: ok }), UI_TYPES).body.frame_id, ok, String(ok));
+  }
+  for (const bad of [max + 1, max + 2, -1, 1.5, Number.NaN, Infinity, "17179869185", null, undefined, 1e300]) {
+    refuses(() => encode("candidates", { tab_id: 1, frame_id: /** @type {any} */ (bad) }), "bad_shape");
+  }
+  // From the wire: a number that JSON cannot hold exactly is not a safe integer, so it is refused as well.
+  const wire = (/** @type {string} */ frame) => `{"v":1,"id":"a1","type":"candidates","body":{"tab_id":1,"frame_id":${frame}}}`;
+  assert.equal(decode(wire("9007199254740991"), UI_TYPES).body.frame_id, max);
+  refuses(() => decode(wire("9007199254740993"), UI_TYPES), "bad_shape");
+  refuses(() => decode(wire("17179869185.5"), UI_TYPES), "bad_shape");
+  // The tab id keeps its 32-bit bound: Firefox tab ids are small counters.
+  refuses(() => encode("candidates", { tab_id: 2_147_483_648, frame_id: 0 }), "bad_shape");
+});

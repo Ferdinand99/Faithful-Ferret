@@ -34,19 +34,21 @@ Window 17 minutes for each cell; the numbers are the same in Release 159.0.1 and
 
 | Scenario | MV3 | MV2 (`persistent: true`) |
 |---|---|---|
-| `idle` | The browser ended the page 30.0 s after the start (`onSuspend` at 30.0 s, state `stopped` at 30.1 to 30.3 s). The next page started at 54 to 61 s (the heartbeat). | Lived the whole 17 minutes: one start, no `suspend`, 16 to 17 heartbeats. |
+| `idle` | The browser ended the page 30.0 s after the start (`onSuspend` at 30.0 s, state `stopped` at 30.1 to 30.3 s). The next page started at 54 to 61 s (the heartbeat). 18 starts of the page in the 17 minutes. | Lived the whole 17 minutes: one start, no `suspend`, 16 to 17 heartbeats. |
 | `sse` | Ended at 30.0 s with the stream open. | Lived the whole window. |
 | `popup` | Ended at 30.0 s with the popup page open as a tab. | Lived the whole window. |
 | `argon` | Ended at 30.0 s while the job loop ran (14 jobs of about 2.1 s were done by then); the loop and the vault worker are gone in the next page. | Lived the whole window; 435 (Release) and 437 (ESR) jobs of 2.0 to 2.2 s. |
 | `terminate` | After Terminate the page is `stopped`; the next message starts a new page that is **locked** and has **no `lockAt`**. | Same: Terminate works on the persistent page, and the next message starts a locked page with no `lockAt`. |
 
-The rest of the MV3 log, for the next task to know: after the first 30 seconds a page lives about 60 seconds. The browser ends every page 30 seconds after the last event (the heartbeat, which comes each minute); and in most cases a new page starts about 30 milliseconds later with no event of ours in between (also with an `onSuspend` listener that writes nothing). The cause was not found. It does not matter for the vault, because every new page is locked, and it means that a page that the alarm has woken is never gone for long. The heartbeat reached the page 16 or 17 times in 17 minutes in every cell.
+The MV2 deadline also fired on time in every MV2 cell: the first log entry that says "locked" is at 900 to 967 seconds (the first heartbeat after the 15-minute deadline), and in the `argon` cell the running job loop failed with `vault_locked` at 900.0 seconds, which is why it stopped at 435 and 437 jobs.
+
+The rest of the MV3 log: after the first 30 seconds a page lives about 60 seconds. The browser ends every page 30 seconds after the last event (the heartbeat, which comes each minute). After every page that the heartbeat had woken (not after the first page, which waits for the next heartbeat) a new page started 23 to 115 milliseconds later, with no event of ours in between, also with an `onSuspend` listener that writes nothing. That points at Firefox starting the page again for the alarm it holds for the extension; the cause was not found. It does not matter for the vault, because every new page is locked. The heartbeat reached the page 16 or 17 times in 17 minutes in every cell.
 
 The reports of the run (every entry of every cell, the browser's state timeline, the Argon2id times) are `lifetime-release.json` and `lifetime-esr.json` in `test-results/out/ext-measure/`; they are not committed.
 
-## The Firefox APIs the plan relies on
+## The Firefox APIs the extension relies on
 
-Result in Firefox Release 159.0.1 and ESR 153.6.0. Where the two builds or the two manifest versions differ, the row says so; otherwise the result is the same in all four. "Since" is the oldest version that was measured; the probes ran only in 153.6.0 and 159.0.1, so no row claims an earlier one.
+Result in Firefox Release 159.0.1 and ESR 153.6.0. Where the two builds or the two manifest versions differ, the row says so; otherwise the result is the same in all four. The probes ran only in these two versions, so no row says in which earlier version an API appeared; the oldest version that every row holds in is ESR 153.6.0. The API probe fails when a row has another status than this table gives it (`documentedStatus` in `03-api-probe.spec.mjs`), so a change in Firefox has to change this table.
 
 | API | Result | What the code does |
 |---|---|---|
@@ -79,7 +81,7 @@ Result in Firefox Release 159.0.1 and ESR 153.6.0. Where the two builds or the t
 
 ### The minimum Firefox version
 
-`strict_min_version` is `153.0`, the current ESR. Everything the plan needs exists in ESR 153.6.0, apart from the screen-lock state and `storage.session.setAccessLevel`, which neither build has and the plan can do without. No row needed a newer Release.
+`strict_min_version` is `153.0`, the current ESR. Everything the extension needs exists in ESR 153.6.0, apart from the screen-lock state and `storage.session.setAccessLevel`, which neither build has and the extension can do without. No row needed a newer Release.
 
 ### When an API is missing
 
@@ -97,15 +99,30 @@ scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2]
 
 `measure` writes `lifetime-<channel>.json` into `test-results/out/ext-measure/`. The API probe prints one `probe-row {json}` line per row and per run.
 
+## Signing the measurement build
+
+The workflow `.github/workflows/extension-sign-measure.yml` ("Extension sign measurement build") builds the test variant and signs it with Mozilla, unlisted, so that it can be installed for good in an ordinary Firefox. It runs only when started by hand (`workflow_dispatch`), signs one build for each run (the manifest version is an input: `mv3` or `mv2`), and gives every attempt of every run a version of its own. It refuses to sign anything that is not the test variant (the add-on id must be `ferret-test@hedgerow.tools`).
+
+The two AMO API values are secrets of a GitHub **environment** named `amo-signing`, not repository secrets. That is what makes every signing wait for a click and keeps the values away from every other branch and workflow. Set it up once:
+
+1. In the repository on GitHub: Settings, Environments, "New environment", name it `amo-signing`.
+2. On the environment, under "Required reviewers", tick it and add yourself. Leave "Prevent self-review" off (you start the run and you approve it). Save.
+3. Under "Deployment branches and tags" choose "Selected branches and tags" and add the rule `ext`. A run started on any other branch is then refused the secrets.
+4. Under "Environment secrets" add `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` (the values from your AMO developer hub API credentials). Then delete the repository secrets of the same names (Settings, Secrets and variables, Actions), so no other workflow can read them.
+5. The file must also be on `main` before GitHub lists the workflow (a copy of it on `main` is enough; it cannot do anything there, because `main` has no `extension/` folder). Start a run on the `ext` branch: `gh workflow run extension-sign-measure.yml --ref ext -f manifest=mv2` (and again with `mv3`). The run stops at "Waiting for review"; open it in the Actions tab, click "Review deployments", tick `amo-signing` and approve. Only then does the signing job start.
+6. Download the artifact `ferret-measure-<manifest>-signed` (the repository is public, so the artifact is kept for one day only) and install it as below.
+
 ## The measurement by hand
 
-The numbers above are headless, in a container. The same measurement is made by hand in an ordinary Firefox, with the signed, unlisted build of the test variant (the workflow "Extension sign measurement build" makes it; the manifest version is an input, `mv3` for the plan and `mv2` to compare). About ten minutes of work and twenty minutes of waiting:
+The numbers above are headless, in a container. The same measurement is made by hand in an ordinary Firefox, with the signed, unlisted build of the test variant. About ten minutes of work and twenty minutes of waiting. Start with the MV2 build, which is the default now, and repeat with MV3 to confirm the 30 seconds.
 
 1. Install the `.xpi` (the menu of `about:addons`, "Install Add-on From File").
-2. Open the settings of "Faithful Ferret (test)" in `about:addons` and follow the link "Open the lifetime measurement page".
-3. Choose "Vault open, no page, no network" and click Start. When the page says that the scenario started, **close the tab and `about:debugging`**, and do not open any page of the extension.
+2. Open the settings of "Faithful Ferret (test)" in `about:addons` and follow the link "Open the lifetime measurement page". **Bookmark that page** (Ctrl+D) so you can open it again without the settings view.
+3. Choose "Vault open, no page, no network" and click Start. When the page says that the scenario started, **close the measurement page, `about:addons` (the settings view is a page of the extension too) and `about:debugging`**, and do not open any page of the extension.
 4. Wait twenty minutes.
-5. Open the measurement page the same way. The line at the top says when the browser first announced the end of the page and when the page started again. Copy the grey box below it (the whole log) for the record.
+5. Open the page from the bookmark. The line at the top says when the browser first announced the end of the page and when the page started again. Copy the grey box below it (the whole log) for the record.
+
+Opening the measurement page does not start the background page; if the log ends with a start of the page after the last heartbeat, it was caused by reopening (for example through the settings view, which does start it) and not by the measurement.
 
 What to expect: with the MV3 build the browser ends the page after about 30 seconds and the line says so. With the MV2 build it says "never".
 

@@ -1,17 +1,17 @@
-// What the Firefox extension plan relies on: does each API exist, does it work,
-// and in which Firefox? One probe per row of docs/EXTENSION-FIREFOX.md, run in the
+// What the Firefox extension relies on: does each API exist, does it work, and in
+// which Firefox? One probe per row of docs/EXTENSION-FIREFOX.md, run in the
 // unbranded Release and in ESR, for both manifest versions. The probes are short
 // (about a minute and a half for each channel and manifest version) and run with
-// every Firefox probe run and in CI.
+// every Firefox run and in CI.
 //
 // The test reports every row (one `probe-row {json}` line each on stderr, and a
-// JSON file when FERRET_PROBE_OUT is set) and fails when a row is missing or when
-// a probe itself broke. A row that says "absent" or "fails" is a result, not a
-// failure of the test: that is what the probe is for, and the document says what
-// the plan does when an API is missing.
+// JSON file when FERRET_PROBE_OUT is set) and fails when a row is missing, when a
+// probe itself broke, or when a row has another status than the document gives it
+// (`documentedStatus` below): a Firefox that changes an answer must change the
+// document, and the code that relied on the answer, in the same step.
 //
 // Statuses: works, partial (works with a limit the detail names), absent (the API
-// is not there), fails (it is there and does not do what the plan needs),
+// is not there), fails (it is there and does not do what the code needs),
 // not_applicable (the row is about the other manifest version), error (the probe
 // broke; the test fails).
 import assert from "node:assert/strict";
@@ -57,6 +57,18 @@ export const ROWS = Object.freeze([
   "chrome_context.context_menu",
   "chrome_context.terminate_background",
 ]);
+
+/**
+ * The status of each row in docs/EXTENSION-FIREFOX.md: "works" unless it is listed here.
+ * @param {string} name
+ * @param {"mv3" | "mv2"} manifest
+ */
+function documentedStatus(name, manifest) {
+  if (name === "storage.session.setAccessLevel" || name === "idle.onStateChanged.locked") return "absent";
+  if (name === "scripting.executeScript.opaque_frames") return manifest === "mv3" ? "works" : "partial";
+  if (name === "optional_host_permissions") return manifest === "mv3" ? "works" : "not_applicable";
+  return "works";
+}
 
 const MANIFESTS = /** @type {const} */ (["mv3", "mv2"]);
 const OUT = process.env.FERRET_PROBE_OUT;
@@ -603,9 +615,10 @@ test("api_probe_reports_every_row", async () => {
       assert.equal(new Set(names).size, names.length, `${channel} ${manifest}: a row is reported twice`);
       const broken = rows.filter((r) => r.status === "error");
       assert.deepEqual(broken.map((r) => `${r.row}: ${JSON.stringify(r.detail)}`), [], `${channel} ${manifest}: probes that broke`);
-      // What the whole extension stands on: WebAssembly and module workers under the extension's CSP.
-      for (const name of ["wasm.instantiate_under_csp", "wasm.module_workers_under_csp"]) {
-        assert.equal(rows.find((r) => r.row === name)?.status, "works", `${channel} ${manifest}: ${name}: ${JSON.stringify(rows.find((r) => r.row === name)?.detail)}`);
+      // Every row has the status that docs/EXTENSION-FIREFOX.md gives it. A Firefox that changes one makes the run fail
+      // here, and the document has to be updated with the code that relied on the old answer.
+      for (const r of rows) {
+        assert.equal(r.status, documentedStatus(r.row, manifest), `${channel} ${manifest}: ${r.row} is not as docs/EXTENSION-FIREFOX.md says: ${JSON.stringify(r.detail)}`);
       }
     }
   }

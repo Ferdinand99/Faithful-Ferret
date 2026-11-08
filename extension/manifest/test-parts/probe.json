@@ -1,4 +1,4 @@
 {
-  "permissions": ["clipboardWrite", "scripting", "webNavigation"],
+  "permissions": ["clipboardWrite", "webNavigation"],
   "optional_host_permissions": ["https://*/*"]
 }

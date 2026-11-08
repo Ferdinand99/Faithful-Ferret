@@ -175,7 +175,7 @@ export async function runLifetimeCell({ channel, manifest, scenario, windowMs, p
       summary,
       jobsMs: entries.filter((/** @type {{ kind: string }} */ e) => e.kind === "job_done").map((/** @type {{ ms: number }} */ e) => e.ms),
       outcome: {
-        lived_whole_window: summary.suspends === 0 && !firstGone,
+        lived_whole_window: summary.suspends === 0 && summary.boots === 1 && !firstGone,
         first_suspend_after_ms: summary.firstSuspendAfterMs,
         restart_after_ms: summary.restartAfterMs,
         browser_stopped_it_after_ms: firstGone ? firstGone.at - origin : null,

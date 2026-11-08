@@ -212,7 +212,7 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
     mergeInto(merged, part, label);
   }
   if (variant === "test") {
-    // Only the test variant: a test command and a menu item for the browser tests.
+    // Only the test variant: a test command and menu item, an options page and the permissions the browser probes need.
     for (const name of listDir(join(dir, "test-parts")).filter((n) => n.endsWith(".json"))) {
       const part = readJson(join(dir, "test-parts", name));
       const label = `manifest/test-parts/${name}`;

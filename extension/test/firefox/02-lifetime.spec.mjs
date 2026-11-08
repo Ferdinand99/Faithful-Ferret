@@ -1,6 +1,6 @@
 // How the background page of the test build lives in real Firefox: the short
-// checks that run with every Firefox probe (XF). The full matrix, with a window of
-// 17 minutes for each cell, is 02-lifetime.measure.spec.mjs (XM).
+// checks that run with every Firefox run. The full matrix, with a window of
+// 17 minutes for each cell, is 02-lifetime.measure.spec.mjs (`scripts/lanbox-ext.sh measure`).
 //
 //   * the lifetime log records the start, the scenario and a heartbeat;
 //   * a background that the browser ends (as the Terminate button of about:debugging

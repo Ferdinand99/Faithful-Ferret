@@ -185,8 +185,7 @@ fi'
       --exclude='extension/dist' \
       extension web/wasm.lock.json scripts/check-ext-release.sh scripts/lanbox-ext.sh \
       scripts/check-lanbox-ext-labels.sh docker/ext-runner.Dockerfile \
-      .github/workflows/extension-firefox.yml .github/workflows/extension-sign-measure.yml \
-      .github/workflows/extension.yml .github/workflows/release.yml .github/workflows/ci.yml \
+      .github/workflows \
       docs/design/phase-1-security-design.md
   }
 
