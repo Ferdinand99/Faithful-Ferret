@@ -40,6 +40,7 @@ pub mod backup;
 pub mod build_info;
 pub mod cli;
 pub mod config;
+pub mod data_lock;
 pub mod db;
 #[cfg(feature = "e2e-clock")]
 pub mod e2e_clock;

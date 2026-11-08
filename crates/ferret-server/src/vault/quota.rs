@@ -25,12 +25,14 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// The limits of a vault: 64 KiB per envelope, 10 000 live rows, 10 000
-    /// tombstones, 256 MiB.
+    /// The limits of a vault: 64 KiB per envelope, 10 000 live rows, 40 000
+    /// tombstones, 256 MiB. The tombstone limit is high on purpose: a tombstone
+    /// stays for 400 days, and someone who deletes a lot must not be stopped
+    /// before the first ones are purged.
     pub const DEFAULT: Limits = Limits {
         max_envelope: 65_536,
         max_items: 10_000,
-        max_tombstones: 10_000,
+        max_tombstones: 40_000,
         max_bytes: 256 * 1024 * 1024,
     };
 }
@@ -61,7 +63,7 @@ mod tests {
         let limits = Limits::default();
         assert_eq!(limits.max_envelope, 65_536);
         assert_eq!(limits.max_items, 10_000);
-        assert_eq!(limits.max_tombstones, 10_000);
+        assert_eq!(limits.max_tombstones, 40_000);
         assert_eq!(limits.max_bytes, 268_435_456);
     }
 
