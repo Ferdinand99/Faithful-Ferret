@@ -10,7 +10,7 @@
 // secrets of the run by `08-plaintext.spec.mjs`.
 import { expect, test as base } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 export { expect };
 
@@ -89,7 +89,7 @@ export const findings = {
 const WATCH = `
   document.addEventListener("securitypolicyviolation", (e) => {
     try {
-      window.__e2eViolation(e.violatedDirective + " " + e.blockedURI + " " + (e.sample || ""));
+      window.__e2eViolation(e.violatedDirective + " " + e.blockedURI + " " + (e.sample || "") + " " + e.sourceFile + ":" + e.lineNumber + " in " + location.href);
     } catch {}
   });
 `;
@@ -349,9 +349,24 @@ export async function signInHere(page, { remember = true, expectList = true } = 
   } else if (await page.locator('[data-role="sk-code"]').isVisible()) {
     await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
   }
-  await pace();
-  await page.locator('[data-role="credentials"] [data-role="submit"]').click();
-  if (expectList) await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: SLOW });
+  // The server's limit counts the starts of earlier phases too, which this process does not know of: when it says so, the
+  // wait it names is taken and the form is sent again.
+  const limit = page.locator('[data-role="error"]').filter({ hasText: /Too many attempts/ });
+  for (let tries = 0; ; tries += 1) {
+    await pace();
+    await page.locator('[data-role="credentials"] [data-role="submit"]').click();
+    if (!expectList) return;
+    // The message of the try that was refused goes when the next one starts.
+    if (tries > 0) await limit.first().waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
+    const outcome = await Promise.race([
+      page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).then(() => "list", () => "timeout"),
+      limit.waitFor({ timeout: SLOW }).then(() => "limited", () => "timeout"),
+    ]);
+    if (outcome !== "limited" || tries >= 5) break;
+    const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
+    await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
+  }
+  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 5_000 });
 }
 
 /**
@@ -557,4 +572,216 @@ export async function evilSession(context) {
   const cookie = (await context.cookies(vaultUrl)).find((c) => c.name === "__Host-ferret_sid");
   if (!cookie) throw new Error("this context has no vault session");
   return cookie.value;
+}
+
+// ------------------------------------------------------ the sync scenarios
+
+/**
+ * The account of the run, for the scenarios that need an account that already exists: the one an
+ * earlier phase left (FERRET_E2E_STATE), or the one 01-setup made in the same run.
+ */
+export function useAccount() {
+  if (process.env.FERRET_E2E_STATE) {
+    adopt(previousState());
+    // A worker that starts again (after a failure) reads the account from this file.
+    remember();
+  } else {
+    requireAccount();
+  }
+}
+
+/**
+ * A new device: a fresh context of the browser, signed in, with its list on the screen.
+ * @param {import("@playwright/test").Browser} browser
+ */
+export async function newDevice(browser) {
+  const context = await freshContext(browser);
+  const page = await context.newPage();
+  await signInOn(page);
+  return { context, page };
+}
+
+/**
+ * Waits until everything this device wrote has gone to the server (the outbox is empty) and the status does not say that
+ * the sync is waiting or stopped. (A screen that was built after the last event shows its first word, "Syncing", until the
+ * next event, so the word "Up to date" is not waited for.)
+ * @param {import("@playwright/test").Page} page
+ */
+export async function synced(page, timeout = 30_000) {
+  await expect
+    .poll(
+      async () => {
+        const state = await page.locator('[data-role="sync-status"]').getAttribute("data-state");
+        if (state !== null && /^(failed|halted|offline|retrying|unauthorized)$/.test(state)) return `status ${state}`;
+        return (await readStores(page)).outbox.count === 0 ? "sent" : "waiting";
+      },
+      { timeout, message: "everything written here is on the server" },
+    )
+    .toBe("sent");
+}
+
+/**
+ * The id of the first list row with this name (the list must be on the screen).
+ * @param {import("@playwright/test").Page} page @param {string} name
+ */
+export async function itemIdOf(page, name) {
+  const id = await rowsNamed(page, name).first().getAttribute("data-id");
+  if (!id) throw new Error(`no list row named ${name}`);
+  return id;
+}
+
+/**
+ * Opens an item from the list.
+ * @param {import("@playwright/test").Page} page @param {string} name
+ */
+export async function openItem(page, name) {
+  await openList(page);
+  await rowsNamed(page, name).locator('[data-role="item-link"]').first().click();
+  await expect(page.locator('[data-role="item"] h1')).toContainText(name);
+}
+
+/**
+ * Edits an item through the form and saves it. Returns when the item page shows the new name.
+ * @param {import("@playwright/test").Page} page
+ * @param {string} name the name now
+ * @param {{ name?: string, username?: string, notes?: string, password?: string }} change
+ * @param {{ waitForName?: boolean }} [options] `waitForName: false`: do not wait for the item page to show the new name (a
+ * change that the server is going to refuse shows the old one)
+ */
+export async function editItem(page, name, change, { waitForName = true } = {}) {
+  await openItem(page, name);
+  await page.locator('[data-role="edit"]').click();
+  await expect(page.locator('[data-role="edit-form"]')).toBeVisible();
+  if (change.name !== undefined) await page.locator('[data-role="name"]').fill(change.name);
+  if (change.username !== undefined) await page.locator('[data-role="username"]').fill(change.username);
+  if (change.password !== undefined) await page.locator('[data-role="password"]').fill(change.password);
+  if (change.notes !== undefined) {
+    // The notes of an item that has some are read into the form only on request.
+    const load = page.locator('[data-role="load-notes"]');
+    if (await load.count()) await load.click();
+    await page.locator('[data-role="notes"]').fill(change.notes);
+  }
+  await page.locator('[data-role="save"]').click();
+  if (waitForName) await expect(page.locator('[data-role="item"] h1')).toContainText(change.name ?? name, { timeout: 30_000 });
+  else await expect(page.locator('[data-role="item"]')).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * The change feed as the server has it now, read with the session of the context.
+ * @param {import("@playwright/test").BrowserContext} context
+ * @returns {Promise<{ changes: { id: string, rev: number, seq: number, deleted: boolean }[], latest_seq: number, restore_epoch: number }>}
+ */
+export async function feedOf(context) {
+  const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=0&limit=500`, { headers: { "Ferret-Protocol": "1" } });
+  if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
+  return response.json();
+}
+
+/**
+ * The revision the server holds for an item (0 when it holds no row).
+ * @param {import("@playwright/test").BrowserContext} context @param {string} id
+ */
+export async function serverRev(context, id) {
+  return (await feedOf(context)).changes.find((c) => c.id === id)?.rev ?? 0;
+}
+
+/**
+ * The sequence number of the checkpoint the server holds (0 when it holds none).
+ * @param {import("@playwright/test").BrowserContext} context
+ */
+export async function checkpointSeq(context) {
+  const response = await context.request.get(`${vaultUrl}/api/sync/checkpoint`, { headers: { "Ferret-Protocol": "1" } });
+  if (response.status() === 404) return 0;
+  if (response.status() !== 200) throw new Error(`the checkpoint answered ${response.status()}`);
+  return (await response.json()).seq;
+}
+
+/**
+ * Signs in a new device and waits until a checkpoint at the top of the feed is on the server. A device that has never
+ * uploaded one does so once its first check has passed. The device is closed again.
+ * @param {import("@playwright/test").Browser} browser
+ */
+export async function putCheckpointOnTop(browser) {
+  const { context, page } = await newDevice(browser);
+  try {
+    await synced(page);
+    await expect
+      .poll(async () => (await checkpointSeq(context)) >= (await feedOf(context)).latest_seq, { timeout: 60_000, message: "a checkpoint at the top of the feed" })
+      .toBe(true);
+  } finally {
+    await context.close();
+  }
+}
+
+/** The sync banner of a code. @param {import("@playwright/test").Page} page @param {string} code */
+export const syncBanner = (page, code) => page.locator(`[data-role="sync-banner"][data-code="${code}"]`);
+/** The one-shot banner of a warning code. @param {import("@playwright/test").Page} page @param {string} code */
+export const warningBanner = (page, code) => page.locator(`[data-role="banner"][data-banner="warning:${code}"]`);
+
+/** The names in the list on the screen. @param {import("@playwright/test").Page} page */
+export const listNames = (page) => page.locator('[data-role="item"] [data-role="item-link"]').allTextContents();
+
+// ------------------------------------------------------------ the shots
+
+/**
+ * Saves a screenshot of the page. The gate script collects it on the host into test-results/out/m2-shots from what the
+ * phase leaves on stdout (as JSON), so no mounted folder is needed. The browser's name is part of the name.
+ * @param {import("@playwright/test").Page} page @param {string} name
+ */
+export async function shot(page, name) {
+  const full = `${test.info().project.name}-${name}`.replace(/[^A-Za-z0-9._-]/g, "-");
+  mkdirSync(`${outDir}/m2-shots`, { recursive: true });
+  const png = await page.screenshot({ path: `${outDir}/m2-shots/${full}.png`, fullPage: true });
+  leave(`shot-${full}`, { name: full, png: png.toString("base64") });
+}
+
+/**
+ * Whether a policy violation is one that these scenarios leave out. Two kinds, neither a fault of what is tested here:
+ * the inline style attribute that the item form sets (dom.mjs), which is the known failure of ruling K50 (Firefox, and
+ * WebKit shows it too); and the style element that Playwright itself puts in a page to take a screenshot (it has no source
+ * file, and is blocked by the policy in WebKit).
+ * @param {string} browserName @param {string} violation
+ */
+function leftOut(browserName, violation) {
+  if (browserName === "firefox" && /^style-src-attr /.test(violation)) return true;
+  if (browserName === "webkit" && /^style-src-attr .*\/app\/dom\.mjs:79 /.test(violation)) return true;
+  return /^style-src-elem inline +:\d+ in /.test(violation);
+}
+
+/**
+ * After each test: no policy violation and no uncaught error in the pages the test made (apart from `leftOut`).
+ */
+export function noViolations() {
+  const mark = { violations: 0, errors: 0 };
+  test.beforeEach(() => {
+    mark.violations = findings.violations.length;
+    mark.errors = findings.pageErrors.length;
+  });
+  test.afterEach(({ browserName }) => {
+    const violations = findings.violations.slice(mark.violations).filter((v) => !leftOut(browserName, v));
+    expect(violations, "security policy violations during the test").toEqual([]);
+    expect(findings.pageErrors.slice(mark.errors), "uncaught errors during the test").toEqual([]);
+  });
+}
+
+// --------------------------------------------------------- the host's part
+
+/** Whether the run has a host script that does the Docker steps for `hostStep`. */
+export const existsHost = () => existsSync("/tmp/host-ready");
+
+/**
+ * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`
+ * or `clock-<seconds>`. The host script (scripts/lanbox-ferret-e2e-gate.sh m2) watches for the request file in the
+ * runner container, does the step and answers with a done file. The test is skipped when the run has no host script.
+ * @param {string} step
+ */
+export async function hostStep(step) {
+  if (!existsHost()) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
+  rmSync(`/tmp/host-done-${step}`, { force: true }); // the answer to an earlier request for the same step
+  writeFileSync(`/tmp/host-request-${step}`, "");
+  const until = Date.now() + 600_000;
+  while (!existsSync(`/tmp/host-done-${step}`)) {
+    if (Date.now() > until) throw new Error(`the host did not do ${step} within 10 minutes`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }

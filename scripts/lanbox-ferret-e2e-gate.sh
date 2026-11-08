@@ -9,6 +9,7 @@
 #   scripts/lanbox-ferret-e2e-gate.sh browsers   the scenarios in every browser (and the data search)
 #   scripts/lanbox-ferret-e2e-gate.sh restart    restart the container; lost opaque_setup refuses to start
 #   scripts/lanbox-ferret-e2e-gate.sh limits     session limits with the moved clock
+#   scripts/lanbox-ferret-e2e-gate.sh m2         the sync scenarios 10 to 16 in every browser
 #
 # Steps:
 #  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
@@ -21,6 +22,11 @@
 #     move the clock forward only, asking Ferret's guard about each session at
 #     every step: the vault session ends after 12 hours idle or 7 days in all, the
 #     admin session after 1 hour idle or 12 hours in all.
+#  4. The sync scenarios (step m2), in each browser on a fresh stack: the account, then
+#     10 conflict, 11 live updates, 12 offline, 13 trash, 14 a malicious server, 15 a
+#     restored server (with the browsers kept open while this script takes the snapshot
+#     and puts it back), 16 forget this server. The screenshots of every phase are
+#     saved in test-results/out/m2-shots/.
 #
 # Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
 # (default "chromium firefox webkit").
@@ -33,6 +39,8 @@ cd "$(dirname "$0")/.."
 
 browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
 main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 07-transport 08-plaintext 09-csp)
+m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
+shots_dir=test-results/out/m2-shots
 failures=0
 vault_origin=https://vault-e2e.test
 admin_origin=https://admin-e2e.test
@@ -259,6 +267,91 @@ limits_phase() {
   # The clock is not set back: the next e2e-up makes a new stack with no offset.
 }
 
+# ------------------------------------------------------------------------ m2
+
+# Saves the screenshots a phase left (each is a JSON file with the name and the PNG as base64 on
+# the phase's stdout, in the form of `left`: the name, the JSON, an empty line).
+save_shots() { # phase output
+  mkdir -p "$shots_dir"
+  printf '%s\n' "$1" | SHOTS_DIR="$shots_dir" node -e '
+const fs = require("fs");
+const lines = fs.readFileSync(0, "utf8").split(/\r?\n/);
+let n = 0;
+for (let i = 0; i < lines.length; i += 1) {
+  if (!lines[i].startsWith("shot-")) continue;
+  const shot = JSON.parse(lines[i + 1]);
+  if (!/^[A-Za-z0-9._-]+$/.test(shot.name)) continue;
+  fs.writeFileSync(process.env.SHOTS_DIR + "/" + shot.name + ".png", Buffer.from(shot.png, "base64"));
+  n += 1;
+}
+console.error("  shots: " + n + " saved in " + process.env.SHOTS_DIR);
+'
+}
+
+# A phase of the sync scenarios: the account of the run is in $2, the files follow.
+run_m2() { # phase name, state, browser, files...
+  local phase="$1" state="$2" browser="$3" rc=0
+  shift 3
+  FERRET_E2E_STATE="$state" run_phase "$phase" "$browser" "$@" || rc=$?
+  save_shots "$phase_out"
+  return "$rc"
+}
+
+# The same, with the browsers kept open while this script does the steps that the tests ask for
+# (a snapshot of the server's data, putting it back, moving the server's clock). A test asks by
+# writing /tmp/host-request-<step> in the runner container and waits for /tmp/host-done-<step>.
+run_m2_hosted() { # phase name, state, browser, files...
+  local phase="$1" state="$2" browser="$3" rc=0 out pid requests request step
+  shift 3
+  out="$(mktemp)"
+  (FERRET_E2E_STATE="$state" FERRET_E2E_PHASE="$phase" e2e_run "--project=$browser" "$@" > "$out") &
+  pid=$!
+  # The runner container has a fixed name (scripts/lanbox-ferret-test.sh, e2e_run).
+  for _ in $(seq 1 600); do
+    [ "$(dk inspect -f '{{.State.Running}}' ferret-e2e-playwright 2>/dev/null || true)" = true ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  dk exec ferret-e2e-playwright touch /tmp/host-ready 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null; do
+    requests="$(dk exec ferret-e2e-playwright sh -c 'ls /tmp/host-request-* 2>/dev/null' 2>/dev/null || true)"
+    for request in $requests; do
+      step="${request#/tmp/host-request-}"
+      dk exec ferret-e2e-playwright rm -f "$request"
+      say "host step for the tests: $step"
+      case "$step" in
+        snapshot) e2e_snapshot >&2 ;;
+        restore) e2e_restore_snapshot >&2 ;;
+        clock-[0-9]*) e2e_clock "${step#clock-}" >&2 ;;
+        *) bad "the tests asked for a step the host does not know: $step" ;;
+      esac
+      dk exec ferret-e2e-playwright touch "/tmp/host-done-$step" 2>/dev/null || true
+    done
+    sleep 2
+  done
+  wait "$pid" || rc=$?
+  phase_out="$(cat "$out")"
+  rm -f "$out"
+  save_shots "$phase_out"
+  return "$rc"
+}
+
+m2_phase() {
+  local browser state
+  for browser in $browsers; do
+    say "sync scenarios in $browser on a fresh stack"
+    e2e_up >&2
+    if ! run_phase m2-account "$browser" phase-m2-account; then
+      bad "$browser: the account for the sync scenarios was not made"
+      continue
+    fi
+    state="$(left "$phase_out" state)"
+    if run_m2 m2-sync "$state" "$browser" "${m2_sync_specs[@]}"; then ok "$browser: scenarios 10 to 14 passed"; else bad "$browser: scenarios 10 to 14 failed"; fi
+    if run_m2_hosted m2-restore "$state" "$browser" 15-restored; then ok "$browser: scenario 15 (restored server) passed"; else bad "$browser: scenario 15 (restored server) failed"; fi
+    if run_m2 m2-forget "$state" "$browser" 16-forget; then ok "$browser: scenario 16 (forget this server) passed"; else bad "$browser: scenario 16 (forget this server) failed"; fi
+  done
+}
+
 # ---------------------------------------------------------------------- main
 
 main_gate() {
@@ -266,9 +359,11 @@ main_gate() {
   case "${1:-all}" in
     all)
       browsers_phase
+      m2_phase
       limits_phase
       ;;
     browsers) browsers_phase ;;
+    m2) m2_phase ;;
     restart)
       first="$(printf '%s' "$browsers" | awk '{print $1}')"
       e2e_up >&2
