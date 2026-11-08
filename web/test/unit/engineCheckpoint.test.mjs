@@ -641,6 +641,35 @@ test("a_checkpoint_that_lists_the_old_hash_of_a_hidden_item_at_its_old_revision_
   d.engine.stop();
 });
 
+test("a_hidden_item_whose_floor_is_revision_1_keeps_its_mark_and_the_old_hash_is_a_pause", async () => {
+  // B was at revision 1 when the checkpoint was made. The server hides it; this device uploads its copy again, and the server
+  // numbers it from 1: the copy is revision 1 with a new envelope, and the checkpoint lists revision 1 with the old hash.
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A");
+  setRow(model, client, ID_B, 1, "Hidden B");
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  model.pinCheckpoint();
+  model.items.delete(ID_B);
+  model.seq += 4;
+  model.minValidSince = model.seq;
+  setRow(model, client, ID_A, 2, "A two");
+  await d.engine.syncNow();
+  await until(() => model.items.has(ID_B) && d.engine.list().find((i) => i.id === ID_B)?.missingOnServer === false, "B is back as a copy");
+  const marks = async () => (await d.store.getSetting(d.store.database.store, `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the mark stays: the copy is at the old floor itself");
+  assert.equal((await marks())[ID_B].rev, 1);
+  assert.equal(await d.engine.verifyNow(), "verify_deferred", "a pause, not a hard warning");
+  assert.deepEqual(standing(d), ["verify_deferred"]);
+  assert.equal(d.model.checkpointPuts.length, 0, "nothing is signed while it lasts");
+
+  // An edit that passes the old floor ends the mark.
+  await d.engine.update(ID_B, { name: "B two" }, 1);
+  await until(async () => model.items.get(ID_B).rev === 2 && !(ID_B in (await marks())), "the mark ends above the floor");
+  d.engine.stop();
+});
+
 test("a_row_below_its_floor_with_an_unrelated_mark_is_hard_and_not_deferred", async () => {
   // B was uploaded again (marked); the checkpoint of this moment lists the copy, so only the memory objects to B's old floor.
   const marked = await hiddenB();
@@ -775,7 +804,7 @@ test("a_409_on_a_reupload_with_the_cached_row_is_server_hid_item", async () => {
   d.engine.stop();
 });
 
-test("a_409_with_another_row_is_still_a_conflict_and_not_a_hidden_item", async () => {
+test("a_409_with_another_row_is_still_refused_and_not_a_hidden_item", async () => {
   const model = new Model();
   const client = createFakeClient();
   setRow(model, client, ID_A, 1, "A");
@@ -787,9 +816,12 @@ test("a_409_with_another_row_is_still_a_conflict_and_not_a_hidden_item", async (
   setRow(model, client, ID_B, 4, "B edited elsewhere"); // another row than the one this device holds
   model.minValidSince = model.seq;
   await d.engine.syncNow();
-  await until(() => d.events.error.some((e) => e.code === "conflict" && e.id === ID_B), "the upload is refused as a conflict");
+  // Nobody changed anything: the refusal of the automatic upload does not speak of a change (it is not a conflict to choose in).
+  await until(() => d.events.error.some((e) => e.code === "reupload_refused" && e.id === ID_B), "the upload is refused");
+  assert.equal(d.events.error.some((e) => e.code === "conflict"), false);
   assert.equal(warningEvents(d, "server_hid_item").length, 0);
-  assert.equal(d.engine.list().find((i) => i.id === ID_B).blocked, true);
+  const refused = d.engine.list().find((i) => i.id === ID_B);
+  assert.deepEqual([refused.blocked, refused.blockedReason, refused.conflict], [true, "reupload_refused", false], "refused, and not a conflict to choose in");
   d.engine.stop();
 });
 

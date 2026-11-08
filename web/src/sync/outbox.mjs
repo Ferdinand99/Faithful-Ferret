@@ -13,13 +13,16 @@
 //     200                           done: the entry leaves the outbox
 //     network, 5xx, 408, 429, a      sent again with the same bytes after a wait
 //       garbled answer               of 1, 2, 4, ... seconds (at most 60)
-//     409 (`conflict`)              not done and not sent again: the draft stays
-//                                   in the outbox and the engine hears of it
+//     409 (`conflict`)              done when it only shows our own write (see
+//                                   `alreadyDone`); otherwise not done and not
+//                                   sent again: the draft stays in the outbox and
+//                                   the engine hears of it
 //     400, 403, 413, 422            refused for good: same, with the server's code
 //     401                           sign in again: every lane waits for `resume()`
 //     404 and any other answer      not sent again; the draft stays
 // Nothing here reads or writes a decrypted field: an entry is ciphertext and
 // public numbers.
+import { b64u } from "../b64.mjs";
 
 /**
  * @typedef {import("../store/outbox.mjs").OutboxEntry} OutboxEntry
@@ -74,6 +77,27 @@ export function classify(error) {
   // A 200 that did not read as a write answer is a proxy page or a broken server: the write may have gone through.
   if (error.code === "bad_response" && error.status >= 200 && error.status < 300) return "retry";
   return "other";
+}
+
+/**
+ * Whether a 409 only shows that the write is already on the server. The server keeps an idempotency key for 30 days; a
+ * write that is sent again after that (the answer was lost) is judged against the row as it is now, and the row may be
+ * the very one this write made. Two cases count as done:
+ * - a live write, when the row in the 409 has the blob and the tag this write sent, byte for byte;
+ * - a tombstone, when the 409 says deleted at the revision this tombstone would have made (the tombstone itself is not in
+ *   the 409, so nothing is compared here; the engine removes nothing locally until the feed brings a tombstone that verifies).
+ * Anything else is a conflict.
+ * Spec: Fase 1 section 8.3 ("Idempotency").
+ * @param {OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+ * @returns {{ rev: number, seq: number, replayed: boolean } | null} the answer to report as done, or null
+ */
+export function alreadyDone(entry, error) {
+  const body = /** @type {any} */ (error?.body);
+  if (body === null || typeof body !== "object" || !Number.isSafeInteger(body.current_rev)) return null;
+  const done = { rev: /** @type {number} */ (body.current_rev), seq: 0, replayed: true };
+  if ("tomb" in entry.body) return body.deleted === true && body.current_rev === entry.baseRev + 1 ? done : null;
+  if (body.deleted === true || typeof body.blob !== "string" || typeof body.tag !== "string") return null;
+  return body.blob === b64u.encode(entry.body.blob) && body.tag === b64u.encode(entry.body.tag) ? done : null;
 }
 
 /** The path of an item write. */
@@ -137,7 +161,10 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
           if (stopped) return;
           const err = /** @type {import("../api.mjs").ApiError} */ (error);
           const kind = classify(err);
-          if (kind === "retry") {
+          const settled = kind === "conflict" ? alreadyDone(entry, err) : null;
+          if (settled !== null) {
+            answer = settled; // the server already holds this very write: done, and no conflict is shown
+          } else if (kind === "retry") {
             lane.attempt += 1;
             const delay = backoffMs(lane.attempt - 1, err.retryAfter);
             hooks.onRetry?.(entry, delay, err);
@@ -146,10 +173,11 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
               void pump(itemId);
             }, delay);
             return;
+          } else {
+            lane.blocked = kind;
+            hooks.onBlocked?.(entry, err, kind);
+            return;
           }
-          lane.blocked = kind;
-          hooks.onBlocked?.(entry, err, kind);
-          return;
         }
         if (stopped) return;
         lane.attempt = 0;
