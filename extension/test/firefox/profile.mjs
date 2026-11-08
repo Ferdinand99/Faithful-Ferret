@@ -40,6 +40,9 @@ export function profilePrefs({ hosts = [], extra = {} } = {}) {
     "extensions.webextensions.uuids": JSON.stringify({ [TEST_ADDON_ID]: FIXED_UUID }),
     // The test profile accepts requests for optional permissions without a prompt.
     "extensions.webextOptionalPermissionPrompts": false,
+    // The test sites mean "http" and "https" literally: no upgrade of an http page.
+    "dom.security.https_first": false,
+    "dom.security.https_only_mode": false,
     // Names of the fixture server: local, as in /etc/hosts of the runner.
     "network.dns.localDomains": hosts.join(","),
     // The container has no network and its user namespaces are limited.

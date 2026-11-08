@@ -333,6 +333,26 @@ export function readInternalHosts(root = defaultRoot) {
 }
 
 /**
+ * Whether a lower-case text names a host: the host at a label boundary, so
+ * `a.github.io` is found in `https://a.github.io/` and `x.a.github.io` but not in
+ * `mozilla.github.io`.
+ * @param {string} lowerText
+ * @param {string} host lower case
+ * @returns {boolean}
+ */
+export function namesHost(lowerText, host) {
+  let from = 0;
+  for (;;) {
+    const at = lowerText.indexOf(host, from);
+    if (at < 0) return false;
+    const before = at === 0 ? "" : lowerText[at - 1];
+    const after = lowerText[at + host.length] ?? "";
+    if (!/[a-z0-9-]/.test(before) && !/[a-z0-9-]/.test(after)) return true;
+    from = at + 1;
+  }
+}
+
+/**
  * What a release package must not hold: test files, a fixed extension UUID, the
  * test name, an internal host name and anything under test/. Returns the problems,
  * empty when clean.
@@ -357,7 +377,7 @@ export function releaseProblems(files, internalHosts) {
       if (text.includes("extensions.webextensions.uuids")) problems.push(`${path}: names the UUID preference of the test profile`);
       const lower = text.toLowerCase();
       for (const host of internalHosts) {
-        if (lower.includes(host)) problems.push(`${path}: names the internal host ${host}`);
+        if (namesHost(lower, host)) problems.push(`${path}: names the internal host ${host}`);
       }
     }
   }

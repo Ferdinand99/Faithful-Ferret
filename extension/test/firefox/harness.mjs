@@ -8,7 +8,9 @@
 //   FERRET_MANIFEST     "mv3" (default) or "mv2": the build the default launch installs
 //   FERRET_HEADLESS     "0" runs with a window (under Xvfb); default headless
 //   FERRET_E2E_CA_PEM   the certificate authority of the end-to-end stack, to trust as well
-//   FERRET_FIXTURE_PORT port of the fixture server (default 8443)
+//   FERRET_FIXTURE_PORT, FERRET_FIXTURE_ALT_PORT, FERRET_FIXTURE_HTTP_PORT
+//                       the fixture server's https, second https and http ports
+//                       (defaults 443, 8443 and 80, so the test sites have ordinary origins)
 //   FERRET_FIREFOX_RELEASE, FERRET_FIREFOX_ESR, FERRET_GECKODRIVER, FERRET_NODE
 //                       the pinned versions (the runner image sets them)
 //
@@ -80,7 +82,12 @@ export function xpiPath(manifest) {
 let shared;
 /** The fixture server of this process, started on first use. */
 export function fixtures() {
-  shared ??= startFixtures({ sseIntervalMs: Number(process.env.FERRET_SSE_INTERVAL_MS ?? 10_000) });
+  shared ??= startFixtures({
+    port: Number(process.env.FERRET_FIXTURE_PORT ?? 443),
+    altPort: Number(process.env.FERRET_FIXTURE_ALT_PORT ?? 8443),
+    httpPort: Number(process.env.FERRET_FIXTURE_HTTP_PORT ?? 80),
+    sseIntervalMs: Number(process.env.FERRET_SSE_INTERVAL_MS ?? 10_000),
+  });
   return shared;
 }
 

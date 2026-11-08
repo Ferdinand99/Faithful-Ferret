@@ -1,4 +1,19 @@
 {
-  "fixture": ["fixture.test", "second.fixture.test"],
+  "fixture": [
+    "fixture.test",
+    "second.fixture.test",
+    "login.example.net",
+    "www.example.net",
+    "shop.example.net",
+    "evil.test",
+    "login-example.net",
+    "login.example.net.evil.test",
+    "login.example.org",
+    "login.xn--exmple-4nf.net",
+    "login.xn--80ak6aa92e.net",
+    "login.xn--exmple-x9m.net",
+    "a.github.io",
+    "b.github.io"
+  ],
   "e2e": ["vault-e2e.test", "admin-e2e.test"]
 }
