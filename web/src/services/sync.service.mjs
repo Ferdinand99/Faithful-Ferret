@@ -5,13 +5,35 @@
 // Parts that follow the engine (the live-update client, the warning banner) do
 // not poll `current()`: they register with `onEngine`, which hands them each
 // engine once it has started and `null` once it has stopped.
-import { createSyncEngine } from "../sync/engine.mjs";
+import { deviceNameFor } from "../sync/deviceName.mjs";
+import { createSyncEngine, SyncError } from "../sync/engine.mjs";
+import { memoryStore, unavailableMemory } from "../sync/memory.mjs";
+
+/**
+ * The sync memory of an account. Where the browser has no Web Locks the engine
+ * is still made, with a memory that fails, and halts with `unsupported`.
+ * @param {{ store: any, client: any, serverUrl: string, accountId: string, locks: any }} options
+ */
+function memoryFor({ store, client, serverUrl, accountId, locks }) {
+  try {
+    return memoryStore({ store, serverUrl, accountId, locks, newMemory: () => client.vault.sync_memory_new() });
+  } catch (error) {
+    if (error instanceof SyncError) return unavailableMemory(error);
+    throw error;
+  }
+}
 
 /** @type {import("../app.mjs").ServiceDef} */
 export default {
   name: "sync",
   deps: ["api", "store", "client"],
-  create: ({ api, store, client }) => {
+  // `serverUrl`, `locks` and `nav` are for tests: in the browser they are the page's own.
+  create: ({
+    api, store, client,
+    serverUrl = globalThis.location?.origin,
+    locks = /** @type {any} */ (globalThis).navigator?.locks,
+    nav = /** @type {any} */ (globalThis).navigator,
+  }) => {
     /** @type {ReturnType<typeof createSyncEngine> | null} */
     let engine = null;
     /** The engine the listeners were last told about, so each one is announced once and ended once. @type {ReturnType<typeof createSyncEngine> | null} */
@@ -47,7 +69,11 @@ export default {
         engine?.stop();
         engine = null; // a listener that asks `current()` while it is told about the end sees none
         retire();
-        const made = createSyncEngine({ api, client, store, scope });
+        const made = createSyncEngine({
+          api, client, store, scope,
+          memory: memoryFor({ store, client, serverUrl, accountId: scope.accountId, locks }),
+          deviceName: () => deviceNameFor(store, nav),
+        });
         engine = made;
         try {
           await made.start();

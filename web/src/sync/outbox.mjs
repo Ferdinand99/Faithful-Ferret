@@ -92,6 +92,8 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
   /** @type {Map<string, Lane>} */
   const lanes = new Map();
   let stopped = false;
+  /** While held, entries are stored and queued but nothing is sent. */
+  let held = false;
 
   /** @param {string} itemId @returns {Lane} */
   function laneOf(itemId) {
@@ -112,10 +114,10 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
   /** @param {string} itemId */
   async function pump(itemId) {
     const lane = laneOf(itemId);
-    if (stopped || lane.running || lane.timer !== null || lane.blocked !== null) return;
+    if (stopped || held || lane.running || lane.timer !== null || lane.blocked !== null) return;
     lane.running = true;
     try {
-      while (!stopped && lane.entries.length > 0 && lane.blocked === null) {
+      while (!stopped && !held && lane.entries.length > 0 && lane.blocked === null) {
         const entry = lane.entries[0];
         /** @type {{ rev: number, seq: number, replayed: boolean }} */
         let answer;
@@ -182,6 +184,18 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
 
     /** Sends everything that is waiting for a first try (after `load`) or was not blocked. */
     start() {
+      for (const itemId of [...lanes.keys()]) void pump(itemId);
+    },
+
+    /** Keeps everything from being sent until `release()`: entries are still stored and queued. A request in flight is not taken back. */
+    hold() {
+      held = true;
+    },
+
+    /** Lets the entries go out again after `hold()`. */
+    release() {
+      if (!held) return;
+      held = false;
       for (const itemId of [...lanes.keys()]) void pump(itemId);
     },
 

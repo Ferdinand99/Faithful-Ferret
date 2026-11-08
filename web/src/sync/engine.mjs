@@ -15,6 +15,16 @@
 //   could check it, the local copy stays. A row with a lower revision than the
 //   local one is refused with a warning (the server is behind); the pinned
 //   state of the account is never touched here.
+// * The sync memory (see memory.mjs) is the floor that survives a cleared cache
+//   and a restart: every accepted row of a page, the manifest row included, goes
+//   through `acceptPage` (under the Web Lock, stored before the rows are used),
+//   and a row it refuses changes nothing here: no row, no index entry, no
+//   overlay, no mark. The exception is a row this device wrote itself for an
+//   item that was uploaded again (the server numbers it from 1): it is accepted
+//   by the digest of what was sent, and the memory keeps the old floor. A top
+//   `seq` below the remembered one, a lower restore epoch, a memory that is full
+//   and a browser without Web Locks halt the engine: nothing is pulled or sent,
+//   local data stays, and `health()` says why.
 // * The feed is read from the `seq` of the last row of the last page, never
 //   from `latest_seq`: a server that lies about `latest_seq` must not be able
 //   to make the client skip rows. A 410 (the cursor is below the floor of the
@@ -30,7 +40,11 @@
 import { b64u, hex16 } from "../b64.mjs";
 import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
+import { codeOf, isFatal, SyncError } from "./errors.mjs";
+import { acceptPage, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
 import { createOutboxRunner } from "./outbox.mjs";
+
+export { SyncError };
 
 /**
  * @typedef {object} ItemSummary
@@ -61,30 +75,13 @@ export const MANIFEST_ID = "00000000000000000000000000000000";
 /** Rows asked for in one page of the feed (the server's maximum). */
 const PAGE_LIMIT = 500;
 
-/** Codes of the core and the client that mean "the vault is not usable now", not "this row is bad". */
-const FATAL_CODES = new Set(["locked", "vault_locked", "worker_failed", "internal"]);
-
-/** An error of the engine. `code` is a word for the caller to switch on. */
-export class SyncError extends Error {
-  /** @param {string} code @param {string} [message] @param {string | null} [reason] why (for `blocked`: the code that blocked the item) */
-  constructor(code, message = code, reason = null) {
-    super(message);
-    this.name = "SyncError";
-    /** @type {string} */
-    this.code = code;
-    /** @type {string | null} */
-    this.reason = reason;
-  }
-}
-
-/** @param {unknown} error */
-const codeOf = (error) => {
-  const code = /** @type {any} */ (error)?.code;
-  return typeof code === "string" ? code : "internal";
-};
-
-/** @param {unknown} error */
-const isFatal = (error) => FATAL_CODES.has(codeOf(error));
+/**
+ * The codes that stop the engine: nothing is pulled or sent until the user acts.
+ * `server_restored` and `restore_epoch_lowered` are about the restore epoch,
+ * `rollback_suspected` about the top `seq`, `sync_memory_full` and `unsupported`
+ * about the memory itself.
+ */
+export const HALT_CODES = Object.freeze(["rollback_suspected", "server_restored", "restore_epoch_lowered", "sync_memory_full", "unsupported"]);
 
 /**
  * @param {Uint8Array | null} a
@@ -107,6 +104,8 @@ const realTimers = /** @type {Timers} */ ({
  *   client: any,
  *   store: any,
  *   scope: Scope,
+ *   memory: import("./memory.mjs").MemoryStore,
+ *   deviceName?: string | (() => string | Promise<string>),
  *   now?: () => number,
  *   pollMs?: number,
  *   rand?: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>,
@@ -114,20 +113,28 @@ const realTimers = /** @type {Timers} */ ({
  *   win?: any,
  * }} options
  *   `store` is the store service (`open()`, `cache`, `outbox`, `getSetting`, ...);
- *   `client` the worker client (`client.vault.open_item(...)`); `timers` and `win`
- *   are for tests (a fake clock; a target for the `focus` event).
+ *   `client` the worker client (`client.vault.open_item(...)`); `memory` the sync
+ *   memory of this account on this server (see memory.mjs; it is required);
+ *   `deviceName` is written into the body of every item this engine creates or
+ *   changes (a function is called once, when the engine starts); `timers` and
+ *   `win` are for tests (a fake clock; a target for the `focus` event).
  */
 export function createSyncEngine({
   api,
   client,
   store,
   scope,
+  memory,
+  deviceName,
   now = Date.now,
-  pollMs = 5_000,
+  pollMs = 300_000,
   rand = crypto.getRandomValues.bind(crypto),
   timers = realTimers,
   win = globalThis,
 }) {
+  if (!memory || typeof memory.withLock !== "function" || typeof memory.load !== "function") {
+    throw new TypeError("the sync engine needs a sync memory");
+  }
   const flagsKey = `sync.flags.${scope.accountId}.${scope.vaultId}.${scope.vkEpoch}`;
 
   let started = false;
@@ -135,14 +142,16 @@ export function createSyncEngine({
   let paused = false; // the server said 401: wait for a manual `syncNow`
   /** The `seq` of the last row of the last page that was read. */
   let cursor = 0;
-  /** @type {number | null} */
-  let restoreEpoch = null;
+  /** The code that stopped the engine, or null. @type {string | null} */
+  let halted = null;
+  /** The warnings that stand until a later check clears them. @type {Set<string>} */
+  const standing = new Set();
+  /** The name of this device, for the body of what it writes. @type {string | undefined} */
+  let device = typeof deviceName === "string" ? deviceName : undefined;
   /** @type {unknown} */
   let pollTimer = null;
   /** @type {string} */
   let lastStatus = "";
-  /** The last "server is behind" warning, so a poll every few seconds does not repeat it. */
-  let behind = "";
   /** @type {Promise<void> | null} */
   let inflight = null;
   let again = false;
@@ -165,8 +174,9 @@ export function createSyncEngine({
    * and stays the floor of the item. `reuploaded`: the copy was uploaded again
    * (the server numbers it from 1) and the old floor is kept. `sent` lists the
    * writes of this device made since (`<rev>:<r|t>:<digest>`): they are the only
-   * rows below the floor that are accepted, byte for byte.
-   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server" | "reuploaded", rev: number, sent?: string[] }>}
+   * rows below the floor that are accepted, byte for byte. `fresh` (only on a mark that was made again) lists
+   * the ones made since that mark.
+   * @type {Map<string, { kind: "damaged" | "quarantined" | "missing_on_server" | "reuploaded", rev: number, sent?: string[], fresh?: string[] }>}
    */
   const flags = new Map();
   /** Items whose upload has been answered by the server in this session. @type {Set<string>} */
@@ -211,6 +221,33 @@ export function createSyncEngine({
   /** @param {string} code @param {Record<string, any>} [extra] */
   function warn(code, extra = {}) {
     emit("state", { kind: "warning", code, ...extra });
+  }
+
+  /**
+   * Stops the engine from pulling and sending. What is stored stays; the screen
+   * keeps what it shows; writes are still stored in the outbox but not sent.
+   * @param {string} code one of `HALT_CODES`
+   */
+  function halt(code) {
+    if (halted !== null) return;
+    halted = code;
+    listing = null; // a listing that was under way is not finished: the ids it has seen so far say nothing about what is missing
+    if (pollTimer !== null) timers.clear(pollTimer);
+    pollTimer = null;
+    runner.hold();
+    setStatus("halted", { code });
+  }
+
+  /** A warning that stands until a later check clears it. @param {string} code */
+  function raiseWarning(code) {
+    if (standing.has(code)) return;
+    standing.add(code);
+    emit("state", { kind: "warning", code });
+  }
+
+  /** @param {string} code */
+  function clearWarning(code) {
+    if (standing.delete(code)) emit("state", { kind: "warning_cleared", code });
   }
 
   /** @param {Iterable<string>} ids */
@@ -319,7 +356,14 @@ export function createSyncEngine({
     const db = await store.open();
     let since = cursor;
     let restarted = false;
+    /** What this pass has learned about the restore epoch of the server. @type {PassState} */
+    const pass = { stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false };
+    /** The page was fetched again once, because another tab had moved the memory since the first fetch. */
+    let refetched = false;
     for (;;) {
+      // What the memory held before this page was asked for. If it has moved by the time the page is given to
+      // it, another tab saved in between, and a page that now looks too old may only be older than that.
+      const snapshot = (await memory.load()).memory;
       /** @type {any} */
       let page;
       try {
@@ -336,7 +380,13 @@ export function createSyncEngine({
       }
       if (stopped) return;
       checkPage(page, since);
-      await applyPage(db, page.changes);
+      await checkEpoch(pass, page.restore_epoch);
+      const outcome = await applyPage(db, page, pass, { snapshot, mayRefetch: !refetched });
+      if (outcome === "refetch") {
+        refetched = true; // once: a server that is really lying says the same again, and the engine halts then
+        continue;
+      }
+      refetched = false;
       if (stopped) return;
       if (page.changes.length > 0) {
         since = page.changes[page.changes.length - 1].seq; // the last row, not latest_seq
@@ -344,8 +394,18 @@ export function createSyncEngine({
       }
       if (!page.has_more) break;
     }
+    await finishEpoch(pass);
+    if (stopped) return;
     if (listing !== null) await finishListing(db);
   }
+
+  /**
+   * @typedef {object} PassState what one pass over the feed has learned about the restore epoch
+   * @property {number | null} stored the highest epoch this device has accepted (null: none yet, a first contact)
+   * @property {number | null} first on a first contact: the epoch the server shows, to be stored when the pass has gone well
+   * @property {number | null} raised the highest epoch the server showed that is above `stored` (on a first contact: above zero)
+   * @property {boolean} lower something the server showed is below what this device remembers
+   */
 
   /**
    * What a page must look like for the engine to go on.
@@ -359,23 +419,101 @@ export function createSyncEngine({
       last = change.seq;
     }
     if (page.has_more && page.changes.length === 0) throw new SyncError("bad_feed");
-    // The server shows fewer changes than this device has seen: a restore, or a
-    // rollback. Say so; nothing is lowered.
-    if (restoreEpoch !== null && restoreEpoch !== page.restore_epoch) {
-      warn("server_restored", { from: restoreEpoch, to: page.restore_epoch });
-    } else if (page.latest_seq < cursor && behind !== `${page.latest_seq}/${cursor}`) {
-      behind = `${page.latest_seq}/${cursor}`;
-      warn("server_behind", { latestSeq: page.latest_seq, cursor });
-    }
-    restoreEpoch = page.restore_epoch;
   }
 
-  /** @param {any} db @param {any[]} changes */
-  async function applyPage(db, changes) {
-    /** @type {CachedRow[]} */
-    const accepted = [];
+  /**
+   * Stores a restore epoch under the lock, unless a higher one is stored (a second
+   * tab may have got there first). @param {number} epoch @returns {Promise<number>} the epoch that is stored now
+   */
+  async function saveEpoch(epoch) {
+    let now_ = epoch;
+    await memory.withLock(async (state) => {
+      if (state.restoreEpoch !== null && state.restoreEpoch >= epoch) {
+        now_ = state.restoreEpoch;
+        return null;
+      }
+      return { ...state, restoreEpoch: epoch };
+    });
+    return now_;
+  }
+
+  /**
+   * The restore epoch of a page against the one this device has accepted. A lower one
+   * halts. A higher one is not stored until the pass has seen nothing below what the
+   * device remembers (`finishEpoch`). With none stored yet (a first contact) the epoch
+   * is stored only when the pass has gone well, and any epoch above zero counts as
+   * raised, so a server that was restored before this device ever stored one is told
+   * apart from a plain rollback.
+   * @param {PassState} pass @param {number} epoch
+   */
+  async function checkEpoch(pass, epoch) {
+    if (pass.stored === null) {
+      if (pass.first === null || epoch > pass.first) pass.first = epoch;
+      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+      return;
+    }
+    if (epoch < pass.stored) {
+      throw new SyncError("restore_epoch_lowered", "The server shows an older restore epoch than this device has seen.");
+    }
+    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+  }
+
+  /**
+   * The end of a pass. A higher epoch with something lower on the server means the
+   * server was restored from a backup: the engine halts and the user decides. A
+   * higher epoch without it is stored, with a message (a first contact stores it
+   * without one: there was nothing to compare with).
+   * @param {PassState} pass
+   */
+  async function finishEpoch(pass) {
+    if (pass.raised === null && pass.first === null) return;
+    if (pass.raised !== null && pass.lower) throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    if (pass.stored === null) {
+      pass.stored = await saveEpoch(/** @type {number} */ (pass.first));
+      pass.first = null;
+      pass.raised = null;
+      return;
+    }
+    if (pass.raised === null) return;
+    const from = pass.stored;
+    await saveEpoch(pass.raised);
+    pass.stored = pass.raised;
+    pass.raised = null;
+    warn("restore_epoch_raised", { from, to: pass.stored });
+  }
+
+  /**
+   * One page of the feed. First every row is judged without changing anything
+   * (the core opens it, the tombstone is verified, the floors of this device are
+   * compared); what the judging would do besides (marks, warnings, the list of ids a
+   * listing has shown) is kept and done only when the page is used. Then the rows
+   * that stand are given to the sync memory; only the rows the memory takes change
+   * the rows, the index, the overlay and the marks. A page that halts the engine, or
+   * that is fetched again, has therefore changed nothing.
+   *
+   * Answers "refetch" when the memory refused something that another tab's save may
+   * explain (see `acceptPage`) and the page has not been fetched again yet.
+   * @param {any} db @param {any} page @param {PassState} pass
+   * @param {{ snapshot: Uint8Array, mayRefetch: boolean }} again
+   * @returns {Promise<"done" | "refetch" | undefined>}
+   */
+  async function applyPage(db, page, pass, { snapshot, mayRefetch }) {
+    const changes = /** @type {any[]} */ (page.changes);
+    /**
+     * A row that stands, and what it does to the engine once the memory has it.
+     * @type {Array<{ id: string, row: CachedRow, ours: boolean, touch: boolean, apply: (() => void) | null }>}
+     */
+    const plan = [];
+    /** The rows of this page as the later rows of it see them (an honest server shows one row per item). @type {Map<string, CachedRow>} */
+    const staged = new Map();
     /** @type {Set<string>} */
     const touched = new Set();
+    /** What judging a row would do besides planning it: marks, warnings. Done only when the page is used. @type {Array<() => void>} */
+    const later = [];
+    /** The ids of this page, for the list of a full listing. @type {string[]} */
+    const shown = [];
+    /** Something on this page is below what this device remembers. */
+    let lowerHere = false;
     /** Marks that end with this page; they go only after the rows are in the cache. @type {Map<string, "clear" | "drop">} */
     const ending = new Map();
     /** The rows this page replaced, to put back when the cache write fails. @type {Map<string, CachedRow | undefined>} */
@@ -385,10 +523,22 @@ export function createSyncEngine({
       if (!replaced.has(itemId)) replaced.set(itemId, rows.get(itemId));
       rows.set(itemId, next);
     };
+    /** A row below what this device remembers. @param {string} code @param {Record<string, any>} extra */
+    const lowerSeen = (code, extra) => {
+      lowerHere = true;
+      later.push(() => warn(code, extra));
+    };
+    /** @param {string} id @param {number} rev @param {string} reason */
+    const damaged = (id, rev, reason) => {
+      later.push(() => {
+        markDamaged(id, rev, reason);
+        touched.add(id);
+      });
+    };
     for (const change of changes) {
       if (stopped) return;
       const id = /** @type {string} */ (change.id);
-      listing?.add(id);
+      shown.push(id);
       if (abandoned.has(id)) continue;
       /** @type {CachedRow} */
       let row;
@@ -399,14 +549,13 @@ export function createSyncEngine({
         if (!hex16.is(id) || !Number.isSafeInteger(change.rev)) throw error;
         const floor = floorOf(id);
         if (floor !== null && change.rev <= floor) {
-          warn("rev_lower_than_local", { id, rev: change.rev, localRev: floor });
+          lowerSeen("rev_lower_than_local", { id, rev: change.rev, localRev: floor });
           continue;
         }
-        markDamaged(id, change.rev, "malformed");
-        touched.add(id);
+        damaged(id, change.rev, "malformed");
         continue;
       }
-      let local = rows.get(id);
+      let local = staged.get(id) ?? rows.get(id);
       const mark = flags.get(id);
       let ours = false;
       if ((mark?.kind === "missing_on_server" || mark?.kind === "reuploaded") && row.rev <= mark.rev) {
@@ -415,38 +564,47 @@ export function createSyncEngine({
         alive();
         if (mark.sent?.includes(key)) {
           ours = true;
-          // Only the row that replaces the old one skips the check against the local row; a replay of an own
-          // earlier version still has to be above what this device has now.
-          if (mark.kind === "missing_on_server" && local && local.rev === mark.rev) local = undefined;
+          // The row that replaces the old copy skips the check against the local row; a replay of an own earlier version
+          // still has to be above what this device has now. The first copy was at the floor itself. After the item was
+          // left out a second time, the copy uploaded after the new mark is below the floor: that is why the keys of
+          // writes made since the mark are listed apart (`fresh`), and only they get the wider rule. A key that was kept
+          // from before (a write still queued when the mark was made again) is held to the narrow one.
+          const replaces = local !== undefined && (local.rev === mark.rev || (mark.fresh?.includes(key) === true && local.rev <= mark.rev));
+          if (mark.kind === "missing_on_server" && replaces) local = undefined;
         } else if (row.rev < mark.rev) {
-          warn("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
+          lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: mark.rev });
           continue;
         } else if (mark.kind === "missing_on_server" && !row.deleted && local && sameRow(row, local)) {
           // The server shows the item again with the row this device has: it was only left out.
-          ending.set(id, "clear");
-          accepted.push(row);
-          touched.add(id);
+          plan.push({ id, row, ours: false, touch: true, apply: () => ending.set(id, "clear") });
+          staged.set(id, row);
           continue;
         } else {
           // Exactly the old floor, and not a row this device wrote: no honest path leads here.
-          warn("rev_same_row_changed", { id, rev: row.rev });
+          lowerSeen("rev_same_row_changed", { id, rev: row.rev });
           continue;
         }
       }
       if (local) {
         if (row.rev < local.rev) {
-          warn("rev_lower_than_local", { id, rev: row.rev, localRev: local.rev });
+          lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: local.rev });
           continue;
         }
         if (row.rev === local.rev) {
-          if (sameRow(row, local)) accepted.push(row); // already known: only make sure it is cached
-          else warn("rev_same_row_changed", { id, rev: row.rev });
+          if (sameRow(row, local)) {
+            // already known: only make sure it is cached
+            plan.push({ id, row, ours: false, touch: false, apply: null });
+            staged.set(id, row);
+          } else {
+            lowerSeen("rev_same_row_changed", { id, rev: row.rev });
+          }
           continue;
         }
       }
       if (id === MANIFEST_ID) {
-        setRow(id, row); // kept in the cache, never an item
-        accepted.push(row);
+        // Kept in the cache, never an item. The memory checks its tag like any other row's.
+        plan.push({ id, row, ours: false, touch: false, apply: () => setRow(id, row) });
+        staged.set(id, row);
         continue;
       }
       if (row.deleted) {
@@ -454,42 +612,98 @@ export function createSyncEngine({
           await client.vault.verify_tombstone(hex16.decode(id), row.rev, /** @type {Uint8Array} */ (row.tomb));
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
-          // A mark that keeps a floor is not replaced: the floor would go with it.
-          if (!keepsFloor(id)) {
-            flags.set(id, { kind: "quarantined", rev: row.rev });
-            flagsDirty = true;
-          }
-          touched.add(id);
-          warn("tombstone_unverified", { id, rev: row.rev });
+          later.push(() => {
+            // A mark that keeps a floor is not replaced: the floor would go with it.
+            if (!keepsFloor(id)) {
+              flags.set(id, { kind: "quarantined", rev: row.rev });
+              flagsDirty = true;
+            }
+            touched.add(id);
+            warn("tombstone_unverified", { id, rev: row.rev });
+          });
           continue;
         }
         alive();
-        settleMark(id, row.rev, ours, ending);
-        setRow(id, row);
-        accepted.push(row);
-        index.delete(id);
-        overlay.delete(id);
-        touched.add(id);
+        plan.push({
+          id, row, ours, touch: true,
+          apply: () => {
+            settleMark(id, row.rev, ours, ending);
+            setRow(id, row);
+            index.delete(id);
+            overlay.delete(id);
+          },
+        });
+        staged.set(id, row);
         continue;
       }
       try {
         const summary = await summarize(id, row.rev, /** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag));
         alive();
-        settleMark(id, row.rev, ours, ending);
-        setRow(id, row);
-        accepted.push(row);
-        const mine = overlay.get(id);
-        if (mine && mine.rev > row.rev) {
-          // A local write is ahead of this row: it stays on screen.
-        } else {
-          overlay.delete(id);
-          index.set(id, summary);
-        }
+        plan.push({
+          id, row, ours, touch: true,
+          apply: () => {
+            settleMark(id, row.rev, ours, ending);
+            setRow(id, row);
+            const mine = overlay.get(id);
+            if (mine && mine.rev > row.rev) {
+              // A local write is ahead of this row: it stays on screen.
+            } else {
+              overlay.delete(id);
+              index.set(id, summary);
+            }
+          },
+        });
+        staged.set(id, row);
       } catch (error) {
         if (stopped || isFatal(error)) throw error;
-        markDamaged(id, row.rev, codeOf(error));
+        damaged(id, row.rev, codeOf(error));
       }
-      touched.add(id);
+    }
+    // The memory, even for a page without rows: its top `seq` is checked and remembered. The rows this device wrote
+    // itself for an item that was uploaded again are not given to it (they are below its floor, by design).
+    /** @type {Set<CachedRow>} */
+    let refusedRows = new Set();
+    /** @type {Array<{ row: CachedRow, code: string }>} */
+    let refused = [];
+    try {
+      const verdict = await acceptPage({
+        client, memory, rows: plan.filter((p) => !p.ours).map((p) => p.row), topSeq: page.latest_seq, since: snapshot,
+      });
+      alive();
+      refused = verdict.refused;
+      refusedRows = new Set(refused.map((r) => r.row));
+      // Below the remembered revision, and another tab has saved since the page was asked for: it may only be older than that.
+      if (mayRefetch && verdict.moved && refused.some((r) => r.code === REV_BELOW_REMEMBERED)) return "refetch";
+    } catch (error) {
+      if (mayRefetch && /** @type {any} */ (error)?.code === "rollback_suspected" && /** @type {any} */ (error).memoryMoved === true) {
+        return "refetch";
+      }
+      // A top `seq` below the remembered one, while the server also shows a higher restore epoch, is a restore.
+      if (pass.raised !== null && /** @type {any} */ (error)?.code === "rollback_suspected") {
+        throw new SyncError("server_restored", "The server was restored to an earlier state.");
+      }
+      throw error;
+    }
+    const refusedBelow = refused.some((r) => r.code === REV_BELOW_REMEMBERED);
+    // Something lower than this device remembers, on a server that now shows a higher epoch: a restore. Nothing of this page is used.
+    if (pass.raised !== null && (pass.lower || lowerHere || refusedBelow)) {
+      throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    }
+    // The page is used: now what judging it kept for later is done.
+    if (lowerHere || refusedBelow) pass.lower = true;
+    for (const id of shown) listing?.add(id);
+    for (const step of later) step();
+    for (const { row, code } of refused) {
+      if (code === REV_BELOW_REMEMBERED) warn("rev_below_remembered", { id: row.itemId, rev: row.rev });
+      else warn("row_damaged", { id: row.itemId, rev: row.rev, reason: code });
+    }
+    /** @type {CachedRow[]} */
+    const accepted = [];
+    for (const step of plan) {
+      if (!step.ours && refusedRows.has(step.row)) continue; // refused: nothing changes
+      step.apply?.();
+      accepted.push(step.row);
+      if (step.touch) touched.add(step.id);
     }
     if (accepted.length > 0) {
       try {
@@ -511,6 +725,7 @@ export function createSyncEngine({
     }
     await saveFlags(db);
     changed(touched);
+    return "done";
   }
 
   /** @param {string} id @param {number} rev @param {string} reason */
@@ -596,8 +811,28 @@ export function createSyncEngine({
     /** @type {string[]} */
     const missing = [];
     for (const [id, row] of rows) {
-      if (seen.has(id) || id === MANIFEST_ID || row.deleted || flags.has(id)) continue;
-      flags.set(id, { kind: "missing_on_server", rev: row.rev });
+      if (seen.has(id) || id === MANIFEST_ID || row.deleted) continue;
+      // Another mark stays as it is. An item that was uploaded again and is left out once more is marked again, with
+      // the floor it already has. The keys of its own writes are kept only for writes that are still queued or in
+      // flight (their echo must still be taken as ours); the others belong to a copy the server has dropped. Keys
+      // of writes made from now on are listed apart, in `fresh`: the wider rule for the copy that replaces the old
+      // one applies to them only.
+      const mark = flags.get(id);
+      if (mark !== undefined && mark.kind !== "reuploaded") continue;
+      /** @type {string[]} */
+      let kept = [];
+      if (mark !== undefined) {
+        const queued = await Promise.all(runner.entriesOf(id).map((entry) => ownKeyOfBody(entry.baseRev + 1, entry.body)));
+        alive();
+        kept = (mark.sent ?? []).filter((key) => queued.includes(key));
+      }
+      flags.set(id, {
+        kind: "missing_on_server",
+        rev: floorOf(id) ?? row.rev,
+        ...(kept.length > 0 ? { sent: kept } : {}),
+        ...(mark !== undefined ? { fresh: [] } : {}),
+      });
+      acked.delete(id); // the earlier upload was answered, but the server has lost that copy: it is uploaded again
       flagsDirty = true;
       missing.push(id);
     }
@@ -737,6 +972,7 @@ export function createSyncEngine({
 
   /** One pass: the feed. Failures become events; they never reject. */
   async function runCycle() {
+    if (halted !== null) return;
     setStatus("syncing");
     try {
       await cycle();
@@ -754,7 +990,9 @@ export function createSyncEngine({
       if (stopped) return;
       const code = codeOf(error);
       const status = /** @type {any} */ (error)?.status;
-      if (status === 401) {
+      if (error instanceof SyncError && HALT_CODES.includes(code)) {
+        halt(code);
+      } else if (status === 401) {
         paused = true;
         setStatus("unauthorized");
       } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {
@@ -772,7 +1010,7 @@ export function createSyncEngine({
 
   /** Reads the feed now. Calls that arrive while a pass runs make it run once more. @returns {Promise<void>} */
   function syncNow() {
-    if (stopped) return Promise.resolve();
+    if (stopped || halted !== null) return Promise.resolve();
     if (inflight) {
       again = true;
       return inflight;
@@ -791,7 +1029,7 @@ export function createSyncEngine({
   }
 
   function schedule() {
-    if (stopped || paused || pollTimer !== null) return;
+    if (stopped || paused || halted !== null || pollTimer !== null) return;
     pollTimer = timers.set(async () => {
       pollTimer = null;
       await syncNow();
@@ -879,7 +1117,9 @@ export function createSyncEngine({
     const mark = flags.get(id);
     if (key !== null && mark && (mark.kind === "missing_on_server" || mark.kind === "reuploaded")) {
       const previousSent = mark.sent;
+      const previousFresh = mark.fresh;
       mark.sent = [...(previousSent ?? []), key].slice(-256);
+      if (previousFresh !== undefined) mark.fresh = [...previousFresh, key].slice(-256);
       flagsDirty = true;
       try {
         // Saved before the write is stored, and a failed save stops the write: without its key the row would be
@@ -887,6 +1127,7 @@ export function createSyncEngine({
         await saveFlags(await store.open());
       } catch (error) {
         mark.sent = previousSent;
+        mark.fresh = previousFresh;
         throw error;
       }
       alive();
@@ -912,6 +1153,9 @@ export function createSyncEngine({
     changed([id]);
   }
 
+  /** The draft with the name of this device, which the conflict view shows. @param {object} draft */
+  const withDevice = (draft) => (device ? { ...draft, device } : draft);
+
   /** The seal of a draft at `rev`. @param {string} id @param {number} rev @param {object} draft @param {number | undefined} handle */
   async function seal(id, rev, draft, handle) {
     const sealed = await client.vault.encrypt_item(hex16.decode(id), rev, draft, handle, now());
@@ -926,8 +1170,15 @@ export function createSyncEngine({
       if (started || stopped) throw new SyncError("invalid_state");
       started = true;
       const db = await store.open();
-      const cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
+      let cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
       const saved = await store.getSetting(db, flagsKey);
+      if (typeof deviceName === "function") {
+        try {
+          device = await deviceName();
+        } catch {
+          device = undefined; // a name that cannot be worked out does not stop the engine; the service gives a default of its own
+        }
+      }
       alive();
       for (const row of cached) {
         rows.set(row.itemId, row);
@@ -937,13 +1188,39 @@ export function createSyncEngine({
       for (const [id, flag] of Object.entries(savedMarks)) {
         const kinds = ["damaged", "quarantined", "missing_on_server", "reuploaded"];
         if (hex16.is(id) && kinds.includes(flag?.kind) && Number.isSafeInteger(flag.rev)) {
-          const sent = Array.isArray(flag.sent) ? flag.sent.filter((/** @type {unknown} */ k) => typeof k === "string").slice(-256) : [];
-          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(sent.length > 0 ? { sent } : {}) });
+          const keys = (/** @type {unknown} */ list) => (Array.isArray(list) ? list.filter((/** @type {unknown} */ k) => typeof k === "string").slice(-256) : []);
+          const sent = keys(flag.sent);
+          flags.set(id, { kind: flag.kind, rev: flag.rev, ...(sent.length > 0 ? { sent } : {}), ...(Array.isArray(flag.fresh) ? { fresh: keys(flag.fresh) } : {}) });
         }
       }
       const savedBlocked = saved?.v === 1 && saved.blocked && typeof saved.blocked === "object" ? saved.blocked : {};
       for (const [id, code] of Object.entries(savedBlocked)) {
         if (hex16.is(id) && typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code)) blocked.set(id, code);
+      }
+      // The sync memory: a first start with no stored state makes it from the rows that are cached (they were checked
+      // when they were cached), so a device that had them before the memory existed gets floors too. Rows of an item
+      // that was uploaded again are left out: the copy is below the floor the item had, which this device no longer
+      // knows, and a floor made from it would be too low to mean anything. A cached row the core refuses is dropped
+      // from the cache (and the feed is read again from the start, so an honest server shows it afresh). A halt here
+      // (no Web Locks, a full memory) leaves the local data to be read, and nothing to be pulled or sent.
+      try {
+        const seeded = await seedMemory({ client, memory, rows: cached.filter((row) => !keepsFloor(row.itemId)), topSeq: cursor });
+        alive();
+        if (seeded.state.hardWarning !== null) raiseWarning(seeded.state.hardWarning);
+        if (seeded.refused.length > 0) {
+          const dropped = new Set(seeded.refused.map(({ row }) => row.itemId));
+          await store.cache.removeRows(db, scope, [...dropped]);
+          alive();
+          for (const { row, code } of seeded.refused) {
+            rows.delete(row.itemId);
+            warn("cached_row_dropped", { id: row.itemId, rev: row.rev, reason: code });
+          }
+          cached = cached.filter((row) => !dropped.has(row.itemId));
+          cursor = 0;
+        }
+      } catch (error) {
+        if (!(error instanceof SyncError && HALT_CODES.includes(error.code))) throw error;
+        halt(error.code);
       }
       for (const row of cached) {
         if (row.deleted || row.itemId === MANIFEST_ID) continue;
@@ -1012,6 +1289,7 @@ export function createSyncEngine({
       if (stopped) return;
       await saveFlags(db);
       changed(index.keys());
+      if (halted !== null) return; // what is stored is shown; nothing is pulled, and nothing queued is sent
       runner.start();
       await syncNow();
       if (stopped) return;
@@ -1043,6 +1321,7 @@ export function createSyncEngine({
       sealing.clear();
       abandoned.clear();
       droppedIdems.clear();
+      standing.clear();
       flagsDirty = false;
       itemQueues.clear();
       listing = null;
@@ -1050,6 +1329,15 @@ export function createSyncEngine({
     },
 
     syncNow,
+
+    /**
+     * Why the engine has stopped (one of `HALT_CODES`, or null) and the warnings that stand until a later check clears them.
+     * Changes come as `state` events: `{ kind: "halted", code }`, `{ kind: "warning", code }`, `{ kind: "warning_cleared", code }`.
+     * @returns {{ halted: string | null, warnings: string[] }}
+     */
+    health() {
+      return { halted, warnings: [...standing] };
+    },
 
     /** @returns {ItemSummary[]} */
     list() {
@@ -1121,7 +1409,7 @@ export function createSyncEngine({
       if (stopped) throw new SyncError("stopped");
       const id = randomId();
       await withItem(id, async () => {
-        const { sealed, summary } = await seal(id, 1, draft, undefined);
+        const { sealed, summary } = await seal(id, 1, withDevice(draft), undefined);
         await queue(id, 0, { blob: sealed.envelope, tag: sealed.tag }, { rev: 1, deleted: false, envelope: sealed.envelope, tag: sealed.tag }, summary);
       });
       return id;
@@ -1146,7 +1434,7 @@ export function createSyncEngine({
         const rev = version.rev + 1;
         const handle = await client.vault.open_item(hex16.decode(id), version.rev, version.envelope, version.tag);
         try {
-          const { sealed, summary } = await seal(id, rev, draft, handle);
+          const { sealed, summary } = await seal(id, rev, withDevice(draft), handle);
           await queue(id, version.rev, { blob: sealed.envelope, tag: sealed.tag }, { rev, deleted: false, envelope: sealed.envelope, tag: sealed.tag }, summary);
         } finally {
           await Promise.resolve(client.vault.close_item(handle)).catch(() => {});

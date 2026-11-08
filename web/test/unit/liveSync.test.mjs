@@ -5,10 +5,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import liveSyncService from "../../src/services/liveSync.service.mjs";
 import syncService from "../../src/services/sync.service.mjs";
-import { ACCOUNT, VAULT } from "./idbHelpers.mjs";
+import { ACCOUNT, SERVER, VAULT } from "./idbHelpers.mjs";
 import { fakeStreamApi } from "./liveHelpers.mjs";
 import { settle } from "./vaultHelpers.mjs";
-import { createFakeApi, createFakeClient, createFakeStore, Model } from "./syncHelpers.mjs";
+import { createFakeApi, createFakeClient, createFakeStore, FakeLocks, Model } from "./syncHelpers.mjs";
 
 /** A sync service that tells its listeners what the test says, with an engine that counts its reads. */
 function fakeSync(initial = null) {
@@ -130,7 +130,7 @@ test("the_service_follows_the_real_sync_service", async () => {
   const streams = fakeStreamApi();
   const api = createFakeApi(model);
   api.stream = (path, options) => streams.stream(path, options);
-  const sync = syncService.create({ api, store, client: { vault: client.vault } });
+  const sync = syncService.create({ api, store, client: { vault: client.vault }, serverUrl: SERVER, locks: new FakeLocks(), nav: { userAgent: "" } });
   const live = liveSyncService.create({ api, sync });
   try {
     const engine = await sync.start({ accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 });

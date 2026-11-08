@@ -10,10 +10,13 @@ import { backoffMs, classify, createOutboxRunner, itemPath, MAX_BACKOFF_MS } fro
 import { createSyncEngine } from "../../src/sync/engine.mjs";
 import { freshStore, scope } from "./idbHelpers.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, FakeTimers, Model, settle, until,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, fakeMemory, FakeTimers, Model, settle, until,
 } from "./syncHelpers.mjs";
 
 const hex = (n) => n.toString(16).padStart(32, "0");
+
+/** The client and the sync memory an engine needs, over the given store; the poll is every five seconds, as the clock of these tests moves. */
+const engineOptions = (store, client = createFakeClient()) => ({ client: { vault: client.vault }, store, memory: fakeMemory({ store, client }), pollMs: 5_000 });
 const ID_NONE = "ee".repeat(16);
 
 /** A queued live write for item `n` as the engine would build it. */
@@ -200,7 +203,7 @@ test("409_keeps_the_draft_and_does_not_overwrite", async () => {
     const timers = new FakeTimers();
     const events = { error: [] };
     const engine = createSyncEngine({
-      api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), win: null,
+      api, ...engineOptions(store, client), scope: scope(), timers, rand: counterRand(seed), win: null,
     });
     engine.on("error", (e) => events.error.push(e));
     return { store, api, timers, engine, events };
@@ -245,7 +248,7 @@ test("a_401_on_the_feed_pauses_the_poll_until_syncNow_succeeds", async () => {
   const store = await createFakeStore();
   const api = createFakeApi(model);
   const states = [];
-  const engine = createSyncEngine({ api, client: { vault: createFakeClient().vault }, store, scope: scope(), timers, win: null, rand: counterRand(1) });
+  const engine = createSyncEngine({ api, ...engineOptions(store), scope: scope(), timers, win: null, rand: counterRand(1) });
   engine.on("state", (s) => states.push(s.kind));
   api.failFeed = new ApiError(401, "unauthorized");
   api.failFeedTimes = 1;
@@ -264,7 +267,7 @@ test("a_network_failure_on_the_feed_looks_offline_and_the_poll_goes_on", async (
   const store = await createFakeStore();
   const api = createFakeApi(model);
   const states = [];
-  const engine = createSyncEngine({ api, client: { vault: createFakeClient().vault }, store, scope: scope(), timers, win: null, rand: counterRand(1) });
+  const engine = createSyncEngine({ api, ...engineOptions(store), scope: scope(), timers, win: null, rand: counterRand(1) });
   engine.on("state", (s) => states.push(s.kind));
   api.failFeed = new ApiError(0, "network");
   api.failFeedTimes = 2;
@@ -289,7 +292,7 @@ async function engineOn(model, client, { db = null, seed = 1 } = {}) {
   const timers = new FakeTimers();
   const events = { error: [], state: [] };
   const engine = createSyncEngine({
-    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), win: null,
+    api, ...engineOptions(store, client), scope: scope(), timers, rand: counterRand(seed), win: null,
   });
   engine.on("error", (e) => events.error.push(e));
   engine.on("state", (s) => events.state.push(s));

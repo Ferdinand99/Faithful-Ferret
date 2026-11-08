@@ -2,13 +2,44 @@
 // (with faults on request), a worker client whose "encryption" is a keyed
 // stream cipher with a keyed tag (opaque enough that a plaintext leak shows),
 // a store that records what it is given, and a clock that only moves when told.
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { deleteSetting, getSetting, setSetting } from "../../src/store/settings.mjs";
-import { freshStore } from "./idbHelpers.mjs";
+import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
+import { memoryStore } from "../../src/sync/memory.mjs";
+import { ACCOUNT, freshStore, SERVER } from "./idbHelpers.mjs";
+
+/**
+ * The Web Locks of a browser, as far as the sync memory uses them: `request(name, callback)`
+ * runs the callbacks of one name one at a time. `held` says which names are locked right now,
+ * `requests` counts the calls.
+ */
+export class FakeLocks {
+  constructor() {
+    this.tails = new Map();
+    this.held = new Set();
+    this.requests = 0;
+  }
+
+  request(name, optionsOrCallback, maybeCallback) {
+    const callback = maybeCallback ?? optionsOrCallback;
+    this.requests += 1;
+    const before = this.tails.get(name) ?? Promise.resolve();
+    const run = before.then(async () => {
+      this.held.add(name);
+      try {
+        return await callback({ name, mode: "exclusive" });
+      } finally {
+        this.held.delete(name);
+      }
+    });
+    this.tails.set(name, run.catch(() => {}));
+    return run;
+  }
+}
 
 /** Waits (real time, in turns of the event loop) until `condition()` is true. */
 export async function until(condition, what = "condition") {
@@ -186,6 +217,13 @@ export class FakeFerretError extends Error {
   }
 }
 
+/** The fake core's sync memory is JSON bytes: `{ maxSeq, checkpointSeq, revs: { <item id>: rev } }`. */
+export const memoryBytes = (memory) => {
+  const revs = Object.fromEntries(Object.entries(memory.revs).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return new TextEncoder().encode(JSON.stringify({ maxSeq: memory.maxSeq, checkpointSeq: memory.checkpointSeq, revs }));
+};
+export const memoryOf = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+
 const rev8 = (rev) => {
   const out = Buffer.alloc(8);
   out.writeBigUInt64BE(BigInt(rev));
@@ -193,7 +231,7 @@ const rev8 = (rev) => {
 };
 
 /** The worker client for one vault key. Handles are numbers; the body stays inside. */
-export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_000_000_000 } = {}) {
+export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_000_000_000, memoryLimit = 50_000 } = {}) {
   const handles = new Map();
   let nextHandle = 1;
   const mac = (...parts) => createHmac("sha256", key).update(Buffer.concat(parts.map((p) => Buffer.from(p)))).digest();
@@ -239,7 +277,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       return {
         item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
         has_totp: false, passkey: null, has_notes: false, created: modified, modified, favorite,
-        device: null, read_only: open.body.read_only === true,
+        device: open.body.device ?? null, read_only: open.body.read_only === true,
       };
     },
     async encrypt_item(id, rev, draft, existing) {
@@ -271,7 +309,100 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       const good = Buffer.concat([mac(Buffer.from("tomb"), id, rev8(rev)), mac(Buffer.from("tomb2"), id).subarray(0, 8)]);
       if (!Buffer.from(tomb).equals(good)) throw new FakeFerretError("tombstone_invalid");
     },
+    // ------------------------------------------------ the rollback memory
+    // The same floors as the core: nothing here lowers a floor except accept_older_state.
+    async sync_memory_new() {
+      return memoryBytes({ maxSeq: 0, checkpointSeq: 0, revs: {} });
+    },
+    async accept_rows(rows, topSeq, memory) {
+      calls.push(["accept_rows", rows.map((row) => hex16.encode(row.item_id)), topSeq]);
+      const next = memoryOf(memory);
+      checkRows(next, rows, topSeq);
+      record(next, rows, topSeq, null);
+      return { newSyncMemory: memoryBytes(next) };
+    },
+    async make_checkpoint(seq, entries) {
+      calls.push(["make_checkpoint", seq]);
+      const sorted = [...entries].sort((a, b) => Buffer.compare(Buffer.from(a.item_id), Buffer.from(b.item_id)));
+      const packed = Buffer.concat(sorted.map((e) => Buffer.concat([Buffer.from(e.item_id), rev8(e.rev), Buffer.from(e.hash ?? new Uint8Array(32))])));
+      const digest = createHash("sha256").update(packed).digest();
+      return { seq, digest: new Uint8Array(digest), mac: new Uint8Array(mac(Buffer.from("checkpoint"), rev8(seq), digest)), entries: new Uint8Array(packed) };
+    },
+    async verify_checkpoint(checkpoint, rows, topSeq, memory) {
+      calls.push(["verify_checkpoint", checkpoint.seq, topSeq]);
+      const next = memoryOf(memory);
+      checkCheckpoint(checkpoint, rows, topSeq);
+      if (checkpoint.seq < next.checkpointSeq) throw new FakeFerretError("checkpoint_seq_below_remembered");
+      checkRows(next, rows, topSeq);
+      record(next, rows, topSeq, checkpoint.seq);
+      return { newSyncMemory: memoryBytes(next) };
+    },
+    async accept_older_state(checkpoint, rows, topSeq) {
+      calls.push(["accept_older_state", checkpoint.seq, topSeq]);
+      checkCheckpoint(checkpoint, rows, topSeq);
+      const next = { maxSeq: 0, checkpointSeq: 0, revs: {} };
+      record(next, rows, topSeq, checkpoint.seq);
+      return { newSyncMemory: memoryBytes(next) };
+    },
   };
+  const entryOf = (bytes) => ({ id: Buffer.from(bytes.subarray(0, 16)).toString("hex"), rev: Number(Buffer.from(bytes.subarray(16, 24)).readBigUInt64BE()), hash: Buffer.from(bytes.subarray(24, 56)) });
+  /** The tag or tombstone of every row is checked, as the core does before it compares anything. */
+  function checkRowProofs(rows) {
+    for (const row of rows) {
+      if (row.state === "deleted") {
+        const good = Buffer.concat([mac(Buffer.from("tomb"), row.item_id, rev8(row.rev)), mac(Buffer.from("tomb2"), row.item_id).subarray(0, 8)]);
+        if (!Buffer.from(row.tomb).equals(good)) throw new FakeFerretError("tombstone_invalid");
+      } else if (!Buffer.from(row.tag).equals(mac(Buffer.from("tag"), row.item_id, rev8(row.rev), row.envelope))) {
+        throw new FakeFerretError("decrypt");
+      }
+    }
+  }
+  function checkRows(memory, rows, topSeq) {
+    checkRowProofs(rows);
+    if (topSeq < memory.maxSeq) throw new FakeFerretError("checkpoint_top_seq_below_remembered");
+    for (const row of rows) {
+      const known = memory.revs[hex16.encode(row.item_id)];
+      if (known !== undefined && row.rev < known) throw new FakeFerretError("checkpoint_rev_below_remembered");
+    }
+  }
+  function record(memory, rows, topSeq, checkpointSeq) {
+    const added = new Set(rows.map((row) => hex16.encode(row.item_id)).filter((id) => memory.revs[id] === undefined));
+    if (Object.keys(memory.revs).length + added.size > memoryLimit) throw new FakeFerretError("too_large");
+    for (const row of rows) {
+      const id = hex16.encode(row.item_id);
+      memory.revs[id] = Math.max(memory.revs[id] ?? 0, row.rev);
+    }
+    memory.maxSeq = Math.max(memory.maxSeq, topSeq);
+    if (checkpointSeq !== null) memory.checkpointSeq = Math.max(memory.checkpointSeq, checkpointSeq);
+  }
+  /** The checks of Fase 1 section 8.6, "what a recipient checks": the digest and the mac, then the entries against the rows. */
+  function checkCheckpoint(checkpoint, rows, topSeq) {
+    const digest = createHash("sha256").update(checkpoint.entries).digest();
+    if (!Buffer.from(checkpoint.digest).equals(digest)) throw new FakeFerretError("checkpoint_bad_digest");
+    if (!Buffer.from(checkpoint.mac).equals(mac(Buffer.from("checkpoint"), rev8(checkpoint.seq), digest))) throw new FakeFerretError("checkpoint_bad_mac");
+    if (checkpoint.entries.length % 56 !== 0) throw new FakeFerretError("malformed_entries");
+    checkRowProofs(rows);
+    const byId = new Map(rows.map((row) => [hex16.encode(row.item_id), row]));
+    const zero = Buffer.alloc(32);
+    const entries = [];
+    for (let at = 0; at < checkpoint.entries.length; at += 56) entries.push(entryOf(checkpoint.entries.subarray(at, at + 56)));
+    for (const entry of entries) {
+      const row = byId.get(entry.id);
+      const tombstone = entry.hash.equals(zero);
+      if (!row) {
+        if (!tombstone) throw new FakeFerretError("checkpoint_hidden_or_rolled_back");
+      } else if (row.rev < entry.rev) {
+        throw new FakeFerretError(row.state === "live" && tombstone ? "checkpoint_live_behind_tombstone" : "checkpoint_lower_rev");
+      } else if (row.rev === entry.rev) {
+        const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
+        if (!hash.equals(entry.hash)) throw new FakeFerretError("checkpoint_same_rev_different_hash");
+      }
+    }
+    if (topSeq === checkpoint.seq) {
+      const listed = new Set(entries.map((entry) => entry.id));
+      for (const id of byId.keys()) if (!listed.has(id)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+    }
+  }
   /** A sealed row for the model, as the wire has it (base64url). */
   const wireRow = (id, rev, body) => {
     const sealed = seal(hex16.decode(id), rev, body);
@@ -290,13 +421,24 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
  */
 export async function createFakeStore({ order = [], db = null } = {}) {
   const database = db ?? (await freshStore());
-  const spy = { putRows: [], enqueued: [], settings: [] };
+  const spy = { putRows: [], enqueued: [], settings: [], states: [], log: [] }; // log: "state.save" and "cache.putRows" in the order they happened
   const service = {
     spy,
     database,
     holdOpen: null, // a promise that the next `open()` waits for
     holdSet: null, // a promise that the next settings write waits for
     failPutRows: 0, // the next this many row writes to the cache fail
+    failSaveState: 0, // the next this many writes of the sync state fail
+    loadSyncState: async (store, serverUrl, accountId) => loadSyncState(store, serverUrl, accountId),
+    saveSyncState: async (store, serverUrl, accountId, state) => {
+      if (service.failSaveState > 0) {
+        service.failSaveState -= 1;
+        throw new Error("the disk is full");
+      }
+      spy.states.push(state);
+      spy.log.push("state.save");
+      return saveSyncState(store, serverUrl, accountId, state);
+    },
     open: async () => {
       if (service.holdOpen) {
         const gate = service.holdOpen;
@@ -313,6 +455,7 @@ export async function createFakeStore({ order = [], db = null } = {}) {
           throw new Error("the cache is full");
         }
         spy.putRows.push(rows);
+        spy.log.push("cache.putRows");
         return cache.putRows(store, scope, rows);
       },
     },
@@ -350,6 +493,14 @@ export async function createFakeStore({ order = [], db = null } = {}) {
     deleteSetting,
   };
   return service;
+}
+
+/**
+ * The sync memory of the test account over a fake store, with the fake locks. `locks` is shared by
+ * the engines that are meant to be tabs of one browser.
+ */
+export function fakeMemory({ store, client, locks = new FakeLocks(), accountId = ACCOUNT, serverUrl = SERVER }) {
+  return memoryStore({ store, serverUrl, accountId, locks, newMemory: () => client.vault.sync_memory_new() });
 }
 
 /** A source of random bytes that never repeats (a counter in the first bytes, `seed` in the last). */
