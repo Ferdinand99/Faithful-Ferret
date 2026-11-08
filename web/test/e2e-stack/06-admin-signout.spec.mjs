@@ -49,6 +49,11 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
   const webkit = browser.browserType().name() === "webkit";
   await page.evaluate(() => history.back());
   if (webkit) {
+    // The report shows that this run checked less than the other two.
+    test.info().annotations.push({
+      type: "weaker-check",
+      description: "WebKit: Back from the signed-out page did not navigate in Playwright, so the Back-to-vault-sign-in check was skipped; only that no admin page shows was checked.",
+    });
     await page.waitForTimeout(5_000);
   } else {
     await page.waitForURL((url) => url.origin === vaultUrl, { timeout: 30_000 });
@@ -63,6 +68,28 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
   await page.goto(`${adminUrl}/static/favicon.svg`);
   expect(await cachedPages(page)).toEqual([]);
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), CACHE_KEY)).toBeNull();
+
+  await context.close();
+});
+
+test("a_session_that_ended_without_log_out_leaves_no_cache_after_the_next_hand_over_page_runs", async ({ browser }) => {
+  // An expired or revoked session never passes the signed-out page. The hand-over page of the next
+  // sign-in in the tab drops what the earlier session left in sessionStorage.
+  const context = await freshContext(browser);
+  const page = await context.newPage();
+  // A page of the admin origin that is not the hand-over page, to put the old snapshot in this tab.
+  await page.goto(`${adminUrl}/static/favicon.svg`);
+  await page.evaluate((key) => {
+    window.sessionStorage.setItem(key, JSON.stringify([{ url: "/settings/users", content: "private" }]));
+    window.sessionStorage.setItem("unrelated", "kept");
+  }, CACHE_KEY);
+  expect(await cachedPages(page)).toHaveLength(1);
+
+  // The hand-over page, with no code (a hand-over that comes later has one): its script runs and starts by clearing.
+  await page.goto(`${adminUrl}/auth/handoff`);
+  await expect(page.locator("#handoff-status")).toBeVisible();
+  await expect.poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), CACHE_KEY), { timeout: 10_000 }).toBeNull();
+  expect(await page.evaluate(() => window.sessionStorage.getItem("unrelated"))).toBe("kept");
 
   await context.close();
 });
