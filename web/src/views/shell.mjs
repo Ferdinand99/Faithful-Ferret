@@ -160,6 +160,12 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     if (warnings !== null && code === "bad_feed") return; // the sync banner shows it, with a way to try again
     // After an older state is accepted, every item that exists on the server is a conflict: there can be hundreds. The
     // first few are shown by name as before; past that they are one banner with the count, and no names.
+    // A pass found that the older state of a restored server does not check out; the engine has stopped again.
+    if (code === "restore_not_verified") {
+      const extra = payload?.reason === "no_checkpoint" ? ` ${t("syncwarnings.restored.not_verified_no_checkpoint")}` : "";
+      banner("error:restore_not_verified", "error", `${t("syncwarnings.restored.not_verified")}${extra}`);
+      return;
+    }
     if (code === "restore_item_unreadable") {
       banner("error:restore_item_unreadable", "warning", t("syncwarnings.error.restore_item_unreadable"));
       return;

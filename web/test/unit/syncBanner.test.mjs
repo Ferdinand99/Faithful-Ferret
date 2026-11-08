@@ -453,3 +453,18 @@ test("many_conflicts_become_one_banner_with_the_count_and_an_unreadable_item_has
     assert.ok(nb);
   });
 });
+
+test("a_pass_that_finds_the_older_state_does_not_check_out_has_one_banner_in_the_frame", async () => {
+  await withDom(async () => {
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const engine = fakeWarningsEngine();
+      const root = frame(engine, lang);
+      engine.emit("error", { code: "restore_not_verified", reason: "no_checkpoint" });
+      engine.emit("error", { code: "restore_not_verified", reason: "checkpoint_bad_mac" });
+      const banners = all(root, "banner");
+      assert.equal(banners.length, 1, "one banner however often it is found");
+      assert.ok(textOf(banners[0]).includes(catalog["syncwarnings.restored.not_verified"]));
+      assert.doesNotMatch(textOf(banners[0]), /checkpoint_bad_mac/);
+    }
+  });
+});

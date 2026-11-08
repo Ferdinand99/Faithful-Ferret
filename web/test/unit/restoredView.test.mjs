@@ -289,3 +289,29 @@ test("an_older_manifest_is_said_in_the_preview_and_in_the_result_and_conflicts_h
     assert.equal(find(root, "restored-unreadable"), null);
   });
 });
+
+test("a_lying_listing_in_the_preview_or_the_accept_says_bad_feed_and_can_be_tried_again", async () => {
+  await withDom(() => withFocus(async () => {
+    const { engine, root } = await page({ engine: { previewError: problem("bad_feed") } });
+    assert.ok(textOf(find(root, "restored-error")).includes(EN["syncwarnings.banner.bad_feed"]));
+    assert.ok(find(root, "preview-retry"), "a bad feed may be gone the next time");
+    engine.previewError = null;
+    await click(find(root, "preview-retry"));
+    await settle();
+    assert.equal(find(root, "restored-accept").disabled, false);
+    engine.acceptError = problem("bad_feed");
+    type(root, "accept");
+    await submit(find(root, "restored-form"));
+    await settle();
+    assert.ok(textOf(find(root, "restored-error")).includes(EN["syncwarnings.banner.bad_feed"]));
+    assert.ok(find(root, "restored-form"), "the form stays, and the word has to be typed again");
+    assert.equal(globalThis.document.activeElement, find(root, "restored-word"));
+  }));
+});
+
+test("the_conflict_text_prepares_a_device_that_was_behind_for_many_conflicts", async () => {
+  for (const [lang, catalog, behind] of [["en", EN, /was behind can have many/], ["nb", NB, /lå etter kan få mange/]]) {
+    assert.match(catalog["syncwarnings.restored.conflicts_note"], behind, `${lang}: the preview says it`);
+    assert.match(catalog["syncwarnings.restored.done_conflicts"], lang === "en" ? /can be many, also for items that nobody changed/ : /Det kan være mange, også for elementer ingen endret/, `${lang}: the result says it`);
+  }
+});

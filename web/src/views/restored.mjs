@@ -20,7 +20,7 @@ const plain = (word) => word.normalize("NFC").trim().toLocaleLowerCase();
  * that the older state does not check out; `invalid_state` that there is nothing to accept any more
  * (another tab did it, or the server changed); `busy` that an older state is being accepted right now.
  * @param {unknown} error
- * @returns {{ kind: "not_verified" | "invalid_state" | "busy" | "stopped" | "other", reason: string | null }}
+ * @returns {{ kind: "not_verified" | "invalid_state" | "busy" | "bad_feed" | "stopped" | "other", reason: string | null }}
  */
 function kindOf(error) {
   const code = /** @type {any} */ (error)?.code;
@@ -28,6 +28,7 @@ function kindOf(error) {
   if (code === "restore_not_verified") return { kind: "not_verified", reason: typeof reason === "string" ? reason : null };
   if (code === "invalid_state") return { kind: "invalid_state", reason: null };
   if (code === "busy") return { kind: "busy", reason: null };
+  if (code === "bad_feed") return { kind: "bad_feed", reason: null };
   if (code === "stopped" || code === "locked" || code === "vault_locked") return { kind: "stopped", reason: null };
   return { kind: "other", reason: null };
 }
@@ -196,7 +197,7 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
       return;
     }
     // Busy, or a failure the page has no name for: the user may try again, and the focus goes back to where it was.
-    fail(t(kind === "busy" ? "syncwarnings.restored.busy" : phase === "preview" ? "syncwarnings.restored.preview_failed" : "syncwarnings.restored.failed"));
+    fail(t(kind === "busy" ? "syncwarnings.restored.busy" : kind === "bad_feed" ? "syncwarnings.banner.bad_feed" : phase === "preview" ? "syncwarnings.restored.preview_failed" : "syncwarnings.restored.failed"));
     if (phase === "preview") {
       /** @type {any} */ (retry).disabled = false;
       mount(retryRow, retry);
