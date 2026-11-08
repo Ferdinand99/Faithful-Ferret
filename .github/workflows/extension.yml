@@ -48,7 +48,7 @@ jobs:
             done
           done
       - name: Type check
-        run: npx tsc -p jsconfig.json --noEmit
+        run: npm exec --no -- tsc -p jsconfig.json --noEmit
       - name: Unit tests
         run: node --test "test/unit/*.test.mjs"
 
@@ -73,7 +73,7 @@ jobs:
         run: |
           for mv in mv3 mv2; do
             node scripts/build.mjs --browser firefox --manifest "$mv" --variant release
-            npx web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors
+            npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors
           done
       - name: Check the release packages
         run: bash scripts/check-ext-release.sh

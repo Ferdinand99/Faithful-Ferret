@@ -121,6 +121,17 @@ updates:
       # are moved together by hand, with tests/browser.
       - dependency-name: "@playwright/test"
 
+  # The browser extension: build tools and tests only, no runtime dependencies.
+  - package-ecosystem: npm
+    directory: "/extension"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels: [dependencies, javascript]
+
   # Pinned by commit SHA in every workflow; Dependabot moves the SHA and the
   # version comment together.
   - package-ecosystem: github-actions

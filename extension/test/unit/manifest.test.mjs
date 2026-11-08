@@ -156,15 +156,18 @@ test("manifest_declares_data_collection_permissions_and_strict_min_version_153",
   for (const manifest of MANIFESTS) {
     for (const variant of VARIANTS) {
       const m = manifestOf(manifest, variant);
+      // The extension sends sign-in credentials and proofs to a server outside the
+      // browser (the user's own), which counts as authentication information.
       assert.deepEqual(m.browser_specific_settings, {
         gecko: {
-          id: "ferret@hedgerow.tools",
+          // The test variant has an id of its own, so it never shares storage with a release.
+          id: variant === "test" ? "ferret-test@hedgerow.tools" : "ferret@hedgerow.tools",
           strict_min_version: "153.0",
-          data_collection_permissions: { required: ["none"] },
+          data_collection_permissions: { required: ["authenticationInfo"] },
         },
       });
       assert.equal(m.version, readJson(join(extensionRoot, "package.json")).version);
-      assert.equal(m.name.endsWith(" (test build)"), variant === "test");
+      assert.equal(m.name, variant === "test" ? "Faithful Ferret (test)" : "Faithful Ferret");
     }
   }
 });

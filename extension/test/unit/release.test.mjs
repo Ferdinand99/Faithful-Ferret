@@ -47,6 +47,7 @@ test("release_variant_contains_no_test_files_and_no_fixed_uuid", async () => {
     assert.notEqual(bad.status, 0);
     assert.match(bad.output, /test files are not allowed in a release/);
     assert.match(bad.output, /the name is the test build's/);
+    assert.match(bad.output, /the add-on id is "ferret-test@hedgerow\.tools"/);
 
     // A test file planted into a release folder, in several places, fails the check.
     for (const path of ["test/bridge.html", "test/anything.mjs", "pages/bridge.html", "pages/measure.mjs"]) {
@@ -78,8 +79,39 @@ test("release_variant_refuses_a_fixed_extension_uuid_and_the_test_profile_prefer
       env.cleanup();
     }
   }
-  assert.deepEqual(releaseProblems(new Map([["manifest.json", Buffer.from('{ "name": "x" }')]])), []);
   assert.deepEqual(releaseProblems(new Map()), ["manifest.json is missing"]);
+});
+
+test("release_package_must_carry_exactly_the_release_add_on_id", () => {
+  /** @param {unknown} id */
+  const manifestWith = (id) => new Map([[
+    "manifest.json",
+    Buffer.from(JSON.stringify({ name: "Faithful Ferret", browser_specific_settings: { gecko: { id } } })),
+  ]]);
+  assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools")), []);
+  for (const id of ["ferret-test@hedgerow.tools", "other@example.com", "Ferret@hedgerow.tools", "ferret@hedgerow.tools ", undefined]) {
+    const problems = releaseProblems(manifestWith(id));
+    assert.equal(problems.length, 1, String(id));
+    assert.match(problems[0], /the add-on id is/);
+  }
+  // No gecko section at all.
+  assert.match(releaseProblems(new Map([["manifest.json", Buffer.from('{ "name": "x" }')]]))[0], /the add-on id is undefined/);
+});
+
+test("release_build_carries_the_release_id_and_the_test_build_its_own", async () => {
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+    for (const manifest of ["mv3", "mv2"]) {
+      const release = await build({ ...options, manifest, variant: "release" });
+      const test = await build({ ...options, manifest, variant: "test" });
+      const id = (/** @type {{ files: Map<string, Buffer> }} */ r) => JSON.parse(/** @type {Buffer} */ (r.files.get("manifest.json")).toString("utf8")).browser_specific_settings.gecko.id;
+      assert.equal(id(release), "ferret@hedgerow.tools");
+      assert.equal(id(test), "ferret-test@hedgerow.tools");
+    }
+  } finally {
+    env.cleanup();
+  }
 });
 
 test("check_ext_release_needs_a_package", () => {
