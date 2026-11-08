@@ -1,0 +1,4 @@
+{
+  "fixture": ["fixture.test", "second.fixture.test"],
+  "e2e": ["vault-e2e.test", "admin-e2e.test"]
+}
