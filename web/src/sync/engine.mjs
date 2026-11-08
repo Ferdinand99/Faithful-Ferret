@@ -59,7 +59,7 @@ import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
 import {
-  checkListingPage, checkpointBody, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES, suspendsUpload,
+  checkListingPage, checkpointBody, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
   UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
 } from "./checkpoint.mjs";
 import { acceptPage, coreRow, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
@@ -182,7 +182,8 @@ export function createSyncEngine({
    * What the last pass that read the whole feed found, for the checkpoint step: the `latest_seq` of its last page (`seq`),
    * the head of the checkpoint that page showed (`head`), whether a full listing was part of it, whether it refused rows, and
    * the sync memory as this pass left it (`memory`: another tab's save after that makes the verification read the feed again).
-   * @type {{ seq: number, head: number | null, listed: boolean, refused: boolean, memory: Uint8Array } | null}
+   * `head` may be raised by the verification (the checkpoint it read); `pageHead` is what the feed showed.
+   * @type {{ seq: number, head: number | null, pageHead: number | null, listed: boolean, refused: boolean, memory: Uint8Array } | null}
    */
   let lastDrain = null;
   /** A verification has succeeded in this session (the engine has run since `start`). */
@@ -488,8 +489,8 @@ export function createSyncEngine({
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
     lastDrain = {
-      seq: last.latest_seq, head: last.checkpoint?.seq ?? null, listed: listing !== null, refused: pass.refused,
-      memory: (await memory.load()).memory,
+      seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
+      refused: pass.refused, memory: (await memory.load()).memory,
     };
     if (listing !== null) await finishListing(db);
   }
@@ -1137,12 +1138,23 @@ export function createSyncEngine({
    * Whether every item the checkpoint disagrees with is one that was uploaded again (an item with a `missing_on_server` or `reuploaded` mark), so the disagreement is
    * explained and verification is only put off. An item without a mark, or a disagreement nobody can name, is not.
    * Spec: Fase 1 section 8.6 ("What a recipient checks").
+   *
+   * The core checks the memory last, after the entries, so the first failure it names can hide a row that is below its floor
+   * for no reason a mark can give. Before a failure is put off, the rows without a mark are therefore given to the memory
+   * on their own (the answer is thrown away): if the core refuses one of them, the failure is hard. A checkpoint below the
+   * highest one that has verified is an old one shown again, and is hard as well.
+   *
+   * Known gap: an item the server hid whose floor is revision 1 gets its mark ended as soon as the copy that was uploaded
+   * again comes back (the rows hold the floor then). A checkpoint that lists the old hash of that revision is then a hard
+   * warning, not a pause, because nothing marks the item any more. Keeping the mark until the revision passes the floor
+   * would close it.
    * @param {string} code the failure of the core
    * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
-   * @param {Uint8Array} remembered the sync memory the verification ran against
+   * @param {import("../store/syncState.mjs").SyncState} state the state the verification ran against
    */
-  async function explainedByMarks(code, checkpoint, topSeq, remembered) {
+  async function explainedByMarks(code, checkpoint, topSeq, state) {
     if (hardWarningOf(code, { deferred: true }) !== "verify_deferred") return false;
+    if (state.verifiedSeq !== null && checkpoint.seq < state.verifiedSeq) return false;
     /** @type {Set<string>} */
     const marked = new Set();
     for (const [id, mark] of flags) if (mark.kind === "missing_on_server" || mark.kind === "reuploaded") marked.add(id);
@@ -1153,16 +1165,12 @@ export function createSyncEngine({
     // a disagreement between entries and rows: it is explained when nothing unmarked disagrees.
     if (code !== REV_BELOW_REMEMBERED && failing.size === 0) return false;
     if (![...failing].every((id) => marked.has(id))) return false;
-    if (code === REV_BELOW_REMEMBERED) {
-      // The memory refused a row. Only the copy of a marked item may be the one. Ask the core about the unmarked rows alone
-      // (the answer is thrown away): if it refuses one of them, a row is below its floor for no reason a mark can give.
-      const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
-      try {
-        await client.vault.accept_rows(unmarked, topSeq, remembered);
-      } catch (error) {
-        if (isFatal(error)) throw error;
-        return false;
-      }
+    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
+    try {
+      await client.vault.accept_rows(unmarked, topSeq, state.memory);
+    } catch (error) {
+      if (isFatal(error)) throw error;
+      return false;
     }
     return true;
   }
@@ -1174,7 +1182,7 @@ export function createSyncEngine({
    * read the feed again first, once), or null (the server could not be reached; nothing changed). A stop (`rollback_suspected`,
    * `sync_memory_full`) is thrown as a `SyncError`.
    * Spec: Fase 1 section 8.6 ("What a recipient checks", "Local memory").
-   * @param {{ seq: number, head: number | null, memory: Uint8Array }} drain
+   * @param {{ seq: number, head: number | null, pageHead: number | null, memory: Uint8Array }} drain
    * @param {import("../store/syncState.mjs").SyncState} before the stored state when the step began
    * @param {boolean} mayRetry
    * @returns {Promise<string | null>}
@@ -1215,7 +1223,9 @@ export function createSyncEngine({
       try {
         const done = await client.vault.verify_checkpoint(checkpoint, coreRows, drain.seq, state.memory);
         box.verdict = { ok: true };
-        return { ...state, memory: done.newSyncMemory, verifiedAt: now(), hardWarning: null };
+        return {
+          ...state, memory: done.newSyncMemory, verifiedAt: now(), verifiedSeq: Math.max(state.verifiedSeq ?? 0, checkpoint.seq), hardWarning: null,
+        };
       } catch (error) {
         if (isFatal(error)) throw error;
         const code = codeOf(error);
@@ -1223,7 +1233,7 @@ export function createSyncEngine({
           box.verdict = { ok: false, code, moved, warning: "", kept: "" };
           return null; // the other tab has seen more: nothing is said before the feed has been read again
         }
-        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state.memory) });
+        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state) });
         // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
         const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
         box.verdict = { ok: false, code, moved, warning, kept };
@@ -1257,7 +1267,7 @@ export function createSyncEngine({
    * information (a forged checkpoint, a bad feed). Uploads may be unlocked by the exception for those two on a device that has
    * verified before, but never while a state warning or a pause stands. The next automatic try waits.
    * @param {string} warning @param {string} kept @param {import("../store/syncState.mjs").SyncState} before
-   * @param {{ seq: number, head: number | null }} drain
+   * @param {{ seq: number, pageHead: number | null }} drain
    * @returns {string} the most serious warning that stands
    */
   function settleFailure(warning, kept, before, drain) {
@@ -1267,7 +1277,7 @@ export function createSyncEngine({
     for (const code of wanted) raiseWarning(code);
     forgedUnlock = warningRank(warning) === 1 && warningRank(kept) < 2 && before.verifiedAt !== null;
     verifyNotBefore = now() + VERIFY_RETRY_MS;
-    deferredAt = kept === "verify_deferred" ? { seq: drain.seq, head: drain.head, at: now() } : null;
+    deferredAt = kept === "verify_deferred" ? { seq: drain.seq, head: drain.pageHead, at: now() } : null;
     return warningRank(kept) > warningRank(warning) ? kept : warning;
   }
 
@@ -1290,7 +1300,7 @@ export function createSyncEngine({
     const due = before.verifiedAt === null || age < 0 || age >= VERIFY_AFTER_MS || before.hardWarning !== null;
     // While only a pause stands, the checkpoint is not asked for again until the feed has moved (its top or the head of the
     // checkpoint), or a day has passed: nothing but a change can end a pause.
-    const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.head && at - deferredAt.at < VERIFY_AFTER_MS;
+    const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.pageHead && at - deferredAt.at < VERIFY_AFTER_MS;
     if (verifyRequested || drain.listed || (due && at >= verifyNotBefore && !unchanged)) {
       verifyRequested = false;
       const result = await verifyStep(drain, before, mayRetry);
@@ -1314,14 +1324,14 @@ export function createSyncEngine({
    */
   async function uploadStep(drain) {
     if (stopped || halted !== null || !(verifiedInSession || forgedUnlock)) return;
-    for (const code of standing) if (suspendsUpload(code)) return;
+    for (const code of standing) if (warningRank(code) >= 2) return; // a code nobody named ranks as serious: it blocks
     if (drain.refused || flags.size > 0 || blocked.size > 0 || runner.itemsWithEntries().length > 0) return;
     const at = now();
     if (at < uploadNotBefore) return;
     const seq = drain.seq;
     const state = await memory.load();
     alive();
-    if (suspendsUpload(state.hardWarning)) return; // another tab may have stored one that this engine has not shown
+    if (warningRank(state.hardWarning) >= 2) return; // another tab may have stored one that this engine has not shown
     const since = state.uploadedAt === null ? Infinity : at - state.uploadedAt;
     if (since >= 0 && since < UPLOAD_EVERY_MS) return;
     if (state.uploadedSeq !== null && seq <= state.uploadedSeq) return; // nothing new since the last upload

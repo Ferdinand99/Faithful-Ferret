@@ -65,7 +65,7 @@ export const VERIFY_WARNINGS = Object.freeze(
 );
 
 /** How serious a warning of a verification is: 1 is information, 2 is a pause, 3 is a state warning. */
-const RANK = Object.freeze({ checkpoint_forged: 1, bad_feed: 1, verify_deferred: 2 });
+const RANK = Object.freeze({ checkpoint_forged: 1, bad_feed: 1, server_hid_item: 1, verify_deferred: 2 });
 
 /**
  * The rank of a stored warning (0 for none). A code nobody named ranks as a state warning.

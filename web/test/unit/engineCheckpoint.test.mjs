@@ -60,6 +60,7 @@ test("first_start_verifies_after_the_first_drained_pass_and_saves_verified_at", 
   assert.equal(d.api.checkpointGets.length, 1, "the checkpoint is read once, after the feed is drained");
   const state = await stateOf(d);
   assert.equal(state.verifiedAt, T0 + d.timers.time);
+  assert.equal(state.verifiedSeq, 2, "and the seq of the checkpoint it verified");
   assert.equal(state.hardWarning, null);
   assert.equal(memoryOf(state.memory).checkpointSeq, 2, "the memory knows the checkpoint it has verified");
   assert.deepEqual(d.engine.health(), { halted: null, warnings: [] });
@@ -658,6 +659,70 @@ test("a_row_below_its_floor_with_an_unrelated_mark_is_hard_and_not_deferred", as
   assert.equal(await d.engine.verifyNow(), "checkpoint_rolled_back");
   assert.deepEqual(standing(d), ["checkpoint_rolled_back"]);
   assert.equal(d.engine.health().halted, null);
+  d.engine.stop();
+});
+
+test("an_old_checkpoint_does_not_give_a_pause_when_an_unmarked_row_is_below_its_floor", async () => {
+  // The checkpoint lists B at revision 3, and the copy of B that was uploaded again is revision 1: that alone is a pause.
+  // The core names it first and checks the memory last, so a row of A that is below its floor would never be seen.
+  const d = await hiddenB();
+  await d.memory.withLock(async (state) => {
+    const floors = memoryOf(state.memory);
+    floors.revs[ID_A] = 9; // A is held at revision 2
+    return { ...state, memory: new TextEncoder().encode(JSON.stringify(floors)) };
+  });
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state");
+  assert.deepEqual(standing(d), ["server_shows_older_state"]);
+  d.engine.stop();
+});
+
+test("a_replayed_checkpoint_below_the_highest_verified_one_is_hard_and_not_a_pause", async () => {
+  const d = await hiddenB();
+  assert.equal((await stateOf(d)).verifiedSeq, 2, "the listing pass verified the checkpoint at seq 2");
+  // The same checkpoint is a pause while nothing newer has been verified ...
+  assert.equal(await d.engine.verifyNow(), "verify_deferred");
+  // ... and hard once a newer one has verified: the server shows an old checkpoint again.
+  await seed(d, { verifiedSeq: 50, hardWarning: null });
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state");
+  assert.deepEqual(standing(d), ["server_shows_older_state"]);
+  d.engine.stop();
+});
+
+test("a_stored_warning_nobody_named_blocks_uploads", async () => {
+  const { model, client } = withNewerRow();
+  const d = await syncDevice({ model, client });
+  await seed(d, { verifiedAt: T0 - 2 * DAY });
+  await d.engine.start();
+  assert.equal(model.checkpointPuts.length, 1, "verified and uploaded");
+  // Another tab stores a code this engine has never seen, and the checkpoint cannot be read.
+  await seed(d, { hardWarning: "a_code_nobody_named" });
+  d.api.checkpointFaults.push({ kind: "network" });
+  setRow(model, client, ID_D, 1, "D");
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(660_000);
+  await until(() => d.api.checkpointGets.length === 2, "the engine looks again");
+  await d.engine.syncNow();
+  assert.equal(model.checkpointPuts.length, 1, "an unknown warning is read as a serious one");
+  d.engine.stop();
+});
+
+test("a_pause_is_not_tried_again_when_the_feed_shows_no_head", async () => {
+  const d = await hiddenB();
+  await settle(80); // the pass that brings the copy back may still be running
+  const real = d.api.get;
+  d.api.get = async (path) => {
+    const answer = await real(path);
+    if (!path.includes("/changes")) return answer;
+    const { checkpoint: _head, ...rest } = answer;
+    return rest;
+  };
+  assert.equal(await d.engine.verifyNow(), "verify_deferred");
+  const asked = d.api.checkpointGets.length;
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(400_000);
+  await settle(60);
+  await d.engine.syncNow();
+  assert.equal(d.api.checkpointGets.length, asked, "nothing has moved, with or without a head in the feed");
   d.engine.stop();
 });
 

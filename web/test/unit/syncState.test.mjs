@@ -12,6 +12,7 @@ const state = (overrides = {}) => ({
   memory: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]),
   restoreEpoch: 2,
   verifiedAt: 1_700_000_000_000,
+  verifiedSeq: 40,
   uploadedAt: 1_700_000_100_000,
   uploadedSeq: 41,
   hardWarning: null,
@@ -35,7 +36,7 @@ test("sync_state_round_trips_and_is_null_before_the_first_save", async () => {
   await saveSyncState(db.store, SERVER, ACCOUNT, full);
   assert.deepEqual(await loadSyncState(db.store, SERVER, ACCOUNT), full);
   // A later save replaces the whole state.
-  const next = state({ restoreEpoch: null, verifiedAt: null, uploadedAt: null, uploadedSeq: null, restore: { epoch: 3, phase: "queued" } });
+  const next = state({ restoreEpoch: null, verifiedAt: null, verifiedSeq: null, uploadedAt: null, uploadedSeq: null, restore: { epoch: 3, phase: "queued" } });
   await saveSyncState(db.store, SERVER, ACCOUNT, next);
   assert.deepEqual(await loadSyncState(await db.reopen(), SERVER, ACCOUNT), next);
 });
@@ -105,8 +106,9 @@ test("sync_state_rejects_non_bytes_fractional_numbers_and_unknown_phases", async
     await refused(state({ memory }), `memory ${String(memory)}`);
   }
   // Numbers are whole, not negative, and numbers.
-  for (const field of ["restoreEpoch", "verifiedAt", "uploadedAt", "uploadedSeq"]) {
-    for (const bad of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, 5n, "7", undefined]) {
+  for (const field of ["restoreEpoch", "verifiedAt", "verifiedSeq", "uploadedAt", "uploadedSeq"]) {
+    // A state from before `verifiedSeq` existed has none, and reads as null.
+    for (const bad of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, 5n, "7", ...(field === "verifiedSeq" ? [] : [undefined])]) {
       await refused(state({ [field]: bad }), `${field} ${String(bad)}`);
     }
   }
@@ -174,4 +176,13 @@ test("a_damaged_stored_state_is_refused_on_load", async () => {
     await put({ ...good, ...damage });
     await refused();
   }
+});
+
+test("a_state_stored_before_the_verified_seq_existed_reads_with_none", async () => {
+  const db = await freshStore();
+  const { verifiedSeq: _none, ...old } = state();
+  await saveSyncState(db.store, SERVER, ACCOUNT, old);
+  assert.equal((await loadSyncState(db.store, SERVER, ACCOUNT)).verifiedSeq, null);
+  await saveSyncState(db.store, SERVER, ACCOUNT, state({ verifiedSeq: 7 }));
+  assert.equal((await loadSyncState(db.store, SERVER, ACCOUNT)).verifiedSeq, 7);
 });
