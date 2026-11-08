@@ -9,8 +9,9 @@ import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { deleteSetting, getSetting, setSetting } from "../../src/store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../../src/store/syncState.mjs";
+import { createSyncEngine } from "../../src/sync/engine.mjs";
 import { memoryStore } from "../../src/sync/memory.mjs";
-import { ACCOUNT, freshStore, SERVER } from "./idbHelpers.mjs";
+import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
 
 /**
  * The Web Locks of a browser, as far as the sync memory uses them: `request(name, callback)`
@@ -99,6 +100,24 @@ export class FakeTimers {
 /** The text of a request body. */
 const text = (bytes) => new TextDecoder().decode(bytes);
 
+/** A row of the feed or of the listing, as the wire has it. */
+function changeOf(id, row) {
+  const change = { id, rev: row.rev, seq: row.seq, deleted: row.deleted };
+  if (row.blob !== null) change.blob = row.blob;
+  if (row.tag !== null) change.tag = row.tag;
+  if (row.tomb !== null) change.tomb = row.tomb;
+  return change;
+}
+
+/** A checkpoint as the fake core signs it: the entries sorted by the bytes of the id, a digest and a keyed mac. */
+export function signCheckpoint(key, seq, entries) {
+  const sorted = [...entries].sort((a, b) => Buffer.compare(Buffer.from(a.item_id), Buffer.from(b.item_id)));
+  const packed = Buffer.concat(sorted.map((e) => Buffer.concat([Buffer.from(e.item_id), rev8(e.rev), Buffer.from(e.hash ?? new Uint8Array(32))])));
+  const digest = createHash("sha256").update(packed).digest();
+  const mac = createHmac("sha256", key).update(Buffer.concat([Buffer.from("checkpoint"), rev8(seq), digest])).digest();
+  return { seq, digest: new Uint8Array(digest), mac: new Uint8Array(mac), entries: new Uint8Array(packed) };
+}
+
 /** A tiny model of the server's item store and changes feed. */
 export class Model {
   constructor() {
@@ -111,6 +130,54 @@ export class Model {
     this.latestSeqLie = null;
     this.idems = new Map(); // idem -> { body, result }
     this.writes = []; // every accepted write
+    // The checkpoint the server holds: "auto" is an honest one for the state of the model right now (what a device that
+    // keeps the checkpoints up to date would have uploaded), null is none, an object ({ seq, digest, mac, entries } as
+    // bytes, what `make_checkpoint` returns) is that one.
+    this.checkpoint = "auto";
+    this.signKey = Buffer.alloc(32, 7);
+    this.hidden = new Set(); // ids the listing leaves out (the feed and the item routes still show them)
+    this.checkpointPuts = []; // the body of every checkpoint the server stored
+  }
+
+  /** An honest checkpoint of the rows the model holds right now, at its `seq`. */
+  autoCheckpoint(seq = this.seq) {
+    const entries = [...this.items.entries()].map(([id, row]) => ({
+      item_id: hex16.decode(id),
+      rev: row.rev,
+      hash: row.deleted || row.blob === null ? null : new Uint8Array(createHash("sha256").update(b64u.decode(row.blob)).digest()),
+    }));
+    return signCheckpoint(this.signKey, seq, entries);
+  }
+
+  /** Keeps the honest checkpoint of this moment, as another device would have uploaded it; it stays while the model moves on. */
+  pinCheckpoint() {
+    this.checkpoint = this.autoCheckpoint();
+  }
+
+  /** The checkpoint as the wire has it, or null when the server holds none. */
+  checkpointJson() {
+    if (this.checkpoint === null) return null;
+    const cp = this.checkpoint === "auto" ? this.autoCheckpoint() : this.checkpoint;
+    return { seq: cp.seq, digest: b64u.encode(cp.digest), mac: b64u.encode(cp.mac), entries: b64u.encode(cp.entries) };
+  }
+
+  /** The server side of `PUT /api/sync/checkpoint`: the structure only, as the real server checks it. */
+  putCheckpoint(body) {
+    const request = JSON.parse(body);
+    const entries = b64u.decode(request.entries);
+    const digest = b64u.decode(request.digest);
+    if (entries.length % 56 !== 0 || !createHash("sha256").update(entries).digest().equals(Buffer.from(digest))) {
+      throw new ApiError(422, "checkpoint_invalid");
+    }
+    if (request.seq > this.seq) throw new ApiError(422, "checkpoint_invalid");
+    const stored = this.checkpointJson();
+    if (stored && request.seq < stored.seq) throw new ApiError(409, "checkpoint_stale", null, { error: "checkpoint_stale", stored_seq: stored.seq });
+    if (stored && request.seq === stored.seq && JSON.stringify(stored) !== JSON.stringify(request)) {
+      throw new ApiError(409, "checkpoint_stale", null, { error: "checkpoint_stale", stored_seq: stored.seq });
+    }
+    this.checkpoint = { seq: request.seq, digest, mac: b64u.decode(request.mac), entries };
+    this.checkpointPuts.push(request);
+    return { seq: request.seq };
   }
 
   /** The server side of `PUT /api/sync/items/{id}` for the exact body text. */
@@ -154,18 +221,30 @@ export class Model {
       .sort((a, b) => a[1].seq - b[1].seq);
     const size = Math.min(limit, this.pageSize);
     const page = all.slice(0, size);
+    const head = this.checkpointJson();
     return {
-      changes: page.map(([id, row]) => {
-        const change = { id, rev: row.rev, seq: row.seq, deleted: row.deleted };
-        if (row.blob !== null) change.blob = row.blob;
-        if (row.tag !== null) change.tag = row.tag;
-        if (row.tomb !== null) change.tomb = row.tomb;
-        return change;
-      }),
+      changes: page.map(([id, row]) => changeOf(id, row)),
       latest_seq: this.latestSeqLie ?? this.seq,
       vk_epoch: this.vkEpoch,
       restore_epoch: this.restoreEpoch,
+      ...(head ? { checkpoint: { seq: head.seq, digest: head.digest, mac: head.mac } } : {}),
       has_more: all.length > size,
+    };
+  }
+
+  /** `GET /api/sync/items`: every row in the order of the ids, the ones in `hidden` left out, never a 410. */
+  listItems(after, limit) {
+    const ids = [...this.items.keys()].filter((id) => !this.hidden.has(id) && (after === null || id > after)).sort();
+    const size = Math.min(limit || 500, this.pageSize);
+    const page = ids.slice(0, size);
+    const more = ids.length > size;
+    return {
+      items: page.map((id) => changeOf(id, this.items.get(id))),
+      as_of_seq: this.seq,
+      vk_epoch: this.vkEpoch,
+      restore_epoch: this.restoreEpoch,
+      ...(more ? { next_after: page[page.length - 1] } : {}),
+      has_more: more,
     };
   }
 }
@@ -179,20 +258,42 @@ export class Model {
 export function createFakeApi(model, { order = [] } = {}) {
   const api = {
     faults: [],
-    gets: [], // paths of the feed calls
+    gets: [], // paths of the feed calls (the changes and the listing)
+    checkpointGets: [], // paths of the calls for the checkpoint
+    checkpointPuts: [], // the text of every checkpoint upload request, faults included
+    checkpointFaults: [], // failures for the next checkpoint reads (`{ kind: "network" | "status", status, code }`)
+    checkpointPutFaults: [], // and for the next uploads (`{ kind: "network" | "status", status, code, retryAfter }`)
     puts: [], // { id, bytes, text } of every write request, faults included
     failFeed: null, // an ApiError to throw on the next feed calls (count in failFeedTimes)
     failFeedTimes: 0,
     async get(path) {
+      const url = new URL(path, "https://vault.invalid");
+      if (url.pathname === "/api/sync/checkpoint") {
+        api.checkpointGets.push(path);
+        const fault = api.checkpointFaults.shift();
+        if (fault?.kind === "network") throw new ApiError(0, "network");
+        if (fault?.kind === "status") throw new ApiError(fault.status, fault.code);
+        const checkpoint = model.checkpointJson();
+        if (!checkpoint) throw new ApiError(404, "not_found");
+        return checkpoint;
+      }
       api.gets.push(path);
       if (api.failFeed && api.failFeedTimes > 0) {
         api.failFeedTimes -= 1;
         throw api.failFeed;
       }
-      const url = new URL(path, "https://vault.invalid");
+      if (url.pathname === "/api/sync/items") return model.listItems(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
       return model.changes(Number(url.searchParams.get("since")), Number(url.searchParams.get("limit")));
     },
     async put(path, body) {
+      if (path === "/api/sync/checkpoint") {
+        const sent = body instanceof Uint8Array ? text(body) : String(body);
+        api.checkpointPuts.push(sent);
+        const fault = api.checkpointPutFaults.shift();
+        if (fault?.kind === "network") throw new ApiError(0, "network");
+        if (fault?.kind === "status") throw new ApiError(fault.status, fault.code, fault.retryAfter ?? null, fault.body ?? null);
+        return model.putCheckpoint(sent);
+      }
       const id = path.split("/").pop();
       const bytes = body instanceof Uint8Array ? new Uint8Array(body) : new TextEncoder().encode(String(body));
       api.puts.push({ id, bytes, text: text(bytes) });
@@ -323,10 +424,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     },
     async make_checkpoint(seq, entries) {
       calls.push(["make_checkpoint", seq]);
-      const sorted = [...entries].sort((a, b) => Buffer.compare(Buffer.from(a.item_id), Buffer.from(b.item_id)));
-      const packed = Buffer.concat(sorted.map((e) => Buffer.concat([Buffer.from(e.item_id), rev8(e.rev), Buffer.from(e.hash ?? new Uint8Array(32))])));
-      const digest = createHash("sha256").update(packed).digest();
-      return { seq, digest: new Uint8Array(digest), mac: new Uint8Array(mac(Buffer.from("checkpoint"), rev8(seq), digest)), entries: new Uint8Array(packed) };
+      return signCheckpoint(key, seq, entries);
     },
     async verify_checkpoint(checkpoint, rows, topSeq, memory) {
       calls.push(["verify_checkpoint", checkpoint.seq, topSeq]);
@@ -381,6 +479,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     if (!Buffer.from(checkpoint.digest).equals(digest)) throw new FakeFerretError("checkpoint_bad_digest");
     if (!Buffer.from(checkpoint.mac).equals(mac(Buffer.from("checkpoint"), rev8(checkpoint.seq), digest))) throw new FakeFerretError("checkpoint_bad_mac");
     if (checkpoint.entries.length % 56 !== 0) throw new FakeFerretError("malformed_entries");
+    if (checkpoint.seq > topSeq) throw new FakeFerretError("checkpoint_seq_above_top");
     checkRowProofs(rows);
     const byId = new Map(rows.map((row) => [hex16.encode(row.item_id), row]));
     const zero = Buffer.alloc(32);
@@ -493,6 +592,24 @@ export async function createFakeStore({ order = [], db = null } = {}) {
     deleteSetting,
   };
   return service;
+}
+
+/**
+ * One device: an engine over its own fake browser storage and a fake clock, as the checkpoint tests use it. `db` and `locks` are
+ * shared by the engines that are meant to be the same browser (a reload, a second tab).
+ */
+export async function syncDevice({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, locks = new FakeLocks(), deviceName, win = null } = {}) {
+  const store = await createFakeStore({ db });
+  const api = createFakeApi(model);
+  const timers = new FakeTimers();
+  const events = { changed: [], error: [], state: [] };
+  const memory = fakeMemory({ store, client, locks });
+  const engine = createSyncEngine({
+    api, client: { vault: client.vault }, store, scope: scope(), memory, timers, rand: counterRand(seed), pollMs, win, deviceName,
+    now: () => 1_700_000_000_000 + timers.time,
+  });
+  for (const name of Object.keys(events)) engine.on(name, (payload) => events[name].push(payload));
+  return { model, client, store, api, timers, engine, events, memory, locks };
 }
 
 /**

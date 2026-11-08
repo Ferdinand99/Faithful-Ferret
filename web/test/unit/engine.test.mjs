@@ -99,11 +99,13 @@ test("second_engine_sees_the_change_within_one_poll", async () => {
 
   await a.engine.update(id, { name: "Changed on A" }, currentRev(a.engine, id));
   await until(() => model.items.get(id).rev === 2);
+  await until(() => b.timers.pending > 0, "B has finished its pass and waits for the next poll");
   b.timers.advance(5_000);
   await until(() => b.engine.list()[0].name === "Changed on A", "B sees the edit");
 
   await a.engine.remove(id);
   await until(() => model.items.get(id).deleted);
+  await until(() => b.timers.pending > 0, "B waits for the next poll");
   b.timers.advance(5_000);
   await until(() => b.engine.list().length === 0, "B sees the deletion");
   a.engine.stop();
@@ -474,9 +476,10 @@ test("a_410_is_answered_with_one_full_listing_from_zero_and_nothing_is_deleted",
   d.api.gets.length = 0;
   d.api.faults.push({ kind: "network", only: ID_B }, { kind: "network", only: ID_C }); // the uploads wait for a retry
   await d.engine.syncNow();
-  assert.match(d.api.gets[0], /since=3&/);
-  assert.match(d.api.gets[1], /since=0&/, "restarts from 0");
-  assert.equal(d.api.gets.filter((p) => p.includes("since=0")).length, 1, "once");
+  assert.equal(d.api.gets[0], "/api/sync/changes?since=3&limit=500");
+  assert.equal(d.api.gets[1], "/api/sync/items?limit=500", "the listing, from the first id");
+  assert.equal(d.api.gets[2], `/api/sync/changes?since=${model.seq}&limit=500`, "then the feed from the as_of_seq of the first page");
+  assert.equal(d.api.gets.filter((p) => p.includes("/items")).length, 1, "once");
   const byId = Object.fromEntries(d.engine.list().map((i) => [i.id, i]));
   assert.equal(byId[ID_A].name, "Stays 2");
   assert.equal(byId[ID_A].missingOnServer, false);
@@ -605,20 +608,25 @@ test("a_410_on_a_later_page_restarts_once_and_then_surfaces_an_error", async () 
   }
   model.pageSize = 2;
   const d = await device({ model, client });
-  // The floor rises while page 2 of the first listing is being read; the second answer is a 410 as well.
+  // The floor rises while page 2 of the feed is being read; the answer after the listing is a 410 as well.
   const real = d.api.get;
   let calls = 0;
+  let gone = 0;
   d.api.get = async (path) => {
     calls += 1;
-    if (calls === 2 || calls === 4) throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 9 });
+    if (path.includes("/changes") && calls >= 2) {
+      gone += 1;
+      throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 9 });
+    }
     return real(path);
   };
   await d.engine.start();
-  assert.equal(calls, 4, "page 1, 410, restart from 0, 410 again: no third try in the same pass");
+  assert.equal(calls, 5, "page 1, 410, the two pages of the listing, 410 again: no second listing in the same pass");
+  assert.equal(gone, 2);
   assert.deepEqual(d.events.error, [{ code: "gone" }]);
   assert.ok(d.events.state.some((s) => s.kind === "failed" && s.code === "gone"));
   // The next pass can recover.
-  calls = 100;
+  d.api.get = real;
   await d.engine.syncNow();
   assert.equal(d.engine.list().length, 3);
   d.engine.stop();
