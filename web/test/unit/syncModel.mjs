@@ -5,7 +5,8 @@
 // revision, resurrection only with the flag and the tombstone's revision, the retention of tombstones (a 410 for a device that
 // is behind the purge), backups, and a restore that is recorded the way `ferret restore-epoch bump` records it.
 //
-// `Sim` runs devices (engines over their own fake browser storage, or two tabs over one) against it, with the faults a
+// `Sim` runs devices (engines over their own fake browser storage; a browser can have several tabs, of which one holds the owner
+// lock and runs the engine, and the others are on standby until the user presses "Use here") against it, with the faults a
 // network and a server can give (a request that never arrives, an answer that is lost, 429, 503, a feed that fails), and a seeded
 // random choice of what happens next. It keeps the facts the invariants of the matrix need: every write a user made, every
 // choice the user made, the floors of the sync memory over time, and every request an engine made after `stop()`.
@@ -15,10 +16,12 @@ import { cache } from "../../src/store/cache.mjs";
 import { STORES } from "../../src/store/idb.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { loadSyncState } from "../../src/store/syncState.mjs";
+import { serverKey } from "../../src/store/idb.mjs";
 import { createSyncEngine } from "../../src/sync/engine.mjs";
+import { createOwner, ownerName } from "../../src/sync/owner.mjs";
 import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeLocks, FakeTimers, fakeMemory, memoryOf, Model, settle,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, FakeChannels, FakeLocks, FakeTimers, fakeMemory, memoryOf, Model, settle,
 } from "./syncHelpers.mjs";
 
 /** An item id as a log line shows it: the first two bytes and the last one (the last byte belongs to the random source of one engine). */
@@ -28,12 +31,11 @@ const short = (id) => `${id.slice(0, 4)}..${id.slice(-2)}`;
 const frames = () => (new Error().stack ?? "").split("\n").slice(3, 10).map((line) => line.trim().replace("at ", "").split("/").at(-1)).join(" < ");
 
 /**
- * The gaps of the engine that the runs still tolerate (each has a todo test in `syncMatrix.test.mjs`): `tabs` (two tabs of one browser that both
- * write; the outbox and the marks are stored once and kept per tab) and `purge` (a purged tombstone can look like a rollback). All of them are
- * tolerated by default. `FERRET_MATRIX_STRICT=1` tolerates none; `FERRET_MATRIX_TOLERATE=tabs,purge` names the ones that are still let through
- * (to see what a strict run finds besides them).
+ * The gaps of the engine that the runs still tolerate (each has a todo test in `syncMatrix.test.mjs`): `purge` (a purged tombstone can look
+ * like a rollback). Tolerated by default. `FERRET_MATRIX_STRICT=1` tolerates none; `FERRET_MATRIX_TOLERATE=purge` names the ones that are still
+ * let through (to see what a strict run finds besides them).
  */
-export const KNOWN_GAPS = Object.freeze(["tabs", "purge"]);
+export const KNOWN_GAPS = Object.freeze(["purge"]);
 const tolerated = () => (process.env.FERRET_MATRIX_STRICT
   ? new Set((process.env.FERRET_MATRIX_TOLERATE ?? "").split(",").map((name) => name.trim()).filter(Boolean))
   : new Set(KNOWN_GAPS));
@@ -204,7 +206,7 @@ export async function simEngine({ model, client, seed, pollMs = POLL_MS, db = nu
 /** What happens in a step, and how often. */
 export const ACTIONS = [
   ["create", 14], ["update", 22], ["remove", 6], ["sync", 14], ["poll", 10], ["offline", 6], ["fault", 8], ["resolve", 8],
-  ["trash", 3], ["restart", 3], ["purge", 2], ["retention", 2], ["jump", 1], ["race", 3],
+  ["trash", 3], ["restart", 3], ["purge", 2], ["retention", 2], ["jump", 1], ["race", 3], ["useHere", 4],
 ];
 
 /** Changes by the user and the engine's own pace, with nothing going wrong: no faults, nothing off the network, no restart, no purge. */
@@ -220,9 +222,10 @@ export class Sim {
   /**
    * @param {number} seed
    * @param {{ layout?: number[], skews?: number[] }} [options] `layout`: the number of tabs of each browser (`[1, 1]` two devices, `[2, 1]`
-   *   two tabs of one browser and a second browser); `skews`: the clock of each device is that many ms off
+   *   two tabs of one browser and a second browser: the first tab of a browser runs the engine, the others are on standby, and the user can move the
+   *   engine to a standby tab with "Use here"); `skews`: the clock of each device is that many ms off
    */
-  constructor(seed, { layout = [1, 1], skews = [], tabsWrite = false, pageSize = 500 } = {}) {
+  constructor(seed, { layout = [1, 1], skews = [], pageSize = 500 } = {}) {
     this.seed = seed;
     this.rng = rngOf(seed);
     this.server = new SimServer();
@@ -244,12 +247,13 @@ export class Sim {
       }
     };
     this.layout = layout;
-    this.tabsWrite = tabsWrite;
     this.skews = skews;
-    this.tabs = layout.some((n) => n > 1); // some tabs share one storage
-    this.devices = []; // the engines that run now
+    this.tabs = layout.some((n) => n > 1); // some browsers have several tabs
+    this.ownerClock = new FakeTimers(); // the wait of a tab that asks for the vault before it takes it
+    this.ownerTimers = { setTimeout: this.ownerClock.set, clearTimeout: this.ownerClock.clear };
+    this.devices = []; // the engines that run now: one for each browser, in the tab that holds its owner lock
     this.retired = []; // the ones that were stopped (their late requests are still counted)
-    this.groups = []; // { db, locks, label }: one per browser
+    this.groups = []; // { db, locks, channels, label, tabs, owners }: one per browser
     this.instances = 0;
     this.names = 0;
     this.log = [];
@@ -309,31 +313,71 @@ export class Sim {
 
   async start() {
     for (const tabs of this.layout) {
-      const group = await this.newGroup();
-      for (let tab = 0; tab < tabs; tab += 1) {
-        this.devices.push(await this.spawn(group, tabs > 1 ? `${group.label}-tab${tab + 1}` : group.label, tab, this.skews[this.devices.length] ?? 0));
-      }
+      const group = await this.newGroup(tabs);
+      await this.openTabs(group);
+      this.devices.push(await this.spawn(group, group.label, 0, this.skews[this.devices.length] ?? 0));
     }
     for (const dev of this.devices) await dev.engine.start();
     await this.checkFloors();
   }
 
-  /** A new browser: a storage and the locks that go with it. */
-  async newGroup() {
-    const group = { db: await freshStore(), locks: new FakeLocks(), label: `browser${this.groups.length + 1}` };
+  /** A new browser: a storage, the locks and the channels that its tabs share. */
+  async newGroup(tabs = 1) {
+    const group = { db: await freshStore(), locks: new FakeLocks(), channels: new FakeChannels(), label: `browser${this.groups.length + 1}`, tabs, owners: [] };
     this.groups.push(group);
     return group;
   }
 
+  /**
+   * The owner lock of tab `tab` of a browser. `onYield` and `onLost` stop the engine of the tab, as the sync service does: the tab that
+   * runs the engine is the tab that holds the lock.
+   */
+  makeOwner(group, tab) {
+    return createOwner({
+      locks: group.locks, server: serverKey(SERVER), accountId: ACCOUNT, tabId: `${group.label}-tab${tab + 1}`, timers: this.ownerTimers,
+      makeChannel: () => group.channels.channel(ownerName(serverKey(SERVER), ACCOUNT)),
+      onYield: () => this.giveUp(group, tab, "asked"),
+      onLost: () => this.giveUp(group, tab, "stolen"),
+    });
+  }
+
+  /** The engine of a browser stops because its tab was asked for the vault (or lost the lock): the outbox and the marks are stored. */
+  giveUp(group, tab, why) {
+    const dev = this.devices.find((d) => d.group === group && d.tab === tab && !d.stopped);
+    if (!dev) return;
+    this.count(`owner:gave_up_${why}`);
+    this.note(`${dev.label} tab ${tab + 1} gives the vault up (${why})`);
+    this.retire(dev);
+  }
+
+  /** The engine of a device is stopped; late requests are still counted. */
+  retire(dev) {
+    dev.stopped = true;
+    dev.stoppedAt = this.step;
+    dev.engine.stop();
+    this.retired.push(dev);
+  }
+
+  /** The tabs of a browser are opened: the first gets the lock and the others are on standby (a second tab never starts an engine). */
+  async openTabs(group) {
+    for (let tab = 0; tab < group.tabs; tab += 1) {
+      group.owners[tab] = this.makeOwner(group, tab);
+      const role = await group.owners[tab].acquire();
+      if (role !== (tab === 0 ? "owner" : "standby")) this.fail(`${group.label} tab ${tab + 1} opened as ${role}`);
+    }
+  }
+
   /** A device that joins later, in a browser of its own (it has seen nothing). */
   async addDevice({ skewMs = 0 } = {}) {
-    const dev = await this.spawn(await this.newGroup(), `browser${this.groups.length}`, 0, skewMs);
+    const group = await this.newGroup(1);
+    await this.openTabs(group);
+    const dev = await this.spawn(group, group.label, 0, skewMs);
     this.devices.push(dev);
     await dev.engine.start();
     return dev;
   }
 
-  /** A device over the storage of `group` (`tab`: the number of the tab in a browser that has several). */
+  /** A device over the storage of `group` (`tab`: the number of the tab that runs it, in a browser that has several). */
   async spawn(group, label, tab = 0, skewMs = 0) {
     this.instances += 1;
     if (this.instances > 250) throw new Error("too many engines for the random sources");
@@ -400,16 +444,69 @@ export class Sim {
   }
 
 
-  /** Stops the engine of a device and starts a new one over the same storage (the page was closed and opened). */
+  /**
+   * The page of the tab that runs the engine is closed and opened again: the engine stops and the lock is let go; the page takes the lock again
+   * (nobody else asked: the other tabs are on standby) and starts a new engine over the same storage.
+   */
   async restart(dev) {
-    dev.stopped = true;
-    dev.stoppedAt = this.step;
-    dev.engine.stop();
-    this.retired.push(dev);
-    const fresh = await this.spawn(dev.group, dev.label, dev.tab, dev.skewMs);
+    const { group } = dev;
+    this.retire(dev);
+    await group.owners[dev.tab].release();
+    group.owners[dev.tab] = this.makeOwner(group, dev.tab);
+    const role = await group.owners[dev.tab].acquire();
+    if (role !== "owner") this.fail(`${dev.label} tab ${dev.tab + 1} did not get the lock back after it was opened again (${role})`);
+    const fresh = await this.spawn(group, dev.label, dev.tab, dev.skewMs);
     fresh.offline = dev.offline;
     this.devices[this.devices.indexOf(dev)] = fresh;
     await fresh.engine.start();
+    return fresh;
+  }
+
+  /**
+   * "Use here" in another tab of the browser. `ask`: the owner is asked and stops by itself; `steal`: the owner tab is frozen (it does not hear the
+   * question) and the lock is taken after about three seconds; `closed`: the owner tab was closed, so the lock is free. The engine then runs in
+   * the tab that asked, over the same storage. `during` runs after the new engine has started, before the answer. Answers the new device, or null
+   * when the browser has no other tab.
+   */
+  async useHere(dev, { variant = this.rng.weighted([["ask", 6], ["steal", 2], ["closed", 2]]), during = null } = {}) {
+    const { group } = dev;
+    if (group.tabs < 2 || dev.stopped) return null;
+    const tab = this.rng.pick([...Array(group.tabs).keys()].filter((n) => n !== dev.tab));
+    const was = dev.tab;
+    this.count(`owner:${variant}`);
+    this.note(`${dev.label} tab ${tab + 1} uses the vault here (${variant}, tab ${was + 1} had it)`);
+    if (variant === "closed") {
+      // The page is gone: the engine stops with it and the lock is let go; the tab is opened again later, on standby.
+      this.retire(dev);
+      await group.owners[was].release();
+    } else if (variant === "steal") {
+      for (const channel of group.channels.all) if (channel.listeners.size > 0) channel.muted = true;
+    }
+    const taking = group.owners[tab].takeOver();
+    await Promise.race([taking, settle(80)]);
+    let waited = false;
+    if (variant === "steal") {
+      this.ownerClock.advance(3000);
+      waited = true;
+    }
+    const settled = await Promise.race([taking.then(() => true), settle(80).then(() => false)]);
+    if (!settled) {
+      this.fail(`${dev.label} tab ${tab + 1}: "use here" did not finish${waited ? "" : " (the owner was asked and did not let go)"}`);
+      this.ownerClock.advance(3000);
+    }
+    await taking;
+    for (const channel of group.channels.all) channel.muted = false;
+    if (variant === "closed") {
+      group.owners[was] = this.makeOwner(group, was); // the tab is opened again
+      const role = await group.owners[was].acquire();
+      if (role !== "standby") this.fail(`${dev.label} tab ${was + 1} opened as ${role} after the vault was moved`);
+    }
+    if (!dev.stopped) this.fail(`${dev.label} tab ${was + 1} still runs its engine after the vault was moved to tab ${tab + 1}`);
+    const fresh = await this.spawn(group, dev.label, tab, dev.skewMs);
+    fresh.offline = dev.offline;
+    this.devices[this.devices.indexOf(dev)] = fresh;
+    await fresh.engine.start();
+    if (during) await during(fresh);
     return fresh;
   }
 
@@ -546,69 +643,42 @@ export class Sim {
     return ids;
   }
 
-  /**
-   * Whether the user changes things in this tab. Two tabs of one browser share the outbox and the marks of the store, while each keeps its
-   * own copy of both in memory; when both tabs change things, a tab can drop or hide what the other has queued (known gap, writing tabs, the todo test
-   * `two_tabs_that_both_write_keep_every_write`). So in a browser with several tabs only the first one writes.
-   */
-  writer(dev) {
-    return !this.tolerates("tabs") || this.tabsWrite || dev.tab === 0;
+  /** A row written by a device that is not one of ours (the model is honest about them): a new one, or a newer revision of one it wrote. */
+  elsewhere() {
+    this.names += 1;
+    // Only a row that nobody has changed since is given a newer revision (a device may have edited it, or deleted it).
+    const known = [...this.ghosts].filter(([id, rev]) => this.server.items.get(id)?.rev === rev && this.server.items.get(id)?.deleted === false);
+    const old = known.length > 0 && this.rng.chance(0.5) ? this.rng.pick(known) : null;
+    const id = old ? old[0] : (0xf0000 + this.names).toString(16).padStart(32, "0");
+    const rev = old ? old[1] + 1 : 1;
+    this.server.set(id, { rev, ...this.client.wireRow(id, rev, { item_type: "login", name: `Written elsewhere ${this.names}` }) });
+    this.ghosts.set(id, rev);
   }
 
   /**
-   * Passes of two devices of one browser that are held after the server has answered, while the server changes between the two answers.
-   * Either the first pass is held while the second device reads the feed and stores what it saw, and then goes on with an answer that is
-   * older than the sync memory; or both are held, the newer answer is let go first and the older one right after it, so that both give
-   * their page to the memory at the same moment. The memory is saved under the lock of the account, read again inside it, so that nothing
-   * it holds goes down.
+   * The vault is moved to another tab of the browser while a pass of the engine is in the air. The pass is held after the server has answered, the
+   * server changes, the vault is moved (the old engine stops, the new one starts and reads the feed and stores what it saw), and then the old pass is
+   * let go with its answer, which is older than what the sync memory holds. The engine that has stopped must do nothing with it: no request, no write
+   * to the stores, no floor that goes down.
    */
   async race(dev) {
-    const peers = this.devices.filter((d) => d.group === dev.group && d !== dev && !d.offline);
-    if (peers.length === 0 || dev.offline) return false;
-    const other = this.rng.pick(peers);
-    const hold = (d) => {
-      const gate = { arrived: false, release: () => {}, promise: null };
-      gate.promise = new Promise((resolve) => (gate.release = resolve));
-      d.hold = gate;
-      return gate;
-    };
-    const arrived = async (gate) => {
-      for (let turn = 0; turn < 40 && !gate.arrived; turn += 1) await settle(1);
-      return gate.arrived;
-    };
-    // Rows written by a device that is not one of ours (the model is honest about them): a new one and a newer revision of one it wrote.
-    const elsewhere = () => {
-      this.names += 1;
-      // Only a row that nobody has changed since is given a newer revision (a device may have edited it, or deleted it).
-      const known = [...this.ghosts].filter(([id, rev]) => this.server.items.get(id)?.rev === rev && this.server.items.get(id)?.deleted === false);
-      const old = known.length > 0 && this.rng.chance(0.5) ? this.rng.pick(known) : null;
-      const id = old ? old[0] : (0xf0000 + this.names).toString(16).padStart(32, "0");
-      const rev = old ? old[1] + 1 : 1;
-      this.server.set(id, { rev, ...this.client.wireRow(id, rev, { item_type: "login", name: `Written elsewhere ${this.names}` }) });
-      this.ghosts.set(id, rev);
-    };
-    const first = hold(dev);
-    const pass = dev.engine.syncNow();
-    const together = this.rng.chance(0.5);
-    let second = null;
-    let pass2 = null;
-    if (await arrived(first)) {
-      elsewhere();
-      if (together) {
-        second = hold(other);
-        pass2 = other.engine.syncNow();
-        await arrived(second);
-      } else {
-        await other.engine.syncNow();
-      }
-    }
+    if (dev.group.tabs < 2 || dev.offline || dev.stopped) return false;
+    const gate = { arrived: false, release: () => {}, promise: null };
+    gate.promise = new Promise((resolve) => (gate.release = resolve));
+    dev.hold = gate;
+    const pass = dev.engine.syncNow().catch(() => {});
+    for (let turn = 0; turn < 40 && !gate.arrived; turn += 1) await settle(1);
+    if (gate.arrived) this.elsewhere();
     dev.hold = null;
-    other.hold = null;
-    second?.release(); // the newer answer first, the older one right after it
-    first.release();
-    await Promise.all([pass, pass2]);
-    this.note(`${dev.label} reads ${together ? "at the same moment as" : "while"} ${other.label} ${together ? "(the older answer is given to the memory last)" : "has read and stored a newer feed"}`);
-    return first.arrived;
+    let fresh = null;
+    try {
+      fresh = await this.useHere(dev, { variant: this.rng.pick(["ask", "steal"]), during: (made) => made.engine.syncNow() });
+    } finally {
+      gate.release();
+    }
+    await pass;
+    this.note(`${dev.label} had a pass in the air (${gate.arrived ? "after the answer" : "not reached"}) when the vault moved to tab ${fresh ? fresh.tab + 1 : "?"}`);
+    return gate.arrived;
   }
 
   /** One random action. */
@@ -616,8 +686,6 @@ export class Sim {
     this.step += 1;
     const dev = this.rng.pick(pool);
     let action = this.rng.weighted(actions);
-    // known gap, writing tabs: of two tabs of one browser only the first changes things (see `writer`).
-    if (["create", "update", "remove", "resolve", "trash"].includes(action) && !this.writer(dev)) action = "sync";
     switch (action) {
       case "create": await this.create(dev); break;
       case "update": await this.update(dev); break;
@@ -632,10 +700,16 @@ export class Sim {
       case "race":
         if (!(await this.race(dev))) action = "sync";
         break;
+      case "useHere":
+        if (!(await this.useHere(dev))) action = "sync";
+        break;
       case "both": {
-        // Every tab of the browser reads the feed at the same moment.
-        this.note(`${dev.group.label} every tab syncs at once`);
-        await Promise.all(this.devices.filter((d) => d.group === dev.group).map((d) => d.engine.syncNow()));
+        // The engine reads the feed at the moment another tab asks for the vault.
+        this.note(`${dev.group.label} reads while another tab asks for the vault`);
+        const reading = dev.engine.syncNow().catch(() => {});
+        const moved = await this.useHere(dev, { variant: "ask" });
+        await reading;
+        if (!moved) await dev.engine.syncNow();
         break;
       }
       case "poll": {
@@ -680,6 +754,7 @@ export class Sim {
     this.count(`act:${action}`);
     await settle(6);
     await this.checkFloors();
+    this.checkOwners();
   }
 
   async run(steps, options) {
@@ -805,14 +880,11 @@ export class Sim {
   /**
    * After a restore, a device that has not accepted the older state and has not stopped holds nothing the restored server lacks or shows lower,
    * however far the seq of the server has come since: every live row it caches is on the server at the same or a higher revision (and at the
-   * same revision with the same bytes). A device that goes on without asking has missed the restore. Tabs of one browser share the cache and the
-   * epoch but each decides alone from what it has read itself: a tab that goes on while the cache holds a row another tab stopped for is let
-   * through (known gap, tabs).
+   * same revision with the same bytes). A device that goes on without asking has missed the restore.
    */
   async checkStopped() {
     for (const dev of this.devices) {
       if (this.accepted.has(dev.label) || dev.engine.health().halted !== null) continue;
-      if (this.tolerates("tabs") && this.devices.some((other) => other !== dev && other.group === dev.group)) continue;
       for (const row of await cache.getRows(dev.d.store.database.store, scope())) {
         if (row.deleted) continue;
         const server = this.server.items.get(row.itemId);
@@ -828,6 +900,24 @@ export class Sim {
     this.floors.delete(dev.group.label);
   }
 
+  /**
+   * One engine per browser: the browser has one device, and of its tabs exactly the tab of that device holds the owner lock; a tab on standby holds
+   * nothing and has no engine.
+   */
+  checkOwners() {
+    for (const group of this.groups) {
+      const running = this.devices.filter((dev) => dev.group === group && !dev.stopped);
+      if (running.length !== 1) {
+        this.fail(`${group.label} runs ${running.length} engines`);
+        continue;
+      }
+      const holders = group.owners.map((owner, tab) => (owner.isOwner() ? tab : -1)).filter((tab) => tab >= 0);
+      if (holders.length !== 1 || holders[0] !== running[0].tab) {
+        this.fail(`${group.label}: the engine runs in tab ${running[0].tab + 1} and the lock is held by ${holders.length === 0 ? "no tab" : `tab ${holders.map((tab) => tab + 1).join(", ")}`}`);
+      }
+    }
+  }
+
   /** The engines and their messages: nothing stopped, nothing warned, in a run against an honest server. */
   checkHealthy(allowed = []) {
     for (const dev of this.devices) {
@@ -840,10 +930,9 @@ export class Sim {
   }
 
   /** The devices show what the server holds, and nothing waits, is blocked or is marked. */
-  async checkConverged({ readers = false } = {}) {
+  async checkConverged() {
     const live = await this.serverLive();
     for (const dev of this.devices) {
-      if (this.tolerates("tabs") && !readers && !this.writer(dev)) continue; // known gap, writing tabs: the other tab of a browser shows what the first one stored, with a delay
       const shown = new Map(dev.engine.list().map((item) => [item.id, item]));
       for (const [id, row] of live) {
         const item = shown.get(id);
@@ -863,7 +952,7 @@ export class Sim {
 
   /**
    * Checkpoints stay alive: when everything is at rest, more than ten minutes pass and every device reads once more, the checkpoint the server
-   * holds is for the `seq` the server is at. Let through is the gap that keeps a device from storing one: two tabs over one storage (known gap, tabs).
+   * holds is for the `seq` the server is at.
    */
   async checkCheckpointLive() {
     const held = () => (this.server.checkpoint === "auto" ? this.server.seq : (this.server.checkpoint?.seq ?? 0));
@@ -878,10 +967,6 @@ export class Sim {
     };
     await readAgain(0);
     if (held() === this.server.seq) return;
-    if (this.tolerates("tabs") && this.tabs) {
-      this.count("known:checkpoint_not_live");
-      return;
-    }
     const states = [];
     for (const dev of this.devices) {
       const state = await loadSyncState(dev.group.db.store, SERVER, ACCOUNT);
@@ -960,6 +1045,7 @@ export class Sim {
       dev.stoppedAt = this.step;
       dev.engine.stop();
     }
+    for (const group of this.groups) for (const owner of group.owners) owner.release();
     await settle(40);
     for (const dev of [...this.devices, ...this.retired]) {
       const late = dev.lateCalls;

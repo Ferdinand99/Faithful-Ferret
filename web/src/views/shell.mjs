@@ -10,6 +10,7 @@ import { el, mount } from "../dom.mjs";
 import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
 import { createWipeScope, describeError, listenWhileShown } from "./common.mjs";
+import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
 
@@ -30,10 +31,15 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
  * @property {LiveSource} [live] the live-update channel (`state`, `on`); without it the frame has no live field
  * @property {{ go(path: string): void }} [router] where the actions of the sync banner lead
+ * @property {StandbySource} [standby] where the tab is told that another tab took the vault; without it the frame never shows the standby notice
  *
  * @typedef {object} LiveSource
  * @property {() => string} state
  * @property {(event: "state", fn: (state: string) => void) => () => void} on
+ *
+ * @typedef {object} StandbySource
+ * @property {(fn: (standby: boolean) => void) => () => void} onStandby
+ * @property {() => ReturnType<typeof standbyView>} card makes the notice
  */
 
 /** More conflicts than this are shown as one banner with the count. */
@@ -99,7 +105,7 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -248,6 +254,19 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   }
   trackLock(session, { root, scope, wipe, seen: false });
 
+  // Another tab took the vault: this one stops showing it. The engine has stopped already (the items and the open handles are gone);
+  // what is on the screen goes too, and the notice takes the whole frame.
+  if (standby) {
+    listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
+      if (on !== true) return;
+      scope.run();
+      shown.clear();
+      const card = standby.card();
+      mount(root, card.root);
+      card.focus();
+    });
+  }
+
   lockButton.addEventListener("click", async () => {
     await lock();
   });
@@ -290,6 +309,17 @@ export async function enterVault(ctx) {
   // An open vault always has an idle lock, whatever else fails below (Spec: Fase 1 section 7.1).
   if (!autoLock.running()) autoLock.start();
 
+  // Another tab holds the vault: this tab has no engine and shows nothing from it, only the way to move it here.
+  const standbyCard = () => standbyView({
+    t, sync, onTaken: () => go(path), lock: () => autoLock.lock(), touch: () => autoLock.touch(),
+  });
+  const standbyScreen = () => {
+    const card = standbyCard();
+    trackLock(session, { root: card.root, scope: null, seen: false, wipe: () => mount(card.root, lockedScreen()) });
+    return card.root;
+  };
+  if (typeof sync.standby === "function" && sync.standby()) return { locked: standbyScreen() };
+
   let engine = sync.current();
   if (!engine) {
     try {
@@ -298,6 +328,7 @@ export async function enterVault(ctx) {
       engine = null;
     }
   }
+  if (!engine && typeof sync.standby === "function" && sync.standby()) return { locked: standbyScreen() };
   if (!engine) {
     // The vault stays open and the idle lock is running; the card says sync is down and offers the lock.
     const lockButton = el("button", { type: "button", class: "btn btn-secondary i-lock", "data-role": "lock" }, t("vault.lock"));
@@ -321,7 +352,9 @@ export async function enterVault(ctx) {
     page: (content) => {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
-      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go } });
+      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
+        standby: typeof sync.onStandby === "function" ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard } : undefined,
+      });
     },
   };
 }

@@ -1,6 +1,5 @@
 // Live updates: a change in one browser shows in the other within two seconds, the event stream is closed by the server
-// when the session ends, and a third tab of the same browser (the server gives a device two streams) falls back to
-// reading now and then without breaking the sync or the record of what the server showed before.
+// when the session ends, and only the tab that runs the sync of a browser has a stream (the other tabs are on standby).
 import { createItem, expect, newDevice, noViolations, openList, readStores, rowsNamed, shot, synced, test, unlockWith, secrets, useAccount, vaultUrl, signOutOn } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
@@ -86,56 +85,39 @@ test("the_events_stream_closes_on_sign_out", async ({ browser }) => {
   }
 });
 
-test("a_third_tab_falls_back_without_breaking_sync_or_lowering_a_floor", async ({ browser }) => {
+test("a_second_and_a_third_tab_open_no_stream_and_leave_the_record_of_the_server_alone", async ({ browser }) => {
   test.setTimeout(600_000);
   const { context, page: first } = await newDevice(browser);
   try {
-    // A second and a third tab of the same browser: the server keeps two streams per device.
+    // Only the tab that runs the sync has a stream: the second and the third tab of the same browser are on standby.
     const tab = async () => {
       const page = await context.newPage();
       // The address of the first tab: a signed-in browser asks for the password there.
       await page.goto(`${vaultUrl}/vault/#/items`);
       await unlockWith(page, secrets.password);
-      await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 90_000 });
+      await expect(page.locator('[data-role="standby"]')).toBeVisible({ timeout: 90_000 });
       return page;
     };
-    const second = await tab();
     await expect(live(first)).toHaveAttribute("data-state", "live", { timeout: 30_000 });
-    await expect(live(second)).toHaveAttribute("data-state", "live", { timeout: 30_000 });
     const recordOne = await memoryOfServer(first);
+    const second = await tab();
     const third = await tab();
-    // The third stream is refused, tried again a few times and then given up: the tab says so.
-    await expect(live(third)).toHaveAttribute("data-state", "fallback", { timeout: 240_000 });
-    await shot(third, "11-live-third-tab-fallback");
-    const recordTwo = await memoryOfServer(first);
-    expectMonotonic(recordOne, recordTwo, "after the third tab came up");
-
-    // The sync goes on in every tab. A change in the first tab reaches the second by its stream.
-    const fromFirst = `Third-first-${Date.now()}`;
-    await openList(first);
-    await createItem(first, { name: fromFirst });
-    await openList(second);
-    await expect(rowsNamed(second, fromFirst)).toHaveCount(1, { timeout: 15_000 });
-    // The third tab reads when it is shown again.
-    await openList(third);
-    await third.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(rowsNamed(third, fromFirst)).toHaveCount(1, { timeout: 30_000 });
-    // And its own change is saved and reaches the others.
-    const fromThird = `Third-own-${Date.now()}`;
-    await createItem(third, { name: fromThird });
-    await synced(third);
-    await openList(first);
-    await expect(rowsNamed(first, fromThird)).toHaveCount(1, { timeout: 15_000 });
-    await openList(second);
-    await expect(rowsNamed(second, fromThird)).toHaveCount(1, { timeout: 15_000 });
-
-    // The record of what the server showed, read straight from the store: three engines wrote it, and it was never lowered.
-    expectMonotonic(recordTwo, await memoryOfServer(first), "after three tabs wrote");
-    // Three engines wrote the record of what the server showed, and none of them lowered it: no tab shows a warning.
-    for (const page of [first, second, third]) {
-      await expect(page.locator('[data-role="sync-banner"]')).toHaveCount(0);
-      await expect(page.locator('[data-role="sync-status"]')).not.toHaveAttribute("data-state", "halted");
+    // Neither tab has a live field or a list: they are not part of the sync.
+    for (const page of [second, third]) {
+      await expect(live(page)).toHaveCount(0);
+      await expect(page.locator('[data-role="list"]')).toHaveCount(0);
     }
+    await shot(third, "11-live-third-tab-standby");
+    await expect(live(first)).toHaveAttribute("data-state", "live");
+
+    // The sync goes on in the first tab, and the record of what the server showed is never lowered.
+    const name = `Third-first-${Date.now()}`;
+    await openList(first);
+    await createItem(first, { name });
+    await synced(first);
+    expectMonotonic(recordOne, await memoryOfServer(first), "after two more tabs were opened and a change was made");
+    await expect(first.locator('[data-role="sync-banner"]')).toHaveCount(0);
+    await expect(first.locator('[data-role="sync-status"]')).not.toHaveAttribute("data-state", "halted");
   } finally {
     await context.close();
   }

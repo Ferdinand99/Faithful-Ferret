@@ -22,9 +22,14 @@
 // pinned record. The two messages make that window a few milliseconds long.
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "../store/idb.mjs";
+import { TAB_ID } from "../tabId.mjs";
 
-/** The message the other tabs hear, first when the forgetting starts and again when it is done. @param {"forgetting" | "forgotten"} type @param {string} server @param {string} accountId */
-const messageOf = (type, server, accountId) => ({ type, serverKey: server, accountId });
+/**
+ * The message the other tabs hear, first when the forgetting starts and again when it is done. It names the tab that sends it
+ * (`from`), so that this tab's own watch can leave it alone.
+ * @param {"forgetting" | "forgotten"} type @param {string} server @param {string} accountId @param {string} from
+ */
+const messageOf = (type, server, accountId, from) => ({ type, serverKey: server, accountId, from });
 
 /**
  * @typedef {object} ForgetResult what the store removed
@@ -50,14 +55,15 @@ const messageOf = (type, server, accountId) => ({ type, serverKey: server, accou
  *   navigate: (hash: string, result: ForgetResult) => void,
  *   channel?: Channel | null,
  *   locks?: { request(name: string, callback: () => Promise<unknown>): Promise<any> },
+ *   tabId?: string,
  * }} options
  *   `channel` is where the other tabs are told; without one the page's `BroadcastChannel("ferret")` is used and closed again.
- *   `locks` is the page's Web Locks.
+ *   `locks` is the page's Web Locks. `tabId` names this tab in the message (the page's own by default).
  * @returns {Promise<"forgotten" | "cancelled">}
  */
 export async function forgetServer({
   api, session, store, serverUrl, accountId, confirm, navigate, channel,
-  locks = /** @type {any} */ (globalThis).navigator?.locks,
+  locks = /** @type {any} */ (globalThis).navigator?.locks, tabId = TAB_ID,
 }) {
   const server = serverKey(serverUrl);
   if (!hex16.is(accountId)) throw new TypeError("an account id is 32 lower-case hex characters");
@@ -73,7 +79,7 @@ export async function forgetServer({
   /** @param {"forgetting" | "forgotten"} type */
   const tell = (type) => {
     try {
-      out?.postMessage(messageOf(type, server, accountId));
+      out?.postMessage(messageOf(type, server, accountId, tabId));
     } catch {
       // A tab that is not told keeps what it has until its next lock.
     }

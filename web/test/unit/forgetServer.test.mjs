@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { forgetServer, resolveForgetTarget } from "../../src/flows/forgetServer.mjs";
+import { TAB_ID } from "../../src/tabId.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { forgetServer as forgetRecords, pendingWrites, sharedAccount } from "../../src/store/forget.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
@@ -151,7 +152,7 @@ test("forget_signs_out_locks_and_removes_the_account_data_and_the_sealed_sk", as
   assert.deepEqual(r.log.find((entry) => entry[0] === "forgetServer"), ["forgetServer", name]);
   assert.deepEqual(r.log.find((entry) => entry[0] === "lock request"), ["lock request", name]);
   assert.deepEqual(r.log.find((entry) => entry[0] === "forgetSecretKey"), ["forgetSecretKey", ACCOUNT]);
-  assert.deepEqual(r.log.filter((entry) => entry[0] === "channel").at(-1), ["channel", { type: "forgotten", serverKey: SERVER, accountId: ACCOUNT }]);
+  assert.deepEqual(r.log.filter((entry) => entry[0] === "channel").at(-1), ["channel", { type: "forgotten", serverKey: SERVER, accountId: ACCOUNT, from: TAB_ID }]);
   assert.deepEqual(r.navigated[0][0], "#/login");
   assert.equal(r.navigated[0][1].shared, undefined);
   // Gone: the pinned record, the sync state, the sealed secret key, the rows and the queued writes.
@@ -201,8 +202,8 @@ test("forget_runs_without_web_locks_and_without_a_channel_it_made_itself", async
     else globalThis.BroadcastChannel = saved;
   }
   assert.deepEqual(posted, [
-    ["ferret", { type: "forgetting", serverKey: SERVER, accountId: ACCOUNT }],
-    ["ferret", { type: "forgotten", serverKey: SERVER, accountId: ACCOUNT }],
+    ["ferret", { type: "forgetting", serverKey: SERVER, accountId: ACCOUNT, from: TAB_ID }],
+    ["ferret", { type: "forgotten", serverKey: SERVER, accountId: ACCOUNT, from: TAB_ID }],
     ["closed"],
   ]);
   assert.equal(await loadPinnedByAccount(r.db, SERVER, ACCOUNT), null);

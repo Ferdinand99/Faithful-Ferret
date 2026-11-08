@@ -186,7 +186,11 @@ export function createSyncEngine({
     throw new TypeError("the sync engine needs a sync memory");
   }
   const flagsKey = `sync.flags.${scope.accountId}.${scope.vaultId}.${scope.vkEpoch}`;
-  /** The note that a listing has been begun and the feed after it not yet read to its end (under the prefix "forget" removes). */
+  /**
+   * The note that a listing has been begun and the feed after it not yet read to its end (under the prefix "forget" removes). It is
+   * one note for the browser, and only the engine of the tab that holds the owner lock (`sync/owner.mjs`) writes or removes it; a tab on
+   * standby has no engine.
+   */
   const listingKey = `${flagsKey}.listing`;
 
   let started = false;
@@ -521,8 +525,11 @@ export function createSyncEngine({
         const automatic = kind === "conflict" && entry.baseRev === 0 && flags.get(entry.itemId)?.kind === "missing_on_server";
         // The refusal of a write over an item this device already holds a verified tombstone for, when everything that waits for the
         // item ends in a deletion: the item is deleted on both sides and there is nothing to choose, so the chain is dropped and the
-        // checkpoints can go on. Decided from the verified row, never from what the 409 says. A chain that cannot be dropped is a conflict.
-        if (kind === "conflict" && !automatic && mootChain(entry.itemId)) {
+        // checkpoints can go on. Decided from the verified row, never from what the 409 says: a server that says "deleted" does not make
+        // a chain moot. The 409 can only keep a chain: when it says the item is live again (another device brought it back, and this device
+        // has not read that yet), the verified tombstone is out of date, and dropping the chain would hide a live item. A chain that cannot
+        // be dropped is a conflict.
+        if (kind === "conflict" && !automatic && mootChain(entry.itemId) && /** @type {any} */ (error)?.body?.deleted !== false) {
           void dropMoot(entry.itemId).then((dropped) => {
             if (stopped) return;
             if (dropped) void syncNow();
