@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs inside the runner container (docker/ext-runner.Dockerfile), with the tree
-# in /work: `sh extension/test/firefox/run.sh firefox|e2e`. Started by
+# in /work: `sh extension/test/firefox/run.sh firefox|e2e|measure`. Started by
 # scripts/lanbox-ext.sh and by .github/workflows/extension-firefox.yml.
 #
 # As root: add the fixture host names to /etc/hosts and hand /work to the test
@@ -13,6 +13,11 @@
 #
 # A spec that is skipped, or a run in which no test ran, is a failure: a missing
 # piece of the environment must never pass as green.
+#
+# measure: only the *.measure.spec.mjs files (the lifetime matrix, hours long). The
+# reports they write (FERRET_MEASURE_OUT, /work/test-results/out/ext-measure) leave
+# the container as a tar archive on stdout; everything else of this script goes to
+# stderr.
 set -eu
 
 mode="${1:-firefox}"
@@ -30,8 +35,9 @@ for mv in mv3 mv2; do
 done
 
 case "$mode" in
-  firefox) specs=$(ls test/firefox/*.spec.mjs | grep -v '\.e2e\.spec\.mjs$') ;;
+  firefox) specs=$(ls test/firefox/*.spec.mjs | grep -v '\.e2e\.spec\.mjs$' | grep -v '\.measure\.spec\.mjs$') ;;
   e2e) specs=$(ls test/firefox/*.e2e.spec.mjs) ;;
+  measure) specs=$(ls test/firefox/*.measure.spec.mjs) ;;
   *) echo "run.sh: unknown mode $mode" >&2; exit 2 ;;
 esac
 
@@ -54,11 +60,20 @@ done
 
 # A limit for the whole run of one channel, so a stuck browser cannot hold the container.
 step_timeout="${FERRET_STEP_TIMEOUT:-1500}"
+test_timeout=600000
+if [ "$mode" = measure ]; then
+  # Hours, not minutes: every cell waits for its window.
+  step_timeout="${FERRET_STEP_TIMEOUT:-21600}"
+  test_timeout=21600000
+  FERRET_MEASURE_OUT="${FERRET_MEASURE_OUT:-/work/test-results/out/ext-measure}"
+  export FERRET_MEASURE_OUT
+  mkdir -p "$FERRET_MEASURE_OUT"
+fi
 failed=0
 for channel in $channel_list; do
   echo "run.sh: channel $channel" >&2
   report=$(mktemp)
-  set -- --test --test-force-exit --test-concurrency=1 --test-timeout=600000
+  set -- --test --test-force-exit --test-concurrency=1 "--test-timeout=$test_timeout"
   if [ -n "${FERRET_GREP:-}" ]; then
     set -- "$@" "--test-name-pattern=$FERRET_GREP"
   fi
@@ -83,4 +98,8 @@ for channel in $channel_list; do
   fi
   rm -f "$report"
 done
+if [ "$mode" = measure ]; then
+  # The reports, also of a run that failed: what was measured is still worth having.
+  tar -c -C "$(dirname "$FERRET_MEASURE_OUT")" "$(basename "$FERRET_MEASURE_OUT")"
+fi
 exit $failed

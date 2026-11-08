@@ -115,9 +115,10 @@ export function e2eCertificateFile() {
 /**
  * Starts Firefox with the test build installed and the CAs of the fixture server
  * (and, in the end-to-end run, of that stack) trusted.
- * @param {{ channel: "release" | "esr", manifest?: "mv3" | "mv2", prefs?: Record<string, string | number | boolean>, headless?: boolean, profileDir?: string }} options
+ * @param {{ channel: "release" | "esr", manifest?: "mv3" | "mv2", prefs?: Record<string, string | number | boolean>, headless?: boolean, profileDir?: string, addon?: string }} options
+ *   addon: another package than the build of `manifest` (a test that changes the manifest on purpose)
  */
-export async function launch({ channel, manifest = defaultManifest(), prefs, headless = process.env.FERRET_HEADLESS !== "0", profileDir }) {
+export async function launch({ channel, manifest = defaultManifest(), prefs, headless = process.env.FERRET_HEADLESS !== "0", profileDir, addon }) {
   const server = await fixtures();
   const certificateFiles = [server.caFile];
   const e2e = e2eCertificateFile();
@@ -126,7 +127,7 @@ export async function launch({ channel, manifest = defaultManifest(), prefs, hea
     channel,
     prefs,
     headless,
-    addon: xpiPath(manifest),
+    addon: addon ?? xpiPath(manifest),
     hosts: server.hosts,
     certificateFiles,
     profileDir,

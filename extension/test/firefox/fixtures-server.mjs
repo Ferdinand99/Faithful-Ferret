@@ -5,6 +5,8 @@
 //   /sse                  an event every `sseIntervalMs` (10 s by default)
 //   /static/login.html    one sign-in form (user name and password)
 //   /static/blank.html    an empty page
+//   /static/frames.html   one page with an iframe of each kind that has an opaque or special origin
+//                         (srcdoc, sandboxed without allow-same-origin, about:blank) and one ordinary one
 //   /healthz              "ok"
 //
 // The adversarial test sites of test/fixtures/sites (phishing and clickjacking
@@ -37,6 +39,22 @@ const LOGIN_HTML = `<!doctype html>
     <label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>
     <button id="submit" type="submit">Sign in</button>
   </form>
+</body>
+</html>
+`;
+
+// Frames of every kind the fill engine has to tell apart. The sandboxed one has an https
+// address but an opaque origin; the srcdoc and about:blank ones inherit the parent's.
+const FRAMES_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture frames</title></head>
+<body>
+  <h1>Frames</h1>
+  <input id="top" type="text" name="top">
+  <iframe id="srcdoc" srcdoc="&lt;!doctype html&gt;&lt;title&gt;srcdoc&lt;/title&gt;&lt;input id=f1 type=text&gt;"></iframe>
+  <iframe id="sandboxed" sandbox="allow-scripts" src="/static/blank.html"></iframe>
+  <iframe id="blank"></iframe>
+  <iframe id="same" src="/static/login.html"></iframe>
 </body>
 </html>
 `;
@@ -133,7 +151,8 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
       const html = site.render({ url: (origin, p = "/") => `${originText(origin, ports)}${p}` });
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(req.method === "HEAD" ? undefined : html);
     } else if (path === "/sse" && req.method === "GET") {
-      res.writeHead(200, { ...common, "content-type": "text/event-stream", connection: "keep-alive" });
+      // CORS for the stream only, so the extension's own pages can read it without a host permission.
+      res.writeHead(200, { ...common, "content-type": "text/event-stream", connection: "keep-alive", "access-control-allow-origin": "*" });
       res.write(": open\n\n");
       streams.add(res);
       let n = 0;
@@ -141,6 +160,8 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
       res.on("close", () => { clearInterval(timer); streams.delete(res); });
     } else if (path === "/static/login.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(LOGIN_HTML);
+    } else if (path === "/static/frames.html") {
+      res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(FRAMES_HTML);
     } else if (path === "/static/blank.html" || path === "/static/login-done.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(BLANK_HTML);
     } else if (path === "/healthz") {

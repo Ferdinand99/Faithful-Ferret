@@ -103,7 +103,7 @@ test("unknown_core_op_is_refused", async () => {
 
 test("core_ops_is_a_frozen_list_and_the_release_has_no_argon2_bench", async () => {
   assert.equal(Object.isFrozen(CORE_OPS), true);
-  assert.deepEqual([...CORE_OPS], ["ping", "argon2_bench"]);
+  assert.deepEqual([...CORE_OPS], ["ping", "argon2_bench", "measure_open"]);
   // Without the test build's implementation the name is in the list but refused.
   const release = createCoreHost({ createClient: () => createFakeClient() });
   await assert.rejects(release.call("argon2_bench", { m_kib: 8, t: 1, p: 1 }), { code: "unknown_core_op" });

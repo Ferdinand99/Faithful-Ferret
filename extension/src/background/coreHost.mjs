@@ -23,10 +23,11 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
 /**
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
- * `argon2_bench` is only available in the test build, which passes its
- * implementation in (`ops`); in a release it is refused like any other name.
+ * `argon2_bench` and `measure_open` are only available in the test build, which
+ * passes their implementations in (`ops`); in a release they are refused like any
+ * other name.
  */
-export const CORE_OPS = Object.freeze(["ping", "argon2_bench"]);
+export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open"]);
 
 /**
  * The codes that say the worker which holds the vault is gone or was ended:

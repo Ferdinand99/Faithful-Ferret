@@ -92,7 +92,8 @@ const origin = string({ min: 1, max: 300 });
 const serverUrl = string({ min: 1, max: 300 });
 const url = string({ min: 1, max: 8192 });
 const tabId = integer({ min: 0, max: 2_147_483_647 });
-const frameId = integer({ min: 0, max: 2_147_483_647 });
+// Firefox numbers the frames below a tab from 17179869185 up (more than 2^32), so the bound is the largest safe integer.
+const frameId = integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 
 const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
 const handle = object(

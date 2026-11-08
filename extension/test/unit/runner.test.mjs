@@ -165,3 +165,62 @@ test("an_empty_channel_list_fails_the_run", () => {
   }
   assert.equal(run("esr").stdout.trim(), "esr");
 });
+
+test("the_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_one_step", () => {
+  const text = read(".github/workflows/extension-sign-measure.yml");
+  const code = text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  // Only a manual run: no push, tag, pull request or schedule.
+  assert.match(code, /^on:\n {2}workflow_dispatch:\n/m);
+  for (const trigger of ["push:", "pull_request", "schedule:", "tags:", "workflow_run", "release:"]) {
+    assert.equal(code.includes(trigger), false, trigger);
+  }
+  assert.match(code, /^permissions:\n {2}contents: read\n/m);
+  assert.equal(/contents: write|id-token|packages:/.test(code), false);
+  // Every third-party action is pinned by a full commit SHA.
+  const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+  assert.ok(uses.length >= 3);
+  for (const use of uses) assert.match(use, /@[0-9a-f]{40}$/, use);
+  // The secrets: two names, in the environment of the signing step only, never on a command line or echoed.
+  const secretUses = [...code.matchAll(/secrets\.(\w+)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(secretUses, ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]);
+  // The token `secrets` appears on exactly those two lines: no index syntax, no `toJSON(secrets)`, no `secrets: inherit`.
+  assert.deepEqual(code.split("\n").filter((line) => /\bsecrets\b/.test(line)).map((line) => line.trim()), [
+    "WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}",
+    "WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}",
+  ]);
+  // The secrets are those of an environment that waits for a reviewer: the job names it, and only the one job exists.
+  assert.deepEqual([...code.matchAll(/^ {4}environment: (\S+)$/gm)].map((m) => m[1]), ["amo-signing"]);
+  assert.equal([...code.matchAll(/^ {2}\w[\w-]*:\n {4}name:/gm)].length, 1, "one job");
+  assert.match(code, /retention-days: 1\n/);
+  // Every attempt of every run has a version of its own, and the build is checked before it is signed.
+  assert.match(code, /manifest\.version = `0\.0\.\$\{RUN_NUMBER\}\.\$\{RUN_ATTEMPT\}`/);
+  assert.match(code, /id !== "ferret-test@hedgerow\.tools"\) throw/);
+  const checkAt = code.indexOf("the add-on id is");
+  assert.ok(checkAt > 0 && checkAt < code.indexOf("web-ext sign"), "the id check comes before the signing");
+  // No input or expression is spliced into script text (node -e '...').
+  const script = code.slice(code.indexOf("node -e '"), code.indexOf("\n          '\n"));
+  assert.equal(/\$\{\{/.test(script), false, "no expression inside the script");
+  const steps = code.split(/\n {6}- /);
+  const holders = steps.filter((step) => step.includes("secrets."));
+  assert.equal(holders.length, 1);
+  assert.match(holders[0], /name: Sign with Mozilla \(unlisted\)/);
+  assert.match(holders[0], /WEB_EXT_API_KEY: \$\{\{ secrets\.AMO_JWT_ISSUER \}\}/);
+  assert.match(holders[0], /WEB_EXT_API_SECRET: \$\{\{ secrets\.AMO_JWT_SECRET \}\}/);
+  assert.match(holders[0], /--channel unlisted/);
+  assert.equal(/--api-key|--api-secret/.test(code), false, "no secret as a flag");
+  assert.equal(/echo[^\n]*(WEB_EXT|AMO_JWT)/.test(code), false, "no secret echoed");
+  // It signs the test variant (MV3 or MV2 by the input), and nothing else of ours signs anything.
+  assert.match(code, /--variant test/);
+  assert.equal(/--variant release/.test(code), false);
+  assert.match(code, /--source-dir "dist\/ferret-firefox-\$\{MANIFEST\}-test"/);
+  assert.match(code, /type: choice\n\s+options: \[mv3, mv2\]/);
+  // The input reaches the shell through the environment only, never spliced into a command line.
+  const shellLines = code.split("\n").filter((line) => !/^\s*(?:name|path|description):/.test(line) && !/^\s*MANIFEST:/.test(line));
+  assert.equal(shellLines.some((line) => /\$\{\{\s*inputs\./.test(line)), false, "an input is used outside an env value or a name or path");
+  const names = readdirSync(join(repoRoot, ".github", "workflows")).filter((n) => /\.ya?ml$/.test(n));
+  assert.ok(names.includes("extension.yml") && names.length >= 5);
+  for (const name of names.filter((n) => n !== "extension-sign-measure.yml")) {
+    const other = read(`.github/workflows/${name}`);
+    assert.equal(/web-ext sign|AMO_JWT|WEB_EXT_API|amo-signing/.test(other), false, `${name} must not sign`);
+  }
+});

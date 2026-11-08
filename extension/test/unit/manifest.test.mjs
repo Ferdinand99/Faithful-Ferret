@@ -254,3 +254,29 @@ test("compat_action_is_the_same_object_shape_in_both_variants", async () => {
   await assert.rejects(loadCompat({ runtime: { getManifest: () => ({ manifest_version: 3 }) } }, "none"), /no action API for manifest version 3/);
   await assert.rejects(loadCompat({ runtime: { getManifest: () => ({ manifest_version: 2 }) }, action: makeAction() }, "none2"), /no action API for manifest version 2/);
 });
+
+test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_adds_a_fixed_list", () => {
+  /** The permissions that only the test variant has (test/test-parts). Remove an entry when the release gets it. */
+  const TEST_PERMISSIONS = ["clipboardWrite", "menus", "webNavigation"];
+  const partsDir = join(extensionRoot, "manifest", "parts");
+  const parts = readdirSync(partsDir).filter((n) => n.endsWith(".json")).map((n) => readJson(join(partsDir, n)));
+  const fromParts = (/** @type {string} */ key) => parts.flatMap((p) => p[key] ?? []).sort();
+  for (const mv of MANIFESTS) {
+    const release = manifestOf(mv, "release");
+    const test = manifestOf(mv, "test");
+    // The release is the base, the overlay and the parts, nothing from the test parts.
+    assert.deepEqual(release.permissions, [...new Set(fromParts("permissions"))], `${mv}: release permissions are those of the parts`);
+    assert.equal(release.options_ui, undefined, `${mv}: no options page in a release`);
+    assert.equal(release.commands, undefined, `${mv}: no command in a release`);
+    for (const key of ["content_scripts", "web_accessible_resources", "externally_connectable"]) assert.equal(release[key], undefined, key);
+    assert.equal(release.browser_specific_settings.gecko.id, "ferret@hedgerow.tools");
+    // The test variant: the release plus a named list, and its own pages and command.
+    const added = (test.permissions ?? []).filter((/** @type {string} */ p) => !release.permissions.includes(p));
+    assert.deepEqual(added.sort(), TEST_PERMISSIONS, `${mv}: what the test variant adds`);
+    const optionalOf = (/** @type {Record<string, any>} */ m) => sortedUnion(m.optional_permissions, m.optional_host_permissions);
+    assert.deepEqual(optionalOf(release), [], `${mv}: a release asks for no optional permission yet`);
+    assert.deepEqual(optionalOf(test), ["https://*/*"], `${mv}: the test variant may ask for any https origin`);
+    assert.equal(test.options_ui.page, "pages/test-only/options.html");
+    assert.ok(test.commands["ferret-test-command"]);
+  }
+});
