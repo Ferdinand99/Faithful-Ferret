@@ -190,7 +190,9 @@ export class Model {
     }
     const current = this.items.get(id);
     const currentRev = current?.rev ?? 0;
-    if (request.base_rev !== currentRev || current?.deleted) {
+    // A tombstone takes a live write only with the flag, and only built on the tombstone's own revision.
+    const resurrecting = current?.deleted === true && request.resurrect === true && request.base_rev === currentRev;
+    if (request.base_rev !== currentRev || (current?.deleted && !resurrecting)) {
       const detail = { current_rev: currentRev, deleted: current?.deleted ?? false };
       if (current && !current.deleted) Object.assign(detail, { blob: current.blob, tag: current.tag });
       throw new ApiError(409, "conflict", null, detail);
@@ -528,10 +530,16 @@ export async function createFakeStore({ order = [], db = null } = {}) {
     holdSet: null, // a promise that the next settings write waits for
     failPutRows: 0, // the next this many row writes to the cache fail
     failSaveState: 0, // the next this many writes of the sync state fail
+    failSaveWhen: null, // a function of the state about to be saved: when it answers true that one write fails (once)
+    failEnqueue: 0, // the next this many writes into the outbox fail
     loadSyncState: async (store, serverUrl, accountId) => loadSyncState(store, serverUrl, accountId),
     saveSyncState: async (store, serverUrl, accountId, state) => {
       if (service.failSaveState > 0) {
         service.failSaveState -= 1;
+        throw new Error("the disk is full");
+      }
+      if (service.failSaveWhen?.(state)) {
+        service.failSaveWhen = null;
         throw new Error("the disk is full");
       }
       spy.states.push(state);
@@ -569,7 +577,12 @@ export async function createFakeStore({ order = [], db = null } = {}) {
         return outbox.remove(store, scope, idem);
       },
       enqueue: async (store, scope, entry) => {
+        if (service.failEnqueue > 0) {
+          service.failEnqueue -= 1;
+          throw new Error("the disk is full");
+        }
         order.push("outbox.enqueue");
+        spy.log.push("outbox.enqueue");
         spy.enqueued.push(entry);
         return outbox.enqueue(store, scope, entry);
       },
@@ -600,7 +613,7 @@ export async function createFakeStore({ order = [], db = null } = {}) {
  */
 export async function syncDevice({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, locks = new FakeLocks(), deviceName, win = null } = {}) {
   const store = await createFakeStore({ db });
-  const api = createFakeApi(model);
+  const api = createFakeApi(model, { order: store.spy.log }); // the writes to the server are in the log of the store, in order
   const timers = new FakeTimers();
   const events = { changed: [], error: [], state: [] };
   const memory = fakeMemory({ store, client, locks });

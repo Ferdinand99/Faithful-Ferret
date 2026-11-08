@@ -49,6 +49,14 @@
 //   uploads at most every ten minutes, only for a `seq` above the head of the
 //   server and its own last upload, and never with a state warning, a stop, a
 //   mark or a write in the outbox.
+// * A server that was restored from a backup (a higher restore epoch with something lower than this device remembers,
+//   the same revision with other bytes, or a checkpoint that does not verify) stops the engine with `server_restored`.
+//   Only `acceptOlderState`, after the user has confirmed, lowers the floors, in three stored phases (see restore.mjs for
+//   what is sent and what is kept back): the older state is verified and becomes the memory; the local versions the
+//   server lacks are queued again, built on the server's rows, and an item the server changed since the restore is kept
+//   as a conflict instead; then the rows and the cache are replaced. Writes are not sent before the last phase is done,
+//   and a restart carries on from the stored phase before the outbox runner starts. `resumeAfterHalt` lifts a stop and
+//   reads the feed again; it clears no warning, since only a verification that succeeds does that.
 // * A write that the server refuses for good (409 or a final code) blocks its
 //   item: the draft stays in the outbox, the screen shows the server's version,
 //   edits are refused until `discard(id)` drops the draft.
@@ -64,6 +72,7 @@ import {
 } from "./checkpoint.mjs";
 import { acceptPage, coreRow, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
 import { createOutboxRunner } from "./outbox.mjs";
+import { planRestore, restoreItems } from "./restore.mjs";
 
 export { SyncError };
 
@@ -183,7 +192,9 @@ export function createSyncEngine({
    * the head of the checkpoint that page showed (`head`), whether a full listing was part of it, whether it refused rows, and
    * the sync memory as this pass left it (`memory`: another tab's save after that makes the verification read the feed again).
    * `head` may be raised by the verification (the checkpoint it read); `pageHead` is what the feed showed.
-   * @type {{ seq: number, head: number | null, pageHead: number | null, listed: boolean, refused: boolean, memory: Uint8Array } | null}
+   * `epoch` is a higher restore epoch the pass saw with nothing lower: it is stored when the checkpoint verifies (`from` is the one
+   * that was stored).
+   * @type {{ seq: number, head: number | null, pageHead: number | null, listed: boolean, refused: boolean, memory: Uint8Array, epoch: { from: number | null, to: number } | null } | null}
    */
   let lastDrain = null;
   /** A verification has succeeded in this session (the engine has run since `start`). */
@@ -202,6 +213,14 @@ export function createSyncEngine({
   let deferredAt = null;
   /** The next verification is the second try of a round (another tab had moved the memory, or the checkpoint was newer than the feed). */
   let retryPending = false;
+  /** An older state is being accepted right now (see `acceptOlderState`): nothing else changes the rows or the outbox meanwhile. */
+  let restoring = false;
+  /** A restore was started and its state is stored but it is not finished: nothing is pulled until it is. */
+  let restorePending = false;
+  /** A higher restore epoch was seen with nothing lower and has not been accepted yet (its checkpoint has not verified): writes are held. */
+  let epochPending = false;
+  /** The focus and online listeners are registered. */
+  let listening = false;
 
   /** The server-accepted rows, ciphertext only (what the cache holds). @type {Map<string, CachedRow>} */
   const rows = new Map();
@@ -484,13 +503,13 @@ export function createSyncEngine({
       }
       if (!page.has_more) break;
     }
-    await finishEpoch(pass);
+    const raised = await finishEpoch(pass);
     if (stopped) return;
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
     lastDrain = {
       seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
-      refused: pass.refused, memory: (await memory.load()).memory,
+      refused: pass.refused, memory: (await memory.load()).memory, epoch: raised === null ? null : { from: pass.stored, to: raised },
     };
     if (listing !== null) await finishListing(db);
   }
@@ -604,37 +623,41 @@ export function createSyncEngine({
   async function checkEpoch(pass, epoch) {
     if (pass.stored === null) {
       if (pass.first === null || epoch > pass.first) pass.first = epoch;
-      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) {
+        pass.raised = epoch;
+        runner.hold(); // nothing is sent from the moment the server shows a restore, whoever released the runner before
+      }
       return;
     }
     if (epoch < pass.stored) {
       throw new SyncError("restore_epoch_lowered", "The server shows an older restore epoch than this device has seen.");
     }
-    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) {
+      pass.raised = epoch;
+      runner.hold();
+    }
   }
 
   /**
    * The end of a pass. A higher epoch with something lower on the server means the
    * server was restored from a backup: the engine halts and the user decides. A
-   * higher epoch without it is stored, with a message (a first contact stores it
-   * without one: there was nothing to compare with).
+   * higher epoch without it is not stored here: it is stored, with a message, when
+   * the checkpoint of the server verifies (`checkpointStep`), and a checkpoint that
+   * does not verify is a restore as well. A first contact stores its epoch without
+   * a message: there was nothing to compare with.
    * @param {PassState} pass
+   * @returns {Promise<number | null>} the higher epoch that waits for the verification, or null
    */
   async function finishEpoch(pass) {
-    if (pass.raised === null && pass.first === null) return;
+    if (pass.raised === null && pass.first === null) return null;
     if (pass.raised !== null && pass.lower) throw new SyncError("server_restored", "The server was restored to an earlier state.");
     if (pass.stored === null) {
       pass.stored = await saveEpoch(/** @type {number} */ (pass.first));
       pass.first = null;
       pass.raised = null;
-      return;
+      return null;
     }
-    if (pass.raised === null) return;
-    const from = pass.stored;
-    await saveEpoch(pass.raised);
-    pass.stored = pass.raised;
-    pass.raised = null;
-    warn("restore_epoch_raised", { from, to: pass.stored });
+    return pass.raised;
   }
 
   /**
@@ -1185,9 +1208,11 @@ export function createSyncEngine({
    * @param {{ seq: number, head: number | null, pageHead: number | null, memory: Uint8Array }} drain
    * @param {import("../store/syncState.mjs").SyncState} before the stored state when the step began
    * @param {boolean} mayRetry
+   * @param {boolean} [offer] the server shows a higher restore epoch: a checkpoint that does not verify is then a restore, the
+   *   engine stops with `server_restored` (the user may accept the older state) and no warning is stored or shown
    * @returns {Promise<string | null>}
    */
-  async function verifyStep(drain, before, mayRetry) {
+  async function verifyStep(drain, before, mayRetry, offer = false) {
     /** @type {import("./checkpoint.mjs").Checkpoint} */
     let checkpoint;
     try {
@@ -1201,6 +1226,7 @@ export function createSyncEngine({
       }
       if (typeof status !== "number" || status === 0 || status === 408 || status === 429 || status >= 500) return null; // not reachable now
       // The server answers, and not with a checkpoint it can have: nothing can be verified. A warning that is stored stays.
+      if (offer) throw new SyncError("server_restored", "The server was restored to an earlier state.");
       let kept = "bad_feed";
       await memory.withLock(async (state) => {
         kept = escalate(state.hardWarning, "bad_feed");
@@ -1215,7 +1241,7 @@ export function createSyncEngine({
     if (checkpoint.seq > drain.seq && mayRetry) return "retry";
     const rowsNow = [...rows.values()];
     const coreRows = rowsNow.map(coreRow);
-    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string }} Verdict */
+    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string, offered?: boolean }} Verdict */
     /** @type {{ verdict: Verdict | null }} */
     const box = { verdict: null };
     await memory.withLock(async (state) => {
@@ -1232,6 +1258,10 @@ export function createSyncEngine({
         if (moved && mayRetry && TAB_RACE.has(code)) {
           box.verdict = { ok: false, code, moved, warning: "", kept: "" };
           return null; // the other tab has seen more: nothing is said before the feed has been read again
+        }
+        if (offer && hardWarningOf(code) !== "sync_memory_full") {
+          box.verdict = { ok: false, code, moved, warning: "", kept: "", offered: true };
+          return null; // a restored server that shows what this device cannot verify: the user is offered the older state, nothing is said
         }
         const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state) });
         // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
@@ -1251,6 +1281,7 @@ export function createSyncEngine({
       for (const code of VERIFY_WARNINGS) clearWarning(code);
       return "ok";
     }
+    if (verdict.offered === true) throw new SyncError("server_restored", "The server was restored to an earlier state.");
     if (verdict.warning === "") return "retry";
     if (STOP_CODES.includes(verdict.warning)) {
       throw new SyncError(verdict.warning, verdict.warning === "rollback_suspected"
@@ -1301,9 +1332,13 @@ export function createSyncEngine({
     // While only a pause stands, the checkpoint is not asked for again until the feed has moved (its top or the head of the
     // checkpoint), or a day has passed: nothing but a change can end a pause.
     const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.pageHead && at - deferredAt.at < VERIFY_AFTER_MS;
-    if (verifyRequested || drain.listed || (due && at >= verifyNotBefore && !unchanged)) {
+    // A higher restore epoch is accepted only after the checkpoint has verified: that is asked for whatever the time.
+    const pending = drain.epoch;
+    epochPending = pending !== null;
+    if (pending !== null) runner.hold(); // nothing is sent to a server that may have been restored, until its checkpoint has verified
+    if (verifyRequested || drain.listed || pending !== null || (due && at >= verifyNotBefore && !unchanged)) {
       verifyRequested = false;
-      const result = await verifyStep(drain, before, mayRetry);
+      const result = await verifyStep(drain, before, mayRetry, pending !== null);
       if (result === "retry") {
         retryPending = true;
         verifyRequested = true;
@@ -1312,6 +1347,13 @@ export function createSyncEngine({
       }
       verifyOutcome = result ?? "not_checked";
       if (result === null) verifyNotBefore = now() + VERIFY_RETRY_MS;
+      if (pending !== null) {
+        if (result !== "ok") return; // not checked: the epoch waits for the next pass, and nothing is uploaded meanwhile
+        await saveEpoch(pending.to);
+        alive();
+        epochPending = false;
+        warn("restore_epoch_raised", { from: pending.from, to: pending.to });
+      }
     }
     await uploadStep(drain);
   }
@@ -1366,11 +1408,41 @@ export function createSyncEngine({
     }));
   }
 
+  /** What a failure of a pass shows: a stop, a pause for the session, or a status and an event. @param {unknown} error */
+  function failWith(error) {
+    const code = codeOf(error);
+    const status = /** @type {any} */ (error)?.status;
+    if (error instanceof SyncError && code === "restore_not_verified") {
+      // What the server shows now cannot be verified: the user is offered the older state again, and nothing is retried unasked.
+      emit("error", { code, reason: error.reason });
+      halt("server_restored");
+    } else if (error instanceof SyncError && HALT_CODES.includes(code)) {
+      halt(code);
+    } else if (status === 401 || /** @type {any} */ (error)?.sessionProblem === true) {
+      paused = true;
+      setStatus("unauthorized");
+    } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {
+      setStatus("failed", { code });
+      emit("error", { code });
+    } else if (typeof status === "number") {
+      setStatus("offline", { code });
+    } else {
+      // A failure of the local store, or a bug: say so, do not look offline.
+      setStatus("failed", { code });
+      emit("error", { code });
+    }
+  }
+
   /** One pass: the feed. Failures become events; they never reject. */
   async function runCycle() {
     if (halted !== null) return;
     setStatus("syncing");
     try {
+      // A restore that was started and not finished is finished first: the rows here are of the old history.
+      if (restorePending) {
+        await resumeRestore();
+        if (stopped) return;
+      }
       await cycle();
       if (stopped) return;
       await checkpointStep();
@@ -1384,25 +1456,10 @@ export function createSyncEngine({
         schedule();
       }
       setStatus("idle", { at: now() });
+      releaseIfClear();
     } catch (error) {
       if (stopped) return;
-      const code = codeOf(error);
-      const status = /** @type {any} */ (error)?.status;
-      if (error instanceof SyncError && HALT_CODES.includes(code)) {
-        halt(code);
-      } else if (status === 401 || /** @type {any} */ (error)?.sessionProblem === true) {
-        paused = true;
-        setStatus("unauthorized");
-      } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {
-        setStatus("failed", { code });
-        emit("error", { code });
-      } else if (typeof status === "number") {
-        setStatus("offline", { code });
-      } else {
-        // A failure of the local store, or a bug: say so, do not look offline.
-        setStatus("failed", { code });
-        emit("error", { code });
-      }
+      failWith(error);
     }
   }
 
@@ -1439,6 +1496,28 @@ export function createSyncEngine({
     void syncNow();
   };
   const FOCUS_EVENTS = ["focus", "online"];
+
+  /** Registers the focus and online listeners once, also for an engine that starts stopped (the user may try again later). */
+  function listen() {
+    if (listening || stopped) return;
+    listening = true;
+    for (const name of FOCUS_EVENTS) win?.addEventListener?.(name, onFocus);
+  }
+
+  /**
+   * The writes in the outbox go out only when nothing speaks against the server: not stopped, no restore half done, no higher
+   * restore epoch that has not been accepted. The runner is held from the start of the engine, and is let go only here, at the end
+   * of a pass that read the feed to its end: a pass that fails (offline, a bad answer) lets nothing go.
+   */
+  function releaseIfClear() {
+    if (stopped || halted !== null || restorePending || epochPending) return;
+    runner.release();
+  }
+
+  /** A restore is one at a time in a browser: the Web Lock of the account, when the memory has one. @template T @param {() => Promise<T>} fn @returns {Promise<T>} */
+  function exclusive(fn) {
+    return typeof memory.withRestoreLock === "function" ? memory.withRestoreLock(fn) : fn();
+  }
 
   // --------------------------------------------------------------- writes
 
@@ -1561,12 +1640,400 @@ export function createSyncEngine({
     return { sealed, summary };
   }
 
+  /**
+   * What the screen shows for the writes that wait in the outbox: the newest of each item, as pending. A write of an item
+   * the server has moved past is not shown; a blocked item shows the server's version (a draft of an item the server never
+   * took is shown as it is).
+   * @param {import("../store/outbox.mjs").OutboxEntry[]} queued oldest first
+   */
+  async function showDrafts(queued) {
+    for (const entry of queued) {
+      const rev = entry.baseRev + 1;
+      if (rev <= (rows.get(entry.itemId)?.rev ?? 0)) continue; // the feed already has this item beyond the draft
+      if (blocked.has(entry.itemId)) {
+        // Refused for good before the restart: the server's version stays on screen; a draft of an item the server never took is shown.
+        if (!rows.has(entry.itemId) && !("tomb" in entry.body)) {
+          try {
+            index.set(entry.itemId, await summarize(entry.itemId, rev, entry.body.blob, entry.body.tag));
+          } catch (error) {
+            if (stopped || isFatal(error)) throw error;
+          }
+        }
+        continue;
+      }
+      try {
+        if ("tomb" in entry.body) {
+          overlay.set(entry.itemId, { rev, deleted: true, envelope: null, tag: null });
+          index.delete(entry.itemId);
+        } else {
+          const { blob, tag } = entry.body;
+          const summary = await summarize(entry.itemId, rev, blob, tag);
+          alive();
+          index.set(entry.itemId, summary);
+          overlay.set(entry.itemId, { rev, deleted: false, envelope: blob, tag });
+        }
+      } catch (error) {
+        if (stopped || isFatal(error)) throw error;
+        emit("error", { code: "draft_unreadable", id: entry.itemId });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------- an older state
+
+  /**
+   * What the server shows now, for the older state: the whole listing as rows, the `as_of_seq` of its first page, its
+   * restore epoch, and (when `withCheckpoint`) the checkpoint it holds. Nothing is changed here.
+   * @param {boolean} [withCheckpoint]
+   * @returns {Promise<{ rows: CachedRow[], asOf: number, epoch: number, checkpoint: import("./checkpoint.mjs").Checkpoint | null }>}
+   */
+  async function readRestoreInputs(withCheckpoint = true) {
+    /** @type {CachedRow[]} */
+    const listed = [];
+    const seen = { epoch: /** @type {number | null} */ (null) };
+    const asOf = await readListing(async (page) => {
+      if (seen.epoch === null) seen.epoch = page.restore_epoch;
+      for (const change of page.items) {
+        try {
+          listed.push(rowOfChange(change));
+        } catch {
+          throw new SyncError("bad_feed", "The server's listing cannot be right.");
+        }
+      }
+      return "done";
+    });
+    alive();
+    if (asOf === null || seen.epoch === null) throw new SyncError("stopped");
+    const epoch = seen.epoch;
+    /** @type {import("./checkpoint.mjs").Checkpoint | null} */
+    let checkpoint = null;
+    if (withCheckpoint) {
+      try {
+        checkpoint = await fetchCheckpoint(api);
+      } catch (error) {
+        if (/** @type {any} */ (error)?.status === 404) {
+          throw new SyncError("restore_not_verified", "The server holds no checkpoint to compare the older state with.", "no_checkpoint");
+        }
+        throw error;
+      }
+      alive();
+    }
+    return { rows: listed, asOf, epoch, checkpoint };
+  }
+
+  /** @typedef {Awaited<ReturnType<typeof readRestoreInputs>>} RestoreInputs */
+
+  /**
+   * The core's check of an older state: the checkpoint against the listing, without the memory. The answer holds the memory that
+   * state would give; nothing is stored here.
+   * @param {RestoreInputs} inputs
+   */
+  async function checkOlderState(inputs) {
+    try {
+      return await client.vault.accept_older_state(inputs.checkpoint, inputs.rows.map(coreRow), inputs.asOf);
+    } catch (error) {
+      if (isFatal(error)) throw error;
+      throw new SyncError("restore_not_verified", "The older state of the server could not be verified.", codeOf(error));
+    }
+  }
+
+  /**
+   * Phase 1. The listing and the checkpoint are verified by the core, and the memory it gives (the floors of that older
+   * state: the only place where floors go down) is stored together with the note that a restore is under way. The restore
+   * epoch has to be a higher one than this device has accepted, or the floors are not lowered at all.
+   * Spec: Fase 1 section 8.6 ("Legitimate rollbacks").
+   * @param {RestoreInputs} inputs
+   */
+  async function saveOlderMemory(inputs) {
+    await memory.withLock(async (state) => {
+      if (inputs.epoch <= (state.restoreEpoch ?? 0)) {
+        throw new SyncError("invalid_state", "The server does not show a restore epoch above the one this device has accepted.");
+      }
+      const done = await checkOlderState(inputs);
+      return {
+        ...state,
+        memory: done.newSyncMemory,
+        // The state that verified is the one this device stands on now: its checkpoint is the highest verified one, nothing of
+        // the old history counts as an uploaded checkpoint, and a warning of the old history has no more to say.
+        verifiedAt: now(),
+        verifiedSeq: /** @type {import("./checkpoint.mjs").Checkpoint} */ (inputs.checkpoint).seq,
+        uploadedSeq: null,
+        hardWarning: null,
+        restore: { epoch: inputs.epoch, phase: /** @type {"memory_saved"} */ ("memory_saved") },
+      };
+    });
+    alive();
+  }
+
+  /**
+   * The same check on a restart that finds the restore half done: the floors stay where phase 1 put them (nothing is lowered a
+   * second time on a word that was given once), and the checkpoint has to verify against what the server shows now.
+   * @param {RestoreInputs} inputs
+   */
+  async function checkAgain(inputs) {
+    await memory.withLock(async (state) => {
+      try {
+        const done = await client.vault.verify_checkpoint(inputs.checkpoint, inputs.rows.map(coreRow), inputs.asOf, state.memory);
+        return {
+          ...state, memory: done.newSyncMemory, verifiedAt: now(),
+          verifiedSeq: Math.max(state.verifiedSeq ?? 0, /** @type {import("./checkpoint.mjs").Checkpoint} */ (inputs.checkpoint).seq),
+        };
+      } catch (error) {
+        if (isFatal(error)) throw error;
+        const code = codeOf(error);
+        if (code === "checkpoint_top_seq_below_remembered") {
+          throw new SyncError("rollback_suspected", "The server shows a state older than this device has seen.");
+        }
+        throw new SyncError("restore_not_verified", "The server shows a state this device cannot verify.", code);
+      }
+    });
+    alive();
+  }
+
+  /**
+   * The write that carries the newest local version of an item over to the server's rows: sealed again at `base + 1`, opened from
+   * the row this device holds or from the write that was waiting in the outbox. A tombstone is made at `base + 1`.
+   * @param {import("./restore.mjs").Decision} decision
+   * @param {import("../store/outbox.mjs").OutboxEntry[]} waiting the queued writes of the item, oldest first
+   * @returns {Promise<{ blob: Uint8Array, tag: Uint8Array } | { tomb: Uint8Array }>}
+   */
+  async function sealOlder(decision, waiting) {
+    const id = decision.id;
+    if (decision.kind === "tombstone") {
+      return { tomb: (await client.vault.make_tombstone(hex16.decode(id), decision.baseRev + 1)).tomb };
+    }
+    const last = waiting.at(-1);
+    /** @type {number} */
+    let handle;
+    if (decision.source === "outbox" && last !== undefined && !("tomb" in last.body)) {
+      handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
+    } else {
+      const row = rows.get(id);
+      if (!row || row.deleted) throw new SyncError("invalid_state");
+      handle = await client.vault.open_item(hex16.decode(id), row.rev, row.envelope, row.tag);
+    }
+    try {
+      const sealed = await client.vault.encrypt_item(hex16.decode(id), decision.baseRev + 1, {}, handle, now());
+      return { blob: sealed.envelope, tag: sealed.tag };
+    } finally {
+      await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+    }
+  }
+
+  /**
+   * Phase 2. Every local version that is newer than the server's row is queued again, built on what the server has now
+   * (`server rev + 1`; a tombstone is brought back with `resurrect`; an item the server lacks starts at revision 0), and
+   * replaces the old writes of that item in the outbox. An item the server changed after the restore (see `restoreItems`)
+   * is queued as a draft that is not sent and marked as a conflict. Nothing is sent: the runner is held until the rows have
+   * been replaced. The new write is stored before the old ones are dropped, and the mark of a conflict is saved before its
+   * draft is stored, so a crash at any point resumes to the same answer.
+   * @param {RestoreInputs} inputs
+   * @returns {Promise<{ reuploaded: number, conflicts: number }>}
+   */
+  async function queueNewer(inputs) {
+    const db = await store.open();
+    await runner.whenIdle();
+    /** @type {import("../store/outbox.mjs").OutboxEntry[]} */
+    const stored = await store.outbox.all(db, scope);
+    alive();
+    const decisions = await restoreItems({
+      listing: inputs.rows, checkpoint: /** @type {import("./checkpoint.mjs").Checkpoint} */ (inputs.checkpoint),
+      rows: rows.values(), outbox: stored, blocked: blocked.keys(), marks: flags,
+    });
+    const served = new Map(inputs.rows.map((row) => [row.itemId, row]));
+    let reuploaded = 0;
+    let conflicts = 0;
+    for (const decision of decisions) {
+      const id = decision.id;
+      const waiting = stored.filter((entry) => entry.itemId === id);
+      if (decision.kind === "skip") {
+        // Nothing to send. An old write waiting for this item belonged to the old history (the server has the newer version, or both are deleted).
+        if (waiting.length > 0) for (const idem of await runner.discard(id)) droppedIdems.add(idem);
+        if (blocked.delete(id)) flagsDirty = true;
+        continue;
+      }
+      /** @type {{ blob: Uint8Array, tag: Uint8Array } | { tomb: Uint8Array }} */
+      let body;
+      try {
+        body = await sealOlder(decision, waiting);
+      } catch (error) {
+        if (stopped || isFatal(error)) throw error;
+        emit("error", { code: "restore_item_unreadable", id }); // no copy of it can be opened: nothing can be sent for it
+        continue;
+      }
+      alive();
+      const idem = randomId();
+      const bytes = encodeWireBytes("put_item_req", {
+        base_rev: decision.baseRev,
+        ...("tomb" in body ? { deleted: true, tomb: b64u.encode(body.tomb) } : { blob: b64u.encode(body.blob), tag: b64u.encode(body.tag) }),
+        idem,
+        ...(!("tomb" in body) && decision.kind === "resurrect" ? { resurrect: true } : {}),
+      });
+      if (decision.conflict) {
+        blocked.set(id, "conflict");
+        flagsDirty = true;
+        await saveFlags(db);
+      } else if (blocked.delete(id)) {
+        flagsDirty = true;
+      }
+      for (const gone of await runner.replace({ idem, itemId: id, baseRev: decision.baseRev, body, bytes })) droppedIdems.add(gone);
+      alive();
+      if (decision.conflict) {
+        runner.block(id);
+        conflicts += 1;
+        const row = served.get(id);
+        emit("error", { code: "conflict", id, currentRev: row?.rev ?? 0, deleted: row?.deleted === true });
+      } else {
+        reuploaded += 1;
+      }
+    }
+    await saveFlags(db);
+    return { reuploaded, conflicts };
+  }
+
+  /**
+   * Phase 3. The rows and the cache become what the server shows (the memory takes them first: a restart may find newer ones,
+   * and nothing is lowered here), the marks of the old history are dropped (the drafts of conflicts stay: they are in the outbox,
+   * blocked), the screen is rebuilt from the new rows and the writes that wait, the feed continues from the `as_of_seq` of
+   * the listing, and last of all the restore epoch is stored and the note of the restore removed.
+   * @param {RestoreInputs} inputs
+   */
+  async function replaceRows(inputs) {
+    const db = await store.open();
+    const verdict = await acceptPage({ client, memory, rows: inputs.rows, topSeq: inputs.asOf });
+    alive();
+    if (verdict.refused.length > 0) {
+      throw new SyncError("restore_not_verified", "The server shows rows this device cannot accept.", verdict.refused[0].code);
+    }
+    /** @type {import("../store/outbox.mjs").OutboxEntry[]} */
+    const waiting = await store.outbox.all(db, scope);
+    alive();
+    const withCopy = new Set(waiting.map((entry) => entry.itemId));
+    const keep = new Set(inputs.rows.map((row) => row.itemId));
+    // A live row of this device that the listing does not show and that has no write waiting for it is the only copy there is:
+    // the server may be hiding it, and nothing is deleted on its word. It stays (cached with seq 0, so the cursor does not follow
+    // the old history), and is marked and sent again like any item a listing left out. A tombstone the server does not show is not kept.
+    const only = [...rows.values()]
+      .filter((row) => !keep.has(row.itemId) && !row.deleted && row.itemId !== MANIFEST_ID && !withCopy.has(row.itemId))
+      .map((row) => ({ ...row, seq: 0 }));
+    const onlyIds = new Set(only.map((row) => row.itemId));
+    await store.cache.putRows(db, scope, [...inputs.rows, ...only]);
+    alive();
+    /** @type {CachedRow[]} */
+    const cached = await store.cache.getRows(db, scope);
+    const stale = cached.map((row) => row.itemId).filter((id) => !keep.has(id) && !onlyIds.has(id));
+    if (stale.length > 0) await store.cache.removeRows(db, scope, stale);
+    alive();
+    // What the screen will show, made before anything is swapped.
+    /** @type {Map<string, ReturnType<typeof summaryOf>>} */
+    const summaries = new Map();
+    /** @type {Array<{ id: string, rev: number, code: string }>} */
+    const unreadable = [];
+    for (const row of [...inputs.rows, ...only]) {
+      if (row.deleted || row.itemId === MANIFEST_ID) continue;
+      try {
+        summaries.set(row.itemId, await summarize(row.itemId, row.rev, /** @type {Uint8Array} */ (row.envelope), /** @type {Uint8Array} */ (row.tag)));
+        alive();
+      } catch (error) {
+        if (stopped || isFatal(error)) throw error;
+        unreadable.push({ id: row.itemId, rev: row.rev, code: codeOf(error) });
+      }
+    }
+    const before = [...index.keys()];
+    rows.clear();
+    for (const row of inputs.rows) rows.set(row.itemId, row);
+    for (const row of only) rows.set(row.itemId, row);
+    flags.clear();
+    acked.clear();
+    overlay.clear();
+    index.clear();
+    for (const [id, summary] of summaries) index.set(id, summary);
+    for (const { id, rev, code } of unreadable) markDamaged(id, rev, code);
+    for (const row of only) if (!flags.has(row.itemId)) flags.set(row.itemId, { kind: "missing_on_server", rev: row.rev });
+    flagsDirty = true;
+    for (const id of [...blocked.keys()]) if (!withCopy.has(id)) blocked.delete(id); // a block needs its draft
+    await showDrafts(waiting);
+    await saveFlags(db);
+    cursor = inputs.asOf;
+    await memory.withLock(async (state) => ({ ...state, restoreEpoch: Math.max(state.restoreEpoch ?? 0, inputs.epoch), restore: null }));
+    alive();
+    changed(new Set([...before, ...index.keys()]));
+  }
+
+  /**
+   * Whether the manifest of the restored server is older than the one this device holds (a lower revision, or none): the unlock
+   * methods of the older state are what the server will show, and the user is told.
+   * @param {CachedRow[]} listed
+   */
+  function manifestOlder(listed) {
+    const mine = rows.get(MANIFEST_ID);
+    if (mine === undefined) return false;
+    const theirs = listed.find((row) => row.itemId === MANIFEST_ID);
+    return theirs === undefined || theirs.rev < mine.rev;
+  }
+
+  /** What stands again once an older state is accepted: nothing from the old history is held against the new one. */
+  function afterRestore() {
+    restorePending = false;
+    epochPending = false;
+    listing = null;
+    lastDrain = null;
+    for (const code of VERIFY_WARNINGS) clearWarning(code);
+    // The checkpoint verified against the listing in phase 1: this device has verified in this session, and the next pass checks again.
+    verifiedInSession = true;
+    forgedUnlock = false;
+    verifyNotBefore = 0;
+    uploadNotBefore = 0;
+    deferredAt = null;
+    retryPending = false;
+    verifyRequested = true;
+  }
+
+  /**
+   * Carries on a restore whose note is stored (the page was closed, or a phase failed): from the stored phase, with the
+   * listing read again and verified against the checkpoint. The runner stays held; the pass that follows lets it go. A listing that shows a different restore epoch than the one that
+   * was being accepted is not the same restore: the engine stops and the user decides again.
+   */
+  async function resumeRestore() {
+    await exclusive(async () => {
+      const state = await memory.load();
+      alive();
+      if (state.restore === null) {
+        restorePending = false;
+        return;
+      }
+      if (restoring) return;
+      restoring = true;
+      try {
+        runner.hold();
+        await runner.whenIdle();
+        await Promise.all([...itemQueues.values()]);
+        const { epoch, phase } = state.restore;
+        // The listing is checked against the checkpoint again, whichever phase the note is in: rows are never replaced from a listing nobody verified.
+        const inputs = await readRestoreInputs();
+        if (inputs.epoch > epoch) throw new SyncError("server_restored", "The server was restored again.");
+        if (inputs.epoch < epoch) throw new SyncError("restore_epoch_lowered", "The server shows an older restore epoch than this device has seen.");
+        await checkAgain(inputs);
+        if (phase === "memory_saved") {
+          await queueNewer(inputs);
+          await memory.withLock(async (current) => ({ ...current, restore: { epoch, phase: /** @type {"queued"} */ ("queued") } }));
+          alive();
+        }
+        await replaceRows(inputs);
+        afterRestore();
+      } finally {
+        restoring = false;
+      }
+    });
+  }
+
   // -------------------------------------------------------------- the API
 
   const engine = {
     async start() {
       if (started || stopped) throw new SyncError("invalid_state");
       started = true;
+      runner.hold(); // the writes that wait go out after the first pass has shown that the server is not a restored one
       const db = await store.open();
       let cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
       const saved = await store.getSetting(db, flagsKey);
@@ -1654,44 +2121,37 @@ export function createSyncEngine({
           flagsDirty = true;
         }
       }
-      for (const entry of queued) {
-        const rev = entry.baseRev + 1;
-        if (rev <= (rows.get(entry.itemId)?.rev ?? 0)) continue; // the feed already has this item beyond the draft
-        if (blocked.has(entry.itemId)) {
-          // Refused for good before the restart: the server's version stays on screen; a draft of an item the server never took is shown.
-          if (!rows.has(entry.itemId) && !("tomb" in entry.body)) {
-            try {
-              index.set(entry.itemId, await summarize(entry.itemId, rev, entry.body.blob, entry.body.tag));
-            } catch (error) {
-              if (stopped || isFatal(error)) throw error;
-            }
-          }
-          continue;
-        }
-        try {
-          if ("tomb" in entry.body) {
-            overlay.set(entry.itemId, { rev, deleted: true, envelope: null, tag: null });
-            index.delete(entry.itemId);
-          } else {
-            const { blob, tag } = entry.body;
-            const summary = await summarize(entry.itemId, rev, blob, tag);
-            alive();
-            index.set(entry.itemId, summary);
-            overlay.set(entry.itemId, { rev, deleted: false, envelope: blob, tag });
-          }
-        } catch (error) {
-          if (stopped || isFatal(error)) throw error;
-          emit("error", { code: "draft_unreadable", id: entry.itemId });
-        }
-      }
+      await showDrafts(queued);
       if (stopped) return;
       await saveFlags(db);
       changed(index.keys());
-      if (halted !== null) return; // what is stored is shown; nothing is pulled, and nothing queued is sent
-      runner.start();
+      if (halted !== null) {
+        listen();
+        return; // what is stored is shown; nothing is pulled, and nothing queued is sent
+      }
+      // An older state that was being accepted when the page went away is carried on first, while the runner is held: no write
+      // goes out before the rows have been replaced. If that cannot be done now (no network), the passes try again and the
+      // runner stays held until it is done.
+      if ((await memory.load()).restore !== null) {
+        alive();
+        restorePending = true;
+        runner.hold();
+        try {
+          await resumeRestore();
+        } catch (error) {
+          if (stopped) return;
+          failWith(error);
+        }
+        if (stopped) return;
+        if (halted !== null) {
+          listen();
+          return;
+        }
+      }
+      runner.start(); // nothing goes out yet: the runner is held, and only a pass that ends well lets it go
       await syncNow();
       if (stopped) return;
-      for (const name of FOCUS_EVENTS) win?.addEventListener?.(name, onFocus);
+      listen();
       schedule();
     },
 
@@ -1701,6 +2161,7 @@ export function createSyncEngine({
       if (pollTimer !== null) timers.clear(pollTimer);
       pollTimer = null;
       for (const name of FOCUS_EVENTS) win?.removeEventListener?.(name, onFocus);
+      listening = false;
       runner.stop();
       for (const handle of handles) {
         try {
@@ -1723,6 +2184,8 @@ export function createSyncEngine({
       lastDrain = null;
       verifyRequested = false;
       retryPending = false;
+      restoring = false;
+      restorePending = false;
       flagsDirty = false;
       itemQueues.clear();
       listing = null;
@@ -1756,6 +2219,95 @@ export function createSyncEngine({
       await syncNow();
       if (halted !== null) return halted;
       return verifyOutcome ?? "not_checked";
+    },
+
+    /**
+     * What accepting the older state would do, for the screen that asks the user: how many local versions the server lacks and
+     * would be sent again, and how many would be kept as conflicts because the server holds something else for them now.
+     * Only while the engine is stopped with `server_restored`. The older state is verified first (the answer is the same refusal
+     * `acceptOlderState` would give); nothing is stored or sent.
+     * `manifestOlder` is true when the unlock methods of the restored server are older than this device's.
+     * @returns {Promise<{ reupload: number, conflicts: number, manifestOlder: boolean }>}
+     */
+    async restorePreview() {
+      if (stopped) throw new SyncError("stopped");
+      if (halted !== "server_restored" || restoring) throw new SyncError("invalid_state", "There is no restored server to look at.");
+      const inputs = await readRestoreInputs();
+      await checkOlderState(inputs);
+      const db = await store.open();
+      const plan = await planRestore({
+        listing: inputs.rows, checkpoint: /** @type {import("./checkpoint.mjs").Checkpoint} */ (inputs.checkpoint),
+        rows: rows.values(), outbox: await store.outbox.all(db, scope), blocked: blocked.keys(), marks: flags,
+      });
+      alive();
+      return { reupload: plan.upload.length, conflicts: plan.conflicts.length, manifestOlder: manifestOlder(inputs.rows) };
+    },
+
+    /**
+     * "Accept older state": the user has confirmed that the server was restored from a backup. Only while the engine is stopped
+     * with `server_restored`; anything else is `invalid_state`. In three phases, each stored, so a crash carries on from the
+     * stored one at the next start: (1) the listing and the checkpoint are verified and the floors of that state become the
+     * memory; (2) every local version the server has no row for is queued again (revision 0), and every local version over a row the server has is kept as an
+     * unsent draft (a conflict) when the server has a row for it; (3) the rows and the cache
+     * become the listing, the old marks go, the feed continues from its `as_of_seq`, and the restore epoch is stored. Writes
+     * are not sent before phase 3 is done. A state that does not verify leaves the engine stopped.
+     * Spec: Fase 1 section 8.6 ("Legitimate rollbacks").
+     * `manifestOlder` is true when the unlock methods of the restored server are older than this device's.
+     * @returns {Promise<{ reuploaded: number, conflicts: number, manifestOlder: boolean }>}
+     */
+    async acceptOlderState() {
+      if (stopped) throw new SyncError("stopped");
+      if (halted !== "server_restored" || restoring) throw new SyncError("invalid_state", "There is no restored server to accept.");
+      restoring = true;
+      try {
+        return await exclusive(async () => {
+          if (inflight) await inflight;
+          await Promise.all([...itemQueues.values()]); // writes that were being made when the user confirmed finish first
+          await runner.whenIdle();
+          alive();
+          const inputs = await readRestoreInputs();
+          const older = manifestOlder(inputs.rows);
+          await saveOlderMemory(inputs); // phase 1
+          restorePending = true;
+          const counts = await queueNewer(inputs); // phase 2
+          await memory.withLock(async (state) => ({ ...state, restore: { epoch: inputs.epoch, phase: /** @type {"queued"} */ ("queued") } }));
+          alive();
+          await replaceRows(inputs); // phase 3
+          afterRestore();
+          halted = null;
+          lastStatus = "";
+          emit("state", { kind: "warning_cleared", code: "server_restored" });
+          schedule(); // the runner stays held until the pass that follows ends well
+          void syncNow();
+          return { ...counts, manifestOlder: older };
+        });
+      } finally {
+        restoring = false;
+      }
+    },
+
+    /**
+     * "Try again" after a stop: the stop is lifted and the feed is read once. If the cause is still there the engine stops
+     * again, with the same code. Nothing that was earned is kept: the checkpoint has to verify again before this session
+     * uploads one. A warning that is stored is not cleared here; only a verification that succeeds clears it. The runner stays
+     * held until the pass has shown that nothing stops the engine.
+     * @returns {Promise<void>}
+     */
+    async resumeAfterHalt() {
+      if (stopped) throw new SyncError("stopped");
+      if (halted === null || restoring) throw new SyncError("invalid_state", "The engine is not stopped.");
+      halted = null;
+      lastStatus = "";
+      verifiedInSession = false;
+      forgedUnlock = false;
+      verifyNotBefore = 0;
+      retryPending = false;
+      deferredAt = null;
+      lastDrain = null;
+      verifyRequested = true;
+      await syncNow(); // the runner is let go by that pass, if it ends well
+      if (stopped || halted !== null) return;
+      schedule();
     },
 
     /** @returns {ItemSummary[]} */
@@ -1826,6 +2378,8 @@ export function createSyncEngine({
      */
     async create(draft) {
       if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+
       const id = randomId();
       await withItem(id, async () => {
         const { sealed, summary } = await seal(id, 1, withDevice(draft), undefined);
@@ -1847,6 +2401,8 @@ export function createSyncEngine({
     async update(id, draft, expectedRev) {
       if (!Number.isSafeInteger(expectedRev)) throw new TypeError("update needs the revision the edit was made from");
       if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+
       await withItem(id, async () => {
         const version = editable(id);
         if (version.rev !== expectedRev) throw new SyncError("item_changed");
@@ -1864,6 +2420,8 @@ export function createSyncEngine({
     /** Deletes an item: a tombstone at revision base + 1. @param {string} id */
     async remove(id) {
       if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+
       await withItem(id, async () => {
         const version = editable(id);
         const rev = version.rev + 1;
@@ -1880,6 +2438,8 @@ export function createSyncEngine({
      */
     async discard(id) {
       if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+
       if (typeof id !== "string" || !blocked.has(id)) throw new SyncError("not_found");
       await withItem(id, async () => {
         // The stored entries go first; the block stays until that has worked, so a failed store leaves the item blocked.
@@ -1902,6 +2462,8 @@ export function createSyncEngine({
      */
     async discardMissing(id) {
       if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+
       if (typeof id !== "string" || flags.get(id)?.kind !== "missing_on_server") throw new SyncError("not_found");
       abandoned.add(id);
       await withItem(id, async () => {

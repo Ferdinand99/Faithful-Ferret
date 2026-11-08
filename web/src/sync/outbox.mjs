@@ -94,6 +94,16 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
   let stopped = false;
   /** While held, entries are stored and queued but nothing is sent. */
   let held = false;
+  /** Callers waiting for every request in flight to end. @type {Array<() => void>} */
+  let idleWaiters = [];
+
+  /** Wakes the callers of `whenIdle` once no lane has a request in flight. */
+  function wakeIdle() {
+    if ([...lanes.values()].some((lane) => lane.running)) return;
+    const waiting = idleWaiters;
+    idleWaiters = [];
+    for (const wake of waiting) wake();
+  }
 
   /** @param {string} itemId @returns {Lane} */
   function laneOf(itemId) {
@@ -157,6 +167,7 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     } finally {
       lane.running = false;
       if (!stopped && lanes.get(itemId) === lane && lane.entries.length === 0 && lane.timer === null) lanes.delete(itemId);
+      wakeIdle();
     }
   }
 
@@ -190,6 +201,37 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     /** Keeps everything from being sent until `release()`: entries are still stored and queued. A request in flight is not taken back. */
     hold() {
       held = true;
+    },
+
+    /** Resolves when no request is in flight (a request that was sent before `hold()` is not taken back). @returns {Promise<void>} */
+    whenIdle() {
+      if (![...lanes.values()].some((lane) => lane.running)) return Promise.resolve();
+      return new Promise((resolve) => idleWaiters.push(resolve));
+    },
+
+    /**
+     * Makes `entry` the only queued write of its item. The new entry is stored first and the old ones are removed after,
+     * so a crash in between leaves the newest write (never none): the next start sees both and the last one wins. The lane
+     * is not blocked afterwards, and nothing is sent while the runner is held.
+     * @param {OutboxEntry} entry
+     * @returns {Promise<string[]>} the idempotency keys of the writes that were dropped
+     */
+    async replace(entry) {
+      await this.whenIdle();
+      const db = await store.open();
+      await store.outbox.enqueue(db, scope, entry);
+      const old = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem);
+      for (const stored of old) await store.outbox.remove(db, scope, stored.idem);
+      if (stopped) return [];
+      const lane = laneOf(entry.itemId);
+      const dropped = new Set([...old, ...lane.entries].filter((one) => one.idem !== entry.idem).map((one) => one.idem));
+      cancelWait(lane);
+      lane.entries.length = 0;
+      lane.entries.push(entry);
+      lane.attempt = 0;
+      lane.blocked = null;
+      void pump(entry.itemId);
+      return [...dropped];
     },
 
     /** Lets the entries go out again after `hold()`. */
