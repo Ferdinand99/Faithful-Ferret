@@ -966,7 +966,14 @@ async fn login_finish_route(
                 })
                 .await?;
             let signed_in = match opened {
-                Opened::Session(signed_in) => signed_in,
+                Opened::Session(signed_in) => {
+                    // The session the new one replaced is over: its event
+                    // stream closes now, not at the next heartbeat.
+                    if let Some(previous) = presented {
+                        state.events.session_revoked(previous);
+                    }
+                    signed_in
+                }
                 Opened::Refused => {
                     return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
                 }
@@ -1080,17 +1087,24 @@ async fn logout(
         // A failed clock skips the revoke but never the clearing of cookies.
         match to_i64(state.clock.now_unix()) {
             Ok(now) => {
-                state
+                let ended = state
                     .vault_db
                     .with_conn(move |conn| {
                         if let Some(row) = lookup(conn, &sid)?
                             && row.origin == origin
                         {
                             revoke(conn, &sid, now)?;
+                            return Ok(true);
                         }
-                        Ok(())
+                        Ok(false)
                     })
                     .await?;
+                // After the row is ended: a stream that wakes for this finds
+                // it ended as well. A session without a stream is heard by
+                // nobody, and the call never fails.
+                if ended {
+                    state.events.session_revoked(sid);
+                }
             }
             Err(_) => tracing::error!("the clock failed; the session row was not ended"),
         }

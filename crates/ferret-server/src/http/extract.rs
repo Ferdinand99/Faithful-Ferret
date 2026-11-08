@@ -46,6 +46,27 @@ pub struct SessionAuth {
     pub clock: Arc<dyn Clock>,
 }
 
+/// The clock of the state, handed to a route that must ask the time again
+/// later (a stream that holds a session open and checks it from time to time).
+/// A route calls [`SessionClock::now`] and names nothing else about it.
+#[derive(Clone)]
+pub struct SessionClock(Arc<dyn Clock>);
+
+impl SessionClock {
+    /// The time in Unix seconds, or `None` when the clock failed (it then
+    /// reads as the largest value) or the value does not fit: nothing is valid
+    /// then.
+    pub fn now(&self) -> Option<i64> {
+        i64::try_from(self.0.now_unix()).ok()
+    }
+}
+
+impl std::fmt::Debug for SessionClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionClock")
+    }
+}
+
 /// A signed-in session on the vault listener, with its account and vault.
 #[derive(Debug, Clone)]
 pub struct VaultSession {
@@ -53,12 +74,18 @@ pub struct VaultSession {
     pub user_id: i64,
     pub issued_at: i64,
     /// The time the request was checked at (Unix seconds, from the clock of the
-    /// state), so a vault route needs no clock of its own.
+    /// state), so a vault route needs no clock of its own for the request.
     pub now: i64,
+    /// The same clock, for a route that outlives the request.
+    pub clock: SessionClock,
     pub device: DeviceId,
     pub account: AccountId,
     pub vault: VaultId,
     pub vk_epoch: u64,
+    /// The kit's `session_version` of the user, which the extractor has found
+    /// equal to the one in the kit's cookie. A long-lived stream asks for it
+    /// again (`auth::session::still_valid`): a changed value ends the session.
+    pub session_version: i64,
 }
 
 /// A signed-in session on the admin listener.
@@ -75,6 +102,8 @@ struct Verified {
     user_id: i64,
     issued_at: i64,
     device: DeviceId,
+    /// The kit's session version, as checked against the kit's cookie.
+    session_version: i64,
     /// The account of the user, read for the vault listener only.
     account: Option<(AccountId, VaultId, u64)>,
 }
@@ -178,6 +207,7 @@ impl SessionAuth {
                     user_id: row.user_id,
                     issued_at: row.issued_at,
                     device: row.device,
+                    session_version: claims.version,
                     account,
                 }))
             })
@@ -202,12 +232,14 @@ where
         Ok(VaultSession {
             sid: verified.sid,
             now: verified.now,
+            clock: SessionClock(auth.clock.clone()),
             user_id: verified.user_id,
             issued_at: verified.issued_at,
             device: verified.device,
             account,
             vault,
             vk_epoch,
+            session_version: verified.session_version,
         })
     }
 }
