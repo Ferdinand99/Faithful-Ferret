@@ -20,7 +20,7 @@ import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { createRecorder } from "./recorder.mjs";
-import { ModeError, activate, honest, parseMode, preempt, shape } from "./modes.mjs";
+import { ModeError, activate, honest, interceptCheckpointPut, parseMode, preempt, shape } from "./modes.mjs";
 
 /** Headers that belong to one connection and are not passed on. */
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -168,7 +168,7 @@ export function createProxy({ upstreamVault, upstreamAdmin, now = Date.now, rand
     const sid = sessionOf(req);
     const shaped = kind === "changes" || kind === "items" || kind === "checkpoint";
     if (shaped) {
-      const early = preempt(active, { route: kind, query: url.searchParams }, recorder);
+      const early = preempt(active, { route: kind, query: url.searchParams });
       if (early) return sendJson(res, early.status, early.json);
     }
     /** @type {Buffer} */
@@ -178,6 +178,11 @@ export function createProxy({ upstreamVault, upstreamAdmin, now = Date.now, rand
     } catch {
       if (!res.headersSent) sendJson(res, 413, { error: "too_large" });
       return;
+    }
+    if (kind === "put_checkpoint") {
+      // A forked session's checkpoint stays in its own branch and is not sent on.
+      const kept = interceptCheckpointPut(active, { sid }, parseJson(body));
+      if (kept) return sendJson(res, kept.status, kept.json);
     }
     // The answers that are read are not compressed, so that they can be parsed.
     forward(upstreamVault, req, res, body, (answer) => bufferedAnswer(kind, url, sid, body, res, answer), shaped ? (name) => name === "accept-encoding" : undefined);
@@ -197,20 +202,23 @@ export function createProxy({ upstreamVault, upstreamAdmin, now = Date.now, rand
       const headers = pairs(answer.rawHeaders, (name) => name === "content-length");
       /** @type {Buffer} */
       let out = raw;
-      const readable = answer.statusCode === 200 && !answer.headers["content-encoding"];
+      let status = answer.statusCode ?? 502;
+      // A checkpoint that the real server does not have (404) can still be answered by a mode that shows another state.
+      const readable = (answer.statusCode === 200 || (kind === "checkpoint" && answer.statusCode === 404)) && !answer.headers["content-encoding"];
       const json = readable ? parseJson(raw) : undefined;
       if (json !== undefined) {
-        record(kind, url, sid, sent, json);
+        if (answer.statusCode === 200) record(kind, url, sid, sent, json);
         if (kind === "changes" || kind === "items" || kind === "checkpoint") {
           const lie = shape(active, recorder, { route: kind, query: url.searchParams, sid }, json, random);
           if (lie !== null) {
-            out = Buffer.from(JSON.stringify(lie));
+            out = Buffer.from(JSON.stringify(lie.json));
+            status = lie.status;
             log(`mode ${active.mode}: reshaped ${kind}`);
             for (let i = headers.length - 2; i >= 0; i -= 2) if (["etag", "content-md5"].includes(headers[i].toLowerCase())) headers.splice(i, 2);
           }
         }
       }
-      res.writeHead(answer.statusCode ?? 502, [...headers, "content-length", String(out.length)]);
+      res.writeHead(status, [...headers, "content-length", String(out.length)]);
       res.end(out);
     });
   }

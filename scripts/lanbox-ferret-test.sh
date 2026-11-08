@@ -61,6 +61,8 @@
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
 #   FERRET_LANBOX       address of the LANBox (default 10.0.3.26)
 #   FERRET_PROXY_CONTAINER  name of the tunnel client container (default Newt)
+# The snapshot steps are handed to take_snapshot and restore_snapshot by name.
+# shellcheck disable=SC2329
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
@@ -299,7 +301,7 @@ e2e_remove() {
 
 e2e_running() {
   local name
-  for name in "$e2e_app" "$e2e_tls"; do
+  for name in "$e2e_app" "$e2e_evil" "$e2e_tls"; do
     [ "$(dk inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" = true ] || return 1
   done
 }
@@ -360,15 +362,96 @@ wait_container_healthy() { # container
   return 1
 }
 
-# Replaces the contents of the volume <to> with a copy of the volume <from>, with the
-# file ownership and modes, in a helper container of the pinned Alpine image: no network, no
-# capability but the ones that a copy as root needs. The app must be stopped.
-copy_volume() { # from, to, label, helper container name
-  dk run --rm --name "$4" --label "$3" --network none \
+# The jobs on volumes, each in a helper container of the pinned Alpine image: no network, no
+# capability but the ones that a copy as root needs, no new privileges, a memory limit. A snapshot
+# is complete only with the marker .snapshot-complete, which is the last thing written, and a
+# database file that is not empty; a source that is not good is never copied, and a target is
+# emptied only after the source is known to be good.
+#   verify   the snapshot has the marker and a database (mounted read-only, nothing is written)
+#   make     the data -> a fresh volume, then the marker
+#   move     a complete snapshot -> a fresh volume, then the marker
+#   restore  a complete snapshot -> the data (no marker in the data)
+# The apps must be stopped for make and restore.
+# shellcheck disable=SC2016
+volume_script='set -e
+good() { [ -f "$1/.snapshot-complete" ] && [ -s "$1/ferret.sqlite" ]; }
+case "$MODE" in
+  verify | move | restore) good /from || { echo "the snapshot has no completion marker or no database" >&2; exit 3; } ;;
+  make) [ -s /from/ferret.sqlite ] || { echo "the data holds no database" >&2; exit 3; } ;;
+  *) exit 2 ;;
+esac
+if [ "$MODE" = verify ]; then exit 0; fi
+find /to -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+find /from -mindepth 1 -maxdepth 1 ! -name .snapshot-complete -exec cp -a {} /to/ \;
+[ -s /to/ferret.sqlite ] || { echo "the copy holds no database" >&2; exit 4; }
+case "$MODE" in
+  make) date > /to/.snapshot-complete ;;
+  move) cp -a /from/.snapshot-complete /to/ ;;
+esac
+sync'
+
+volume_job() { # mode, from, to (not used by verify), label, helper container name
+  local mounts=(-v "$2:/from:ro")
+  [ "$1" = verify ] || mounts+=(-v "$3:/to")
+  dk run --rm --name "$5" --label "$4" --network none \
     --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add FSETID \
-    -v "$1:/from:ro" -v "$2:/to" \
+    --security-opt no-new-privileges:true --memory 256m \
+    -e "MODE=$1" "${mounts[@]}" \
     "$alpine_image" \
-    sh -c 'set -e; find /to -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /from/. /to/'
+    sh -c "$volume_script"
+}
+
+# A volume of this name that exists must carry our label; one that does not is not touched.
+require_ours() { # volume, label (key=value)
+  local have
+  dk volume inspect "$1" >/dev/null 2>&1 || return 0
+  have="$(dk volume inspect -f '{{index .Labels "owner"}}' "$1" 2>/dev/null || true)"
+  if [ "$have" != "${2#*=}" ]; then
+    echo "lanbox-ferret-test: the volume $1 exists and does not carry the label $2; not touching it" >&2
+    return 1
+  fi
+}
+
+# Takes a snapshot: the data goes into a fresh volume <snapshot>-new while the app is stopped
+# (and the app is started again at once), then the old snapshot is swapped for the finished one.
+# A failed copy leaves the old snapshot as it was.
+take_snapshot() { # data volume, snapshot volume, label, name prefix, stop function, start function
+  local data="$1" snap="$2" lbl="$3" prefix="$4" stop="$5" start="$6" tmp rc=0
+  tmp="$snap-new"
+  require_ours "$snap" "$lbl" || exit 1
+  require_ours "$tmp" "$lbl" || exit 1
+  dk volume rm "$tmp" >/dev/null 2>&1 || true
+  dk volume create --label "$lbl" "$tmp" >/dev/null
+  "$stop"
+  volume_job make "$data" "$tmp" "$lbl" "$prefix-copy" || rc=$?
+  "$start"
+  if [ "$rc" -ne 0 ]; then
+    dk volume rm "$tmp" >/dev/null 2>&1 || true
+    echo "snapshot: the copy failed (exit $rc); the old snapshot, if there was one, is untouched" >&2
+    exit "$rc"
+  fi
+  dk volume rm "$snap" >/dev/null 2>&1 || true
+  dk volume create --label "$lbl" "$snap" >/dev/null
+  volume_job move "$tmp" "$snap" "$lbl" "$prefix-swap" \
+    || { echo "snapshot: the swap failed; the finished copy is in the volume $tmp" >&2; exit 1; }
+  dk volume rm "$tmp" >/dev/null
+}
+
+# Puts a snapshot back: refuses unless it is complete (nothing is stopped or changed before that),
+# stops the app, copies, raises the restore epoch (the entrypoint already runs `ferret`; the bump
+# refuses while a server runs on the data and a database from before migration 0005), starts the
+# app. When a step fails the app stays stopped: it must not run on data that is half restored.
+restore_snapshot() { # snapshot volume, data volume, label, name prefix, stop function, bump function, start function
+  local snap="$1" data="$2" lbl="$3" prefix="$4" stop="$5" bump="$6" start="$7"
+  dk volume inspect "$snap" >/dev/null 2>&1 || { echo "lanbox-ferret-test: there is no snapshot ($snap); take one first" >&2; exit 1; }
+  require_ours "$snap" "$lbl" || exit 1
+  volume_job verify "$snap" - "$lbl" "$prefix-verify" \
+    || { echo "lanbox-ferret-test: the snapshot $snap is not complete (no marker or no database); nothing was changed" >&2; exit 1; }
+  "$stop"
+  volume_job restore "$snap" "$data" "$lbl" "$prefix-restore" \
+    || { echo "restore: the copy failed; the app stays stopped" >&2; exit 1; }
+  "$bump" || { echo "restore: the restore epoch was not raised; the app stays stopped" >&2; exit 1; }
+  "$start"
 }
 
 # The clock offset of the app (seconds), 0 when there is none. A restart of the container
@@ -403,40 +486,37 @@ process.exit(answer.ok ? 0 : 1);
 ' "$mode" "$params"
 }
 
+e2e_clock_before=0
+e2e_stop_app() { dk stop "$e2e_app" >/dev/null; }
+e2e_bump() { dce run --rm -T --no-deps "$e2e_app" restore-epoch bump --yes; }
+# A restart empties /tmp of the app, where the clock offset is: it is put back.
+e2e_start_app() {
+  dk start "$e2e_app" >/dev/null
+  wait_container_healthy "$e2e_app"
+  e2e_clock "$e2e_clock_before" >/dev/null
+}
+# What the malicious server has recorded belongs to the data that was there before.
+e2e_evil_reset() {
+  dk exec "$e2e_evil" node --input-type=module -e '
+const answer = await fetch("http://127.0.0.1:9000/reset", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+process.exit(answer.ok ? 0 : 1);
+' >/dev/null
+}
+
 # Copies the data of the app to the snapshot volume while the app is stopped, then starts it.
 e2e_snapshot() {
   e2e_require_running
-  local offset rc=0
-  offset="$(e2e_clock_offset)"
-  echo "e2e-snapshot: stopping $e2e_app"
-  dk stop "$e2e_app" >/dev/null
-  dk volume inspect "$e2e_snapshot_volume" >/dev/null 2>&1 || dk volume create --label "$e2e_label" "$e2e_snapshot_volume" >/dev/null
-  copy_volume "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" ferret-e2e-snapshot-copy || rc=$?
-  dk start "$e2e_app" >/dev/null
-  wait_container_healthy "$e2e_app"
-  e2e_clock "$offset" >/dev/null
-  [ "$rc" -eq 0 ] || { echo "e2e-snapshot: the copy failed (exit $rc); the app runs on its own data" >&2; exit "$rc"; }
+  e2e_clock_before="$(e2e_clock_offset)"
+  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_start_app
   echo "e2e-snapshot: the data of $e2e_app is in the volume $e2e_snapshot_volume"
 }
 
-# Puts the snapshot back: stop the app, copy the snapshot over the data, raise the restore epoch
-# (the entrypoint already runs `ferret`; the bump refuses while a server runs on the data and a
-# database from before migration 0005), start the app. When a step fails the app stays stopped:
-# it must not run on data that is half restored.
+# Puts the snapshot back with a higher restore epoch.
 e2e_restore_snapshot() {
   e2e_require_running
-  dk volume inspect "$e2e_snapshot_volume" >/dev/null 2>&1 || { echo "lanbox-ferret-test: there is no snapshot ($e2e_snapshot_volume); run e2e-snapshot first" >&2; exit 1; }
-  local offset
-  offset="$(e2e_clock_offset)"
-  echo "e2e-restore-snapshot: stopping $e2e_app"
-  dk stop "$e2e_app" >/dev/null
-  copy_volume "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" ferret-e2e-snapshot-restore \
-    || { echo "e2e-restore-snapshot: the copy failed; $e2e_app stays stopped" >&2; exit 1; }
-  dce run --rm -T --no-deps "$e2e_app" restore-epoch bump --yes \
-    || { echo "e2e-restore-snapshot: the restore epoch was not raised; $e2e_app stays stopped" >&2; exit 1; }
-  dk start "$e2e_app" >/dev/null
-  wait_container_healthy "$e2e_app"
-  e2e_clock "$offset" >/dev/null
+  e2e_clock_before="$(e2e_clock_offset)"
+  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_bump e2e_start_app
+  e2e_evil_reset
   echo "e2e-restore-snapshot: $e2e_app runs on the snapshot, with a higher restore epoch"
 }
 
@@ -543,30 +623,34 @@ require_yes_ferret_test() {
   exit 2
 }
 
+snapshot_was_running=false
+test_stop_app() {
+  snapshot_was_running="$(dk inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo false)"
+  dc stop "$container" >/dev/null
+}
+# An app that was stopped before the snapshot stays stopped.
+test_start_after_snapshot() {
+  [ "$snapshot_was_running" = true ] || return 0
+  dc start "$container" >/dev/null
+  wait_container_healthy "$container"
+}
+test_bump() { dc run --rm -T --no-deps "$container" restore-epoch bump --yes; }
+test_start_app() {
+  dc start "$container" >/dev/null
+  wait_container_healthy "$container"
+}
+
 test_snapshot() {
   require_yes_ferret_test "$@"
   [ -f "$envfile" ] || { echo "no $envfile: nothing to copy" >&2; exit 1; }
-  local rc=0
-  dc stop "$container" >/dev/null
-  dk volume inspect "$snapshot_volume" >/dev/null 2>&1 || dk volume create --label "$label" "$snapshot_volume" >/dev/null
-  copy_volume "$volume" "$snapshot_volume" "$label" ferret-test-snapshot-copy || rc=$?
-  dc start "$container" >/dev/null
-  wait_container_healthy "$container"
-  [ "$rc" -eq 0 ] || { echo "snapshot: the copy failed (exit $rc); the app runs on its own data" >&2; exit "$rc"; }
+  take_snapshot "$volume" "$snapshot_volume" "$label" ferret-test-snapshot test_stop_app test_start_after_snapshot
   echo "snapshot: the data of $container is in the volume $snapshot_volume"
 }
 
 test_restore_snapshot() {
   require_yes_ferret_test "$@"
   [ -f "$envfile" ] || { echo "no $envfile: nothing to restore" >&2; exit 1; }
-  dk volume inspect "$snapshot_volume" >/dev/null 2>&1 || { echo "there is no snapshot ($snapshot_volume); run snapshot first" >&2; exit 1; }
-  dc stop "$container" >/dev/null
-  copy_volume "$snapshot_volume" "$volume" "$label" ferret-test-snapshot-restore \
-    || { echo "restore-snapshot: the copy failed; $container stays stopped" >&2; exit 1; }
-  dc run --rm -T --no-deps "$container" restore-epoch bump --yes \
-    || { echo "restore-snapshot: the restore epoch was not raised; $container stays stopped" >&2; exit 1; }
-  dc start "$container" >/dev/null
-  wait_container_healthy "$container"
+  restore_snapshot "$snapshot_volume" "$volume" "$label" ferret-test-snapshot test_stop_app test_bump test_start_app
   echo "restore-snapshot: $container runs on the snapshot, with a higher restore epoch"
 }
 

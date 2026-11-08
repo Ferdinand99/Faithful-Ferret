@@ -258,26 +258,134 @@ describe("evil modes", () => {
     after(() => r.close());
     await r.put(A, live(0, 1));
     await r.put(B, live(0, 2));
-    await r.mode("gone");
+    // A floor that is asked for: 410 for 0 < since < floor, as the real server does.
+    await r.mode("gone", { min_valid_since: 5 });
     const before = r.vault.state.calls.length;
-    const none = await call(r.ports.vault, "GET", "/api/sync/changes?since=0", { headers: cookie(SID_A) });
-    assert.equal(none.status, 200);
-    const missing = await call(r.ports.vault, "GET", "/api/sync/changes", { headers: cookie(SID_A) });
-    assert.equal(missing.status, 200);
-    const gone = await call(r.ports.vault, "GET", "/api/sync/changes?since=1&limit=50", { headers: cookie(SID_A) });
+    const ask = (/** @type {string} */ path) => call(r.ports.vault, "GET", path, { headers: cookie(SID_A) });
+    assert.equal((await ask("/api/sync/changes?since=0")).status, 200);
+    assert.equal((await ask("/api/sync/changes")).status, 200);
+    const gone = await ask("/api/sync/changes?since=1&limit=50");
     assert.equal(gone.status, 410);
-    const floor = JSON.parse(gone.body.toString("utf8"));
-    assert.equal(floor.error, "gone");
-    assert.ok(floor.min_valid_since > 1, "the floor is above the cursor");
-    assert.equal(r.vault.state.calls.length, before + 2, "the real server is not asked for the 410");
+    assert.deepEqual(JSON.parse(gone.body.toString("utf8")), { error: "gone", min_valid_since: 5 });
+    assert.equal((await ask("/api/sync/changes?since=4")).status, 410);
+    assert.equal((await ask("/api/sync/changes?since=5")).status, 200, "at the floor is not below it");
+    assert.equal(r.vault.state.calls.length, before + 3, "the real server is not asked for the two 410s");
     // The full listing is never 410.
-    assert.equal((await call(r.ports.vault, "GET", "/api/sync/items", { headers: cookie(SID_A) })).status, 200);
-    // A floor that is asked for is used when it is above the rest.
-    await r.mode("gone", { min_valid_since: 500 });
-    assert.equal(JSON.parse((await call(r.ports.vault, "GET", "/api/sync/changes?since=2", { headers: cookie(SID_A) })).body.toString("utf8")).min_valid_since, 500);
+    assert.equal((await ask("/api/sync/items")).status, 200);
     // Other modes never answer 410.
     await r.mode("honest");
-    assert.equal((await call(r.ports.vault, "GET", "/api/sync/changes?since=2", { headers: cookie(SID_A) })).status, 200);
+    assert.equal((await ask("/api/sync/changes?since=1")).status, 200);
+  });
+
+  it("gone_floor_is_the_top_seen_so_a_client_resuming_from_as_of_seq_settles", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.put(A, live(0, 1));
+    await r.put(B, live(0, 2));
+    await r.get("/api/sync/changes?since=0");
+    // The floor was fixed when the mode was switched on: the highest seq seen (2).
+    await r.mode("gone");
+    const ask = (/** @type {string} */ path) => call(r.ports.vault, "GET", path, { headers: cookie(SID_A) });
+    const early = await ask("/api/sync/changes?since=1");
+    assert.equal(early.status, 410);
+    assert.equal(JSON.parse(early.body.toString("utf8")).min_valid_since, 2);
+    const listing = await r.get("/api/sync/items");
+    assert.equal(listing.as_of_seq, 2);
+    // The client goes on from the as_of_seq of its listing: that is not below the floor.
+    assert.equal((await ask(`/api/sync/changes?since=${listing.as_of_seq}`)).status, 200);
+    // And a later write moves nothing: the floor stays where it was.
+    await r.put(C, live(0, 3));
+    assert.equal((await ask("/api/sync/changes?since=2")).status, 200);
+    assert.equal((await ask("/api/sync/changes?since=1")).status, 410);
+    // A floor above the as_of_seq of the listing: the second 410 ends the pass in gone.
+    await r.mode("gone", { min_valid_since: 500 });
+    const listed = await r.get("/api/sync/items");
+    assert.equal((await ask(`/api/sync/changes?since=${listed.as_of_seq}`)).status, 410);
+    assert.equal((await ask(`/api/sync/changes?since=${listed.as_of_seq}`)).status, 410, "again: the pass ends in gone");
+  });
+
+  it("gone_with_hide_gives_the_order_410_then_a_listing_without_the_item_then_a_409_with_an_equal_blob", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.put(A, live(0, 1));
+    await r.put(B, live(0, 2));
+    const honestItems = await r.get("/api/sync/items");
+    await r.mode("gone", { min_valid_since: 500, hide: A });
+    const ask = (/** @type {string} */ path) => call(r.ports.vault, "GET", path, { headers: cookie(SID_A) });
+    // 1. the 410 for a client that is caught up
+    assert.equal((await ask("/api/sync/changes?since=2")).status, 410);
+    // 2. the listing leaves the item out (and the rest is untouched)
+    const items = await r.get("/api/sync/items");
+    assert.deepEqual(items.items.map((/** @type {any} */ i) => i.id), [B]);
+    assert.deepEqual(items.items[0], rowOf(honestItems.items, B));
+    assert.equal(items.as_of_seq, honestItems.as_of_seq);
+    const changes = await r.get("/api/sync/changes?since=0");
+    assert.deepEqual(changes.changes.map((/** @type {any} */ c) => c.id), [B]);
+    // 3. the upload of the item that the client then keeps meets the real row: 409 with the very same blob and tag
+    const conflict = await call(r.ports.vault, "PUT", `/api/sync/items/${A}`, { headers: { "content-type": "application/json", ...cookie(SID_A) }, body: JSON.stringify(live(0, 1)) });
+    assert.equal(conflict.status, 409);
+    const body = JSON.parse(conflict.body.toString("utf8"));
+    assert.equal(body.blob, rowOf(honestItems.items, A).blob);
+    assert.equal(body.tag, rowOf(honestItems.items, A).tag);
+    // The parameters are checked: the hidden item is an item id.
+    const refused = await call(r.ports.control, "POST", "/mode", { headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "gone", hide: "x" }) });
+    assert.equal(refused.status, 400);
+  });
+
+  it("rollback_and_fork_answer_404_for_a_checkpoint_that_their_state_does_not_hold", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.put(A, live(0, 1));
+    r.clock.t += 1000;
+    const early = r.clock.t;
+    r.clock.t += 1000;
+    await call(r.ports.vault, "PUT", "/api/sync/checkpoint", { headers: { "content-type": "application/json", ...cookie(SID_B) }, body: JSON.stringify({ seq: 1, digest: b64(32, 1), mac: b64(32, 2), entries: b64(56, 3) }) });
+    // Before the checkpoint existed: no checkpoint, in the head and in the body, while the real server has one.
+    await r.mode("rollback", { at: early });
+    assert.equal((await call(r.ports.vault, "GET", "/api/sync/checkpoint", { headers: cookie(SID_A) })).status, 404);
+    assert.ok(!("checkpoint" in (await r.get("/api/sync/changes?since=0"))));
+    // A fork frozen before the checkpoint was uploaded by another session: the same.
+    await r.mode("fork", { sid: SID_A });
+    // (the fork is frozen now, after the checkpoint; so the session sees it)
+    assert.equal((await call(r.ports.vault, "GET", "/api/sync/checkpoint", { headers: cookie(SID_A) })).status, 200);
+    // A second fork on a vault that has none: it is frozen before any checkpoint.
+    const r2 = await rig();
+    after(() => r2.close());
+    await r2.put(A, live(0, 1));
+    await r2.mode("fork", { sid: SID_A });
+    r2.clock.t += 1000;
+    await call(r2.ports.vault, "PUT", "/api/sync/checkpoint", { headers: { "content-type": "application/json", ...cookie(SID_B) }, body: JSON.stringify({ seq: 1, digest: b64(32, 1), mac: b64(32, 2), entries: b64(56, 3) }) });
+    assert.equal((await call(r2.ports.vault, "GET", "/api/sync/checkpoint", { headers: cookie(SID_A) })).status, 404);
+    assert.equal((await call(r2.ports.vault, "GET", "/api/sync/checkpoint", { headers: cookie(SID_B) })).status, 200);
+  });
+
+  it("a_forked_session_keeps_its_checkpoint_in_its_own_branch_and_the_real_server_never_gets_it", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.put(A, live(0, 1));
+    await r.mode("fork", { sid: SID_A });
+    const upload = (/** @type {number} */ seq, /** @type {string} */ sid, /** @type {number} */ fill) =>
+      call(r.ports.vault, "PUT", "/api/sync/checkpoint", { headers: { "content-type": "application/json", ...cookie(sid) }, body: JSON.stringify({ seq, digest: b64(32, fill), mac: b64(32, fill + 1), entries: b64(56, fill + 2) }) });
+    const forked = await upload(1, SID_A, 10);
+    assert.equal(forked.status, 200);
+    assert.deepEqual(JSON.parse(forked.body.toString("utf8")), { seq: 1 });
+    assert.equal(r.vault.state.full, null, "not sent on");
+    assert.equal(r.vault.state.calls.some((c) => c.method === "PUT" && c.url === "/api/sync/checkpoint"), false);
+    // The session reads it back, in the body and in the head of the feed.
+    const mine = await r.get("/api/sync/checkpoint", SID_A);
+    assert.equal(mine.mac, b64(32, 11));
+    assert.deepEqual((await r.get("/api/sync/changes?since=0", SID_A)).checkpoint, { seq: 1, digest: b64(32, 10), mac: b64(32, 11) });
+    // A lower seq than its own branch holds is stale, as at the real server.
+    r.clock.t += 1000;
+    assert.equal((await upload(3, SID_A, 20)).status, 200);
+    const stale = await upload(2, SID_A, 30);
+    assert.equal(stale.status, 409);
+    assert.deepEqual(JSON.parse(stale.body.toString("utf8")), { error: "checkpoint_stale", stored_seq: 3 });
+    // Another session's upload goes to the real server as usual, and the real head never reaches the fork.
+    assert.equal((await upload(1, SID_B, 40)).status, 200);
+    assert.equal(r.vault.state.full.seq, 1);
+    assert.equal((await r.get("/api/sync/checkpoint", SID_A)).seq, 3);
+    assert.equal((await r.get("/api/sync/checkpoint", SID_B)).mac, b64(32, 41));
   });
 
   it("fake_tombstone_turns_a_live_row_into_a_tombstone_with_a_higher_rev_and_40_random_bytes", async () => {
@@ -630,6 +738,8 @@ describe("evil modes", () => {
       { mode: "seq_lie", latest_seq: "7" },
       { mode: "rollback" },
       { mode: "gone", min_valid_since: 0 },
+      { mode: "gone", hide: "nope" },
+      { mode: "gone", other: 1 },
       { mode: "fork", sid: "short" },
       { mode: "forge_checkpoint", field: "digest" },
     ]) {

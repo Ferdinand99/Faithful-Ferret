@@ -11,7 +11,11 @@
 //                                                                  server_shows_older_state
 //   hide {id}             the item's rows left out                 with `gone`: missing_on_server,
 //                                                                  re-upload, 409 -> server_hid_item
-//   gone                  410 for /changes with since > 0          a full reconciliation
+//   gone [{min_valid_since, hide}]
+//                         410 for /changes with 0 < since < floor  a full reconciliation; with `hide` the
+//                         (see below); with `hide`, that item is     item is also left out of what follows
+//                         left out of every answer as in hide      (the K40 order: 410, a listing without
+//                                                                  the item, then a 409 with an equal blob)
 //   fake_tombstone {id}   live row -> tombstone, rev + 1,          quarantine
 //                         40 random bytes
 //   seq_lie {latest_seq}  latest_seq rewritten                     lower: rollback_suspected;
@@ -20,6 +24,20 @@
 //   fork {sid}            one session gets a frozen state          no warning
 //   forge_checkpoint      one byte of mac (or entries) flipped     checkpoint_forged, uploads go on
 //   drop_checkpoint_head  `checkpoint` left out of /changes        no warning
+//
+// The floor of `gone` is fixed when the mode is switched on: `min_valid_since` when it is
+// given, else the highest sequence number the proxy has seen (the real server answers
+// 410 only when `since != 0 && since < floor`). A client that resumes from the
+// `as_of_seq` of its listing therefore settles, unless the floor that was asked for is
+// above that `as_of_seq`: then the second 410 ends the pass in `gone`. A client that
+// is caught up is only sent into a full reconciliation by a floor above its cursor.
+//
+// `fork` also keeps the forked session's own `PUT /api/sync/checkpoint` in the session's own
+// branch: it is answered 200 (409 `checkpoint_stale` for a lower seq than the branch holds)
+// and never sent on to the real server.
+//
+// `GET /api/sync/checkpoint` is answered 404 in `rollback` and `fork` when the state
+// they show holds no checkpoint (a checkpoint that was never seen cannot be shown).
 //
 // `at` is a time in milliseconds on the proxy's clock (the control port tells
 // it: GET /recorded). `sid` is the value of the session cookie
@@ -88,9 +106,14 @@ export function parseMode(input) {
     case "fake_tombstone":
       only(rest, ["id"]);
       return { mode, params: { id: item("id", rest.id) } };
-    case "gone":
-      only(rest, ["min_valid_since"]);
-      return { mode, params: rest.min_valid_since === undefined ? {} : { min_valid_since: u53("min_valid_since", rest.min_valid_since, 1) } };
+    case "gone": {
+      only(rest, ["min_valid_since", "hide"]);
+      /** @type {Record<string, any>} */
+      const params = {};
+      if (rest.min_valid_since !== undefined) params.min_valid_since = u53("min_valid_since", rest.min_valid_since, 1);
+      if (rest.hide !== undefined) params.hide = item("hide", rest.hide);
+      return { mode, params };
+    }
     case "seq_lie":
       only(rest, ["latest_seq"]);
       return { mode, params: { latest_seq: u53("latest_seq", rest.latest_seq) } };
@@ -114,22 +137,24 @@ export function parseMode(input) {
 }
 
 /**
- * @typedef {{ mode: string, params: Record<string, any>, since: number, fakes: Map<string, string> }} Active
+ * @typedef {{ seq: number, digest: string, mac: string, entries: string }} Branch a checkpoint of a forked session
+ * @typedef {{ mode: string, params: Record<string, any>, since: number, floor: number, fakes: Map<string, string>, branch: Branch[] }} Active
  */
 
 /**
  * Makes a parsed mode active: the time it was switched on is kept (the fork
- * freezes the state of that moment).
+ * freezes the state of that moment), and so is the floor of `gone`.
  * @param {{ mode: string, params: Record<string, any> }} parsed
- * @param {{ now: () => number }} recorder
+ * @param {{ now: () => number, top: () => number }} recorder
  * @returns {Active}
  */
 export function activate(parsed, recorder) {
-  return { mode: parsed.mode, params: parsed.params, since: recorder.now(), fakes: new Map() };
+  const floor = parsed.mode === "gone" ? (parsed.params.min_valid_since ?? recorder.top()) : 0;
+  return { mode: parsed.mode, params: parsed.params, since: recorder.now(), floor, fakes: new Map(), branch: [] };
 }
 
-/** The honest mode. @param {{ now: () => number }} recorder */
-export const honest = (recorder) => activate({ mode: "honest", params: {} }, recorder);
+/** The honest mode. */
+export const honest = (/** @type {{ now: () => number, top: () => number }} */ recorder) => activate({ mode: "honest", params: {} }, recorder);
 
 /** Whether a session cookie is the one a `sid` parameter names. @param {string | null} cookie @param {string} sid */
 export const sessionMatches = (cookie, sid) => cookie !== null && cookie.startsWith(sid);
@@ -139,22 +164,39 @@ export const sessionMatches = (cookie, sid) => cookie !== null && cookie.startsW
 const rowsKey = (/** @type {string} */ route) => (route === "changes" ? "changes" : "items");
 
 /**
- * The 410 of the mode `gone`, before the real server is asked. Only for
- * `/changes` with `since` above 0; the floor it names is above `since` (a floor
- * at or below it would make no sense), or `min_valid_since` when that is given.
+ * The 410 of the mode `gone`, before the real server is asked: for `/changes`
+ * with `since != 0 && since < floor`, as the real server does. The floor was fixed
+ * when the mode was switched on.
  * @param {Active} active
  * @param {{ route: string, query: URLSearchParams }} req
- * @param {{ top: () => number }} recorder
  * @returns {{ status: number, json: object } | null}
  */
-export function preempt(active, req, recorder) {
+export function preempt(active, req) {
   if (active.mode !== "gone" || req.route !== "changes") return null;
   const raw = req.query.get("since");
   if (raw === null || !/^[0-9]{1,16}$/.test(raw)) return null;
   const since = Number(raw);
-  if (since === 0) return null;
-  const floor = Math.max(active.params.min_valid_since ?? 0, since + 1, recorder.top() + 1);
-  return { status: 410, json: { error: "gone", min_valid_since: floor } };
+  if (since === 0 || since >= active.floor) return null;
+  return { status: 410, json: { error: "gone", min_valid_since: active.floor } };
+}
+
+/**
+ * A `PUT /api/sync/checkpoint` of a forked session: kept in the session's own branch and
+ * answered 200, never sent on. `null` means that the request goes on to the real server
+ * (another mode, another session, a body that is not a checkpoint).
+ * @param {Active} active
+ * @param {{ sid: string | null }} req
+ * @param {any} body the parsed request body
+ * @returns {{ status: number, json: object } | null}
+ */
+export function interceptCheckpointPut(active, req, body) {
+  if (active.mode !== "fork" || !sessionMatches(req.sid, active.params.sid)) return null;
+  const text = (/** @type {unknown} */ v) => typeof v === "string" && v.length > 0;
+  if (!body || !Number.isSafeInteger(body.seq) || body.seq < 0 || !text(body.digest) || !text(body.mac) || !text(body.entries)) return null;
+  const held = active.branch.reduce((m, c) => Math.max(m, c.seq), 0);
+  if (body.seq < held) return { status: 409, json: { error: "checkpoint_stale", stored_seq: held } };
+  active.branch.push({ seq: body.seq, digest: body.digest, mac: body.mac, entries: body.entries });
+  return { status: 200, json: { seq: body.seq } };
 }
 
 /**
@@ -165,21 +207,28 @@ export function preempt(active, req, recorder) {
  * @param {{ route: string, query: URLSearchParams, sid: string | null }} req
  * @param {any} up the real answer
  * @param {(n: number) => Uint8Array} [random]
- * @returns {object | null}
+ * @returns {{ status: number, json: object } | null}
  */
 export function shape(active, recorder, req, up, random = randomBytes) {
   if (up === null || typeof up !== "object") return null;
+  const lie = lieFor(active, recorder, req, up, random);
+  if (lie === null) return null;
+  return "status" in lie && "json" in lie ? /** @type {any} */ (lie) : { status: 200, json: lie };
+}
+
+/** @returns {object | null} the new JSON, or `{ status, json }` for another status */
+function lieFor(/** @type {Active} */ active, /** @type {any} */ recorder, /** @type {any} */ req, /** @type {any} */ up, /** @type {any} */ random) {
   const { route } = req;
   switch (active.mode) {
+    case "gone":
+      // The 410 itself is `preempt`; the item that is hidden stays hidden in everything that follows.
+      return active.params.hide ? rewriteRows(route, up, (rows) => withoutItem(rows, active.params.hide)) : null;
     case "swap_blobs":
       return rewriteRows(route, up, (rows) => swapBlobs(rows, active.params.a, active.params.b, recorder));
     case "replay_old":
       return rewriteRows(route, up, (rows) => replayOld(rows, active.params.id, recorder));
     case "hide":
-      return rewriteRows(route, up, (rows) => {
-        const kept = rows.filter((r) => r.id !== active.params.id);
-        return kept.length === rows.length ? null : kept;
-      });
+      return rewriteRows(route, up, (rows) => withoutItem(rows, active.params.id));
     case "fake_tombstone":
       return rewriteRows(route, up, (rows) => fakeTombstone(rows, active, random));
     case "seq_lie":
@@ -187,7 +236,7 @@ export function shape(active, recorder, req, up, random = randomBytes) {
     case "rollback":
       return viewAnswer(route, req, up, recorder.viewAt(active.params.at));
     case "fork":
-      return sessionMatches(req.sid, active.params.sid) ? viewAnswer(route, req, up, recorder.viewAt(active.since, req.sid)) : null;
+      return sessionMatches(req.sid, active.params.sid) ? viewAnswer(route, req, up, recorder.viewAt(active.since, req.sid), active.branch) : null;
     case "forge_checkpoint":
       return forgeCheckpoint(route, up, active.params.field);
     case "drop_checkpoint_head":
@@ -195,6 +244,12 @@ export function shape(active, recorder, req, up, random = randomBytes) {
     default:
       return null;
   }
+}
+
+/** @param {any[]} rows @param {string} id */
+function withoutItem(rows, id) {
+  const kept = rows.filter((r) => r.id !== id);
+  return kept.length === rows.length ? null : kept;
 }
 
 /** @param {object} o @param {string} key */
@@ -301,8 +356,12 @@ const clampInt = (/** @type {string | null} */ raw, /** @type {number} */ fallba
  * not change `restore_epoch`).
  * @param {string} route @param {{ query: URLSearchParams }} req @param {any} up
  * @param {ReturnType<ReturnType<typeof import("./recorder.mjs").createRecorder>["viewAt"]>} view
+ * @param {Branch[]} [branch] checkpoints that a forked session uploaded itself
  */
-function viewAnswer(route, req, up, view) {
+function viewAnswer(route, req, up, view, branch = []) {
+  const own = branch.reduce((/** @type {Branch | null} */ a, c) => (a === null || c.seq > a.seq ? c : a), null);
+  const head = own && (!view.head || own.seq >= view.head.seq) ? own : view.head;
+  const full = own && (!view.checkpoint || own.seq >= view.checkpoint.seq) ? own : view.checkpoint;
   if (route === "changes") {
     const since = clampInt(req.query.get("since"), 0, 0, Number.MAX_SAFE_INTEGER);
     const limit = clampInt(req.query.get("limit"), 100, 1, 500);
@@ -314,7 +373,7 @@ function viewAnswer(route, req, up, view) {
       vk_epoch: up.vk_epoch,
       restore_epoch: up.restore_epoch,
     };
-    if (view.head) out.checkpoint = { seq: view.head.seq, digest: view.head.digest, mac: view.head.mac };
+    if (head) out.checkpoint = { seq: head.seq, digest: head.digest, mac: head.mac };
     out.has_more = newer.length > limit;
     return out;
   }
@@ -330,9 +389,10 @@ function viewAnswer(route, req, up, view) {
     return out;
   }
   if (route === "checkpoint") {
-    // Only a checkpoint whose entries were seen can be replayed; without one the real answer stays.
-    const c = view.checkpoint;
-    return c ? { seq: c.seq, digest: c.digest, mac: c.mac, entries: c.entries } : null;
+    // Only a checkpoint whose entries were seen can be shown; a state without one has none (404),
+    // and the real server's newer checkpoint is never let through.
+    const c = full;
+    return c ? { seq: c.seq, digest: c.digest, mac: c.mac, entries: c.entries } : { status: 404, json: { error: "not_found" } };
   }
   return null;
 }

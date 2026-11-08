@@ -218,6 +218,11 @@ left() { # output, name
   printf '%s\n' "$1" | awk -v n="$2" '$0 == n { getline; print; exit }'
 }
 
+# One browser phase of the snapshot check; the state of the phase before comes in FERRET_E2E_STATE.
+snapshot_phase() { # browser, phase, state
+  FERRET_E2E_PHASE="$2" FERRET_E2E_STATE="${3:-}" e2e_run "--project=$1" phase-snapshot
+}
+
 # e2e_snapshot_and_restore_raise_restore_epoch: an account and a write, a snapshot, a second
 # write, the snapshot put back. The browser half is web/test/e2e-stack/phase-snapshot.spec.mjs.
 check_snapshot_restore() {
@@ -225,27 +230,25 @@ check_snapshot_restore() {
   local browser out state rc=0
   browser="$(printf '%s' "${FERRET_E2E_BROWSERS:-chromium}" | awk '{print $1}')"
   quiet_up
-  run_phase() { # phase, state
-    FERRET_E2E_PHASE="$1" FERRET_E2E_STATE="${2:-}" e2e_run "--project=$browser" phase-snapshot
-  }
   rc=0
-  out="$(run_phase snapshot-first)" || rc=$?
+  out="$(snapshot_phase "$browser" snapshot-first)" || rc=$?
   expect "snapshot: the first write was made" 0 "$rc"
   state="$(left "$out" state)"
   [ -n "$state" ] || { fail "snapshot: the first phase left no state"; e2e_down >/dev/null; return 0; }
   scripts/lanbox-ferret-test.sh e2e-snapshot >/dev/null
   expect "e2e-snapshot: the snapshot volume carries the label owner=ferret-e2e" "ferret-e2e" \
     "$(dk volume inspect -f '{{index .Labels "owner"}}' "$e2e_snapshot_volume")"
-  expect "e2e-snapshot: the snapshot holds the database" "yes" \
-    "$(dk run --rm --name ferret-e2e-check-snap --label "$e2e_label" --network none -v "$e2e_snapshot_volume:/data:ro" "$alpine_image" sh -c 'if [ -s /data/ferret.sqlite ]; then echo yes; else echo no; fi')"
+  expect "e2e-snapshot: the snapshot holds the database and the completion marker" "yes yes" \
+    "$(dk run --rm --name ferret-e2e-check-snap --label "$e2e_label" --network none -v "$e2e_snapshot_volume:/data:ro" "$alpine_image" sh -c 'd=no; m=no; [ -s /data/ferret.sqlite ] && d=yes; [ -f /data/.snapshot-complete ] && m=yes; echo "$d $m"')"
+  expect "e2e-snapshot: the temporary volume of the swap is gone" "" "$(dk volume ls -q --filter "name=$e2e_snapshot_volume-new" | tr -d '\n')"
   expect "e2e-snapshot: the app runs again and is healthy" "healthy" "$(dk inspect -f '{{.State.Health.Status}}' "$e2e_app")"
   rc=0
-  out="$(run_phase snapshot-second "$state")" || rc=$?
+  out="$(snapshot_phase "$browser" snapshot-second "$state")" || rc=$?
   expect "snapshot: the second write was made after the snapshot" 0 "$rc"
   scripts/lanbox-ferret-test.sh e2e-restore-snapshot >/dev/null
   expect "e2e-restore-snapshot: the app runs again and is healthy" "healthy" "$(dk inspect -f '{{.State.Health.Status}}' "$e2e_app")"
   rc=0
-  out="$(run_phase snapshot-restored "$state")" || rc=$?
+  out="$(snapshot_phase "$browser" snapshot-restored "$state")" || rc=$?
   expect "e2e_snapshot_and_restore_raise_restore_epoch: the feed ends at the first write, restore_epoch + 1" 0 "$rc"
   [ -n "$(left "$out" restored)" ] || fail "e2e_snapshot_and_restore_raise_restore_epoch: the phase left no marker"
   # The bump refuses while a server runs on the data.
@@ -254,7 +257,6 @@ check_snapshot_restore() {
   if [ "$rc" -ne 0 ]; then pass "restore-epoch bump refuses while the server runs"; else fail "restore-epoch bump refuses while the server runs"; fi
   e2e_down >/dev/null
   expect "e2e-down: the snapshot volume is gone too" "" "$(dk volume ls -q --filter "label=$e2e_label" | tr -d '\n')"
-  unset -f run_phase
 }
 
 check_stack() {

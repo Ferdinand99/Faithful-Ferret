@@ -195,7 +195,7 @@ for f in docker/*; do
     exit 1
   fi
 done
-if ! tr -d '' < .dockerignore | grep -qx 'web/test/e2e-stack/evil'; then
+if ! tr -d '\r' < .dockerignore | grep -qx 'web/test/e2e-stack/evil'; then
   echo "check-ferret-test-stack: .dockerignore must list web/test/e2e-stack/evil" >&2
   exit 1
 fi
@@ -216,8 +216,7 @@ for f in proxy.mjs modes.mjs recorder.mjs; do
 done
 # The snapshot of the ferret-test stack and of the e2e stack: the label of the e2e one is its own.
 grep -q '^e2e_snapshot_volume=ferret-e2e-snapshot$' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be ferret-e2e-snapshot" >&2; exit 1; }
-# shellcheck disable=SC2016
-grep -q 'dk volume create --label "$e2e_label" "$e2e_snapshot_volume"' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be made with the label owner=ferret-e2e" >&2; exit 1; }
+grep -q 'take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label"' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be made with the label owner=ferret-e2e" >&2; exit 1; }
 # The snapshot of the ferret-test stack refuses without --yes-ferret-test, before any Docker call.
 for command in snapshot restore-snapshot; do
   if FERRET_DOCKER_ARGS="--context check-no-such-context" scripts/lanbox-ferret-test.sh "$command" >/dev/null 2>&1; then
@@ -277,6 +276,123 @@ done
   tunnel_address() { :; }
   tunnel_mismatch >/dev/null || { echo "check-ferret-test-stack: plain.env: an unknown tunnel address passed" >&2; exit 1; }
 )
+
+# The snapshot guards, with a stand-in for docker that records its arguments and answers from
+# the environment (STUB_VOLUMES: name=label pairs; STUB_VERIFY_RC and STUB_JOB_RC: the exit codes
+# of the volume jobs; STUB_BUMP_RC: the restore epoch bump; STUB_RUNNING: the state of the
+# container). Nothing is sent to a Docker host. A restore refuses before anything is stopped or
+# emptied unless the snapshot has its label, the completion marker and a database; a failed copy
+# leaves the old snapshot and restarts the app; a snapshot of an app that was stopped does not
+# start it; a volume with another label is not touched.
+mkdir "$tmp/bin"
+cat > "$tmp/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG"
+last="${*: -1}"
+has_volume() { for pair in $STUB_VOLUMES; do [ "${pair%%=*}" = "$1" ] && return 0; done; return 1; }
+case "$*" in
+  *"volume inspect -f"*)
+    has_volume "$last" || exit 1
+    for pair in $STUB_VOLUMES; do [ "${pair%%=*}" = "$last" ] && echo "${pair#*=}"; done
+    exit 0 ;;
+  *"volume inspect"*) has_volume "$last"; exit $? ;;
+  *"inspect -f {{.State.Running}}"*) echo "${STUB_RUNNING:-true}" ;;
+  *"inspect -f"*Health*) echo healthy ;;
+  *compose*" run "*) exit "${STUB_BUMP_RC:-0}" ;;
+  *" run "*"MODE=verify"*) exit "${STUB_VERIFY_RC:-0}" ;;
+  *" run "*"MODE="*) exit "${STUB_JOB_RC:-0}" ;;
+esac
+exit 0
+STUB
+chmod +x "$tmp/bin/docker"
+guard_log="$PWD/$tmp/guard.log"
+guard_fail() { echo "check-ferret-test-stack: snapshot guard: $1" >&2; exit 1; }
+# guard_run <function> [vars...]: runs a function of the script against the stand-in; the exit code is its own.
+guard_run() {
+  : > "$guard_log"
+  (
+    export PATH="$PWD/$tmp/bin:$PATH" STUB_LOG="$guard_log" FERRET_DOCKER_ARGS="--context stub" FERRET_ENV_FILE="$tmp/plain.env"
+    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING
+    # shellcheck disable=SC1091
+    source scripts/lanbox-ferret-test.sh
+    "$@"
+  ) >/dev/null 2>&1
+}
+logged() { grep -qE -- "$1" "$guard_log"; }
+first_line() { grep -nE -- "$1" "$guard_log" | head -n 1 | cut -d: -f1; }
+good_e2e="ferret-e2e-data=ferret-e2e ferret-e2e-snapshot=ferret-e2e"
+good_test="ferret-test-data=ferret-test ferret-test-snapshot=ferret-test"
+unset STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING
+
+# --- restore refuses, and changes nothing, when the snapshot is not good
+for kind in e2e test; do
+  if [ "$kind" = e2e ]; then
+    fn=e2e_restore_snapshot; app=ferret-e2e-app; snap=ferret-e2e-snapshot; good="$good_e2e"; arg=()
+  else
+    fn=test_restore_snapshot; app=ferret-test-app; snap=ferret-test-snapshot; good="$good_test"; arg=(--yes-ferret-test)
+  fi
+  # no snapshot volume
+  STUB_VOLUMES="${good%% *}"
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a restore without a snapshot went through"; fi
+  if logged " stop | MODE=restore"; then guard_fail "$kind: a restore without a snapshot stopped the app or wrote the data"; fi
+  # a volume of that name with another label
+  STUB_VOLUMES="${good%% *} $snap=somebody-else"
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a snapshot with another label was restored"; fi
+  if logged " stop | MODE=verify | MODE=restore"; then guard_fail "$kind: a volume with another label was touched"; fi
+  # no completion marker or no database: the check job fails
+  STUB_VOLUMES="$good"
+  STUB_VERIFY_RC=3
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: an incomplete snapshot was restored"; fi
+  logged "MODE=verify" || guard_fail "$kind: the snapshot was not checked"
+  if logged " stop | MODE=restore|restore-epoch bump"; then guard_fail "$kind: an incomplete snapshot stopped the app or was copied"; fi
+  unset STUB_VERIFY_RC
+  # the copy fails half way: the epoch is not raised and the app is not started
+  STUB_JOB_RC=4
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a failed copy went through"; fi
+  if logged "restore-epoch bump| start $app"; then guard_fail "$kind: after a failed copy the epoch was raised or the app started"; fi
+  unset STUB_JOB_RC
+  # the bump fails: the app is not started
+  STUB_BUMP_RC=1
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a failed bump went through"; fi
+  if logged " start $app"; then guard_fail "$kind: the app was started after a failed bump"; fi
+  unset STUB_BUMP_RC
+  # a good snapshot: checked, then the app is stopped, then copied, then the bump, then the start
+  guard_run "$fn" "${arg[@]}" || guard_fail "$kind: a good snapshot was refused"
+  verify="$(first_line 'MODE=verify')"; stop="$(first_line " stop ")"; copy="$(first_line 'MODE=restore')"; bump="$(first_line 'restore-epoch bump')"; start="$(first_line " start $app")"
+  { [ -n "$verify" ] && [ -n "$stop" ] && [ -n "$copy" ] && [ -n "$bump" ] && [ -n "$start" ] && [ "$verify" -lt "$stop" ] && [ "$stop" -lt "$copy" ] && [ "$copy" -lt "$bump" ] && [ "$bump" -lt "$start" ]; } \
+    || guard_fail "$kind: the order must be check, stop, copy, bump, start (got $verify $stop $copy $bump $start)"
+  if [ "$kind" = e2e ] && ! logged "127.0.0.1:9000/reset"; then guard_fail "e2e: the recorder of the malicious server was not reset after a restore"; fi
+done
+
+# --- a snapshot: a failed copy keeps the old snapshot and restarts the app; a volume with another label is not touched
+for kind in e2e test; do
+  if [ "$kind" = e2e ]; then
+    fn=e2e_snapshot; app=ferret-e2e-app; snap=ferret-e2e-snapshot; good="$good_e2e"; arg=()
+  else
+    fn=test_snapshot; app=ferret-test-app; snap=ferret-test-snapshot; good="$good_test"; arg=(--yes-ferret-test)
+  fi
+  STUB_VOLUMES="$good"
+  STUB_JOB_RC=3
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a failed copy went through"; fi
+  logged " start $app" || guard_fail "$kind: the app was not started after a failed copy"
+  if logged "volume rm $snap$|MODE=move"; then guard_fail "$kind: a failed copy replaced the old snapshot"; fi
+  unset STUB_JOB_RC
+  STUB_VOLUMES="${good%% *} $snap=somebody-else"
+  if guard_run "$fn" "${arg[@]}"; then guard_fail "$kind: a volume with another label was replaced"; fi
+  if logged " stop |volume rm $snap$|MODE="; then guard_fail "$kind: a volume with another label was touched"; fi
+  STUB_VOLUMES="$good"
+  guard_run "$fn" "${arg[@]}" || guard_fail "$kind: a good snapshot failed"
+  make="$(first_line 'MODE=make')"; started="$(first_line " start $app")"; removed="$(first_line "volume rm $snap$")"; moved="$(first_line 'MODE=move')"
+  logged "volume create --label owner=ferret-$kind $snap$" || guard_fail "$kind: the new snapshot volume must carry the label owner=ferret-$kind"
+  { [ -n "$make" ] && [ -n "$started" ] && [ -n "$removed" ] && [ -n "$moved" ] && [ "$make" -lt "$started" ] && [ "$started" -lt "$removed" ] && [ "$removed" -lt "$moved" ]; } \
+    || guard_fail "$kind: the order must be copy, start, swap (got $make $started $removed $moved)"
+done
+# the app of the owner's stack that was stopped before stays stopped
+STUB_VOLUMES="$good_test"
+STUB_RUNNING=false
+guard_run test_snapshot --yes-ferret-test || guard_fail "a snapshot of a stopped app failed"
+if logged " start ferret-test-app"; then guard_fail "a snapshot started an app that was stopped before"; fi
+unset STUB_RUNNING STUB_VOLUMES
 
 # The Dockerfile.
 dockerfile=docker/server.Dockerfile
