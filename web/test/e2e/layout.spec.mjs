@@ -43,6 +43,7 @@ async function scene(page, which) {
       { id: "a2", name: "Bank of Elm Street with a very long name that keeps going and going and ends differently", username: "ada", urls: ["https://bank.example.org/login"], pending: true },
       { id: "a3", name: "Old router", username: "admin", urls: [], damaged: true },
       { id: "a4", name: "Wi-Fi hjemme", username: "", urls: [], blocked: true, readOnly: true },
+      { id: "a5", name: "Router in the hall with another very long name that must wrap inside its row", username: "", urls: [], blocked: true, conflict: true },
     ];
     const view = {
       name: "GitHub", item_type: "login", favorite: true, has_notes: true, has_totp: true, read_only: false,
@@ -108,6 +109,35 @@ async function scene(page, which) {
       mount(root, view);
       view.querySelector('[data-role="forget-start"]').click();
       await new Promise((resolve) => setTimeout(resolve, 50));
+    } else if (name === "conflict") {
+      const { conflictView } = await import("/app/views/conflict.mjs");
+      const long = "Firefox on a laptop with a long device name that has to wrap inside its cell and never push the page sideways";
+      const side = (modified, device) => ({
+        rev: 2, deleted: false, handle: 1,
+        view: { ...view, name: "GitHub login with a long name that keeps going until it has to wrap", modified, device, passkey: { rp_id: "github.com", user_name: "ada@example.com" } },
+      });
+      const eng = {
+        ...engine([{ id: "a1", name: "GitHub", conflict: true }, { id: "a2", name: "Bank", conflict: true }]),
+        conflict: async () => ({
+          local: side(Date.now() - 3_600_000, long), server: side(Date.now(), "Safari on iPhone"),
+          fields: [{ key: "username", label: "Username", kind: "text", same: true }, { key: "password", label: "Password", kind: "password", same: null }],
+          close: async () => {},
+        }),
+        resolve: async () => {},
+      };
+      const client = { vault: { reveal_item_field: async () => "correct-horse-battery-1", reveal_item_notes: async () => "notes" } };
+      mount(root, await frame(eng, await conflictView({ engine: eng, client, id: "a1", t, router: { go() {} }, locale: i18n.lang, touch: () => true })));
+    } else if (name === "trash") {
+      const { trashView } = await import("/app/views/trash.mjs");
+      const eng = {
+        ...engine([]),
+        trash: async () => [
+          { id: "a1", name: "Old router with a really long name that has to wrap inside its row without cutting anything off", deletedAt: Date.now() - 86_400_000 },
+          { id: "a2", name: "Bank", deletedAt: Date.now() - 5 * 86_400_000 },
+        ],
+        restoreFromTrash: async () => {}, removeFromTrash: async () => {},
+      };
+      mount(root, await frame(eng, await trashView({ engine: eng, t, locale: i18n.lang, touch: () => true })));
     } else if (name === "item") {
       const { itemView } = await import("/app/views/item.mjs");
       const eng = engine([{ id: "a1", name: "GitHub", damaged: true, blocked: true, blockedReason: "conflict", missingOnServer: true }]);
@@ -145,7 +175,7 @@ for (const locale of ["en", "nb-NO"]) {
       test(`nothing_is_cut_off_or_outside_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);
-        for (const name of ["signed-in", "list", "item", "warnings", "restored", "forget"]) {
+        for (const name of ["signed-in", "list", "item", "warnings", "restored", "forget", "conflict", "trash"]) {
           await scene(page, name);
           expect(await clipped(page), `${name} at ${width}px`).toEqual([]);
         }
@@ -155,6 +185,32 @@ for (const locale of ["en", "nb-NO"]) {
     }
 
     for (const width of [320, 360, 1100]) {
+      test(`showing_a_secret_in_the_conflict_view_moves_nothing_at_${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await pageIsReady(page, locale);
+        await scene(page, "conflict");
+        const measure = () =>
+          page.evaluate(() => {
+            const button = document.querySelector('[data-role="reveal"][data-key="local.password"]');
+            const box = button.getBoundingClientRect();
+            const sideways = document.documentElement.scrollWidth > document.documentElement.clientWidth + 1;
+            return { top: Math.round(box.top), left: Math.round(box.left), page: document.documentElement.scrollHeight, sideways };
+          });
+        const before = await measure();
+        await page.locator('[data-role="reveal"][data-key="local.password"]').click();
+        await expect(page.locator('[data-role="value"][data-key="local.password"]')).toHaveText("correct-horse-battery-1");
+        const shown = await measure();
+        expect(shown.sideways).toBe(false);
+        expect(shown.top, "the button stays where it was").toBe(before.top);
+        expect(shown.left).toBe(before.left);
+        expect(shown.page, "the page is as high with the value as without").toBe(before.page);
+        expect(await clipped(page)).toEqual([]);
+        // The other version's value replaces it; still only one on the page.
+        await page.locator('[data-role="reveal"][data-key="server.password"]').click();
+        await expect(page.locator('[data-role="value"]', { hasText: "correct-horse-battery-1" })).toHaveCount(1);
+        expect((await measure()).page).toBe(before.page);
+      });
+
       test(`the_live_field_keeps_the_bar_and_its_own_width_the_same_in_every_state_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);

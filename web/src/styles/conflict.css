@@ -1,0 +1,255 @@
+/* The conflict view, the local trash and the conflict mark. Colours and components
+   come from base.css. Nothing here is shown by colour alone: the mark, the notice,
+   the "same" and "different" words all carry text. Nothing changes size when a
+   hidden value is shown or hidden: a value sits in a cell of fixed structure and
+   long values wrap inside it. */
+
+.mark-conflict,
+.notice-conflict {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.notice-conflict::before {
+  -webkit-mask-image: var(--i-alert);
+  mask-image: var(--i-alert);
+}
+
+.vault-ui .conflicts:empty {
+  display: none;
+}
+
+.vault-ui .conflict-card > h1,
+.vault-ui .trash-card > h1 {
+  overflow-wrap: anywhere;
+  font-size: 1.5rem;
+  letter-spacing: -0.019em;
+}
+
+.vault-ui .cf-intro {
+  color: var(--muted);
+}
+
+/* The two versions: name, time and device, side by side when there is room. */
+.vault-ui .cf-blocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.vault-ui .cf-block {
+  min-width: 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-raised, var(--card));
+}
+
+.vault-ui .cf-block > * + * {
+  margin-top: var(--sp-2);
+}
+
+.vault-ui .cf-block h2 {
+  font-size: 1rem;
+}
+
+.vault-ui .cf-name {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.vault-ui .cf-deleted {
+  color: var(--bad-text);
+  font-weight: 500;
+}
+
+.vault-ui .cf-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--sp-3);
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.vault-ui .cf-facts dt {
+  color: var(--muted);
+}
+
+.vault-ui .cf-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* One row per field: the name and whether the two agree, then one cell per version. */
+.vault-ui .cf-fields {
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .cf-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--sp-2) var(--sp-3);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.vault-ui .cf-row > .label {
+  grid-column: 1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .cf-row[data-role="passkey-row"] > .label {
+  grid-column: 1 / -1;
+}
+
+.vault-ui .cf-status {
+  grid-column: 2;
+  justify-self: end;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: end;
+}
+
+.vault-ui .cf-differs {
+  color: var(--warn-text);
+}
+
+.vault-ui .cf-same,
+.vault-ui .cf-hidden {
+  color: var(--muted);
+}
+
+.vault-ui .cf-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.vault-ui .cf-side {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.vault-ui .cf-cell .value {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+.vault-ui .cf-absent {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* The two choices, each with the sentence that says what it does. */
+.vault-ui .cf-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+  margin-top: var(--sp-5);
+}
+
+.vault-ui .cf-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.vault-ui .cf-choice .btn {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
+.vault-ui .cf-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* The trash */
+.vault-ui .trash-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.vault-ui .trash-items:empty {
+  display: none;
+}
+
+.vault-ui .trash-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name actions"
+    "detail actions";
+  align-items: center;
+  column-gap: var(--sp-3);
+  padding: 10px 16px;
+}
+
+.vault-ui .trash-item + .trash-item {
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .trash-name {
+  grid-area: name;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.vault-ui .trash-item .detail {
+  grid-area: detail;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.vault-ui .trash-item .actions {
+  grid-area: actions;
+  justify-content: flex-end;
+}
+
+/* A phone: one column, so no cell is narrower than a value needs. */
+@media (max-width: 40rem) {
+  .vault-ui .cf-blocks,
+  .vault-ui .cf-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vault-ui .cf-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .vault-ui .cf-row > .cf-cell {
+    grid-column: 1 / -1;
+  }
+
+  .vault-ui .trash-item {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "name"
+      "detail"
+      "actions";
+    row-gap: var(--sp-2);
+  }
+
+  .vault-ui .trash-item .actions {
+    justify-content: flex-start;
+  }
+}
