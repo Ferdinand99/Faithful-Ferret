@@ -15,7 +15,10 @@
 //!   vault origin refuses an account with a second factor, so a user who turned
 //!   it on here would lose the vault and the admin pages both.
 //! * [`end_session_on_logout`] ends the session row when the kit's sign-out
-//!   runs, so the session is over on the server and not only in the browser.
+//!   runs, so the session is over on the server and not only in the browser. It
+//!   also sends the browser on to the signed-out page instead of `/login`, so a
+//!   page of the admin origin loads after a sign-out and can drop htmx's history
+//!   cache.
 
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::header::HeaderValue;
@@ -25,6 +28,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::SignedCookieJar;
 use vole_kit::auth::guard as kit_guard;
 
+use crate::admin::signed_out_page;
 use crate::auth::session::{Origin, clear_cookies, lookup, revoke};
 use crate::error::ApiError;
 use crate::http::extract::AdminSession;
@@ -119,6 +123,15 @@ pub async fn end_session_on_logout(
         }
     }
     let mut response = next.run(request).await;
+    // The kit sends a sign-out to `/login`, which only leads on to the vault
+    // origin. Send it through the signed-out page first, so a page of this
+    // origin loads and drops htmx's history cache of the pages just left.
+    if response.status().is_redirection() {
+        response.headers_mut().insert(
+            header::LOCATION,
+            HeaderValue::from_static(signed_out_page::PATH),
+        );
+    }
     // The same cookies the sign-out of the API clears, as extra headers. The
     // jar is the request's: a jar removes only the cookies it holds.
     let cleared = clear_cookies(jar).into_response();

@@ -39,9 +39,9 @@ cd "$(dirname "$0")/.."
 . scripts/lanbox-ferret-test.sh
 
 browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
-main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 07-transport 08-plaintext 09-csp)
 m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 shots_dir=test-results/out/m2-shots
+main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 08b-webkit-select-canary 09-csp)
 failures=0
 vault_origin=https://vault-e2e.test
 admin_origin=https://admin-e2e.test

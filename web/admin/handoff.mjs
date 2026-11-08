@@ -101,6 +101,26 @@ export async function run(env) {
   return true;
 }
 
+/** The key htmx 2 keeps its page snapshots under, the same one the kit's `app.js` removes. */
+export const HISTORY_CACHE_KEY = "htmx-history-cache";
+
+/**
+ * Drops htmx's snapshots of the pages this tab left. A session that ended with no
+ * Log out (it expired, was revoked, or was ended by "sign out others") leaves
+ * them behind, so every new hand-over starts with none. Storage that is not
+ * there or is blocked holds nothing to drop. The storage is read inside the guard
+ * (a getter): a browser that blocks site storage throws a `SecurityError` on the
+ * very read of `sessionStorage`, and that must not stop the hand-over.
+ * @param {() => { removeItem(key: string): void } | undefined} getStorage
+ */
+export function clearHistoryCache(getStorage) {
+  try {
+    getStorage()?.removeItem(HISTORY_CACHE_KEY);
+  } catch {
+    // Blocked storage has nothing cached either.
+  }
+}
+
 /** @param {string} language */
 function messagesFor(language) {
   const primary = String(language).toLowerCase().split("-")[0];
@@ -113,6 +133,9 @@ if (typeof document !== "undefined" && document.getElementById("handoff-status")
   const retry = document.getElementById("handoff-retry");
   const text = messagesFor(navigator.language);
   status.textContent = text.working;
+  // Before anything else: the snapshots of an earlier session in this tab are gone
+  // before this one starts.
+  clearHistoryCache(() => globalThis.sessionStorage);
   run({ location, history, fetch: globalThis.fetch.bind(globalThis) }).then((went) => {
     if (went) return;
     status.textContent = text.failed;

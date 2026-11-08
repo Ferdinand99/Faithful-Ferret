@@ -121,6 +121,7 @@ async fn admin_guard_wraps_only_the_kit_router() {
     );
     assert_eq!(get(&app, "/auth/handoff").await.status, StatusCode::OK);
     assert_eq!(get(&app, "/auth/handoff.mjs").await.status, StatusCode::OK);
+    assert_eq!(get(&app, "/auth/signed-out").await.status, StatusCode::OK);
     assert_eq!(
         get(&app, "/auth/handoff/begin").await.status,
         StatusCode::FOUND
@@ -376,10 +377,15 @@ async fn kit_sign_out_ends_the_session_row_and_clears_the_cookies() {
     let app = TestApp::new_at_real_time().await;
     let (_user, _vault) = admin_user(&app, 1).await;
     let admin = app.jar(Which::Admin);
-    assert_eq!(get(&app, "/settings/general").await.status, StatusCode::OK);
+    let page = get(&app, "/settings/general").await;
+    assert_eq!(page.status, StatusCode::OK);
+    // The page the sign-out form is on sends `Origin` with a plain form post.
+    assert_eq!(page.header("referrer-policy"), "same-origin");
 
     let res = post(&app, "/logout").await;
     assert!(res.status.is_redirection(), "{}", res.status);
+    // It goes on to the page that drops htmx's history cache, not straight to `/login`.
+    assert_eq!(res.header("location"), "/auth/signed-out");
     for name in [SID_COOKIE, SESSION_COOKIE] {
         let cookie = set_cookie(&res, name).unwrap_or_else(|| panic!("{name} is cleared"));
         assert!(
@@ -608,4 +614,45 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
             .await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{method} {path}");
     }
+}
+
+// ------------------------------------------------------- the signed-out page
+
+#[tokio::test]
+async fn signed_out_page_drops_the_history_cache_and_holds_nothing_private() {
+    let app = TestApp::new().await;
+    seed(&app, 1).await;
+
+    // No session is needed, and none is set.
+    let page = get(&app, "/auth/signed-out").await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.header("content-type").starts_with("text/html"));
+    assert_eq!(page.header("cache-control"), "no-store");
+    assert!(page.headers.get_all("set-cookie").iter().next().is_none());
+    let csp = page.header("content-security-policy").to_string();
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    // No other site can frame it (clickjacking): the link on it must not sit under a hidden frame.
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert_eq!(page.header("x-frame-options"), "DENY");
+
+    // The kit's rule for a page that drops the cache: the attribute on the
+    // body, and the kit's script (a file of the origin, no inline script).
+    let html = page.text();
+    assert!(
+        html.contains("<body class=\"auth-body\" data-clear-history>"),
+        "{html}"
+    );
+    assert_eq!(html.matches("<script").count(), 1, "{html}");
+    assert!(html.contains("<script src=\"/static/app.js\" defer></script>"));
+    assert!(!html.contains("hx-history"), "{html}");
+    assert!(!html.to_ascii_lowercase().contains("type=\"password\""));
+    let script = get(&app, "/static/app.js").await;
+    assert_eq!(script.status, StatusCode::OK);
+    assert!(script.text().contains("htmx-history-cache"));
+
+    // Not a page of the vault listener.
+    let res = app
+        .call(Which::Vault, Req::get("/auth/signed-out").build())
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
