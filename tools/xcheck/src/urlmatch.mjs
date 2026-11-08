@@ -47,7 +47,8 @@ export function urlMatch(entryUrl, kind, pageUrl) {
   if (!e || !p || e.https !== p.https || e.port !== p.port) return 'none';
   if (kind === 'exact') return e.host === p.host && e.path === p.path && e.query === p.query ? 'exact' : 'none';
   if (e.host === p.host) return 'host';
-  if (kind === 'domain') {
+  // An address saved with http is never widened to other hosts.
+  if (kind === 'domain' && e.https) {
     const a = registrable(e);
     const b = registrable(p);
     if (a !== null && a === b) return 'domain';
@@ -72,10 +73,34 @@ export function sameSite(a, b) {
   return rx !== null && rx === registrable(y);
 }
 
+// The script of a letter, by the Unicode property; letters of other scripts by their block of 128 code points.
+const SCRIPTS = ['Latin', 'Greek', 'Cyrillic', 'Armenian', 'Han', 'Hiragana', 'Katakana', 'Hangul', 'Bopomofo'];
+const SCRIPT_RES = SCRIPTS.map((n) => [n, new RegExp(`^\\p{Script=${n}}$`, 'u')]);
+const LETTER = /^\p{L}$/u;
+function scriptOf(ch) {
+  for (const [n, re] of SCRIPT_RES) if (re.test(ch)) return n;
+  return `block${ch.codePointAt(0) >> 7}`;
+}
+
+// Letters of a label from more than one writing system. Digits, hyphens and marks do not count; Han with Hiragana and
+// Katakana, with Hangul or with Bopomofo are one system each.
+function mixesScripts(label) {
+  const seen = new Set();
+  for (const ch of label) if (LETTER.test(ch)) seen.add(scriptOf(ch));
+  if (seen.size < 2) return false;
+  const only = (allowed) => [...seen].every((x) => allowed.includes(x));
+  return !(only(['Han', 'Hiragana', 'Katakana']) || only(['Han', 'Hangul']) || only(['Han', 'Bopomofo']));
+}
+
+function unicodeLabel(label) {
+  if (!label.startsWith('xn--')) return label;
+  const u = domainToUnicode(label);
+  return u === '' || mixesScripts(u) ? label : u;
+}
+
 export function displayHost(pageUrl) {
   const p = parseWeb(pageUrl);
   if (!p) fail('malformed_origin');
   if (p.ip) return { a_label: p.host, unicode: p.host };
-  const u = domainToUnicode(p.host);
-  return { a_label: p.host, unicode: u === '' ? p.host : u };
+  return { a_label: p.host, unicode: p.host.split('.').map(unicodeLabel).join('.') };
 }

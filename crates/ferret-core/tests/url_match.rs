@@ -221,9 +221,31 @@ fn http_entry_matches_only_http_with_the_same_host_and_port() {
         domain_of("http://example.com", "https://www.example.com"),
         NoMatch
     );
+    // An address saved with http is never widened to other hosts, whatever its
+    // match kind.
     assert_eq!(
         domain_of("http://example.com", "http://www.example.com"),
-        Domain
+        NoMatch
+    );
+    assert_eq!(
+        domain_of("http://www.example.com", "http://example.com"),
+        NoMatch
+    );
+    assert_eq!(
+        domain_of("http://example.com", "http://example.com/x"),
+        Host
+    );
+    assert_eq!(
+        domain_of("http://a.github.io", "http://a.github.io:80"),
+        Host
+    );
+    assert_eq!(
+        exact_of("http://example.com/a", "http://www.example.com/a"),
+        NoMatch
+    );
+    assert_eq!(
+        exact_of("http://example.com/a", "http://example.com/a#f"),
+        Exact
     );
     assert_eq!(
         host_of("http://example.com", "http://example.com:8080"),
@@ -825,12 +847,56 @@ fn display_host_gives_both_forms() {
     let h = display_host("https://пример.рф").unwrap();
     assert_eq!(h.a_label, "xn--e1afmkfd.xn--p1ai");
     assert_eq!(h.unicode, "пример.рф");
-    // The look-alike with the Cyrillic letter shows as itself, with the
-    // A-label to tell it from the Latin name.
+    // A label that mixes Latin with Cyrillic, Greek or Armenian stays in
+    // A-label form.
     let h = display_host("https://exаmple.com").unwrap();
     assert_eq!(h.a_label, "xn--exmple-4nf.com");
-    assert_eq!(h.unicode, "exаmple.com");
-    assert_ne!(h.unicode, "example.com");
+    assert_eq!(h.unicode, "xn--exmple-4nf.com");
+    let h = display_host("https://exαmple.com").unwrap();
+    assert_eq!(h.unicode, "xn--exmple-qxe.com");
+    let h = display_host("https://gօogle.com").unwrap();
+    assert_eq!(h.unicode, "xn--gogle-lkg.com");
+    let h = display_host("https://абвa.com").unwrap();
+    assert_eq!(h.unicode, "xn--a-7sbde.com");
+    // Han with Latin is a mix too.
+    let h = display_host("https://日本abc.jp").unwrap();
+    assert_eq!(h.unicode, "xn--abc-s08fl0d.jp");
+    // The decision is per label: the other labels show in Unicode.
+    let h = display_host("https://shop.exаmple.com").unwrap();
+    assert_eq!(h.a_label, "shop.xn--exmple-4nf.com");
+    assert_eq!(h.unicode, "shop.xn--exmple-4nf.com");
+    let h = display_host("https://пример.exаmple.рф").unwrap();
+    assert_eq!(h.a_label, "xn--e1afmkfd.xn--exmple-4nf.xn--p1ai");
+    assert_eq!(h.unicode, "пример.xn--exmple-4nf.рф");
+    // A label from one script shows in Unicode: digits and hyphens do not
+    // count, and neither does the top-level domain's script.
+    let h = display_host("https://пример-1.рф").unwrap();
+    assert_eq!(h.unicode, "пример-1.рф");
+    let h = display_host("https://αβγ.gr").unwrap();
+    assert_eq!(h.unicode, "αβγ.gr");
+    let h = display_host("https://café.com").unwrap();
+    assert_eq!(h.unicode, "café.com");
+    // Japanese, Korean and Chinese writing is one system each.
+    for host in [
+        "日本語ひらがな.jp",
+        "日本カタカナ.jp",
+        "한漢字.kr",
+        "注音ㄅㄆ.tw",
+    ] {
+        let h = display_host(&format!("https://{host}/")).unwrap();
+        assert_eq!(h.unicode, host);
+        assert!(h.a_label.contains("xn--"));
+    }
+    // A label from a single script that looks like another is still shown in
+    // Unicode, as a browser does: the match, which compares A-labels, is the
+    // boundary.
+    let h = display_host("https://аррӏе.com").unwrap();
+    assert_eq!(h.a_label, "xn--80ak6aa92e.com");
+    assert_eq!(h.unicode, "аррӏе.com");
+    assert_eq!(
+        host_of("https://apple.com", "https://xn--80ak6aa92e.com"),
+        NoMatch
+    );
     // A trailing dot and the case are removed.
     let h = display_host("https://EXAMPLE.com./").unwrap();
     assert_eq!(

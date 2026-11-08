@@ -64,6 +64,11 @@ fuzz_target!(|data: &[u8]| {
         let saved_origin = page_origin(saved).expect("a matched entry has an origin");
         assert_eq!((o.scheme(), o.port()), (saved_origin.scheme(), saved_origin.port()));
         assert!(same_site(saved, page));
+        // An address saved with http is never widened to another host.
+        if saved_origin.scheme() == "http" {
+            assert_ne!(result, UrlMatchResult::Domain);
+            assert_eq!(o.host(), saved_origin.host());
+        }
         if result == UrlMatchResult::Exact || result == UrlMatchResult::Host {
             assert_eq!(o.host(), saved_origin.host());
         }

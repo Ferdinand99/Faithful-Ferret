@@ -565,7 +565,7 @@
     },
     {
       "id": "url-match/match/025",
-      "title": "\"http://example.com\" (domain) against \"http://www.example.com\" is domain",
+      "title": "\"http://example.com\" (domain) against \"http://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
       "tags": [
@@ -582,12 +582,104 @@
         "page_utf8": "687474703a2f2f7777772e6578616d706c652e636f6d"
       },
       "expect": {
-        "result": "domain"
+        "result": "none"
       },
       "expect_error": null
     },
     {
       "id": "url-match/match/026",
+      "title": "\"http://www.example.com\" (domain) against \"http://example.com\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://www.example.com",
+        "entry_utf8": "687474703a2f2f7777772e6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "http://example.com",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/027",
+      "title": "\"http://example.com\" (domain) against \"http://example.com/login\" is host",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d",
+        "match": "domain",
+        "page": "http://example.com/login",
+        "page_utf8": "687474703a2f2f6578616d706c652e636f6d2f6c6f67696e"
+      },
+      "expect": {
+        "result": "host"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/028",
+      "title": "\"http://example.co.uk\" (domain) against \"http://shop.example.co.uk\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.co.uk",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f2e756b",
+        "match": "domain",
+        "page": "http://shop.example.co.uk",
+        "page_utf8": "687474703a2f2f73686f702e6578616d706c652e636f2e756b"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/029",
+      "title": "\"http://example.com/a\" (exact) against \"http://www.example.com/a\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "entry": "http://example.com/a",
+        "entry_utf8": "687474703a2f2f6578616d706c652e636f6d2f61",
+        "match": "exact",
+        "page": "http://www.example.com/a",
+        "page_utf8": "687474703a2f2f7777772e6578616d706c652e636f6d2f61"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/030",
       "title": "\"http://example.com\" (domain) against \"https://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -610,7 +702,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/027",
+      "id": "url-match/match/031",
       "title": "\"http://localhost:3000\" (host) against \"http://localhost:3000/\" is host",
       "op": "url.match",
       "status": "valid",
@@ -633,7 +725,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/028",
+      "id": "url-match/match/032",
       "title": "\"http://localhost:3000\" (host) against \"http://localhost\" is none",
       "op": "url.match",
       "status": "valid",
@@ -656,7 +748,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/029",
+      "id": "url-match/match/033",
       "title": "\"https://localhost\" (host) against \"http://localhost\" is none",
       "op": "url.match",
       "status": "valid",
@@ -679,7 +771,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/030",
+      "id": "url-match/match/034",
       "title": "\"https://example.com\" (host) against \"https://examp1e.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -702,7 +794,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/031",
+      "id": "url-match/match/035",
       "title": "\"https://example.com\" (host) against \"https://example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -725,7 +817,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/032",
+      "id": "url-match/match/036",
       "title": "\"https://example.com\" (domain) against \"https://sub.example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -748,7 +840,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/033",
+      "id": "url-match/match/037",
       "title": "\"https://example.com\" (host) against \"https://evil.net/example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -771,7 +863,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/034",
+      "id": "url-match/match/038",
       "title": "\"https://example.com\" (host) against \"https://example.com@evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -794,7 +886,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/035",
+      "id": "url-match/match/039",
       "title": "\"https://example.com\" (host) against \"https://evil.net#@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -817,7 +909,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/036",
+      "id": "url-match/match/040",
       "title": "\"https://example.com\" (host) against \"https://evil.net\\\\@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -840,7 +932,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/037",
+      "id": "url-match/match/041",
       "title": "\"https://example.com\" (host) against \"https://example-com.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -863,7 +955,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/038",
+      "id": "url-match/match/042",
       "title": "\"https://example.com\" (host) against \"https://examplecom\" is none",
       "op": "url.match",
       "status": "valid",
@@ -886,7 +978,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/039",
+      "id": "url-match/match/043",
       "title": "\"https://example.com\" (host) against \"https://exаmple.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -909,7 +1001,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/040",
+      "id": "url-match/match/044",
       "title": "\"https://example.com\" (domain) against \"https://www.exаmple.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -932,7 +1024,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/041",
+      "id": "url-match/match/045",
       "title": "\"https://exаmple.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -955,7 +1047,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/042",
+      "id": "url-match/match/046",
       "title": "\"https://exаmple.com\" (host) against \"https://exаmple.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -978,7 +1070,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/043",
+      "id": "url-match/match/047",
       "title": "\"https://exаmple.com\" (host) against \"https://xn--exmple-4nf.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1001,7 +1093,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/044",
+      "id": "url-match/match/048",
       "title": "\"https://example.com\" (host) against \"https://example.com\\\\login\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1024,7 +1116,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/045",
+      "id": "url-match/match/049",
       "title": "\"https://example.com\" (host) against \"https://example.com\\\\@evil.net\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1047,7 +1139,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/046",
+      "id": "url-match/match/050",
       "title": "\"https://example.com\" (host) against \"https://exam\\tple.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1070,7 +1162,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/047",
+      "id": "url-match/match/051",
       "title": "\"https://example.com\" (host) against \"ht\\ntps://example.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1093,7 +1185,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/048",
+      "id": "url-match/match/052",
       "title": "\"https://example.com\" (host) against \"https://example.com\\r\\n/x\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1116,7 +1208,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/049",
+      "id": "url-match/match/053",
       "title": "\"https://example.com\" (host) against \"https://example.com\\t.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1139,7 +1231,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/050",
+      "id": "url-match/match/054",
       "title": "\"https://example.com\" (host) against \"  https://example.com  \" is host",
       "op": "url.match",
       "status": "valid",
@@ -1162,7 +1254,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/051",
+      "id": "url-match/match/055",
       "title": "\"https://example.com\" (host) against \"https://%65xample.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1185,7 +1277,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/052",
+      "id": "url-match/match/056",
       "title": "\"https://example.com\" (host) against \"https://example%2Ecom\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1208,7 +1300,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/053",
+      "id": "url-match/match/057",
       "title": "\"https://example.com\" (host) against \"https://example.com%2F.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1231,7 +1323,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/054",
+      "id": "url-match/match/058",
       "title": "\"https://example.com\" (host) against \"https://ｅｘａｍｐｌｅ。ｃｏｍ\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1254,7 +1346,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/055",
+      "id": "url-match/match/059",
       "title": "\"https://example.com\" (host) against \"https:example.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1277,7 +1369,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/056",
+      "id": "url-match/match/060",
       "title": "\"https://example.com\" (host) against \"https:///example.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -1300,7 +1392,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/057",
+      "id": "url-match/match/061",
       "title": "\"https://example.com\" (host) against \"https://exa mple.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1323,7 +1415,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/058",
+      "id": "url-match/match/062",
       "title": "\"https://example.com\" (host) against \"https://example.com:99999\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1346,7 +1438,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/059",
+      "id": "url-match/match/063",
       "title": "\"https://example.com\" (host) against \"https://example.com:abc\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1369,7 +1461,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/060",
+      "id": "url-match/match/064",
       "title": "\"https://example.com\" (host) against \"https://\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1392,7 +1484,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/061",
+      "id": "url-match/match/065",
       "title": "\"https://example.com\" (host) against \"https://[::1\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1415,7 +1507,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/062",
+      "id": "url-match/match/066",
       "title": "\"https://example.com\" (host) against \"\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1438,7 +1530,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/063",
+      "id": "url-match/match/067",
       "title": "\"\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1461,7 +1553,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/064",
+      "id": "url-match/match/068",
       "title": "\"https://a..b\" (host) against \"https://a..b\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1484,7 +1576,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/065",
+      "id": "url-match/match/069",
       "title": "\"https://example.com\" (host) against \"https://user@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1507,7 +1599,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/066",
+      "id": "url-match/match/070",
       "title": "\"https://example.com\" (host) against \"https://user:pw@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1530,7 +1622,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/067",
+      "id": "url-match/match/071",
       "title": "\"https://example.com\" (domain) against \"https://:pw@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1553,7 +1645,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/068",
+      "id": "url-match/match/072",
       "title": "\"https://user@example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1576,7 +1668,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/069",
+      "id": "url-match/match/073",
       "title": "\"https://user@example.com\" (host) against \"https://user@example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1599,7 +1691,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/070",
+      "id": "url-match/match/074",
       "title": "\"https://example.com\" (host) against \"data:text/html,<h1>x</h1>\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1622,7 +1714,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/071",
+      "id": "url-match/match/075",
       "title": "\"https://example.com\" (host) against \"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1645,7 +1737,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/072",
+      "id": "url-match/match/076",
       "title": "\"https://example.com\" (host) against \"file:///etc/passwd\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1668,7 +1760,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/073",
+      "id": "url-match/match/077",
       "title": "\"https://example.com\" (host) against \"about:blank\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1691,7 +1783,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/074",
+      "id": "url-match/match/078",
       "title": "\"https://example.com\" (host) against \"javascript:alert(1)\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1714,7 +1806,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/075",
+      "id": "url-match/match/079",
       "title": "\"https://example.com\" (host) against \"ftp://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1737,7 +1829,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/076",
+      "id": "url-match/match/080",
       "title": "\"https://example.com\" (host) against \"moz-extension://abc/page.html\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1760,7 +1852,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/077",
+      "id": "url-match/match/081",
       "title": "\"about:blank\" (host) against \"about:blank\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1783,7 +1875,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/078",
+      "id": "url-match/match/082",
       "title": "\"example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1806,7 +1898,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/079",
+      "id": "url-match/match/083",
       "title": "\"example.com\" (domain) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1829,7 +1921,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/080",
+      "id": "url-match/match/084",
       "title": "\"www.example.com/login\" (host) against \"https://www.example.com/login\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1852,7 +1944,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/081",
+      "id": "url-match/match/085",
       "title": "\"//example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1875,7 +1967,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/082",
+      "id": "url-match/match/086",
       "title": "\"example.com:8080\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1898,7 +1990,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/083",
+      "id": "url-match/match/087",
       "title": "\"example.com\" (exact) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1921,7 +2013,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/084",
+      "id": "url-match/match/088",
       "title": "\"https://example.com\" (regex) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1944,7 +2036,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/085",
+      "id": "url-match/match/089",
       "title": "\"https://example.com\" () against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1967,7 +2059,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/086",
+      "id": "url-match/match/090",
       "title": "\"https://example.com\" (HOST) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -1990,7 +2082,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/087",
+      "id": "url-match/match/091",
       "title": "\"https://login.example.co.uk\" (domain) against \"https://www.example.co.uk\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2013,7 +2105,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/088",
+      "id": "url-match/match/092",
       "title": "\"https://example.co.uk\" (domain) against \"https://a.b.example.co.uk\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2036,7 +2128,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/089",
+      "id": "url-match/match/093",
       "title": "\"https://example.com\" (domain) against \"https://login.example.com\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2059,7 +2151,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/090",
+      "id": "url-match/match/094",
       "title": "\"https://example.com\" (domain) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2082,7 +2174,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/091",
+      "id": "url-match/match/095",
       "title": "\"https://example.com.\" (domain) against \"https://login.example.com\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2105,7 +2197,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/092",
+      "id": "url-match/match/096",
       "title": "\"https://login.example.co.uk\" (host) against \"https://www.example.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2128,7 +2220,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/093",
+      "id": "url-match/match/097",
       "title": "\"https://example.co.uk\" (domain) against \"https://other.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2151,7 +2243,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/094",
+      "id": "url-match/match/098",
       "title": "\"https://example.com\" (domain) against \"https://example.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2174,7 +2266,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/095",
+      "id": "url-match/match/099",
       "title": "\"https://example.com\" (domain) against \"https://www.example.com:8443\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2197,7 +2289,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/096",
+      "id": "url-match/match/100",
       "title": "\"https://a.example.com\" (domain) against \"https://example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2220,7 +2312,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/097",
+      "id": "url-match/match/101",
       "title": "\"https://bücher.de\" (domain) against \"https://shop.xn--bcher-kva.de\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2243,7 +2335,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/098",
+      "id": "url-match/match/102",
       "title": "\"https://a.github.io\" (domain) against \"https://b.github.io\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2266,7 +2358,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/099",
+      "id": "url-match/match/103",
       "title": "\"https://a.github.io\" (domain) against \"https://x.a.github.io\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2289,7 +2381,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/100",
+      "id": "url-match/match/104",
       "title": "\"https://x.y.vercel.app\" (domain) against \"https://z.y.vercel.app\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2312,7 +2404,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/101",
+      "id": "url-match/match/105",
       "title": "\"https://x.vercel.app\" (domain) against \"https://y.vercel.app\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2335,7 +2427,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/102",
+      "id": "url-match/match/106",
       "title": "\"https://github.io\" (domain) against \"https://github.io\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2358,7 +2450,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/103",
+      "id": "url-match/match/107",
       "title": "\"https://github.io\" (domain) against \"https://a.github.io\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2381,7 +2473,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/104",
+      "id": "url-match/match/108",
       "title": "\"https://a.foo.ck\" (domain) against \"https://b.foo.ck\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2404,7 +2496,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/105",
+      "id": "url-match/match/109",
       "title": "\"https://www.ck\" (domain) against \"https://x.www.ck\" is domain",
       "op": "url.match",
       "status": "valid",
@@ -2427,7 +2519,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/106",
+      "id": "url-match/match/110",
       "title": "\"https://fritz.box\" (domain) against \"https://fritz.box\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2450,7 +2542,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/107",
+      "id": "url-match/match/111",
       "title": "\"https://a.fritz.box\" (domain) against \"https://b.fritz.box\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2473,7 +2565,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/108",
+      "id": "url-match/match/112",
       "title": "\"https://fritz.box\" (domain) against \"https://x.fritz.box\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2496,7 +2588,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/109",
+      "id": "url-match/match/113",
       "title": "\"https://router.lan\" (domain) against \"https://router.lan\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2519,7 +2611,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/110",
+      "id": "url-match/match/114",
       "title": "\"https://a.router.lan\" (domain) against \"https://b.router.lan\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2542,7 +2634,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/111",
+      "id": "url-match/match/115",
       "title": "\"https://nas.home.arpa\" (domain) against \"https://nas.home.arpa\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2565,7 +2657,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/112",
+      "id": "url-match/match/116",
       "title": "\"https://nas.home.arpa\" (domain) against \"https://x.nas.home.arpa\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2588,7 +2680,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/113",
+      "id": "url-match/match/117",
       "title": "\"https://intranet\" (domain) against \"https://intranet/login\" is host",
       "op": "url.match",
       "status": "valid",
@@ -2611,7 +2703,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/114",
+      "id": "url-match/match/118",
       "title": "\"https://intranet\" (domain) against \"https://other\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2634,7 +2726,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/115",
+      "id": "url-match/match/119",
       "title": "\"https://a.example.zzzunknown\" (domain) against \"https://b.example.zzzunknown\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2657,7 +2749,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/116",
+      "id": "url-match/match/120",
       "title": "\"https://a.example\" (domain) against \"https://b.example\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2680,7 +2772,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/117",
+      "id": "url-match/match/121",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2703,7 +2795,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/118",
+      "id": "url-match/match/122",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login#top\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2726,7 +2818,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/119",
+      "id": "url-match/match/123",
       "title": "\"https://example.com/login#a\" (exact) against \"https://example.com/login#b\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2749,7 +2841,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/120",
+      "id": "url-match/match/124",
       "title": "\"https://example.com\" (exact) against \"https://example.com/\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2772,7 +2864,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/121",
+      "id": "url-match/match/125",
       "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=1#f\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2795,7 +2887,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/122",
+      "id": "url-match/match/126",
       "title": "\"https://example.com./a\" (exact) against \"https://EXAMPLE.com/a\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2818,7 +2910,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/123",
+      "id": "url-match/match/127",
       "title": "\"https://example.com/a/b\" (exact) against \"https://example.com\\\\a\\\\b\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2841,7 +2933,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/124",
+      "id": "url-match/match/128",
       "title": "\"https://example.com/a/./b/../c\" (exact) against \"https://example.com/a/c\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2864,7 +2956,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/125",
+      "id": "url-match/match/129",
       "title": "\"https://example.com/a b\" (exact) against \"https://example.com/a%20b\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -2887,7 +2979,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/126",
+      "id": "url-match/match/130",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login/\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2910,7 +3002,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/127",
+      "id": "url-match/match/131",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/Login\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2933,7 +3025,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/128",
+      "id": "url-match/match/132",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login?x=1\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2956,7 +3048,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/129",
+      "id": "url-match/match/133",
       "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=2\" is none",
       "op": "url.match",
       "status": "valid",
@@ -2979,7 +3071,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/130",
+      "id": "url-match/match/134",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/other\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3002,7 +3094,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/131",
+      "id": "url-match/match/135",
       "title": "\"https://example.com/login\" (exact) against \"https://example.com:8443/login\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3025,7 +3117,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/132",
+      "id": "url-match/match/136",
       "title": "\"https://example.com/login\" (exact) against \"https://www.example.com/login\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3048,7 +3140,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/133",
+      "id": "url-match/match/137",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1/admin\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3071,7 +3163,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/134",
+      "id": "url-match/match/138",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.2\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3094,7 +3186,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/135",
+      "id": "url-match/match/139",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.10\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3117,7 +3209,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/136",
+      "id": "url-match/match/140",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3140,7 +3232,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/137",
+      "id": "url-match/match/141",
       "title": "\"http://192.168.1.1\" (host) against \"https://192.168.1.1\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3163,7 +3255,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/138",
+      "id": "url-match/match/142",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1:8080\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3186,7 +3278,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/139",
+      "id": "url-match/match/143",
       "title": "\"http://192.168.1.1\" (host) against \"http://3232235777\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3209,7 +3301,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/140",
+      "id": "url-match/match/144",
       "title": "\"http://192.168.1.1\" (host) against \"http://0xc0a80101\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3232,7 +3324,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/141",
+      "id": "url-match/match/145",
       "title": "\"http://192.168.1.1\" (host) against \"http://0300.0250.01.01\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3255,7 +3347,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/142",
+      "id": "url-match/match/146",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.257\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3278,7 +3370,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/143",
+      "id": "url-match/match/147",
       "title": "\"http://3232235777\" (host) against \"http://192.168.1.1\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3301,7 +3393,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/144",
+      "id": "url-match/match/148",
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1.example.com\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3324,7 +3416,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/145",
+      "id": "url-match/match/149",
       "title": "\"http://192.168.1.1\" (domain) against \"http://192.168.1.1\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3347,7 +3439,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/146",
+      "id": "url-match/match/150",
       "title": "\"http://10.0.0.1\" (domain) against \"http://10.0.0.2\" is none",
       "op": "url.match",
       "status": "valid",
@@ -3370,7 +3462,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/147",
+      "id": "url-match/match/151",
       "title": "\"http://192.168.1.1/a\" (exact) against \"http://3232235777/a#f\" is exact",
       "op": "url.match",
       "status": "valid",
@@ -3393,7 +3485,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/148",
+      "id": "url-match/match/152",
       "title": "\"http://[::1]:3000\" (host) against \"http://[::1]:3000/x\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3416,7 +3508,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/149",
+      "id": "url-match/match/153",
       "title": "\"http://[::1]\" (host) against \"http://[0:0:0:0:0:0:0:1]\" is host",
       "op": "url.match",
       "status": "valid",
@@ -3439,7 +3531,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/match/150",
+      "id": "url-match/match/154",
       "title": "\"http://[::1]\" (host) against \"http://[::2]\" is none",
       "op": "url.match",
       "status": "valid",
@@ -5175,7 +5267,7 @@
     },
     {
       "id": "url-match/display_host/005",
-      "title": "host to show for \"https://exаmple.com\" is exаmple.com",
+      "title": "host to show for \"https://exаmple.com\" is xn--exmple-4nf.com",
       "op": "url.display_host",
       "status": "valid",
       "tags": [
@@ -5190,12 +5282,264 @@
       },
       "expect": {
         "a_label": "xn--exmple-4nf.com",
-        "unicode": "exаmple.com"
+        "unicode": "xn--exmple-4nf.com"
       },
       "expect_error": null
     },
     {
       "id": "url-match/display_host/006",
+      "title": "host to show for \"https://exαmple.com\" is xn--exmple-qxe.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://exαmple.com",
+        "page_utf8": "68747470733a2f2f6578ceb16d706c652e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--exmple-qxe.com",
+        "unicode": "xn--exmple-qxe.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/007",
+      "title": "host to show for \"https://gօogle.com\" is xn--gogle-lkg.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://gօogle.com",
+        "page_utf8": "68747470733a2f2f67d6856f676c652e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--gogle-lkg.com",
+        "unicode": "xn--gogle-lkg.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/008",
+      "title": "host to show for \"https://абвa.com\" is xn--a-7sbde.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://абвa.com",
+        "page_utf8": "68747470733a2f2fd0b0d0b1d0b2612e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--a-7sbde.com",
+        "unicode": "xn--a-7sbde.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/009",
+      "title": "host to show for \"https://日本abc.jp\" is xn--abc-s08fl0d.jp",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://日本abc.jp",
+        "page_utf8": "68747470733a2f2fe697a5e69cac6162632e6a70"
+      },
+      "expect": {
+        "a_label": "xn--abc-s08fl0d.jp",
+        "unicode": "xn--abc-s08fl0d.jp"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/010",
+      "title": "host to show for \"https://shop.exаmple.com\" is shop.xn--exmple-4nf.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://shop.exаmple.com",
+        "page_utf8": "68747470733a2f2f73686f702e6578d0b06d706c652e636f6d"
+      },
+      "expect": {
+        "a_label": "shop.xn--exmple-4nf.com",
+        "unicode": "shop.xn--exmple-4nf.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/011",
+      "title": "host to show for \"https://пример.exаmple.рф\" is пример.xn--exmple-4nf.рф",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://пример.exаmple.рф",
+        "page_utf8": "68747470733a2f2fd0bfd180d0b8d0bcd0b5d1802e6578d0b06d706c652ed180d184"
+      },
+      "expect": {
+        "a_label": "xn--e1afmkfd.xn--exmple-4nf.xn--p1ai",
+        "unicode": "пример.xn--exmple-4nf.рф"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/012",
+      "title": "host to show for \"https://пример-1.рф\" is пример-1.рф",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://пример-1.рф",
+        "page_utf8": "68747470733a2f2fd0bfd180d0b8d0bcd0b5d1802d312ed180d184"
+      },
+      "expect": {
+        "a_label": "xn---1-mlcluqhd.xn--p1ai",
+        "unicode": "пример-1.рф"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/013",
+      "title": "host to show for \"https://αβγ.gr\" is αβγ.gr",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://αβγ.gr",
+        "page_utf8": "68747470733a2f2fceb1ceb2ceb32e6772"
+      },
+      "expect": {
+        "a_label": "xn--mxacd.gr",
+        "unicode": "αβγ.gr"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/014",
+      "title": "host to show for \"https://café.com\" is café.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://café.com",
+        "page_utf8": "68747470733a2f2f636166c3a92e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--caf-dma.com",
+        "unicode": "café.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/015",
+      "title": "host to show for \"https://日本語ひらがな.jp\" is 日本語ひらがな.jp",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://日本語ひらがな.jp",
+        "page_utf8": "68747470733a2f2fe697a5e69cace8aa9ee381b2e38289e3818ce381aa2e6a70"
+      },
+      "expect": {
+        "a_label": "xn--v8j0cwa6g1563acvb2w6i.jp",
+        "unicode": "日本語ひらがな.jp"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/016",
+      "title": "host to show for \"https://한漢字.kr\" is 한漢字.kr",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://한漢字.kr",
+        "page_utf8": "68747470733a2f2fed959ce6bca2e5ad972e6b72"
+      },
+      "expect": {
+        "a_label": "xn--p8s937bex8e.kr",
+        "unicode": "한漢字.kr"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/017",
+      "title": "host to show for \"https://аррӏе.com\" is аррӏе.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://аррӏе.com",
+        "page_utf8": "68747470733a2f2fd0b0d180d180d38fd0b52e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--80ak6aa92e.com",
+        "unicode": "аррӏе.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/018",
       "title": "host to show for \"https://日本語.jp\" is 日本語.jp",
       "op": "url.display_host",
       "status": "valid",
@@ -5216,7 +5560,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/007",
+      "id": "url-match/display_host/019",
       "title": "host to show for \"https://EXAMPLE.com./\" is example.com",
       "op": "url.display_host",
       "status": "valid",
@@ -5237,7 +5581,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/008",
+      "id": "url-match/display_host/020",
       "title": "host to show for \"https://ｅｘａｍｐｌｅ.com\" is example.com",
       "op": "url.display_host",
       "status": "valid",
@@ -5258,7 +5602,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/009",
+      "id": "url-match/display_host/021",
       "title": "host to show for \"http://3232235777/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
@@ -5279,7 +5623,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/010",
+      "id": "url-match/display_host/022",
       "title": "host to show for \"http://192.168.1.1:8080/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
@@ -5300,7 +5644,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/011",
+      "id": "url-match/display_host/023",
       "title": "host to show for \"http://[2001:DB8::1]:8080/\" is [2001:db8::1]",
       "op": "url.display_host",
       "status": "valid",
@@ -5321,7 +5665,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/012",
+      "id": "url-match/display_host/024",
       "title": "host to show for \"http://localhost:3000\" is localhost",
       "op": "url.display_host",
       "status": "valid",
@@ -5342,7 +5686,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/013",
+      "id": "url-match/display_host/025",
       "title": "\"ftp://example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5359,7 +5703,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/014",
+      "id": "url-match/display_host/026",
       "title": "\"about:blank\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5376,7 +5720,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/015",
+      "id": "url-match/display_host/027",
       "title": "\"data:text/html,x\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5393,7 +5737,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/016",
+      "id": "url-match/display_host/028",
       "title": "\"https://user@example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5410,7 +5754,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/017",
+      "id": "url-match/display_host/029",
       "title": "\"example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5427,7 +5771,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/018",
+      "id": "url-match/display_host/030",
       "title": "\"\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5444,7 +5788,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/019",
+      "id": "url-match/display_host/031",
       "title": "\"https://a..b\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",

@@ -34,9 +34,11 @@
 //!
 //! * `host` (the default): the hosts are equal. The result is
 //!   [`UrlMatchResult::Host`].
-//! * `domain`: the hosts are equal ([`UrlMatchResult::Host`]), or both are
-//!   names with the same registrable domain, by the Public Suffix List with
-//!   its private domains ([`UrlMatchResult::Domain`]). A host with no
+//! * `domain`: the hosts are equal ([`UrlMatchResult::Host`]), or, for an
+//!   `https` entry only, both are names with the same registrable domain, by
+//!   the Public Suffix List with its private domains
+//!   ([`UrlMatchResult::Domain`]). An entry saved with `http` acts as `host`
+//!   whatever its match kind. A host with no
 //!   registrable domain acts as `host`: a single label (`intranet`), a name
 //!   under a top-level domain the list does not know (`router.lan`), under
 //!   `arpa` (`nas.home.arpa`) or under `box` (`fritz.box`, a router name), and
@@ -48,10 +50,16 @@
 //!
 //! An IP host (IPv4 in any form the standard reads, or IPv6) matches only the
 //! identical address, whatever the match kind.
+//!
+//! There is no loopback exception in this comparison: an `https` entry is never
+//! matched on `http://localhost`. That a loopback page counts as secure (no
+//! warning for an `http` entry, no insecure ancestor) is for the extension's
+//! frame and warning checks, not for the match.
 
 use crate::error::{Error, MalformedKind};
 use crate::item::{UrlEntry, UrlMatch};
 use crate::passkey::registrable_domain;
+use unicode_general_category::{GeneralCategory, get_general_category};
 use url::{Host, Url};
 
 /// The longest address accepted, in bytes. A longer one never matches and is
@@ -165,17 +173,13 @@ fn registrable(host: &HostName) -> Option<&str> {
 /// without a scheme, one that is not `http` or `https`, and a match kind this
 /// version does not know all give [`UrlMatchResult::None`].
 pub fn url_match(entry: &UrlEntry, page_url: &str) -> UrlMatchResult {
-    let kind = match &entry.matching {
-        UrlMatch::Host | UrlMatch::Domain | UrlMatch::Exact => &entry.matching,
-        UrlMatch::Other(_) => return UrlMatchResult::None,
-    };
     let (Some(saved), Some(page)) = (parse_web(&entry.url), parse_web(page_url)) else {
         return UrlMatchResult::None;
     };
     if saved.scheme != page.scheme || saved.port != page.port {
         return UrlMatchResult::None;
     }
-    match kind {
+    match &entry.matching {
         UrlMatch::Exact => {
             if saved.host == page.host
                 && saved.url.path() == page.url.path()
@@ -186,21 +190,29 @@ pub fn url_match(entry: &UrlEntry, page_url: &str) -> UrlMatchResult {
                 UrlMatchResult::None
             }
         }
-        _ => {
-            if saved.host == page.host {
-                return UrlMatchResult::Host;
+        UrlMatch::Host => host_match(&saved, &page),
+        UrlMatch::Domain => {
+            let by_host = host_match(&saved, &page);
+            if by_host != UrlMatchResult::None || saved.scheme == Scheme::Http {
+                // An address saved with `http` is never widened to other hosts:
+                // nothing over plain text ties another host of the domain to the
+                // server the user meant.
+                return by_host;
             }
-            let same_domain = *kind == UrlMatch::Domain
-                && matches!(
-                    (registrable(&saved.host), registrable(&page.host)),
-                    (Some(a), Some(b)) if a == b
-                );
-            if same_domain {
-                UrlMatchResult::Domain
-            } else {
-                UrlMatchResult::None
+            match (registrable(&saved.host), registrable(&page.host)) {
+                (Some(a), Some(b)) if a == b => UrlMatchResult::Domain,
+                _ => UrlMatchResult::None,
             }
         }
+        UrlMatch::Other(_) => UrlMatchResult::None,
+    }
+}
+
+fn host_match(saved: &Web, page: &Web) -> UrlMatchResult {
+    if saved.host == page.host {
+        UrlMatchResult::Host
+    } else {
+        UrlMatchResult::None
     }
 }
 
@@ -315,14 +327,28 @@ pub fn same_site(a: &str, b: &str) -> bool {
 pub struct DisplayHost {
     /// The A-label (`xn--` form), lower case. For an IP host the address.
     pub a_label: String,
-    /// The Unicode form. The same as `a_label` for an ASCII name and for an
-    /// IP host, and when the name cannot be converted back.
+    /// The Unicode form, label by label. A label that mixes scripts (see
+    /// [`display_host`]) and one that cannot be converted back keeps its
+    /// A-label. The same as `a_label` for an ASCII name and for an IP host.
     pub unicode: String,
 }
 
 /// The host of a page address for display, in both forms, so that a user
 /// interface can show the Unicode name and the A-label next to it when they
 /// differ.
+///
+/// The Unicode form is made label by label. A label whose letters come from
+/// more than one script, ignoring digits, hyphens and combining marks, stays in
+/// A-label form: `exаmple` (Latin with the Cyrillic `а`) is shown as
+/// `xn--exmple-4nf`, as a browser with its default IDN policy shows it. The
+/// combinations that are one writing system are allowed: Han with Hiragana and
+/// Katakana (Japanese), with Hangul (Korean) or with Bopomofo (Chinese).
+///
+/// This does not make the Unicode form safe to trust. A label from a single
+/// script that looks like another (an all-Cyrillic `аррӏе`
+/// next to `apple`) is still shown in Unicode, as in a browser. The security
+/// boundary is the matching, which compares A-labels; the interface must show
+/// the A-label next to the Unicode form when they differ.
 ///
 /// An address that is not a web address is
 /// `Error::Malformed(MalformedKind::Origin)`.
@@ -333,14 +359,128 @@ pub fn display_host(page_url: &str) -> Result<DisplayHost, Error> {
     let a_label = web.host.as_str().to_owned();
     let unicode = match &web.host {
         HostName::Ip(_) => a_label.clone(),
-        HostName::Name(name) => {
-            let (text, result) = idna::domain_to_unicode(name);
-            if result.is_ok() && !text.is_empty() {
-                text
-            } else {
-                a_label.clone()
-            }
-        }
+        HostName::Name(name) => name
+            .split('.')
+            .map(unicode_label)
+            .collect::<Vec<_>>()
+            .join("."),
     };
     Ok(DisplayHost { a_label, unicode })
+}
+
+/// One label for display: its Unicode form, or the label itself when it is
+/// plain ASCII, cannot be converted back, or mixes scripts.
+fn unicode_label(label: &str) -> String {
+    if !label.starts_with("xn--") {
+        return label.to_owned();
+    }
+    let (text, result) = idna::domain_to_unicode(label);
+    if result.is_ok() && !text.is_empty() && !mixes_scripts(&text) {
+        text
+    } else {
+        label.to_owned()
+    }
+}
+
+/// The writing systems the check tells apart. Letters of a script that has no
+/// entry of its own are told apart by their block of 128 code points, so two
+/// such letters may count as two scripts when they are one (which only gives
+/// the A-label: the safe side).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Script {
+    Latin,
+    Greek,
+    Cyrillic,
+    Armenian,
+    Han,
+    Hiragana,
+    Katakana,
+    Hangul,
+    Bopomofo,
+    Block(u32),
+}
+
+/// Ranges of code points by script, for the letters the table names.
+const SCRIPT_RANGES: &[(u32, u32, Script)] = &[
+    (0x0041, 0x005A, Script::Latin),
+    (0x0061, 0x007A, Script::Latin),
+    (0x00AA, 0x00AA, Script::Latin),
+    (0x00BA, 0x00BA, Script::Latin),
+    (0x00C0, 0x00D6, Script::Latin),
+    (0x00D8, 0x00F6, Script::Latin),
+    (0x00F8, 0x02AF, Script::Latin),
+    (0x1D00, 0x1D25, Script::Latin),
+    (0x1E00, 0x1EFF, Script::Latin),
+    (0x2C60, 0x2C7F, Script::Latin),
+    (0xA720, 0xA7FF, Script::Latin),
+    (0xAB30, 0xAB5A, Script::Latin),
+    (0xFF21, 0xFF3A, Script::Latin),
+    (0xFF41, 0xFF5A, Script::Latin),
+    (0x0370, 0x03FF, Script::Greek),
+    (0x1F00, 0x1FFF, Script::Greek),
+    (0x0400, 0x052F, Script::Cyrillic),
+    (0x1C80, 0x1C8F, Script::Cyrillic),
+    (0x2DE0, 0x2DFF, Script::Cyrillic),
+    (0xA640, 0xA69F, Script::Cyrillic),
+    (0x0530, 0x058F, Script::Armenian),
+    (0xFB13, 0xFB17, Script::Armenian),
+    (0x2E80, 0x2FDF, Script::Han),
+    (0x3005, 0x3005, Script::Han),
+    (0x3007, 0x3007, Script::Han),
+    (0x3021, 0x3029, Script::Han),
+    (0x3038, 0x303B, Script::Han),
+    (0x3400, 0x4DBF, Script::Han),
+    (0x4E00, 0x9FFF, Script::Han),
+    (0xF900, 0xFAFF, Script::Han),
+    (0x20000, 0x323AF, Script::Han),
+    (0x3041, 0x309F, Script::Hiragana),
+    (0x30A0, 0x30FF, Script::Katakana),
+    (0x31F0, 0x31FF, Script::Katakana),
+    (0xFF66, 0xFF9F, Script::Katakana),
+    (0x1100, 0x11FF, Script::Hangul),
+    (0x3130, 0x318F, Script::Hangul),
+    (0xA960, 0xA97F, Script::Hangul),
+    (0xAC00, 0xD7FF, Script::Hangul),
+    (0x3100, 0x312F, Script::Bopomofo),
+    (0x31A0, 0x31BF, Script::Bopomofo),
+];
+
+fn script_of(c: char) -> Script {
+    let cp = u32::from(c);
+    SCRIPT_RANGES
+        .iter()
+        .find(|(lo, hi, _)| (*lo..=*hi).contains(&cp))
+        .map_or(Script::Block(cp >> 7), |(_, _, script)| *script)
+}
+
+/// Whether the letters of a label come from more than one writing system.
+/// Digits, hyphens, other symbols and combining marks do not count: they
+/// belong to whatever they follow.
+fn mixes_scripts(label: &str) -> bool {
+    let mut seen: Vec<Script> = Vec::new();
+    for c in label.chars() {
+        let letter = matches!(
+            get_general_category(c),
+            GeneralCategory::UppercaseLetter
+                | GeneralCategory::LowercaseLetter
+                | GeneralCategory::TitlecaseLetter
+                | GeneralCategory::ModifierLetter
+                | GeneralCategory::OtherLetter
+        );
+        if !letter {
+            continue;
+        }
+        let script = script_of(c);
+        if !seen.contains(&script) {
+            seen.push(script);
+        }
+    }
+    if seen.len() < 2 {
+        return false;
+    }
+    // One writing system written with several scripts: the CJK combinations.
+    let only = |allowed: &[Script]| seen.iter().all(|s| allowed.contains(s));
+    !(only(&[Script::Han, Script::Hiragana, Script::Katakana])
+        || only(&[Script::Han, Script::Hangul])
+        || only(&[Script::Han, Script::Bopomofo]))
 }

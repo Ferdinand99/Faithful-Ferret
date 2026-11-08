@@ -143,11 +143,36 @@ const MATCHES: &[MatchRow] = &[
         "http://example.com:8080",
         "none",
     ),
+    // An address saved with http is never widened to other hosts.
     (
         "http://example.com",
         "domain",
         "http://www.example.com",
+        "none",
+    ),
+    (
+        "http://www.example.com",
         "domain",
+        "http://example.com",
+        "none",
+    ),
+    (
+        "http://example.com",
+        "domain",
+        "http://example.com/login",
+        "host",
+    ),
+    (
+        "http://example.co.uk",
+        "domain",
+        "http://shop.example.co.uk",
+        "none",
+    ),
+    (
+        "http://example.com/a",
+        "exact",
+        "http://www.example.com/a",
+        "none",
     ),
     (
         "http://example.com",
@@ -909,7 +934,53 @@ const DISPLAYS: &[DisplayRow] = &[
     ),
     (
         "https://ex\u{0430}mple.com",
-        Some(("xn--exmple-4nf.com", "ex\u{0430}mple.com")),
+        Some(("xn--exmple-4nf.com", "xn--exmple-4nf.com")),
+    ),
+    (
+        "https://exαmple.com",
+        Some(("xn--exmple-qxe.com", "xn--exmple-qxe.com")),
+    ),
+    (
+        "https://gօogle.com",
+        Some(("xn--gogle-lkg.com", "xn--gogle-lkg.com")),
+    ),
+    (
+        "https://абвa.com",
+        Some(("xn--a-7sbde.com", "xn--a-7sbde.com")),
+    ),
+    (
+        "https://日本abc.jp",
+        Some(("xn--abc-s08fl0d.jp", "xn--abc-s08fl0d.jp")),
+    ),
+    (
+        "https://shop.exаmple.com",
+        Some(("shop.xn--exmple-4nf.com", "shop.xn--exmple-4nf.com")),
+    ),
+    (
+        "https://пример.exаmple.рф",
+        Some((
+            "xn--e1afmkfd.xn--exmple-4nf.xn--p1ai",
+            "пример.xn--exmple-4nf.рф",
+        )),
+    ),
+    (
+        "https://пример-1.рф",
+        Some(("xn---1-mlcluqhd.xn--p1ai", "пример-1.рф")),
+    ),
+    ("https://αβγ.gr", Some(("xn--mxacd.gr", "αβγ.gr"))),
+    ("https://café.com", Some(("xn--caf-dma.com", "café.com"))),
+    (
+        "https://日本語ひらがな.jp",
+        Some(("xn--v8j0cwa6g1563acvb2w6i.jp", "日本語ひらがな.jp")),
+    ),
+    (
+        "https://한漢字.kr",
+        Some(("xn--p8s937bex8e.kr", "한漢字.kr")),
+    ),
+    // All one script: still shown in Unicode, as a browser does.
+    (
+        "https://аррӏе.com",
+        Some(("xn--80ak6aa92e.com", "аррӏе.com")),
     ),
     (
         "https://\u{65e5}\u{672c}\u{8a9e}.jp",

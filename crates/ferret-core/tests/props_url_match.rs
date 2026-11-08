@@ -3,6 +3,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use ferret_core::testing::passkey::is_public_suffix;
 use ferret_core::{
     UrlEntry, UrlMatch, UrlMatchResult, display_host, page_origin, same_site, url_match,
 };
@@ -158,6 +159,82 @@ proptest! {
             if oa.is_ip() || ob.is_ip() {
                 prop_assert_eq!(domain, UrlMatchResult::Host);
             }
+        }
+    }
+
+    /// An address saved with http never matches a different host, whatever
+    /// its match kind: the answer is `None`, `Host` (the same host) or, for
+    /// `exact`, `Exact`.
+    #[test]
+    fn an_http_entry_never_matches_a_different_host(
+        a in host(),
+        b in host(),
+        port in prop::option::of(1u16..=65535),
+    ) {
+        let port = port.map(|p| format!(":{p}")).unwrap_or_default();
+        let saved = format!("http://{a}{port}/x");
+        let on_page = format!("http://{b}{port}/x");
+        let same_host = match (page_origin(&saved), page_origin(&on_page)) {
+            (Ok(x), Ok(y)) => x.host() == y.host(),
+            _ => false,
+        };
+        for kind in kinds() {
+            let r = url_match(&entry(saved.clone(), kind.clone()), &on_page);
+            prop_assert_ne!(r, UrlMatchResult::Domain);
+            if !same_host {
+                prop_assert_eq!(r, UrlMatchResult::None);
+            }
+        }
+    }
+
+    /// Hosts that differ under a private or public suffix are never one site
+    /// and never a domain match: `<a>.github.io` and `<b>.github.io`.
+    #[test]
+    fn siblings_under_a_suffix_are_not_one_site(
+        a in "[a-z][a-z0-9]{0,8}",
+        b in "[a-z][a-z0-9]{0,8}",
+        suffix in prop_oneof![
+            Just("github.io"), Just("blogspot.com"), Just("vercel.app"),
+            Just("herokuapp.com"), Just("co.uk"), Just("com.au"),
+        ],
+        deep in any::<bool>(),
+    ) {
+        prop_assume!(a != b);
+        let (x, y) = if deep {
+            (format!("https://www.{a}.{suffix}"), format!("https://{b}.{suffix}"))
+        } else {
+            (format!("https://{a}.{suffix}"), format!("https://{b}.{suffix}"))
+        };
+        prop_assert!(!same_site(&x, &y));
+        prop_assert_eq!(url_match(&entry(x, UrlMatch::Domain), &y), UrlMatchResult::None);
+    }
+
+    /// An independent check of a `Domain` result: some suffix R of the saved
+    /// host is not a public suffix, its parent is, and both hosts are R or
+    /// end with `.R`. It uses the suffix test of the origin rules, not the
+    /// registrable-domain code that the match uses.
+    #[test]
+    fn a_domain_result_has_a_registrable_domain_both_hosts_share(a in page(), b in page()) {
+        let saved = entry(a.clone(), UrlMatch::Domain);
+        if url_match(&saved, &b) == UrlMatchResult::Domain {
+            let (oa, ob) = (page_origin(&a).unwrap(), page_origin(&b).unwrap());
+            prop_assert!(oa.is_https() && ob.is_https());
+            prop_assert!(!oa.is_ip() && !ob.is_ip());
+            let g = oa.host();
+            let h = ob.host();
+            let mut found = false;
+            let mut rest = g;
+            while let Some((_, parent)) = rest.split_once('.') {
+                if is_public_suffix(parent) && !is_public_suffix(rest) {
+                    let dotted = format!(".{rest}");
+                    found = (g == rest || g.ends_with(&dotted)) && (h == rest || h.ends_with(&dotted));
+                    break;
+                }
+                rest = parent;
+            }
+            prop_assert!(found, "{g} and {h}");
+            let tld = g.rsplit('.').next().unwrap_or(g);
+            prop_assert!(tld != "arpa" && tld != "box");
         }
     }
 
