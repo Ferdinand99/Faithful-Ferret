@@ -1009,9 +1009,10 @@ async fn unlock_methods_returns_wraps_pk_a_epoch_and_manifest_row() {
 
 #[tokio::test]
 async fn vault_handlers_take_only_vault_db_state() {
-    // The routes build over a state with nothing but the database handle and
-    // the session handle: no `FerretState`, no kit state. If a handler needed
-    // more, this would not compile.
+    // The routes build over a state with nothing but the database handle, the
+    // session handle and the four sync handles (notifications, rate limits,
+    // write gate, event stream slots): no `FerretState`, no kit state. If a
+    // handler needed more, this would not compile.
     let app = TestApp::new().await;
     let u = user(&app, 1).await;
     let router: Router = ferret_server::vault::routes::<Narrow>()

@@ -27,7 +27,7 @@ use crate::http::extract::SessionAuth;
 use crate::http::proxy_guard::ProxyList;
 use crate::product;
 use crate::vault::events::EventStreams;
-use crate::vault::notify::SyncEvents;
+use crate::vault::notify::{CAPACITY, SyncEvents};
 use crate::vault::rate::{RateConfig, SyncLimits, WriteGate};
 use crate::vault::retention;
 
@@ -215,7 +215,7 @@ pub async fn build_state(
         throttle,
         login_states,
         prelogin: Arc::new(RwLock::new(prelogin)),
-        events: SyncEvents::new(1024),
+        events: SyncEvents::new(CAPACITY),
         limits,
         write_gate: WriteGate::new(8, 64),
         streams: Arc::new(EventStreams::new(2, 40, 256)),

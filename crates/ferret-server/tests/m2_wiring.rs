@@ -294,7 +294,7 @@ fn restore_epoch_command_is_parsed_and_server_flags_are_left_to_config() {
     for line in [
         &["ferret", "restore-epoch"][..],
         &["ferret", "restore-epoch", "reset"],
-        &["ferret", "restore-epoch", "bump", "--yes"],
+        &["ferret", "restore-epoch", "bump", "--no-such-flag"],
         &["ferret", "restore-epoch", "bump", "--vault-port", "1"],
     ] {
         assert!(matches!(cli::parse(args(line)), Some(Err(_))), "{line:?}");
