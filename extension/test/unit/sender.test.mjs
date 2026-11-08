@@ -122,6 +122,10 @@ test("an extension page that a web page frames is not a top-level page", () => {
   assert.equal(isTopLevelExtensionPage(top, runtime), true);
   const { frameId: _frameId, ...noFrame } = top;
   assert.equal(isTopLevelExtensionPage(noFrame, runtime), true);
+  // A page in a tab always has a frame id, and it must be 0.
+  assert.equal(isTopLevelExtensionPage({ ...top, tab: { id: 5 } }, runtime), true);
+  assert.equal(isTopLevelExtensionPage({ ...noFrame, tab: { id: 5 } }, runtime), false);
+  assert.equal(isTopLevelExtensionPage({ ...top, tab: { id: 5 }, frameId: 2 }, runtime), false);
   // The framed page has the extension's URL and id, but a frame id above 0.
   const framed = extensionPageSender(fake, "pages/signin.html", { frameId: 3 });
   assert.equal(isExtensionPage(framed, runtime), true);

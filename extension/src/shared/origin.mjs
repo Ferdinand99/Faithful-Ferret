@@ -80,6 +80,9 @@ export function isExtensionPage(sender, runtime) {
 export function isTopLevelExtensionPage(sender, runtime) {
   if (!isExtensionPage(sender, runtime)) return false;
   const frameId = /** @type {Sender} */ (sender).frameId;
+  // Browsers set `frameId` whenever `tab` is set. A sender with a tab and no
+  // frame id is not trusted as top level.
+  if (/** @type {Sender} */ (sender).tab !== undefined) return frameId === 0;
   return frameId === undefined || frameId === 0;
 }
 

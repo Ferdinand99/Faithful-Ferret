@@ -58,6 +58,10 @@ export function string(opts) {
   if (!finiteBound(opts.max) || !finiteBound(min) || min > opts.max) {
     throw new TypeError("string schema needs a finite max");
   }
+  // A global or sticky regex keeps `lastIndex`, so `test` would alternate.
+  if (opts.pattern && (opts.pattern.global || opts.pattern.sticky)) {
+    throw new TypeError("string schema pattern must not be global or sticky");
+  }
   const oneOf = opts.oneOf ? Object.freeze([...opts.oneOf]) : null;
   if (oneOf && oneOf.some((v) => typeof v !== "string" || v.length > opts.max)) {
     throw new TypeError("string schema enum is out of bounds");

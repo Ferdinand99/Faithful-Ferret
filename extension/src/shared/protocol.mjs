@@ -42,15 +42,18 @@ export const FORBIDDEN_KEYS = Object.freeze([
 ]);
 
 /**
- * The only places a secret key name is allowed. `fill_field` carries the one
- * value that is filled into a page. `sign_in` and `unlock` carry what the user
- * typed into an extension page; they go to the background and never come back.
+ * The only place a forbidden key name is allowed: `fill_field` carries the one
+ * value that is filled into a page.
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
 });
 
-/** What the user types in an extension page and sends to the background. */
+/**
+ * What the user types in an extension page: `sign_in` and `unlock` carry it to
+ * the background, one way. No reply, content type or push type carries it.
+ * A new device gives `sk` or `qr_text`; the sign-in handler checks that.
+ */
 export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   sign_in: Object.freeze(["mp", "sk", "qr_text"]),
   unlock: Object.freeze(["mp"]),

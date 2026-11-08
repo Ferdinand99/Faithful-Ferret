@@ -70,6 +70,10 @@ test("schemas_cap_every_string_and_array", () => {
   assert.throws(() => string(/** @type {any} */ ({})), TypeError);
   assert.throws(() => string({ max: Infinity }), TypeError);
   assert.throws(() => string({ max: -1 }), TypeError);
+  // A stateful pattern would alternate between pass and fail.
+  assert.throws(() => string({ max: 8, pattern: /a/g }), TypeError);
+  assert.throws(() => string({ max: 8, pattern: /a/y }), TypeError);
+  assert.doesNotThrow(() => string({ max: 8, pattern: /a/i }));
   assert.throws(() => string({ max: 1.5 }), TypeError);
   assert.throws(() => array(boolean(), /** @type {any} */ ({})), TypeError);
   assert.throws(() => array(boolean(), { max: Infinity }), TypeError);
