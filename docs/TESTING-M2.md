@@ -6,7 +6,7 @@ restored from an older backup. This file lists what is tested automatically, how
 hand on the test deployment, and what is known not to be done. `docs/TESTING-M1.md` still describes the end-to-end
 stack and the first milestone's checks.
 
-Everything runs on the LANBox through the Docker context `unraid`; nothing here starts Docker on a workstation. All data
+Everything runs on the LANBox through the Docker context `lanbox`; nothing here starts Docker on a workstation. All data
 on the test stacks is throwaway test data.
 
 ## Automated tests
@@ -83,7 +83,7 @@ and no real passwords. Reload every open vault tab after a deploy: a tab loaded 
    then removes the local store, so the next sign-in asks for the secret key.
 8. **Sign-out closes the stream.** In the browser's network tools the `events` request is open; signing out closes it at
    once, and the other browser stays signed in and live.
-9. **No stale code and no secrets.** `docker logs ferret-test-app` shows no content from the vault, and
+9. **No stale code and no secrets.** `docker --context lanbox logs ferret-test-app` shows no content from the vault, and
    `scripts/lanbox-ferret-test.sh peers` shows the Pangolin traffic as `trusted=true`.
 
 A failed checkpoint upload (the server was busy or answered with an error) shows one calm notice that it is tried again
@@ -101,7 +101,7 @@ each of them. The ones to expect while testing:
   that drops changes that were not sent yet. A backup from before the `restore_seq` migration needs a start, a stop
   and then the bump.
 - Two devices that accept the same restore get a conflict for every item that was created or changed after the backup.
-- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, can look like a rollback.
+- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, can make the checkpoint check fail with the warning that the server shows an older state. Sync goes on, but checkpoints are not uploaded while the warning stands. Nothing is lost; do not forget the server for it.
 - One tab per browser: no fence for an old tab that is alive but not answering, a standby tab unlocks the account keys,
   an unsaved edit is lost on "Use here", and locking or signing out during "Use here" can leave no syncing tab until a reload.
 - A rolled-back newest write, a fork and withheld writes are not detected (§ 8.6), `top_seq` is not signed, and clearing

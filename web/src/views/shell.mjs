@@ -145,6 +145,12 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
 
   /** @param {any} payload */
   function onState(payload) {
+    if (payload?.kind === "warning_cleared" && payload.code === "checkpoint_upload_failed") {
+      // A later upload went through: the notice that it failed is withdrawn.
+      shown.get("error:checkpoint_upload_failed")?.remove();
+      shown.delete("error:checkpoint_upload_failed");
+      return;
+    }
     if (payload?.kind === "warning") {
       const code = String(payload.code ?? "");
       if (warnings !== null && isBannerCode(code)) return; // the sync banner shows it

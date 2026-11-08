@@ -16,7 +16,7 @@ The order matters. Do all four steps:
 
 1. **Stop the server.** The bump command refuses to run while the server is up. Both take an exclusive lock on
    `ferret.lock` in the data directory, so one cannot change the database under the other.
-2. **Restore the data directory** (the whole directory, including `ferret.sqlite`).
+2. **Restore the data directory as a whole.** First remove everything in it, in particular `ferret.sqlite-wal` and `ferret.sqlite-shm`, and then copy the backup in. If an older `ferret.sqlite` is copied over the current one while the current `-wal` and `-shm` files stay, SQLite replays that log onto the older file when it opens it, and the result is a mixed, probably corrupt database. Copy a backup that was taken with the server stopped, or one that comes with its own `-wal` file.
 3. **Bump the restore epoch** with the same image and the same data directory:
 
    ```
