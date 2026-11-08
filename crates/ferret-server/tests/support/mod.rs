@@ -12,8 +12,10 @@
 #![allow(dead_code)]
 
 pub mod accounts;
+pub mod events;
 pub mod handoff;
 pub mod session;
+pub mod sync;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -29,6 +31,8 @@ use ferret_server::config::Config;
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::server;
 use ferret_server::state::FerretState;
+use ferret_server::vault::notify::SyncEvents;
+use ferret_server::vault::rate::{RateConfig, SyncLimits, WriteGate};
 use ferret_server_auth::{Clock, ManualClock, NoThrottle, Throttle};
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -224,6 +228,8 @@ pub struct Builder {
     start: u64,
     throttle: Arc<dyn Throttle>,
     proxies: ProxyList,
+    rate: Option<RateConfig>,
+    gate: Option<(usize, usize)>,
 }
 
 impl Builder {
@@ -242,6 +248,18 @@ impl Builder {
     /// The proxies whose forwarding headers are believed.
     pub fn proxies(mut self, proxies: ProxyList) -> Self {
         self.proxies = proxies;
+        self
+    }
+
+    /// Other rate limits than the defaults.
+    pub fn rate(mut self, rate: RateConfig) -> Self {
+        self.rate = Some(rate);
+        self
+    }
+
+    /// A write gate of this many concurrent writes and this many waiting.
+    pub fn gate(mut self, concurrency: usize, queue: usize) -> Self {
+        self.gate = Some((concurrency, queue));
         self
     }
 
@@ -289,6 +307,8 @@ impl TestApp {
             start: START,
             throttle: Arc::new(NoThrottle),
             proxies: ProxyList::parse(&[]).expect("an empty proxy list"),
+            rate: None,
+            gate: None,
         }
     }
 
@@ -317,6 +337,12 @@ impl TestApp {
             .expect("start the server");
         state.throttle = settings.throttle;
         state.proxies = Arc::new(settings.proxies);
+        if let Some(rate) = settings.rate {
+            state.limits = Arc::new(SyncLimits::new(rate, clock.clone() as Arc<dyn Clock>));
+        }
+        if let Some((concurrency, queue)) = settings.gate {
+            state.write_gate = WriteGate::new(concurrency, queue);
+        }
         TestApp {
             vault: server::vault_router(state.clone()),
             admin: server::admin_router(state.clone()),
@@ -379,6 +405,12 @@ impl TestApp {
             headers: parts.headers,
             body: body.to_vec(),
         }
+    }
+
+    /// The change and revocation notifications of the server, to subscribe to
+    /// or to send on.
+    pub fn sync_events(&self) -> SyncEvents {
+        self.state.events.clone()
     }
 
     /// A copy of the cookies of a listener's jar.

@@ -24,7 +24,10 @@ use ferret_server::auth::session::Origin;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::ids::ItemId;
 use ferret_server::state::VaultDb;
+use ferret_server::vault::events::EventStreams;
+use ferret_server::vault::notify::SyncEvents;
 use ferret_server::vault::quota::Limits;
+use ferret_server::vault::rate::{SyncLimits, WriteGate};
 use ferret_server::vault::store::{PutBody, PutRequest, put_item};
 use ferret_server::wire::{b64url, hex16};
 use ferret_server_auth::SessionScope;
@@ -214,14 +217,56 @@ fn b64(value: &Value) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 // The narrow state.
 
-/// What the vault routes may see: the database handle, and the session handle
-/// the `VaultSession` extractor reads. No kit state, no `FerretState`. The
-/// database of the handlers is separate from that of the sessions, so a test
-/// can make one of them unusable.
+/// What the vault routes may see: the database handle, the session handle
+/// the `VaultSession` extractor reads, and the handles of the sync routes. No
+/// kit state, no `FerretState`. The database of the handlers is separate from
+/// that of the sessions, so a test can make one of them unusable.
 #[derive(Clone)]
 struct Narrow {
     auth: SessionAuth,
     db: VaultDb,
+    events: SyncEvents,
+    limits: Arc<SyncLimits>,
+    gate: WriteGate,
+    streams: Arc<EventStreams>,
+}
+
+impl Narrow {
+    /// The handles of the app, with `db` as the database of the handlers.
+    fn of(app: &TestApp, db: VaultDb) -> Self {
+        Self {
+            auth: SessionAuth::from_ref(&app.state),
+            db,
+            events: SyncEvents::from_ref(&app.state),
+            limits: Arc::<SyncLimits>::from_ref(&app.state),
+            gate: WriteGate::from_ref(&app.state),
+            streams: Arc::<EventStreams>::from_ref(&app.state),
+        }
+    }
+}
+
+impl FromRef<Narrow> for SyncEvents {
+    fn from_ref(state: &Narrow) -> SyncEvents {
+        state.events.clone()
+    }
+}
+
+impl FromRef<Narrow> for Arc<SyncLimits> {
+    fn from_ref(state: &Narrow) -> Arc<SyncLimits> {
+        state.limits.clone()
+    }
+}
+
+impl FromRef<Narrow> for WriteGate {
+    fn from_ref(state: &Narrow) -> WriteGate {
+        state.gate.clone()
+    }
+}
+
+impl FromRef<Narrow> for Arc<EventStreams> {
+    fn from_ref(state: &Narrow) -> Arc<EventStreams> {
+        state.streams.clone()
+    }
 }
 
 impl FromRef<Narrow> for SessionAuth {
@@ -247,10 +292,7 @@ fn dead_db() -> VaultDb {
 /// The vault routes over [`Narrow`], with sessions from the app's database and
 /// handlers that have no usable database.
 fn tripwire(app: &TestApp) -> Router {
-    ferret_server::vault::routes::<Narrow>().with_state(Narrow {
-        auth: SessionAuth::from_ref(&app.state),
-        db: dead_db(),
-    })
+    ferret_server::vault::routes::<Narrow>().with_state(Narrow::of(app, dead_db()))
 }
 
 async fn send(router: &Router, request: Request<Body>) -> Res {
@@ -875,6 +917,7 @@ async fn changes_response_stops_at_4_MiB() {
                 },
                 idem: idem(n),
                 request_hash: [n; 32],
+                resurrect: false,
             };
             put_item(conn, &vault, &device, &req, &Limits::DEFAULT, 1)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
@@ -966,15 +1009,14 @@ async fn unlock_methods_returns_wraps_pk_a_epoch_and_manifest_row() {
 
 #[tokio::test]
 async fn vault_handlers_take_only_vault_db_state() {
-    // The routes build over a state with nothing but the database handle and
-    // the session handle: no `FerretState`, no kit state. If a handler needed
-    // more, this would not compile.
+    // The routes build over a state with nothing but the database handle, the
+    // session handle and the four sync handles (notifications, rate limits,
+    // write gate, event stream slots): no `FerretState`, no kit state. If a
+    // handler needed more, this would not compile.
     let app = TestApp::new().await;
     let u = user(&app, 1).await;
-    let router: Router = ferret_server::vault::routes::<Narrow>().with_state(Narrow {
-        auth: SessionAuth::from_ref(&app.state),
-        db: app.state.vault_db.clone(),
-    });
+    let router: Router = ferret_server::vault::routes::<Narrow>()
+        .with_state(Narrow::of(&app, app.state.vault_db.clone()));
     let sealed = seal(&u, item(1), 1, "narrow");
     let res = send(
         &router,

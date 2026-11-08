@@ -55,6 +55,7 @@ fn live<'a>(item_id: ItemId, base_rev: u64, blob: &'a [u8], n: u8) -> PutRequest
         body: PutBody::Live { blob, tag: [n; 32] },
         idem: id16(0xe0, n),
         request_hash: hash(n),
+        resurrect: false,
     }
 }
 
@@ -65,6 +66,7 @@ fn tomb<'a>(item_id: ItemId, base_rev: u64, tomb: &'a [u8], n: u8) -> PutRequest
         body: PutBody::Deleted { tomb },
         idem: id16(0xe0, n),
         request_hash: hash(n),
+        resurrect: false,
     }
 }
 

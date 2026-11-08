@@ -27,6 +27,7 @@
 //!   origin. [`http`]: the layers (proxy trust, `Origin` check, headers),
 //!   static files and extractors. [`admin`]: the admin listener's own routes.
 //! * [`wire`]: the JSON shapes shared with the web vault.
+//! * [`cli`]: the commands of `ferret` that are not the server.
 //!
 //! Many modules are still stubs: each has its documentation and, where it has
 //! routes, a `routes()` that serves nothing yet.
@@ -37,6 +38,7 @@ pub mod admin;
 pub mod auth;
 pub mod backup;
 pub mod build_info;
+pub mod cli;
 pub mod config;
 pub mod db;
 #[cfg(feature = "e2e-clock")]
