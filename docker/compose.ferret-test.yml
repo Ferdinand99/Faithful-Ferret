@@ -10,7 +10,9 @@
 #
 # Newt, the tunnel client, runs outside Docker (Proxmox CT 130, 10.0.3.169): set
 # FERRET_TRUSTED_PROXIES=10.0.3.169 in docker/.env. The script accepts one valid
-# IPv4 address there, or the address of a Docker container named Newt.
+# IPv4 address there, or the address of a Docker container named Newt. The Newt CT
+# needs a static IP (a fixed address or a DHCP reservation): the server trusts exactly
+# this address.
 name: ferret-test
 
 services:

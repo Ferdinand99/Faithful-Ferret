@@ -188,7 +188,7 @@ for case in duplicate:172.17.0.5 export:172.17.0.6 spaces:172.17.0.7 forged:; do
     same_addresses 172.17.0.2/32 172.17.0.2 || { echo "check-ferret-test-stack: /32 must equal the plain address" >&2; exit 1; }
     if same_addresses "172.17.0.2,172.17.0.3" 172.17.0.2 || same_addresses "" 172.17.0.2; then echo "check-ferret-test-stack: a list with more or no entries must not match" >&2; exit 1; fi
     # The guard itself, with the tunnel client at 172.17.0.2.
-    tunnel_address() { echo 172.17.0.2; }
+    tunnel_lookup() { echo "address 172.17.0.2"; }
     tunnel_mismatch >/dev/null || { echo "check-ferret-test-stack: $name.env: tunnel_mismatch did not report the mismatch" >&2; exit 1; }
     if (require_tunnel) >/dev/null 2>&1; then echo "check-ferret-test-stack: $name.env: require_tunnel did not refuse" >&2; exit 1; fi
   )
@@ -198,20 +198,24 @@ done
   unset FERRET_TRUSTED_PROXIES FERRET_SETUP_TOKEN
   # shellcheck disable=SC1091
   source scripts/lanbox-ferret-test.sh
-  tunnel_address() { echo 172.17.0.2; }
+  tunnel_lookup() { echo "address 172.17.0.2"; }
   if tunnel_mismatch >/dev/null; then echo "check-ferret-test-stack: plain.env: a matching address was reported as a mismatch" >&2; exit 1; fi
   (require_tunnel) >/dev/null 2>&1 || { echo "check-ferret-test-stack: plain.env: require_tunnel refused a matching address" >&2; exit 1; }
   # The tunnel client at another address, and at none.
-  tunnel_address() { echo 172.17.0.3; }
+  tunnel_lookup() { echo "address 172.17.0.3"; }
   tunnel_mismatch >/dev/null || { echo "check-ferret-test-stack: plain.env: another tunnel address passed" >&2; exit 1; }
   # A tunnel client that Docker cannot see (a Proxmox CT) is believed only through
   # the explicit value, which is a valid single address here: no mismatch.
-  tunnel_address() { :; }
+  tunnel_lookup() { echo notfound; }
   if tunnel_mismatch >/dev/null; then echo "check-ferret-test-stack: plain.env: an explicit single address was refused when the tunnel client is outside Docker" >&2; exit 1; fi
+  # An unreadable tunnel client is a refusal, whatever the explicit value is.
+  tunnel_lookup() { echo unreadable; }
+  tunnel_mismatch >/dev/null || { echo "check-ferret-test-stack: plain.env: an unreadable tunnel client did not refuse" >&2; exit 1; }
+  if (require_tunnel) >/dev/null 2>&1; then echo "check-ferret-test-stack: plain.env: require_tunnel accepted an unreadable tunnel client" >&2; exit 1; fi
 )
 
 # A tunnel client that runs outside Docker (since the move to Proxmox, Newt is a CT
-# that `docker inspect` cannot see). The real tunnel_address, reachable and
+# that `docker inspect` cannot see). The real tunnel_lookup, reachable and
 # require_tunnel run against a stand-in docker program that only answers `inspect`
 # and `run` from the environment and records the `run` arguments; `compose` goes to
 # the real docker, which only reads the files. Nothing is sent to a Docker host.
@@ -225,10 +229,21 @@ for a in "$@"; do
 done
 case "$sub" in
   inspect)
-    # Newt as a Docker container only when FAKE_NEWT_MODE is set; else "no such container".
-    [ -n "${FAKE_NEWT_MODE:-}" ] || exit 1
+    # Docker cannot be asked: not a "no such container" answer.
+    if [ -n "${FAKE_INSPECT_ERROR:-}" ]; then
+      echo "error during connect: Cannot connect to the Docker daemon" >&2
+      exit 1
+    fi
+    # Newt as a Docker container only when FAKE_NEWT_MODE is set; else Docker's own
+    # "no such container" answer.
+    if [ -z "${FAKE_NEWT_MODE:-}" ]; then
+      echo "Error response from daemon: No such container: Newt" >&2
+      exit 1
+    fi
     case "$*" in
-      *HostConfig.NetworkMode*) echo "$FAKE_NEWT_MODE" ;;
+      *State.Running*)
+        if [ -n "${FAKE_NEWT_STOPPED:-}" ]; then echo "false $FAKE_NEWT_MODE"; else echo "true $FAKE_NEWT_MODE"; fi
+        ;;
       *NetworkSettings.Networks*) echo "${FAKE_NEWT_IP:-}" ;;
     esac
     exit 0
@@ -276,12 +291,13 @@ expect_fail() { echo "check-ferret-test-stack: $1" >&2; exit 1; }
 (
   # shellcheck disable=SC1091
   source scripts/lanbox-ferret-test.sh
-  for ok in 10.0.3.169 192.168.1.20 172.17.0.2 1.2.3.4 223.255.255.254; do
+  for ok in 10.0.3.169 192.168.1.20 172.17.0.2 1.2.3.4 223.255.255.254 169.253.1.1 169.255.1.1 10.0.0.254 10.0.1.1; do
     single_ipv4 "$ok" || expect_fail "single_ipv4 refused $ok"
   done
   for bad in "" 10.0.3 10.0.3.169.1 10.0.3.256 10.0.3.1690 010.0.3.169 10.0.03.169 10.0.3.169/32 10.0.3.0/24 \
              "10.0.3.169,10.0.3.170" "10.0.3.169 10.0.3.170" " 10.0.3.169" "10.0.3.169 " newt abc.def.ghi.jkl ::1 fe80::1 \
-             0.0.0.0 0.1.2.3 127.0.0.1 127.1.2.3 224.0.0.1 239.1.1.1 255.255.255.255 -1.0.0.1 "10.0.3.169
+             0.0.0.0 0.1.2.3 127.0.0.1 127.1.2.3 224.0.0.1 239.1.1.1 255.255.255.255 -1.0.0.1 \
+             10.0.3.0 10.0.3.255 192.168.1.0 192.168.1.255 169.254.1.1 169.254.0.0 169.254.169.254 10x0x3x169 "10.0.3.169
 1.2.3.4"; do
     if single_ipv4 "$bad"; then expect_fail "single_ipv4 accepted '$bad'"; fi
   done
@@ -296,6 +312,11 @@ grep -q -- '--label owner=ferret-test' "$run_log" || expect_fail "the reachabili
 grep -q -- '--cap-drop ALL' "$run_log" || expect_fail "the reachability check keeps its capabilities"
 grep -q -- 'ping -c 1 -W 3 10.0.3.169' "$run_log" || expect_fail "the reachability check does not ping the address"
 if grep -qE 'docker\.sock|--privileged|-v ' "$run_log"; then expect_fail "the reachability check has a mount or privilege"; fi
+# The ping container is removed when it ends, cannot write, cannot gain privileges
+# and is limited in processes and memory.
+for flag in '--rm' '--read-only' '--security-opt no-new-privileges:true' '--pids-limit [0-9]' '--memory [0-9]'; do
+  grep -q -- "$flag" "$run_log" || expect_fail "the reachability check lacks $flag"
+done
 # Not answering ping: a warning, not a refusal.
 out="$(FAKE_PING_RC=1 outcome 10.0.3.169 require_tunnel)" || expect_fail "a silent address was refused: $out"
 printf '%s' "$out" | grep -q 'WARNING.*10.0.3.169 does not answer ping' || expect_fail "no warning for an address that does not answer ping: $out"
@@ -304,8 +325,31 @@ out="$(FAKE_PING_RC=1 outcome 10.0.3.169 check_tunnel)"
 printf '%s' "$out" | grep -q 'WARNING.*does not answer ping' || expect_fail "status gave no warning for a silent address: $out"
 out="$(FAKE_PING_RC=0 outcome 10.0.3.169 check_tunnel)"
 [ -z "$out" ] || expect_fail "status warned about a good address: $out"
-# A host-mode or bridge-less Docker container has no readable address: same path.
-out="$(FAKE_NEWT_MODE=host FAKE_PING_RC=0 outcome 10.0.3.169 require_tunnel)" || expect_fail "a host-mode Newt was refused: $out"
+
+# Newt exists as a Docker container but its address cannot be read (host, none or
+# another container's network, stopped, no address on its network), or Docker cannot
+# be asked: refused, even with a valid explicit address, and nothing is pinged. Only
+# Docker's answer "no such container" opens the explicit path.
+refuse_unreadable() { # description, then VAR=value pairs of the fake docker
+  local what="$1"; shift
+  : > "$run_log"
+  if out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 10.0.3.169 require_tunnel)"; then
+    expect_fail "$what: require_tunnel accepted the explicit address"
+  fi
+  printf '%s' "$out" | grep -q 'refusing to start' || expect_fail "$what: no refusal message: $out"
+  printf '%s' "$out" | grep -q 'cannot read the address of Newt' || expect_fail "$what: wrong reason: $out"
+  [ ! -s "$run_log" ] || expect_fail "$what: reached docker run"
+  # The status command warns for it too.
+  out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 10.0.3.169 check_tunnel)"
+  printf '%s' "$out" | grep -q 'WARNING: cannot read the address of Newt' || expect_fail "$what: status gave no warning: $out"
+}
+refuse_unreadable "a host-mode Newt" FAKE_NEWT_MODE=host FAKE_NEWT_IP=10.0.3.152
+refuse_unreadable "a Newt without a network of its own" FAKE_NEWT_MODE=none FAKE_NEWT_IP=172.17.0.9
+refuse_unreadable "a Newt in another container's network" FAKE_NEWT_MODE=container:abc123 FAKE_NEWT_IP=172.17.0.9
+refuse_unreadable "a stopped Newt (bridge)" FAKE_NEWT_MODE=bridge FAKE_NEWT_IP= FAKE_NEWT_STOPPED=1
+refuse_unreadable "a stopped Newt with a remembered address" FAKE_NEWT_MODE=bridge FAKE_NEWT_IP=172.17.0.2 FAKE_NEWT_STOPPED=1
+refuse_unreadable "a running Newt with no address on its network" FAKE_NEWT_MODE=bridge FAKE_NEWT_IP=
+refuse_unreadable "a failed docker inspect (not 'no such container')" FAKE_INSPECT_ERROR=1
 
 # Refused without any ping: not set, and everything that is not one valid address.
 for bad in UNSET "" "10.0.3.169,10.0.3.170" "10.0.3.0/24" "10.0.3.169/32" newt 10.0.3.256 010.0.3.169 0.0.0.0 127.0.0.1 224.0.0.1 ::1; do
