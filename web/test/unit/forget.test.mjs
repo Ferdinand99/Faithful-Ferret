@@ -101,23 +101,47 @@ test("forget_server_removes_everything_of_the_account_and_nothing_of_another_acc
   assert.deepEqual(await counts(db.store, SERVER, OTHER_ACCOUNT), ALL_THERE);
 });
 
-test("forget_server_keeps_the_keyed_records_of_the_same_account_on_another_server", async () => {
+/** Pinned record, sync state and device secrets of the account under another origin of the same server. */
+async function pinUnder(store, server, accountId, n) {
+  await savePinned(store, server, accountId, `alias${n}@example.org`, pinnedRecord({ accountId, server }));
+  await saveSyncState(store, server, accountId, syncState(n));
+  await deviceSecrets.put(store, server, accountId, await sealing());
+}
+
+test("forget_server_keeps_the_records_of_the_same_account_under_another_origin", async () => {
   const db = await freshStore();
   const { store } = db;
-  await savePinned(store, SERVER, ACCOUNT, "a@example.org", pinnedRecord({ accountId: ACCOUNT, server: SERVER }));
-  await savePinned(store, OTHER_SERVER, ACCOUNT, "a@example.org", pinnedRecord({ accountId: ACCOUNT, server: OTHER_SERVER }));
-  await saveSyncState(store, SERVER, ACCOUNT, syncState(1));
-  await saveSyncState(store, OTHER_SERVER, ACCOUNT, syncState(2));
-  await deviceSecrets.put(store, SERVER, ACCOUNT, await sealing());
-  await deviceSecrets.put(store, OTHER_SERVER, ACCOUNT, await sealing());
+  await populate(store, SERVER, ACCOUNT, 1);
+  await pinUnder(store, OTHER_SERVER, ACCOUNT, 2);
 
-  await forgetServer(store, `${SERVER}/anything`, ACCOUNT);
-  assert.equal(await loadPinnedByAccount(store, SERVER, ACCOUNT), null);
-  assert.equal(await loadSyncState(store, SERVER, ACCOUNT), null);
-  assert.equal(await deviceSecrets.get(store, SERVER, ACCOUNT), null);
+  const result = await forgetServer(store, `${SERVER}/anything`, ACCOUNT);
+  assert.equal(result.shared, true, "another origin has this account");
+  assert.deepEqual(result.removed, { ...NONE, pinned: 1, sync_state: 1, device_secrets: 1 }, "only the records of this origin went");
+
+  // What this origin held by key is gone; what is kept per account stays for the other origin.
+  assert.deepEqual(await counts(store, SERVER, ACCOUNT), { ...ALL_THERE, pinned: 0, sync_state: 0, device_secrets: 0 });
   assert.ok(await loadPinnedByAccount(store, OTHER_SERVER, ACCOUNT));
   assert.equal((await loadSyncState(store, OTHER_SERVER, ACCOUNT)).uploadedSeq, 2);
   assert.ok(await deviceSecrets.get(store, OTHER_SERVER, ACCOUNT));
+  assert.equal(await pendingWrites(store, ACCOUNT), 3, "the queued writes are still there");
+
+  // Forgetting the last origin takes the rest.
+  const last = await forgetServer(store, OTHER_SERVER, ACCOUNT);
+  assert.equal(last.shared, undefined);
+  assert.deepEqual(last.removed, { ...ALL_THERE, pinned: 1, sync_state: 1, device_secrets: 1 });
+  assert.deepEqual(await counts(store, OTHER_SERVER, ACCOUNT), NONE);
+  assert.equal(await pendingWrites(store, ACCOUNT), 0);
+});
+
+test("forget_server_is_not_shared_by_another_account_on_another_origin", async () => {
+  const db = await freshStore();
+  const { store } = db;
+  await populate(store, SERVER, ACCOUNT, 1);
+  await pinUnder(store, OTHER_SERVER, OTHER_ACCOUNT, 2);
+  const result = await forgetServer(store, SERVER, ACCOUNT);
+  assert.equal(result.shared, undefined);
+  assert.deepEqual(result.removed, ALL_THERE);
+  assert.ok(await loadPinnedByAccount(store, OTHER_SERVER, OTHER_ACCOUNT));
 });
 
 test("forget_server_keeps_the_device_id", async () => {

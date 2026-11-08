@@ -151,3 +151,27 @@ test("a_refused_state_leaves_the_stored_one_alone", async () => {
   await assert.rejects(() => saveSyncState(db.store, SERVER, ACCOUNT, state({ uploadedSeq: 0.5 })), StoreError);
   assert.deepEqual(await loadSyncState(db.store, SERVER, ACCOUNT), good);
 });
+
+test("a_damaged_stored_state_is_refused_on_load", async () => {
+  const db = await freshStore();
+  const put = (record) => new Promise((resolve, reject) => {
+    const tx = db.store.db.transaction("sync_state", "readwrite");
+    tx.objectStore("sync_state").put({ serverUrl: SERVER, accountId: ACCOUNT, ...record });
+    tx.oncomplete = () => resolve(undefined);
+    tx.onerror = () => reject(tx.error);
+  });
+  const refused = () => assert.rejects(
+    loadSyncState(db.store, SERVER, ACCOUNT),
+    (error) => error instanceof StoreError && error.code === "sync_state_malformed",
+  );
+  const good = state();
+  await put(good);
+  assert.deepEqual(await loadSyncState(db.store, SERVER, ACCOUNT), good);
+  for (const damage of [
+    { memory: [1, 2, 3] }, { memory: undefined }, { uploadedSeq: 1.5 }, { verifiedAt: -3 }, { restoreEpoch: "2" },
+    { hardWarning: "" }, { restore: { epoch: 1, phase: "later" } }, { restore: undefined }, { extra: "field" },
+  ]) {
+    await put({ ...good, ...damage });
+    await refused();
+  }
+});

@@ -9,8 +9,16 @@
 // and the device secrets. What stays: this browser's device id, and everything
 // that belongs to another account or another server.
 //
-// Rows, the outbox and the trash are kept per account, not per server (an
-// account id is 16 random bytes that one server made), so they go by account.
+// Rows, the outbox, the trash and the sync flags are kept per account, not per
+// server (an account id is 16 random bytes that one server made). The same
+// account id can be pinned under two origins (one server reached by two
+// addresses, or a server that reuses an id), and those records are then shared.
+// When another origin has the account too, only the records of this origin go
+// (pinned, sync state, device secrets); the shared ones stay, are reported as 0,
+// and the result says `shared: true`.
+//
+// Callers run `forgetServer` inside the Web Lock `ferret-sync-memory:<server>:<account>`,
+// like every other write of the sync state, so no tab is saving it meanwhile.
 import { hex16 } from "../b64.mjs";
 import { req, run, serverKey } from "./idb.mjs";
 
@@ -25,11 +33,12 @@ function checkAccount(accountId) {
 /**
  * Removes everything this device keeps for the server and account, in one
  * transaction, and reports how many records went from each store. The device id
- * stays.
+ * stays. When another origin has the same account id pinned, the records kept
+ * per account (rows, outbox, trash, flags) stay and `shared` is true.
  * @param {import("./idb.mjs").Store} store
  * @param {string} serverUrl
  * @param {string} accountId
- * @returns {Promise<{ removed: Record<string, number> }>}
+ * @returns {Promise<{ removed: Record<string, number>, shared?: true }>}
  */
 export async function forgetServer(store, serverUrl, accountId) {
   const server = serverKey(serverUrl);
@@ -37,7 +46,7 @@ export async function forgetServer(store, serverUrl, accountId) {
   const key = [server, accountId];
   const ofAccount = store.keyRange.bound([accountId], [accountId, []]);
   const flags = `sync.flags.${accountId}.`;
-  const ofFlags = store.keyRange.bound(flags, `${flags}￿`);
+  const ofFlags = store.keyRange.bound(flags, `${flags}\uffff`);
 
   return run(store, FORGET_STORES, "readwrite", async ([pinned, syncState, rows, outbox, trash, settings, secrets]) => {
     /** @type {Record<string, number>} */
@@ -48,21 +57,32 @@ export async function forgetServer(store, serverUrl, accountId) {
       if (found !== undefined) await req(table.delete(key));
       removed[name] = found === undefined ? 0 : 1;
     }
+    // Another origin with the same account id: what is kept per account is not ours alone.
+    let shared = false;
+    for (const table of [pinned, syncState, secrets]) {
+      const keys = await req(table.getAllKeys());
+      if (keys.some((other) => Array.isArray(other) && other[1] === accountId && other[0] !== server)) shared = true;
+    }
     // Records under a prefix.
     for (const [name, table, range] of /** @type {[string, IDBObjectStore, IDBKeyRange][]} */ ([
       ["rows", rows, ofAccount],
       ["trash", trash, ofAccount],
       ["settings", settings, ofFlags],
     ])) {
+      if (shared) {
+        removed[name] = 0;
+        continue;
+      }
       const keys = await req(table.getAllKeys(range));
       if (keys.length > 0) await req(table.delete(range));
       removed[name] = keys.length;
     }
     // The outbox is keyed by a counter; its entries of the account are found by the scope index.
-    const queued = await req(outbox.index("by_scope").getAllKeys(ofAccount));
+    const queued = shared ? [] : await req(outbox.index("by_scope").getAllKeys(ofAccount));
     for (const primary of queued) await req(outbox.delete(primary));
     removed.outbox = queued.length;
-    return { removed: Object.fromEntries(FORGET_STORES.map((name) => [name, removed[name]])) };
+    const report = Object.fromEntries(FORGET_STORES.map((name) => [name, removed[name]]));
+    return shared ? { removed: report, shared: true } : { removed: report };
   });
 }
 

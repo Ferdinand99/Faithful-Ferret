@@ -42,10 +42,10 @@ for id in "${bad_ids[@]}"; do
 done
 
 # A valid run id adds the label and the name.
-run_lanbox DEV_RUN=m1-t13-test DEV_TITLE="Ferret tests" || { cat "$work/out" >&2; fail "valid DEV_RUN failed"; }
-grep -qx 'dev.run=m1-t13-test' "$work/log" || fail "dev.run label is missing"
+run_lanbox DEV_RUN=run-check DEV_TITLE="Ferret tests" || { cat "$work/out" >&2; fail "valid DEV_RUN failed"; }
+grep -qx 'dev.run=run-check' "$work/log" || fail "dev.run label is missing"
 grep -qx 'dev.title=Ferret tests' "$work/log" || fail "dev.title label is missing"
-grep -qxE 'ferret-m1-t13-test-[0-9]+' "$work/log" || fail "container name is wrong"
+grep -qxE 'ferret-run-check-[0-9]+' "$work/log" || fail "container name is wrong"
 grep -qx 'owner=ferret-core' "$work/log" || fail "owner label is missing"
 
 # The longest allowed id is accepted, and a title is optional.
@@ -73,10 +73,10 @@ for id in "${bad_ids[@]}"; do
   grep -q 'DEV_RUN must match' "$work/out" || fail "web: DEV_RUN='$id' gave no message"
 done
 
-run_web DEV_RUN=m2-t22-check DEV_TITLE="Web checks" FERRET_PASS_ENV="FOO BAR_1" FOO=1   || { cat "$work/out" >&2; fail "web: valid settings failed"; }
-grep -qx 'dev.run=m2-t22-check' "$work/log" || fail "web: dev.run label is missing"
+run_web DEV_RUN=web-check DEV_TITLE="Web checks" FERRET_PASS_ENV="FOO BAR_1" FOO=1   || { cat "$work/out" >&2; fail "web: valid settings failed"; }
+grep -qx 'dev.run=web-check' "$work/log" || fail "web: dev.run label is missing"
 grep -qx 'dev.title=Web checks' "$work/log" || fail "web: dev.title label is missing"
-grep -qxE 'ferret-m2-t22-check-[0-9]+' "$work/log" || fail "web: container name is wrong"
+grep -qxE 'ferret-web-check-[0-9]+' "$work/log" || fail "web: container name is wrong"
 grep -qx 'owner=ferret-core' "$work/log" || fail "web: owner label is missing"
 # A passed variable is a bare name after -e: the value never appears on the command line.
 grep -qx 'FOO' "$work/log" || fail "web: FOO is not passed on"

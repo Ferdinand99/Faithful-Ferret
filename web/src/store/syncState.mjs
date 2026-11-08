@@ -79,7 +79,8 @@ function keyOf(serverUrl, accountId) {
 
 /**
  * The stored state of an account on a server, or null when there is none (a
- * first start on this device).
+ * first start on this device). A stored record that does not pass the checks of
+ * a save is refused (`StoreError`, code `sync_state_malformed`).
  * @param {import("./idb.mjs").Store} store
  * @param {string} serverUrl
  * @param {string} accountId
@@ -89,8 +90,10 @@ export async function loadSyncState(store, serverUrl, accountId) {
   const key = keyOf(serverUrl, accountId);
   const row = await run(store, ["sync_state"], "readonly", ([table]) => req(table.get(key)));
   if (row === undefined) return null;
-  const { memory, restoreEpoch, verifiedAt, uploadedAt, uploadedSeq, hardWarning, restore } = row;
-  return { memory, restoreEpoch, verifiedAt, uploadedAt, uploadedSeq, hardWarning, restore };
+  // A stored record that is damaged (another version, or edited by hand) is not
+  // handed on: it fails the same check as a save.
+  const { serverUrl: _server, accountId: _account, ...state } = row;
+  return clean(state);
 }
 
 /**

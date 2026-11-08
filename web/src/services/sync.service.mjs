@@ -45,6 +45,7 @@ export default {
        */
       async start(scope) {
         engine?.stop();
+        engine = null; // a listener that asks `current()` while it is told about the end sees none
         retire();
         const made = createSyncEngine({ api, client, store, scope });
         engine = made;

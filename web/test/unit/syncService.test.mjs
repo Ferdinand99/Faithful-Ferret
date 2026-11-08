@@ -92,3 +92,13 @@ test("a_stop_during_a_start_does_not_announce_the_engine", async () => {
   assert.deepEqual(calls, [], "the engine was stopped before it was ready");
   assert.equal(sync.current(), null);
 });
+
+test("a_listener_told_about_the_end_of_an_engine_sees_no_current_engine", async () => {
+  const { sync } = await service();
+  const seen = [];
+  sync.onEngine((engine) => seen.push(engine === null ? { ended: sync.current() } : { started: sync.current() === engine }));
+  await sync.start(scope);
+  await sync.start(scope); // the first ends while the second is about to start
+  sync.stop();
+  assert.deepEqual(seen, [{ started: true }, { ended: null }, { started: true }, { ended: null }]);
+});
