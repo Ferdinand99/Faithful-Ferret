@@ -79,6 +79,10 @@ export const findings = {
   violations: /** @type {string[]} */ ([]),
   pageErrors: /** @type {string[]} */ ([]),
   consoleErrors: /** @type {string[]} */ ([]),
+  /** Reports that the engine makes about its own widgets (see `watchScript`); not violations of the page. */
+  engineReports: /** @type {string[]} */ ([]),
+  /** The console lines that go with those reports; there is at most one per report. */
+  engineConsole: /** @type {string[]} */ ([]),
   pages: 0,
   /** Everything sent to the servers and received from them, as text. */
   traffic: /** @type {string[]} */ ([]),
@@ -86,12 +90,45 @@ export const findings = {
 
 // ------------------------------------------------------------- watching
 
-const WATCH = `
-  document.addEventListener("securitypolicyviolation", (e) => {
-    try {
-      window.__e2eViolation(e.violatedDirective + " " + e.blockedURI + " " + (e.sample || ""));
-    } catch {}
-  });
+/**
+ * The script that watches one page for policy violations.
+ *
+ * One violation is not ours and is counted apart: WebKit builds the inner parts of
+ * a `<select>` with an inline `style` attribute, and reports a `style-src-attr`
+ * violation for each `<select>` that a page makes, with or without our code (a bare
+ * `document.createElement("select")` on this page does it, and the element has no
+ * `style` attribute afterwards). Chromium and Firefox report nothing. The report is
+ * set apart only when all of this is true: the engine is WebKit, the directive is
+ * `style-src-attr`, the blocked source is `inline`, and fewer such reports have been
+ * set apart than `<select>` elements were made on this page. Any other inline style,
+ * and any second one for the same `<select>`, still fails the run. The CSP is not
+ * loosened for this: the page keeps `style-src 'self'` with no exception.
+ * @param {string} engine the name of the browser engine (`chromium`, `firefox`, `webkit`)
+ */
+const watchScript = (engine) => `
+  (() => {
+    const webkit = ${JSON.stringify(engine === "webkit")};
+    let selects = 0;
+    let setApart = 0;
+    if (webkit) {
+      const create = Document.prototype.createElement;
+      Document.prototype.createElement = function (name, ...rest) {
+        if (String(name).toLowerCase() === "select") selects += 1;
+        return create.call(this, name, ...rest);
+      };
+    }
+    document.addEventListener("securitypolicyviolation", (e) => {
+      try {
+        const text = e.violatedDirective + " " + e.blockedURI + " " + (e.sample || "");
+        if (webkit && e.effectiveDirective === "style-src-attr" && e.blockedURI === "inline" && !e.sample && setApart < selects) {
+          setApart += 1;
+          window.__e2eEngineReport(text + " (the inner style of a select, WebKit)");
+          return;
+        }
+        window.__e2eViolation(text);
+      } catch {}
+    });
+  })();
 `;
 
 /**
@@ -103,7 +140,9 @@ export async function watch(context) {
   if (watched.includes(context)) return context;
   watched.push(context);
   await context.exposeFunction("__e2eViolation", (/** @type {string} */ text) => findings.violations.push(text));
-  await context.addInitScript(WATCH);
+  await context.exposeFunction("__e2eEngineReport", (/** @type {string} */ text) => findings.engineReports.push(text));
+  const engine = context.browser()?.browserType().name() ?? "";
+  await context.addInitScript(watchScript(engine));
   const onPage = (/** @type {import("@playwright/test").Page} */ page) => {
     findings.pages += 1;
     page.on("pageerror", (e) => findings.pageErrors.push(String(e)));
@@ -115,6 +154,12 @@ export async function watch(context) {
       if (/^Failed to load resource/.test(text)) return;
       // WebKit does not know the `interactive-widget` viewport key of the page's meta tag and says so.
       if (/^Viewport argument key "interactive-widget" not recognized/.test(text)) return;
+      // WebKit also logs the report of its own select widget (see `watchScript`). These are
+      // counted apart, and 09-csp holds them to the number of reports set apart in the page.
+      if (engine === "webkit" && /^Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive/.test(text)) {
+        findings.engineConsole.push(text);
+        return;
+      }
       findings.consoleErrors.push(text);
     });
   };

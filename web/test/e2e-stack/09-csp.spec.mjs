@@ -8,4 +8,7 @@ test("csp_has_zero_violations_during_the_whole_run", async () => {
   expect(findings.violations).toEqual([]);
   expect(findings.pageErrors).toEqual([]);
   expect(findings.consoleErrors).toEqual([]);
+  // WebKit reports the inline style of its own select widget (see `watchScript` in support.mjs).
+  // Each console line needs a report that was set apart in the page, and nothing else is let through.
+  expect(findings.engineConsole.length).toBeLessThanOrEqual(findings.engineReports.length);
 });
