@@ -577,7 +577,7 @@ test("automatic_reupload_refusal_does_not_say_you_changed_something", async () =
 test("the_conflict_texts_exist_in_both_languages", () => {
   for (const lang of ["en", "nb"]) {
     const texts = JSON.parse(readFileSync(new URL(`../../src/locales/${lang}/sync.json`, import.meta.url), "utf8"));
-    for (const key of ["reupload_refused", "conflict_unsettled", "busy", "invalid_state", "conflict"]) assert.ok(`sync.error.${key}` in texts, `${lang} ${key}`);
+    for (const key of ["reupload_refused", "conflict_unsettled", "conflict_changed", "busy", "invalid_state", "conflict"]) assert.ok(`sync.error.${key}` in texts, `${lang} ${key}`);
   }
 });
 
@@ -740,4 +740,58 @@ test("keep_mine_and_a_restore_from_the_trash_name_the_restore_epoch", async () =
   await until(() => gone.model.items.get(ID_A).deleted === false, "restored");
   assert.equal(JSON.parse(gone.model.writes.at(-1).body).restore_epoch, 0, "and so does a restore from the trash");
   gone.engine.stop();
+});
+
+// ------------------------------------------------------------------ the row the user was shown
+
+test("a_choice_made_against_another_server_row_than_the_one_shown_is_refused_and_writes_nothing", async () => {
+  const d = await conflictWorld();
+  const shown = await d.engine.conflict(ID_A);
+  assert.deepEqual(shown.seen, { rev: 2, deleted: false }, "the server row the two versions are shown against");
+  await shown.close();
+  // Another device deletes the item before the user chooses; the verified tombstone comes through the feed.
+  setTomb(d.model, d.client, ID_A, 3);
+  await d.engine.syncNow();
+  await until(() => d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 3), "the tombstone is verified");
+  const sent = requests(d).length;
+  // "Keep mine" would bring back a deletion the user never saw.
+  await assert.rejects(() => d.engine.resolve(ID_A, "mine", shown.seen), { code: "conflict_changed" });
+  await assert.rejects(() => d.engine.resolve(ID_A, "theirs", shown.seen), { code: "conflict_changed" });
+  assert.equal(requests(d).length, sent, "nothing was sent");
+  assert.equal(d.model.items.get(ID_A).deleted, true, "the item is still deleted");
+  assert.equal((await queued(d)).length, 1, "the draft is kept");
+  assert.equal(itemOf(d).conflict, true, "and it is still a conflict");
+  // Shown again, the two versions carry the row that is there now, and the choice goes through.
+  const again = await d.engine.conflict(ID_A);
+  assert.deepEqual([again.seen, again.server.deleted], [{ rev: 3, deleted: true }, true]);
+  await again.close();
+  await d.engine.resolve(ID_A, "mine", again.seen);
+  await until(() => d.model.items.get(ID_A).deleted === false, "brought back, by a choice made against what was shown");
+  assert.equal(JSON.parse(d.model.writes.at(-1).body).resurrect, true);
+  d.engine.stop();
+});
+
+test("a_choice_made_against_a_newer_live_row_is_refused_too", async () => {
+  const d = await conflictWorld();
+  const shown = await d.engine.conflict(ID_A);
+  await shown.close();
+  setRow(d.model, d.client, ID_A, 3, body("Newer server name", [USER("carol"), PASS("third")]));
+  await d.engine.syncNow();
+  await until(() => itemOf(d)?.rev === 3, "the newer row is here");
+  await assert.rejects(() => d.engine.resolve(ID_A, "mine", shown.seen), { code: "conflict_changed" });
+  assert.equal(d.model.items.get(ID_A).rev, 3, "nothing was written over the row the user has not seen");
+  assert.equal((await queued(d)).length, 1);
+  d.engine.stop();
+});
+
+test("a_choice_without_the_shown_row_is_still_accepted_and_a_malformed_one_is_refused", async () => {
+  const d = await conflictWorld();
+  await assert.rejects(() => d.engine.resolve(ID_A, "mine", { rev: "2", deleted: false }), TypeError);
+  await assert.rejects(() => d.engine.resolve(ID_A, "mine", { rev: 2 }), TypeError);
+  assert.equal(itemOf(d).conflict, true, "nothing was done");
+  const shown = await d.engine.conflict(ID_A);
+  await shown.close();
+  await d.engine.resolve(ID_A, "theirs", shown.seen); // the row that was shown is the row that is there
+  assert.equal(itemOf(d).conflict, false);
+  d.engine.stop();
 });

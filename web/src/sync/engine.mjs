@@ -40,7 +40,7 @@
 // * Checkpoints (see checkpoint.mjs). At the end of a pass that has read the
 //   whole feed, the checkpoint of the server is verified against the rows this
 //   device holds: in the first such pass after a start when the last verification
-//   is missing or older than a day, after a listing, and when asked. A failure is
+//   is missing or older than a day, when a session that has not verified has a checkpoint to store, after a listing, and when asked. A failure is
 //   named by `hardWarningOf`, kept in the sync state and shown until a later
 //   verification succeeds. Nothing is uploaded before a verification has
 //   succeeded in this session; the one exception is a device that has verified
@@ -50,7 +50,11 @@
 //   server and its own last upload, and never with a state warning, a stop, a
 //   mark or a write in the outbox.
 // * A server that was restored from a backup (a higher restore epoch with something lower than this device remembers,
-//   the same revision with other bytes, or a checkpoint that does not verify) stops the engine with `server_restored`.
+//   the same revision with other bytes, a live row this device holds that the server no longer lists, or a checkpoint that does not
+//   verify) stops the engine with `server_restored`. A higher restore epoch is never stored before the vault has been listed in
+//   full through the normal page path (seq numbers are used again after a restore, so the feed alone cannot show what is lost).
+// * A listing is noted in the settings from its first row until the feed after it has been read to its end: a start that finds the
+//   note lists again from the beginning and never takes the cursor from the highest cached `seq` (a listing caches rows in the order of ids).
 //   Only `acceptOlderState`, after the user has confirmed, lowers the floors, in three stored phases (see restore.mjs for
 //   what is sent and what is kept back): the older state is verified and becomes the memory; the local versions the
 //   server lacks are queued again, built on the server's rows, and an item the server changed since the restore is kept
@@ -182,6 +186,8 @@ export function createSyncEngine({
     throw new TypeError("the sync engine needs a sync memory");
   }
   const flagsKey = `sync.flags.${scope.accountId}.${scope.vaultId}.${scope.vkEpoch}`;
+  /** The note that a listing has been begun and the feed after it not yet read to its end (under the prefix "forget" removes). */
+  const listingKey = `${flagsKey}.listing`;
 
   let started = false;
   let stopped = false;
@@ -203,6 +209,15 @@ export function createSyncEngine({
   let again = false;
   /** The ids a full listing has shown so far, while one is going on. @type {Set<string> | null} */
   let listing = null;
+  /**
+   * The note of an unfinished listing is stored: the rows a listing caches come in the order of the ids, not of their `seq`, so until the
+   * feed after the listing has been read to its end the highest `seq` among the cached rows says nothing about what has been read.
+   */
+  let listingNoted = false;
+  /** The page was closed before a listing was finished (the note was stored): the first pass lists the vault again, from the beginning. */
+  let relistFirst = false;
+  /** The highest restore epoch for which a full listing has been made in this session and found nothing lower. */
+  let listedEpoch = -1;
   /**
    * What the last pass that read the whole feed found, for the checkpoint step: the `latest_seq` of its last page (`seq`),
    * the head of the checkpoint that page showed (`head`), whether a full listing was part of it, whether it refused rows, and
@@ -405,6 +420,70 @@ export function createSyncEngine({
 
   // -------------------------------------------------------- the outbox
 
+  /**
+   * A write was refused for good: the item is blocked, the draft stays in the outbox, the screen goes back to the server's version
+   * (or keeps the draft when the server has deleted the item), and nothing more is queued behind it.
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error @param {string} kind @param {boolean} automatic
+   */
+  function refuse(entry, error, kind, automatic) {
+    /** @type {Record<string, any>} */
+    const detail = { code: automatic ? "reupload_refused" : kind === "conflict" ? "conflict" : error.code, id: entry.itemId };
+    if (kind === "conflict") {
+      const current = error.body?.current_rev;
+      if (Number.isSafeInteger(current)) detail.currentRev = current;
+      detail.deleted = error.body?.deleted === true;
+      if (!automatic) conflictNotes.set(entry.itemId, { serverRev: Number.isSafeInteger(current) ? current : 0, serverDeleted: detail.deleted });
+    }
+    blocked.set(entry.itemId, detail.code);
+    flagsDirty = true;
+    overlay.delete(entry.itemId);
+    void persistFlags();
+    void showServerVersion(entry.itemId).then(persistFlags);
+    emit("error", detail);
+    // A 409 on a deleted item carries no tombstone, and a live one carries a
+    // row without a `seq`: both come through the feed, where they are checked.
+    if (kind === "conflict") void syncNow();
+  }
+
+  /**
+   * Whether nothing is left to choose for an item: this device holds a verified tombstone row for it (rows come from the feed and the
+   * listing, where a tombstone is verified before it is kept) and the last write that waits for it is a deletion. The edits before that
+   * deletion in the chain go with it: the user's last word was the deletion, and the server has deleted the item.
+   * @param {string} id
+   */
+  function mootChain(id) {
+    if (rows.get(id)?.deleted !== true) return false;
+    const last = runner.entriesOf(id).at(-1);
+    return last !== undefined && "tomb" in last.body;
+  }
+
+  /**
+   * Drops the whole chain of writes of an item for which `mootChain` holds, and what blocked it, and shows the screen as the server's
+   * deletion shows it. Only the writes that were looked at go (`discard` with `expect`): a write another tab queued meanwhile is never
+   * dropped unseen. Answers false, and changes nothing, when the chain is not moot (any more) or the store refuses.
+   * @param {string} id
+   * @returns {Promise<boolean>}
+   */
+  async function dropMoot(id) {
+    const chain = runner.entriesOf(id);
+    if (chain.length > 0 && !mootChain(id)) return false;
+    try {
+      for (const idem of await runner.discard(id, chain.map((entry) => entry.idem))) droppedIdems.add(idem);
+    } catch (error) {
+      if (!stopped && codeOf(error) !== "outbox_changed") emit("error", { code: "storage" });
+      return false;
+    }
+    if (stopped) return false;
+    blocked.delete(id);
+    conflictNotes.delete(id);
+    overlay.delete(id);
+    if (rows.get(id)?.deleted === true) index.delete(id);
+    flagsDirty = true;
+    await persistFlags();
+    changed([id]);
+    return true;
+  }
+
   const runner = createOutboxRunner({
     api,
     store,
@@ -437,25 +516,18 @@ export function createSyncEngine({
         // An upload nobody asked for (a copy of an item the server left out, sent again by this engine) that the server
         // refuses is not a change of the user's: it says so, and it is not a conflict the user can resolve with a choice.
         const automatic = kind === "conflict" && entry.baseRev === 0 && flags.get(entry.itemId)?.kind === "missing_on_server";
-        /** @type {Record<string, any>} */
-        const detail = { code: automatic ? "reupload_refused" : kind === "conflict" ? "conflict" : error.code, id: entry.itemId };
-        if (kind === "conflict") {
-          const current = error.body?.current_rev;
-          if (Number.isSafeInteger(current)) detail.currentRev = current;
-          detail.deleted = error.body?.deleted === true;
-          if (!automatic) conflictNotes.set(entry.itemId, { serverRev: Number.isSafeInteger(current) ? current : 0, serverDeleted: detail.deleted });
+        // The refusal of a write over an item this device already holds a verified tombstone for, when everything that waits for the
+        // item ends in a deletion: the item is deleted on both sides and there is nothing to choose, so the chain is dropped and the
+        // checkpoints can go on. Decided from the verified row, never from what the 409 says. A chain that cannot be dropped is a conflict.
+        if (kind === "conflict" && !automatic && mootChain(entry.itemId)) {
+          void dropMoot(entry.itemId).then((dropped) => {
+            if (stopped) return;
+            if (dropped) void syncNow();
+            else refuse(entry, error, kind, automatic);
+          });
+          return;
         }
-        // The item is blocked: the draft stays in the outbox, the screen goes
-        // back to the server's version, and nothing more is queued behind it.
-        blocked.set(entry.itemId, detail.code);
-        flagsDirty = true;
-        overlay.delete(entry.itemId);
-        void persistFlags();
-        void showServerVersion(entry.itemId).then(persistFlags);
-        emit("error", detail);
-        // A 409 on a deleted item carries no tombstone, and a live one carries a
-        // row without a `seq`: both come through the feed, where they are checked.
-        if (kind === "conflict") void syncNow();
+        refuse(entry, error, kind, automatic);
       },
       onStorageError: () => emit("error", { code: "storage" }),
     },
@@ -626,10 +698,19 @@ export function createSyncEngine({
     let refetched = false;
     /** The last page of the feed that was used. @type {any} */
     let last = null;
+    if (relistFirst) {
+      // The page was closed in the middle of a listing: the rows it cached say nothing about what was read, so the vault is listed again from the beginning.
+      await relist(db, pass);
+      if (stopped) return;
+      relistFirst = false;
+      restarted = true; // one listing in a pass, as after a 410
+      since = cursor;
+    }
     for (;;) {
       // What the memory held before this page was asked for. If it has moved by the time the page is given to
       // it, another tab saved in between, and a page that now looks too old may only be older than that.
       const snapshot = (await memory.load()).memory;
+      if (stopped) return; // stopped while the memory was read: nothing is asked of the server any more
       /** @type {any} */
       let page;
       try {
@@ -659,13 +740,25 @@ export function createSyncEngine({
         since = page.changes[page.changes.length - 1].seq; // the last row, not latest_seq
         cursor = since;
       }
-      if (!page.has_more) break;
+      if (!page.has_more) {
+        // A higher restore epoch is never stored before the vault has been listed in full: seq numbers are used again after a restore, so
+        // rows below the cursor are never sent by the feed, and what the restore lost is only seen by comparing with the listing.
+        const listed = await listForRaisedEpoch(db, pass);
+        if (stopped) return;
+        if (listed) {
+          since = cursor;
+          continue; // the feed goes on from where the listing began
+        }
+        break;
+      }
     }
     const raised = await finishEpoch(pass);
     if (stopped) return;
     // A pass that began after the server refused something for its restore epoch, and found no higher one, has settled it.
     if (epochMovedAt !== null && pass.id > epochMovedAt) epochMovedAt = null;
     await conditionAfterFirstContact();
+    if (stopped) return;
+    await clearListingNote(db); // the feed after the listing (if there was one) has been read to its end
     if (stopped) return;
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
@@ -694,6 +787,7 @@ export function createSyncEngine({
     for (;;) {
       // What the memory held before the page was asked for (see `cycle`).
       const snapshot = (await memory.load()).memory;
+      if (stopped) return null; // stopped while the memory was read: nothing is asked of the server any more
       const after = previous === null ? "" : `&after=${previous.next_after}`;
       const page = await api.get(`/api/sync/items?limit=${PAGE_LIMIT}${after}`, { shape: "items_res" });
       if (stopped) return null;
@@ -722,6 +816,7 @@ export function createSyncEngine({
   async function relist(db, pass) {
     listing = new Set();
     try {
+      await noteListing(db); // before a row of it is cached: a page closed from here on lists again, it never reads on from the cached rows
       const first = await readListing(async (page, again) => {
         await checkEpoch(pass, page.restore_epoch);
         return applyPage(db, { changes: page.items, latest_seq: page.as_of_seq }, pass, again);
@@ -731,6 +826,49 @@ export function createSyncEngine({
       listing = null; // the ids seen so far are not a listing: nothing may be marked missing from them
       throw error;
     }
+  }
+
+  /** Stores the note of an unfinished listing, before any row of the listing is cached. @param {any} db */
+  async function noteListing(db) {
+    if (listingNoted) return;
+    await store.setSetting(db, listingKey, { v: 1 });
+    listingNoted = true;
+  }
+
+  /** Removes the note once the feed after the listing has been read to its end. @param {any} db */
+  async function clearListingNote(db) {
+    if (!listingNoted) return;
+    await store.deleteSetting(db, listingKey);
+    listingNoted = false;
+  }
+
+  /**
+   * The feed has been read to its end and the server shows a restore epoch above the stored one: before it is stored (by the
+   * verification of the checkpoint, or at once on a first contact) the vault is listed in full, through the normal page path
+   * (the checks of `checkListingPage`, the judging and the sync memory of `applyPage`). Rows that lie below what this device holds
+   * make `applyPage` stop with `server_restored`; so does a live row this device holds that the listing leaves out (the restore lost
+   * it; a write that only waits in the outbox is not a held row). Otherwise the cursor is the `as_of_seq` of the first page, and the
+   * caller reads the feed on from there. A write that the server refused for its restore epoch already stops the engine in `finishEpoch`.
+   * Spec: Fase 1 section 8.6 ("Legitimate rollbacks").
+   * @param {any} db @param {PassState} pass
+   * @returns {Promise<boolean>} true when the vault was listed now (the feed has to be read on from the new cursor)
+   */
+  async function listForRaisedEpoch(db, pass) {
+    if (pass.raised === null || pass.lower || epochMovedAt !== null || listedEpoch >= pass.raised) return false;
+    let listedNow = false;
+    if (listing === null) {
+      await relist(db, pass);
+      if (stopped) return false;
+      listedNow = true;
+    }
+    const seen = /** @type {Set<string>} */ (listing);
+    for (const [id, row] of rows) {
+      if (seen.has(id) || id === MANIFEST_ID || row.deleted || abandoned.has(id)) continue;
+      if (flags.get(id)?.kind === "missing_on_server") continue; // the server already lacked it before the restore
+      throw new SyncError("server_restored", "The server was restored to an earlier state.");
+    }
+    listedEpoch = Math.max(listedEpoch, /** @type {number} */ (pass.raised));
+    return listedNow;
   }
 
   /**
@@ -863,6 +1001,8 @@ export function createSyncEngine({
     const ending = new Map();
     /** Items whose refused draft only deleted (the server deleted them too): the draft is moot and goes after the rows are stored. @type {Set<string>} */
     const moot = new Set();
+    /** Items that became a conflict with a deleted server while this page was being used, with a live draft whose summary was not made: shown after the rows are stored. @type {Set<string>} */
+    const draftLate = new Set();
     /** The rows this page replaced, to put back when the cache write fails. @type {Map<string, CachedRow | undefined>} */
     const replaced = new Map();
     /** @param {string} itemId @param {CachedRow} next */
@@ -974,8 +1114,9 @@ export function createSyncEngine({
         alive();
         // A write of this item that was refused and waits for the user: a live draft is a conflict with a deleted server (it stays
         // on screen, with the choice to bring the item back or to accept the deletion); a draft that only deletes is moot.
-        const waits = blocked.has(id);
-        const draft = waits ? liveDraftOf(id) : null;
+        // The summary of the draft is made now when the item is blocked; whether it is blocked is decided again when the row is used,
+        // because a refusal can come in between (the page is judged, given to the memory and written to the trash first).
+        const draft = blocked.has(id) ? liveDraftOf(id) : null;
         /** @type {ReturnType<typeof summaryOf> | null} */
         let draftSummary = null;
         if (draft) {
@@ -993,13 +1134,17 @@ export function createSyncEngine({
           apply: () => {
             settleMark(id, row.rev, ours, ending);
             setRow(id, row);
-            if (draftSummary) index.set(id, draftSummary);
+            const waits = blocked.has(id);
+            const draftNow = waits ? liveDraftOf(id) : null;
+            const summarized = draftNow !== null && draft !== null && draftSummary !== null && draftNow.idem === draft.idem;
+            if (summarized) index.set(id, /** @type {any} */ (draftSummary));
             else index.delete(id);
             overlay.delete(id);
             if (waits) {
-              if (draft) {
+              if (draftNow) {
                 blocked.set(id, "conflict");
                 conflictNotes.set(id, { serverRev: row.rev, serverDeleted: true });
+                if (!summarized) draftLate.add(id);
               } else {
                 moot.add(id);
               }
@@ -1118,15 +1263,10 @@ export function createSyncEngine({
       flagsDirty = true;
     }
     for (const itemId of moot) {
-      // The refused write only deleted the item, and the server has deleted it: there is nothing left to choose.
-      try {
-        for (const idem of await runner.discard(itemId)) droppedIdems.add(idem);
-        blocked.delete(itemId);
-        flagsDirty = true;
-      } catch {
-        emit("error", { code: "storage" });
-      }
+      // The refused writes only delete the item, and the server has deleted it: there is nothing left to choose.
+      await dropMoot(itemId);
     }
+    for (const itemId of draftLate) await showServerVersion(itemId); // a refusal came in while the page was used: the draft is what the screen shows
     // A conflict follows the server's row: its revision and whether it is deleted are what the user will be shown.
     for (const row of accepted) {
       if (conflictNotes.has(row.itemId) && blocked.get(row.itemId) === "conflict") {
@@ -1601,11 +1741,15 @@ export function createSyncEngine({
     // While only a pause stands, the checkpoint is not asked for again until the feed has moved (its top or the head of the
     // checkpoint), or a day has passed: nothing but a change can end a pause.
     const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.pageHead && at - deferredAt.at < VERIFY_AFTER_MS;
+    // A session that has not verified yet and has a checkpoint to store (every other condition of an upload holds) verifies now, whatever
+    // the time of the last verification: a device that is reloaded at least once a day would otherwise never store one.
+    const wantsUpload = !due && !verifiedInSession && !forgedUnlock && (await uploadReady(drain)) !== null;
+    alive();
     // A higher restore epoch is accepted only after the checkpoint has verified: that is asked for whatever the time.
     const pending = drain.epoch;
     epochPending = pending !== null;
     if (pending !== null) runner.hold(); // nothing is sent to a server that may have been restored, until its checkpoint has verified
-    if (verifyRequested || drain.listed || pending !== null || (due && at >= verifyNotBefore && !unchanged)) {
+    if (verifyRequested || drain.listed || pending !== null || ((due || wantsUpload) && at >= verifyNotBefore && !unchanged)) {
       verifyRequested = false;
       const result = await verifyStep(drain, before, mayRetry, pending !== null);
       if (result === "retry") {
@@ -1628,6 +1772,29 @@ export function createSyncEngine({
   }
 
   /**
+   * Every condition of an upload except the verification of this session: nothing stands against it, nothing waits or is marked, the
+   * pace of one upload in ten minutes, and something new to store. Answers the sync memory as it is now, or null.
+   * @param {{ seq: number, head: number | null, refused: boolean }} drain
+   * @returns {Promise<import("../store/syncState.mjs").SyncState | null>}
+   */
+  async function uploadReady(drain) {
+    for (const code of standing) if (warningRank(code) >= 2) return null; // a code nobody named ranks as serious: it blocks
+    if (drain.refused || flags.size > 0 || blocked.size > 0 || runner.itemsWithEntries().length > 0) return null;
+    const at = now();
+    if (at < uploadNotBefore) return null;
+    const seq = drain.seq;
+    const state = await memory.load();
+    alive();
+    if (warningRank(state.hardWarning) >= 2) return null; // another tab may have stored one that this engine has not shown
+    const since = state.uploadedAt === null ? Infinity : at - state.uploadedAt;
+    if (since >= 0 && since < UPLOAD_EVERY_MS) return null;
+    if (state.uploadedSeq !== null && seq <= state.uploadedSeq) return null; // nothing new since the last upload
+    if (drain.head !== null && seq <= drain.head) return null; // the server already holds one at least this new
+    if ([...rows.values()].some((row) => row.seq > seq)) return null; // rows above the top the server named: no honest feed
+    return state;
+  }
+
+  /**
    * Signs what this device holds and uploads it, when every condition holds (see the head of this file). A `409` that says
    * the stored checkpoint is newer counts as done; a `429` waits for the time the server named.
    * Spec: Fase 1 section 8.6 ("Checkpoint": the entries at `S`, at most one upload in ten minutes, only when something changed).
@@ -1635,20 +1802,10 @@ export function createSyncEngine({
    */
   async function uploadStep(drain) {
     if (stopped || halted !== null || !(verifiedInSession || forgedUnlock)) return;
-    for (const code of standing) if (warningRank(code) >= 2) return; // a code nobody named ranks as serious: it blocks
-    if (drain.refused || flags.size > 0 || blocked.size > 0 || runner.itemsWithEntries().length > 0) return;
-    const at = now();
-    if (at < uploadNotBefore) return;
+    const state = await uploadReady(drain);
+    if (state === null) return;
     const seq = drain.seq;
-    const state = await memory.load();
-    alive();
-    if (warningRank(state.hardWarning) >= 2) return; // another tab may have stored one that this engine has not shown
-    const since = state.uploadedAt === null ? Infinity : at - state.uploadedAt;
-    if (since >= 0 && since < UPLOAD_EVERY_MS) return;
-    if (state.uploadedSeq !== null && seq <= state.uploadedSeq) return; // nothing new since the last upload
-    if (drain.head !== null && seq <= drain.head) return; // the server already holds one at least this new
     const held = [...rows.values()];
-    if (held.some((row) => row.seq > seq)) return; // rows above the top the server named: no honest feed
     try {
       const signed = await client.vault.make_checkpoint(seq, await entriesOf(held));
       alive();
@@ -2298,6 +2455,9 @@ export function createSyncEngine({
       });
       alive();
     }
+    // The rows of a listing come in the order of the ids: until the feed after it has been read to its end, a restart must not take the cursor from them.
+    await noteListing(db);
+    alive();
     await store.cache.putRows(db, scope, [...inputs.rows, ...only]);
     alive();
     /** @type {CachedRow[]} */
@@ -2336,6 +2496,7 @@ export function createSyncEngine({
     await showDrafts(waiting);
     await saveFlags(db);
     cursor = inputs.asOf;
+    relistFirst = false; // this listing is the one that was owed
     await memory.withLock(async (state) => ({ ...state, restoreEpoch: Math.max(state.restoreEpoch ?? 0, inputs.epoch), restore: null }));
     alive();
     changed(new Set([...before, ...index.keys()]));
@@ -2440,6 +2601,18 @@ export function createSyncEngine({
   }
 
   /**
+   * A choice is made against the server row the user was shown, and no other: a row with another revision, or one that is deleted
+   * where the user saw a live one (or the reverse), is a different conflict.
+   * @param {CachedRow} row the verified row this device holds now @param {{ rev: number, deleted: boolean }} seen
+   * @throws {SyncError} `conflict_changed`
+   */
+  function assertSeen(row, seen) {
+    if (row.rev !== seen.rev || row.deleted !== seen.deleted) {
+      throw new SyncError("conflict_changed", "The server's version of this item changed after it was shown.");
+    }
+  }
+
+  /**
    * The saved record of the flags, read again from the store just before a choice is written: another tab of this browser may have
    * made the same choice already, and this tab's memory would be stale. Unsaved changes of this tab are saved first.
    * @returns {Promise<any>}
@@ -2539,10 +2712,11 @@ export function createSyncEngine({
    * server's fields are not mixed in. The draft is replaced (the new write is stored before the old ones go), and the block
    * and the conflict note are saved before that, so a crash at any point leaves a conflict that can be chosen again.
    * Spec: Fase 1 section 8.4 ("No resurrection without an active choice") and section 8.5.
-   * @param {string} id
+   * @param {string} id @param {{ rev: number, deleted: boolean }} [seen] the server row the user was shown, when the caller has it
    */
-  async function keepMineInConflict(id) {
+  async function keepMineInConflict(id, seen) {
     const row = await settledServerRow(id);
+    if (seen !== undefined) assertSeen(row, seen);
     const last = runner.entriesOf(id).at(-1);
     if (last === undefined) throw new SyncError("not_found");
     const base = row.rev;
@@ -2655,6 +2829,8 @@ export function createSyncEngine({
       const db = await store.open();
       let cached = /** @type {CachedRow[]} */ (await store.cache.getRows(db, scope));
       const saved = await store.getSetting(db, flagsKey);
+      // A listing was begun and the feed after it was not read to its end: the cached rows are not a prefix of the feed (see `listingNoted`).
+      const unfinished = (await store.getSetting(db, listingKey)) != null;
       if (typeof deviceName === "function") {
         try {
           device = await deviceName();
@@ -2667,6 +2843,7 @@ export function createSyncEngine({
         rows.set(row.itemId, row);
         cursor = Math.max(cursor, row.seq);
       }
+      const cachedTop = cursor;
       const savedMarks = saved?.v === 1 && saved.marks && typeof saved.marks === "object" ? saved.marks : {};
       for (const [id, flag] of Object.entries(savedMarks)) {
         const kinds = ["damaged", "quarantined", "missing_on_server", "reuploaded"];
@@ -2701,7 +2878,7 @@ export function createSyncEngine({
       // from the cache (and the feed is read again from the start, so an honest server shows it afresh). A halt here
       // (no Web Locks, a full memory) leaves the local data to be read, and nothing to be pulled or sent.
       try {
-        const seeded = await seedMemory({ client, memory, rows: cached.filter((row) => !keepsFloor(row.itemId)), topSeq: cursor });
+        const seeded = await seedMemory({ client, memory, rows: cached.filter((row) => !keepsFloor(row.itemId)), topSeq: cachedTop });
         alive();
         if (seeded.state.hardWarning !== null) raiseWarning(seeded.state.hardWarning);
         if (seeded.refused.length > 0) {
@@ -2718,6 +2895,12 @@ export function createSyncEngine({
       } catch (error) {
         if (!(error instanceof SyncError && HALT_CODES.includes(error.code))) throw error;
         halt(error.code);
+      }
+      if (unfinished) {
+        // Never read on from the highest cached `seq` while a listing is unfinished: the first pass lists the vault again, and its first page sets the cursor.
+        listingNoted = true;
+        relistFirst = true;
+        cursor = 0;
       }
       for (const row of cached) {
         if (row.deleted || row.itemId === MANIFEST_ID) continue;
@@ -2753,7 +2936,11 @@ export function createSyncEngine({
           flagsDirty = true;
         }
       }
-      await showDrafts(queued);
+      // A refused chain that ends in a deletion, of an item this device holds a verified tombstone for, was left behind (the page was
+      // closed before it was dropped): nothing is left to choose, and it would keep this device from storing checkpoints.
+      for (const id of [...blocked.keys()]) if (mootChain(id)) await dropMoot(id);
+      alive();
+      await showDrafts(queued.filter((entry) => runner.entriesOf(entry.itemId).some((held) => held.idem === entry.idem)));
       if (stopped) return;
       await saveFlags(db);
       changed(index.keys());
@@ -2824,6 +3011,8 @@ export function createSyncEngine({
       flagsDirty = false;
       itemQueues.clear();
       listing = null;
+      listingNoted = false;
+      relistFirst = false;
       for (const set of Object.values(listeners)) set.clear();
     },
 
@@ -2939,6 +3128,7 @@ export function createSyncEngine({
       retryPending = false;
       deferredAt = null;
       lastDrain = null;
+      listedEpoch = -1;
       verifyRequested = true;
       await syncNow(); // the runner is let go by that pass, if it ends well
       if (stopped || halted !== null) return;
@@ -3085,13 +3275,16 @@ export function createSyncEngine({
      * wrote (the newest draft in the outbox, sealed), `server` the verified row the server shows. Each side has its `rev`, whether
      * it is `deleted`, and, when it is a live version, its `view` (no secret in it) and an open `handle` for revealing one value
      * at a time; a deleted side has neither. `fields` tells for each field of the two views whether it is the same on both sides
-     * (`null` for a secret: its value is not in a view). `close()` closes both handles, and so does `stop()`. Nothing is merged.
+     * (`null` for a secret: its value is not in a view). `seen` is the server row these versions were shown against (its revision
+     * and whether it is deleted): `resolve` takes it back, and refuses when the row has changed since. `close()` closes both handles, and
+     * so does `stop()`. Nothing is merged.
      * Spec: Fase 1 section 8.5.
      * @param {string} id
      * @returns {Promise<{
      *   local: { rev: number, deleted: boolean, view: any, handle: number | null },
      *   server: { rev: number, deleted: boolean, view: any, handle: number | null },
      *   fields: import("./conflict.mjs").FieldCompare[],
+     *   seen: { rev: number, deleted: boolean },
      *   close(): Promise<void>,
      * }>}
      */
@@ -3124,7 +3317,7 @@ export function createSyncEngine({
           ? { rev: server.rev, deleted: true, view: null, handle: null }
           : await side(server.rev, server.envelope, server.tag);
         if (stopped) throw new SyncError("stopped");
-        return { local: mine, server: theirs, fields: compareFields(mine.view, theirs.view), close: closeAll };
+        return { local: mine, server: theirs, fields: compareFields(mine.view, theirs.view), seen: { rev: server.rev, deleted: server.deleted }, close: closeAll };
       } catch (error) {
         await closeAll();
         throw error;
@@ -3135,12 +3328,16 @@ export function createSyncEngine({
      * Ends a conflict on the user's choice. "mine": the local version is written on top of the server's version (a resurrection
      * when the server has deleted the item, a deletion when the local version is a deletion). "theirs": the draft is dropped and
      * the server's version stands (a deletion by the server is accepted). Nothing is merged.
+     * `seen` (the `seen` of `conflict(id)`) is the server row the user looked at: when the row this device holds for the item is another
+     * one by now (another revision, or deleted where it was live), nothing is done and the answer is `conflict_changed`, so the user is shown
+     * both versions again. A choice is never carried out against a row the user has not seen: "mine" could bring back a deletion nobody saw.
      * Spec: Fase 1 section 8.5 ("Resolution").
-     * @param {string} id @param {"mine" | "theirs"} choice
+     * @param {string} id @param {"mine" | "theirs"} choice @param {{ rev: number, deleted: boolean }} [seen]
      * @returns {Promise<void>}
      */
-    async resolve(id, choice) {
+    async resolve(id, choice, seen) {
       if (choice !== "mine" && choice !== "theirs") throw new TypeError("a conflict is resolved with mine or theirs");
+      if (seen !== undefined && !(Number.isSafeInteger(seen?.rev) && typeof seen?.deleted === "boolean")) throw new TypeError("seen is the rev and deleted of what the user was shown");
       notWhileRestoring();
       if (typeof id !== "string" || conflictOf(id) === null) throw new SyncError("not_found");
       return exclusive(() => withItem(id, async () => {
@@ -3161,8 +3358,10 @@ export function createSyncEngine({
           changed([id]);
           throw new SyncError("not_found");
         }
-        if (choice === "theirs") await dropDraft(id);
-        else await keepMineInConflict(id);
+        if (choice === "theirs") {
+          if (seen !== undefined) assertSeen(await settledServerRow(id), seen);
+          await dropDraft(id);
+        } else await keepMineInConflict(id, seen);
       }));
     },
 

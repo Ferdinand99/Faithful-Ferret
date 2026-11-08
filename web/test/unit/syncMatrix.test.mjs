@@ -6,33 +6,16 @@
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
 // What the model does not assert, because it is reported (each has a todo test below). `FERRET_MATRIX_STRICT=1` takes every one of these
-// tolerances away (`knownGaps` in `syncModel.mjs`), and the random runs then fail on them:
-//   known gap, hidden draft  a deletion that waits in the outbox when the feed brings the tombstone of its item is refused afterwards and is then a
-//            blocked draft that is on no screen (todo test `a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no_blocked_draft`);
-//            only a last queued write that is a deletion, over a deleted row, is let through
-//   known gap, request after stop  a feed read (`/changes`, `/items`) can still go out when `stop()` comes while a pass reads the sync memory (todo
-//            test `a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server`)
+// tolerances away (`KNOWN_GAPS` in `syncModel.mjs`), and the random runs then fail on them; `FERRET_MATRIX_TOLERATE=tabs,purge` names the ones
+// that are still let through in a strict run:
 //   known gap, writing tabs  two tabs of one browser that both change things can drop or hide each other's queued writes (the outbox and the marks
 //            are stored once and kept in memory by each tab); in the runs only the first tab of a browser changes things, and the other tabs are
-//            checked after the pages are reloaded (todo test `two_tabs_that_both_write_keep_every_write`)
+//            checked after the pages are reloaded, and a browser with several tabs is not asked to keep its checkpoint alive (todo tests
+//            `two_tabs_that_both_write_keep_every_write` and `tabs_that_only_read_hold_no_unsent_write_after_a_reload`)
 //   known gap, purged tombstone  a checkpoint can list the item of a purged tombstone live, and a device that still holds a purged tombstone is
 //            at odds with a checkpoint that lacks it (todo tests `a_purged_tombstone_that_the_checkpoint_still_lists_live_is_no_alarm` and
 //            `a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it`); the model purges only what the checkpoint
 //            lists and no device holds
-//   known gap, late restore contact  a device that first meets a restored server after its seq has passed what the device remembers finds nothing
-//            lower (todo test `a_device_that_meets_a_restored_server_late_does_not_miss_what_was_written_to_it`); the restore runs let both devices
-//            meet the server before either accepts, and the mid-run test only asks the devices that are shown less than they remember to stop
-//   known gap, cut listing  the cursor of a started engine is the highest `seq` among the rows it holds; a listing that is cut short after rows with
-//            a high `seq` leaves it above rows that were never sent (todo test `a_listing_that_is_cut_short_does_not_hide_the_rows_it_did_not_reach`)
-//   Seeds that meet a gap the model cannot tolerate (a refused edit left off the screen, a cut listing, a reader tab holding an unsent write) are
-//            listed in `GAP_SEEDS` below; the main test leaves them out and a todo test runs each list
-//   known gap, stale choice  "keep mine" builds its write on the row the engine knows when the choice is made, so it can bring back an item whose
-//            deletion the user never saw; any "keep mine" counts as the choice that allows a revival
-//   known gap, checkpoint waits for a verification  a session stores a checkpoint only after it has verified, and a reloaded device verifies only when
-//            its last verification is a day old (todo test `a_device_that_was_reloaded_stores_a_checkpoint_within_minutes`); the liveness check then
-//            sets the clock a day on
-//   checkpoint liveness  is not asserted at all for browsers with several tabs and after a refused deletion was left behind (they keep a device from
-//            storing one)
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
@@ -451,8 +434,6 @@ const fewer = () => Math.max(50, Math.ceil(RUNS / 5));
  * closed). The seeds belong to the model as it is: a change to it moves them, and a run of more seeds can find more.
  */
 const GAP_SEEDS = {
-  refusedLiveDraft: [3406, 3591], // a refused edit of a deleted item is stored as a conflict but is on no screen until a reload
-  cutListing: [3176, 3359], // a device that lacks rows a cut listing never gave it
   readerTab: [1494, 4347], // the tab that only reads still holds an unsent write of the browser after a reload
 };
 const GAP_ALL = new Set(Object.values(GAP_SEEDS).flat());
@@ -514,19 +495,11 @@ async function restoreRun(seed, { afterwards }) {
     const held = new Map();
     for (const dev of sim.devices) held.set(dev.label, await sim.held(dev));
 
-    // A device that meets a server which another device has already brought back to its own state may find nothing lower, store the new
-    // epoch and go on without a question: so here a device that has not accepted is not expected to stop.
-    await sim.restoreServer(backup, { watch: !sim.knownGaps });
+    await sim.restoreServer(backup);
     const frozen = new Map(sim.server.frozen);
     sim.heal();
-    // Both devices meet the restored server before either accepts (known gap, late restore contact: a device that first meets it after the other has written to it
-    // can keep a cursor above the new rows and miss them).
-    if (sim.knownGaps) {
-      for (const dev of sim.devices) {
-        await dev.engine.syncNow();
-        await settle(10);
-      }
-    }
+    // The devices meet the restored server in either order, and the one that accepts first may write to it before the other has met it: a device that holds
+    // what the restore lost stops whatever the server's seq has come to (`checkStopped`).
     const order = rng.chance(0.5) ? [a, b] : [b, a];
     for (const dev of order) {
       await dev.engine.syncNow();
@@ -539,6 +512,7 @@ async function restoreRun(seed, { afterwards }) {
       }
     }
     await sim.calm();
+    await sim.checkStopped();
     sim.checkHealthy(["server_restored", "restore_epoch_raised"]);
     await sim.checkConverged();
     // Accepting an older state is the choice that brings back what a device holds above a tombstone of the restored state (and only that).
@@ -628,10 +602,8 @@ test("a_restore_in_the_middle_of_a_run_never_lands_a_write_on_the_restored_state
       await sim.run(rng.between(5, 12)); // the devices see more than the backup holds
       await sim.restoreServer(backup);
       const before = sim.server.writes.length;
-      // The users keep working, and nobody accepts anything. The retention job does not run and nobody writes to the server but the devices:
-      // a server whose seq has passed what a device remembers is one that device finds nothing lower on (known gap, late restore contact).
-      const after = sim.knownGaps ? ACTIONS.filter(([name]) => !["retention", "purge", "race"].includes(name)) : ACTIONS;
-      await sim.run(rng.between(12, 24), { actions: after });
+      // The users keep working, and nobody accepts anything; the retention job runs and other writers write to the server as in any run.
+      await sim.run(rng.between(12, 24), { actions: ACTIONS });
       sim.heal();
       for (let round = 0; round < 3; round += 1) {
         for (const dev of sim.devices) await pump(dev);
@@ -705,7 +677,7 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
   // A check that never fails proves nothing: each is shown the thing it is there for.
   const fresh = async () => {
     const sim = await world();
-    sim.knownGaps = false;
+    sim.tolerated = new Set();
     return sim;
   };
   const complains = (sim, text) => assert.ok(sim.problems.some((problem) => problem.includes(text)), `expected a problem with "${text}", got ${JSON.stringify(sim.problems)}`);
@@ -789,16 +761,21 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
   });
 });
 
-// ------------------------------------------------------------------------- findings of the matrix (todo)
-// Each todo test is the smallest run found that shows a gap (two live-draft ones are controls that pass). They are `todo`, so that a fix turns them green without anyone having to find
-// them again.
+// ------------------------------------------------------------------------- what the matrix found, and the engine now does right
+// The smallest runs that showed a gap, kept as plain tests. The ones that follow the last of them (two tabs, a purged tombstone) are still `todo`.
 
-test("a_write_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_screen", async () => {
-  const sim = await world();
+/** A device that has an item at revision 1 together with another one; both hold it and are online. */
+async function sharedItem(layout = [1, 1], options = {}) {
+  const sim = await world(layout, options);
   const [a, b] = sim.devices;
   const id = await a.engine.create(draft("v0"));
   await untilServerRev(sim, id, 1);
   await b.engine.syncNow();
+  return { sim, a, b, id };
+}
+
+test("a_write_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_screen", async () => {
+  const { sim, a, b, id } = await sharedItem();
   offline(b);
   await b.engine.update(id, { name: "edited while the other device deleted it" }, currentRev(b.engine, id)); // waits in the outbox
   await a.engine.remove(id);
@@ -810,15 +787,12 @@ test("a_write_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_scr
   assert.equal(sim.server.items.get(id).deleted, true);
   // The user's edit must not vanish: it is a conflict with a deleted row, on screen, with the choice.
   assert.equal(shows(b, id)?.conflict, true, "the refused edit is on screen as a conflict");
+  assert.equal((await queued(b)).length, 1, "and the draft is kept");
   await sim.stopAll();
 });
 
 test("a_chain_of_edits_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_screen", async () => {
-  const sim = await world();
-  const [a, b] = sim.devices;
-  const id = await a.engine.create(draft("v0"));
-  await untilServerRev(sim, id, 1);
-  await b.engine.syncNow();
+  const { sim, a, b, id } = await sharedItem();
   offline(b);
   for (const name of ["first", "second", "third"]) await b.engine.update(id, { name }, currentRev(b.engine, id)); // three writes wait
   await a.engine.remove(id);
@@ -829,15 +803,13 @@ test("a_chain_of_edits_refused_over_a_tombstone_the_feed_has_already_brought_sta
   await pump(b);
   assert.equal(sim.server.items.get(id).deleted, true);
   assert.equal(shows(b, id)?.conflict, true, "the refused edits are on screen as a conflict");
+  assert.equal((await queued(b)).length, 3, "and none of them is dropped: the chain does not end in a deletion");
   await sim.stopAll();
 });
 
-test("a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no_blocked_draft", { todo: "a refused write is left hidden once the tombstone is known" }, async () => {
-  const sim = await world();
-  const [a, b] = sim.devices;
-  const id = await a.engine.create(draft("v0"));
-  await untilServerRev(sim, id, 1);
-  await b.engine.syncNow();
+/** Device B edits and then deletes the item while offline; device A edits it and deletes it (the tombstone is at revision 3). */
+async function bothDelete() {
+  const { sim, a, b, id } = await sharedItem();
   offline(b);
   await b.engine.update(id, { name: "edited, then deleted" }, currentRev(b.engine, id)); // base 1
   await b.engine.remove(id); // base 2: the two writes wait
@@ -845,16 +817,140 @@ test("a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no
   await untilServerRev(sim, id, 2);
   await a.engine.remove(id);
   await untilServerRev(sim, id, 3);
+  return { sim, a, b, id };
+}
+
+test("a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no_blocked_draft", async () => {
+  const { sim, b, id } = await bothDelete();
   online(b);
   await b.engine.syncNow();
   await pump(b);
   await pump(b);
   // Both devices deleted the item: there is nothing to choose, and nothing may stay behind that stops the device from storing checkpoints.
   assert.equal((await queued(b)).length, 0);
+  assert.equal(shows(b, id), undefined, "the deleted item is on no screen");
+  assert.equal(b.engine.list().some((item) => item.blocked || item.conflict), false);
+  assert.equal(b.d.events.error.some((e) => e.code === "conflict"), false, "and no conflict was announced for it");
   await sim.stopAll();
 });
 
-test("a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server", { todo: "a feed read goes out after stop()" }, async () => {
+test("uploads_resume_after_a_refused_chain_over_a_tombstone_is_dropped", async () => {
+  const { sim, b } = await bothDelete();
+  online(b);
+  await b.engine.syncNow();
+  await pump(b);
+  await pump(b);
+  assert.equal((await queued(b)).length, 0);
+  b.d.timers.advance(11 * 60_000);
+  await b.engine.syncNow();
+  await settle(20);
+  assert.equal(sim.server.checkpoint.seq, sim.server.seq, "the device stores a checkpoint again");
+  await sim.stopAll();
+});
+
+test("a_chain_that_is_dropped_with_the_deletion_at_its_end_takes_every_edit_before_it", async () => {
+  const { sim, a, b, id } = await sharedItem();
+  offline(b);
+  for (const name of ["one", "two"]) await b.engine.update(id, { name }, currentRev(b.engine, id));
+  await b.engine.remove(id); // three writes wait, the last is the deletion
+  await a.engine.remove(id);
+  await untilServerRev(sim, id, 2);
+  online(b);
+  await b.engine.syncNow();
+  await pump(b);
+  await pump(b);
+  assert.equal((await queued(b)).length, 0);
+  assert.equal(sim.server.writes.filter((w) => JSON.parse(w.body).idem && w.id === id).length, 2, "the server took the creation and the other device's deletion, nothing of the dropped chain");
+  await sim.stopAll();
+});
+
+test("a_409_that_says_deleted_does_not_drop_a_chain_while_the_row_the_device_holds_is_live", async () => {
+  const { sim, a, b, id } = await sharedItem();
+  offline(b);
+  await b.engine.update(id, { name: "edited, then deleted" }, currentRev(b.engine, id));
+  await b.engine.remove(id); // the chain ends in a deletion
+  // A server that says "deleted" about a row the feed still shows live: nothing is dropped on its word.
+  b.d.api.faults.push({ kind: "status", status: 409, code: "conflict", body: { current_rev: 2, deleted: true } });
+  online(b);
+  b.d.timers.advance(3_000);
+  await settle(30);
+  assert.equal((await queued(b)).length, 2, "the chain stays");
+  assert.equal(shows(b, id)?.blocked, true, "and the item is blocked, on screen as the server's live version");
+  // Now the server really deletes it: the verified tombstone is what lets the chain go.
+  await a.engine.remove(id);
+  await untilServerRev(sim, id, 2);
+  await pump(b);
+  assert.equal((await queued(b)).length, 0, "the chain is dropped once the tombstone is held");
+  assert.equal(b.engine.list().some((item) => item.blocked), false);
+  await sim.stopAll();
+});
+
+test("a_refused_chain_over_a_tombstone_that_is_held_when_the_page_starts_is_dropped_at_start_up", async () => {
+  // Two tabs of one browser (the first writes, the second reads) and a second browser. The first tab's chain is refused while its row is
+  // live (a server that says "deleted" too early): blocked, the chain kept. Then the tombstone is cached by the other tab, and the first
+  // tab's page is reloaded: with a verified tombstone held and a chain that ends in a deletion, nothing is left to choose.
+  const sim = await world([2, 1]);
+  const [writer, reader, other] = sim.devices;
+  const id = await writer.engine.create(draft("v0"));
+  await untilServerRev(sim, id, 1);
+  await reader.engine.syncNow();
+  await other.engine.syncNow();
+  offline(writer);
+  await writer.engine.update(id, { name: "edited, then deleted" }, currentRev(writer.engine, id));
+  await writer.engine.remove(id);
+  writer.d.api.faults.push({ kind: "status", status: 409, code: "conflict", body: { current_rev: 2, deleted: true } });
+  online(writer);
+  writer.d.timers.advance(3_000);
+  await settle(30);
+  assert.equal(shows(writer, id)?.blocked, true, "refused while the row is live: the chain is kept");
+  assert.equal((await queued(writer)).length, 2);
+  await other.engine.remove(id);
+  await untilServerRev(sim, id, 2);
+  await reader.engine.syncNow(); // the other tab caches the tombstone
+  await settle(20);
+  const reloaded = await sim.restart(writer);
+  await settle(20);
+  assert.equal((await queued(reloaded)).length, 0, "the chain was dropped at start-up");
+  assert.equal(reloaded.engine.list().some((item) => item.blocked || item.conflict), false);
+  await sim.stopAll();
+});
+
+test("a_refusal_that_comes_in_while_the_tombstone_page_is_being_used_leaves_the_draft_on_screen", async () => {
+  const { sim, a, b, id } = await sharedItem();
+  offline(b);
+  await b.engine.update(id, { name: "edited while the other device deleted it" }, currentRev(b.engine, id)); // waits for its retry
+  await a.engine.remove(id);
+  await untilServerRev(sim, id, 2);
+  online(b);
+  // The pass that brings the tombstone is held at the sync memory (the page is judged and planned, not yet used) while the write is sent and refused.
+  const withLock = b.d.memory.withLock.bind(b.d.memory);
+  let gate = null;
+  let arrived = false;
+  b.d.memory.withLock = async (...args) => {
+    if (gate) {
+      const wait = gate;
+      gate = null;
+      arrived = true;
+      await wait;
+    }
+    return withLock(...args);
+  };
+  let release;
+  gate = new Promise((resolve) => (release = resolve));
+  const pass = b.engine.syncNow();
+  await until(() => arrived, "the pass is at the memory");
+  b.d.timers.advance(3_000); // the retry of the write: the server refuses it (the item is deleted)
+  await until(() => b.d.events.error.some((e) => e.code === "conflict"), "the refusal");
+  release();
+  await pass;
+  await settle(20);
+  assert.equal(sim.server.items.get(id).deleted, true);
+  assert.equal(shows(b, id)?.conflict, true, "the refused edit is on screen as a conflict with the deleted row");
+  assert.equal((await queued(b)).length, 1);
+  await sim.stopAll();
+});
+
+test("a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server", async () => {
   const sim = await world([1]);
   const [a] = sim.devices;
   const load = a.d.memory.load.bind(a.d.memory);
@@ -878,7 +974,78 @@ test("a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server",
   assert.deepEqual(a.lateCalls, []);
 });
 
-test("a_device_that_meets_a_restored_server_late_does_not_miss_what_was_written_to_it", { todo: "a device that meets a restored server late misses it" }, async () => {
+test("a_listing_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server", async () => {
+  const sim = await world([1]);
+  const [a] = sim.devices;
+  const first = "10".repeat(16);
+  sim.server.set(first, { rev: 1, ...sim.client.wireRow(first, 1, { item_type: "login", name: "one" }) });
+  // The feed answers 410 once: the engine lists the vault, and the pass is held at the memory just before the first page of the listing.
+  const get = a.d.api.get;
+  let told = false;
+  a.d.api.get = async (path, ...rest) => {
+    if (path.startsWith("/api/sync/changes") && !told) {
+      told = true;
+      throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 1 });
+    }
+    return get(path, ...rest);
+  };
+  const load = a.d.memory.load.bind(a.d.memory);
+  let hold = null;
+  a.d.memory.load = async () => {
+    if (told && hold === null) hold = new Promise((resolve) => (release = resolve));
+    if (hold) await hold;
+    return load();
+  };
+  let release = () => {};
+  const pass = a.engine.syncNow();
+  await until(() => told, "the 410");
+  await settle(10);
+  a.stopped = true;
+  a.engine.stop();
+  const asked = a.d.api.gets.length;
+  const wait = hold;
+  hold = null;
+  release();
+  await wait;
+  await pass;
+  await settle(20);
+  assert.equal(a.d.api.gets.length, asked, "no request after stop()");
+  assert.deepEqual(a.lateCalls, []);
+});
+
+/**
+ * Two devices that hold the same state; the first leaves behind a backup, then the vault takes more writes; the server is restored from
+ * the backup (restore epoch 1). Answers the devices and the ids: `kept` (in the backup), `lost` (written after it, held by both).
+ */
+async function restoredWorld() {
+  const sim = await world();
+  const [a, b] = sim.devices;
+  const kept = await a.engine.create(draft("before the backup"));
+  await untilServerRev(sim, kept, 1);
+  await b.engine.syncNow();
+  const backup = sim.server.backup(); // seq 1
+  const lost = await a.engine.create(draft("after the backup"));
+  await untilServerRev(sim, lost, 1);
+  await a.engine.update(lost, { name: "edited after the backup" }, currentRev(a.engine, lost));
+  await untilServerRev(sim, lost, 2);
+  await b.engine.syncNow();
+  assert.equal(shows(b, lost)?.rev, 2);
+  await sim.restoreServer(backup);
+  return { sim, a, b, kept, lost };
+}
+
+/** Rows written to the server by someone else until its seq is `to`. */
+function writeUntil(sim, to, prefix = "f0") {
+  const ids = [];
+  while (sim.server.seq < to) {
+    const id = `${prefix}${String(sim.server.seq + 1).padStart(2, "0")}`.repeat(16).slice(0, 32);
+    sim.server.set(id, { rev: 1, ...sim.client.wireRow(id, 1, { item_type: "login", name: `written elsewhere ${sim.server.seq + 1}` }) });
+    ids.push(id);
+  }
+  return ids;
+}
+
+test("a_device_that_meets_a_restored_server_late_does_not_miss_what_was_written_to_it", async () => {
   const sim = await world();
   const [a, b] = sim.devices;
   const first = await a.engine.create(draft("before the backup"));
@@ -894,7 +1061,7 @@ test("a_device_that_meets_a_restored_server_late_does_not_miss_what_was_written_
   }
   await b.engine.syncNow();
   assert.equal(sim.server.seq, 6);
-  await sim.restoreServer(backup, { watch: false });
+  await sim.restoreServer(backup);
   // The first device meets the restored server, accepts, and goes on: its copy of the item goes up again (one row, seq 2), and it adds
   // an item and changes it twice more, so that the server's seq is 6 again, as the second device remembers it.
   await a.engine.syncNow();
@@ -911,16 +1078,84 @@ test("a_device_that_meets_a_restored_server_late_does_not_miss_what_was_written_
   await a.engine.update(added, { name: "added 4" }, currentRev(a.engine, added));
   await untilServerRev(sim, added, 4);
   assert.equal(sim.server.seq, 6);
-  // The second device meets the server now. It must either stop for the restore or show what the first device wrote.
+  // The second device meets the server now. It must stop for the restore: it holds the item at revision 5, the server shows it at revision 1.
   await b.engine.syncNow();
-  const stopped = b.engine.health().halted !== null;
-  assert.ok(stopped || shows(b, added)?.name === "added 4", "it neither stops nor shows the item that was added after the restore");
+  assert.equal(b.engine.health().halted, "server_restored");
+  assert.equal(shows(b, item)?.rev, 5, "what the device holds is left as it is");
   await sim.stopAll();
 });
 
-test("a_device_that_was_reloaded_stores_a_checkpoint_within_minutes", { todo: "a reloaded device stores no checkpoint until a day has passed" }, async () => {
+test("an_idle_device_meeting_a_restored_server_after_seq_passed_its_cursor_stops_with_server_restored", async () => {
+  const { sim, b, lost } = await restoredWorld();
+  // Someone else writes to the restored server until its seq is above the cursor of the idle device (3): that device is shown no
+  // top below what it remembers, and the feed from its cursor holds nothing it has lost.
+  writeUntil(sim, 5);
+  sim.heal();
+  const gets = b.d.api.gets.length;
+  await b.engine.syncNow();
+  assert.equal(b.engine.health().halted, "server_restored", "it holds an item the restored server does not have");
+  assert.ok(b.d.api.gets.slice(gets).some((path) => path.startsWith("/api/sync/items")), "the vault was listed before anything was decided");
+  assert.equal(shows(b, lost)?.rev, 2, "nothing it holds is dropped");
+  assert.equal((await loadSyncState(b.group.db.store, SERVER, ACCOUNT)).restoreEpoch, 0, "the new epoch is not stored");
+  assert.equal(sim.server.writes.length, 3, "and it wrote nothing");
+  await sim.stopAll();
+});
+
+test("a_device_with_nothing_lower_stores_the_epoch_after_a_full_listing_and_gets_the_rows_written_at_reused_seqs", async () => {
+  const sim = await world();
+  const [a, b] = sim.devices;
+  const kept = await a.engine.create(draft("before the backup"));
+  await untilServerRev(sim, kept, 1);
+  await b.engine.syncNow();
+  const backup = sim.server.backup(); // seq 1
+  // An item that is created and deleted after the backup: the device holds its tombstone (seq 3) and nothing live that the restore loses.
+  const gone = await a.engine.create(draft("short-lived"));
+  await untilServerRev(sim, gone, 1);
+  await a.engine.remove(gone);
+  await untilServerRev(sim, gone, 2);
+  await b.engine.syncNow();
+  assert.equal(sim.server.seq, 3);
+  await sim.restoreServer(backup);
+  // Rows are written at seq 2, 3 and 4: the cursor of the device is 3, and the feed from it brings only the last.
+  const written = writeUntil(sim, 4);
+  sim.heal();
+  await b.engine.syncNow();
+  await settle(20);
+  assert.equal(b.engine.health().halted, null, "nothing it holds is lower than what the server shows");
+  assert.deepEqual(
+    b.engine.list().map((item) => item.name).sort(),
+    ["before the backup", ...written.map((id, at) => `written elsewhere ${at + 2}`)].sort(),
+    "every row of the restored server is shown, also the ones below the old cursor",
+  );
+  assert.equal((await loadSyncState(b.group.db.store, SERVER, ACCOUNT)).restoreEpoch, 1, "the epoch is stored");
+  assert.ok(b.d.events.state.some((e) => e.kind === "warning" && e.code === "restore_epoch_raised"));
+  await sim.stopAll();
+});
+
+test("a_raised_epoch_is_listed_once_and_the_feed_goes_on_from_the_first_page_of_the_listing", async () => {
+  const sim = await world([1], { pageSize: 2 });
+  const [a] = sim.devices;
+  const ids = [];
+  for (let n = 0; n < 5; n += 1) ids.push(await a.engine.create(draft(`item ${n}`)));
+  await untilServerRev(sim, ids[4], 1);
+  await a.engine.syncNow(); // the device has read its own rows, and nothing is in flight when the server is restored
+  await settle(20);
+  const backup = sim.server.backup();
+  await sim.restoreServer(backup);
+  const gets = a.d.api.gets.length;
+  await a.engine.syncNow();
+  await settle(20);
+  assert.equal(a.engine.health().halted, null, "a device that holds what the backup holds has nothing to be asked about");
+  const paths = a.d.api.gets.slice(gets);
+  assert.equal(paths.filter((path) => path.startsWith("/api/sync/items")).length, 3, "one listing of three pages");
+  await a.engine.syncNow();
+  assert.equal(a.d.api.gets.slice(gets).filter((path) => path.startsWith("/api/sync/items")).length, 3, "and not again once the epoch is stored");
+  await sim.stopAll();
+});
+
+test("a_device_that_was_reloaded_stores_a_checkpoint_within_minutes", async () => {
   // A device that has verified stores a checkpoint ten minutes after the vault changed, in the session that verified (the control). After
-  // a reload within a day of that verification the new session does not verify, and a session stores nothing before it has verified.
+  // a reload within a day of that verification the new session verifies when it has a checkpoint to store, and stores it.
   const sim = await world([1]);
   const [first] = sim.devices;
   const one = await first.engine.create(draft("one"));
@@ -939,10 +1174,28 @@ test("a_device_that_was_reloaded_stores_a_checkpoint_within_minutes", { todo: "a
   await sim.stopAll();
 });
 
-test("a_listing_that_is_cut_short_does_not_hide_the_rows_it_did_not_reach", { todo: "a start after an interrupted listing reads from a cursor above rows it never got" }, async () => {
-  // The cursor of a started engine is the highest `seq` among the rows it holds. A listing hands out rows in the order of the ids, so after its
-  // first page the cache can hold a row with a high `seq` while rows with a lower one are still to come; if the page is closed there, the next start
-  // reads the feed from that `seq` and the rows in between are never sent.
+test("a_reload_verifies_only_when_there_is_a_checkpoint_to_store", async () => {
+  const sim = await world([1]);
+  const [first] = sim.devices;
+  const one = await first.engine.create(draft("one"));
+  await untilServerRev(sim, one, 1);
+  first.d.timers.advance(11 * 60_000);
+  await first.engine.syncNow();
+  await settle(20);
+  assert.equal(sim.server.checkpoint.seq, sim.server.seq);
+  const verified = () => sim.client.vault.calls.filter((call) => call[0] === "verify_checkpoint").length;
+  const before = verified();
+  const reloaded = await sim.restart(first);
+  reloaded.d.timers.advance(11 * 60_000);
+  await reloaded.engine.syncNow();
+  await settle(20);
+  assert.equal(verified(), before, "nothing new to store: the reloaded session does not verify before a day has passed");
+  await sim.stopAll();
+});
+
+test("a_listing_that_is_cut_short_does_not_hide_the_rows_it_did_not_reach", async () => {
+  // A listing hands out rows in the order of the ids, so after its first page the cache can hold a row with a high `seq` while rows with a lower
+  // one are still to come. If the page is closed there, the next start must not read the feed from that `seq`: it lists the vault again.
   const sim = await world([1], { pageSize: 1 });
   const [a] = sim.devices;
   const sealed = (id, name) => ({ rev: 1, ...sim.client.wireRow(id, 1, { item_type: "login", name }) });
@@ -975,12 +1228,52 @@ test("a_listing_that_is_cut_short_does_not_hide_the_rows_it_did_not_reach", { to
   await sim.stopAll();
 });
 
-test("a_refused_edit_of_a_deleted_item_is_on_screen_in_every_run", { todo: "a refused edit of a deleted item can be left off the screen" }, async () => {
-  await runSeeds(GAP_SEEDS.refusedLiveDraft, (seed) => randomRun(seed));
+test("a_start_after_a_listing_that_was_cut_short_lists_the_vault_again_from_the_beginning_and_the_start_after_that_does_not", async () => {
+  const sim = await world([1], { pageSize: 1 });
+  const [a] = sim.devices;
+  const ids = ["10", "20", "30"].map((n) => n.repeat(16));
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}.listing`;
+  const noted = async (dev) => (await dev.d.store.getSetting(dev.d.store.database.store, key)) != null;
+  const listed = (dev) => dev.d.api.gets.filter((path) => path.startsWith("/api/sync/items"));
+  sim.server.set(ids[2], { rev: 1, ...sim.client.wireRow(ids[2], 1, { item_type: "login", name: "row 2" }) });
+  await a.engine.syncNow();
+  assert.equal(await noted(a), false, "a pass that lists nothing leaves no note");
+  const gone = "ee".repeat(16);
+  sim.server.set(gone, { rev: 2, deleted: true, tomb: sim.client.wireTomb(gone, 2) });
+  sim.server.pinCheckpoint();
+  sim.server.purgeTombstones(() => false, false); // the floor is above the cursor of the device
+  ids.slice(0, 2).forEach((id, at) => sim.server.set(id, { rev: 1, ...sim.client.wireRow(id, 1, { item_type: "login", name: `row ${at}` }) }));
+  const get = a.d.api.get;
+  let pages = 0;
+  a.d.api.get = async (path, ...rest) => {
+    if (path.startsWith("/api/sync/items") && (pages += 1) === 2) {
+      a.stopped = true;
+      a.engine.stop();
+      throw new ApiError(0, "network");
+    }
+    return get(path, ...rest);
+  };
+  await a.engine.syncNow();
+  await settle(20);
+  assert.equal(await noted(a), true, "the note of the unfinished listing is stored");
+  const reopened = await sim.restart(a);
+  await pump(reopened);
+  assert.equal(listed(reopened)[0].includes("after="), false, "the listing begins again, from the first id");
+  assert.equal(listed(reopened).length, 3, "and is read to its end");
+  assert.equal(await noted(reopened), false, "the note is gone once the feed after the listing has been read");
+  assert.deepEqual(reopened.engine.list().map((item) => item.name).sort(), ["row 0", "row 1", "row 2"]);
+  const again = await sim.restart(reopened);
+  await pump(again);
+  assert.equal(listed(again).length, 0, "the next start reads on from the cached rows");
+  await sim.stopAll();
 });
 
-test("a_device_that_lists_the_vault_again_shows_every_row_in_every_run", { todo: "a start after an interrupted listing reads from a cursor above rows it never got" }, async () => {
-  await runSeeds(GAP_SEEDS.cutListing, (seed) => randomRun(seed));
+test("a_refused_edit_of_a_deleted_item_is_on_screen_in_every_run", async () => {
+  await runSeeds([3406, 3591], (seed) => randomRun(seed));
+});
+
+test("a_device_that_lists_the_vault_again_shows_every_row_in_every_run", async () => {
+  await runSeeds([3176, 3359], (seed) => randomRun(seed));
 });
 
 test("tabs_that_only_read_hold_no_unsent_write_after_a_reload", { todo: "two tabs that both write can lose writes" }, async () => {
