@@ -247,3 +247,11 @@ test("refused_is_not_a_request_or_a_content_type", () => {
   // The size limit applies to it as to everything.
   refuses(() => decode(" ".repeat(MAX_MESSAGE_BYTES + 1) + raw, UI_TYPES, { reply: true }), "too_large");
 });
+
+test("a_frame_id_of_the_size_firefox_gives_to_sub_frames_is_accepted", () => {
+  // Measured in Firefox 153 and 159: the first sub-frame of a tab has frame id 17179869185.
+  const raw = encode("fill", { ref: "h1", tab_id: 1, frame_id: 17_179_869_185 });
+  assert.equal(decode(raw, UI_TYPES).body.frame_id, 17_179_869_185);
+  refuses(() => encode("fill", { ref: "h1", tab_id: 1, frame_id: Number.MAX_SAFE_INTEGER + 2 }), "bad_shape");
+  refuses(() => encode("fill", { ref: "h1", tab_id: 1, frame_id: -1 }), "bad_shape");
+});
