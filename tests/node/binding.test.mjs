@@ -1223,3 +1223,159 @@ test("the_token_is_good_for_five_minutes_and_the_clock_cannot_go_back", () => {
   assert.equal(code(() => reveal(unused, NOW)), "reauth_required");
   assert.equal(code(() => vault.reveal_plain_export(rows, "json", false, null, NOW)), "reauth_required");
 });
+
+// ------------------------------------------------------------- copy_item
+
+const COPY = fill(16, 0x61);
+const COPY_AT = NOW + 10_000;
+
+/** A minimal CBOR encoder for the hand-made body of a newer schema. */
+function cbor(value) {
+  const head = (major, n) => (n < 24 ? [(major << 5) | n] : [(major << 5) | 24, n]);
+  if (typeof value === "number") return head(0, value);
+  if (typeof value === "boolean") return [value ? 0xf5 : 0xf4];
+  if (typeof value === "string") return [...head(3, value.length), ...enc.encode(value)];
+  if (Array.isArray(value)) return [...head(4, value.length), ...value.flatMap(cbor)];
+  return [...head(5, Object.keys(value).length), ...Object.entries(value).flatMap(([k, v]) => [...cbor(k), ...cbor(v)])];
+}
+
+test("copy_item_opens_under_the_new_id_at_rev_1_with_the_same_view", () => {
+  const { vault } = newAccount("copy-view");
+  const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  // The item has been edited before, so the original is at rev 3.
+  const third = vault.encrypt_item(ITEM, 3, { name: "Edited", favorite: true }, h, NOW + 5);
+  const before = vault.item_view(h);
+
+  const copy = vault.copy_item(h, COPY, COPY_AT);
+  assert.deepEqual(Object.keys(copy).sort(), ["envelope", "rev", "tag"], "only the sealed row leaves");
+  assert.equal(copy.rev, 1, "a new item starts at rev 1");
+  assert.ok(copy.envelope instanceof Uint8Array && copy.tag.length === 32);
+  assert.notDeepEqual(copy.envelope, third.envelope);
+
+  // It opens under the new id at rev 1, and only there.
+  const ch = open(vault, COPY, copy);
+  assert.notEqual(ch, h);
+  assert.equal(code(() => vault.open_item(ITEM, 1, copy.envelope, copy.tag)), "decrypt", "not under the old id");
+  assert.equal(code(() => vault.open_item(COPY, 2, copy.envelope, copy.tag)), "decrypt", "not at another rev");
+  const view = vault.item_view(ch);
+  assert.equal(view.modified, COPY_AT, "modified is the time of the copy");
+  assert.deepEqual({ ...view, modified: 0 }, { ...before, modified: 0 }, "the rest of the view is the same");
+  assert.equal(view.name, "Edited");
+  assert.equal(view.favorite, true);
+
+  // The open item was not touched: it is the same item, and still edits to rev 4.
+  assert.deepEqual(vault.item_view(h), before);
+  const fourth = vault.encrypt_item(ITEM, 4, { name: "Edited again" }, h, NOW + 20_000);
+  assert.equal(fourth.rev, 4);
+  assert.equal(vault.item_view(ch).name, "Edited", "the copy is its own item");
+});
+
+test("copy_has_a_new_item_key", () => {
+  const { vault } = newAccount("copy-key");
+  const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  const ikOf = (id, sealed) => vault.test_item_key(id, sealed.rev, sealed.envelope, sealed.tag);
+  const fingerprint = (key) => createHash("sha256").update(Buffer.from(key)).digest("hex");
+  const original = fingerprint(ikOf(ITEM, first));
+
+  // The control: an edit keeps the item key, and the fingerprint sees that.
+  const edited = vault.encrypt_item(ITEM, 2, { name: "Edited" }, h, NOW + 1);
+  assert.equal(fingerprint(ikOf(ITEM, edited)), original, "the control: an edit keeps the item key");
+
+  // The copy has another key, also a copy of a copy.
+  const copy = vault.copy_item(h, COPY, COPY_AT);
+  const copyKey = fingerprint(ikOf(COPY, copy));
+  assert.notEqual(copyKey, original, "the copy has a new item key");
+  // The wrapped key (`ik_wrap`, bytes 3 to 75 of the envelope) differs for any
+  // copy, whatever key is inside: it is sealed under another item id with a
+  // fresh nonce. So comparing it says nothing about a reused key; the
+  // fingerprint of the key is what does.
+  assert.notDeepEqual(copy.envelope.slice(3, 75), first.envelope.slice(3, 75));
+  const again = vault.copy_item(h, fill(16, 0x62), COPY_AT);
+  const againKey = fingerprint(ikOf(fill(16, 0x62), again));
+  assert.notEqual(againKey, original);
+  assert.notEqual(againKey, copyKey, "every copy has its own key");
+  const copyOfCopy = vault.copy_item(open(vault, COPY, copy), fill(16, 0x63), COPY_AT);
+  assert.notEqual(fingerprint(ikOf(fill(16, 0x63), copyOfCopy)), copyKey);
+});
+
+test("copy_keeps_hidden_fields_without_revealing_them", () => {
+  const { vault } = newAccount("copy-hidden");
+  const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  const copy = vault.copy_item(h, COPY, COPY_AT);
+  // Nothing in what came back is a secret, in plain or as text.
+  assert.ok(!JSON.stringify(copy).includes("hunter2"));
+  assert.ok(!Buffer.from(copy.envelope).includes(Buffer.from("hunter2-secret")));
+
+  const ch = open(vault, COPY, copy);
+  // The view hides the same things as the view of the original.
+  const view = vault.item_view(ch);
+  const hidden = view.fields.find((f) => f.id === "pass");
+  assert.equal(hidden.value, null, "the hidden field is still hidden");
+  assert.equal(view.has_totp, true);
+  assert.equal(view.has_notes, true);
+  assert.ok(!JSON.stringify(view).includes("hunter2-secret"));
+  assert.ok(!JSON.stringify(view).includes("JBSWY3DPEHPK3PXP"));
+  assert.ok(!JSON.stringify(view).includes("private note text"));
+  // And it is the same secrets, kept inside WASM, that a reveal gives.
+  const index = view.fields.findIndex((f) => f.id === "pass");
+  assert.equal(vault.reveal_item_field(ch, index), vault.reveal_item_field(h, index));
+  assert.equal(vault.reveal_item_field(ch, index), "hunter2-secret");
+  assert.equal(vault.reveal_item_notes(ch), "private note text");
+  assert.equal(vault.reveal_totp_secret(ch), vault.reveal_totp_secret(h));
+  assert.deepEqual(vault.totp_code(ch, 59), vault.totp_code(h, 59));
+});
+
+test("copy_to_the_same_id_or_the_manifest_id_is_invalid_input", () => {
+  const { vault } = newAccount("copy-ids");
+  const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  assert.equal(code(() => vault.copy_item(h, ITEM, COPY_AT)), "invalid_input", "the id of the open item");
+  assert.equal(code(() => vault.copy_item(h, new Uint8Array(16), COPY_AT)), "invalid_input", "the id of the manifest");
+  for (const length of [0, 15, 17, 32]) {
+    assert.equal(code(() => vault.copy_item(h, fill(length, 7), COPY_AT)), "invalid_input", `${length} bytes`);
+  }
+  for (const bad of [NaN, Infinity, -1, 1e20]) {
+    assert.equal(code(() => vault.copy_item(h, COPY, bad)), "invalid_input", `time ${bad}`);
+  }
+  assert.equal(code(() => vault.copy_item(4242, COPY, COPY_AT)), "invalid_handle");
+  // Nothing was made, and a good call after the failures works.
+  assert.equal(vault.copy_item(h, COPY, COPY_AT).rev, 1);
+});
+
+test("copy_of_a_passkey_item_is_invalid_state", () => {
+  const { vault } = newAccount("copy-passkey");
+  const id = fill(16, 0x52);
+  const created = passkeyCreate(vault, id, 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  const h = open(vault, id, created.item);
+  assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "invalid_state");
+  // The passkey is still there and still signs.
+  assertSignature(created, vault.passkey_get(h, GET, CALLER, UV));
+  // A login that had its passkey removed can be copied.
+  const stripped = vault.encrypt_item(id, 2, { remove_passkey: true }, h, NOW + 1);
+  const sh = open(vault, id, stripped);
+  assert.equal(vault.copy_item(sh, COPY, COPY_AT).rev, 1);
+});
+
+test("copy_of_a_read_only_schema_item_is_read_only_schema", () => {
+  const { vault } = newAccount("copy-future");
+  const future = vault.test_seal_plaintext(
+    ITEM,
+    1,
+    new Uint8Array(cbor({ schema: 2, type: "login", name: "From the future", fields: [], urls: [], created: 1, modified: 2, favorite: true })),
+  );
+  const h = open(vault, ITEM, future);
+  assert.equal(vault.item_view(h).read_only, true);
+  assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "read_only_schema");
+  assert.equal(code(() => vault.encrypt_item(ITEM, 2, { name: "x" }, h, NOW)), "read_only_schema", "the same code as an edit");
+});
+
+test("copy_on_a_locked_vault_is_vault_locked", () => {
+  const { vault } = newAccount("copy-locked");
+  const first = vault.encrypt_item(ITEM, 1, LOGIN_DRAFT, undefined, NOW);
+  const h = open(vault, ITEM, first);
+  vault.lock();
+  assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "vault_locked");
+});

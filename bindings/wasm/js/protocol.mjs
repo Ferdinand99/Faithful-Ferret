@@ -134,6 +134,8 @@ export const BYTES_ARGS = {
   verify_checkpoint: [[3, false, false]],
   accept_rows: [[2, false, false]],
   verify_tombstone: [[0, false, false], [2, false, false]],
+  // The id of the copy: public, typed so that nothing but bytes reaches Rust.
+  copy_item: [[1, false, false]],
   rekey: [[2, false, false]],
   sync_memory_prune: [[0, false, false]],
 };
@@ -163,6 +165,7 @@ export const U32_ARGS = {
   reveal_totp_secret: [[0, false]],
   totp_code: [[0, false]],
   encrypt_item: [[3, true]],
+  copy_item: [[0, false]],
   passkey_create: [[8, true]],
   passkey_create_confirm: [[0, false]],
   passkey_create_abort: [[0, false]],
@@ -212,6 +215,7 @@ const MAX_MILLIS = 4e13;
 export const F64_ARGS = {
   open_item: [[1, "u64"]],
   encrypt_item: [[1, "u64"], [4, "millis"]],
+  copy_item: [[2, "millis"]],
   make_tombstone: [[1, "u64"]],
   verify_tombstone: [[1, "u64"]],
   make_checkpoint: [[0, "u64"]],

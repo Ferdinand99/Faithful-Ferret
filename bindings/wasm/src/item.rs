@@ -164,7 +164,7 @@ pub(crate) struct PasskeyDraft {
 /// item. To remove the one-time-password setup, the notes or the passkey, set
 /// `remove_totp`, `remove_notes` or `remove_passkey`. There is no key for a
 /// private key, a PRF seed or a TOTP secret apart from the address.
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Default, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DraftDto {
     #[serde(default)]

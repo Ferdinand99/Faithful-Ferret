@@ -538,6 +538,51 @@ impl Vault {
         })
     }
 
+    /// Copies an open item under a new id and returns `{ rev, envelope, tag }`
+    /// with `rev` 1. The copy has the same body as the open item (exactly
+    /// what `encrypt_item` makes from the open body and an empty draft, with
+    /// `modified` set to `now_ms`) and a **new item key**: the core makes it
+    /// with `encrypt_item` and no existing envelope, so nothing of the old
+    /// `ik_wrap` is reused. Every secret of the body (hidden fields, notes,
+    /// the TOTP address) is copied inside WASM and none of it goes through
+    /// JavaScript. The open item stays as it was and the copy is not opened:
+    /// open it with `open_item` when it is needed.
+    ///
+    /// `new_item_id` must be 16 bytes, differ from the id of the open item
+    /// and not be the id of the manifest (`invalid_input`). An item from a
+    /// newer schema is `read_only_schema`. An item that holds a passkey is
+    /// `invalid_state`: a copy would be a second item with the same
+    /// credential id, and the relying party has one credential for it. The
+    /// caller does not offer a copy of such an item. `now_ms` is the time of
+    /// the write in unix milliseconds.
+    ///
+    /// Spec: Fase 1 § 8.5 ("Keep both" creates a new item), § 4.4 (an item
+    /// key per item), § 5.1 (the envelope).
+    pub fn copy_item(
+        &mut self,
+        handle: u32,
+        new_item_id: Vec<u8>,
+        now_ms: f64,
+    ) -> Result<JsValue, JsValue> {
+        run(|| {
+            let new_id = ItemId::from_bytes(arr(&new_item_id)?);
+            let now = js_time(now_ms)?;
+            let inner = self.inner_mut()?;
+            let open = inner.item(handle)?;
+            if new_id == open.item_id || new_id == ItemId::MANIFEST {
+                return Err(Fail::Input);
+            }
+            // A read-only item is refused here (`read_only_schema`), before
+            // anything else is read from it.
+            let body = build_body(&DraftDto::default(), Some(&open.body), now)?;
+            if body.passkey.is_some() {
+                return Err(Error::InvalidState.into());
+            }
+            let sealed = encrypt_item(&mut OsRng, &inner.vault, new_id, 1, &body, None)?;
+            to_js(&SealedDto::of(&sealed))
+        })
+    }
+
     /// The tombstone of a deleted item at revision `rev`: `{ rev, tomb }`.
     pub fn make_tombstone(&self, item_id: Vec<u8>, rev: f64) -> Result<JsValue, JsValue> {
         run(|| {
