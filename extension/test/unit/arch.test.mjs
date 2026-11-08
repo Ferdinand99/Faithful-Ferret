@@ -393,3 +393,32 @@ test("anything_in_a_test_only_folder_is_left_out_of_a_release_and_refused_by_the
     test_.env.cleanup();
   }
 });
+
+test("a_release_build_fails_on_an_import_or_script_that_points_outside_the_package", async () => {
+  const hooks = '// a real module that reaches into test-only code\nimport "../background/test-only/testHooks.mjs";\nexport {};\n';
+  const cases = {
+    "a page module imports test-only code": { "src/pages/uses.mjs": hooks },
+    "a shared module imports a test-only module": {
+      "src/shared/uses.mjs": 'export { x } from "./test-only/x.mjs";\n',
+      "src/shared/test-only/x.mjs": "export const x = 1;\n",
+    },
+    "a dynamic import of a test-only module": {
+      "src/pages/uses.mjs": 'export const load = () => import("../shared/test-only/x.mjs");\n',
+      "src/shared/test-only/x.mjs": "export const x = 1;\n",
+    },
+    "a page script that is not there": {
+      "src/pages/uses.html": '<!doctype html><html><head><script type="module" src="gone.mjs"></script></head></html>\n',
+    },
+    "an import of a file that does not exist": { "src/pages/uses.mjs": 'import "./nothing.mjs";\n' },
+  };
+  for (const [label, extra] of Object.entries(cases)) {
+    await assert.rejects(built({ variant: "release", extra }), /not in the package/, `release: ${label}`);
+  }
+  // The test build holds the test-only files, so the first three build there.
+  for (const label of Object.keys(cases).slice(0, 3)) {
+    const { env } = await built({ variant: "test", extra: /** @type {any} */ (cases)[label] });
+    env.cleanup();
+  }
+  // And a package that is whole builds, in both variants.
+  for (const variant of VARIANTS) (await built({ variant })).env.cleanup();
+});

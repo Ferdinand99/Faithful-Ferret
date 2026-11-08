@@ -292,3 +292,69 @@ test("add_ops_refuses_to_replace_an_op", async () => {
   const fresh = setup();
   assert.equal(/** @type {any} */ (await fresh.host.call("ping")).ok, true);
 });
+
+test("an_op_that_uses_the_vault_locks_the_host_when_the_worker_fails_whatever_it_says", async () => {
+  const failing = (/** @type {"job" | "none" | "vault"} */ worker) => ({
+    // Says `worker`, and an export-like op: the job worker first, then the vault.
+    mixed: {
+      vault: false,
+      worker,
+      run: async (/** @type {any} */ client) => {
+        await client.job.argon2_export_key("x", new Uint8Array(16).fill(1), {}, "open", null);
+        return client.vault.export_finish();
+      },
+    },
+  });
+  for (const worker of /** @type {const} */ (["job", "none", "vault"])) {
+    const client = createFakeClient({
+      vault: { export_finish: () => { throw Object.assign(new Error("trap"), { code: "internal" }); } },
+      job: { argon2_export_key: () => new Uint8Array(32).fill(3) },
+    });
+    const host = createCoreHost({ createClient: () => client, ops: { ...probes, ...failing(worker) }, names: [...names, "mixed"] });
+    /** @type {string[]} */
+    const heard = [];
+    host.onLocked((reason) => heard.push(reason));
+    await host.call("unlock_probe");
+    await assert.rejects(host.call("mixed"), { code: "internal" });
+    assert.equal(host.state(), "locked", worker);
+    assert.deepEqual(heard, ["worker_failed"], worker);
+  }
+});
+
+test("a_job_op_that_never_touches_the_vault_does_not_lock_but_any_other_failure_does", async () => {
+  const client = createFakeClient({ job: { argon2_export_key: () => { throw Object.assign(new Error("oom"), { code: "internal" }); } } });
+  const host = createCoreHost({ createClient: () => client, ops: probes, names });
+  host.addOps(testOps);
+  await host.call("unlock_probe");
+  await assert.rejects(host.call("argon2_bench", { m_kib: 8, t: 1, p: 1 }), { code: "internal" });
+  assert.equal(host.state(), "unlocked", "a job worker is ended by the client on its own");
+  // The same failure from an op declared `none` locks: only a job op is exempt.
+  const none = createCoreHost({
+    createClient: () => createFakeClient(),
+    ops: { ...probes, undeclared: { vault: false, worker: /** @type {"none"} */ ("none"), run: async () => { throw Object.assign(new Error("x"), { code: "worker_failed" }); } } },
+    names: [...names, "undeclared"],
+  });
+  await none.call("unlock_probe");
+  await assert.rejects(none.call("undeclared"), { code: "worker_failed" });
+  assert.equal(none.state(), "locked");
+});
+
+test("an_op_needs_a_known_worker_and_a_vault_op_runs_on_the_vault_worker", () => {
+  const run = async () => ({});
+  const make = (/** @type {any} */ def) => () => createCoreHost({ ops: { probe: def }, names: [...CORE_OPS, "probe"] });
+  assert.throws(make({ vault: false, run }), { code: "bad_op" }, "no worker");
+  assert.throws(make({ vault: false, worker: undefined, run }), { code: "bad_op" });
+  for (const worker of ["Vault", "vault ", "worker", "", null, 1, "__proto__"]) {
+    assert.throws(make({ vault: false, worker, run }), { code: "bad_op" }, String(worker));
+  }
+  assert.throws(make({ vault: true, worker: "job", run }), { code: "bad_op" });
+  assert.throws(make({ vault: true, worker: "none", run }), { code: "bad_op" });
+  assert.throws(make({ vault: "yes", worker: "vault", run }), { code: "bad_op" });
+  assert.throws(make({ vault: false, worker: "job" }), { code: "bad_op" }, "no run");
+  assert.throws(make(null), { code: "bad_op" });
+  for (const worker of ["vault", "job", "none"]) assert.doesNotThrow(make({ vault: false, worker, run }));
+  assert.doesNotThrow(make({ vault: true, worker: "vault", run }));
+  // addOps checks the same.
+  const host = createCoreHost({ names: [...CORE_OPS, "probe"] });
+  assert.throws(() => host.addOps({ probe: { vault: false, run } }), { code: "bad_op" });
+});

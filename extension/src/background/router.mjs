@@ -152,7 +152,9 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
     const { id, type, body } = message;
     const handler = table.get(`ui:${type}`);
     if (!handler) return post(port, encodeRefusal(id, "not_available"));
-    if (!(await allowed(type))) return post(port, encodeRefusal(id, "vault_locked"));
+    const may = await allowed(type);
+    // A request to lock is never refused: it runs whatever the check says.
+    if (!may && type !== "lock") return post(port, encodeRefusal(id, "vault_locked"));
     // Activity in Ferret's own UI moves the deadline. The messages that need no
     // key (a state poll, an unlock attempt) do not.
     if (!LOCK_EXEMPT.includes(type)) lock.touch();

@@ -33,6 +33,8 @@ export const CORE_OPS = Object.freeze(["ping", "argon2_bench"]);
  * the client ends it on `worker_failed`, `internal` and `kdf_out_of_memory`,
  * and rejects the calls that wait for it with `locked`.
  */
+const WORKERS = Object.freeze(["vault", "job", "none"]);
+
 const WORKER_GONE = new Set(["worker_failed", "internal", "kdf_out_of_memory", "locked", "vault_locked"]);
 
 /** The error of this module. Only a short code leaves it, never a message of the client. */
@@ -54,11 +56,13 @@ export class CoreError extends Error {
  * @typedef {{
  *   vault: boolean,
  *   worker: "vault" | "job" | "none",
- *   run: (client: any, args: any, context: OpContext) => Promise<unknown>,
+ *   run: (client: { vault: any, job: any }, args: any, context: OpContext) => Promise<unknown>,
  * }} CoreOp
  *   `vault` is true when the op needs an unlocked vault: it is refused while
  *   the host is locked, without touching the client. `worker` says which worker
- *   the op runs on; a failure of the vault worker locks the host.
+ *   the op runs on and is required (`vault` ops run on the vault worker). A
+ *   failure of the vault worker locks the host; so does a failure of any op that
+ *   touched `client.vault`, whatever it says, and of any op not declared `job`.
  */
 
 /**
@@ -140,9 +144,15 @@ export function createCoreHost({
 
   /** @param {Readonly<Record<string, CoreOp>>} extra */
   const register = (extra) => {
-    for (const name of Object.keys(extra)) {
+    for (const [name, def] of Object.entries(extra)) {
       if (!allowed.has(name)) throw new CoreError("unknown_core_op");
       if (Object.hasOwn(table, name)) throw new CoreError("op_exists");
+      // An op says which worker it runs on. A missing or unknown value is an
+      // error, and an op that needs the vault runs on the vault worker. (What
+      // an op really uses is also watched at run time, see `call`.)
+      if (typeof def?.run !== "function" || typeof def.vault !== "boolean") throw new CoreError("bad_op");
+      if (!WORKERS.includes(def.worker)) throw new CoreError("bad_op");
+      if (def.vault && def.worker !== "vault") throw new CoreError("bad_op");
     }
     Object.assign(table, extra);
   };
@@ -198,6 +208,9 @@ export function createCoreHost({
       if (def.vault && current !== "unlocked") throw new CoreError("vault_locked");
       const started = epoch;
       let refusedUnlock = false;
+      // What the op really uses decides the lock, not what it says: the view of
+      // the client that it gets notes every use of the vault worker.
+      let usedVault = false;
       /** @type {OpContext} */
       const context = {
         now,
@@ -219,7 +232,17 @@ export function createCoreHost({
         },
       };
       try {
-        const value = await def.run(await client(), args, context);
+        const real = await client();
+        const view = {
+          get vault() {
+            usedVault = true;
+            return real.vault;
+          },
+          get job() {
+            return real.job;
+          },
+        };
+        const value = await def.run(view, args, context);
         // A lock that happened while the call ran wins: nothing is handed out for it.
         if ((def.vault && current !== "unlocked") || refusedUnlock) throw new CoreError("vault_locked");
         return value;
@@ -228,7 +251,9 @@ export function createCoreHost({
         const code = codeOf(error);
         // The vault worker is gone (it failed, ran out of memory, or was ended):
         // the vault is gone with it, so the host says so.
-        if (def.worker === "vault" && WORKER_GONE.has(code) && current === "unlocked") {
+        // Only an op that is declared a job-worker op and never touched the vault
+        // is left alone (the client ends a job worker on its own).
+        if (WORKER_GONE.has(code) && (usedVault || def.worker !== "job") && current === "unlocked") {
           await lock("worker_failed").catch(() => {});
         }
         throw new CoreError(code);

@@ -149,7 +149,12 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
       if (LOCK_EXEMPT.includes(type)) {
         // No key is needed, but an open vault whose time has run out is locked
         // first, so a state poll never reports a vault that should be closed.
-        await expire();
+        try {
+          await expire();
+        } catch {
+          // The lock is already in force whatever went wrong; a message that
+          // needs no key (above all `lock`) is never refused for it.
+        }
         return true;
       }
       const at = await readLockAt();

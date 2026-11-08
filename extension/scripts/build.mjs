@@ -25,7 +25,8 @@
 //    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs)
 //    and background/variant.gen.mjs (what differs between release and test). Anything
 //    below a folder named test-only is left out of a release.
-// 5. Refuses inline script and style in HTML, source maps, files over 4 MiB that
+// 5. Refuses a relative import or page script whose file is not in the package, inline
+//    script and style in HTML, source maps, files over 4 MiB that
 //    are not .wasm, and, for the release variant, anything under test/.
 // 6. Writes <out>/ferret-firefox-<mv>-<variant>/ and the .xpi next to it: sorted
 //    names, a fixed time, fixed permissions, entries stored.
@@ -35,6 +36,7 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
+import { danglingImports } from "./lib/imports.mjs";
 
 export { sha256 };
 
@@ -540,6 +542,11 @@ export async function build({
 
   // 5. Checks.
   for (const [path, bytes] of dist) checkFile(path, bytes);
+  // Every relative import and page script must find its file in the package: a
+  // release that leaves out test-only code must not import it. (The WASM
+  // package is checked by its SHA-256.)
+  const dangling = danglingImports(dist, (path) => path.startsWith("js/") || path.startsWith("pkg-web/"));
+  if (dangling.length > 0) throw new Error(`package: ${dangling.join("; ")}`);
   for (const path of manifestFiles(manifestJson)) {
     if (!dist.has(path)) throw new Error(`manifest.json: ${path} is not in the package`);
   }

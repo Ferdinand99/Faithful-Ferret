@@ -316,3 +316,58 @@ test("a_poll_in_the_turn_after_an_unlock_does_not_lock_the_new_vault", async () 
   await Promise.all([port.send(requests.unlock()), poll.send(requests.state())]);
   assert.equal(coreHost.state(), "unlocked");
 });
+
+test("lock_is_never_refused_and_a_throw_during_lock_still_ends_locked", async () => {
+  // A lock check that throws refuses every other type, and never `lock`.
+  {
+    const { fake, coreHost } = await setup({ unlocked: true });
+    /** @type {string[]} */
+    const ran = [];
+    const handler = (/** @type {string} */ type, /** @type {any} */ reply) => ({
+      types: [type],
+      channel: /** @type {"ui"} */ ("ui"),
+      async handle(/** @type {any} */ _body, /** @type {any} */ ctx) {
+        ran.push(type);
+        if (type === "lock") await ctx.lock("manual");
+        return reply;
+      },
+    });
+    const router = createRouter({
+      runtime: fake.runtime,
+      lock: { checkOrLock: async () => { throw new Error("storage failed"); }, touch() {}, setMinutes() {} },
+      coreHost,
+      handlers: [handler("lock", { ok: true }), handler("candidates", { handles: [] })],
+    });
+    const port = connect(router, extensionPageSender(fake));
+    await port.send(requests.candidates());
+    await port.send(requests.lock());
+    assert.deepEqual(ran, ["lock"], "only lock ran");
+    assert.deepEqual(refusal(port.sent[0]).body, { reason: "vault_locked" });
+    assert.deepEqual(decode(port.sent[1], UI_TYPES, { reply: true }).body, { ok: true });
+    assert.equal(coreHost.state(), "locked");
+  }
+  // A client that cannot end its worker, and a deadline that cannot be read: the host ends locked all the same.
+  {
+    const { fake, client, coreHost, storage, router, log } = await setup({
+      unlocked: true,
+      handlers: () => [{
+        types: ["lock"],
+        channel: "ui",
+        async handle(/** @type {any} */ _body, /** @type {any} */ ctx) {
+          await ctx.lock("manual");
+          return { ok: true };
+        },
+      }],
+    });
+    client.lock = async () => {
+      throw new Error("the worker would not end");
+    };
+    storage.broken = true;
+    const port = connect(router, extensionPageSender(fake));
+    await port.send(requests.lock());
+    assert.equal(coreHost.state(), "locked");
+    assert.equal(log.length, 0);
+    assert.equal(port.sent.length, 1, "the page got an answer");
+    assert.equal(refusal(port.sent[0]).body.reason, "internal_error");
+  }
+});
