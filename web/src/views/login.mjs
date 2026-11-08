@@ -263,6 +263,7 @@ export function loginView(deps) {
     okBox,
     errorBox,
     !reauthPage && info === null ? el("p", null, el("a", { href: "#/setup" }, t("account.login.setup_link"))) : null,
+    !reauthPage ? el("p", null, el("a", { href: "#/forget", "data-role": "forget-link" }, t("syncwarnings.forget.link"))) : null,
     trust,
   ].filter((n) => n !== null);
   mount(root, ...parts);

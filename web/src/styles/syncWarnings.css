@@ -1,0 +1,133 @@
+/* What the sync engine has found out about the server: warnings that stand and stops.
+   Each banner has an icon, a word that names its kind ("Warning", "Sync stopped") and the
+   text, so nothing is shown by colour alone. Long words and translations wrap; the
+   buttons wrap with them, and nothing is wider than the screen. */
+.vault-ui .sync-banners {
+  display: grid;
+  gap: var(--sp-2);
+  padding-inline: max(var(--gutter), calc((100% - var(--wrap)) / 2));
+}
+
+.vault-ui .sync-banners:not(:empty) {
+  padding-top: var(--sp-4);
+}
+
+.vault-ui .sync-banner {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 12px 16px 12px 44px;
+  border-radius: var(--r-md);
+  background: var(--status-fill);
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .sync-banner::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 20px;
+  height: 20px;
+  background-color: var(--status-text);
+  -webkit-mask: var(--i-info) center / contain no-repeat;
+  mask: var(--i-info) center / contain no-repeat;
+}
+
+.vault-ui .sync-banner-warning {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.vault-ui .sync-banner-stop {
+  --status: var(--bad);
+  --status-text: var(--bad-text);
+  --status-fill: var(--bad-fill);
+}
+
+.vault-ui .sync-banner-warning::before,
+.vault-ui .sync-banner-stop::before {
+  -webkit-mask-image: var(--i-alert);
+  mask-image: var(--i-alert);
+}
+
+.vault-ui .sync-banner p {
+  margin: 0;
+}
+
+.vault-ui .sync-banner > * + * {
+  margin-top: var(--sp-2);
+}
+
+.vault-ui .sync-banner-kind {
+  color: var(--status-text);
+  font-weight: 600;
+}
+
+/* A button on the tinted banner sits on the card colour, so its text keeps its contrast. */
+.vault-ui .sync-banner .btn {
+  --btn-bg: var(--card);
+  --btn-hover: color-mix(in srgb, var(--card) 92%, var(--text));
+}
+
+/* The note after a try is always on the page (a screen reader hears it when it is filled in) but takes no room while it is empty. */
+.vault-ui .sync-banner-note[data-empty="true"] {
+  block-size: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.vault-ui .sync-status[data-state="halted"] {
+  --status: var(--bad);
+  --status-text: var(--bad-text);
+  --status-fill: var(--bad-fill);
+}
+
+@media (max-width: 40rem) {
+  .vault-ui .sync-banners {
+    padding-inline: var(--sp-4);
+  }
+
+  /* Two buttons side by side on a phone, or one under the other when the words are long. */
+  .vault-ui .sync-banner .actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .vault-ui .sync-banner {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* The page for a restored server, and the page that forgets a server. */
+.vault-ui .restored {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .restored-preview {
+  margin: 0;
+  padding-inline-start: var(--sp-5);
+  font-weight: 600;
+}
+
+.vault-ui .restored .field input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.vault-ui .restored .actions .btn,
+.account.forget .actions .btn {
+  flex: 1 1 auto;
+}
