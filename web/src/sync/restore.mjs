@@ -10,7 +10,8 @@
 // sent by itself: it is kept as a draft that is not sent and the user chooses (a conflict). This is on purpose and
 // conservative: the server may hold a write that another device made after the restore, a checkpoint that device uploaded
 // covers that write (so the row looks as the checkpoint says), and a client alone cannot tell it from the restored state.
-// A version the server has newer, the same bytes, or a deletion on both sides needs nothing.
+// A version byte for byte the server's, or a deletion on both sides, needs nothing; a version that differs from the
+// server's row is kept as a draft even when its revision is lower (revisions no longer form one line after a restore).
 //
 // Spec: Fase 1 section 8.6 ("Legitimate rollbacks": accept older state, and the local changes the server is missing
 // are uploaded), section 8.3 (a write over a row that has changed is a conflict).
@@ -104,21 +105,13 @@ export async function restoreItems({ listing, rows, outbox, blocked = new Set(),
     }
     /** @type {Kind} */
     const kind = local.deleted ? "tombstone" : server.deleted ? "resurrect" : "reseal";
-    if (local.from === "row" && !blockedIds.has(id)) {
-      // A version the server once had (before the restore): nothing is lost by taking the server's when it is the newer.
-      if (local.rev < server.rev) {
-        decide("skip", false);
-        continue;
-      }
-      if (local.rev === server.rev) {
-        const identical = !local.deleted && row !== undefined && !server.deleted &&
-          sameBytes(row.envelope, server.envelope) && sameBytes(row.tag, server.tag);
-        decide(identical ? "skip" : kind, !identical);
-        continue;
-      }
-    }
-    // A local version over a row the server has: a draft, never a write (a write that waits in the outbox is never dropped either).
-    decide(kind, true);
+    // Only a version byte for byte the server's is nothing to do. After a restore the revisions no longer form one line: a
+    // lower revision here than on the server can be a version this device wrote and uploaded before the restore (which the
+    // restore lost) against a row another device wrote after it, and nothing on this device says which. So a version that
+    // differs from the server's row is kept as a draft whatever its revision, never skipped and never dropped.
+    const identical = local.from === "row" && !blockedIds.has(id) && !local.deleted && row !== undefined && !server.deleted &&
+      sameBytes(row.envelope, server.envelope) && sameBytes(row.tag, server.tag);
+    decide(identical ? "skip" : kind, !identical);
   }
   return out;
 }

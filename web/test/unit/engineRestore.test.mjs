@@ -636,8 +636,15 @@ test("the_same_revision_with_other_bytes_is_a_conflict_and_identical_rows_are_no
   assert.deepEqual(identical, { upload: [], conflicts: [], unchanged: 1 });
   const other = await planRestore({ listing: [server], checkpoint, rows: [live(ID_A, 3, 5)], outbox: [] });
   assert.deepEqual(other, { upload: [], conflicts: [ID_A], unchanged: 0 });
-  const newer = await planRestore({ listing: [live(ID_A, 5, 1)], checkpoint: checkpointOf(5, ENTRY(ID_A, 5, bytes(1))), rows: [live(ID_A, 4, 9)], outbox: [] });
-  assert.deepEqual(newer, { upload: [], conflicts: [], unchanged: 1 }, "the server's newer version needs nothing from this device");
+  // A lower revision here than on the server is no reason to drop the local version: after a restore the revisions are not one line.
+  const lower = await planRestore({ listing: [live(ID_A, 5, 1)], checkpoint: checkpointOf(5, ENTRY(ID_A, 5, bytes(1))), rows: [live(ID_A, 4, 9)], outbox: [] });
+  assert.deepEqual(lower, { upload: [], conflicts: [ID_A], unchanged: 0 });
+  // Byte for byte the server's row is nothing to do, whatever the revision numbers say.
+  const same = await planRestore({ listing: [live(ID_A, 5, 1)], checkpoint: checkpointOf(5, ENTRY(ID_A, 5, bytes(1))), rows: [live(ID_A, 5, 1)], outbox: [] });
+  assert.deepEqual(same, { upload: [], conflicts: [], unchanged: 1 });
+  // A local tombstone below a live row the server has now.
+  const gone = await restoreItems({ listing: [live(ID_A, 5, 1)], checkpoint: checkpointOf(5, ENTRY(ID_A, 5, bytes(1))), rows: [dead(ID_A, 4)], outbox: [] });
+  assert.deepEqual(gone.map(({ kind, conflict }) => ({ kind, conflict })), [{ kind: "tombstone", conflict: true }]);
 });
 
 test("only_an_item_the_server_has_no_row_for_is_sent_the_rest_are_drafts_of_their_kind", async () => {
@@ -834,8 +841,12 @@ test("a_live_row_the_listing_no_longer_shows_and_that_has_no_write_waiting_is_ke
   d.engine.stop();
   model.hidden.add(ID_X); // the server hides X by the time the restart resumes
   const again = await reload(d);
+  again.api.faults.push({ kind: "network" }); // the copy of X does not reach the server yet, so the mark can be seen
   await again.engine.start();
   assert.equal(again.engine.health().halted, null);
+  assert.equal(again.engine.list().find((item) => item.id === ID_X).missingOnServer, true, "marked, to be sent again");
+  const flagsKey = `sync.flags.${ACCOUNT}.${scope().vaultId}.${scope().vkEpoch}`;
+  assert.equal((await getSetting(again.store.database.store, flagsKey)).marks[ID_X].kind, "missing_on_server", "and the mark is stored");
   const rows = await cache.getRows(again.store.database.store, scope());
   assert.ok(rows.some((row) => row.itemId === ID_X), "the only copy of X is not deleted on the server's word");
   assert.ok(again.engine.list().some((item) => item.id === ID_X));
@@ -924,5 +935,75 @@ test("the_preview_and_the_accept_say_when_the_restored_manifest_is_older", async
   assert.deepEqual(await d.engine.restorePreview(), { reupload: 0, conflicts: 0, manifestOlder: true });
   assert.deepEqual(await d.engine.acceptOlderState(), { reuploaded: 0, conflicts: 0, manifestOlder: true });
   assert.equal(d.api.puts.length, 0, "the manifest is never sent from here");
+  d.engine.stop();
+});
+
+test("a_local_version_lower_than_the_servers_row_with_other_bytes_is_a_conflict_not_a_drop", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.seq = 10;
+  setRow(model, client, ID_A, 5, "A five from the old history");
+  setRow(model, client, ID_B, 1, "B");
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  const rowB = model.items.get(ID_B);
+  model.items.clear();
+  // After the restore another device wrote A, and the server numbers it 6.
+  setRow(model, client, ID_A, 6, "A six written after the restore", { seq: 1 });
+  model.items.set(ID_B, { ...rowB, seq: 2 });
+  model.seq = 2;
+  model.restoreEpoch = 1;
+  await d.engine.syncNow();
+  assert.equal(d.engine.health().halted, "server_restored");
+  assert.deepEqual(await d.engine.restorePreview(), { reupload: 0, conflicts: 1, manifestOlder: false });
+  assert.deepEqual(await d.engine.acceptOlderState(), { reuploaded: 0, conflicts: 1, manifestOlder: false });
+  await settle(80);
+  assert.deepEqual(sentFor(d, ID_A), []);
+  const item = d.engine.list().find((entry) => entry.id === ID_A);
+  assert.equal(item.blockedReason, "conflict");
+  assert.equal(item.name, "A six written after the restore", "the screen shows the server's version");
+  const [draft] = await queued(d);
+  assert.equal(draft.baseRev, 6, "the old version is kept as a draft on top of it");
+  const handle = await d.client.vault.open_item(hex16.decode(ID_A), 7, draft.body.blob, draft.body.tag);
+  assert.equal((await d.client.vault.item_view(handle)).name, "A five from the old history");
+  await d.client.vault.close_item(handle);
+  d.engine.stop();
+});
+
+test("a_first_pass_that_fails_offline_after_a_reload_keeps_the_queued_writes_held_until_a_clean_pass", async () => {
+  const d = await withUnsentEdit();
+  const again = await reload(d);
+  again.api.failFeed = new ApiError(0, "network");
+  again.api.failFeedTimes = 1;
+  await again.engine.start();
+  await settle(60);
+  assert.ok(states(again, "offline").length > 0, "the first pass failed");
+  assert.equal(again.api.puts.length, 0, "and the write stays held: nothing says yet that the server is not a restored one");
+  await until(() => again.timers.pending > 0);
+  again.timers.advance(5_000);
+  await until(() => again.api.puts.length === 1, "the write goes out after a pass that ended well");
+  again.engine.stop();
+});
+
+test("resume_after_halt_keeps_the_queued_writes_held_until_a_pass_ends_well", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A", { seq: 5 });
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  model.latestSeqLie = 2;
+  await d.engine.syncNow();
+  assert.equal(d.engine.health().halted, "rollback_suspected");
+  const id = await d.engine.create(DRAFT);
+  model.latestSeqLie = null;
+  d.api.failFeed = new ApiError(0, "network");
+  d.api.failFeedTimes = 1;
+  await d.engine.resumeAfterHalt();
+  await settle(60);
+  assert.equal(d.engine.health().halted, null);
+  assert.equal(model.items.has(id), false, "the pass failed: the write is still held");
+  await until(() => d.timers.pending > 0);
+  d.timers.advance(5_000);
+  await until(() => model.items.has(id), "a clean pass lets it go");
   d.engine.stop();
 });

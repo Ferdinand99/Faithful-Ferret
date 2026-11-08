@@ -623,13 +623,19 @@ export function createSyncEngine({
   async function checkEpoch(pass, epoch) {
     if (pass.stored === null) {
       if (pass.first === null || epoch > pass.first) pass.first = epoch;
-      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+      if (epoch > 0 && (pass.raised === null || epoch > pass.raised)) {
+        pass.raised = epoch;
+        runner.hold(); // nothing is sent from the moment the server shows a restore, whoever released the runner before
+      }
       return;
     }
     if (epoch < pass.stored) {
       throw new SyncError("restore_epoch_lowered", "The server shows an older restore epoch than this device has seen.");
     }
-    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) pass.raised = epoch;
+    if (epoch > pass.stored && (pass.raised === null || epoch > pass.raised)) {
+      pass.raised = epoch;
+      runner.hold();
+    }
   }
 
   /**
@@ -1500,7 +1506,8 @@ export function createSyncEngine({
 
   /**
    * The writes in the outbox go out only when nothing speaks against the server: not stopped, no restore half done, no higher
-   * restore epoch that has not been accepted. The runner is held from the start of the engine until the first pass has said so.
+   * restore epoch that has not been accepted. The runner is held from the start of the engine, and is let go only here, at the end
+   * of a pass that read the feed to its end: a pass that fails (offline, a bad answer) lets nothing go.
    */
   function releaseIfClear() {
     if (stopped || halted !== null || restorePending || epochPending) return;
@@ -2141,10 +2148,9 @@ export function createSyncEngine({
           return;
         }
       }
-      runner.start(); // nothing goes out yet: the runner is held
+      runner.start(); // nothing goes out yet: the runner is held, and only a pass that ends well lets it go
       await syncNow();
       if (stopped) return;
-      releaseIfClear();
       listen();
       schedule();
     },
@@ -2271,8 +2277,7 @@ export function createSyncEngine({
           halted = null;
           lastStatus = "";
           emit("state", { kind: "warning_cleared", code: "server_restored" });
-          releaseIfClear();
-          schedule();
+          schedule(); // the runner stays held until the pass that follows ends well
           void syncNow();
           return { ...counts, manifestOlder: older };
         });
@@ -2300,9 +2305,8 @@ export function createSyncEngine({
       deferredAt = null;
       lastDrain = null;
       verifyRequested = true;
-      await syncNow();
+      await syncNow(); // the runner is let go by that pass, if it ends well
       if (stopped || halted !== null) return;
-      releaseIfClear();
       schedule();
     },
 
