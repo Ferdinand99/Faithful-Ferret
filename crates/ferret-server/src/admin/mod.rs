@@ -1,5 +1,6 @@
 //! The admin listener's own routes: the redirects that stand in for the kit's
-//! password pages, the hand-over page and the guard that wraps the kit's pages.
+//! password pages, the hand-over page, the signed-out page and the guard that
+//! wraps the kit's pages.
 //! The kit's pages themselves are mounted in `server::admin_router`.
 //!
 //! The admin listener never has a password field, never loads WASM and serves
@@ -10,6 +11,7 @@ pub mod handoff_page;
 pub mod panel;
 pub mod redirects;
 pub mod settings;
+pub mod signed_out_page;
 
 use axum::Router;
 use axum::extract::FromRef;
@@ -25,4 +27,5 @@ where
     Router::new()
         .merge(redirects::routes())
         .merge(handoff_page::routes())
+        .merge(signed_out_page::routes())
 }
