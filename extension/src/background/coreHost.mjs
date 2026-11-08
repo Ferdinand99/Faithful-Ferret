@@ -6,14 +6,19 @@
 // Where the vault lives (design document, section 7.2): the vault worker of the
 // client and the core host are in the same background page and die together. If
 // the page dies, the vault is locked. `lock()` is `client.lock()`: it ends the
-// worker at once, which frees the heap.
+// worker at once, which frees the heap. If the vault worker fails, the host
+// locks itself: it never says "unlocked" about a worker that is gone.
 //
 // Only this file may import the WASM client (`../js/client.mjs`, copied into
 // the package by the build). A test reads the import graph of the built package
 // and fails on any other importer.
+//
+// Boundary: an op gets the raw client. Production ops therefore live in this
+// file; the only other code that passes ops in is the test build's hooks
+// (the test build only), which a release does not contain.
 
 /** The reasons a lock can have. */
-export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_out", "restart"]);
+export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_out", "restart", "worker_failed"]);
 
 /**
  * The operations the router may call. A name outside this list is refused,
@@ -22,6 +27,13 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * implementation in (`ops`); in a release it is refused like any other name.
  */
 export const CORE_OPS = Object.freeze(["ping", "argon2_bench"]);
+
+/**
+ * The codes that say the worker which holds the vault is gone or was ended:
+ * the client ends it on `worker_failed`, `internal` and `kdf_out_of_memory`,
+ * and rejects the calls that wait for it with `locked`.
+ */
+const WORKER_GONE = new Set(["worker_failed", "internal", "kdf_out_of_memory", "locked", "vault_locked"]);
 
 /** The error of this module. Only a short code leaves it, never a message of the client. */
 export class CoreError extends Error {
@@ -34,11 +46,19 @@ export class CoreError extends Error {
 }
 
 /**
- * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => void }} OpContext
+ * @typedef {"timeout" | "idle" | "manual" | "sign_out" | "restart" | "worker_failed"} LockReason
  * @typedef {{ setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void }} Timers
- * @typedef {{ vault: boolean, run: (client: any, args: any, context: OpContext) => Promise<unknown> }} CoreOp
+ * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => void }} OpContext
+ *   `setUnlocked` opens the host. It does nothing if a lock ran after the call
+ *   started, and the call then fails with `vault_locked`.
+ * @typedef {{
+ *   vault: boolean,
+ *   worker: "vault" | "job" | "none",
+ *   run: (client: any, args: any, context: OpContext) => Promise<unknown>,
+ * }} CoreOp
  *   `vault` is true when the op needs an unlocked vault: it is refused while
- *   the host is locked, without touching the client.
+ *   the host is locked, without touching the client. `worker` says which worker
+ *   the op runs on; a failure of the vault worker locks the host.
  */
 
 /**
@@ -47,6 +67,7 @@ export class CoreError extends Error {
  */
 const ping = {
   vault: false,
+  worker: "vault",
   async run(client) {
     const bytes = await client.vault.ferret_aaguid();
     if (!(bytes instanceof Uint8Array) || bytes.length !== 16) throw new CoreError("internal");
@@ -88,7 +109,8 @@ function codeOf(error) {
  * }} [options]
  *   `createClient` makes the WASM client (once, on the first call). `ops` adds
  *   operations to the base ones (the test build's `argon2_bench`; a later task's
- *   operations). `names` replaces `CORE_OPS` and exists for the tests only.
+ *   operations); it cannot replace one. `names` replaces `CORE_OPS` and exists
+ *   for the tests only.
  */
 export function createCoreHost({
   createClient = defaultCreateClient,
@@ -104,12 +126,27 @@ export function createCoreHost({
   let clientPromise = null;
   /** @type {"locked" | "unlocked"} */
   let current = "locked";
+  // Counts the locks. A call remembers it at the start; if it moved, a lock ran
+  // since, and nothing the call does may open the host again.
+  let epoch = 0;
   /** @type {Set<(reason: string) => void>} */
   const listeners = new Set();
+  /** @type {Set<() => void>} */
+  const openListeners = new Set();
 
   /** @type {Record<string, CoreOp>} */
-  const table = { ...BASE_OPS, ...ops };
+  const table = { ...BASE_OPS };
   const allowed = new Set(names);
+
+  /** @param {Readonly<Record<string, CoreOp>>} extra */
+  const register = (extra) => {
+    for (const name of Object.keys(extra)) {
+      if (!allowed.has(name)) throw new CoreError("unknown_core_op");
+      if (Object.hasOwn(table, name)) throw new CoreError("op_exists");
+    }
+    Object.assign(table, extra);
+  };
+  register(ops);
 
   const client = () => {
     if (!clientPromise) {
@@ -123,14 +160,31 @@ export function createCoreHost({
     return clientPromise;
   };
 
-  /** @type {OpContext} */
-  const context = { now, timers, setUnlocked: () => { current = "unlocked"; } };
+  /** @param {LockReason} reason @returns {Promise<void>} */
+  async function lock(reason) {
+    if (!LOCK_REASONS.includes(reason)) throw new CoreError("bad_reason");
+    current = "locked";
+    epoch += 1;
+    const made = clientPromise;
+    try {
+      const started = await made?.catch(() => null);
+      await started?.lock();
+    } finally {
+      for (const listener of [...listeners]) {
+        try {
+          listener(reason);
+        } catch {
+          // A listener that fails must not stop the others or undo the lock.
+        }
+      }
+    }
+  }
 
   return {
     /**
      * Runs one operation. Rejects with a `CoreError` (`unknown_core_op`,
      * `vault_locked`) or with the code of the client's error; never with a
-     * message.
+     * message. A failure of the vault worker locks the host first.
      *
      * @param {string} op
      * @param {unknown} [args]
@@ -142,41 +196,50 @@ export function createCoreHost({
       }
       const def = table[op];
       if (def.vault && current !== "unlocked") throw new CoreError("vault_locked");
+      const started = epoch;
+      let refusedUnlock = false;
+      /** @type {OpContext} */
+      const context = {
+        now,
+        timers,
+        setUnlocked: () => {
+          if (epoch !== started) {
+            refusedUnlock = true;
+            return;
+          }
+          current = "unlocked";
+          // At once, in the same turn: an open vault never exists without a deadline.
+          for (const listener of [...openListeners]) {
+            try {
+              listener();
+            } catch {
+              // A listener that fails must not undo the unlock.
+            }
+          }
+        },
+      };
       try {
         const value = await def.run(await client(), args, context);
         // A lock that happened while the call ran wins: nothing is handed out for it.
-        if (def.vault && current !== "unlocked") throw new CoreError("vault_locked");
+        if ((def.vault && current !== "unlocked") || refusedUnlock) throw new CoreError("vault_locked");
         return value;
       } catch (error) {
         if (error instanceof CoreError) throw error;
-        throw new CoreError(codeOf(error));
+        const code = codeOf(error);
+        // The vault worker is gone (it failed, ran out of memory, or was ended):
+        // the vault is gone with it, so the host says so.
+        if (def.worker === "vault" && WORKER_GONE.has(code) && current === "unlocked") {
+          await lock("worker_failed").catch(() => {});
+        }
+        throw new CoreError(code);
       }
     },
 
     /**
      * Locks: the vault worker is ended at once, and the next call starts a new
      * one. Never waits for a call that is running.
-     *
-     * @param {"timeout" | "idle" | "manual" | "sign_out" | "restart"} reason
-     * @returns {Promise<void>}
      */
-    async lock(reason) {
-      if (!LOCK_REASONS.includes(reason)) throw new CoreError("bad_reason");
-      current = "locked";
-      const made = clientPromise;
-      try {
-        const started = await made?.catch(() => null);
-        await started?.lock();
-      } finally {
-        for (const listener of [...listeners]) {
-          try {
-            listener(reason);
-          } catch {
-            // A listener that fails must not stop the others or undo the lock.
-          }
-        }
-      }
-    },
+    lock,
 
     /** @returns {"locked" | "unlocked"} */
     state: () => current,
@@ -184,16 +247,10 @@ export function createCoreHost({
     /**
      * Adds the implementation of operations whose names are in the list. The
      * test build uses it for `argon2_bench`, once its module has loaded. A name
-     * that is not in the list is an error.
-     *
-     * @param {Readonly<Record<string, CoreOp>>} extra
+     * that is not in the list, or that has an implementation already, is an
+     * error.
      */
-    addOps(extra) {
-      for (const name of Object.keys(extra)) {
-        if (!allowed.has(name)) throw new CoreError("unknown_core_op");
-      }
-      Object.assign(table, extra);
-    },
+    addOps: register,
 
     /**
      * Calls `listener(reason)` after every lock, also one that found the vault
@@ -205,6 +262,17 @@ export function createCoreHost({
     onLocked(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+
+    /**
+     * Calls `listener()` in the turn in which an op opens the host.
+     *
+     * @param {() => void} listener
+     * @returns {() => void} stops the listener
+     */
+    onUnlocked(listener) {
+      openListeners.add(listener);
+      return () => openListeners.delete(listener);
     },
   };
 }

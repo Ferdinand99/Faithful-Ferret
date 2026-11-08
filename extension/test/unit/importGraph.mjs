@@ -2,9 +2,12 @@
 // file (the runner picks up *.test.mjs only).
 //
 // Static imports, `export ... from`, side-effect imports and `import("...")`
-// with a string literal are edges. An `import(...)` whose argument is not a
-// string literal cannot be followed, so it is reported and the tests fail on it:
-// a dynamic import that hides its target is a way around the graph.
+// with a string literal are edges. An `import(...)` that cannot be followed is
+// reported, and the tests fail on it: a dynamic import that hides its target is
+// a way around the graph. That covers an argument that is not a string literal,
+// one inside a template literal, and any `import(` in the code that the reader
+// did not recognise (the count of the text must equal the count of what was
+// understood), so a tokenizer blind spot fails closed.
 import { posix } from "node:path";
 
 const TOKEN = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\[\s\S]|[^`\\])*`|\b(import|export)\b/g;
@@ -24,19 +27,32 @@ export function importsOf(source) {
   /** @type {string[]} */
   const specifiers = [];
   let hidden = 0;
+  let understood = 0;
+  // The source without its comments (a comment is not code), for the cross-check below.
+  let code = "";
+  let copied = 0;
   for (const match of source.matchAll(TOKEN)) {
     const keyword = match[1];
-    if (!keyword) continue;
+    if (!keyword) {
+      if (match[0].startsWith("/*") || match[0].startsWith("//")) {
+        const at = /** @type {number} */ (match.index);
+        code += source.slice(copied, at);
+        copied = at + match[0].length;
+      }
+      continue;
+    }
     const rest = source.slice(/** @type {number} */ (match.index) + keyword.length);
     if (keyword === "import") {
       if (META.test(rest)) continue;
       const dynamic = DYNAMIC_LITERAL.exec(rest);
       if (dynamic) {
         specifiers.push(dynamic[2]);
+        understood += 1;
         continue;
       }
       if (DYNAMIC_OTHER.test(rest)) {
         hidden += 1;
+        understood += 1;
         continue;
       }
       const found = SIDE_EFFECT.exec(rest) ?? IMPORT_FROM.exec(rest);
@@ -46,6 +62,12 @@ export function importsOf(source) {
       if (found) specifiers.push(found[2]);
     }
   }
+  // Every `import(` in the code must have been understood above; one that sits
+  // in a template literal, a string or after a regular expression that
+  // confused the reader is counted as hidden.
+  code += source.slice(copied);
+  const textual = (code.match(/\bimport\s*\(/g) ?? []).length;
+  if (textual > understood) hidden += textual - understood;
   return { specifiers, hidden };
 }
 

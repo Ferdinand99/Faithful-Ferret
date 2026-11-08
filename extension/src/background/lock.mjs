@@ -8,6 +8,10 @@
 // A missing or unreadable `lockAt` while the vault is open means locked. A
 // lock is `coreHost.lock(reason)`: the worker that holds the keys is ended.
 // Nothing here keeps the background page alive.
+//
+// The vault never opens without a deadline: the core host tells this module in
+// the turn it opens, and the deadline is set then. Every message, also one in
+// LOCK_EXEMPT, first locks a vault whose deadline has passed.
 
 /**
  * Message types that need no vault key and so are not checked: they must work
@@ -23,7 +27,12 @@ export const MAX_MINUTES = 480;
 const MS_PER_MINUTE = 60_000;
 
 /**
- * @typedef {{ lock: (reason: "timeout" | "idle" | "manual" | "sign_out" | "restart") => Promise<void>, state: () => "locked" | "unlocked", onLocked: (listener: (reason: string) => void) => unknown }} Locker
+ * @typedef {{
+ *   lock: (reason: "timeout" | "idle" | "manual" | "sign_out" | "restart" | "worker_failed") => Promise<void>,
+ *   state: () => "locked" | "unlocked",
+ *   onLocked: (listener: (reason: string) => void) => unknown,
+ *   onUnlocked: (listener: () => void) => unknown,
+ * }} Locker
  * @typedef {{
  *   alarms: { create: (name: string, info: { when: number }) => unknown, clear: (name: string) => unknown, onAlarm: { addListener: (fn: (alarm: { name: string }) => unknown) => void } },
  *   idle: { onStateChanged: { addListener: (fn: (state: string) => void) => void } },
@@ -114,16 +123,22 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
     if (state === "locked") coreHost.lock("idle").catch(() => {});
   });
 
+  const touch = () => {
+    const at = now() + idleMinutes * MS_PER_MINUTE;
+    queue(() => storageSession.set({ [LOCK_AT_KEY]: at }));
+    arm(at);
+  };
+
+  // The deadline starts in the turn the vault opens.
+  coreHost.onUnlocked(touch);
+
   return {
     /** Moves the deadline to `minutes` from now. Call it for activity in Ferret's own UI. */
-    touch() {
-      const at = now() + idleMinutes * MS_PER_MINUTE;
-      queue(() => storageSession.set({ [LOCK_AT_KEY]: at }));
-      arm(at);
-    },
+    touch,
 
     /**
-     * True when the call may go on. A type in LOCK_EXEMPT always may. Any other
+     * True when the call may go on. A type in LOCK_EXEMPT always may (after the
+     * lock of a passed or missing deadline, as below). Any other
      * type may only while the vault is open and the deadline is in the future;
      * a passed or missing deadline locks first and answers false.
      *
@@ -131,7 +146,12 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
      * @returns {Promise<boolean>}
      */
     async checkOrLock(type) {
-      if (LOCK_EXEMPT.includes(type)) return true;
+      if (LOCK_EXEMPT.includes(type)) {
+        // No key is needed, but an open vault whose time has run out is locked
+        // first, so a state poll never reports a vault that should be closed.
+        await expire();
+        return true;
+      }
       const at = await readLockAt();
       if (coreHost.state() === "locked") return false;
       if (at === null) {

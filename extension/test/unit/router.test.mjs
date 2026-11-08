@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CORE_OPS, createCoreHost } from "../../src/background/coreHost.mjs";
 import { LOCK_AT_KEY, LOCK_EXEMPT, createLock } from "../../src/background/lock.mjs";
-import { createRouter, encodeRefusal } from "../../src/background/router.mjs";
-import { CONTENT_TYPES, UI_PORT, UI_TYPES, decode, encode } from "../../src/shared/protocol.mjs";
+import { createRouter } from "../../src/background/router.mjs";
+import { CONTENT_TYPES, REFUSAL_REASONS, UI_PORT, UI_TYPES, decode, encode, encodeRefusal } from "../../src/shared/protocol.mjs";
 import { contentScriptSender, createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 import { createAlarmsAndIdle, createClock, createFakeClient, createPort, createSessionStorage } from "./backgroundHelpers.mjs";
 
@@ -12,6 +12,7 @@ const MINUTE = 60_000;
 const probes = Object.freeze({
   unlock_probe: {
     vault: false,
+    worker: /** @type {"none"} */ ("none"),
     run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
       ctx.setUnlocked();
       return { ok: true };
@@ -33,14 +34,15 @@ async function setup({ unlocked = false, handlers } = {}) {
   if (unlocked) {
     await coreHost.call("unlock_probe");
     lock.touch();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  /** @type {Array<{ type: string, body: any, ctx: any }>} */
+  /** @type {Array<{ type: string, body: any, ctx: any, stateAtCall: string }>} */
   const log = [];
   const record = (/** @type {string} */ type, /** @type {any} */ reply, /** @type {(ctx: any) => unknown} */ after = () => {}) => ({
     types: [type],
     channel: /** @type {"ui" | "content"} */ (type in UI_TYPES ? "ui" : "content"),
     async handle(/** @type {any} */ body, /** @type {any} */ ctx) {
-      log.push({ type, body, ctx });
+      log.push({ type, body, ctx, stateAtCall: ctx.state() });
       await after(ctx);
       return reply;
     },
@@ -80,8 +82,12 @@ const requests = {
   search: () => encode("search", { query: "x" }),
 };
 
-/** @param {string} text */
-const refusal = (text) => JSON.parse(text);
+/** The refusal as the page decodes it: a typed reply of the UI channel. @param {string} text */
+const refusal = (text) => {
+  const message = decode(text, UI_TYPES, { reply: true });
+  assert.equal(message.type, "refused");
+  return message;
+};
 
 test("unlock_is_allowed_while_locked_and_sets_lock_at", async () => {
   const { fake, clock, coreHost, storage, router, log } = await setup();
@@ -199,13 +205,14 @@ test("a_type_without_a_handler_is_not_available", async () => {
   const { fake, router } = await setup({ handlers: () => [] });
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.state());
-  assert.deepEqual(refusal(port.sent[0]), { v: 1, id: refusal(port.sent[0]).id, type: "refused", body: { reason: "not_available" } });
+  assert.deepEqual(refusal(port.sent[0]).body, { reason: "not_available" });
 });
 
 test("a_refusal_carries_a_reason_and_never_text_from_the_handler_or_the_request", async () => {
   const handlers = () => [
     { types: ["unlock"], channel: "ui", handle: async () => { throw new Error("master password hunter2"); } },
     { types: ["sign_in"], channel: "ui", handle: async () => { throw Object.assign(new Error("hunter2"), { code: "bad_credentials" }); } },
+    { types: ["lock"], channel: "ui", handle: async () => { throw Object.assign(new Error("hunter2"), { code: "invalid_input" }); } },
     { types: ["settings"], channel: "ui", handle: async () => ({ lock_minutes: 9999 }) },
     { types: ["state"], channel: "ui", handle: async () => { throw Object.assign(new Error("x"), { code: "Has Spaces: hunter2" }); } },
   ];
@@ -215,8 +222,11 @@ test("a_refusal_carries_a_reason_and_never_text_from_the_handler_or_the_request"
   await port.send(requests.sign_in());
   await port.send(requests.settings());
   await port.send(requests.state());
-  assert.deepEqual(port.sent.map((t) => refusal(t).body.reason), ["internal_error", "bad_credentials", "internal_error", "internal_error"]);
+  await port.send(requests.lock());
+  // A code outside the fixed list is internal_error; one in it is passed on.
+  assert.deepEqual(port.sent.map((t) => refusal(t).body.reason), ["internal_error", "internal_error", "internal_error", "internal_error", "invalid_input"]);
   assert.equal(port.sent.join("").includes("hunter2"), false);
+  for (const sent of port.sent) assert.ok(REFUSAL_REASONS.includes(refusal(sent).body.reason));
   assert.equal(JSON.parse(encodeRefusal("abc", "Not A Reason")).body.reason, "internal_error");
 });
 
@@ -239,8 +249,8 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   const report = encode("frame_report", { request_id: "r1", self_origin: "https://example.com", fields: [] });
   assert.equal(await router.onMessage(report, sender), undefined);
   assert.deepEqual(log.map((e) => [e.type, e.ctx.channel, e.ctx.sender.tabId, e.ctx.sender.frameId]), [["frame_report", "content", 7, 2]]);
-  assert.equal(Object.hasOwn(log[0].ctx, "touch"), false, "a content script does not count as activity");
-  assert.equal(Object.hasOwn(log[0].ctx, "setMinutes"), false);
+  // A report handler reads the state and nothing else: no call, no lock, no touch.
+  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["channel", "sender", "state"]);
 
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;
@@ -285,4 +295,24 @@ test("the_handlers_are_checked_at_start_up", async () => {
   await assert.rejects(make([{ ...ok, handle: null }])(), /needs channel/);
   await assert.rejects(make([null])(), /needs channel/);
   assert.ok(Object.hasOwn(UI_TYPES, "state") && Object.hasOwn(CONTENT_TYPES, "frame_report"));
+});
+
+test("state_after_the_deadline_reports_locked", async () => {
+  const { fake, clock, coreHost, router, log } = await setup({ unlocked: true });
+  const port = connect(router, extensionPageSender(fake));
+  clock.advance(15 * MINUTE);
+  await port.send(requests.state());
+  assert.equal(log.at(-1)?.type, "state");
+  assert.equal(log.at(-1)?.stateAtCall, "locked", "the vault was locked before the handler answered");
+  assert.equal(coreHost.state(), "locked");
+});
+
+test("a_poll_in_the_turn_after_an_unlock_does_not_lock_the_new_vault", async () => {
+  const { fake, coreHost, router } = await setup();
+  const port = connect(router, extensionPageSender(fake));
+  // The unlock handler of the stub opens the host and touches afterwards; a state
+  // poll that arrives in between must find a deadline already.
+  const poll = connect(router, extensionPageSender(fake, "pages/popup.html"));
+  await Promise.all([port.send(requests.unlock()), poll.send(requests.state())]);
+  assert.equal(coreHost.state(), "unlocked");
 });

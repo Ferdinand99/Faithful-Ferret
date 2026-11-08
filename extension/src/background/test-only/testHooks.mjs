@@ -1,12 +1,13 @@
 // What only the test build has: the `argon2_bench` core operation and a port for
-// the test pages to call core operations by name. This file is not in a release
-// package (the build leaves it out and the release check refuses it).
+// the test pages to call core operations by name. It is in a folder named
+// test-only: the release build leaves the folder out and the release check
+// refuses it.
 //
 // The port is not the UI protocol and carries no secret: a test page sends
 // `{ id, op, args }` and gets `{ id, ok: true, value }` or `{ id, ok: false, code }`
 // back. It is accepted from top-level extension pages only, like the UI port.
 
-import { isUiPort } from "../shared/origin.mjs";
+import { isUiPort } from "../../shared/origin.mjs";
 
 export const TEST_CORE_PORT = "ferret-test-core";
 
@@ -21,10 +22,11 @@ function whole(n, min, max) {
  * Runs Argon2id once in the job worker and reports how long it took. The key
  * that comes out is wiped here and never returned.
  *
- * @type {import("./coreHost.mjs").CoreOp}
+ * @type {import("../coreHost.mjs").CoreOp}
  */
 const argon2Bench = {
   vault: false,
+  worker: "job",
   async run(client, args, { now }) {
     const { m_kib: mKib, t, p } = args ?? {};
     if (!whole(mKib, 1, 524_288) || !whole(t, 1, 16) || !whole(p, 1, 4)) {
@@ -40,7 +42,7 @@ const argon2Bench = {
   },
 };
 
-/** @type {Readonly<Record<string, import("./coreHost.mjs").CoreOp>>} */
+/** @type {Readonly<Record<string, import("../coreHost.mjs").CoreOp>>} */
 export const ops = Object.freeze({ argon2_bench: argon2Bench });
 
 /**
@@ -50,7 +52,11 @@ export const ops = Object.freeze({ argon2_bench: argon2Bench });
 export function onConnect(port, { runtime, coreHost }) {
   if (port?.name !== TEST_CORE_PORT) return;
   if (!isUiPort(port, runtime, TEST_CORE_PORT)) {
-    port.disconnect();
+    try {
+      port.disconnect();
+    } catch {
+      // Already gone.
+    }
     return;
   }
   port.onMessage.addListener(async (/** @type {any} */ message) => {

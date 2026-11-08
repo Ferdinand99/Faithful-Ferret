@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CORE_OPS, CoreError, LOCK_REASONS, createCoreHost } from "../../src/background/coreHost.mjs";
-import { ops as testOps } from "../../src/background/testHooks.mjs";
+import { ops as testOps } from "../../src/background/test-only/testHooks.mjs";
 import { AAGUID, createClock, createFakeClient } from "./backgroundHelpers.mjs";
 
 /** Operations that only the tests have: one that needs the vault and one that opens it. */
 const probes = Object.freeze({
-  vault_probe: { vault: true, run: async (/** @type {any} */ client) => client.vault.item_list() },
+  vault_probe: { vault: true, worker: /** @type {"vault"} */ ("vault"), run: async (/** @type {any} */ client) => client.vault.item_list() },
   unlock_probe: {
     vault: false,
+    worker: /** @type {"none"} */ ("none"),
     run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
       ctx.setUnlocked();
       return { ok: true };
@@ -93,8 +94,9 @@ test("unknown_core_op_is_refused", async () => {
     await assert.rejects(host.call(/** @type {any} */ (op)), { code: "unknown_core_op" }, String(op));
   }
   assert.equal(made(), 0, "a refused name never starts the client");
-  // A name that is not in the list is refused even when an implementation is given for it.
-  const plain = createCoreHost({ createClient: () => createFakeClient(), ops: probes });
+  // A name that is not in the list cannot be given an implementation, at start or later.
+  assert.throws(() => createCoreHost({ createClient: () => createFakeClient(), ops: probes }), { code: "unknown_core_op" });
+  const plain = createCoreHost({ createClient: () => createFakeClient() });
   await assert.rejects(plain.call("vault_probe"), { code: "unknown_core_op" });
   assert.throws(() => plain.addOps(probes), { code: "unknown_core_op" });
 });
@@ -153,7 +155,7 @@ test("a_reply_is_plain_data_and_never_a_key", async () => {
 
 test("lock_refuses_a_reason_it_does_not_know_and_tells_its_listeners", async () => {
   const { host, client } = setup();
-  assert.deepEqual([...LOCK_REASONS], ["timeout", "idle", "manual", "sign_out", "restart"]);
+  assert.deepEqual([...LOCK_REASONS], ["timeout", "idle", "manual", "sign_out", "restart", "worker_failed"]);
   await assert.rejects(host.lock(/** @type {any} */ ("because")), { code: "bad_reason" });
   assert.equal(client.locks, 0);
   /** @type {string[]} */
@@ -198,4 +200,95 @@ test("argon2_bench_runs_in_the_job_worker_wipes_the_key_and_returns_only_the_tim
   for (const bad of [undefined, {}, { m_kib: 0, t: 1, p: 1 }, { m_kib: 1e9, t: 1, p: 1 }, { m_kib: 8, t: 1.5, p: 1 }, { m_kib: 8, t: 1, p: 9 }, { m_kib: "8", t: 1, p: 1 }]) {
     await assert.rejects(host.call("argon2_bench", bad), { code: "invalid_input" });
   }
+});
+
+test("a_worker_that_fails_locks_the_host_and_tells_its_listeners", async () => {
+  for (const code of ["worker_failed", "internal", "kdf_out_of_memory"]) {
+    const { host, client } = setup({
+      item_list: () => {
+        throw Object.assign(new Error("worker died"), { code });
+      },
+    });
+    /** @type {string[]} */
+    const heard = [];
+    host.onLocked((reason) => heard.push(reason));
+    await host.call("unlock_probe");
+    await assert.rejects(host.call("vault_probe"), { code });
+    assert.equal(host.state(), "locked", code);
+    assert.deepEqual(heard, ["worker_failed"], code);
+    // The next vault op is refused without touching the client.
+    const before = client.calls.length;
+    await assert.rejects(host.call("vault_probe"), { code: "vault_locked" });
+    assert.equal(client.calls.length, before);
+  }
+});
+
+test("a_failure_of_the_job_worker_or_of_the_host_itself_does_not_lock", async () => {
+  // The job worker is ended by the client on its own; the vault is not affected.
+  const client = createFakeClient({
+    vault: { ferret_aaguid: () => Uint8Array.from(AAGUID) },
+    job: { argon2_export_key: () => { throw Object.assign(new Error("oom"), { code: "kdf_out_of_memory" }); } },
+  });
+  const host = createCoreHost({ createClient: () => client, ops: probes, names });
+  host.addOps(testOps);
+  await host.call("unlock_probe");
+  await assert.rejects(host.call("argon2_bench", { m_kib: 8, t: 1, p: 1 }), { code: "kdf_out_of_memory" });
+  assert.equal(host.state(), "unlocked");
+  // A bad answer that the op itself found (not the client) is not a dead worker either.
+  const odd = createCoreHost({ createClient: () => createFakeClient({ vault: { ferret_aaguid: () => new Uint8Array(3) } }), ops: probes, names });
+  await odd.call("unlock_probe");
+  await assert.rejects(odd.call("ping"), { code: "internal" });
+  assert.equal(odd.state(), "unlocked");
+});
+
+test("a_lock_during_an_unlock_wins", async () => {
+  /** @type {() => void} */
+  let open = () => {};
+  const gate = new Promise((resolve) => {
+    open = () => resolve(undefined);
+  });
+  const slow = {
+    slow_unlock: {
+      vault: false,
+      worker: /** @type {"vault"} */ ("vault"),
+      run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
+        await gate;
+        ctx.setUnlocked();
+        return { ok: true };
+      },
+    },
+  };
+  const client = createFakeClient();
+  const host = createCoreHost({ createClient: () => client, ops: slow, names: [...CORE_OPS, "slow_unlock"] });
+  let opened = 0;
+  host.onUnlocked(() => {
+    opened += 1;
+  });
+  const pending = host.call("slow_unlock");
+  await tick();
+  await host.lock("idle");
+  open();
+  await assert.rejects(pending, { code: "vault_locked" });
+  assert.equal(host.state(), "locked");
+  assert.equal(opened, 0, "nothing heard of an unlock that did not happen");
+  // A later unlock works.
+  const again = createCoreHost({ createClient: () => client, ops: probes, names });
+  again.onUnlocked(() => {
+    opened += 1;
+  });
+  await again.call("unlock_probe");
+  assert.equal(again.state(), "unlocked");
+  assert.equal(opened, 1);
+});
+
+test("add_ops_refuses_to_replace_an_op", async () => {
+  const host = createCoreHost({ createClient: () => createFakeClient(), names });
+  host.addOps(probes);
+  assert.throws(() => host.addOps({ ping: { vault: false, worker: "none", run: async () => ({ ok: true, aaguid: "fake" }) } }), { code: "op_exists" });
+  assert.throws(() => host.addOps({ vault_probe: probes.vault_probe }), { code: "op_exists" });
+  // Nor can the constructor replace the base op.
+  assert.throws(() => createCoreHost({ ops: { ping: probes.vault_probe }, names }), { code: "op_exists" });
+  // The base op still answers as before.
+  const fresh = setup();
+  assert.equal(/** @type {any} */ (await fresh.host.call("ping")).ok, true);
 });

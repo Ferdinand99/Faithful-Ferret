@@ -16,8 +16,10 @@
 //
 // A message is decoded and its sender checked before anything else happens. The
 // origin of a sender comes from the browser, never from the message. A handler
-// answers with a body; a refusal carries only a short snake_case reason, never
-// a message text and never anything that was in the request.
+// answers with a body; a refusal is the protocol's typed `refused` reply with a
+// reason from a fixed short list, never a message text and never anything that
+// was in the request. A domain outcome (a wrong password) is the handler's own
+// reply, not a refusal.
 //
 // Handlers come from `background/handlers/<feature>.handler.mjs`, collected by
 // the build into `handlers.gen.mjs`; see handlers/README.
@@ -25,51 +27,33 @@
 import { contentSender, isUiPort } from "../shared/origin.mjs";
 import {
   CONTENT_TYPES,
-  PROTOCOL_VERSION,
+  REFUSAL_REASONS,
   UI_PORT,
   UI_TYPES,
   decode,
   encode,
+  encodeRefusal,
 } from "../shared/protocol.mjs";
 import { LOCK_EXEMPT } from "./lock.mjs";
-
-const REASON = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
  *   sender: any,
- *   call: (op: string, args?: unknown) => Promise<unknown>,
- *   lock: (reason: "timeout" | "idle" | "manual" | "sign_out" | "restart") => Promise<void>,
+ *   lock?: (reason: import("./coreHost.mjs").LockReason) => Promise<void>,
  *   state: () => "locked" | "unlocked",
+ *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   touch?: () => void,
  *   setMinutes?: (n: number) => void,
  * }} HandlerContext
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
 
-/**
- * The text of a refusal. It is not one of the typed replies, because a refusal
- * has no body but a reason.
- *
- * @param {string} id
- * @param {string} reason
- * @returns {string}
- */
-export function encodeRefusal(id, reason) {
-  return JSON.stringify({
-    v: PROTOCOL_VERSION,
-    id,
-    type: "refused",
-    body: { reason: REASON.test(reason) ? reason : "internal_error" },
-  });
-}
-
 /** @param {unknown} error @returns {string} */
 function reasonOf(error) {
   const code = /** @type {{ code?: unknown }} */ (error)?.code;
-  return typeof code === "string" && REASON.test(code) ? code : "internal_error";
+  return typeof code === "string" && REFUSAL_REASONS.includes(code) ? code : "internal_error";
 }
 
 /**
@@ -111,14 +95,14 @@ function indexHandlers(handlers) {
  * @param {{
  *   runtime: { id?: string, getURL: (path: string) => string },
  *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setMinutes: (n: number) => void },
- *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, lock: HandlerContext["lock"], state: () => "locked" | "unlocked" },
+ *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, lock: (reason: import("./coreHost.mjs").LockReason) => Promise<void>, state: () => "locked" | "unlocked" },
  *   handlers?: readonly Handler[],
  * }} options
  */
 export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
   const table = indexHandlers(handlers);
   const call = (/** @type {string} */ op, /** @type {unknown} */ args) => coreHost.call(op, args);
-  const lockHost = (/** @type {Parameters<HandlerContext["lock"]>[0]} */ reason) => coreHost.lock(reason);
+  const lockHost = (/** @type {import("./coreHost.mjs").LockReason} */ reason) => coreHost.lock(reason);
   const state = () => coreHost.state();
 
   /**
@@ -128,7 +112,6 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
    * @param {string} type
    */
   async function allowed(type) {
-    if (LOCK_EXEMPT.includes(type)) return true;
     try {
       return await lock.checkOrLock(type);
     } catch {
@@ -242,7 +225,8 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
     return (async () => {
       if (!(await allowed(message.type))) return undefined;
       /** @type {HandlerContext} */
-      const ctx = Object.freeze({ channel: "content", sender: from, call, lock: lockHost, state });
+      // A report handler can read the state and nothing else: no call, no lock.
+      const ctx = Object.freeze({ channel: "content", sender: from, state });
       try {
         await handler.handle(message.body, ctx);
       } catch {

@@ -15,6 +15,7 @@ async function deadline(/** @type {ReturnType<typeof createSessionStorage>} */ s
 const probes = Object.freeze({
   unlock_probe: {
     vault: false,
+    worker: /** @type {"none"} */ ("none"),
     run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
       ctx.setUnlocked();
       return { ok: true };
@@ -30,7 +31,11 @@ async function setup({ unlocked = true, minutes = 15 } = {}) {
   const storage = createSessionStorage();
   const events = createAlarmsAndIdle();
   const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: storage, now: clock.now, coreHost, minutes });
-  if (unlocked) await coreHost.call("unlock_probe");
+  if (unlocked) {
+    await coreHost.call("unlock_probe");
+    // The deadline was set in the turn the host opened; let the write land.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
   return { clock, client, coreHost, storage, events, lock };
 }
 
@@ -58,7 +63,7 @@ test("a_missing_lock_at_after_a_restart_means_locked", async () => {
   // The page restarted: nothing in the session storage, and a vault that is open
   // anyway (a worker from before) is closed rather than trusted.
   const { client, coreHost, storage, lock } = await setup();
-  assert.equal(storage.data.has(LOCK_AT_KEY), false);
+  storage.data.delete(LOCK_AT_KEY);
   assert.equal(await lock.checkOrLock("search"), false);
   assert.equal(coreHost.state(), "locked");
   assert.equal(client.locks, 1);
@@ -123,7 +128,8 @@ test("an_alarm_before_lock_at_arms_again_and_another_alarm_is_ignored", async ()
 });
 
 test("an_alarm_with_no_lock_at_locks", async () => {
-  const { coreHost, events } = await setup();
+  const { coreHost, events, storage } = await setup();
+  storage.data.delete(LOCK_AT_KEY);
   await events.fireAlarm(ALARM_NAME);
   assert.equal(coreHost.state(), "locked");
 });
@@ -180,4 +186,28 @@ test("every_lock_clears_the_deadline_whatever_started_it", async () => {
 test("the_listeners_are_registered_while_the_lock_is_created", async () => {
   const { events } = await setup();
   assert.deepEqual(events.listenerCounts(), { alarm: 1, idle: 1 });
+});
+
+test("the_deadline_starts_in_the_turn_the_vault_opens", async () => {
+  const { clock, storage, coreHost, lock } = await setup({ unlocked: false });
+  await coreHost.call("unlock_probe");
+  // No touch from the caller: the host told the lock.
+  assert.equal(await lock.checkOrLock("state"), true);
+  assert.equal(coreHost.state(), "unlocked");
+  assert.equal((await deadline(storage)), clock.now() + 15 * MINUTE);
+});
+
+test("a_message_that_needs_no_key_still_locks_a_vault_whose_time_has_run_out", async () => {
+  for (const type of LOCK_EXEMPT) {
+    const { clock, client, coreHost, lock } = await setup();
+    clock.advance(15 * MINUTE);
+    assert.equal(await lock.checkOrLock(type), true, type);
+    assert.equal(coreHost.state(), "locked", type);
+    assert.equal(client.locks, 1, type);
+  }
+  // And one that is still in time is left alone.
+  const { clock, coreHost, lock } = await setup();
+  clock.advance(15 * MINUTE - 1);
+  assert.equal(await lock.checkOrLock("state"), true);
+  assert.equal(coreHost.state(), "unlocked");
 });
