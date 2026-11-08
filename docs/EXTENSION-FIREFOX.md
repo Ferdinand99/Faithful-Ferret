@@ -12,7 +12,37 @@ This page records what the Firefox extension relies on, measured in real Firefox
 
 ## The lifetime of the background page
 
-LIFETIME_PLACEHOLDER
+### The decision: MV2 with a persistent background page is the default for Firefox
+
+The question is whether the background page of an MV3 build, which holds the vault worker and so the keys, survives until the auto-lock (15 minutes) while the vault is open. It does not. In every scenario, in both Firefox builds, the browser ends the MV3 background page 30 seconds after the last event, and the keys go with it (the next page starts locked). The MV2 page with `persistent: true` lived the whole window in every scenario. The rule was that MV2 becomes the default if an MV3 page is ended before the auto-lock in a normal scenario (no page of the extension open, `about:debugging` closed, the event stream open); that is the case, so **the Firefox build uses the MV2 manifest with `persistent: true`**. The MV3 build stays buildable (the manifest overlay and the tests keep both), so a later Firefox that keeps an MV3 page alive can be measured again. No keep-alive trick was used or is allowed: no port held open, no timer or alarm that is there to keep the page alive. (The heartbeat alarm belongs to the measurement and exists in the test build only; in MV3 it does wake a page that has been ended, which is why the log shows new starts.)
+
+### How it was measured
+
+The background page of the test build writes three kinds of entry to `storage.local` (`background/test-only/measureLog.mjs`): `startup` when it is loaded, `suspend` when the browser says it is about to end it (`runtime.onSuspend`; the listener first leaves a marker in `localStorage` and the next start turns it into the entry, because the page can be gone before a storage write finishes), and `heartbeat` from an alarm every minute. A scenario is started from the measure page with a click, and then **the page is closed**; nothing touches the extension for the length of the window (17 minutes, two more than the auto-lock). Afterwards the measure page is opened again and reads the log straight from `storage.local` (reading does not wake the background). The second witness is the browser's own `backgroundState`, read every 5 seconds from the chrome context, which does not wake or touch the page.
+
+Scenarios, all with the vault open (the vault worker holds a WASM instance and the lock's deadline is set):
+
+- `idle`: nothing else; no page of the extension open, no network.
+- `sse`: and an open `fetch` stream of server-sent events (an event every 10 seconds) read by the background page.
+- `popup`: and the popup page open as a tab.
+- `argon`: and an Argon2id job (256 MiB, 8 passes, about 2 seconds) that runs again and again in the job worker.
+- `terminate`: the browser's Terminate for the background, then the next message.
+
+### The lifetime matrix
+
+Window 17 minutes for each cell; the numbers are the same in Release 159.0.1 and ESR 153.6.0 to within a second or two.
+
+| Scenario | MV3 | MV2 (`persistent: true`) |
+|---|---|---|
+| `idle` | The browser ended the page 30.0 s after the start (`onSuspend` at 30.0 s, state `stopped` at 30.1 to 30.3 s). The next page started at 54 to 61 s (the heartbeat). | Lived the whole 17 minutes: one start, no `suspend`, 16 to 17 heartbeats. |
+| `sse` | Ended at 30.0 s with the stream open. | Lived the whole window. |
+| `popup` | Ended at 30.0 s with the popup page open as a tab. | Lived the whole window. |
+| `argon` | Ended at 30.0 s while the job loop ran (14 jobs of about 2.1 s were done by then); the loop and the vault worker are gone in the next page. | Lived the whole window; 435 (Release) and 437 (ESR) jobs of 2.0 to 2.2 s. |
+| `terminate` | After Terminate the page is `stopped`; the next message starts a new page that is **locked** and has **no `lockAt`**. | Same: Terminate works on the persistent page, and the next message starts a locked page with no `lockAt`. |
+
+The rest of the MV3 log, for the next task to know: after the first 30 seconds a page lives about 60 seconds. The browser ends every page 30 seconds after the last event (the heartbeat, which comes each minute); and in most cases a new page starts about 30 milliseconds later with no event of ours in between (also with an `onSuspend` listener that writes nothing). The cause was not found. It does not matter for the vault, because every new page is locked, and it means that a page that the alarm has woken is never gone for long. The heartbeat reached the page 16 or 17 times in 17 minutes in every cell.
+
+The reports of the run (every entry of every cell, the browser's state timeline, the Argon2id times) are `lifetime-release.json` and `lifetime-esr.json` in `test-results/out/ext-measure/`; they are not committed.
 
 ## The Firefox APIs the plan relies on
 
@@ -69,4 +99,14 @@ scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2]
 
 ## The measurement by hand
 
-HAND_PLACEHOLDER
+The numbers above are headless, in a container. The same measurement is made by hand in an ordinary Firefox, with the signed, unlisted build of the test variant (the workflow "Extension sign measurement build" makes it; the manifest version is an input, `mv3` for the plan and `mv2` to compare). About ten minutes of work and twenty minutes of waiting:
+
+1. Install the `.xpi` (the menu of `about:addons`, "Install Add-on From File").
+2. Open the settings of "Faithful Ferret (test)" in `about:addons` and follow the link "Open the lifetime measurement page".
+3. Choose "Vault open, no page, no network" and click Start. When the page says that the scenario started, **close the tab and `about:debugging`**, and do not open any page of the extension.
+4. Wait twenty minutes.
+5. Open the measurement page the same way. The line at the top says when the browser first announced the end of the page and when the page started again. Copy the grey box below it (the whole log) for the record.
+
+What to expect: with the MV3 build the browser ends the page after about 30 seconds and the line says so. With the MV2 build it says "never".
+
+The "stream" scenario needs the address of a server-sent events stream over https and the permission for its server (the button "Allow the stream's server" asks for it).
