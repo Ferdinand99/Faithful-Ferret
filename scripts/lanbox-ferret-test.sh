@@ -15,6 +15,14 @@
 #   scripts/lanbox-ferret-test.sh peers    peer addresses the server has seen since start
 #   scripts/lanbox-ferret-test.sh token    print the setup link with the setup token
 #                                          (`up` prints it on the first deploy only)
+#   scripts/lanbox-ferret-test.sh snapshot --yes-ferret-test
+#                                          stop the app, copy its data volume to the volume
+#                                          ferret-test-snapshot (label owner=ferret-test), start it
+#   scripts/lanbox-ferret-test.sh restore-snapshot --yes-ferret-test
+#                                          stop the app, copy the snapshot back, raise the
+#                                          restore epoch (`restore-epoch bump --yes`), start it
+#                                          Both stop the app for a short while and replace data: they
+#                                          are run after an explicit yes, never by a test run.
 #
 # The end-to-end stack (compose project ferret-e2e: its own app with the test clock,
 # a TLS terminator and the test host names vault-e2e.test and admin-e2e.test on a
@@ -30,6 +38,16 @@
 #                                          (0 puts it back)
 #   scripts/lanbox-ferret-test.sh e2e-token    print the setup token of the running stack
 #   scripts/lanbox-ferret-test.sh e2e-ca       print the certificate of the stack's test CA
+#   scripts/lanbox-ferret-test.sh e2e-evil <mode> [json]  switch the malicious server of the stack to a
+#                                          mode (honest, swap_blobs, replay_old, hide, gone,
+#                                          fake_tombstone, seq_lie, rollback, fork, forge_checkpoint,
+#                                          drop_checkpoint_head); json holds the parameters, for
+#                                          example e2e-evil hide '{"id":"<32 hex>"}'. The modes are
+#                                          in web/test/e2e-stack/evil/modes.mjs
+#   scripts/lanbox-ferret-test.sh e2e-snapshot  stop the app, copy the volume ferret-e2e-data to the
+#                                          volume ferret-e2e-snapshot (label owner=ferret-e2e), start the app
+#   scripts/lanbox-ferret-test.sh e2e-restore-snapshot  stop the app, copy the snapshot back, raise the
+#                                          restore epoch, start the app (the clock offset is kept)
 #   scripts/lanbox-ferret-test.sh e2e-down     remove the stack and its image
 #
 # docker/.env (not in git; on a Unix host it is made with mode 600) holds
@@ -71,6 +89,12 @@ e2e_app=ferret-e2e-app
 e2e_tls=ferret-e2e-tls
 e2e_network=ferret-e2e-net
 e2e_image=ferret-e2e-app:latest
+# The malicious server between the terminator and the app (web/test/e2e-stack/evil), and the
+# volumes of the app's data and of its snapshot.
+e2e_evil=ferret-e2e-evil
+e2e_evil_image=ferret-e2e-evil:latest
+e2e_data_volume=ferret-e2e-data
+e2e_snapshot_volume=ferret-e2e-snapshot
 # The compose file wants the setup token of the run; commands that only stop or
 # list the stack do not need the real one.
 dce() { FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" dk compose -p "$e2e_project" -f "$e2e_composefile" "$@"; }
@@ -319,8 +343,101 @@ e2e_up() {
 e2e_down() {
   e2e_remove
   dk image rm "$e2e_image" >/dev/null 2>&1 || true
+  dk image rm "$e2e_evil_image" >/dev/null 2>&1 || true
   for id in $(dk images -q --filter "label=$e2e_label"); do dk image rm "$id" >/dev/null 2>&1 || true; done
   echo "e2e-down: done"
+}
+
+# Waits until a container reports healthy (the server has a health check).
+wait_container_healthy() { # container
+  local i status=""
+  for i in $(seq 1 90); do
+    status="$(dk inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null || true)"
+    [ "$status" = healthy ] && return 0
+    sleep 1
+  done
+  echo "lanbox-ferret-test: $1 is not healthy after 90 seconds (status: ${status:-unknown})" >&2
+  return 1
+}
+
+# Replaces the contents of the volume <to> with a copy of the volume <from>, with the
+# file ownership and modes, in a helper container of the pinned Alpine image: no network, no
+# capability but the ones that a copy as root needs. The app must be stopped.
+copy_volume() { # from, to, label, helper container name
+  dk run --rm --name "$4" --label "$3" --network none \
+    --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add FSETID \
+    -v "$1:/from:ro" -v "$2:/to" \
+    "$alpine_image" \
+    sh -c 'set -e; find /to -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /from/. /to/'
+}
+
+# The clock offset of the app (seconds), 0 when there is none. A restart of the container
+# empties /tmp, where the test clock lives, so the offset is read before and set again after.
+e2e_clock_offset() {
+  local offset
+  offset="$(dk exec "$e2e_app" cat /tmp/e2e-clock 2>/dev/null | tr -dc '0-9' || true)"
+  echo "${offset:-0}"
+}
+
+# Switches the malicious server to a mode: `e2e_evil <mode> [json parameters]`. The call is made
+# by Node inside its own container, to its control port, which is on the network of the stack
+# only. The mode and the parameters are given as arguments, never put into the program text.
+e2e_evil() {
+  local mode="${1:-}" params="${2:-}"
+  case "$mode" in
+    '' | *[!a-z_]*) echo "usage: e2e-evil <mode> [json] (a mode name is lower case letters and underscores)" >&2; exit 2 ;;
+  esac
+  e2e_require_running
+  [ "$(dk inspect -f '{{.State.Running}}' "$e2e_evil" 2>/dev/null || true)" = true ] || { echo "lanbox-ferret-test: $e2e_evil is not running" >&2; exit 1; }
+  dk exec "$e2e_evil" node --input-type=module -e '
+const [mode, text] = process.argv.slice(1);
+let params;
+try { params = JSON.parse(text || "{}"); } catch { console.error("the parameters must be JSON"); process.exit(2); }
+const answer = await fetch("http://127.0.0.1:9000/mode", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ ...params, mode }),
+});
+console.log(await answer.text());
+process.exit(answer.ok ? 0 : 1);
+' "$mode" "$params"
+}
+
+# Copies the data of the app to the snapshot volume while the app is stopped, then starts it.
+e2e_snapshot() {
+  e2e_require_running
+  local offset rc=0
+  offset="$(e2e_clock_offset)"
+  echo "e2e-snapshot: stopping $e2e_app"
+  dk stop "$e2e_app" >/dev/null
+  dk volume inspect "$e2e_snapshot_volume" >/dev/null 2>&1 || dk volume create --label "$e2e_label" "$e2e_snapshot_volume" >/dev/null
+  copy_volume "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" ferret-e2e-snapshot-copy || rc=$?
+  dk start "$e2e_app" >/dev/null
+  wait_container_healthy "$e2e_app"
+  e2e_clock "$offset" >/dev/null
+  [ "$rc" -eq 0 ] || { echo "e2e-snapshot: the copy failed (exit $rc); the app runs on its own data" >&2; exit "$rc"; }
+  echo "e2e-snapshot: the data of $e2e_app is in the volume $e2e_snapshot_volume"
+}
+
+# Puts the snapshot back: stop the app, copy the snapshot over the data, raise the restore epoch
+# (the entrypoint already runs `ferret`; the bump refuses while a server runs on the data and a
+# database from before migration 0005), start the app. When a step fails the app stays stopped:
+# it must not run on data that is half restored.
+e2e_restore_snapshot() {
+  e2e_require_running
+  dk volume inspect "$e2e_snapshot_volume" >/dev/null 2>&1 || { echo "lanbox-ferret-test: there is no snapshot ($e2e_snapshot_volume); run e2e-snapshot first" >&2; exit 1; }
+  local offset
+  offset="$(e2e_clock_offset)"
+  echo "e2e-restore-snapshot: stopping $e2e_app"
+  dk stop "$e2e_app" >/dev/null
+  copy_volume "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" ferret-e2e-snapshot-restore \
+    || { echo "e2e-restore-snapshot: the copy failed; $e2e_app stays stopped" >&2; exit 1; }
+  dce run --rm -T --no-deps "$e2e_app" restore-epoch bump --yes \
+    || { echo "e2e-restore-snapshot: the restore epoch was not raised; $e2e_app stays stopped" >&2; exit 1; }
+  dk start "$e2e_app" >/dev/null
+  wait_container_healthy "$e2e_app"
+  e2e_clock "$offset" >/dev/null
+  echo "e2e-restore-snapshot: $e2e_app runs on the snapshot, with a higher restore epoch"
 }
 
 # The runner image (docker/e2e-runner.Dockerfile: the Playwright image of
@@ -399,6 +516,7 @@ exit $status'
         -e CI=1 \
         -e FERRET_E2E_VAULT_URL=https://vault-e2e.test \
         -e FERRET_E2E_ADMIN_URL=https://admin-e2e.test \
+        -e FERRET_E2E_EVIL_URL=http://$e2e_evil:9000 \
         -e FERRET_E2E_SETUP_TOKEN="$token" \
         -e FERRET_E2E_CA_PEM="$pem" \
         -e FERRET_E2E_STATE="${FERRET_E2E_STATE:-}" \
@@ -409,6 +527,47 @@ exit $status'
         -w /work \
         "$runner_image" \
         sh -c "$inner" sh "$@"
+}
+
+# --- Snapshot and restore of the stack behind Pangolin ---------------------------
+# These two replace data of that stack, so they refuse without --yes-ferret-test. A test
+# run never calls them; they are run after an explicit yes.
+snapshot_volume=ferret-test-snapshot
+require_yes_ferret_test() {
+  local arg
+  for arg in "$@"; do
+    [ "$arg" = --yes-ferret-test ] && return 0
+  done
+  echo "lanbox-ferret-test: this stops the stack $project for a short while and replaces data." >&2
+  echo "Run it again with --yes-ferret-test after an explicit yes." >&2
+  exit 2
+}
+
+test_snapshot() {
+  require_yes_ferret_test "$@"
+  [ -f "$envfile" ] || { echo "no $envfile: nothing to copy" >&2; exit 1; }
+  local rc=0
+  dc stop "$container" >/dev/null
+  dk volume inspect "$snapshot_volume" >/dev/null 2>&1 || dk volume create --label "$label" "$snapshot_volume" >/dev/null
+  copy_volume "$volume" "$snapshot_volume" "$label" ferret-test-snapshot-copy || rc=$?
+  dc start "$container" >/dev/null
+  wait_container_healthy "$container"
+  [ "$rc" -eq 0 ] || { echo "snapshot: the copy failed (exit $rc); the app runs on its own data" >&2; exit "$rc"; }
+  echo "snapshot: the data of $container is in the volume $snapshot_volume"
+}
+
+test_restore_snapshot() {
+  require_yes_ferret_test "$@"
+  [ -f "$envfile" ] || { echo "no $envfile: nothing to restore" >&2; exit 1; }
+  dk volume inspect "$snapshot_volume" >/dev/null 2>&1 || { echo "there is no snapshot ($snapshot_volume); run snapshot first" >&2; exit 1; }
+  dc stop "$container" >/dev/null
+  copy_volume "$snapshot_volume" "$volume" "$label" ferret-test-snapshot-restore \
+    || { echo "restore-snapshot: the copy failed; $container stays stopped" >&2; exit 1; }
+  dc run --rm -T --no-deps "$container" restore-epoch bump --yes \
+    || { echo "restore-snapshot: the restore epoch was not raised; $container stays stopped" >&2; exit 1; }
+  dc start "$container" >/dev/null
+  wait_container_healthy "$container"
+  echo "restore-snapshot: $container runs on the snapshot, with a higher restore epoch"
 }
 
 main() {
@@ -433,7 +592,7 @@ case "${1:-}" in
   reset)
     # Only resources of this stack: the compose project, then anything that still
     # carries the label owner=ferret-test. No prune, nothing else is touched.
-    echo "This removes the ferret-test container, network, image and the data volume $volume."
+    echo "This removes the ferret-test container, network, image, the data volume $volume and the snapshot volume $snapshot_volume."
     printf 'Type "reset" to go on: '
     read -r answer
     [ "$answer" = reset ] || { echo "cancelled"; exit 1; }
@@ -467,6 +626,24 @@ case "${1:-}" in
     ;;
   e2e-down)
     e2e_down
+    ;;
+  e2e-evil)
+    shift
+    e2e_evil "$@"
+    ;;
+  e2e-snapshot)
+    e2e_snapshot
+    ;;
+  e2e-restore-snapshot)
+    e2e_restore_snapshot
+    ;;
+  snapshot)
+    shift
+    test_snapshot "$@"
+    ;;
+  restore-snapshot)
+    shift
+    test_restore_snapshot "$@"
     ;;
   e2e-run)
     shift

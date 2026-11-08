@@ -15,9 +15,15 @@
 # The end-to-end stack (checked below the owner's):
 #  * its own project, containers, network and image, all named ferret-e2e* and
 #    labelled owner=ferret-e2e; one named volume for the data and no bind mount, no
-#    published port; built with the e2e-clock feature; trusts only the TLS
-#    terminator; and shares no name, network, volume or address with the
-#    owner's stack.
+#    published port; built with the e2e-clock feature; and shares no name,
+#    network, volume or address with the ferret-test stack. The volume of the
+#    snapshot is made by the script (checked below), with the label owner=ferret-e2e.
+#  * the malicious server ferret-e2e-evil, the one place the sync answers are
+#    reshaped: it exists in the e2e file only (not in the ferret-test compose file,
+#    not in the server's Dockerfile or its build context), publishes no port,
+#    sits between the TLS terminator and the app for both hosts, and is the one
+#    address that the app trusts as its proxy (FERRET_TRUSTED_PROXIES is that
+#    address and nothing else). The ferret-test compose file does not mention it.
 # The deploy script: its drift guard reads what compose injects, refuses a
 # mismatch, and is not fooled by crafted values.
 # The checks below set FERRET_ENV_FILE in subshells on purpose.
@@ -73,6 +79,10 @@ if grep -qi 'e2e' "$file"; then
   echo "check-ferret-test-stack: $file must not mention the end-to-end stack" >&2
   exit 1
 fi
+if grep -qiE 'evil|snapshot' "$file"; then
+  echo "check-ferret-test-stack: $file must not mention the malicious server or a snapshot" >&2
+  exit 1
+fi
 # Without the token that `e2e-up` makes, the stack does not start.
 if docker compose -f "$e2e_file" config >/dev/null 2>&1; then
   echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_SETUP_TOKEN" >&2
@@ -84,7 +94,7 @@ const [owner, e2e] = process.argv.slice(1).map((s) => JSON.parse(s));
 const fail = (m) => { console.error("check-ferret-test-stack: e2e: " + m); process.exit(1); };
 if (e2e.name !== "ferret-e2e") fail("project name must be ferret-e2e");
 const names = Object.keys(e2e.services || {}).sort();
-if (names.join() !== "ferret-e2e-app,ferret-e2e-tls") fail("expected the services ferret-e2e-app and ferret-e2e-tls, got " + names);
+if (names.join() !== "ferret-e2e-app,ferret-e2e-evil,ferret-e2e-tls") fail("expected the services ferret-e2e-app, ferret-e2e-evil and ferret-e2e-tls, got " + names);
 for (const [k, s] of Object.entries(e2e.services)) {
   if (s.container_name !== k) fail(k + ": container_name");
   if (s.labels?.owner !== "ferret-e2e") fail(k + ": label owner=ferret-e2e");
@@ -110,6 +120,7 @@ for (const [k, s] of Object.entries(e2e.services)) {
 }
 const app = e2e.services["ferret-e2e-app"];
 const tls = e2e.services["ferret-e2e-tls"];
+const evil = e2e.services["ferret-e2e-evil"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
 if (Object.keys(app.build?.args || {}).sort().join() !== "FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock, nothing else");
@@ -132,14 +143,30 @@ const subnet = net.ipam?.config?.[0]?.subnet;
 if (subnet !== "172.30.250.0/28") fail("subnet");
 const tlsIp = tls.networks["ferret-e2e-net"].ipv4_address;
 const appIp = app.networks["ferret-e2e-net"].ipv4_address;
-if (!tlsIp || !appIp || tlsIp === appIp) fail("pinned addresses");
-if (env.FERRET_TRUSTED_PROXIES !== tlsIp) fail("the only trusted proxy is the TLS terminator at " + tlsIp + ", got " + env.FERRET_TRUSTED_PROXIES);
-for (const ip of [tlsIp, appIp]) if (!/^172\.30\.250\.([2-9]|1[0-4])$/.test(ip)) fail(ip + " is not a host address of " + subnet + " (.1 is the gateway)");
+const evilIp = evil.networks["ferret-e2e-net"].ipv4_address;
+if (!tlsIp || !appIp || !evilIp || new Set([tlsIp, appIp, evilIp]).size !== 3) fail("pinned addresses");
+if (env.FERRET_TRUSTED_PROXIES !== evilIp) fail("the only trusted proxy is the malicious server at " + evilIp + ", got " + env.FERRET_TRUSTED_PROXIES);
+for (const ip of [tlsIp, appIp, evilIp]) if (!/^172\.30\.250\.([2-9]|1[0-4])$/.test(ip)) fail(ip + " is not a host address of " + subnet + " (.1 is the gateway)");
+
+// The malicious server: made here and nowhere else, in a pinned image, with no way in from outside and no right in the container.
+if (evil.image !== "ferret-e2e-evil:latest") fail("image of the malicious server");
+if (evil.build?.labels?.owner !== "ferret-e2e") fail("build label of the malicious server");
+if (!String(evil.build?.context || "").replace(/\\/g, "/").endsWith("/web/test/e2e-stack/evil") || (evil.build?.dockerfile || "") !== "Dockerfile") fail("the malicious server is built from web/test/e2e-stack/evil/Dockerfile");
+if (Object.keys(evil.build?.args || {}).length) fail("the malicious server takes no build argument");
+if ((evil.cap_add || []).length) fail("the malicious server needs no capability");
+if (evil.user || evil.pid || evil.ipc || evil.devices?.length || evil.volumes?.length || evil.volumes_from?.length) fail("the malicious server has no extra user, namespace, device or mount");
+if (evil.expose?.length) fail("the malicious server exposes no port to publish");
+if (Object.keys(evil.environment || {}).sort().join() !== "EVIL_UPSTREAM_ADMIN,EVIL_UPSTREAM_VAULT") fail("environment of the malicious server");
+if (evil.environment.EVIL_UPSTREAM_VAULT !== "http://ferret-e2e-app:3041" || evil.environment.EVIL_UPSTREAM_ADMIN !== "http://ferret-e2e-app:3040") fail("the malicious server reaches the vault listener and the admin listener of the app, and nothing else");
+if (app.depends_on?.["ferret-e2e-evil"] || !evil.depends_on?.["ferret-e2e-app"] || !tls.depends_on?.["ferret-e2e-evil"] || tls.depends_on?.["ferret-e2e-app"]) fail("start order: app, then the malicious server, then the terminator");
+if (!evil.healthcheck) fail("the malicious server needs a health check (the terminator waits for it)");
+if (!(evil.tmpfs || []).every((t) => t.startsWith("/tmp"))) fail("the malicious server writes to /tmp only");
 const aliases = [...(tls.networks["ferret-e2e-net"].aliases || [])].sort().join();
 if (aliases !== "admin-e2e.test,vault-e2e.test") fail("aliases of the TLS terminator: " + aliases);
 const caddyfile = tls.environment?.CADDYFILE || "";
-if (!/https:\/\/vault-e2e\.test \{[^}]*tls internal[^}]*reverse_proxy ferret-e2e-app:3041/.test(caddyfile)) fail("Caddyfile: vault site");
-if (!/https:\/\/admin-e2e\.test \{[^}]*tls internal[^}]*reverse_proxy ferret-e2e-app:3040/.test(caddyfile)) fail("Caddyfile: admin site");
+if (!/https:\/\/vault-e2e\.test \{[^}]*tls internal[^}]*reverse_proxy ferret-e2e-evil:8041/.test(caddyfile)) fail("Caddyfile: vault site goes to the malicious server (8041)");
+if (!/https:\/\/admin-e2e\.test \{[^}]*tls internal[^}]*reverse_proxy ferret-e2e-evil:8040/.test(caddyfile)) fail("Caddyfile: admin site goes to the malicious server (8040)");
+if (/ferret-e2e-app/.test(caddyfile) || /:9000/.test(caddyfile)) fail("Caddyfile: nothing goes to the app directly, and nothing to the control port");
 if (/trusted_proxies/.test(caddyfile)) fail("the terminator must not trust forwarding headers from anyone");
 
 // Nothing in common with the owner stack.
@@ -149,7 +176,7 @@ const hostNames = (c) => Object.keys(c.services).concat(Object.values(c.services
 overlap("service or container names", hostNames(owner), hostNames(e2e));
 overlap("volumes", Object.values(owner.volumes || {}).map((v) => v.name), Object.values(e2e.volumes || {}).map((v) => v.name));
 overlap("networks", Object.values(owner.networks || {}).map((n) => n.name), Object.values(e2e.networks).map((n) => n.name));
-overlap("images", [o.image], [app.image, tls.image]);
+overlap("images", [o.image], [app.image, tls.image, evil.image]);
 overlap("labels", [o.labels.owner], [app.labels.owner, tls.labels.owner]);
 if (owner.name === e2e.name) fail("same compose project");
 if (o.env_file || app.env_file) fail("env_file would pull in the owner secrets");
@@ -158,6 +185,48 @@ for (const k of ["FERRET_VAULT_URL", "FERRET_ADMIN_URL", "FERRET_TRUSTED_PROXIES
   if (oe[k] === env[k]) fail(k + " is the same in both stacks");
 }
 ' "$config" "$e2e_config"
+
+# The malicious server exists in the e2e stack only: no other compose file, no
+# Dockerfile of the server, nothing of its folder in the server's build context.
+for f in docker/*; do
+  [ "$f" = "$e2e_file" ] && continue
+  if grep -qiE 'e2e-evil|e2e-stack/evil' "$f"; then
+    echo "check-ferret-test-stack: $f must not mention the malicious server; only $e2e_file may" >&2
+    exit 1
+  fi
+done
+if ! tr -d '' < .dockerignore | grep -qx 'web/test/e2e-stack/evil'; then
+  echo "check-ferret-test-stack: .dockerignore must list web/test/e2e-stack/evil" >&2
+  exit 1
+fi
+# The server image takes the built web vault (web/dist, web/admin) from the web stage and nothing else.
+if grep -E '^COPY --from=web ' docker/server.Dockerfile | grep -vE ' /src/web/(dist|admin)( |$)'; then
+  echo "check-ferret-test-stack: docker/server.Dockerfile must copy only web/dist and web/admin from the web stage" >&2
+  exit 1
+fi
+# The folder of the malicious server: its image is pinned by the digest of the server's Node image, and
+# it is the only place that the stack's snapshot helper (a pinned Alpine) is named the same as the server's.
+evil_dockerfile=web/test/e2e-stack/evil/Dockerfile
+server_node="$(sed -n 's/^ARG NODE_IMAGE=//p' docker/server.Dockerfile)"
+[ -n "$server_node" ] && grep -qx "FROM $server_node" "$evil_dockerfile" || { echo "check-ferret-test-stack: $evil_dockerfile must start from the Node image of docker/server.Dockerfile, pinned by digest" >&2; exit 1; }
+server_alpine="$(sed -n 's/^ARG ALPINE_IMAGE=//p' docker/server.Dockerfile)"
+[ -n "$server_alpine" ] && grep -qx "alpine_image=$server_alpine" scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the snapshot helper image of scripts/lanbox-ferret-test.sh must be the pinned Alpine of docker/server.Dockerfile" >&2; exit 1; }
+for f in proxy.mjs modes.mjs recorder.mjs; do
+  grep -q "$f" "$evil_dockerfile" || { echo "check-ferret-test-stack: $evil_dockerfile must copy $f" >&2; exit 1; }
+done
+# The snapshot of the ferret-test stack and of the e2e stack: the label of the e2e one is its own.
+grep -q '^e2e_snapshot_volume=ferret-e2e-snapshot$' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be ferret-e2e-snapshot" >&2; exit 1; }
+grep -q 'dk volume create --label "$e2e_label" "$e2e_snapshot_volume"' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be made with the label owner=ferret-e2e" >&2; exit 1; }
+# The snapshot of the ferret-test stack refuses without --yes-ferret-test, before any Docker call.
+for command in snapshot restore-snapshot; do
+  if FERRET_DOCKER_ARGS="--context check-no-such-context" scripts/lanbox-ferret-test.sh "$command" >/dev/null 2>&1; then
+    echo "check-ferret-test-stack: $command ran without --yes-ferret-test" >&2
+    exit 1
+  fi
+  rc=0
+  FERRET_DOCKER_ARGS="--context check-no-such-context" scripts/lanbox-ferret-test.sh "$command" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 2 ] || { echo "check-ferret-test-stack: $command without --yes-ferret-test must stop with exit 2, got $rc" >&2; exit 1; }
+done
 
 # The deploy script must read the trusted proxy the way compose injects it (last
 # definition wins, `export ` prefix, spaces), so a second line in docker/.env
