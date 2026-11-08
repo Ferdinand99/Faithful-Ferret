@@ -28,6 +28,8 @@
   "sync.state.unauthorized": "Logg inn på nytt for å fortsette",
   "sync.warning.missing_on_server": "Tjenerens liste viste ikke noen elementer. De er beholdt på denne enheten og lastes opp på nytt. Ingenting ble slettet.",
   "sync.warning.rev_lower_than_local": "Tjeneren viste en eldre versjon av et element enn denne enheten har. Den ble ignorert.",
+  "sync.warning.rev_below_remembered": "Tjeneren viste en eldre versjon av et element enn denne enheten har sett før. Den ble ignorert.",
+  "sync.warning.restore_epoch_raised": "Tjeneren melder et nytt gjenopprettingsnummer, men ingenting den viser er eldre enn det denne enheten har sett.",
   "sync.warning.rev_same_row_changed": "Tjeneren viste et annet element under en versjon denne enheten allerede har. Det ble ignorert.",
   "sync.warning.row_damaged": "Et element fra tjeneren kunne ikke åpnes. Siste gode versjon er beholdt.",
   "sync.warning.server_behind": "Tjeneren ligger bak denne enheten. Den kan ha blitt gjenopprettet fra en sikkerhetskopi. Endringer gjort på denne enheten i mellomtiden vises kanskje ikke etter omstart.",

@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import syncService from "../../src/services/sync.service.mjs";
-import { ACCOUNT, VAULT } from "./idbHelpers.mjs";
-import { createFakeApi, createFakeClient, createFakeStore, Model } from "./syncHelpers.mjs";
+import { ACCOUNT, SERVER, VAULT } from "./idbHelpers.mjs";
+import { createFakeApi, createFakeClient, createFakeStore, FakeLocks, Model } from "./syncHelpers.mjs";
 
 const scope = { accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 };
 
@@ -11,7 +11,9 @@ const scope = { accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 };
 async function service(overrides = {}) {
   const store = overrides.store ?? (await createFakeStore());
   const client = createFakeClient();
-  const sync = syncService.create({ api: createFakeApi(new Model()), store, client: { vault: client.vault }, ...overrides });
+  const sync = syncService.create({
+    api: createFakeApi(new Model()), store, client: { vault: client.vault }, serverUrl: SERVER, locks: new FakeLocks(), nav: { userAgent: "" }, ...overrides,
+  });
   return { sync, store };
 }
 

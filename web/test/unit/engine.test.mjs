@@ -7,9 +7,10 @@ import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { createSyncEngine, MANIFEST_ID, SyncError } from "../../src/sync/engine.mjs";
-import { freshStore, scope } from "./idbHelpers.mjs";
+import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
+import { loadSyncState } from "../../src/store/syncState.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, FakeTimers, Model, settle, until,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, fakeMemory, FakeLocks, FakeTimers, memoryOf, Model, settle, until,
 } from "./syncHelpers.mjs";
 
 const MARKER = "Secret Bank Login";
@@ -18,18 +19,19 @@ const ID_A = "11".repeat(16);
 const ID_B = "22".repeat(16);
 
 /** One device: an engine over its own fake browser storage and a fake clock. */
-async function device({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, win = null } = {}) {
+async function device({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, win = null, locks = new FakeLocks(), deviceName } = {}) {
   const order = [];
   const store = await createFakeStore({ order, db });
   const api = createFakeApi(model, { order });
   const timers = new FakeTimers();
   const events = { changed: [], error: [], state: [] };
   const engine = createSyncEngine({
-    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), pollMs, win,
+    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), pollMs, win, deviceName,
+    memory: fakeMemory({ store, client, locks }),
     now: () => 1_700_000_000_000 + timers.time,
   });
   for (const name of Object.keys(events)) engine.on(name, (payload) => events[name].push(payload));
-  return { model, client, store, api, timers, engine, events, order };
+  return { model, client, store, api, timers, engine, events, order, locks };
 }
 
 const rowsOf = (d) => cache.getRows(d.store.database.store, scope());
@@ -256,8 +258,8 @@ test("lower_rev_than_local_is_rejected_with_a_warning", async () => {
 test("manifest_row_is_skipped_in_list_but_kept_in_cache", async () => {
   const model = new Model();
   const client = createFakeClient();
-  // Not a valid item row: the engine must not try to open it as one.
-  model.set(MANIFEST_ID, { rev: 1, blob: b64u.encode(new Uint8Array(64).fill(3)), tag: b64u.encode(new Uint8Array(32).fill(4)) });
+  // A row with a good tag that is no item: the engine must not try to open it as one.
+  model.set(MANIFEST_ID, { rev: 1, ...client.wireRow(MANIFEST_ID, 1, { item_type: "login", name: "unlock methods" }) });
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Item" }) });
   const d = await device({ model, client });
   await d.engine.start();
@@ -568,13 +570,14 @@ test("a_2xx_answer_that_is_not_a_changes_page_is_a_failure_not_offline", async (
   d.engine.stop();
 });
 
-test("a_changed_restore_epoch_and_an_unexpected_revision_are_warnings", async () => {
+test("a_raised_restore_epoch_with_nothing_lower_and_an_unexpected_revision_are_warnings", async () => {
   const model = new Model();
   const d = await device({ model });
   await d.engine.start();
   model.restoreEpoch = 1;
   await d.engine.syncNow();
-  assert.ok(warnings(d).some((w) => w.code === "server_restored" && w.from === 0 && w.to === 1));
+  assert.ok(warnings(d).some((w) => w.code === "restore_epoch_raised" && w.from === 0 && w.to === 1));
+  assert.equal(d.engine.health().halted, null, "nothing was lower, so nothing stops");
 
   const real = d.api.put;
   d.api.put = async (path, body) => ({ ...(await real(path, body)), rev: 9 });
@@ -643,7 +646,7 @@ test("a_feed_that_cannot_be_right_changes_nothing", async () => {
   e.engine.stop();
 });
 
-test("a_server_behind_the_device_is_a_warning_once_and_nothing_is_lowered", async () => {
+test("a_server_behind_the_device_halts_the_engine_and_nothing_is_lowered", async () => {
   const model = new Model();
   const client = createFakeClient();
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
@@ -655,7 +658,8 @@ test("a_server_behind_the_device_is_a_warning_once_and_nothing_is_lowered", asyn
   model.latestSeqLie = 1;
   await d.engine.syncNow();
   await d.engine.syncNow();
-  assert.equal(warnings(d).filter((w) => w.code === "server_behind").length, 1);
+  assert.deepEqual(d.events.state.filter((s) => s.kind === "halted"), [{ kind: "halted", code: "rollback_suspected" }], "said once");
+  assert.equal(d.engine.health().halted, "rollback_suspected");
   assert.equal(d.engine.list().length, 2, "the device keeps what it has");
   d.engine.stop();
 });
@@ -806,6 +810,7 @@ test("a_lock_during_a_mark_save_never_wipes_the_saved_marks", async () => {
   // Another item is refused by the server.
   const id = await d.engine.create({ item_type: "login", name: "C" });
   await until(() => model.items.get(id)?.rev === 1 && d.engine.list().find((i) => i.id === id)?.pending === false);
+  await until(async () => (await rowsOf(d)).some((r) => r.itemId === id && r.rev === 1), "the row is cached");
   model.set(id, { rev: 2, ...client.wireRow(id, 2, { item_type: "login", name: "From elsewhere" }) });
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
@@ -1174,5 +1179,52 @@ test("an_edit_without_the_revision_it_was_made_from_is_refused_and_writes_nothin
   await settle();
   assert.equal(d.model.items.get(id).rev, 1, "no write went out");
   assert.equal(d.engine.list()[0].name, MARKER);
+  d.engine.stop();
+});
+
+// ------------------------------------------------------------------ the memory and the items that were uploaded again
+
+test("own_reupload_below_the_floor_is_accepted_and_the_memory_floor_stays", async () => {
+  const d = await hideItemB();
+  const memoryOfDevice = async () => memoryOf((await loadSyncState(d.store.database.store, SERVER, ACCOUNT)).memory);
+  assert.equal((await memoryOfDevice()).revs[ID_B], 3, "the memory saw the item at revision 3 before it was hidden");
+  const before = d.client.vault.calls.length;
+  await until(() => model_has(d, ID_B) && itemB(d)?.missingOnServer === false, "the copy is back");
+  assert.equal(itemB(d).rev, 1, "the own copy at revision 1 is accepted, below the floor");
+  await d.engine.update(ID_B, { name: "Mine 2" }, 1);
+  await until(() => itemB(d).rev === 2 && !itemB(d).pending, "its own edit too");
+  const given = d.client.vault.calls.slice(before).filter(([op]) => op === "accept_rows").flatMap((call) => call[1]);
+  assert.equal(given.includes(ID_B), false, "none of those rows was given to the memory");
+  assert.equal((await memoryOfDevice()).revs[ID_B], 3, "its floor stays");
+  assert.equal(d.engine.health().halted, null);
+  d.engine.stop();
+});
+
+test("reuploaded_item_missing_from_a_later_listing_is_marked_again", async () => {
+  const d = await hideItemB();
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const marks = async () => (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the copy is back and the mark says so");
+
+  const oldSent = (await marks())[ID_B].sent;
+
+  // The server loses the copy again and a new listing leaves it out.
+  d.model.items.delete(ID_B);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.set(ID_A, { rev: 3, ...d.client.wireRow(ID_A, 3, { item_type: "login", name: "A3" }) });
+  d.api.faults.push({ kind: "network", only: ID_B }); // the new upload waits for a retry
+  await d.engine.syncNow();
+  assert.equal(itemB(d).missingOnServer, true, "marked again");
+  assert.equal(itemB(d).rev, 1, "the copy is kept");
+  const mark = (await marks())[ID_B];
+  assert.deepEqual([mark.kind, mark.rev], ["missing_on_server", 3], "with the floor it had");
+  assert.equal(mark.sent.length, 1, "and only the new upload listed as an own write");
+  assert.equal(oldSent.includes(mark.sent[0]), false);
+  assert.ok(warnings(d).filter((w) => w.code === "missing_on_server").length >= 2);
+
+  // It is uploaded again, and its own row is accepted below the floor once more.
+  d.timers.advance(1_000);
+  await until(() => d.model.items.has(ID_B) && itemB(d)?.missingOnServer === false, "the copy is back again");
   d.engine.stop();
 });
