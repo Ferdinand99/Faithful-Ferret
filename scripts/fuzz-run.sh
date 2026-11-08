@@ -91,6 +91,7 @@ for t in "${targets[@]}"; do
   # size; keep this map equal to MAX_LEN_OF in scripts/fuzz-seeds.mjs.
   case "$t" in
     fuzz_envelope | fuzz_item_body | fuzz_cbor_value | fuzz_export_file) maxlen=70000 ;;
+    fuzz_url_match) maxlen=16384 ;;
     *) maxlen=4096 ;;
   esac
   echo "fuzz-run.sh: $mode $t" >&2

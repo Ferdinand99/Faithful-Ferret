@@ -88,8 +88,9 @@ pub use integrity::{
     verify_recovery_proof, verify_tombstone,
 };
 pub use item::{
-    DecodedItem, Field, FieldKind, ItemBody, ItemType, Manifest, ManifestEntry, Passkey, Totp,
-    UrlEntry, UrlMatch,
+    DecodedItem, DisplayHost, Field, FieldKind, ItemBody, ItemType, Manifest, ManifestEntry,
+    PageOrigin, Passkey, Totp, UrlEntry, UrlMatch, UrlMatchResult, display_host, page_origin,
+    same_site, url_match,
 };
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;

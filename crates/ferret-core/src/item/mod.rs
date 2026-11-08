@@ -6,10 +6,14 @@
 pub mod body;
 pub mod manifest;
 pub mod pad;
+pub mod url_match;
 pub mod view;
 
 pub use body::{Field, FieldKind, ItemBody, ItemType, Passkey, Totp, UrlEntry, UrlMatch};
 pub use manifest::{Manifest, ManifestEntry};
+pub use url_match::{
+    DisplayHost, PageOrigin, UrlMatchResult, display_host, page_origin, same_site, url_match,
+};
 pub use view::{FieldView, ItemView, PasskeyView, UrlView};
 
 /// A decrypted item and whether it may be written back.
