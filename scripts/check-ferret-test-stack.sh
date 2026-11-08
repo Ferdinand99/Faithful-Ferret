@@ -216,6 +216,7 @@ for f in proxy.mjs modes.mjs recorder.mjs; do
 done
 # The snapshot of the ferret-test stack and of the e2e stack: the label of the e2e one is its own.
 grep -q '^e2e_snapshot_volume=ferret-e2e-snapshot$' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be ferret-e2e-snapshot" >&2; exit 1; }
+# shellcheck disable=SC2016
 grep -q 'take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label"' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be made with the label owner=ferret-e2e" >&2; exit 1; }
 # The snapshot of the ferret-test stack refuses without --yes-ferret-test, before any Docker call.
 for command in snapshot restore-snapshot; do
