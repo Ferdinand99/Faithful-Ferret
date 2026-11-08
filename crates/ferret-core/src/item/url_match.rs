@@ -338,7 +338,7 @@ pub struct DisplayHost {
 /// differ.
 ///
 /// The Unicode form is made label by label. A label whose letters come from
-/// more than one script, ignoring digits, hyphens and combining marks, stays in
+/// more than one script, ignoring ASCII digits, hyphens and combining marks, stays in
 /// A-label form: `exаmple` (Latin with the Cyrillic `а`) is shown as
 /// `xn--exmple-4nf`, as a browser with its default IDN policy shows it. The
 /// combinations that are one writing system are allowed: Han with Hiragana and
@@ -348,7 +348,11 @@ pub struct DisplayHost {
 /// script that looks like another (an all-Cyrillic `аррӏе`
 /// next to `apple`) is still shown in Unicode, as in a browser. The security
 /// boundary is the matching, which compares A-labels; the interface must show
-/// the A-label next to the Unicode form when they differ.
+/// the A-label next to the Unicode form when they differ. The same goes for
+/// a Latin label that uses letters outside ASCII to look like another name
+/// (`gıthub` with a dotless i, `ɑpple` with a Latin alpha): all
+/// Latin, so shown in Unicode. This is an accepted class, not a gap to close
+/// here.
 ///
 /// An address that is not a web address is
 /// `Error::Malformed(MalformedKind::Origin)`.
@@ -392,6 +396,7 @@ enum Script {
     Greek,
     Cyrillic,
     Armenian,
+    Arabic,
     Han,
     Hiragana,
     Katakana,
@@ -416,7 +421,9 @@ const SCRIPT_RANGES: &[(u32, u32, Script)] = &[
     (0xAB30, 0xAB5A, Script::Latin),
     (0xFF21, 0xFF3A, Script::Latin),
     (0xFF41, 0xFF5A, Script::Latin),
-    (0x0370, 0x03FF, Script::Greek),
+    // Coptic (03E2..=03EF) is not Greek: it falls to its own block.
+    (0x0370, 0x03E1, Script::Greek),
+    (0x03F0, 0x03FF, Script::Greek),
     (0x1F00, 0x1FFF, Script::Greek),
     (0x0400, 0x052F, Script::Cyrillic),
     (0x1C80, 0x1C8F, Script::Cyrillic),
@@ -424,6 +431,13 @@ const SCRIPT_RANGES: &[(u32, u32, Script)] = &[
     (0xA640, 0xA69F, Script::Cyrillic),
     (0x0530, 0x058F, Script::Armenian),
     (0xFB13, 0xFB17, Script::Armenian),
+    // The Arabic blocks are one script, so Persian and Urdu names are not
+    // split by the 128-point blocks.
+    (0x0600, 0x06FF, Script::Arabic),
+    (0x0750, 0x077F, Script::Arabic),
+    (0x08A0, 0x08FF, Script::Arabic),
+    (0xFB50, 0xFDFF, Script::Arabic),
+    (0xFE70, 0xFEFF, Script::Arabic),
     (0x2E80, 0x2FDF, Script::Han),
     (0x3005, 0x3005, Script::Han),
     (0x3007, 0x3007, Script::Han),
@@ -454,20 +468,25 @@ fn script_of(c: char) -> Script {
 }
 
 /// Whether the letters of a label come from more than one writing system.
-/// Digits, hyphens, other symbols and combining marks do not count: they
-/// belong to whatever they follow.
+/// ASCII digits, hyphens, other symbols and combining marks do not count: they
+/// belong to whatever they follow. A digit of another script does count, as a
+/// letter of its script: the Devanagari zero (U+0966) looks like an `o`, and
+/// it must not hide in a Latin label.
 fn mixes_scripts(label: &str) -> bool {
     let mut seen: Vec<Script> = Vec::new();
     for c in label.chars() {
-        let letter = matches!(
-            get_general_category(c),
-            GeneralCategory::UppercaseLetter
-                | GeneralCategory::LowercaseLetter
-                | GeneralCategory::TitlecaseLetter
-                | GeneralCategory::ModifierLetter
-                | GeneralCategory::OtherLetter
-        );
-        if !letter {
+        let counts = !c.is_ascii_digit()
+            && matches!(
+                get_general_category(c),
+                GeneralCategory::UppercaseLetter
+                    | GeneralCategory::LowercaseLetter
+                    | GeneralCategory::TitlecaseLetter
+                    | GeneralCategory::ModifierLetter
+                    | GeneralCategory::OtherLetter
+                    | GeneralCategory::DecimalNumber
+                    | GeneralCategory::LetterNumber
+            );
+        if !counts {
             continue;
         }
         let script = script_of(c);

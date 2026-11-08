@@ -977,6 +977,37 @@ const DISPLAYS: &[DisplayRow] = &[
         "https://한漢字.kr",
         Some(("xn--p8s937bex8e.kr", "한漢字.kr")),
     ),
+    (
+        "https://faceb\u{966}\u{966}k.com",
+        Some(("xn--facebk-09ma.com", "xn--facebk-09ma.com")),
+    ),
+    (
+        "https://g\u{ae6}\u{ae6}gle.com",
+        Some(("xn--ggle-l4ka.com", "xn--ggle-l4ka.com")),
+    ),
+    (
+        "https://\u{92d}\u{93e}\u{930}\u{924}\u{967}.in",
+        Some(("xn--h2brj9c5l.in", "\u{92d}\u{93e}\u{930}\u{924}\u{967}.in")),
+    ),
+    (
+        "https://\u{e44}\u{e17}\u{e22}\u{e51}.th",
+        Some(("xn--o3cw4h6b.th", "\u{e44}\u{e17}\u{e22}\u{e51}.th")),
+    ),
+    (
+        "https://\u{30b3}\u{30fc}\u{30d2}\u{30fc}.jp",
+        Some(("xn--tck2c4fb.jp", "\u{30b3}\u{30fc}\u{30d2}\u{30fc}.jp")),
+    ),
+    (
+        "https://\u{6af}\u{686}\u{67e}.ir",
+        Some(("xn--3ibp6j.ir", "\u{6af}\u{686}\u{67e}.ir")),
+    ),
+    (
+        "https://\u{67e}\u{627}\u{631}\u{633}\u{6cc}.ir",
+        Some((
+            "xn--mgbug11aqn.ir",
+            "\u{67e}\u{627}\u{631}\u{633}\u{6cc}.ir",
+        )),
+    ),
     // All one script: still shown in Unicode, as a browser does.
     (
         "https://аррӏе.com",

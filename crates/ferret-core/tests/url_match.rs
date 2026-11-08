@@ -876,6 +876,27 @@ fn display_host_gives_both_forms() {
     assert_eq!(h.unicode, "αβγ.gr");
     let h = display_host("https://café.com").unwrap();
     assert_eq!(h.unicode, "café.com");
+    // A digit of another script counts as a letter of that script: a
+    // Devanagari or Gujarati zero in a Latin label is a mix.
+    let h = display_host("https://faceb\u{966}\u{966}k.com").unwrap();
+    assert_eq!(h.unicode, "xn--facebk-09ma.com");
+    let h = display_host("https://g\u{ae6}\u{ae6}gle.com").unwrap();
+    assert_eq!(h.unicode, "xn--ggle-l4ka.com");
+    // ... and a label with the digits of its own script is one script.
+    let h = display_host("https://\u{92d}\u{93e}\u{930}\u{924}\u{967}.in").unwrap();
+    assert_eq!(h.unicode, "\u{92d}\u{93e}\u{930}\u{924}\u{967}.in");
+    let h = display_host("https://\u{e44}\u{e17}\u{e22}\u{e51}.th").unwrap();
+    assert_eq!(h.unicode, "\u{e44}\u{e17}\u{e22}\u{e51}.th");
+    // The Arabic blocks are one script (Persian, Urdu), digits included.
+    let h = display_host("https://\u{6af}\u{686}\u{67e}.ir").unwrap();
+    assert_eq!(h.a_label, "xn--3ibp6j.ir");
+    assert_eq!(h.unicode, "\u{6af}\u{686}\u{67e}.ir");
+    let h = display_host("https://\u{62a}\u{633}\u{62a}\u{661}\u{662}.sa").unwrap();
+    assert_eq!(h.unicode, "\u{62a}\u{633}\u{62a}\u{661}\u{662}.sa");
+    // The prolonged sound mark belongs to the kana.
+    let h = display_host("https://\u{30b3}\u{30fc}\u{30d2}\u{30fc}.jp").unwrap();
+    assert_eq!(h.a_label, "xn--tck2c4fb.jp");
+    assert_eq!(h.unicode, "\u{30b3}\u{30fc}\u{30d2}\u{30fc}.jp");
     // Japanese, Korean and Chinese writing is one system each.
     for host in [
         "日本語ひらがな.jp",

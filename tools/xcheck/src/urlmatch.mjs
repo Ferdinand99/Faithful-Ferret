@@ -76,17 +76,24 @@ export function sameSite(a, b) {
 // The script of a letter, by the Unicode property; letters of other scripts by their block of 128 code points.
 const SCRIPTS = ['Latin', 'Greek', 'Cyrillic', 'Armenian', 'Han', 'Hiragana', 'Katakana', 'Hangul', 'Bopomofo'];
 const SCRIPT_RES = SCRIPTS.map((n) => [n, new RegExp(`^\\p{Script=${n}}$`, 'u')]);
-const LETTER = /^\p{L}$/u;
+const LETTER = /^[\p{L}\p{Nd}\p{Nl}]$/u;
+// The Arabic blocks, as one script: the property leaves out Common letters such as the tatweel.
+const ARABIC = [[0x600, 0x6ff], [0x750, 0x77f], [0x8a0, 0x8ff], [0xfb50, 0xfdff], [0xfe70, 0xfeff]];
 function scriptOf(ch) {
+  const cp = ch.codePointAt(0);
+  if (ARABIC.some(([lo, hi]) => cp >= lo && cp <= hi)) return 'Arabic';
+  // The prolonged sound mark is Common by property and belongs to the kana.
+  if (cp === 0x30fc) return 'Katakana';
   for (const [n, re] of SCRIPT_RES) if (re.test(ch)) return n;
   return `block${ch.codePointAt(0) >> 7}`;
 }
 
-// Letters of a label from more than one writing system. Digits, hyphens and marks do not count; Han with Hiragana and
+// Letters of a label from more than one writing system. ASCII digits, hyphens and marks do not count; Han with Hiragana and
 // Katakana, with Hangul or with Bopomofo are one system each.
 function mixesScripts(label) {
   const seen = new Set();
-  for (const ch of label) if (LETTER.test(ch)) seen.add(scriptOf(ch));
+  // ASCII digits do not count; a digit of another script counts as a letter of its script.
+  for (const ch of label) if (LETTER.test(ch) && !/^[0-9]$/.test(ch)) seen.add(scriptOf(ch));
   if (seen.size < 2) return false;
   const only = (allowed) => [...seen].every((x) => allowed.includes(x));
   return !(only(['Han', 'Hiragana', 'Katakana']) || only(['Han', 'Hangul']) || only(['Han', 'Bopomofo']));

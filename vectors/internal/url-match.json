@@ -5519,6 +5519,153 @@
     },
     {
       "id": "url-match/display_host/017",
+      "title": "host to show for \"https://faceb००k.com\" is xn--facebk-09ma.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://faceb००k.com",
+        "page_utf8": "68747470733a2f2f6661636562e0a5a6e0a5a66b2e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--facebk-09ma.com",
+        "unicode": "xn--facebk-09ma.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/018",
+      "title": "host to show for \"https://g૦૦gle.com\" is xn--ggle-l4ka.com",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://g૦૦gle.com",
+        "page_utf8": "68747470733a2f2f67e0aba6e0aba6676c652e636f6d"
+      },
+      "expect": {
+        "a_label": "xn--ggle-l4ka.com",
+        "unicode": "xn--ggle-l4ka.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/019",
+      "title": "host to show for \"https://भारत१.in\" is भारत१.in",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://भारत१.in",
+        "page_utf8": "68747470733a2f2fe0a4ade0a4bee0a4b0e0a4a4e0a5a72e696e"
+      },
+      "expect": {
+        "a_label": "xn--h2brj9c5l.in",
+        "unicode": "भारत१.in"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/020",
+      "title": "host to show for \"https://ไทย๑.th\" is ไทย๑.th",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://ไทย๑.th",
+        "page_utf8": "68747470733a2f2fe0b984e0b897e0b8a2e0b9912e7468"
+      },
+      "expect": {
+        "a_label": "xn--o3cw4h6b.th",
+        "unicode": "ไทย๑.th"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/021",
+      "title": "host to show for \"https://コーヒー.jp\" is コーヒー.jp",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://コーヒー.jp",
+        "page_utf8": "68747470733a2f2fe382b3e383bce38392e383bc2e6a70"
+      },
+      "expect": {
+        "a_label": "xn--tck2c4fb.jp",
+        "unicode": "コーヒー.jp"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/022",
+      "title": "host to show for \"https://گچپ.ir\" is گچپ.ir",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://گچپ.ir",
+        "page_utf8": "68747470733a2f2fdaafda86d9be2e6972"
+      },
+      "expect": {
+        "a_label": "xn--3ibp6j.ir",
+        "unicode": "گچپ.ir"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/023",
+      "title": "host to show for \"https://پارسی.ir\" is پارسی.ir",
+      "op": "url.display_host",
+      "status": "valid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
+      "rng": [],
+      "input": {
+        "page": "https://پارسی.ir",
+        "page_utf8": "68747470733a2f2fd9bed8a7d8b1d8b3db8c2e6972"
+      },
+      "expect": {
+        "a_label": "xn--mgbug11aqn.ir",
+        "unicode": "پارسی.ir"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/display_host/024",
       "title": "host to show for \"https://аррӏе.com\" is аррӏе.com",
       "op": "url.display_host",
       "status": "valid",
@@ -5539,7 +5686,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/018",
+      "id": "url-match/display_host/025",
       "title": "host to show for \"https://日本語.jp\" is 日本語.jp",
       "op": "url.display_host",
       "status": "valid",
@@ -5560,7 +5707,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/019",
+      "id": "url-match/display_host/026",
       "title": "host to show for \"https://EXAMPLE.com./\" is example.com",
       "op": "url.display_host",
       "status": "valid",
@@ -5581,7 +5728,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/020",
+      "id": "url-match/display_host/027",
       "title": "host to show for \"https://ｅｘａｍｐｌｅ.com\" is example.com",
       "op": "url.display_host",
       "status": "valid",
@@ -5602,7 +5749,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/021",
+      "id": "url-match/display_host/028",
       "title": "host to show for \"http://3232235777/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
@@ -5623,7 +5770,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/022",
+      "id": "url-match/display_host/029",
       "title": "host to show for \"http://192.168.1.1:8080/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
@@ -5644,7 +5791,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/023",
+      "id": "url-match/display_host/030",
       "title": "host to show for \"http://[2001:DB8::1]:8080/\" is [2001:db8::1]",
       "op": "url.display_host",
       "status": "valid",
@@ -5665,7 +5812,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/024",
+      "id": "url-match/display_host/031",
       "title": "host to show for \"http://localhost:3000\" is localhost",
       "op": "url.display_host",
       "status": "valid",
@@ -5686,7 +5833,7 @@
       "expect_error": null
     },
     {
-      "id": "url-match/display_host/025",
+      "id": "url-match/display_host/032",
       "title": "\"ftp://example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5703,7 +5850,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/026",
+      "id": "url-match/display_host/033",
       "title": "\"about:blank\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5720,7 +5867,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/027",
+      "id": "url-match/display_host/034",
       "title": "\"data:text/html,x\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5737,7 +5884,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/028",
+      "id": "url-match/display_host/035",
       "title": "\"https://user@example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5754,7 +5901,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/029",
+      "id": "url-match/display_host/036",
       "title": "\"example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5771,7 +5918,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/030",
+      "id": "url-match/display_host/037",
       "title": "\"\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
@@ -5788,7 +5935,7 @@
       "expect_error": "malformed_origin"
     },
     {
-      "id": "url-match/display_host/031",
+      "id": "url-match/display_host/038",
       "title": "\"https://a..b\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
