@@ -69,9 +69,13 @@ async function forget(/** @type {any} */ session, /** @type {string} */ name) {
   await session.content((/** @type {string} */ n) => document.getElementById("out")?.removeAttribute(`data-${n}`), name);
 }
 
-/** Registers the scripts for https://fixture.test at run time. @returns {Promise<string>} "ok" or the error */
-async function registerDynamic(/** @type {Awaited<ReturnType<typeof openControl>>} */ control, persist = false) {
-  return control.call("registerDynamic", { matches: DYNAMIC_MATCHES, persist });
+/**
+ * Registers the scripts for https://fixture.test at run time. By default with matchOriginAsFallback, which is what
+ * puts the override into about:blank, srcdoc and blob: frames of the page (the registration API has no matchAboutBlank).
+ * @returns {Promise<string>} "ok" or the error
+ */
+async function registerDynamic(/** @type {Awaited<ReturnType<typeof openControl>>} */ control, persist = false, extra = { matchOriginAsFallback: true }) {
+  return control.call("registerDynamic", { matches: DYNAMIC_MATCHES, persist, extra });
 }
 
 /** The page's own first-script notes, parsed. @param {any} session @param {string} attribute */
@@ -86,7 +90,7 @@ test("firefox_main_world_override_answers_a_local_rp_create_and_get", async () =
   for (const channel of channels()) {
     for (const manifest of MANIFESTS) {
       await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
-        await registerDynamic(control);
+        assert.equal(await registerDynamic(control), "ok");
         const label = `${channel}/${manifest}`;
 
         // The same flow for a page matched by the manifest (http://localhost) and one matched by a registration at run time.
@@ -135,7 +139,15 @@ test("firefox_main_world_override_answers_a_local_rp_create_and_get", async () =
         await press(session, "native-create");
         const native = await published(session, "native-create");
         assert.equal(native.ok, false, `${label}: the browser's own create does not succeed here`);
+        // A browser error, not a page script error or a failed fetch.
+        assert.ok(["NotAllowedError", "NotSupportedError"].includes(native.error.name), `${label}: the browser's own create fails with a WebAuthn error: ${JSON.stringify(native)}`);
         assert.equal(rps.unmatched.rp.verified.registration, false);
+        // The same control for get: the browser's own get has no credential to offer and no authenticator.
+        await press(session, "native-get");
+        const nativeGet = await published(session, "native-get");
+        assert.equal(nativeGet.ok, false, `${label}: the browser's own get does not succeed here`);
+        assert.ok(["NotAllowedError", "NotSupportedError"].includes(nativeGet.error.name), `${label}: the browser's own get fails with a WebAuthn error: ${JSON.stringify(nativeGet)}`);
+        assert.equal(rps.unmatched.rp.verified.authentication, 0);
 
         // The override refuses what the design says it must (section 9.2 and 9.3), through the same channel.
         await openPage(session, rps.urlOf(rps.local) + "?uv=required");
@@ -153,7 +165,7 @@ test("the_override_is_in_place_before_the_first_page_script", async () => {
   for (const channel of channels()) {
     for (const manifest of MANIFESTS) {
       await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
-        await registerDynamic(control);
+        assert.equal(await registerDynamic(control), "ok");
         const label = `${channel}/${manifest}`;
         const ours = { probe: true, createOurs: true, getOurs: true, cmaOurs: true, createSrc: NATIVE_CREATE, readyState: "loading", hasBody: false };
         const noClaim = (/** @type {any} */ r) => ({ ...r, claimedAtFirstScript: undefined });
@@ -167,14 +179,11 @@ test("the_override_is_in_place_before_the_first_page_script", async () => {
             assert.deepEqual(noClaim(frame), noClaim(ours), `${label} ${via} #${i}: the first script of a same-origin frame`);
           }
         }
-        // A frame the page makes itself (about:blank) is a new realm. Is the function in it the override too?
-        await openPage(session, rps.urlOf(rps.local));
-        await press(session, "blank-frame");
-        const blank = await published(session, "blank-frame");
-        console.log(`# blank-frame ${label} ${JSON.stringify(blank)}`);
-        assert.equal(typeof blank.sync.probe, "boolean");
-        // The relay of a frame reached the background with the frame's own ids.
+        // The relay of a frame reached the background with the frame's own ids, for the same-origin frame
+        // and for an about:blank frame that the page makes itself.
         await openPage(session, rps.urlOf(rps.local, "/?frame=1"));
+        await press(session, "blank-frame");
+        await published(session, "blank-frame");
         const connects = (await control.call("events")).filter((/** @type {any} */ e) => e.kind === "connect" && e.frameId !== 0);
         for (const c of connects) assert.equal(c.topOrigin, c.origin, `${label}: a frame of the same origin as the top frame`);
         assert.ok(connects.some((/** @type {any} */ c) => /\/frame$/.test(String(c.frameUrl))), `${label}: the same-origin frame connected with its own URL`);
@@ -193,8 +202,10 @@ test("conditional_mediation_availability_can_be_answered", async () => {
         await openPage(session, rps.urlOf(rps.unmatched));
         await press(session, "cma");
         const nativeAnswer = await published(session, "cma");
-        console.log(`# native cma ${label} ${JSON.stringify(nativeAnswer)}`);
         assert.equal(nativeAnswer.fnType, "function", `${label}: Firefox has isConditionalMediationAvailable`);
+        // What Firefox itself says in this build (headless Linux, no authenticator): conditional mediation yes, platform authenticator no.
+        assert.equal(nativeAnswer.value, true, `${label}: Firefox's own isConditionalMediationAvailable: ${JSON.stringify(nativeAnswer)}`);
+        assert.equal(nativeAnswer.uvpaa, false, `${label}: Firefox's own isUserVerifyingPlatformAuthenticatorAvailable`);
 
         // With the override the extension decides, both ways, whatever Firefox says.
         await openPage(session, rps.urlOf(rps.local));
@@ -205,7 +216,8 @@ test("conditional_mediation_availability_can_be_answered", async () => {
           const answer = await published(session, "cma");
           assert.equal(answer.value, wanted, `${label}: the page got the extension's answer ${wanted}: ${JSON.stringify(answer)}`);
         }
-        console.log(`# overridden cma ${label} native-behind-override ${JSON.stringify((await published(session, "cma")).native)}`);
+        // The browser's own answer behind the override is still true, so the false above was the extension's.
+        assert.equal((await published(session, "cma")).native, true, `${label}: the native answer behind the override`);
 
         // A conditional request is held by the extension, and answered later (the user picks in the extension's own UI).
         await press(session, "register");
@@ -296,31 +308,38 @@ test("optional_host_permission_gates_the_override_until_the_user_grants_it", asy
       const session = await launchWithSpike({ channel, manifest, hosts: "optional" });
       try {
         const control = await openControl(session);
-        // Host access is only optional: nothing is granted, so no script is injected anywhere yet.
+        // Host access is only optional: no https origin is granted, so the registered scripts cannot inject yet.
         const before = await control.call("permissions");
-        console.log(`# granted at install ${label}: ${JSON.stringify(before.origins)}`);
         assert.equal(before.origins.some((/** @type {string} */ o) => o.startsWith("https://")), false, `${label}: no https origin granted at install`);
-        const registration = await registerDynamic(control);
-        console.log(`# registerContentScripts without a grant ${label}: ${registration}`);
-        // The declared match (http://localhost) was granted with the install in this profile; the https origins were not.
+
+        // The registration is accepted before the grant, once, and the browser keeps both scripts.
+        assert.equal(await registerDynamic(control), "ok", `${label}: registerContentScripts is accepted without a grant`);
+        assert.deepEqual((await control.call("registered")).map((/** @type {{ id: string }} */ x) => x.id).sort(), ["spike-main", "spike-relay"], `${label}: both scripts are registered`);
+
+        // The match that the manifest declares is granted with the install in this profile (the sideload path): the
+        // override is there on http://localhost even though host access is only optional.
         await openPage(session, rps.urlOf(rps.local));
-        console.log(`# declared match without a grant ${label}: probe=${(await firstScript(session, "data-first-inline")).probe}`);
+        assert.equal((await firstScript(session, "data-first-inline")).probe, true, `${label}: the manifest-declared match is injected without a grant`);
+
+        // The registered page has no override yet: registered, not granted.
         await openPage(session, rps.urlOf(rps.dynamic));
-        assert.equal((await firstScript(session, "data-first-inline")).probe, false, `${label}: a page that only the optional permission covers has no override before the grant`);
+        assert.equal((await firstScript(session, "data-first-inline")).probe, false, `${label}: a registered page has no override before the grant`);
+
         // The user grants https and localhost access, in the extension's own page (a real click, as permissions.request needs).
         await control.press("grant");
         await session.waitFor(() => control.published("grant"), 10_000, "the answer to the permission request");
         assert.deepEqual(JSON.parse(await control.published("grant")), { granted: true }, `${label}: the request was granted`);
-        const registrationAfter = await registerDynamic(control);
-        console.log(`# registerContentScripts after the grant ${label}: ${registrationAfter}`);
-        for (const [what, rp] of /** @type {const} */ ([["manifest-declared page", rps.local], ["registered page", rps.dynamic]])) {
-          await openPage(session, rps.urlOf(rp));
-          const first = await firstScript(session, "data-first-inline");
-          console.log(`# after the grant ${label} ${what}: probe=${first.probe} createOurs=${first.createOurs}`);
-          assert.equal(first.createOurs, true, `${label}: ${what} has the override from its first script after the grant`);
-          await press(session, "register");
-          assert.equal((await published(session, "register")).ok, true, `${label}: ${what}: and it answers`);
-        }
+
+        // No second registration: the scripts registered before the grant now inject, from the first script of the page.
+        assert.equal((await control.call("registered")).length, 2, `${label}: still the same two registered scripts`);
+        await openPage(session, rps.urlOf(rps.dynamic));
+        const first = await firstScript(session, "data-first-inline");
+        assert.equal(first.createOurs, true, `${label}: the registered page has the override from its first script after the grant`);
+        assert.equal(first.readyState, "loading");
+        await press(session, "register");
+        assert.equal((await published(session, "register")).ok, true, `${label}: and it answers`);
+        // A second registration of the same ids is refused: the first one is still the live one.
+        assert.match(await registerDynamic(control), /already registered/, `${label}: the ids are taken`);
       } finally {
         await endSession(session);
         await rps.close();
@@ -352,6 +371,106 @@ test("registered_content_scripts_survive_a_restart_when_asked_to", async () => {
         await endSession(session);
         await rps.close();
       }
+    }
+  }
+});
+
+test("realms_the_page_makes_for_itself_have_the_override_where_the_script_asks_for_it", async () => {
+  for (const channel of channels()) {
+    for (const manifest of MANIFESTS) {
+      const label = `${channel}/${manifest}`;
+      // The scripts match the opener's origin as a fallback (manifest: match_about_blank and match_origin_as_fallback;
+      // registration: matchOriginAsFallback). Then the override is in every realm the page can make from its own origin,
+      // from the moment the realm's document is the final one.
+      await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
+        assert.equal(await registerDynamic(control), "ok");
+        for (const [via, rp] of /** @type {const} */ ([["manifest-declared", rps.local], ["registered", rps.dynamic]])) {
+          await openPage(session, rps.urlOf(rp));
+          for (const name of ["blank-frame", "open-window"]) {
+            await press(session, name);
+            const r = await published(session, name);
+            assert.equal(r.sync.createOurs, true, `${label} ${via} ${name}: the override is there when the page reads the new realm at once: ${JSON.stringify(r)}`);
+            assert.equal(r.later.createOurs, true, `${label} ${via} ${name}: and later`);
+          }
+          for (const name of ["srcdoc-frame", "blob-frame"]) {
+            await press(session, name);
+            const r = await published(session, name);
+            assert.equal(r.later.createOurs, true, `${label} ${via} ${name}: the override is in the loaded frame: ${JSON.stringify(r)}`);
+            // A gap that the spike cannot close: read straight after the frame was added, the page still holds the
+            // frame's initial realm, and the override is not in it. A page can get the browser's own functions there.
+            assert.equal(r.sync.probe, false, `${label} ${via} ${name}: the initial realm of the frame has no override (a gap): ${JSON.stringify(r)}`);
+          }
+        }
+      });
+      // Without the fallback the registered scripts stay out of all three kinds of frame: the registration option is needed.
+      await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
+        assert.equal(await registerDynamic(control, false, {}), "ok");
+        await openPage(session, rps.urlOf(rps.dynamic));
+        assert.equal((await firstScript(session, "data-first-inline")).createOurs, true, `${label}: the top frame has it`);
+        for (const name of ["blank-frame", "srcdoc-frame", "blob-frame"]) {
+          await press(session, name);
+          const r = await published(session, name);
+          assert.equal(r.later.probe, false, `${label} registered without the fallback, ${name}: no override in the frame: ${JSON.stringify(r)}`);
+        }
+      });
+    }
+  }
+});
+
+test("held_conditional_requests_of_two_documents_do_not_clash", async () => {
+  for (const channel of channels()) {
+    for (const manifest of MANIFESTS) {
+      await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
+        const label = `${channel}/${manifest}`;
+        const tabA = await session.windowHandle();
+        await openPage(session, rps.urlOf(rps.local));
+        await press(session, "register");
+        assert.equal((await published(session, "register")).ok, true);
+        // Reload, so the first request of each document has id 1: the same id in two documents.
+        await openPage(session, rps.urlOf(rps.local));
+        await press(session, "conditional");
+        await session.waitFor(async () => (await control.call("heldConditional")) === 1, 10_000, "A holds a request");
+        const tabB = await session.newTab();
+        await session.switchTo(tabB);
+        await openPage(session, rps.urlOf(rps.local));
+        await press(session, "conditional");
+        await session.waitFor(async () => (await control.call("heldConditional")) === 2, 10_000, "B holds a request too: the same id did not overwrite A's");
+        // B aborts. The cancel for id 1 drops B's request and not A's.
+        await press(session, "abort");
+        assert.equal((await published(session, "conditional")).error.name, "AbortError", `${label}: B's page got AbortError`);
+        await session.waitFor(async () => (await control.call("heldConditional")) === 1, 10_000, "only A's request is left");
+        const cancel = (await control.call("events")).filter((/** @type {any} */ e) => e.kind === "cancel");
+        assert.deepEqual(cancel.map((/** @type {any} */ e) => e.dropped), [true], `${label}: one cancel, and it dropped a request of its own port`);
+        // A's request is still answerable, and goes to A.
+        await control.call("resolveConditional");
+        await session.switchTo(tabA);
+        const picked = await published(session, "conditional");
+        assert.equal(picked.ok, true, `${label}: A's request was answered: ${JSON.stringify(picked)}`);
+        assert.deepEqual(picked.server, { ok: true, errs: [], signatureValid: true });
+        assert.equal(await control.call("heldConditional"), 0);
+      });
+    }
+  }
+});
+
+test("held_conditional_requests_are_capped_per_document", async () => {
+  for (const channel of channels()) {
+    for (const manifest of MANIFESTS) {
+      await withSpike({ channel, manifest }, async ({ session, rps, control }) => {
+        const label = `${channel}/${manifest}`;
+        await openPage(session, rps.urlOf(rps.local));
+        await press(session, "register");
+        assert.equal((await published(session, "register")).ok, true);
+        // Six conditional requests from one document: four are held, two are refused.
+        await press(session, "flood");
+        const flood = await published(session, "flood");
+        assert.equal(flood.requested, 6);
+        assert.equal(flood.refusedBeforeAbort, 2, `${label}: the requests over the limit were refused: ${JSON.stringify(flood)}`);
+        assert.deepEqual(flood.other, [], `${label}: the held ones are still waiting`);
+        assert.equal(await control.call("heldConditional"), 4, `${label}: four are held`);
+        await press(session, "flood-abort");
+        await session.waitFor(async () => (await control.call("heldConditional")) === 0, 10_000, "the held requests are dropped on abort");
+      });
     }
   }
 });

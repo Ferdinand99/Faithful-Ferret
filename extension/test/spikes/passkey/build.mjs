@@ -22,7 +22,7 @@ export const SPIKE_ORIGIN = `moz-extension://${SPIKE_UUID}`;
 export const CONTROL_URL = `${SPIKE_ORIGIN}/control.html`;
 
 /** Files of the add-on, from addon/. */
-const FILES = ["authenticator.mjs", "background.mjs", "control.html", "control.mjs", "main-world.js", "relay.js"];
+const FILES = ["authenticator.mjs", "background.mjs", "held.mjs", "control.html", "control.mjs", "main-world.js", "relay.js"];
 
 /** Pages that the static content scripts match: the local relying party on localhost. */
 export const STATIC_MATCHES = ["http://localhost/*"];
@@ -39,8 +39,8 @@ export const UNMATCHED_HOST = "second.fixture.test";
 export function spikeManifest({ manifest, hosts: how = "granted" }) {
   const hosts = [...STATIC_MATCHES, ...DYNAMIC_MATCHES, `https://${UNMATCHED_HOST}/*`];
   const scripts = [
-    { matches: STATIC_MATCHES, js: ["main-world.js"], run_at: "document_start", world: "MAIN", all_frames: true, match_about_blank: true },
-    { matches: STATIC_MATCHES, js: ["relay.js"], run_at: "document_start", all_frames: true, match_about_blank: true },
+    { matches: STATIC_MATCHES, js: ["main-world.js"], run_at: "document_start", world: "MAIN", all_frames: true, match_about_blank: true, match_origin_as_fallback: true },
+    { matches: STATIC_MATCHES, js: ["relay.js"], run_at: "document_start", all_frames: true, match_about_blank: true, match_origin_as_fallback: true },
   ];
   const base = {
     name: "Ferret passkey spike (test only)",

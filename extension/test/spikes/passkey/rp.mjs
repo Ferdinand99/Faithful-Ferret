@@ -265,18 +265,62 @@ document.getElementById("forge").onclick = async function () {
   publish("forge", { login: login, forgedPortGotRequests: got, hostileOfferSentAtFirstScript: !!(spy && spy.forgedOfferSent), earlyForgedPortRequests: spy ? spy.forgedPortRequests : null });
 };
 
-document.getElementById("blank-frame").onclick = function () {
-  var f = document.createElement("iframe");
-  document.body.appendChild(f);
-  var w = f.contentWindow;
-  var snap = function () {
+// Realms the page can make for itself. Each probe reads the new realm at once (what a page would do
+// to reach the browser's own function) and again later, and says whether the override is in it.
+function snapshot(w) {
+  try {
     var C = w.CredentialsContainer && w.CredentialsContainer.prototype;
     var p = w.__ferretSpikeProbe;
     return { href: w.location.href, probe: !!p, createOurs: p && C ? p.isOurs(C.create) : null, createSrc: C ? w.Function.prototype.toString.call(C.create) : null };
+  } catch (e) { return { error: err(e) }; }
+}
+function realmProbe(name, make) {
+  document.getElementById(name).onclick = function () {
+    var made = make();
+    var sync = snapshot(made.win);
+    var done = function () { setTimeout(function () { publish(name, { sync: sync, later: snapshot(made.win) }); }, 800); };
+    if (made.frame) made.frame.addEventListener("load", done); else done();
   };
-  var sync = snap();
-  setTimeout(function () { publish("blank-frame", { sync: sync, later: snap() }); }, 800);
+}
+realmProbe("blank-frame", function () { var f = document.createElement("iframe"); document.body.appendChild(f); return { win: f.contentWindow }; });
+realmProbe("srcdoc-frame", function () { var f = document.createElement("iframe"); f.srcdoc = "<!doctype html><p>srcdoc</p>"; document.body.appendChild(f); return { win: f.contentWindow, frame: f }; });
+realmProbe("blob-frame", function () {
+  var f = document.createElement("iframe");
+  f.src = URL.createObjectURL(new Blob(["<!doctype html><p>blob</p>"], { type: "text/html" }));
+  document.body.appendChild(f);
+  return { win: f.contentWindow, frame: f };
+});
+realmProbe("open-window", function () { var w = window.open(""); return { win: w }; });
+
+// Native controls: a get the browser itself would have to answer.
+document.getElementById("native-get").onclick = async function () {
+  try {
+    var o = await post("/auth/options");
+    await navigator.credentials.get({ publicKey: { rpId: o.rpId, challenge: unb64u(o.challenge), timeout: 1500, userVerification: "discouraged" } });
+    publish("native-get", { ok: true });
+  } catch (e) { publish("native-get", { ok: false, error: err(e) }); }
 };
+
+// More conditional requests than one document may hold: the extra ones must be refused.
+document.getElementById("flood").onclick = async function () {
+  var count = 6, controllers = [], settled = [];
+  for (var i = 0; i < count; i++) {
+    var c = new AbortController();
+    controllers.push(c);
+    (async function (index, signal) {
+      var o = await post("/auth/options");
+      try {
+        await navigator.credentials.get({ mediation: "conditional", signal: signal, publicKey: { rpId: o.rpId, challenge: unb64u(o.challenge) } });
+        settled.push({ index: index, ok: true });
+      } catch (e) { settled.push({ index: index, name: e && e.name }); }
+    })(i, c.signal);
+  }
+  await new Promise(function (r) { setTimeout(r, 2000); });
+  var refused = settled.filter(function (x) { return x.name === "NotAllowedError"; }).length;
+  publish("flood", { requested: count, refusedBeforeAbort: refused, other: settled.filter(function (x) { return x.name !== "NotAllowedError"; }) });
+  window.__controllers = controllers;
+};
+document.getElementById("flood-abort").onclick = function () { (window.__controllers || []).forEach(function (c) { c.abort(); }); };
 
 document.getElementById("dump").onclick = function () { publish("spy", window.__spy); };
 
@@ -309,6 +353,12 @@ function page({ frame }) {
 <button id="native-create">Native create</button>
 <button id="forge">Forge</button>
 <button id="blank-frame">Blank frame</button>
+<button id="srcdoc-frame">Srcdoc frame</button>
+<button id="blob-frame">Blob frame</button>
+<button id="open-window">Open window</button>
+<button id="native-get">Native get</button>
+<button id="flood">Flood</button>
+<button id="flood-abort">Abort flood</button>
 <button id="dump">Dump spy</button>
 <pre id="out"></pre>
 ${frame ? '<iframe id="same-origin-frame" src="/frame"></iframe>' : ""}
@@ -333,8 +383,8 @@ export async function startRp({ originFor, rpId, port = 0, tls, requireUv = true
     rpId,
     requireUv,
     userHandle: b64u(randomBytes(16)),
-    /** @type {string | null} */
-    challenge: null,
+    /** Challenges handed out and not used yet: each can be used once, and two documents can wait at the same time. @type {Set<string>} */
+    challenges: new Set(),
     /** @type {{ id: string, key: import("node:crypto").KeyObject } | null} */
     credential: null,
     verified: { registration: false, authentication: 0 },
@@ -351,6 +401,15 @@ export async function startRp({ originFor, rpId, port = 0, tls, requireUv = true
     req.on("data", (c) => { s += c; });
     req.on("end", () => { try { resolve(JSON.parse(s || "{}")); } catch { resolve({}); } });
   });
+  /** The challenge in the client data, if it was handed out and unused: it is used up by asking. @param {string} clientDataJSON @returns {string | null} */
+  const claim = (clientDataJSON) => {
+    try {
+      const challenge = JSON.parse(Buffer.from(String(clientDataJSON), "base64url").toString("utf8")).challenge;
+      return typeof challenge === "string" && rp.challenges.delete(challenge) ? challenge : null;
+    } catch {
+      return null;
+    }
+  };
   /** @type {import("node:http").RequestListener} */
   const handler = async (req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
@@ -364,12 +423,12 @@ export async function startRp({ originFor, rpId, port = 0, tls, requireUv = true
     if (req.method !== "POST") return send(res, 404, {});
     const body = await readJson(req);
     if (path === "/reg/options") {
-      rp.challenge = b64u(randomBytes(32));
-      return send(res, 200, { challenge: rp.challenge, rpId: rp.rpId, user: { id: rp.userHandle } });
+      const challenge = b64u(randomBytes(32));
+      rp.challenges.add(challenge);
+      return send(res, 200, { challenge, rpId: rp.rpId, user: { id: rp.userHandle } });
     }
     if (path === "/reg/verify") {
-      const r = verifyRegistration(rp, body, rp.challenge);
-      rp.challenge = null; // single use
+      const r = verifyRegistration(rp, body, claim(body.clientDataJSON));
       if (r.ok && r.credential) {
         rp.credential = r.credential;
         rp.verified.registration = true;
@@ -378,12 +437,12 @@ export async function startRp({ originFor, rpId, port = 0, tls, requireUv = true
       return send(res, 200, { ok: r.ok, errs: r.errs });
     }
     if (path === "/auth/options") {
-      rp.challenge = b64u(randomBytes(32));
-      return send(res, 200, { challenge: rp.challenge, rpId: rp.rpId });
+      const challenge = b64u(randomBytes(32));
+      rp.challenges.add(challenge);
+      return send(res, 200, { challenge, rpId: rp.rpId });
     }
     if (path === "/auth/verify") {
-      const challenge = rp.challenge;
-      rp.challenge = null;
+      const challenge = claim(body.clientDataJSON);
       if (!rp.credential) return send(res, 200, { ok: false, errs: ["no credential registered"] });
       const r = verifyAssertion(rp, body, challenge, rp.credential);
       if (r.ok) rp.verified.authentication++;

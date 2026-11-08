@@ -10,6 +10,10 @@
 //    frame's origin equals the top frame's origin (webNavigation.getFrame);
 //  - the private keys never leave authenticator.mjs.
 import { Authenticator, DomError } from "./authenticator.mjs";
+import { HeldRequests } from "./held.mjs";
+
+/** Held requests one document may have at a time. */
+export const MAX_HELD_PER_PORT = 4;
 
 const auth = new Authenticator();
 const state = {
@@ -19,9 +23,8 @@ const state = {
   uv: true,
   /** @type {Record<string, unknown>[]} */
   events: [],
-  /** @type {Map<number, { port: browser.runtime.Port, id: number, request: any, origin: string }>} */
-  conditional: new Map(),
-  nextKey: 1,
+  /** Conditional requests, scoped per port. */
+  conditional: new HeldRequests(MAX_HELD_PER_PORT),
 };
 
 const CONTROL_URL = browser.runtime.getURL("control.html");
@@ -88,9 +91,10 @@ async function answer(port, facts, msg) {
         if (msg.payload.conditional) {
           // Held until the control page "selects a credential" (the autofill surface of the real provider).
           resolveRpIdOrThrow(origin, msg.payload.rpId);
-          const key = state.nextKey++;
-          state.conditional.set(msg.id, { port, id: msg.id, request: { ...msg.payload, origin }, origin });
-          log({ outcome: "held", key });
+          if (!state.conditional.add(port, msg.id, { request: { ...msg.payload, origin }, facts })) {
+            throw new DomError("NotAllowedError", "too many pending requests");
+          }
+          log({ outcome: "held" });
           return;
         }
         const res = await auth.get({ ...msg.payload, origin, uv: state.uv });
@@ -131,23 +135,26 @@ browser.runtime.onConnect.addListener((port) => {
     }
     if (!msg || typeof msg.id !== "number" || typeof msg.kind !== "string") return;
     if (msg.kind === "cancel") {
-      state.conditional.delete(msg.payload && msg.payload.target);
-      state.events.push({ kind: "cancel", ...facts });
+      // Only this port's own request can be cancelled from this port.
+      const dropped = state.conditional.cancel(port, msg.payload && msg.payload.target);
+      state.events.push({ kind: "cancel", dropped, ...facts });
       return;
     }
     await answer(port, facts, msg);
   });
-  port.onDisconnect.addListener(() => {
-    for (const [key, held] of state.conditional) if (held.port === port) state.conditional.delete(key);
-  });
+  port.onDisconnect.addListener(() => state.conditional.dropPort(port));
 });
 
 // ------------------------------------------------------------------ dynamic registration
-/** @param {string[]} matches @param {boolean} persist */
-async function registerDynamic(matches, persist) {
+/**
+ * @param {string[]} matches
+ * @param {boolean} persist
+ * @param {Record<string, boolean>} [extra] more registration options, e.g. { matchOriginAsFallback: true }
+ */
+async function registerDynamic(matches, persist, extra = {}) {
   await browser.scripting.registerContentScripts([
-    { id: "spike-main", matches, js: ["main-world.js"], runAt: "document_start", world: "MAIN", allFrames: true, persistAcrossSessions: persist },
-    { id: "spike-relay", matches, js: ["relay.js"], runAt: "document_start", allFrames: true, persistAcrossSessions: persist },
+    { id: "spike-main", matches, js: ["main-world.js"], runAt: "document_start", world: "MAIN", allFrames: true, persistAcrossSessions: persist, ...extra },
+    { id: "spike-relay", matches, js: ["relay.js"], runAt: "document_start", allFrames: true, persistAcrossSessions: persist, ...extra },
   ]);
 }
 
@@ -162,19 +169,18 @@ const CONTROL = {
   keyFlags: () => auth.keyFlags(),
   tryExportPrivate: () => auth.tryExportPrivate(),
   heldConditional: () => state.conditional.size,
-  /** The user picks a credential in the (simulated) autofill surface. */
-  async resolveConditional() {
-    const [key, held] = [...state.conditional][0] ?? [];
+  /** The user picks a credential in the (simulated) autofill surface: the n-th held request, in the order they were made. */
+  async resolveConditional(n = 0) {
+    const held = state.conditional.take(n ?? 0);
     if (!held) throw new Error("no held conditional request");
-    state.conditional.delete(key);
-    const res = await auth.get({ ...held.request, uv: state.uv });
-    held.port.postMessage({ id: held.id, ...res });
+    const res = await auth.get({ ...held.request.request, uv: state.uv });
+    /** @type {browser.runtime.Port} */ (held.port).postMessage({ id: held.id, ...res });
     return "resolved";
   },
   /** "ok", or the error text (without a host permission the call may refuse). */
   async registerDynamic(a) {
     try {
-      await registerDynamic(a.matches, a.persist);
+      await registerDynamic(a.matches, a.persist, a.extra ?? {});
       return "ok";
     } catch (error) {
       return `error: ${/** @type {Error} */ (error).message}`;

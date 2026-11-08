@@ -30,6 +30,7 @@
   const eventPorts = Object.getOwnPropertyDescriptor(MessageEvent.prototype, "ports").get;
   const stopImmediate = Event.prototype.stopImmediatePropagation;
   const addListener = EventTarget.prototype.addEventListener;
+  const removeListener = EventTarget.prototype.removeEventListener;
   const nativeSetTimeout = window.setTimeout.bind(window);
   const nativeClearTimeout = window.clearTimeout.bind(window);
   const NativePromise = Promise;
@@ -74,14 +75,19 @@
    * "unreachable" error after the timeout (never rejects).
    * @param {string} kind
    * @param {unknown} payload
-   * @param {{ timeoutMs?: number | null, onId?: (id: number) => void }} [options] timeoutMs null: wait for ever (a conditional request)
+   * @param {{ timeoutMs?: number | null, onSent?: (id: number) => void }} [options]
+   *   timeoutMs: null waits for ever, which is what a request that waits for a person needs; the
+   *   only wait that ends early is for the channel itself (two seconds)
+   *   onSent: called with the request id right after the request went out
    */
-  const rpc = (kind, payload, { timeoutMs = 10_000, onId } = {}) => new NativePromise((resolve) => {
-    const portWait = new NativePromise((ok) => nativeSetTimeout(() => ok(null), 2000));
+  const rpc = (kind, payload, { timeoutMs = null, onSent } = {}) => new NativePromise((resolve) => {
+    /** @type {number} */
+    let portTimer = 0;
+    const portWait = new NativePromise((ok) => { portTimer = nativeSetTimeout(() => ok(null), 2000); });
     NativePromise.race([portReady, portWait]).then((p) => {
+      nativeClearTimeout(portTimer);
       if (!p) return resolve({ error: { name: "Unreachable", message: "no channel" } });
       const id = nextId++;
-      onId?.(id);
       const timer = timeoutMs === null ? 0 : nativeSetTimeout(() => {
         pending.delete(id);
         resolve({ error: { name: "Unreachable", message: "timeout" } });
@@ -91,6 +97,7 @@
         resolve(body);
       });
       apply(portPostMessage, p, [{ id, kind, payload }]);
+      if (onSent) onSent(id);
     });
   });
 
@@ -180,28 +187,35 @@
         abortIfNeeded(options.signal);
         /** @type {number | null} */
         let id = null;
+        let aborted = false;
         const signal = options.signal;
-        const onAbort = () => {
+        // The page's promise settles at once on an abort, whatever the extension does with the cancel. An abort
+        // that comes before the request has gone out is carried out the moment it has (onSent).
+        const cancel = () => {
+          aborted = true;
           if (id === null) return;
           apply(portPostMessage, port, [{ id: nextId++, kind: "cancel", payload: { target: id } }]);
-          // The page's promise settles at once, whatever the extension does with the cancel.
           const done = pending.get(id);
           pending.delete(id);
           if (done) done({ id, error: { name: "AbortError", message: "The operation was aborted." } });
         };
-        if (signal) apply(addListener, signal, ["abort", onAbort, { once: true }]);
-        const res = await rpc("get", {
-          rpId: pk.rpId || null,
-          challenge: b64u(pk.challenge),
-          allowCredentials: (pk.allowCredentials || []).map((c) => b64u(c.id)),
-          userVerification: pk.userVerification,
-          conditional,
-        }, { timeoutMs: conditional ? null : 10_000, onId: (n) => { id = n; } });
-        if (signal && signal.aborted) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
-        if (res.error && res.error.name === "Unreachable") return apply(nativeGet, this, args);
-        if (res.error) throw domError(res.error);
-        if (res.use === "native") return apply(nativeGet, this, args);
-        return makeAssertion(res.result);
+        if (signal) apply(addListener, signal, ["abort", cancel]);
+        try {
+          const res = await rpc("get", {
+            rpId: pk.rpId || null,
+            challenge: b64u(pk.challenge),
+            allowCredentials: (pk.allowCredentials || []).map((c) => b64u(c.id)),
+            userVerification: pk.userVerification,
+            conditional,
+          }, { onSent: (n) => { id = n; if (aborted) cancel(); } });
+          if (aborted || (signal && signal.aborted)) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+          if (res.error && res.error.name === "Unreachable") return apply(nativeGet, this, args);
+          if (res.error) throw domError(res.error);
+          if (res.use === "native") return apply(nativeGet, this, args);
+          return makeAssertion(res.result);
+        } finally {
+          if (signal) apply(removeListener, signal, ["abort", cancel]);
+        }
       })();
     },
   }.get;

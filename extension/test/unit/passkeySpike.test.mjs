@@ -3,17 +3,20 @@
 // disagree about anything that is wrong, or a pass in Firefox would mean nothing.
 // The spike never reaches a package of the real build.
 import assert from "node:assert/strict";
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { build } from "../../scripts/build.mjs";
 import { Authenticator, b64u, DomError, resolveRpId } from "../spikes/passkey/addon/authenticator.mjs";
-import { buildSpikeXpi, spikeManifest } from "../spikes/passkey/build.mjs";
+import { HeldRequests } from "../spikes/passkey/addon/held.mjs";
+import { buildSpikeXpi, SPIKE_UUID, spikeManifest } from "../spikes/passkey/build.mjs";
 import { verifyAssertion, verifyRegistration } from "../spikes/passkey/rp.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
 import { readZip } from "../../scripts/lib/archive.mjs";
 
 const ORIGIN = "https://rp.example";
+/** Strings that only the spike's files carry. */
+const SPIKE_MARKERS = ["__ferretSpikeProbe", "ferretSpike", "ferret-passkey-spike@", SPIKE_UUID, "HeldRequests", "dc704a44-b994-410c-a689-ed8d71a84ac3"];
 const rpOf = (/** @type {Partial<{ requireUv: boolean }>} */ extra = {}) => ({ origin: ORIGIN, rpId: "rp.example", requireUv: true, userHandle: b64u(randomBytes(16)), ...extra });
 
 /** Registers and signs in once; returns what the relying party saw. */
@@ -53,10 +56,25 @@ test("the_relying_party_rejects_what_is_wrong", async () => {
   const noUv = await roundTrip({ uv: false });
   assert.equal(noUv.reg.ok, false, "UV flag missing");
   assert.match(noUv.reg.errs.join(), /UV flag/);
-  const reuse = await roundTrip();
-  assert.ok(reuse.assertion);
+  // A challenge can be used once: the relying party forgets it after the first check, so a replay has none to match.
+  const { reg, assertion } = await roundTrip();
+  assert.equal(assertion?.ok, true);
   const rp = rpOf();
   assert.deepEqual(verifyRegistration(rp, { id: "x", clientDataJSON: "e30", attestationObject: "oA" }, null), { ok: false, errs: ["no challenge issued"] });
+  assert.ok(reg.credential);
+  assert.deepEqual(verifyAssertion(rp, { id: reg.credential.id, clientDataJSON: "e30", authenticatorData: "", signature: "", userHandle: null }, null, reg.credential), { ok: false, errs: ["no challenge issued"], signatureValid: false });
+  // The same assertion, checked against another challenge, fails on the client data.
+  const auth2 = new Authenticator();
+  const fresh = await auth2.create({ origin: ORIGIN, uv: true, rpId: "rp.example", challenge: b64u(randomBytes(32)), user: { id: rp.userHandle, name: "a" } });
+  assert.ok("result" in fresh);
+  const first = b64u(randomBytes(32));
+  const got = await auth2.get({ origin: ORIGIN, uv: true, rpId: "rp.example", challenge: first });
+  assert.ok("result" in got);
+  const key = createPublicKey({ key: Buffer.from(fresh.result.publicKey, "base64url"), format: "der", type: "spki" });
+  assert.equal(verifyAssertion(rp, got.result, first, { id: got.result.id, key }).ok, true);
+  const replayed = verifyAssertion(rp, got.result, b64u(randomBytes(32)), { id: got.result.id, key });
+  assert.equal(replayed.ok, false);
+  assert.match(replayed.errs.join(), /clientData\.challenge/);
 });
 
 test("the_authenticator_follows_the_origin_and_rp_id_rules_and_refuses_user_verification_it_cannot_do", async () => {
@@ -123,7 +141,13 @@ test("nothing_of_the_spike_is_in_any_package_of_the_real_build", async () => {
       for (const variant of ["release", "test"]) {
         const built = await build({ ...options, manifest, variant });
         const paths = [...built.files.keys()];
-        assert.deepEqual(paths.filter((p) => /spike|passkey|main-world|relay\.js|authenticator/i.test(p)), [], `${manifest} ${variant}: no spike file`);
+        assert.deepEqual(paths.filter((p) => /spikes\/|main-world\.js|relay\.js|authenticator\.mjs|held\.mjs|control\.(html|mjs)/.test(p)), [], `${manifest} ${variant}: no spike file by name`);
+        // And none by content: a spike file under another name would still carry these.
+        for (const [path, bytes] of built.files) {
+          if (!/\.(html|mjs|js|json|css)$/.test(path)) continue;
+          const text = bytes.toString("utf8");
+          for (const marker of SPIKE_MARKERS) assert.equal(text.includes(marker), false, `${manifest} ${variant}: ${path} holds the spike marker ${marker}`);
+        }
         const manifestJson = JSON.parse(String(built.files.get("manifest.json")));
         assert.equal("content_scripts" in manifestJson, false, `${manifest} ${variant}: the real build still has no content script`);
       }
@@ -133,4 +157,37 @@ test("nothing_of_the_spike_is_in_any_package_of_the_real_build", async () => {
   } finally {
     env.cleanup();
   }
+});
+
+test("held_requests_are_scoped_per_port_and_capped", () => {
+  const held = new HeldRequests(3);
+  const a = { name: "tab A" };
+  const b = { name: "tab B" };
+  // The same id in two ports is two requests.
+  assert.equal(held.add(a, 1, "a1"), true);
+  assert.equal(held.add(b, 1, "b1"), true);
+  assert.equal(held.size, 2);
+  assert.equal(held.add(a, 1, "again"), false, "an id is held once per port");
+  // A cancel from one port never reaches another port's request, whatever id it names.
+  assert.equal(held.cancel(b, 2), false);
+  assert.equal(held.sizeOf(a), 1);
+  assert.equal(held.cancel({ name: "stranger" }, 1), false);
+  assert.equal(held.size, 2);
+  assert.equal(held.cancel(b, 1), true);
+  assert.equal(held.sizeOf(a), 1);
+  assert.equal(held.sizeOf(b), 0);
+  // The cap is per port.
+  assert.equal(held.add(a, 2, "a2"), true);
+  assert.equal(held.add(a, 3, "a3"), true);
+  assert.equal(held.add(a, 4, "a4"), false, "the fourth request of a port is refused");
+  assert.equal(held.add(b, 4, "b4"), true, "another port is not affected");
+  assert.equal(held.size, 4);
+  // Taking goes in the order the requests were made, and removes them.
+  assert.equal(held.take(0)?.request, "a1");
+  assert.equal(held.take(0)?.request, "a2");
+  // A port that goes away takes its requests along and no one else's.
+  held.dropPort(a);
+  assert.equal(held.sizeOf(a), 0);
+  assert.equal(held.sizeOf(b), 1);
+  assert.equal(held.take(5), null);
 });
