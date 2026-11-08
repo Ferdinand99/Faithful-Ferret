@@ -887,8 +887,9 @@ struct SignedIn {
 
 /// How the database side of an ordinary sign-in ended.
 enum Opened {
-    /// A new session.
-    Session(SignedIn),
+    /// A new session, and the vault session it ended (the one the browser
+    /// presented), if a live one was ended.
+    Session(SignedIn, Option<SidHash>),
     /// The user is gone or was disabled since the first step.
     Refused,
     /// The kit's second factor is on for the user and this server cannot ask
@@ -966,7 +967,15 @@ async fn login_finish_route(
                 })
                 .await?;
             let signed_in = match opened {
-                Opened::Session(signed_in) => signed_in,
+                Opened::Session(signed_in, ended) => {
+                    // The session the new one replaced is over: its event
+                    // stream closes now, not at the next heartbeat. Only a
+                    // session that was really ended is announced.
+                    if let Some(previous) = ended {
+                        state.events.session_revoked(previous);
+                    }
+                    signed_in
+                }
                 Opened::Refused => {
                     return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
                 }
@@ -1045,20 +1054,25 @@ fn open_session(
     insert_session(&tx, &session)?;
     // The browser's cookies are replaced by the new ones, so the row they
     // named would be left live and unreachable; it ends here, for any user.
+    let mut ended = None;
     if let Some(previous) = presented
         && let Some(row) = lookup(&tx, &previous)?
         && row.origin == Origin::Vault
+        && revoke(&tx, &previous, now)?
     {
-        revoke(&tx, &previous, now)?;
+        ended = Some(previous);
     }
     tx.commit()?;
-    Ok(Opened::Session(SignedIn {
-        secret,
-        claims,
-        account: AccountId::from_bytes(account),
-        vault: VaultId::from_bytes(vault),
-        vk_epoch,
-    }))
+    Ok(Opened::Session(
+        SignedIn {
+            secret,
+            claims,
+            account: AccountId::from_bytes(account),
+            vault: VaultId::from_bytes(vault),
+            vk_epoch,
+        },
+        ended,
+    ))
 }
 
 // ------------------------------------------------------------------ logout
@@ -1080,17 +1094,24 @@ async fn logout(
         // A failed clock skips the revoke but never the clearing of cookies.
         match to_i64(state.clock.now_unix()) {
             Ok(now) => {
-                state
+                let ended = state
                     .vault_db
                     .with_conn(move |conn| {
                         if let Some(row) = lookup(conn, &sid)?
                             && row.origin == origin
                         {
                             revoke(conn, &sid, now)?;
+                            return Ok(true);
                         }
-                        Ok(())
+                        Ok(false)
                     })
                     .await?;
+                // After the row is ended: a stream that wakes for this finds
+                // it ended as well. A session without a stream is heard by
+                // nobody, and the call never fails.
+                if ended {
+                    state.events.session_revoked(sid);
+                }
             }
             Err(_) => tracing::error!("the clock failed; the session row was not ended"),
         }
