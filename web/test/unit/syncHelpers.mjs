@@ -5,6 +5,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
+import { readWire } from "../../src/wire.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { trash } from "../../src/store/trash.mjs";
@@ -128,6 +129,9 @@ export class Model {
     this.pageSize = 500;
     this.vkEpoch = 1;
     this.restoreEpoch = 0;
+    this.restoreSeq = 0; // the `seq` the vault had when the restore was recorded (0: none, as on a server from before)
+    this.frozen = new Map(); // id -> { rev, seq, hash } what the vault held then (hash: base64url sha-256 of the blob, null for a tombstone)
+    this.tamperRestoreRows = null; // (answer) => answer: for a server that lies about the frozen list
     this.latestSeqLie = null;
     this.idems = new Map(); // idem -> { body, result }
     this.writes = []; // every accepted write
@@ -138,6 +142,36 @@ export class Model {
     this.signKey = Buffer.alloc(32, 7);
     this.hidden = new Set(); // ids the listing leaves out (the feed and the item routes still show them)
     this.checkpointPuts = []; // the body of every checkpoint the server stored
+  }
+
+  /**
+   * `ferret restore-epoch bump`: the restore epoch goes up, `restore_seq` becomes the `seq` of the vault now, and the rows it holds now
+   * are frozen. Call it after the model has been set back to the backup's rows.
+   */
+  bumpRestore() {
+    this.restoreEpoch += 1;
+    this.restoreSeq = this.seq;
+    this.frozen = new Map(
+      [...this.items.entries()].map(([id, row]) => [id, {
+        rev: row.rev, seq: row.seq, hash: row.deleted || row.blob === null ? null : b64u.encode(new Uint8Array(createHash("sha256").update(b64u.decode(row.blob)).digest())),
+      }]),
+    );
+  }
+
+  /** `GET /api/sync/restore-rows`: the frozen rows in the order of the ids, paged like the listing. */
+  restoreRows(after, limit) {
+    const ids = [...this.frozen.keys()].filter((id) => after === null || id > after).sort();
+    const size = Math.min(limit || 500, this.pageSize);
+    const page = ids.slice(0, size);
+    const more = ids.length > size;
+    const answer = {
+      restore_epoch: this.restoreEpoch,
+      restore_seq: this.restoreSeq,
+      rows: page.map((id) => ({ id, ...this.frozen.get(id) })),
+      ...(more ? { next_after: page[page.length - 1] } : {}),
+      has_more: more,
+    };
+    return this.tamperRestoreRows ? this.tamperRestoreRows(answer, after) : answer;
   }
 
   /** An honest checkpoint of the rows the model holds right now, at its `seq`. */
@@ -165,6 +199,7 @@ export class Model {
   /** The server side of `PUT /api/sync/checkpoint`: the structure only, as the real server checks it. */
   putCheckpoint(body) {
     const request = JSON.parse(body);
+    this.checkEpoch(request);
     const entries = b64u.decode(request.entries);
     const digest = b64u.decode(request.digest);
     if (entries.length % 56 !== 0 || !createHash("sha256").update(entries).digest().equals(Buffer.from(digest))) {
@@ -181,7 +216,14 @@ export class Model {
     return { seq: request.seq };
   }
 
-  /** The server side of `PUT /api/sync/items/{id}` for the exact body text. */
+  /** The condition of a write or a checkpoint upload: the restore epoch it names, when it names one, has to be the vault's. */
+  checkEpoch(request) {
+    if (request.restore_epoch !== undefined && request.restore_epoch !== this.restoreEpoch) {
+      throw new ApiError(409, "restore_epoch_changed", null, { error: "restore_epoch_changed", restore_epoch: this.restoreEpoch });
+    }
+  }
+
+  /** The server side of `PUT /api/sync/items/{id}` for the exact body text: the key first, then the epoch, then the revision. */
   put(id, body) {
     const request = JSON.parse(body);
     const seen = this.idems.get(request.idem);
@@ -189,6 +231,7 @@ export class Model {
       if (seen.body !== body) throw new ApiError(422, "idem_reuse");
       return { ...seen.result, replayed: true };
     }
+    this.checkEpoch(request);
     const current = this.items.get(id);
     const currentRev = current?.rev ?? 0;
     // A tombstone takes a live write only with the flag, and only built on the tombstone's own revision.
@@ -230,6 +273,7 @@ export class Model {
       latest_seq: this.latestSeqLie ?? this.seq,
       vk_epoch: this.vkEpoch,
       restore_epoch: this.restoreEpoch,
+      restore_seq: this.restoreSeq,
       ...(head ? { checkpoint: { seq: head.seq, digest: head.digest, mac: head.mac } } : {}),
       has_more: all.length > size,
     };
@@ -246,6 +290,7 @@ export class Model {
       as_of_seq: this.seq,
       vk_epoch: this.vkEpoch,
       restore_epoch: this.restoreEpoch,
+      restore_seq: this.restoreSeq,
       ...(more ? { next_after: page[page.length - 1] } : {}),
       has_more: more,
     };
@@ -263,6 +308,7 @@ export function createFakeApi(model, { order = [] } = {}) {
     faults: [],
     gets: [], // paths of the feed calls (the changes and the listing)
     checkpointGets: [], // paths of the calls for the checkpoint
+    restoreRowGets: [], // paths of the calls for the frozen restore rows
     checkpointPuts: [], // the text of every checkpoint upload request, faults included
     checkpointFaults: [], // failures for the next checkpoint reads (`{ kind: "network" | "status", status, code }`)
     checkpointPutFaults: [], // and for the next uploads (`{ kind: "network" | "status", status, code, retryAfter }`)
@@ -279,6 +325,16 @@ export function createFakeApi(model, { order = [] } = {}) {
         const checkpoint = model.checkpointJson();
         if (!checkpoint) throw new ApiError(404, "not_found");
         return checkpoint;
+      }
+      if (url.pathname === "/api/sync/restore-rows") {
+        api.restoreRowGets.push(path);
+        const answer = model.restoreRows(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
+        // The answer goes through the shape of the wire, as the real client reads it: a shape that cannot be read is a 200 that is no answer.
+        try {
+          return readWire("restore_rows_res", JSON.stringify(answer));
+        } catch {
+          throw new ApiError(200, "bad_response");
+        }
       }
       api.gets.push(path);
       if (api.failFeed && api.failFeedTimes > 0) {
@@ -589,6 +645,17 @@ export async function createFakeStore({ order = [], db = null } = {}) {
           throw new Error("the disk is full");
         }
         return outbox.remove(store, scope, idem);
+      },
+      swap: async (store, scope, remove, entries, only = null) => {
+        if (service.failEnqueue > 0) {
+          service.failEnqueue -= 1;
+          throw new Error("the disk is full");
+        }
+        await outbox.swap(store, scope, remove, entries, only);
+        for (const entry of entries) {
+          spy.log.push("outbox.enqueue");
+          spy.enqueued.push(entry);
+        }
       },
       enqueue: async (store, scope, entry) => {
         if (service.failEnqueue > 0) {

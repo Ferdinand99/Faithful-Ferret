@@ -189,15 +189,18 @@ export async function fetchCheckpoint(api) {
 }
 
 /**
- * The exact text of the body of `PUT /api/sync/checkpoint`.
+ * The exact text of the body of `PUT /api/sync/checkpoint`. `restoreEpoch` is the restore epoch this device has accepted: the
+ * server refuses the upload (`409 restore_epoch_changed`) when its own is another. Left out (null): no condition.
  * @param {Checkpoint} checkpoint
+ * @param {number | null} [restoreEpoch]
  */
-export function checkpointBody(checkpoint) {
+export function checkpointBody(checkpoint, restoreEpoch = null) {
   return encodeWire("checkpoint_put_req", {
     seq: checkpoint.seq,
     digest: b64u.encode(checkpoint.digest),
     mac: b64u.encode(checkpoint.mac),
     entries: b64u.encode(checkpoint.entries),
+    ...(restoreEpoch === null ? {} : { restore_epoch: restoreEpoch }),
   });
 }
 
@@ -263,7 +266,7 @@ export async function failingIds(entries, rows, atTop) {
  *
  * A page holds at most `limit` rows (the number the client asked for): more is a server that ignores the request, and is
  * refused before any row is looked at.
- * @param {{ items: Array<{ id: string, seq: number }>, as_of_seq: number, vk_epoch: number, restore_epoch: number, next_after?: string | null, has_more: boolean }} page
+ * @param {{ items: Array<{ id: string, seq: number }>, as_of_seq: number, vk_epoch: number, restore_epoch: number, restore_seq?: number, next_after?: string | null, has_more: boolean }} page
  * @param {typeof page | null} [previous] the page before this one, or null for the first
  * @param {number} [limit] the most rows a page may hold
  */
@@ -273,6 +276,7 @@ export function checkListingPage(page, previous = null, limit = MAX_PAGE) {
   if (previous !== null) {
     if (!previous.has_more) throw bad(); // a page after the last one
     if (page.vk_epoch !== previous.vk_epoch || page.restore_epoch !== previous.restore_epoch) throw bad();
+    if (page.restore_seq !== previous.restore_seq) throw bad();
     if (page.as_of_seq < previous.as_of_seq) throw bad();
   }
   // This page starts after the position the last one named.
@@ -287,6 +291,39 @@ export function checkListingPage(page, previous = null, limit = MAX_PAGE) {
   if (page.has_more) {
     // The next page starts after the last row of this one; anything else repeats rows or skips some.
     if (page.items.length === 0 || last === null || page.next_after !== last) throw bad();
+  } else if (page.next_after !== undefined && page.next_after !== null) {
+    throw bad();
+  }
+}
+
+/**
+ * Checks a page of the frozen restore rows (`GET /api/sync/restore-rows`) against the one before it and against the listing
+ * it goes with. The list is only information for the honest case, but a list that cannot be right is not used: ids that do not
+ * strictly rise, a revision below 1, a row written after the restore it was frozen at (its `seq` above `restore_seq`), a restore
+ * epoch or `restore_seq` that differs from the listing's or changes in the middle, a `restore_seq` above the top of the
+ * listing, a position that does not move forward, or a page that claims more rows and has none is `SyncError("bad_feed")`.
+ * @param {{ rows: Array<{ id: string, rev: number, seq: number }>, restore_epoch: number, restore_seq: number, next_after?: string | null, has_more: boolean }} page
+ * @param {typeof page | null} previous the page before this one, or null for the first
+ * @param {{ restoreEpoch: number, restoreSeq: number, asOfSeq: number }} listed what the listing showed
+ * @param {number} [limit] the most rows a page may hold
+ */
+export function checkRestoreRowsPage(page, previous, listed, limit = MAX_PAGE) {
+  const bad = () => new SyncError("bad_feed", "The server's list of rows at the restore cannot be right.");
+  if (page.rows.length > limit) throw bad();
+  if (page.restore_epoch !== listed.restoreEpoch || page.restore_seq !== listed.restoreSeq) throw bad();
+  if (page.restore_seq > listed.asOfSeq) throw bad();
+  if (previous !== null) {
+    if (!previous.has_more) throw bad(); // a page after the last one
+    if (page.restore_epoch !== previous.restore_epoch || page.restore_seq !== previous.restore_seq) throw bad();
+  }
+  let last = previous?.next_after ?? null;
+  for (const row of page.rows) {
+    if (last !== null && row.id <= last) throw bad();
+    last = row.id;
+    if (row.rev < 1 || row.seq > page.restore_seq) throw bad();
+  }
+  if (page.has_more) {
+    if (page.rows.length === 0 || last === null || page.next_after !== last) throw bad();
   } else if (page.next_after !== undefined && page.next_after !== null) {
     throw bad();
   }

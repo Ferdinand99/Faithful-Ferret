@@ -341,3 +341,30 @@ test("an_own_delete_of_a_reuploaded_item_below_the_floor_keeps_a_trash_copy", as
   assert.deepEqual((await d.engine.trash()).map((e) => e.name), [MARKER]);
   d.engine.stop();
 });
+
+test("a_cached_row_that_does_not_open_does_not_stall_the_page_that_carries_its_own_tombstone", async () => {
+  // As above, but the cached old copy of B is not a row the core opens. The tombstone is verified and used, the trash only lacks
+  // that copy, a warning says so, and the rows after it on the same page are used as well.
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_B, 3, MARKER);
+  const first = await syncDevice({ model, client });
+  await first.engine.start();
+  first.engine.stop();
+  const cached = (await rowsOf(first)).find((row) => row.itemId === ID_B);
+  await cache.putRows(first.store.database.store, scope(), [{ ...cached, tag: new Uint8Array(32).fill(9) }]);
+  const tomb = client.wireTomb(ID_B, 2);
+  const digest = createHash("sha256").update(Buffer.concat([Buffer.from([2]), Buffer.from(b64u.decode(tomb))])).digest("base64url");
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  await first.store.setSetting(first.store.database.store, key, { v: 1, marks: { [ID_B]: { kind: "missing_on_server", rev: 3, sent: [`2:t:${digest}`] } }, blocked: {} });
+  model.set(ID_B, { rev: 2, deleted: true, tomb });
+  setRow(model, client, ID_A, 1, "After it on the page");
+  const d = await reload(first);
+  await d.engine.start();
+  await until(() => itemOf(d, ID_A)?.name === "After it on the page", "the rows after the tombstone are used");
+  assert.deepEqual(await trashed(d), [], "no copy could be made");
+  assert.ok(d.events.state.some((s) => s.kind === "warning" && s.code === "trash_copy_skipped" && s.id === ID_B), "and a warning says so");
+  assert.deepEqual(d.events.state.filter((s) => s.kind === "failed"), [], "the page did not fail");
+  assert.equal((await rowsOf(d)).find((row) => row.itemId === ID_B).deleted, true, "the verified tombstone is in the cache");
+  d.engine.stop();
+});

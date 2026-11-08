@@ -352,8 +352,9 @@ const clampInt = (/** @type {string | null} */ raw, /** @type {number} */ fallba
 
 /**
  * The answer a vault in the recorded state would give: used by `rollback` and
- * `fork`. The epochs are the real ones (a rollback that is not a restore does
- * not change `restore_epoch`).
+ * `fork`. The epochs and `restore_seq` are the real ones (a rollback that is not a
+ * restore does not change `restore_epoch`, and the vault's restore sequence number is
+ * what the real server said: the client refuses an answer without it).
  * @param {string} route @param {{ query: URLSearchParams }} req @param {any} up
  * @param {ReturnType<ReturnType<typeof import("./recorder.mjs").createRecorder>["viewAt"]>} view
  * @param {Branch[]} [branch] checkpoints that a forked session uploaded itself
@@ -372,6 +373,7 @@ function viewAnswer(route, req, up, view, branch = []) {
       latest_seq: view.top,
       vk_epoch: up.vk_epoch,
       restore_epoch: up.restore_epoch,
+      restore_seq: up.restore_seq,
     };
     if (head) out.checkpoint = { seq: head.seq, digest: head.digest, mac: head.mac };
     out.has_more = newer.length > limit;
@@ -383,7 +385,7 @@ function viewAnswer(route, req, up, view, branch = []) {
     const rest = view.rows.filter((v) => v.id > after);
     const page = rest.slice(0, limit);
     /** @type {Record<string, any>} */
-    const out = { items: page.map(rowOf), as_of_seq: view.top, vk_epoch: up.vk_epoch, restore_epoch: up.restore_epoch };
+    const out = { items: page.map(rowOf), as_of_seq: view.top, vk_epoch: up.vk_epoch, restore_epoch: up.restore_epoch, restore_seq: up.restore_seq };
     if (rest.length > limit) out.next_after = page[page.length - 1].id;
     out.has_more = rest.length > limit;
     return out;

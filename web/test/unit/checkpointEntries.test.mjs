@@ -200,3 +200,18 @@ test("a_failure_can_raise_a_warning_but_never_lower_it", () => {
   assert.equal(escalate("a_code_nobody_named", "checkpoint_forged"), "a_code_nobody_named");
   assert.deepEqual(["checkpoint_forged", "verify_deferred", "server_shows_older_state", null].map(warningRank), [1, 2, 3, 0]);
 });
+
+test("the_upload_body_carries_the_restore_epoch_when_there_is_one", () => {
+  const checkpoint = { seq: 4, digest: new Uint8Array(32).fill(1), mac: new Uint8Array(32).fill(2), entries: new Uint8Array(56) };
+  assert.deepEqual(Object.keys(JSON.parse(checkpointBody(checkpoint, 3))), ["seq", "digest", "mac", "entries", "restore_epoch"]);
+  assert.equal(JSON.parse(checkpointBody(checkpoint, 0)).restore_epoch, 0, "epoch 0 is a condition too");
+  assert.deepEqual(Object.keys(JSON.parse(checkpointBody(checkpoint, null))), ["seq", "digest", "mac", "entries"], "no epoch accepted yet: no condition");
+  assert.deepEqual(Object.keys(JSON.parse(checkpointBody(checkpoint))), ["seq", "digest", "mac", "entries"]);
+});
+
+test("a_listing_whose_restore_seq_changes_between_pages_is_a_bad_feed", () => {
+  const first = page([item(1), item(2)], { has_more: true, restore_seq: 4 });
+  checkListingPage(page([item(3)], { restore_seq: 4 }), first);
+  bad(() => checkListingPage(page([item(3)], { restore_seq: 5 }), first));
+  bad(() => checkListingPage(page([item(3)], { restore_seq: 0 }), first));
+});
