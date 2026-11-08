@@ -18,6 +18,7 @@
   "sync.error.quarantined": "The server says this item is deleted, but that could not be checked. The local copy is kept.",
   "sync.error.quota_exceeded": "The vault is full. Delete something and try again.",
   "sync.error.read_only": "This item is read only.",
+  "sync.error.restore_epoch_refused": "The server was restored while a change was waiting to be sent, and it did not accept the change. The change is kept on this device and nothing was deleted. Sync of this change is stopped. Reload the page to try again, and tell the server's administrator if it happens again.",
   "sync.error.reupload_refused": "The server holds a different version of this item than the copy this device kept, so the copy was not uploaded again. The copy stays on this device and nothing is lost.",
   "sync.error.storage": "This browser could not save the change on this device.",
   "sync.error.tombstone_invalid": "The server refused this deletion.",
@@ -40,5 +41,6 @@
   "sync.warning.server_behind": "The server is behind this device. It may have been restored from a backup. Changes made on this device meanwhile may not show after a restart.",
   "sync.warning.server_restored": "The server was restored to an earlier state.",
   "sync.warning.tombstone_unverified": "The server says an item is deleted, but that could not be checked. The local copy is kept.",
+  "sync.warning.trash_copy_skipped": "The server deleted an item, and no copy of it could be put in the trash on this device. The deletion was still applied here. The item cannot be restored from the trash on this device.",
   "sync.warning.unexpected_rev": "The server saved a change under an unexpected version number."
 }

@@ -468,3 +468,32 @@ test("a_pass_that_finds_the_older_state_does_not_check_out_has_one_banner_in_the
     }
   });
 });
+
+test("a_refused_write_after_a_restore_and_a_skipped_trash_copy_have_texts_and_show_no_item_name", async () => {
+  await withDom(async () => {
+    const id = (n) => n.toString(16).padStart(32, "0");
+    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+      const engine = fakeWarningsEngine();
+      const root = frame(engine, lang);
+      // The engine knows the item by name; the banners must not use it.
+      engine.list = () => [{ id: id(1), name: "Bank login" }, { id: id(2), name: "Mail login" }];
+      engine.emit("error", { code: "restore_epoch_refused", id: id(1) });
+      engine.emit("error", { code: "restore_epoch_refused", id: id(2) });
+      engine.emit("state", { kind: "warning", code: "trash_copy_skipped", id: id(1), rev: 3, reason: "damaged" });
+      engine.emit("state", { kind: "warning", code: "trash_copy_skipped", id: id(2), rev: 4, reason: "invalid_state" });
+      const banners = all(root, "banner");
+      assert.deepEqual(
+        banners.map((node) => node.getAttribute("data-banner")).sort(),
+        ["error:restore_epoch_refused", "warning:trash_copy_skipped"],
+        `${lang}: one banner for each, however many items`,
+      );
+      const refused = banners.find((node) => node.getAttribute("data-banner") === "error:restore_epoch_refused");
+      assert.equal(refused.getAttribute("role"), "alert");
+      assert.ok(textOf(refused).includes(catalog["sync.error.restore_epoch_refused"]));
+      const skipped = banners.find((node) => node.getAttribute("data-banner") === "warning:trash_copy_skipped");
+      assert.ok(textOf(skipped).includes(catalog["sync.warning.trash_copy_skipped"]));
+      assert.doesNotMatch(textOf(root), /Bank login|Mail login|damaged|invalid_state/, `${lang}: no item data on the banners`);
+    }
+    assert.match(NB["sync.error.restore_epoch_refused"], /^Tjeneren er gjenopprettet/);
+  });
+});

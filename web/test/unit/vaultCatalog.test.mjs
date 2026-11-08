@@ -92,3 +92,23 @@ test("the_unlock_screen_uses_the_sign_in_pages_texts_when_those_are_in_the_build
     assert.ok("account.error.retry_in" in texts);
   }
 });
+
+test("every_warning_and_error_the_sync_engine_names_has_a_text_in_both_languages", () => {
+  const source = ["engine.mjs", "outbox.mjs"].map((file) => readFileSync(join(web, "src", "sync", file), "utf8")).join("\n");
+  const warnings = [...new Set([...source.matchAll(/\bwarn\("([a-z_]+)"/g)].map((m) => m[1]))];
+  const errors = [...new Set([...source.matchAll(/emit\("error", \{ code: "([a-z_]+)"/g)].map((m) => m[1]))];
+  assert.ok(warnings.includes("trash_copy_skipped") && errors.includes("restore_epoch_refused"), "the scan finds the two codes of the restore epoch work");
+  const shell = text("views/shell.mjs");
+  for (const lang of ["en", "nb"]) {
+    const texts = catalog(lang);
+    // A warning is shown by the sync banner (a banner text) or by the shell (`sync.warning.<code>`).
+    for (const code of warnings) {
+      assert.ok(`sync.warning.${code}` in texts || `syncwarnings.banner.${code}` in texts, `${lang}: warning ${code}`);
+    }
+    // Errors with a text of their own in the shell, or in the fixed list of `describeError`.
+    for (const code of ["restore_epoch_refused", "storage", "draft_unreadable", "upload_again_failed"]) {
+      assert.ok(`sync.error.${code}` in texts, `${lang}: error ${code}`);
+    }
+  }
+  assert.match(shell, /restore_epoch_refused/);
+});
