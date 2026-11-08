@@ -9,12 +9,13 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FIXED_UUID } from "../../scripts/lib/testIds.mjs";
 
 /** The add-on id of the test variant (extension/scripts/build.mjs, TEST_ID). */
 export const TEST_ADDON_ID = "ferret-test@hedgerow.tools";
 
 /** The UUID of the extension in the test profile, so its origin is moz-extension://<this>/. */
-export const FIXED_UUID = "5c1d6b3e-2f8a-4d0c-9a57-3e7b1c9a4f10";
+export { FIXED_UUID };
 
 /** The Firefox builds in the runner image. */
 export const FIREFOX_DIRS = Object.freeze({

@@ -41,20 +41,33 @@ FERRET_EXT_UUID=$(node -e 'import("/work/extension/test/firefox/profile.mjs").th
 export FERRET_EXT_XPI FERRET_EXT_UUID
 [ -f "$FERRET_EXT_XPI" ] || { echo "run.sh: $FERRET_EXT_XPI is missing" >&2; exit 1; }
 
+channel_list=$(echo "${FERRET_CHANNELS:-release,esr}" | tr ',' ' ')
+# shellcheck disable=SC2086
+set -- $channel_list
+if [ "$#" -eq 0 ]; then
+  echo "run.sh: FERRET_CHANNELS names no channel" >&2
+  exit 1
+fi
+for channel in "$@"; do
+  case "$channel" in release | esr) ;; *) echo "run.sh: channel $channel is not release or esr" >&2; exit 1 ;; esac
+done
+
+# A limit for the whole run of one channel, so a stuck browser cannot hold the container.
+step_timeout="${FERRET_STEP_TIMEOUT:-1500}"
 failed=0
-for channel in $(echo "${FERRET_CHANNELS:-release,esr}" | tr ',' ' '); do
+for channel in $channel_list; do
   echo "run.sh: channel $channel" >&2
   report=$(mktemp)
-  set -- --test --test-concurrency=1 --test-timeout=600000
+  set -- --test --test-force-exit --test-concurrency=1 --test-timeout=600000
   if [ -n "${FERRET_GREP:-}" ]; then
     set -- "$@" "--test-name-pattern=$FERRET_GREP"
   fi
   status=0
   # shellcheck disable=SC2086
   if [ "${FERRET_HEADLESS:-1}" = 0 ]; then
-    FERRET_CHANNELS=$channel FERRET_EXT_CHANNEL=$channel xvfb-run -a -s "-screen 0 1280x1024x24" node "$@" $specs > "$report" || status=$?
+    FERRET_CHANNELS=$channel FERRET_EXT_CHANNEL=$channel timeout --kill-after=30 "$step_timeout" xvfb-run -a -s "-screen 0 1280x1024x24" node "$@" $specs > "$report" || status=$?
   else
-    FERRET_CHANNELS=$channel FERRET_EXT_CHANNEL=$channel node "$@" $specs > "$report" || status=$?
+    FERRET_CHANNELS=$channel FERRET_EXT_CHANNEL=$channel timeout --kill-after=30 "$step_timeout" node "$@" $specs > "$report" || status=$?
   fi
   cat "$report" >&2
   if [ "$status" -ne 0 ]; then

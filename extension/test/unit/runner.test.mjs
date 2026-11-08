@@ -93,6 +93,10 @@ test("firefox_steps_have_no_network_outside_the_test_networks", () => {
   assert.equal(fetchStep.includes("--network"), false, "the fetch step uses the default network");
   assert.ok(!fetchStep.some((a) => a.startsWith("FERRET_CHANNELS=")), "the fetch step runs no test");
   assert.equal(flagValue(testStep, "--network"), "none");
+  // The fetch step needs the network and nothing else.
+  assert.equal(flagValue(fetchStep, "--cap-drop"), "ALL");
+  assert.equal(flagValue(fetchStep, "--user"), "10001:10001");
+  assert.ok(fetchStep.includes("--read-only") && fetchStep.includes("no-new-privileges:true"));
   assert.deepEqual(testStep.filter((a) => a === "--network"), ["--network"], "one network option");
 
   // e2e: the only network of the test step is the stack's.
@@ -141,4 +145,23 @@ test("runner_image_pins_every_download_by_version_and_sha256", () => {
   assert.match(dockerfile, new RegExp(`FERRET_FIREFOX_RELEASE=${dots(arg("RELEASE_VERSION"))} `));
   assert.match(dockerfile, new RegExp(`FERRET_GECKODRIVER=${dots(arg("GECKODRIVER_VERSION"))} `));
   assert.match(dockerfile, new RegExp(`FERRET_NODE=${dots(arg("NODE_VERSION"))} `));
+});
+
+test("the_unbranded_release_pin_is_renewed_before_mozilla_deletes_it", () => {
+  const dockerfile = read("docker/ext-runner.Dockerfile");
+  const expires = /** @type {RegExpMatchArray} */ (dockerfile.match(/^ARG RELEASE_EXPIRES=(\d{4}-\d{2}-\d{2})$/m))[1];
+  const days = (Date.parse(expires) - Date.now()) / 86_400_000;
+  assert.ok(days > 30, `Mozilla deletes the unbranded Release build on ${expires}: move RELEASE_TASK, RELEASE_VERSION and the checksums in docker/ext-runner.Dockerfile (and RELEASE_EXPIRES)`);
+  assert.match(dockerfile, /has expired and RELEASE_TASK/, "the download failure says what to do");
+});
+
+test("an_empty_channel_list_fails_the_run", () => {
+  const run = (/** @type {string} */ channels) => spawnSync("node", ["--input-type=module", "-e", "import('./test/firefox/harness.mjs').then((m) => console.log(m.channels().join(',')))"], {
+    encoding: "utf8", cwd: join(repoRoot, "extension"), env: { ...process.env, FERRET_CHANNELS: channels },
+  });
+  for (const channels of ["", ",", " , "]) {
+    const result = run(channels);
+    assert.ok(result.status !== 0 && /names no channel/.test(result.stderr), `FERRET_CHANNELS='${channels}' must fail: ${result.stdout}${result.stderr}`);
+  }
+  assert.equal(run("esr").stdout.trim(), "esr");
 });

@@ -18,7 +18,9 @@
 #                                 `lanbox-ferret-test.sh e2e-up` (not with --no-up, for
 #                                 a stack that is already up), takes the stack's CA
 #                                 from `e2e-ca` and joins the stack's network, the
-#                                 only network that step has. Afterwards run
+#                                 only network that step has (that network is not
+#                                 internal, so the step can reach whatever it
+#                                 reaches). Afterwards run
 #                                 `scripts/lanbox-ferret-test.sh e2e-down`.
 #
 # unit and lint: the extension/ tree, the WASM pin (web/wasm.lock.json), the
@@ -175,17 +177,24 @@ runner_image="ferret-ext-runner:$runner_hash"
 if ! docker "${docker_args[@]}" image inspect "$runner_image" > /dev/null 2>&1; then
   tr -d '\r' < docker/ext-runner.Dockerfile \
     | docker "${docker_args[@]}" build --label owner=ferret-core -t "$runner_image" - >&2
+  # The images of earlier versions of the Dockerfile (ours, by label) are removed one by
+  # one, never pruned. An image that a running container still uses stays.
+  for old in $(docker "${docker_args[@]}" image ls --filter label=owner=ferret-core --format '{{.Repository}}:{{.Tag}}' | grep '^ferret-ext-runner:' | grep -v ":$runner_hash\$" || true); do
+    docker "${docker_args[@]}" image rm "$old" > /dev/null 2>&1 || true
+  done
 fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # Step 1, the only one with a network: fetch the published WASM package named in
-# web/wasm.lock.json and check its SHA-256. The archive comes back on stdout.
+# web/wasm.lock.json and check its SHA-256. The archive comes back on stdout. The
+# container needs the network and nothing else: no capability, not root, a
+# read-only root file system, and a limit on the download.
 # The script is in single quotes on purpose.
 # shellcheck disable=SC2016
 fetch='const lock = JSON.parse(require("fs").readFileSync(0, "utf8"));
-fetch(lock.url).then((r) => {
+fetch(lock.url, { signal: AbortSignal.timeout(120000) }).then((r) => {
   if (!r.ok) throw new Error(lock.url + " answered " + r.status);
   return r.arrayBuffer();
 }).then((b) => {
@@ -199,6 +208,10 @@ docker "${docker_args[@]}" run --rm -i --init \
   --label owner=ferret-core \
   "${dev_args_out[@]}" \
   --cpus 1 --memory 1g \
+  --user 10001:10001 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --read-only \
   -e FERRET_EXT_STEP=fetch \
   --tmpfs /tmp:size=64m \
   "$runner_image" node -e "$fetch" < web/wasm.lock.json > "$work/wasm.tar.gz"

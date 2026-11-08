@@ -21,6 +21,7 @@ const ALLOWED = {
 /** What the registered command and the menu item saw. @type {Record<string, unknown>[]} */
 const events = [];
 
+// Same value as TEST_MENU_ITEM_ID in scripts/lib/testIds.mjs (a unit test holds them equal).
 const MENU_ID = "ferret-test-menu-item";
 const MENU_TITLE = "Ferret test menu item";
 

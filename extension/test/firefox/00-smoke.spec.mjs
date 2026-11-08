@@ -133,7 +133,8 @@ test("a_page_on_the_fixture_server_cannot_load_any_extension_url", async () => {
   for (const channel of channels()) {
     await withFirefox({ channel }, async (session) => {
       const server = await fixtures();
-      await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+      const addon = await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+      assert.equal(addon.uuid, FIXED_UUID, "the URLs below name the add-on's real origin");
       await session.navigate(server.url(server.hosts[0], "/static/login.html"));
       assert.equal(await session.content(() => document.title), "Fixture sign-in", "the fixture page loaded over trusted https");
       const results = await session.content(async (/** @type {string} */ origin, /** @type {string[]} */ paths) => {
@@ -179,6 +180,15 @@ test("a_page_on_the_fixture_server_cannot_load_any_extension_url", async () => {
         }
       }
       assert.deepEqual(results.apis, { browser: "undefined", chrome: "undefined", bridge: "undefined" }, `${channel}: no extension API in the page`);
+
+      // Control: an extension page loads the same URLs, so "blocked" above means something.
+      await openBridge(session);
+      const fromExtension = await session.content(async (/** @type {string} */ origin, /** @type {string[]} */ paths) => {
+        const out = /** @type {Record<string, boolean>} */ ({});
+        for (const path of paths) out[path] = await window.fetch(`${origin}/${path}`).then((response) => response.ok, () => false);
+        return out;
+      }, `moz-extension://${FIXED_UUID}`, targets);
+      assert.deepEqual(Object.values(fromExtension).filter((ok) => !ok), [], `${channel}: the add-on's own page loads every target: ${JSON.stringify(fromExtension)}`);
     });
   }
 });
@@ -190,49 +200,50 @@ test("chrome_context_can_press_a_shortcut_and_click_a_context_menu_item", async 
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
       const bridgeTab = await session.windowHandle();
       const bridge = await openBridge(session);
-      const pageUrl = server.url(server.hosts[0], "/static/login.html");
-      const pageTab = await session.newTab();
-      await session.switchTo(pageTab);
-      await session.navigate(pageUrl);
-      await session.waitFor(() => session.findAll("#username").then((found) => found.length === 1), 10_000, "the sign-in form");
 
-      /** Reads what the test variant recorded, from the bridge tab, and goes back to the page. */
-      const recorded = async () => {
+      /** Opens a fixture page in a tab of its own and leaves it selected. @param {string} host */
+      const openPage = async (host) => {
+        const url = server.url(host, "/static/login.html");
+        const tab = await session.newTab();
+        await session.switchTo(tab);
+        await session.navigate(url);
+        await session.waitFor(() => session.findAll("#username").then((found) => found.length === 1), 10_000, "the sign-in form");
+        return { url, tab };
+      };
+      /** Runs `body` in the bridge tab and goes back to the tab that was selected. @template T @param {string} back @param {() => Promise<T>} body */
+      const fromBridge = async (back, body) => {
         await session.switchTo(bridgeTab);
         try {
-          return await bridge.events();
+          return await body();
         } finally {
-          await session.switchTo(pageTab);
+          await session.switchTo(back);
         }
       };
+      /** The extension has no tabs permission: it sees a tab's address only under activeTab. Asserts it cannot see `url` now. @param {string} back @param {string} url @param {string} what */
+      const assertHidden = async (back, url, what) => {
+        const tabs = await fromBridge(back, () => bridge.invoke("tabs.query", {}));
+        assert.equal(tabs.some((/** @type {{ url?: string }} */ tab) => tab.url === url), false, `${channel}: ${what}: the address is hidden before the grant`);
+      };
 
-      // Control: before the shortcut, the extension cannot see the page's address (it has no tabs permission and no activeTab yet).
-      await session.switchTo(bridgeTab);
-      const before = await bridge.invoke("tabs.query", {});
-      await session.switchTo(pageTab);
-      assert.equal(before.length, 2);
-      assert.deepEqual(before.filter((/** @type {{ url?: string }} */ tab) => tab.url === undefined).length, 1, `${channel}: one tab without an address`);
-      assert.equal(before.some((/** @type {{ url?: string }} */ tab) => tab.url === pageUrl), false, `${channel}: the page's address is hidden`);
-
-      // A real shortcut. The test command saw the page's address, which an extension without the tabs permission sees only under activeTab.
+      // A real shortcut, on a tab that never had a grant: the command saw the page's address.
+      const first = await openPage(server.hosts[0]);
+      await assertHidden(first.tab, first.url, "shortcut tab");
       await session.pressShortcut(TEST_SHORTCUT);
-      const commandEvent = await session.waitFor(async () => (await recorded()).find((e) => e.kind === "command"), 10_000, "the command event");
+      const commandEvent = await session.waitFor(
+        async () => (await fromBridge(first.tab, () => bridge.events())).find((e) => e.kind === "command"), 10_000, "the command event");
       assert.equal(commandEvent.name, TEST_COMMAND);
-      assert.equal(commandEvent.tabUrl, pageUrl, `${channel}: the command was called with activeTab`);
+      assert.equal(commandEvent.tabUrl, first.url, `${channel}: the command was called with activeTab`);
 
-      // A real context menu click on the form field.
-      const title = await session.waitFor(async () => {
-        await session.switchTo(bridgeTab);
-        try {
-          return await session.content(() => window.ferretBridge.menuTitle);
-        } finally {
-          await session.switchTo(pageTab);
-        }
-      }, 10_000, "the menu title");
+      // A real context menu click, on another tab that never had a grant (the shortcut's grant is for the first tab alone).
+      const second = await openPage(server.hosts[1]);
+      await assertHidden(second.tab, second.url, "menu tab");
+      const title = await session.waitFor(
+        () => fromBridge(second.tab, () => session.content(() => window.ferretBridge.menuTitle)), 10_000, "the menu title");
       await session.clickContextMenuItem(title, "#username");
-      const menuEvent = await session.waitFor(async () => (await recorded()).find((e) => e.kind === "menu"), 10_000, "the menu event");
+      const menuEvent = await session.waitFor(
+        async () => (await fromBridge(second.tab, () => bridge.events())).find((e) => e.kind === "menu"), 10_000, "the menu event");
       assert.equal(menuEvent.menuItemId, "ferret-test-menu-item");
-      assert.equal(menuEvent.tabUrl, pageUrl, `${channel}: the menu click came with activeTab`);
+      assert.equal(menuEvent.tabUrl, second.url, `${channel}: the menu click alone granted activeTab`);
     });
   }
 });
@@ -284,8 +295,28 @@ test("terminate_background_ends_the_background_page", async () => {
   for (const channel of channels()) {
     await withFirefox({ channel }, async (session) => {
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
-      const state = await session.terminateBackground(TEST_ADDON_ID);
-      assert.notEqual(state, "running", `${channel}: the background is not running right after Terminate`);
+      await session.waitFor(async () => (await session.addonInfo(TEST_ADDON_ID)).backgroundState === "running", 30_000, "a running background");
+      await session.terminateBackground(TEST_ADDON_ID);
+      await session.waitFor(async () => (await session.addonInfo(TEST_ADDON_ID)).backgroundState === "stopped", 10_000, "a stopped background");
+    });
+  }
+});
+
+test("the_bridge_page_can_open_a_runtime_port", async () => {
+  for (const channel of channels()) {
+    await withFirefox({ channel }, async (session) => {
+      await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+      await openBridge(session);
+      // A port opens from the page; the background answers it or, with no listener for its name, closes it. Both end the wait.
+      const outcome = await session.content(() => new Promise((resolve, reject) => {
+        if (typeof browser.runtime.connect !== "function") reject(new Error("no browser.runtime.connect"));
+        const port = browser.runtime.connect({ name: "ferret-test-core" });
+        const timer = setTimeout(() => reject(new Error("the port neither answered nor closed")), 10_000);
+        port.onMessage.addListener(() => { clearTimeout(timer); port.disconnect(); resolve("reply"); });
+        port.onDisconnect.addListener(() => { clearTimeout(timer); resolve("disconnect"); });
+        port.postMessage({ id: "1", op: "ping" });
+      }));
+      assert.ok(outcome === "reply" || outcome === "disconnect", `${channel}: ${outcome}`);
     });
   }
 });

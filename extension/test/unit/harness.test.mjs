@@ -6,6 +6,9 @@ import { get } from "node:https";
 import { test } from "node:test";
 import { build, buildManifest, readInternalHosts, releaseProblems, TEST_ID } from "../../scripts/build.mjs";
 import { startFixtures } from "../firefox/fixtures-server.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { FIXED_UUID as UUID_OF_IDS, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "../../scripts/lib/testIds.mjs";
 import { FIXED_UUID, policiesJson, profilePrefs, TEST_ADDON_ID, userJs } from "../firefox/profile.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
 
@@ -108,5 +111,22 @@ test("fixture_server_serves_https_with_its_own_ca_for_the_listed_hosts", async (
     await assert.rejects(fetchText("one.test", "/healthz", { ca: "" }), /self-signed|unable to verify|certificate/i);
   } finally {
     await server.close();
+  }
+});
+
+test("test_only_ids_are_the_ones_the_variant_and_the_release_check_use", async () => {
+  assert.equal(FIXED_UUID, UUID_OF_IDS);
+  const bridge = readFileSync(join(extensionRoot, "test", "bridge.mjs"), "utf8");
+  assert.ok(bridge.includes(`const MENU_ID = "${TEST_MENU_ITEM_ID}";`), "the bridge's menu id is the listed one");
+  const part = JSON.parse(readFileSync(join(extensionRoot, "manifest", "test-parts", "browser-tests.json"), "utf8"));
+  assert.deepEqual(Object.keys(part.commands), [TEST_COMMAND_ID]);
+  // A release package that names any of them is refused, a test build is not a release.
+  for (const id of [FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID]) {
+    const files = new Map([
+      ["manifest.json", Buffer.from(JSON.stringify({ name: "Faithful Ferret", browser_specific_settings: { gecko: { id: "ferret@hedgerow.tools" } } }))],
+      ["pages/leak.mjs", Buffer.from(`export const id = "${id}";
+`)],
+    ]);
+    assert.deepEqual(releaseProblems(files, readInternalHosts(extensionRoot)), [`pages/leak.mjs: names the test-only id ${id}`]);
   }
 });

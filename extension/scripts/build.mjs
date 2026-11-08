@@ -37,6 +37,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
 import { danglingImports } from "./lib/imports.mjs";
+import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
 
 export { sha256 };
 
@@ -348,6 +349,9 @@ export function releaseProblems(files, internalHosts) {
     if (/\.(?:html|mjs|js|json|css)$/.test(path)) {
       const text = bytes.toString("utf8");
       if (/moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(text)) problems.push(`${path}: a fixed extension UUID`);
+      for (const id of [FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID]) {
+        if (text.includes(id)) problems.push(`${path}: names the test-only id ${id}`);
+      }
       if (text.includes("extensions.webextensions.uuids")) problems.push(`${path}: names the UUID preference of the test profile`);
       const lower = text.toLowerCase();
       for (const host of internalHosts) {

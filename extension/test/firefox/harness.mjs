@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFirefox } from "./driver.mjs";
 import { startFixtures, readHosts } from "./fixtures-server.mjs";
+import { TEST_COMMAND_ID } from "../../scripts/lib/testIds.mjs";
 import { FIXED_UUID, TEST_ADDON_ID } from "./profile.mjs";
 
 export { FIXED_UUID, TEST_ADDON_ID, readHosts };
@@ -34,7 +35,7 @@ export const BRIDGE_URL = `${EXTENSION_ORIGIN}/test/bridge.html`;
 export const ABOUT_URL = `${EXTENSION_ORIGIN}/pages/about.html`;
 /** The shortcut and the menu item that the test variant registers (manifest/test-parts). */
 export const TEST_SHORTCUT = "Alt+Shift+F9";
-export const TEST_COMMAND = "ferret-test-command";
+export const TEST_COMMAND = TEST_COMMAND_ID;
 
 /** The versions that the runner image was made with. @returns {Record<"release" | "esr" | "geckodriver" | "node", string>} */
 export function pinnedVersions() {
@@ -54,6 +55,7 @@ export function pinnedVersions() {
 /** The channels of this run. @returns {("release" | "esr")[]} */
 export function channels() {
   const wanted = (process.env.FERRET_CHANNELS ?? "release,esr").split(",").map((c) => c.trim()).filter(Boolean);
+  if (wanted.length === 0) throw new Error("harness: FERRET_CHANNELS names no channel (a run with none would pass without testing anything)");
   for (const channel of wanted) {
     if (channel !== "release" && channel !== "esr") throw new Error(`harness: channel ${channel} is not release or esr`);
   }

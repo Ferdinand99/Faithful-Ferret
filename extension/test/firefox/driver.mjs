@@ -142,40 +142,50 @@ export class Session {
       env: { ...process.env, ...options.env },
     });
     this.geckodriver = child;
-    /** @param {Buffer} chunk */
+    /** @param {Buffer | Error} chunk */
     const collect = (chunk) => { this.log = `${this.log}${chunk}`.slice(-200_000); };
     child.stdout?.on("data", collect);
     child.stderr?.on("data", collect);
+    child.on("error", collect);
     this.base = `http://127.0.0.1:${port}`;
-    for (let i = 0; ; i++) {
-      try {
-        await wire("GET", `${this.base}/status`);
-        break;
-      } catch (error) {
-        if (child.exitCode !== null || i > 100) throw new Error(`driver: geckodriver did not start: ${error}\n${this.log}`);
-        await sleep(100);
-      }
-    }
-
-    const args = ["-profile", this.profileDir, "-no-remote"];
-    if (options.headless !== false) args.push("-headless");
+    // Whatever goes wrong from here on, geckodriver (and Firefox with it) must not be left running.
     try {
-      const value = await wire("POST", `${this.base}/session`, {
-        capabilities: {
-          alwaysMatch: {
-            browserName: "firefox",
-            "moz:firefoxOptions": { binary: join(firefoxDir, "firefox"), args, env: options.env ?? {} },
+      for (let i = 0; ; i++) {
+        try {
+          await wire("GET", `${this.base}/status`);
+          break;
+        } catch (error) {
+          if (child.exitCode !== null || i > 100) throw new Error(`driver: geckodriver did not start: ${error}
+${this.log}`);
+          await sleep(100);
+        }
+      }
+
+      const args = ["-profile", this.profileDir, "-no-remote"];
+      if (options.headless !== false) args.push("-headless");
+      /** @type {any} */
+      let value;
+      try {
+        value = await wire("POST", `${this.base}/session`, {
+          capabilities: {
+            alwaysMatch: {
+              browserName: "firefox",
+              "moz:firefoxOptions": { binary: join(firefoxDir, "firefox"), args, env: options.env ?? {} },
+            },
           },
-        },
-      });
+        });
+      } catch (error) {
+        throw new Error(`${error}
+${this.log.slice(-4000)}`);
+      }
       this.sessionId = value.sessionId;
       this.browserVersion = String(value.capabilities?.browserVersion ?? "");
+      this.context = "content";
+      await wire("POST", `${this.#s()}/timeouts`, { script: 120_000, pageLoad: 60_000, implicit: 0 });
     } catch (error) {
-      await this.#killDriver();
-      throw new Error(`${error}\n${this.log.slice(-4000)}`);
+      await this.quit({ keepProfile: true });
+      throw error;
     }
-    this.context = "content";
-    await wire("POST", `${this.#s()}/timeouts`, { script: 120_000, pageLoad: 60_000, implicit: 0 });
   }
 
   #s() {

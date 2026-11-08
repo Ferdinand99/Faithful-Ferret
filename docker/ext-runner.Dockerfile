@@ -33,6 +33,8 @@ ARG ESR_VERSION=153.6.0esr
 ARG ESR_SHA256=31321cd9e2cef73df678417e810cdd1b5760aa5cc8063c8465669e5869cb8498
 ARG RELEASE_VERSION=159.0.1
 ARG RELEASE_TASK=QyKNOg21RX61F2Ak-F6m3A
+# The last day Mozilla keeps that task's artifacts. A unit test fails 30 days before it.
+ARG RELEASE_EXPIRES=2027-11-02
 ARG RELEASE_SHA256=10e6424a1d708682178119a6289cf6563ba5f87dfbb5f4a7fa8dfad01549b191
 ARG RELEASE_SHA512=b896f4ad9b7ef87be90825b91f2e85dd54eb5f6490e8d98e0972d08a711647b8febf7bef990755bfae7d395ad0fb65abaee2e02bd43b02c54b449aee69d75029
 ARG GECKODRIVER_VERSION=0.37.1
@@ -63,7 +65,8 @@ RUN test "$(uname -m)" = x86_64 \
     && curl -fsSL -o esr.tar.xz "https://archive.mozilla.org/pub/firefox/releases/${ESR_VERSION}/linux-x86_64/en-US/firefox-${ESR_VERSION}.tar.xz" \
     && echo "${ESR_SHA256}  esr.tar.xz" | sha256sum -c - \
     && mkdir /opt/firefox-esr && tar -xJf esr.tar.xz -C /opt/firefox-esr --strip-components=1 \
-    && curl -fsSL -o release.tar.xz "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/${RELEASE_TASK}/artifacts/public/build/target.tar.xz" \
+    && { curl -fsSL -o release.tar.xz "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/${RELEASE_TASK}/artifacts/public/build/target.tar.xz" \
+         || { echo "The unbranded Release build of task ${RELEASE_TASK} could not be downloaded. Mozilla keeps it until ${RELEASE_EXPIRES}: if that day has passed, the pin has expired and RELEASE_TASK, RELEASE_VERSION and both checksums must be updated." >&2; exit 1; }; } \
     && echo "${RELEASE_SHA256}  release.tar.xz" | sha256sum -c - \
     && echo "${RELEASE_SHA512}  release.tar.xz" | sha512sum -c - \
     && mkdir /opt/firefox-release && tar -xJf release.tar.xz -C /opt/firefox-release --strip-components=1 \
@@ -85,6 +88,13 @@ RUN test "$(uname -m)" = x86_64 \
     && node --version
 
 # The versions the tests expect to find (extension/test/firefox/harness.mjs).
+#
+# The MOZ_DISABLE_*_SANDBOX switches turn off the content and helper process
+# sandboxes of Firefox: Docker's default seccomp profile blocks the user
+# namespaces they need, and Firefox would otherwise log errors or refuse to
+# start. That is acceptable only because the test container has no network and
+# loads only the fixture pages. Anything measured here, in security or in
+# performance, was measured with the sandboxes off.
 ENV FERRET_FIREFOX_ESR=153.6.0 \
     FERRET_FIREFOX_RELEASE=159.0.1 \
     FERRET_GECKODRIVER=0.37.1 \

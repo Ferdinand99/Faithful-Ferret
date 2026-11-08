@@ -135,7 +135,7 @@ test("release_check_refuses_an_internal_host_name", async () => {
       env.cleanup();
     }
   }
-  // A package that holds one fails the standalone check, in a folder and in an .xpi.
+  // A package folder that holds one fails the standalone check.
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
