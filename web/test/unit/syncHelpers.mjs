@@ -403,7 +403,8 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
   const seal = (id, rev, body) => {
     const plain = Buffer.from(JSON.stringify(body));
     const iv = randomBytes(12);
-    const envelope = Buffer.concat([iv, plain.map((byte, i) => byte ^ stream(iv, plain.length)[i])]);
+    const keystream = stream(iv, plain.length); // once, not once per byte: ten thousand items are opened in the scale test
+    const envelope = Buffer.concat([iv, plain.map((byte, i) => byte ^ keystream[i])]);
     return { rev, envelope: new Uint8Array(envelope), tag: new Uint8Array(mac(Buffer.from("tag"), id, rev8(rev), envelope)) };
   };
   const calls = [];
@@ -416,7 +417,8 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       if (!Buffer.from(tag).equals(good)) throw new FakeFerretError("decrypt");
       const iv = Buffer.from(envelope.subarray(0, 12));
       const cipher = Buffer.from(envelope.subarray(12));
-      const plain = cipher.map((byte, i) => byte ^ stream(iv, cipher.length)[i]);
+      const keystream = stream(iv, cipher.length);
+      const plain = cipher.map((byte, i) => byte ^ keystream[i]);
       const handle = nextHandle;
       nextHandle += 1;
       handles.set(handle, { id: hex16.encode(id), body: JSON.parse(plain.toString()), envelope });
