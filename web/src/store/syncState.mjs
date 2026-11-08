@@ -19,6 +19,7 @@ import { req, run, serverKey, StoreError } from "./idb.mjs";
  * @property {Uint8Array} memory the core's sync memory, as the core serialized it
  * @property {number | null} restoreEpoch the highest restore epoch this device has accepted
  * @property {number | null} verifiedAt when a checkpoint last verified (ms since the epoch)
+ * @property {number | null} verifiedSeq the `seq` of the highest checkpoint that verified (a record from before this field reads as null)
  * @property {number | null} uploadedAt when this device last uploaded a checkpoint (ms)
  * @property {number | null} uploadedSeq the `seq` of that checkpoint
  * @property {string | null} hardWarning the code of a warning that stays until a later check clears it
@@ -26,7 +27,7 @@ import { req, run, serverKey, StoreError } from "./idb.mjs";
  */
 
 /** The only fields a state may have, and the only phases of a restore. */
-export const STATE_FIELDS = Object.freeze(["memory", "restoreEpoch", "verifiedAt", "uploadedAt", "uploadedSeq", "hardWarning", "restore"]);
+export const STATE_FIELDS = Object.freeze(["memory", "restoreEpoch", "verifiedAt", "verifiedSeq", "uploadedAt", "uploadedSeq", "hardWarning", "restore"]);
 export const RESTORE_PHASES = Object.freeze(["memory_saved", "queued"]);
 
 /** @param {unknown} value @returns {value is number | null} */
@@ -47,9 +48,10 @@ function clean(state) {
     if (!STATE_FIELDS.includes(key)) throw bad(`a sync state has no field ${key}`);
   }
   const { memory, restoreEpoch, verifiedAt, uploadedAt, uploadedSeq, hardWarning, restore } = state;
+  const verifiedSeq = state.verifiedSeq ?? null; // a state stored before the field existed has none
   if (!(memory instanceof Uint8Array)) throw bad("memory is bytes");
-  if (!wholeOrNull(restoreEpoch) || !wholeOrNull(verifiedAt) || !wholeOrNull(uploadedAt) || !wholeOrNull(uploadedSeq)) {
-    throw bad("restoreEpoch, verifiedAt, uploadedAt and uploadedSeq are whole numbers or null");
+  if (!wholeOrNull(restoreEpoch) || !wholeOrNull(verifiedAt) || !wholeOrNull(verifiedSeq) || !wholeOrNull(uploadedAt) || !wholeOrNull(uploadedSeq)) {
+    throw bad("restoreEpoch, verifiedAt, verifiedSeq, uploadedAt and uploadedSeq are whole numbers or null");
   }
   if (hardWarning !== null && (typeof hardWarning !== "string" || hardWarning === "")) throw bad("hardWarning is a code or null");
   /** @type {SyncState["restore"]} */
@@ -64,7 +66,7 @@ function clean(state) {
     }
     kept = { epoch, phase };
   }
-  return { memory: memory.slice(), restoreEpoch, verifiedAt, uploadedAt, uploadedSeq, hardWarning, restore: kept };
+  return { memory: memory.slice(), restoreEpoch, verifiedAt, verifiedSeq, uploadedAt, uploadedSeq, hardWarning, restore: kept };
 }
 
 /**

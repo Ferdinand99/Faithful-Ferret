@@ -28,10 +28,27 @@
 // * The feed is read from the `seq` of the last row of the last page, never
 //   from `latest_seq`: a server that lies about `latest_seq` must not be able
 //   to make the client skip rows. A 410 (the cursor is below the floor of the
-//   feed) is answered once per cycle with a full listing from 0; if that is
-//   answered with 410 as well, the cycle ends with the error `gone`. A listing
-//   never deletes anything here: items it does not show are kept, marked
-//   `missing_on_server` and uploaded again; only the user can discard them.
+//   feed) is answered once per cycle with a full listing (`GET /api/sync/items`,
+//   page by page, each page checked by `checkListingPage`), then the feed goes on
+//   from the `as_of_seq` of the first page; if that is answered with 410 as well,
+//   the cycle ends with the error `gone`. A listing never deletes anything here:
+//   items it does not show are kept, marked `missing_on_server` and uploaded
+//   again; only the user can discard them. (This departs from the rule of the
+//   first version, that the cursor never comes from what the server says its top
+//   is: it is safe here because everything above `as_of_seq` is read from the
+//   feed afterwards.)
+// * Checkpoints (see checkpoint.mjs). At the end of a pass that has read the
+//   whole feed, the checkpoint of the server is verified against the rows this
+//   device holds: in the first such pass after a start when the last verification
+//   is missing or older than a day, after a listing, and when asked. A failure is
+//   named by `hardWarningOf`, kept in the sync state and shown until a later
+//   verification succeeds. Nothing is uploaded before a verification has
+//   succeeded in this session; the one exception is a device that has verified
+//   before and whose only failures are a forged checkpoint or a bad feed, so a
+//   junk checkpoint cannot freeze the checkpoints of every device. A device
+//   uploads at most every ten minutes, only for a `seq` above the head of the
+//   server and its own last upload, and never with a state warning, a stop, a
+//   mark or a write in the outbox.
 // * A write that the server refuses for good (409 or a final code) blocks its
 //   item: the draft stays in the outbox, the screen shows the server's version,
 //   edits are refused until `discard(id)` drops the draft.
@@ -41,7 +58,11 @@ import { b64u, hex16 } from "../b64.mjs";
 import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
-import { acceptPage, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
+import {
+  checkListingPage, checkpointBody, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
+  UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
+} from "./checkpoint.mjs";
+import { acceptPage, coreRow, REV_BELOW_REMEMBERED, seedMemory } from "./memory.mjs";
 import { createOutboxRunner } from "./outbox.mjs";
 
 export { SyncError };
@@ -73,7 +94,7 @@ export { SyncError };
 export const MANIFEST_ID = "00000000000000000000000000000000";
 
 /** Rows asked for in one page of the feed (the server's maximum). */
-const PAGE_LIMIT = 500;
+const PAGE_LIMIT = MAX_PAGE;
 
 /**
  * The codes that stop the engine: nothing is pulled or sent until the user acts.
@@ -81,7 +102,7 @@ const PAGE_LIMIT = 500;
  * `rollback_suspected` about the top `seq`, `sync_memory_full` and `unsupported`
  * about the memory itself.
  */
-export const HALT_CODES = Object.freeze(["rollback_suspected", "server_restored", "restore_epoch_lowered", "sync_memory_full", "unsupported"]);
+export const HALT_CODES = STOP_CODES;
 
 /**
  * @param {Uint8Array | null} a
@@ -157,6 +178,30 @@ export function createSyncEngine({
   let again = false;
   /** The ids a full listing has shown so far, while one is going on. @type {Set<string> | null} */
   let listing = null;
+  /**
+   * What the last pass that read the whole feed found, for the checkpoint step: the `latest_seq` of its last page (`seq`),
+   * the head of the checkpoint that page showed (`head`), whether a full listing was part of it, whether it refused rows, and
+   * the sync memory as this pass left it (`memory`: another tab's save after that makes the verification read the feed again).
+   * `head` may be raised by the verification (the checkpoint it read); `pageHead` is what the feed showed.
+   * @type {{ seq: number, head: number | null, pageHead: number | null, listed: boolean, refused: boolean, memory: Uint8Array } | null}
+   */
+  let lastDrain = null;
+  /** A verification has succeeded in this session (the engine has run since `start`). */
+  let verifiedInSession = false;
+  /** The last verification failed only with `checkpoint_forged` or `bad_feed`, on a device that had verified before. */
+  let forgedUnlock = false;
+  /** Someone asked for a verification (`verifyNow`, a listing): the next drained pass makes one whatever the time. */
+  let verifyRequested = false;
+  /** The answer of the last verification that was made, for `verifyNow`. @type {string | null} */
+  let verifyOutcome = null;
+  /** No automatic verification before this time (ms): the last one failed. */
+  let verifyNotBefore = 0;
+  /** No upload of a checkpoint before this time (ms): the server asked for a wait. */
+  let uploadNotBefore = 0;
+  /** The last verification ended in a pause: what the feed showed then, so it is not tried again until that moves (or a day passes). @type {{ seq: number, head: number | null, at: number } | null} */
+  let deferredAt = null;
+  /** The next verification is the second try of a round (another tab had moved the memory, or the checkpoint was newer than the feed). */
+  let retryPending = false;
 
   /** The server-accepted rows, ciphertext only (what the cache holds). @type {Map<string, CachedRow>} */
   const rows = new Map();
@@ -326,6 +371,10 @@ export function createSyncEngine({
           return;
         }
         if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return;
+        if (kind === "conflict" && showsOurRow(entry, error)) {
+          void serverHidItem(entry.itemId);
+          return;
+        }
         /** @type {Record<string, any>} */
         const detail = { code: kind === "conflict" ? "conflict" : error.code, id: entry.itemId };
         if (kind === "conflict") {
@@ -349,17 +398,57 @@ export function createSyncEngine({
     },
   });
 
+  /**
+   * Whether a refused upload of a missing item says the server holds the very row this device has cached: the copy was
+   * uploaded against nothing (`base_rev` 0), and the conflict shows the same blob and tag.
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+   */
+  function showsOurRow(entry, error) {
+    const row = rows.get(entry.itemId);
+    const body = error.body;
+    if (entry.baseRev !== 0 || flags.get(entry.itemId)?.kind !== "missing_on_server") return false;
+    if (!row || row.deleted || !row.envelope || !row.tag || !body || body.deleted === true) return false;
+    return body.blob === b64u.encode(row.envelope) && body.tag === b64u.encode(row.tag);
+  }
+
+  /**
+   * The server hid an item (the listing left it out) and shows it again when the copy is uploaded: it had the row all
+   * along. The mark goes and so does the upload that was queued; the row comes through the feed. A warning, nothing more.
+   * @param {string} id
+   */
+  async function serverHidItem(id) {
+    try {
+      for (const idem of await runner.discard(id)) droppedIdems.add(idem);
+      alive();
+      if (flags.get(id)?.kind === "missing_on_server") flags.delete(id);
+      acked.delete(id);
+      flagsDirty = true;
+      await persistFlags();
+    } catch (error) {
+      if (!stopped) emit("error", { code: "storage" });
+      return;
+    }
+    if (stopped) return;
+    standing.add("server_hid_item");
+    warn("server_hid_item", { id });
+    changed([id]);
+    void syncNow();
+  }
+
   // ----------------------------------------------------------- the feed
 
   /** Reads the feed from the cursor to its end. */
   async function cycle() {
+    lastDrain = null;
     const db = await store.open();
     let since = cursor;
     let restarted = false;
     /** What this pass has learned about the restore epoch of the server. @type {PassState} */
-    const pass = { stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false };
+    const pass = { stored: (await memory.load()).restoreEpoch, first: null, raised: null, lower: false, refused: false };
     /** The page was fetched again once, because another tab had moved the memory since the first fetch. */
     let refetched = false;
+    /** The last page of the feed that was used. @type {any} */
+    let last = null;
     for (;;) {
       // What the memory held before this page was asked for. If it has moved by the time the page is given to
       // it, another tab saved in between, and a page that now looks too old may only be older than that.
@@ -370,10 +459,10 @@ export function createSyncEngine({
         page = await api.get(`/api/sync/changes?since=${since}&limit=${PAGE_LIMIT}`, { shape: "changes_res" });
       } catch (error) {
         if (/** @type {any} */ (error)?.code === "gone" && !restarted) {
-          restarted = true; // the cursor is below the floor: list the vault again
-          since = 0;
-          cursor = 0;
-          listing = new Set();
+          restarted = true; // the cursor is below the floor: list the vault again, then go on from where the listing began
+          await relist(db, pass);
+          if (stopped) return;
+          since = cursor;
           continue;
         }
         throw error;
@@ -388,6 +477,7 @@ export function createSyncEngine({
       }
       refetched = false;
       if (stopped) return;
+      last = page;
       if (page.changes.length > 0) {
         since = page.changes[page.changes.length - 1].seq; // the last row, not latest_seq
         cursor = since;
@@ -396,7 +486,70 @@ export function createSyncEngine({
     }
     await finishEpoch(pass);
     if (stopped) return;
+    // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
+    // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
+    lastDrain = {
+      seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
+      refused: pass.refused, memory: (await memory.load()).memory,
+    };
     if (listing !== null) await finishListing(db);
+  }
+
+  /**
+   * Reads the full listing, `GET /api/sync/items`, page by page in the order of the ids. Every page is checked
+   * (`checkListingPage`, and the key epoch against the scope) before `use` sees it. `use(page, { snapshot, mayRefetch })`
+   * answers "refetch" to have the same page asked for again (the memory moved under it, see `applyPage`). Returns the
+   * `as_of_seq` of the FIRST page, or null when the engine was stopped. `as_of_seq` is not compared with the rows of
+   * other pages: an honest server takes writes while it lists.
+   * @param {(page: any, again: { snapshot: Uint8Array, mayRefetch: boolean }) => Promise<"done" | "refetch" | undefined | void>} use
+   * @returns {Promise<number | null>}
+   */
+  async function readListing(use) {
+    /** @type {any} */
+    let previous = null;
+    /** @type {number | null} */
+    let first = null;
+    let refetched = false;
+    for (;;) {
+      // What the memory held before the page was asked for (see `cycle`).
+      const snapshot = (await memory.load()).memory;
+      const after = previous === null ? "" : `&after=${previous.next_after}`;
+      const page = await api.get(`/api/sync/items?limit=${PAGE_LIMIT}${after}`, { shape: "items_res" });
+      if (stopped) return null;
+      checkListingPage(page, previous, PAGE_LIMIT);
+      if (page.vk_epoch !== scope.vkEpoch) throw new SyncError("epoch_mismatch");
+      if ((await use(page, { snapshot, mayRefetch: !refetched })) === "refetch") {
+        refetched = true; // once, as for the feed
+        continue;
+      }
+      refetched = false;
+      if (stopped) return null;
+      if (first === null) first = page.as_of_seq;
+      previous = page;
+      if (!page.has_more) return first;
+    }
+  }
+
+  /**
+   * The full listing after a 410: every page is used like a page of the feed (its rows go through the same judging and the
+   * sync memory; the `as_of_seq` of the page is its top `seq`). When the listing is done the cursor is the `as_of_seq` of
+   * the FIRST page: a row written while the listing went on is on a later page, or above that `seq` and in the feed that
+   * follows, and a row read twice is the same row.
+   * Spec: Fase 1 section 8.4 ("Retention": full reconciliation after a 410).
+   * @param {any} db @param {PassState} pass
+   */
+  async function relist(db, pass) {
+    listing = new Set();
+    try {
+      const first = await readListing(async (page, again) => {
+        await checkEpoch(pass, page.restore_epoch);
+        return applyPage(db, { changes: page.items, latest_seq: page.as_of_seq }, pass, again);
+      });
+      if (first !== null) cursor = first;
+    } catch (error) {
+      listing = null; // the ids seen so far are not a listing: nothing may be marked missing from them
+      throw error;
+    }
   }
 
   /**
@@ -405,6 +558,7 @@ export function createSyncEngine({
    * @property {number | null} first on a first contact: the epoch the server shows, to be stored when the pass has gone well
    * @property {number | null} raised the highest epoch the server showed that is above `stored` (on a first contact: above zero)
    * @property {boolean} lower something the server showed is below what this device remembers
+   * @property {boolean} refused the memory refused a row in this pass (the rows this device holds are not all the server shows)
    */
 
   /**
@@ -413,6 +567,7 @@ export function createSyncEngine({
    */
   function checkPage(page, since) {
     if (page.vk_epoch !== scope.vkEpoch) throw new SyncError("epoch_mismatch");
+    if (page.changes.length > PAGE_LIMIT) throw new SyncError("bad_feed"); // more than was asked for
     let last = since;
     for (const change of page.changes) {
       if (change.seq <= last) throw new SyncError("bad_feed"); // not strictly rising: the loop could never end
@@ -691,6 +846,7 @@ export function createSyncEngine({
     }
     // The page is used: now what judging it kept for later is done.
     if (lowerHere || refusedBelow) pass.lower = true;
+    if (refused.length > 0 || lowerHere) pass.refused = true;
     for (const id of shown) listing?.add(id);
     for (const step of later) step();
     for (const { row, code } of refused) {
@@ -970,12 +1126,254 @@ export function createSyncEngine({
     }
   }
 
+  // ------------------------------------------------------- checkpoints
+
+  /** The failures of the core that another tab's save can explain: its memory knows more than the rows or the checkpoint here. */
+  const TAB_RACE = new Set(["checkpoint_seq_below_remembered", "checkpoint_top_seq_below_remembered", REV_BELOW_REMEMBERED]);
+
+  /** @param {Uint8Array} a @param {Uint8Array} b */
+  const sameMemory = (a, b) => a.length === b.length && a.every((n, i) => n === b[i]);
+
+  /**
+   * Whether every item the checkpoint disagrees with is one that was uploaded again (an item with a `missing_on_server` or `reuploaded` mark), so the disagreement is
+   * explained and verification is only put off. An item without a mark, or a disagreement nobody can name, is not.
+   * Spec: Fase 1 section 8.6 ("What a recipient checks").
+   *
+   * The core checks the memory last, after the entries, so the first failure it names can hide a row that is below its floor
+   * for no reason a mark can give. Before a failure is put off, the rows without a mark are therefore given to the memory
+   * on their own (the answer is thrown away): if the core refuses one of them, the failure is hard. A checkpoint below the
+   * highest one that has verified is an old one shown again, and is hard as well.
+   *
+   * Known gap: an item the server hid whose floor is revision 1 gets its mark ended as soon as the copy that was uploaded
+   * again comes back (the rows hold the floor then). A checkpoint that lists the old hash of that revision is then a hard
+   * warning, not a pause, because nothing marks the item any more. Keeping the mark until the revision passes the floor
+   * would close it.
+   * @param {string} code the failure of the core
+   * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
+   * @param {import("../store/syncState.mjs").SyncState} state the state the verification ran against
+   */
+  async function explainedByMarks(code, checkpoint, topSeq, state) {
+    if (hardWarningOf(code, { deferred: true }) !== "verify_deferred") return false;
+    if (state.verifiedSeq !== null && checkpoint.seq < state.verifiedSeq) return false;
+    /** @type {Set<string>} */
+    const marked = new Set();
+    for (const [id, mark] of flags) if (mark.kind === "missing_on_server" || mark.kind === "reuploaded") marked.add(id);
+    if (marked.size === 0) return false;
+    const failing = await failingIds(checkpoint.entries, rows, checkpoint.seq === topSeq);
+    if (failing === null) return false;
+    // A row below what this device remembers (the copy that was uploaded again is below its old floor, by design) is not
+    // a disagreement between entries and rows: it is explained when nothing unmarked disagrees.
+    if (code !== REV_BELOW_REMEMBERED && failing.size === 0) return false;
+    if (![...failing].every((id) => marked.has(id))) return false;
+    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
+    try {
+      await client.vault.accept_rows(unmarked, topSeq, state.memory);
+    } catch (error) {
+      if (isFatal(error)) throw error;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Verifies the checkpoint of the server against the rows this device holds, under the lock of the sync memory: the new
+   * memory, the time and a cleared warning are stored in one go, or a warning is. Answers `"ok"`, the code of the warning,
+   * `"retry"` (another tab's memory knows more than these rows, or the checkpoint is newer than the feed this pass read:
+   * read the feed again first, once), or null (the server could not be reached; nothing changed). A stop (`rollback_suspected`,
+   * `sync_memory_full`) is thrown as a `SyncError`.
+   * Spec: Fase 1 section 8.6 ("What a recipient checks", "Local memory").
+   * @param {{ seq: number, head: number | null, pageHead: number | null, memory: Uint8Array }} drain
+   * @param {import("../store/syncState.mjs").SyncState} before the stored state when the step began
+   * @param {boolean} mayRetry
+   * @returns {Promise<string | null>}
+   */
+  async function verifyStep(drain, before, mayRetry) {
+    /** @type {import("./checkpoint.mjs").Checkpoint} */
+    let checkpoint;
+    try {
+      checkpoint = await fetchCheckpoint(api);
+    } catch (error) {
+      const status = /** @type {any} */ (error)?.status;
+      if (status === 401 || status === 403) {
+        // The session, not the checkpoint: the pass handles it like any other refused session.
+        /** @type {any} */ (error).sessionProblem = true;
+        throw error;
+      }
+      if (typeof status !== "number" || status === 0 || status === 408 || status === 429 || status >= 500) return null; // not reachable now
+      // The server answers, and not with a checkpoint it can have: nothing can be verified. A warning that is stored stays.
+      let kept = "bad_feed";
+      await memory.withLock(async (state) => {
+        kept = escalate(state.hardWarning, "bad_feed");
+        return kept === state.hardWarning ? null : { ...state, hardWarning: kept };
+      });
+      alive();
+      return settleFailure("bad_feed", kept, before, drain);
+    }
+    alive();
+    drain.head = Math.max(drain.head ?? 0, checkpoint.seq);
+    // A checkpoint above the feed that was read: another device uploaded one since. Read again before calling it a lie.
+    if (checkpoint.seq > drain.seq && mayRetry) return "retry";
+    const rowsNow = [...rows.values()];
+    const coreRows = rowsNow.map(coreRow);
+    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string }} Verdict */
+    /** @type {{ verdict: Verdict | null }} */
+    const box = { verdict: null };
+    await memory.withLock(async (state) => {
+      const moved = !sameMemory(state.memory, drain.memory); // another tab has saved since this pass left the memory
+      try {
+        const done = await client.vault.verify_checkpoint(checkpoint, coreRows, drain.seq, state.memory);
+        box.verdict = { ok: true };
+        return {
+          ...state, memory: done.newSyncMemory, verifiedAt: now(), verifiedSeq: Math.max(state.verifiedSeq ?? 0, checkpoint.seq), hardWarning: null,
+        };
+      } catch (error) {
+        if (isFatal(error)) throw error;
+        const code = codeOf(error);
+        if (moved && mayRetry && TAB_RACE.has(code)) {
+          box.verdict = { ok: false, code, moved, warning: "", kept: "" };
+          return null; // the other tab has seen more: nothing is said before the feed has been read again
+        }
+        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state) });
+        // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
+        const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
+        box.verdict = { ok: false, code, moved, warning, kept };
+        if (STOP_CODES.includes(warning) || state.hardWarning === kept) return null;
+        return { ...state, hardWarning: kept };
+      }
+    });
+    alive();
+    const verdict = /** @type {Verdict} */ (box.verdict);
+    if (verdict.ok) {
+      verifiedInSession = true;
+      forgedUnlock = false;
+      verifyNotBefore = 0;
+      deferredAt = null;
+      for (const code of VERIFY_WARNINGS) clearWarning(code);
+      return "ok";
+    }
+    if (verdict.warning === "") return "retry";
+    if (STOP_CODES.includes(verdict.warning)) {
+      throw new SyncError(verdict.warning, verdict.warning === "rollback_suspected"
+        ? "The server shows a state older than this device has seen."
+        : "This device cannot remember more items from this server. Forget the server to start again.");
+    }
+    return settleFailure(verdict.warning, verdict.kept, before, drain);
+  }
+
+  /**
+   * A verification that did not succeed. `warning` is what this attempt found and `kept` what is stored now (the warning
+   * that stood, when it is more serious). A failure never clears a state warning or a pause: those go only when a
+   * verification succeeds. What stands afterwards is `kept`, and the warning of this attempt next to it when it is only
+   * information (a forged checkpoint, a bad feed). Uploads may be unlocked by the exception for those two on a device that has
+   * verified before, but never while a state warning or a pause stands. The next automatic try waits.
+   * @param {string} warning @param {string} kept @param {import("../store/syncState.mjs").SyncState} before
+   * @param {{ seq: number, pageHead: number | null }} drain
+   * @returns {string} the most serious warning that stands
+   */
+  function settleFailure(warning, kept, before, drain) {
+    const wanted = new Set([kept]);
+    if (warningRank(warning) === 1) wanted.add(warning);
+    for (const code of VERIFY_WARNINGS) if (!wanted.has(code)) clearWarning(code);
+    for (const code of wanted) raiseWarning(code);
+    forgedUnlock = warningRank(warning) === 1 && warningRank(kept) < 2 && before.verifiedAt !== null;
+    verifyNotBefore = now() + VERIFY_RETRY_MS;
+    deferredAt = kept === "verify_deferred" ? { seq: drain.seq, head: drain.pageHead, at: now() } : null;
+    return warningRank(kept) > warningRank(warning) ? kept : warning;
+  }
+
+  /**
+   * After a pass that read the whole feed: verify the checkpoint of the server when it is due, then upload one of this
+   * device's own when that is allowed.
+   */
+  async function checkpointStep() {
+    const drain = lastDrain;
+    lastDrain = null;
+    if (!drain || stopped || halted !== null) return;
+    const mayRetry = !retryPending;
+    retryPending = false;
+    const before = await memory.load();
+    alive();
+    const at = now();
+    const age = before.verifiedAt === null ? Infinity : at - before.verifiedAt;
+    // Due: never verified, a day old (or from the future), a warning to look at again, a listing, or asked for. The automatic
+    // tries wait a while after a failure; a listing and a request do not.
+    const due = before.verifiedAt === null || age < 0 || age >= VERIFY_AFTER_MS || before.hardWarning !== null;
+    // While only a pause stands, the checkpoint is not asked for again until the feed has moved (its top or the head of the
+    // checkpoint), or a day has passed: nothing but a change can end a pause.
+    const unchanged = deferredAt !== null && deferredAt.seq === drain.seq && deferredAt.head === drain.pageHead && at - deferredAt.at < VERIFY_AFTER_MS;
+    if (verifyRequested || drain.listed || (due && at >= verifyNotBefore && !unchanged)) {
+      verifyRequested = false;
+      const result = await verifyStep(drain, before, mayRetry);
+      if (result === "retry") {
+        retryPending = true;
+        verifyRequested = true;
+        again = true; // the feed is read once more, and the verification made then
+        return;
+      }
+      verifyOutcome = result ?? "not_checked";
+      if (result === null) verifyNotBefore = now() + VERIFY_RETRY_MS;
+    }
+    await uploadStep(drain);
+  }
+
+  /**
+   * Signs what this device holds and uploads it, when every condition holds (see the head of this file). A `409` that says
+   * the stored checkpoint is newer counts as done; a `429` waits for the time the server named.
+   * Spec: Fase 1 section 8.6 ("Checkpoint": the entries at `S`, at most one upload in ten minutes, only when something changed).
+   * @param {{ seq: number, head: number | null, refused: boolean }} drain
+   */
+  async function uploadStep(drain) {
+    if (stopped || halted !== null || !(verifiedInSession || forgedUnlock)) return;
+    for (const code of standing) if (warningRank(code) >= 2) return; // a code nobody named ranks as serious: it blocks
+    if (drain.refused || flags.size > 0 || blocked.size > 0 || runner.itemsWithEntries().length > 0) return;
+    const at = now();
+    if (at < uploadNotBefore) return;
+    const seq = drain.seq;
+    const state = await memory.load();
+    alive();
+    if (warningRank(state.hardWarning) >= 2) return; // another tab may have stored one that this engine has not shown
+    const since = state.uploadedAt === null ? Infinity : at - state.uploadedAt;
+    if (since >= 0 && since < UPLOAD_EVERY_MS) return;
+    if (state.uploadedSeq !== null && seq <= state.uploadedSeq) return; // nothing new since the last upload
+    if (drain.head !== null && seq <= drain.head) return; // the server already holds one at least this new
+    const held = [...rows.values()];
+    if (held.some((row) => row.seq > seq)) return; // rows above the top the server named: no honest feed
+    try {
+      const signed = await client.vault.make_checkpoint(seq, await entriesOf(held));
+      alive();
+      await api.put("/api/sync/checkpoint", checkpointBody(signed), { shape: "checkpoint_put_res" });
+    } catch (error) {
+      if (stopped) return;
+      const status = /** @type {any} */ (error)?.status;
+      const code = codeOf(error);
+      if (isFatal(error) || status === 401) throw error;
+      if (status === 409 && code === "checkpoint_stale") {
+        // The server holds one at least as new: nothing is lost by not sending ours.
+      } else if (status === 429) {
+        const wait = /** @type {any} */ (error).retryAfter;
+        uploadNotBefore = now() + 1000 * Math.min(3600, Math.max(1, typeof wait === "number" ? wait : UPLOAD_EVERY_MS / 1000));
+        return;
+      } else {
+        uploadNotBefore = now() + VERIFY_RETRY_MS;
+        emit("error", { code: "checkpoint_upload_failed", reason: code });
+        return;
+      }
+    }
+    await memory.withLock(async (current) => ({
+      ...current,
+      uploadedAt: now(),
+      uploadedSeq: Math.max(current.uploadedSeq ?? 0, seq),
+    }));
+  }
+
   /** One pass: the feed. Failures become events; they never reject. */
   async function runCycle() {
     if (halted !== null) return;
     setStatus("syncing");
     try {
       await cycle();
+      if (stopped) return;
+      await checkpointStep();
       if (stopped) return;
       // Only after a pass that read the whole feed: an item that is still missing and has no upload under way is uploaded.
       for (const [id, mark] of [...flags]) if (mark.kind === "missing_on_server") await uploadAgain(id);
@@ -992,7 +1390,7 @@ export function createSyncEngine({
       const status = /** @type {any} */ (error)?.status;
       if (error instanceof SyncError && HALT_CODES.includes(code)) {
         halt(code);
-      } else if (status === 401) {
+      } else if (status === 401 || /** @type {any} */ (error)?.sessionProblem === true) {
         paused = true;
         setStatus("unauthorized");
       } else if (error instanceof SyncError || isFatal(error) || code === "gone" || code === "bad_request" || code.startsWith("malformed") || (code === "bad_response" && status >= 200 && status < 300)) {
@@ -1322,6 +1720,9 @@ export function createSyncEngine({
       abandoned.clear();
       droppedIdems.clear();
       standing.clear();
+      lastDrain = null;
+      verifyRequested = false;
+      retryPending = false;
       flagsDirty = false;
       itemQueues.clear();
       listing = null;
@@ -1337,6 +1738,24 @@ export function createSyncEngine({
      */
     health() {
       return { halted, warnings: [...standing] };
+    },
+
+    /**
+     * Verifies the checkpoint of the server now ("Check again"): the feed is read to its end, then the checkpoint is
+     * checked against the rows this device holds, whatever the time of the last check. Answers `"ok"`, the code of the
+     * warning that now stands (`server_shows_older_state`, `checkpoint_rolled_back`, `checkpoint_forged`, `bad_feed`,
+     * `verify_deferred`), the code of the stop when the engine is halted, or `"not_checked"` when the server could not
+     * be reached.
+     * @returns {Promise<string>}
+     */
+    async verifyNow() {
+      if (stopped) throw new SyncError("stopped");
+      if (halted !== null) return halted;
+      verifyRequested = true;
+      verifyOutcome = null;
+      await syncNow();
+      if (halted !== null) return halted;
+      return verifyOutcome ?? "not_checked";
     },
 
     /** @returns {ItemSummary[]} */

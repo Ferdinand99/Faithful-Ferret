@@ -120,7 +120,7 @@ test("trash_purge_removes_only_entries_older_than_the_cutoff", async () => {
 test("clearing_the_cache_clears_the_trash_and_keeps_sync_state", async () => {
   const db = await freshStore();
   const memory = bytes(8, 9);
-  const kept = { memory, restoreEpoch: 1, verifiedAt: 5, uploadedAt: null, uploadedSeq: null, hardWarning: null, restore: null };
+  const kept = { memory, restoreEpoch: 1, verifiedAt: 5, verifiedSeq: null, uploadedAt: null, uploadedSeq: null, hardWarning: null, restore: null };
   await saveSyncState(db.store, SERVER, ACCOUNT, kept);
   const row = { itemId: id(1), rev: 1, seq: 1, deleted: false, envelope: bytes(8, 1), tag: bytes(32, 2), tomb: null };
   await cache.putRows(db.store, scope(1), [row]);

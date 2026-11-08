@@ -180,7 +180,7 @@ export function memoryStore({ store, serverUrl, accountId, locks = /** @type {an
   /** @returns {Promise<SyncState>} */
   async function fresh() {
     if (typeof newMemory !== "function") throw new TypeError("a memory store needs newMemory to start an empty state");
-    return { memory: await newMemory(), restoreEpoch: null, verifiedAt: null, uploadedAt: null, uploadedSeq: null, hardWarning: null, restore: null };
+    return { memory: await newMemory(), restoreEpoch: null, verifiedAt: null, verifiedSeq: null, uploadedAt: null, uploadedSeq: null, hardWarning: null, restore: null };
   }
 
   return {
