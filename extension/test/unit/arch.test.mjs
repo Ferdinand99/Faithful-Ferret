@@ -152,6 +152,9 @@ test("a_page_or_content_script_that_reaches_a_crypto_module_is_found", async () 
   const plants = {
     "a content script imports the core host": { "src/content/fill.mjs": 'import "../background/coreHost.mjs";\n' },
     "a content script imports the lock": { "src/content/fill.mjs": 'import "../background/lock.mjs";\n' },
+    // A content file that the joined script does not include is still a root of the graph check.
+    "a content module outside the joined script imports the core host": { "src/content/extra.mjs": 'import "../background/coreHost.mjs";\n' },
+    "a content module outside the joined script imports the client": { "src/content/extra.mjs": 'import "../js/client.mjs";\n' },
     "a page reaches the client through a shared module": {
       "src/pages/spy.mjs": 'import "../shared/viaShared.mjs";\n',
       "src/shared/viaShared.mjs": 'import "../js/client.mjs";\n',
@@ -164,6 +167,11 @@ test("a_page_or_content_script_that_reaches_a_crypto_module_is_found", async () 
     "a page that names a path in the background": { "src/pages/spy.mjs": 'export const where = "../background/lock.mjs";\n' },
   };
   for (const [label, extra] of Object.entries(plants)) {
+    if ("src/content/fill.mjs" in extra) {
+      // The build joins the content script into one file and refuses a module it may not include.
+      await assert.rejects(built({ extra }), /not allowed in a content script/, label);
+      continue;
+    }
     const { env, files } = await built({
       extra: {
         ...extra,
@@ -304,7 +312,8 @@ test("background_exposes_nothing_on_globalThis", async () => {
 
       // It is wired: every listener is registered, and the start locked the vault.
       assert.equal(onConnect.length, variant === "test" ? 2 : 1);
-      assert.equal(onMessage.length, 1);
+      // The test build also listens for the content script's reports, for the fill probe.
+      assert.equal(onMessage.length, variant === "test" ? 2 : 1);
       assert.deepEqual(counts, { alarm: 1, idle: 1 });
       assert.equal(session.has("lock_at"), false, "a new page starts locked");
 

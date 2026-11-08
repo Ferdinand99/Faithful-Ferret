@@ -8,6 +8,7 @@
 // back. It is accepted from top-level extension pages only, like the UI port.
 
 import { isUiPort } from "../../shared/origin.mjs";
+import * as fillProbe from "./fillProbe.mjs";
 
 export const TEST_CORE_PORT = "ferret-test-core";
 
@@ -50,6 +51,10 @@ export const ops = Object.freeze({ argon2_bench: argon2Bench });
  * @param {{ runtime: { id?: string, getURL: (path: string) => string }, coreHost: { call: (op: string, args?: unknown) => Promise<unknown> } }} deps
  */
 export function onConnect(port, { runtime, coreHost }) {
+  if (port?.name === fillProbe.FILL_PROBE_PORT) {
+    fillProbe.onConnect(port, { runtime });
+    return;
+  }
   if (port?.name !== TEST_CORE_PORT) return;
   if (!isUiPort(port, runtime, TEST_CORE_PORT)) {
     try {
@@ -70,3 +75,7 @@ export function onConnect(port, { runtime, coreHost }) {
     }
   });
 }
+
+// The content script's reports are kept for the fill probe (the unit tests load
+// this module without a `browser`).
+if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime });

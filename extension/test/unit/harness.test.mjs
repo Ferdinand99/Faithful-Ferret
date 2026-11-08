@@ -49,7 +49,8 @@ test("the_test_variant_has_the_bridge_and_a_test_command_and_a_release_has_neith
       assert.ok(tm.permissions.includes("activeTab") && tm.permissions.includes("menus"));
       assert.equal("commands" in rm, false);
       assert.equal(rm.permissions.includes("menus"), false);
-      assert.equal(rm.permissions.includes("activeTab"), false);
+      // The release permissions at this stage: storage (core), alarms and idle (lock), activeTab and scripting (fill).
+      assert.deepEqual(rm.permissions, ["activeTab", "alarms", "idle", "scripting", "storage"]);
       // No host permission of any kind in the test variant either.
       assert.deepEqual((tm.permissions ?? []).filter((/** @type {string} */ p) => p.includes("://") || p === "<all_urls>"), []);
       assert.equal("host_permissions" in tm, false);

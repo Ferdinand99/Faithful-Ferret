@@ -23,7 +23,8 @@
 // 4. Merges src/locales/<lang>/<feature>.json and src/styles/<feature>.css. A
 //    feature adds its own files and edits no shared file.
 //    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs)
-//    and background/variant.gen.mjs (what differs between release and test). Anything
+//    and background/variant.gen.mjs (what differs between release and test). The content
+//    script and the modules it imports are joined into content/fill.inject.js (scripts/lib/classic.mjs). Anything
 //    below a folder named test-only is left out of a release.
 // 5. Refuses a relative import or page script whose file is not in the package, inline
 //    script and style in HTML, source maps, files over 4 MiB that
@@ -36,6 +37,7 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
+import { CONTENT_BUNDLE, CONTENT_ENTRY, classicScript } from "./lib/classic.mjs";
 import { danglingImports } from "./lib/imports.mjs";
 import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
 
@@ -570,6 +572,8 @@ export async function build({
   }
   dist.set("background/handlers.gen.mjs", Buffer.from(handlerRegister(dist)));
   dist.set("background/variant.gen.mjs", Buffer.from(variantModule(variant, dist)));
+  // The content script, joined into one classic script (an injected file cannot be a module).
+  if (dist.has(CONTENT_ENTRY)) dist.set(CONTENT_BUNDLE, Buffer.from(classicScript(CONTENT_ENTRY, dist)));
   for (const [lang, text] of generateLocales(root)) dist.set(`locales.${lang}.json`, Buffer.from(text));
   const css = generateCss(root);
   if (css !== "") dist.set("assets/app.css", Buffer.from(css));
