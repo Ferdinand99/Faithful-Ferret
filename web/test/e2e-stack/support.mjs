@@ -79,10 +79,12 @@ export const findings = {
   violations: /** @type {string[]} */ ([]),
   pageErrors: /** @type {string[]} */ ([]),
   consoleErrors: /** @type {string[]} */ ([]),
-  /** Reports that the engine makes about its own widgets (see `watchScript`); not violations of the page. */
+  /** Reports that WebKit makes about the inner style of its own select (see `watchScript`); not violations of the page. */
   engineReports: /** @type {string[]} */ ([]),
   /** The console lines that go with those reports; there is at most one per report. */
   engineConsole: /** @type {string[]} */ ([]),
+  /** How many selects the pages of WebKit contexts made; each one must have had a report in `engineReports`. */
+  selectsMade: 0,
   pages: 0,
   /** Everything sent to the servers and received from them, as text. */
   traffic: /** @type {string[]} */ ([]),
@@ -93,39 +95,69 @@ export const findings = {
 /**
  * The script that watches one page for policy violations.
  *
- * One violation is not ours and is counted apart: WebKit builds the inner parts of
- * a `<select>` with an inline `style` attribute, and reports a `style-src-attr`
+ * One report is not ours and is set apart: WebKit builds the inner parts of a
+ * `<select>` with an inline `style` attribute, and reports a `style-src-attr`
  * violation for each `<select>` that a page makes, with or without our code (a bare
  * `document.createElement("select")` on this page does it, and the element has no
- * `style` attribute afterwards). Chromium and Firefox report nothing. The report is
- * set apart only when all of this is true: the engine is WebKit, the directive is
- * `style-src-attr`, the blocked source is `inline`, and fewer such reports have been
- * set apart than `<select>` elements were made on this page. Any other inline style,
- * and any second one for the same `<select>`, still fails the run. The CSP is not
- * loosened for this: the page keeps `style-src 'self'` with no exception.
+ * `style` attribute afterwards). Chromium and Firefox report nothing.
+ *
+ * In WebKit the page keeps the `<select>` elements that `document.createElement` made.
+ * A report is set apart only when all of this is true: the directive is `style-src-attr`,
+ * the blocked source is `inline`, and the report belongs to one of those elements that
+ * has no `style` attribute and has not had a report yet. It belongs to an element when
+ * the event's target is that element, or when the target is the document and the element
+ * is not in the page (WebKit reports for a select that is made and never shown, such as
+ * the one of the edit screen, at the document). The script and line that the report names
+ * are not used: WebKit gives the code that happens to run when the report is sent (in
+ * these runs Playwright's own script), not the code that made the element. Any other
+ * inline style, a select that got a `style` attribute, and a second report for the same
+ * select, still fail the run. The CSP is not loosened for this: the page keeps `style-src 'self'`.
+ * (The sample is not checked: without `'report-sample'` in the policy it is always empty.)
+ *
+ * The exception must not outlive the problem: 09-csp requires one set-apart report for
+ * every select that was made in WebKit, and the WebKit canary (08b) checks both ways.
  * @param {string} engine the name of the browser engine (`chromium`, `firefox`, `webkit`)
  */
 const watchScript = (engine) => `
   (() => {
     const webkit = ${JSON.stringify(engine === "webkit")};
-    let selects = 0;
-    let setApart = 0;
+    /** @type {{ node: Element, file: string, line: number }[]} selects that await their report */
+    const made = [];
+    // The place a call came from, as "file", "line" (from a stack line "name@file:line:column").
+    const caller = () => {
+      const frame = String(new Error().stack).split("\\n")[2] || "";
+      const colon = frame.lastIndexOf(":");
+      const colon2 = frame.lastIndexOf(":", colon - 1);
+      const head = frame.slice(0, colon2);
+      return { file: head.slice(head.lastIndexOf("@") + 1), line: Number(frame.slice(colon2 + 1, colon)) };
+    };
     if (webkit) {
       const create = Document.prototype.createElement;
       Document.prototype.createElement = function (name, ...rest) {
-        if (String(name).toLowerCase() === "select") selects += 1;
-        return create.call(this, name, ...rest);
+        const node = create.call(this, name, ...rest);
+        if (this === document && node instanceof HTMLSelectElement) {
+          made.push({ node, ...caller() });
+          try { window.__e2eSelectMade(); } catch {}
+        }
+        return node;
       };
     }
     document.addEventListener("securitypolicyviolation", (e) => {
       try {
         const text = e.violatedDirective + " " + e.blockedURI + " " + (e.sample || "");
-        if (webkit && e.effectiveDirective === "style-src-attr" && e.blockedURI === "inline" && !e.sample && setApart < selects) {
-          setApart += 1;
-          window.__e2eEngineReport(text + " (the inner style of a select, WebKit)");
-          return;
+        if (webkit && e.effectiveDirective === "style-src-attr" && e.blockedURI === "inline") {
+          const at = made.findIndex((m) =>
+            (e.target === m.node || (e.target === document && !m.node.isConnected)) &&
+            !m.node.hasAttribute("style"));
+          if (at >= 0) {
+            const [m] = made.splice(at, 1);
+            window.__e2eEngineReport(text + " (the inner style of a select, WebKit; made at " + (m.file || "?") + ":" + m.line + ")");
+            return;
+          }
         }
-        window.__e2eViolation(text);
+        // What a failure needs to be understood: where the report came from, and what selects wait for one.
+        const waiting = made.map((m) => (m.file || "?") + ":" + m.line + (m.node.isConnected ? " shown" : " not shown") + (m.node.hasAttribute("style") ? " with style" : ""));
+        window.__e2eViolation(text + "(target " + (e.target && e.target.nodeName) + ", at " + (e.sourceFile || "?") + ":" + e.lineNumber + ", selects waiting: " + waiting.join("; ") + ")");
       } catch {}
     });
   })();
@@ -141,6 +173,9 @@ export async function watch(context) {
   watched.push(context);
   await context.exposeFunction("__e2eViolation", (/** @type {string} */ text) => findings.violations.push(text));
   await context.exposeFunction("__e2eEngineReport", (/** @type {string} */ text) => findings.engineReports.push(text));
+  await context.exposeFunction("__e2eSelectMade", () => {
+    findings.selectsMade += 1;
+  });
   const engine = context.browser()?.browserType().name() ?? "";
   await context.addInitScript(watchScript(engine));
   const onPage = (/** @type {import("@playwright/test").Page} */ page) => {
@@ -200,6 +235,18 @@ export const test = base.extend({
     await use(context);
     expect(findings.violations.slice(before), "security policy violations during the test").toEqual([]);
   },
+  // Every report that WebKit made about its own select (see `watchScript`) shows in the
+  // report of the test that was running, so that the exception is seen and not silent.
+  engineIssues: [
+    async ({}, use, testInfo) => {
+      const before = findings.engineReports.length;
+      await use(undefined);
+      for (const description of findings.engineReports.slice(before)) {
+        testInfo.annotations.push({ type: "known-engine-issue", description });
+      }
+    },
+    { auto: true },
+  ],
 });
 
 // -------------------------------------------------- recording the Worker
