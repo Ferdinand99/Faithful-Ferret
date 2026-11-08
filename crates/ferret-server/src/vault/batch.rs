@@ -51,7 +51,7 @@ use sha2::{Digest as _, Sha256};
 use super::events::EventStreams;
 use super::notify::SyncEvents;
 use super::quota::Limits;
-use super::rate::{SyncLimits, WriteGate};
+use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, PutBody, PutOutcome, PutRequest};
 use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError};
@@ -62,9 +62,6 @@ use crate::wire::{
     BatchOpForm, BatchOpJson, BatchReq, BatchRes, BatchResultJson, ConflictRes, MAX_BATCH_BYTES,
     MAX_BATCH_OPS, refusal_code,
 };
-
-/// The seconds a client is told to wait when the write queue is full.
-const BUSY_RETRY_SECS: u32 = 2;
 
 /// Domain separator of the request hash of one operation.
 const OP_HASH_LABEL: &[u8] = b"ferret/v1/batch-op";
@@ -355,14 +352,11 @@ async fn post_batch(
         .admit(&session.vault, &session.device, count, body_len)
         .map_err(|refused| {
             tracing::info!(ops = count, "batch write throttled");
-            ApiError::throttled(refused.retry_after_secs)
+            throttled(refused)
         })?;
-    let permit = gate.enter().await.map_err(|_| {
+    let permit = gate.enter().await.map_err(|full| {
         tracing::info!(ops = count, "batch write turned away, queue full");
-        ApiError {
-            retry_after: Some(BUSY_RETRY_SECS),
-            ..ApiError::coded("busy")
-        }
+        busy(full)
     })?;
 
     let vault = session.vault;

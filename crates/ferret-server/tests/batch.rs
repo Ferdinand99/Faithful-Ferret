@@ -302,10 +302,8 @@ async fn a_conflict_against_a_row_that_is_not_there_is_current_rev_0() {
         ],
     )
     .await;
-    // The answer is read as plain JSON: see the note in the task report on
-    // how the contract of a batch result treats this form.
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    let results = res.json()["results"].clone();
+    // A conflict against an absent row is a valid result of the contract.
+    let results = results(&res);
     assert_eq!(statuses(&results), [409, 200]);
     assert_eq!(results[0]["current_rev"], 0);
     assert_eq!(results[0]["deleted"], false);

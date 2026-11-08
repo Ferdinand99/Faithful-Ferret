@@ -43,9 +43,8 @@ use ferret_core::integrity::checkpoint::parse_entries;
 use sha2::{Digest as _, Sha256};
 
 use super::events::EventStreams;
-use super::items::{busy, throttled};
 use super::notify::SyncEvents;
-use super::rate::{SyncLimits, WriteGate};
+use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, CheckpointOutcome, StoredCheckpoint};
 use crate::error::ApiError;
 use crate::http::extract::{SessionAuth, VaultSession};

@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use ferret_server_auth::Clock;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::error::ApiError;
 use crate::ids::{DeviceId, VaultId};
 
 /// The numbers the limits run on.
@@ -200,6 +201,24 @@ fn wait_for(have: u64, cost: u64, per_min: u64) -> Option<u64> {
 fn refused(secs: u64) -> Refused {
     Refused {
         retry_after_secs: u32::try_from(secs).unwrap_or(u32::MAX).max(1),
+    }
+}
+
+/// The seconds a client waits after `503 busy`.
+pub const BUSY_RETRY_AFTER_SECS: u32 = 2;
+
+/// The answer for a request that a rate limit turned away: `429 throttled`
+/// with the wait. The write routes all answer this way.
+pub fn throttled(refused: Refused) -> ApiError {
+    ApiError::throttled(refused.retry_after_secs)
+}
+
+/// The answer for a write that found the queue full: `503 busy` with a wait
+/// of [`BUSY_RETRY_AFTER_SECS`]. The write routes all answer this way.
+pub fn busy(_: Busy) -> ApiError {
+    ApiError {
+        retry_after: Some(BUSY_RETRY_AFTER_SECS),
+        ..ApiError::coded("busy")
     }
 }
 

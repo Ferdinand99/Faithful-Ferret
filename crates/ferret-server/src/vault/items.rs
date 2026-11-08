@@ -44,7 +44,7 @@ use sha2::{Digest as _, Sha256};
 use super::events::EventStreams;
 use super::notify::SyncEvents;
 use super::quota::Limits;
-use super::rate::{Busy, Refused, SyncLimits, WriteGate};
+use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, PutBody, PutOutcome, PutRequest};
 use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError, status_of};
@@ -72,23 +72,6 @@ where
         "/api/sync/items/{id}",
         put(put_item).layer(DefaultBodyLimit::max(BODY_LIMIT)),
     )
-}
-
-/// The answer for a request that a rate limit turned away: `429 throttled`
-/// with the wait.
-pub(super) fn throttled(refused: Refused) -> ApiError {
-    ApiError::throttled(refused.retry_after_secs)
-}
-
-/// The seconds a client waits after `503 busy`.
-const BUSY_RETRY_AFTER_SECS: u32 = 2;
-
-/// The answer for a write that found the queue full: `503 busy` with a wait.
-pub(super) fn busy(_: Busy) -> ApiError {
-    ApiError {
-        retry_after: Some(BUSY_RETRY_AFTER_SECS),
-        ..ApiError::coded("busy")
-    }
 }
 
 /// A request that passed every check that needs no database.
