@@ -131,6 +131,64 @@ for (const locale of ["en", "nb-NO"]) {
       });
     }
 
+    for (const width of [320, 360, 1100]) {
+      test(`the_live_field_keeps_the_bar_and_its_own_width_the_same_in_every_state_at_${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 800 });
+        await pageIsReady(page, locale);
+        const rows = await page.evaluate(async () => {
+          const { ready } = await import("/app/boot.mjs");
+          const { i18n } = await ready;
+          const { mount } = await import("/app/dom.mjs");
+          const common = await import("/app/views/common.mjs");
+          const { shellView } = await import("/app/views/shell.mjs");
+          const root = document.getElementById("app");
+          const out = [];
+          for (const sync of ["syncing", "idle", "retrying", "offline", "unauthorized"]) {
+            for (const withLive of [false, true]) {
+              for (const state of withLive ? ["connecting", "live", "fallback", "offline", "unauthorized"] : [""]) {
+                /** @type {Map<string, Function>} */
+                const handlers = new Map();
+                const engine = { list: () => [], on: (/** @type {string} */ event, /** @type {Function} */ fn) => { handlers.set(event, fn); return () => {}; } };
+                const listeners = new Set();
+                const live = withLive
+                  ? { current: state, state() { return this.current; }, on: (/** @type {string} */ _event, /** @type {Function} */ fn) => { listeners.add(fn); return () => listeners.delete(fn); } }
+                  : undefined;
+                const frame = shellView({
+                  t: i18n.t, engine, session: { onLock() {} }, content: document.createElement("div"), lock: async () => {}, touch: () => true,
+                  scope: common.createWipeScope(), onLocked: () => document.createElement("div"), live,
+                });
+                mount(root, frame);
+                handlers.get("state")?.({ kind: sync });
+                const bar = /** @type {HTMLElement} */ (frame.querySelector(".vault-bar"));
+                const pill = frame.querySelector('[data-role="live-status"]');
+                out.push({
+                  sync, state, withLive,
+                  bar: Math.round(bar.getBoundingClientRect().height * 100) / 100,
+                  pill: pill ? Math.round(pill.getBoundingClientRect().width * 100) / 100 : null,
+                  parts: [...bar.children].map((c) => `${c.getAttribute("data-role") ?? c.className ?? c.tagName}@${Math.round(c.getBoundingClientRect().left)},${Math.round(c.getBoundingClientRect().top)}+${Math.round(c.getBoundingClientRect().width)}x${Math.round(c.getBoundingClientRect().height)}${[...c.querySelectorAll(".pill")].map((p) => `[${Math.round(p.getBoundingClientRect().width)}x${Math.round(p.getBoundingClientRect().height)}]`).join("")}`).join(" "),
+                  sideways: bar.scrollWidth > bar.clientWidth + 1 || document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+                });
+              }
+            }
+          }
+          return out;
+        });
+        for (const sync of ["syncing", "idle", "retrying", "offline", "unauthorized"]) {
+          const mine = rows.filter((row) => row.sync === sync);
+          const bare = mine.find((row) => !row.withLive);
+          const live = mine.filter((row) => row.withLive);
+          // The same bar in every live state, and no taller than the bar was without the field.
+          expect(new Set(live.map((row) => row.bar)).size, `bar height by live state, sync ${sync}, ${width}px: ${JSON.stringify(live.map((r) => [r.state, r.bar]))}`).toBe(1);
+          // A bar that is wrapped already without the field (the Norwegian links and a long sync text on a phone) may grow by the
+          // difference between the stacked pair and one pill, never by a row of its own.
+          expect(live[0].bar, `the field adds no row, sync ${sync}, ${width}px, bare ${bare.bar}: ${bare.parts} | live ${live[0].bar}: ${live[0].parts}`).toBeLessThanOrEqual(bare.bar <= 90 ? bare.bar : bare.bar + 20);
+          // The field has one width in every state.
+          expect(new Set(live.map((row) => row.pill)).size, `field width by live state, sync ${sync}, ${width}px: ${JSON.stringify(live.map((r) => [r.state, r.pill]))}`).toBe(1);
+          expect(live.some((row) => row.sideways), `no sideways scroll, sync ${sync}, ${width}px`).toBe(false);
+        }
+      });
+    }
+
     test("the_emergency_sheet_is_one_wide_card_with_one_mark", async ({ page }) => {
       await page.setViewportSize({ width: 1100, height: 900 });
       await pageIsReady(page, locale);

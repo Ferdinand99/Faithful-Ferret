@@ -335,3 +335,143 @@ test("api_handles_every_error_code_with_the_status_the_server_gives_it", async (
     "checkpoint_stale",
   ]);
 });
+
+// ------------------------------------------------------------------- stream
+
+const eventStream = (body = "", status = 200, headers = {}) =>
+  new Response(body, { status, headers: { "content-type": "text/event-stream", ...headers } });
+
+test("api_stream_gives_the_reader_of_a_200_event_stream_and_sends_the_right_request", async () => {
+  const { calls, fetchImpl } = fakeFetch(() => eventStream("event: hello\ndata: {}\n\n"));
+  const controller = new AbortController();
+  const reader = await createApi({ fetchImpl, base: "https://vault.example" }).stream("/api/sync/events", { signal: controller.signal });
+  assert.equal(typeof reader.read, "function");
+  const { value } = await reader.read();
+  assert.equal(new TextDecoder().decode(value), "event: hello\ndata: {}\n\n");
+
+  const { url, init } = calls[0];
+  assert.equal(url, "https://vault.example/api/sync/events");
+  assert.equal(init.method, "GET");
+  assert.equal(init.credentials, "same-origin");
+  assert.equal(init.cache, "no-store");
+  assert.equal(init.redirect, "error");
+  assert.equal(init.headers["Ferret-Protocol"], "1");
+  assert.equal(init.headers.Accept, "text/event-stream");
+  assert.equal(init.signal, controller.signal, "the caller's signal, with no time limit of ours");
+
+  // The media type may carry parameters and any case.
+  const loose = fakeFetch(() => eventStream("", 200, { "content-type": "Text/Event-Stream; charset=utf-8" }));
+  assert.ok(await createApi({ fetchImpl: loose.fetchImpl }).stream("/api/sync/events"));
+  assert.equal(loose.calls[0].init.signal, undefined, "no signal when none was given");
+
+  // A path that leaves the origin is refused before anything is sent.
+  const sent = fakeFetch(() => eventStream());
+  await assert.rejects(createApi({ fetchImpl: sent.fetchImpl }).stream("//evil.example/api/sync/events"), TypeError);
+  await assert.rejects(createApi({ fetchImpl: sent.fetchImpl }).stream("/\\evil.example"), TypeError);
+  assert.equal(sent.calls.length, 0);
+});
+
+test("api_stream_refuses_a_non_event_stream_answer_and_never_follows_redirects", async () => {
+  const cancelled = [];
+  /** A response whose body says when it has been dropped. */
+  const withBody = (status, type, headers = {}) =>
+    new Response(
+      new ReadableStream({
+        start: (c) => c.enqueue(new TextEncoder().encode("x")),
+        cancel: () => void cancelled.push(status),
+      }),
+      { status, headers: { "content-type": type, ...headers } },
+    );
+
+  // A 200 that is not an event stream: a proxy page, JSON, or no type at all.
+  for (const type of ["text/html", "application/json", "text/plain", "application/octet-stream"]) {
+    const { fetchImpl } = fakeFetch(() => withBody(200, type));
+    const error = await failure(createApi({ fetchImpl }).stream("/api/sync/events"));
+    assert.equal(error.code, "bad_response", type);
+    assert.equal(error.status, 200);
+  }
+  const bare = fakeFetch(() => new Response("x", { status: 200 }));
+  assert.equal((await failure(createApi({ fetchImpl: bare.fetchImpl }).stream("/api/sync/events"))).code, "bad_response");
+  // An event stream with no body cannot be read.
+  const empty = fakeFetch(() => new Response(null, { status: 200, headers: { "content-type": "text/event-stream" } }));
+  assert.equal((await failure(createApi({ fetchImpl: empty.fetchImpl }).stream("/api/sync/events"))).code, "bad_response");
+  // A success that is not a 200 is no stream either, even with the right type.
+  for (const status of [202, 206]) {
+    const { fetchImpl } = fakeFetch(() => withBody(status, "text/event-stream"));
+    assert.equal((await failure(createApi({ fetchImpl }).stream("/api/sync/events"))).code, "bad_response", `${status}`);
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(cancelled.length >= 6, "the bodies that were refused are dropped");
+
+  // A redirect is an error: the request asks for that, a fetch that refuses is a network error, and an answer that is one anyway is not used.
+  const { calls, fetchImpl } = fakeFetch(() => eventStream());
+  await createApi({ fetchImpl }).stream("/api/sync/events");
+  assert.equal(calls[0].init.redirect, "error");
+  const refused = fakeFetch(() => {
+    throw new TypeError("redirect mode is set to error");
+  });
+  const e1 = await failure(createApi({ fetchImpl: refused.fetchImpl }).stream("/api/sync/events"));
+  assert.deepEqual([e1.status, e1.code], [0, "network"]);
+  const moved = fakeFetch(() => new Response(null, { status: 302, headers: { location: "https://evil.example/" } }));
+  const e2 = await failure(createApi({ fetchImpl: moved.fetchImpl }).stream("/api/sync/events"));
+  assert.deepEqual([e2.status, e2.code], [302, "bad_response"]);
+  const followed = fakeFetch(() => {
+    const response = eventStream();
+    Object.defineProperty(response, "redirected", { value: true });
+    return response;
+  });
+  assert.equal((await failure(createApi({ fetchImpl: followed.fetchImpl }).stream("/api/sync/events"))).code, "bad_response");
+
+  // An abort is told apart from a network error.
+  const stop = new AbortController();
+  const aborting = fakeFetch(() => {
+    stop.abort();
+    throw new DOMException("aborted", "AbortError");
+  });
+  assert.equal((await failure(createApi({ fetchImpl: aborting.fetchImpl }).stream("/api/sync/events", { signal: stop.signal }))).code, "aborted");
+});
+
+test("api_stream_maps_the_error_answers_of_the_event_route", async () => {
+  const cases = [
+    [401, { error: "unauthorized" }, {}, "unauthorized", null],
+    [429, { error: "throttled" }, { "retry-after": "30" }, "throttled", 30],
+    [400, { error: "protocol_header_missing" }, {}, "protocol_header_missing", null],
+    [403, { error: "forbidden_origin" }, {}, "forbidden_origin", null],
+  ];
+  for (const [status, body, headers, code, retryAfter] of cases) {
+    const { fetchImpl } = fakeFetch(() => json(body, status, headers));
+    const error = await failure(createApi({ fetchImpl }).stream("/api/sync/events"));
+    assert.deepEqual([error.status, error.code, error.retryAfter], [status, code, retryAfter]);
+  }
+  // A proxy's page for an error is not an answer we can read.
+  const page = fakeFetch(() => new Response("<html>502</html>", { status: 502, headers: { "content-type": "text/html" } }));
+  assert.equal((await failure(createApi({ fetchImpl: page.fetchImpl }).stream("/api/sync/events"))).code, "bad_response");
+  const odd = fakeFetch(() => json("not an object", 500));
+  assert.equal((await failure(createApi({ fetchImpl: odd.fetchImpl }).stream("/api/sync/events"))).code, "bad_response");
+});
+
+test("api_stream_reads_a_real_event_stream_and_ends_with_the_signal", async () => {
+  const server = createServer((request, response) => {
+    if (request.url !== "/api/sync/events") {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store, no-transform" });
+    response.write('event: hello\ndata: {"seq":3}\n\n');
+    // The stream stays open until the client goes.
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const controller = new AbortController();
+    const reader = await createApi({ base }).stream("/api/sync/events", { signal: controller.signal });
+    const { value } = await reader.read();
+    assert.equal(new TextDecoder().decode(value), 'event: hello\ndata: {"seq":3}\n\n');
+    const next = reader.read();
+    controller.abort();
+    await assert.rejects(next);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});

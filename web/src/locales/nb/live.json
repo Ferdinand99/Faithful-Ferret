@@ -1,0 +1,8 @@
+{
+  "live.label": "Direkte oppdateringer: {state}",
+  "live.state.connecting": "Kobler til",
+  "live.state.fallback": "Hvert 5. min",
+  "live.state.live": "Direkte",
+  "live.state.offline": "Av",
+  "live.state.unauthorized": "Stoppet"
+}

@@ -1,0 +1,60 @@
+/* The state of the live-update channel, in one short word, next to the sync
+   state. The dot follows the state, and the word says it too: nothing is shown
+   by colour alone. The field has the same width in every state, so a change of
+   state moves nothing and never makes the bar wrap again. */
+.vault-ui .live-status {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+  box-sizing: border-box;
+  min-inline-size: 6.25rem;
+  gap: 5px;
+  padding-inline: 8px;
+  font-size: 0.6875rem;
+}
+
+.vault-ui .live-status[data-state="live"] {
+  --status: var(--ok);
+  --status-text: var(--ok-text);
+  --status-fill: var(--ok-fill);
+}
+
+.vault-ui .live-status[data-state="fallback"],
+.vault-ui .live-status[data-state="offline"] {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.vault-ui .live-status[data-state="unauthorized"] {
+  --status: var(--bad);
+  --status-text: var(--bad-text);
+  --status-fill: var(--bad-fill);
+}
+
+/* The sync state and the live state, one above the other, right-aligned. Together they
+   are no higher than the bar is, so the bar keeps its height, and on a phone they fit in
+   the second row beside the links. */
+.vault-ui .vault-status {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.vault-ui .vault-status .pill {
+  min-height: 20px;
+}
+
+@media (max-width: 40rem) {
+  .vault-ui .vault-status {
+    order: 4;
+    margin-inline-start: auto;
+  }
+
+  /* Two of them are as high as the links beside them (34px). */
+  .vault-ui .vault-status .pill {
+    min-height: 16px;
+    margin-inline-start: 0;
+  }
+}
