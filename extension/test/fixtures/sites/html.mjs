@@ -1,7 +1,11 @@
 // Small pieces the test pages are made of. Every password field a test cares
 // about carries data-fixture-expect="fill" (a field the fill engine may fill) or
 // "reject" (a hidden, covered or otherwise hostile one it must never fill), so a
-// test can walk any page and check the engine's verdict field by field.
+// test can walk any page and check the engine's verdict field by field. A hostile
+// field also carries data-fixture-reason, the one thing that makes it hostile
+// (opacity, filter, transform, clip-path, mask, mix-blend-mode, visibility,
+// display, size, offscreen, covered, ...), so a check can prove the page is
+// hostile for the reason it names.
 
 /** @param {unknown} text */
 export function esc(text) {
@@ -45,14 +49,14 @@ ${body}
 
 /**
  * One sign-in form. `prefix` makes the ids (`<prefix>-user`, `<prefix>-pass`);
- * `expect` goes on the password field; `passAttrs` and `wrapPass` change the
- * password field and what surrounds it.
- * @param {{ prefix?: string, expect?: "fill" | "reject", passAttrs?: string, wrapPass?: (input: string) => string, label?: string }} [options]
+ * `expect` and `reason` go on the password field; `passAttrs` and `wrapPass`
+ * change the password field and what surrounds it; `formStyle` styles the form.
+ * @param {{ prefix?: string, expect?: "fill" | "reject", reason?: string, passAttrs?: string, wrapPass?: (input: string) => string, label?: string, formStyle?: string }} [options]
  */
-export function loginForm({ prefix = "login", expect, passAttrs = "", wrapPass = (input) => input, label = "Sign in" } = {}) {
-  const mark = expect ? ` data-fixture-expect="${expect}"` : "";
+export function loginForm({ prefix = "login", expect, reason, passAttrs = "", wrapPass = (input) => input, label = "Sign in", formStyle } = {}) {
+  const mark = (expect ? ` data-fixture-expect="${expect}"` : "") + (reason ? ` data-fixture-reason="${reason}"` : "");
   const pass = `<input id="${prefix}-pass" name="password" type="password" autocomplete="current-password"${mark}${passAttrs ? ` ${passAttrs}` : ""}>`;
-  return `<form id="${prefix}-form" method="post" action="/static/login-done.html">
+  return `<form id="${prefix}-form" method="post" action="/static/login-done.html"${formStyle ? ` style="${esc(formStyle)}"` : ""}>
   <input id="${prefix}-user" name="username" type="text" autocomplete="username">
   ${wrapPass(pass)}
   <button type="submit">${esc(label)}</button>

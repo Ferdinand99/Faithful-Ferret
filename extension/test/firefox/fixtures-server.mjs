@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findSite, siteById } from "../fixtures/sites/index.mjs";
-import { originText } from "../fixtures/sites/origins.mjs";
+import { IP_HOSTS, originText } from "../fixtures/sites/origins.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -122,7 +122,8 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
     const host = String(req.headers.host ?? "").split(":")[0].toLowerCase();
     const path = new URL(req.url ?? "/", "https://placeholder.invalid").pathname;
     requests.push({ host, method: req.method ?? "GET", path, listener });
-    if (!hosts.includes(host)) {
+    // The listed names, and (over http only) the IP hosts of the sites, which need no certificate.
+    if (!hosts.includes(host) && !(listener === "http" && IP_HOSTS.includes(host))) {
       res.writeHead(421, { "content-type": "text/plain" }).end("unknown host\n");
       return;
     }
