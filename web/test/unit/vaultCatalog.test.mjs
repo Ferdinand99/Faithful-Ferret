@@ -106,7 +106,7 @@ test("every_warning_and_error_the_sync_engine_names_has_a_text_in_both_languages
       assert.ok(`sync.warning.${code}` in texts || `syncwarnings.banner.${code}` in texts, `${lang}: warning ${code}`);
     }
     // Errors with a text of their own in the shell, or in the fixed list of `describeError`.
-    for (const code of ["restore_epoch_refused", "storage", "draft_unreadable", "upload_again_failed"]) {
+    for (const code of ["checkpoint_upload_failed", "restore_epoch_refused", "storage", "draft_unreadable", "upload_again_failed"]) {
       assert.ok(`sync.error.${code}` in texts, `${lang}: error ${code}`);
     }
   }

@@ -67,11 +67,17 @@ pub struct RetentionReport {
     pub tombstones_removed: u64,
     /// Idempotency records removed.
     pub idem_removed: u64,
+    /// Vaults whose purge failed. The pass went on with the other vaults, so a
+    /// count above zero means a pass that is to be tried again, not one that
+    /// stopped half way.
+    pub failed_vaults: u64,
 }
 
 /// One pass over every vault at time `now` (Unix seconds): the tombstones last
 /// written more than 400 days ago go, then the idempotency records older than 30
-/// days and, per device, those beyond the newest 1 000.
+/// days and, per device, those beyond the newest 1 000. A vault that fails is
+/// logged and counted in [`RetentionReport::failed_vaults`]; the pass goes on
+/// with the next vault.
 ///
 /// Spec: Fase 1 § 8.4 (retention of 400 days).
 pub fn run_once(conn: &mut Connection, now: i64) -> Result<RetentionReport, StoreError> {
@@ -98,16 +104,33 @@ pub fn run_once(conn: &mut Connection, now: i64) -> Result<RetentionReport, Stor
 
     for vault in vaults {
         report.vaults = report.vaults.saturating_add(1);
-        if has_tombstones_before(conn, &vault, tombstones_before)? {
-            let purged = store::purge_tombstones(conn, &vault, tombstones_before)?;
-            report.tombstones_removed = report.tombstones_removed.saturating_add(purged.removed);
-        }
-        for device in idem_devices(conn, &vault)? {
-            let removed = purge_idem_of_device(conn, &vault, &device, idem_before)?;
-            report.idem_removed = report.idem_removed.saturating_add(removed);
+        // One vault that fails must not keep the others from being purged. The
+        // error is logged without any data of the vault and counted in the report.
+        if let Err(error) = purge_vault(conn, &vault, tombstones_before, idem_before, &mut report) {
+            tracing::warn!(%error, "retention purge of one vault failed");
+            report.failed_vaults = report.failed_vaults.saturating_add(1);
         }
     }
     Ok(report)
+}
+
+/// The purge of one vault. What went before an error stays in `report`.
+fn purge_vault(
+    conn: &mut Connection,
+    vault: &VaultId,
+    tombstones_before: i64,
+    idem_before: i64,
+    report: &mut RetentionReport,
+) -> Result<(), StoreError> {
+    if has_tombstones_before(conn, vault, tombstones_before)? {
+        let purged = store::purge_tombstones(conn, vault, tombstones_before)?;
+        report.tombstones_removed = report.tombstones_removed.saturating_add(purged.removed);
+    }
+    for device in idem_devices(conn, vault)? {
+        let removed = purge_idem_of_device(conn, vault, &device, idem_before)?;
+        report.idem_removed = report.idem_removed.saturating_add(removed);
+    }
+    Ok(())
 }
 
 /// Whether the vault has a tombstone last written before `before`: a read on the
@@ -221,7 +244,8 @@ impl Job {
     }
 
     /// Looks at the clock and runs a pass if one is due. Returns what the pass
-    /// did. A pass that fails is logged and tried again in 10 minutes.
+    /// did. A pass that fails, in whole or for one vault, is logged and
+    /// tried again in 10 minutes.
     pub async fn poll(&mut self, db: &VaultDb, clock: &dyn Clock) -> Option<RetentionReport> {
         let now = seconds(clock)?;
         let started_at = *self.started_at.get_or_insert(now);
@@ -230,6 +254,17 @@ impl Job {
             return None;
         }
         match db.with_conn(move |conn| run_once(conn, now)).await {
+            Ok(report) if report.failed_vaults > 0 => {
+                tracing::warn!(
+                    failed_vaults = report.failed_vaults,
+                    vaults = report.vaults,
+                    tombstones_removed = report.tombstones_removed,
+                    idem_removed = report.idem_removed,
+                    "retention pass failed for some vaults"
+                );
+                self.next = Some(now.saturating_add(RETRY_AFTER));
+                None
+            }
             Ok(report) => {
                 self.next = Some(next_run(started_at, Some(now)));
                 Some(report)

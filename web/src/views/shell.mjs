@@ -177,6 +177,11 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       banner("error:restore_item_unreadable", "warning", t("syncwarnings.error.restore_item_unreadable"));
       return;
     }
+    if (code === "checkpoint_upload_failed") {
+      // Harmless: the upload is tried again later. A calm notice, one for all failures, and no code or reason on screen.
+      banner("error:checkpoint_upload_failed", "warning", describeError(t, { code }));
+      return;
+    }
     if (code === "restore_epoch_refused") {
       // One banner however many items are waiting, and no item name: the text is about the server, not about an item.
       banner("error:restore_epoch_refused", "error", describeError(t, { code }));
