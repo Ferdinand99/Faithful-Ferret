@@ -631,6 +631,9 @@ async fn signed_out_page_drops_the_history_cache_and_holds_nothing_private() {
     assert!(page.headers.get_all("set-cookie").iter().next().is_none());
     let csp = page.header("content-security-policy").to_string();
     assert!(csp.contains("script-src 'self'"), "{csp}");
+    // No other site can frame it (clickjacking): the link on it must not sit under a hidden frame.
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert_eq!(page.header("x-frame-options"), "DENY");
 
     // The kit's rule for a page that drops the cache: the attribute on the
     // body, and the kit's script (a file of the origin, no inline script).
