@@ -373,13 +373,24 @@ function checkBatchResult(result) {
     if (!(present(result, "rev") && present(result, "seq") && present(result, "replayed") && result.status === 200)) bad();
     if (result.rev < 1) bad();
   } else if (conflict) {
-    const rows = present(result, "blob") && present(result, "tag");
-    const neither = !present(result, "blob") && !present(result, "tag");
     if (!present(result, "current_rev") || !present(result, "deleted") || result.status !== 409) bad();
-    if (result.deleted ? !neither : !rows) bad();
+    if (!conflictRowIsValid(result)) bad();
   } else if (!Object.hasOwn(ERROR_STATUS, result.error) || result.status === 409 || result.status !== ERROR_STATUS[result.error]) {
     bad();
   }
+}
+
+/**
+ * Whether the row that a conflict answer describes is one a server can hold: a
+ * live row (a current_rev of at least 1, with blob and tag), a tombstone (neither),
+ * or a row that is not there (current_rev 0 and not deleted: neither).
+ * @param {any} value
+ */
+function conflictRowIsValid(value) {
+  const rows = present(value, "blob") && present(value, "tag");
+  const neither = !present(value, "blob") && !present(value, "tag");
+  if (value.deleted) return neither;
+  return value.current_rev === 0 ? neither : rows;
 }
 
 /**
@@ -406,18 +417,18 @@ export function checkStep(kind, value) {
     if (next !== value.has_more) refuse("next_after is there exactly when has_more is true");
   }
   if (kind === "conflict_res") {
-    // The current row of an item: a live row has its blob and tag, a deleted one neither.
-    const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
-    if (value.deleted ? has("blob") || has("tag") : !has("blob") || !has("tag")) {
-      refuse("a conflict answer is a live row (blob and tag) or a deleted one (neither)");
+    // The current row of an item: a live row has its blob and tag, a deleted
+    // one, or a row that is not there (current_rev 0), neither.
+    if (!conflictRowIsValid(value)) {
+      refuse("a conflict answer is a live row (blob and tag), a deleted one or an absent one (neither)");
     }
   }
   if (kind !== "put_item_req") return;
   const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
-  if (value.resurrect === true) refuse("resurrect is not supported yet");
   const live = has("blob") && has("tag") && !has("tomb") && value.deleted !== true;
   const gone = !has("blob") && !has("tag") && has("tomb") && value.deleted === true;
   if (!live && !gone) refuse("a put request is a live row or a tombstone, never both");
+  if (gone && value.resurrect === true) refuse("only a live row asks to bring an item back");
 }
 
 /**

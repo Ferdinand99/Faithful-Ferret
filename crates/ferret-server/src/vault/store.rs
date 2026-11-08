@@ -84,8 +84,10 @@ pub struct PutRequest<'a> {
     /// `SHA-256(item_id || raw body)`, so a replay can never return the `rev`
     /// and `seq` of another item.
     pub request_hash: [u8; 32],
-    /// Whether the write asks to replace a tombstone. Not read yet: the store
-    /// treats every write as if this were `false`.
+    /// Whether the write asks to replace a tombstone. Read only for a live
+    /// body against a tombstone whose revision is `base_rev`; against a live
+    /// row (or a missing one) it changes nothing, and a tombstone body never
+    /// resurrects anything.
     pub resurrect: bool,
 }
 
@@ -185,8 +187,12 @@ impl Current {
 /// Spec: Fase 1 § 8.1, § 8.3. One write transaction: the idempotency record is
 /// looked up before `base_rev` is compared, then `base_rev`, then the quota;
 /// the new `rev` is `base_rev + 1` and `seq` comes from the counter row of the
-/// vault. A tombstone is never written over: a put on a deleted item is a
-/// conflict with `deleted: true`. `now` is stored as `changed_at` of the row.
+/// vault. A tombstone is written over only by a resurrection: a live body with
+/// `resurrect` and a `base_rev` equal to the revision of the tombstone gives
+/// `rev + 1` and counts as a new live row (it must fit `max_items`). Any other
+/// put on a deleted item, an old basis or no `resurrect` included, is a
+/// conflict with `deleted: true`. Spec: Fase 1 § 8.4. `now` is stored as
+/// `changed_at` of the row.
 ///
 /// The manifest row is not written here, in either body form: changes to it
 /// need a signature of the account (spec § 4.6) and have a function of their
@@ -230,22 +236,27 @@ pub fn put_item(
         return Ok(PutOutcome::QuotaExceeded);
     }
 
-    let (is_new, old_size) = match read_item(&tx, vault, &req.item_id)? {
+    let (is_new, old_size, was_deleted) = match read_item(&tx, vault, &req.item_id)? {
         None => {
             if req.base_rev != 0 {
                 // A basis for a row that is not there: ahead of the server.
                 return Ok(PutOutcome::Conflict(Conflict::absent()));
             }
-            (true, 0)
+            (true, 0, false)
         }
         Some(row) => {
-            // A tombstone is not written over (a resurrection is a decision of
-            // its own), and any other basis than the current revision is stale
-            // or ahead.
-            if row.deleted || row.rev != req.base_rev {
+            // A tombstone is written over only by a resurrection (a decision
+            // of its own: a live body that asks for it, against the revision
+            // of the tombstone). Any other basis than the current revision is
+            // stale or ahead.
+            let resurrects = row.deleted
+                && req.resurrect
+                && matches!(req.body, PutBody::Live { .. })
+                && row.rev == req.base_rev;
+            if (row.deleted && !resurrects) || row.rev != req.base_rev {
                 return Ok(PutOutcome::Conflict(row.into_conflict()?));
             }
-            (false, row.size)
+            (false, row.size, row.deleted)
         }
     };
     let new_rev = req
@@ -260,11 +271,12 @@ pub fn put_item(
     let old_size_sql = sql_int(old_size);
     let makes_tombstone = matches!(req.body, PutBody::Deleted { .. });
     // Live rows count against `max_items`: a new live row is one more, a
-    // deletion of a live row is one less, a tombstone that replaces nothing
-    // changes nothing.
-    let item_delta: i64 = match (is_new, makes_tombstone) {
-        (true, false) => 1,
-        (false, true) => -1,
+    // resurrected one is one more (its tombstone was not counted), a deletion
+    // of a live row is one less, a tombstone that replaces nothing changes
+    // nothing.
+    let item_delta: i64 = match (is_new, makes_tombstone, was_deleted) {
+        (true, false, _) | (false, false, true) => 1,
+        (false, true, _) => -1,
         _ => 0,
     };
     if makes_tombstone {
@@ -337,7 +349,7 @@ pub fn put_item(
             "UPDATE ferret_items \
              SET rev = ?3, seq = ?4, deleted = ?5, blob = ?6, tag = ?7, tomb = ?8, \
                  size = ?9, changed_at = ?10 \
-             WHERE vault_id = ?1 AND item_id = ?2 AND rev = ?11 AND deleted = 0",
+             WHERE vault_id = ?1 AND item_id = ?2 AND rev = ?11 AND deleted = ?12",
             params![
                 vault.as_bytes(),
                 req.item_id.as_bytes(),
@@ -349,7 +361,8 @@ pub fn put_item(
                 tomb,
                 new_size,
                 now,
-                i64::try_from(req.base_rev).map_err(|_| int_error(req.base_rev))?
+                i64::try_from(req.base_rev).map_err(|_| int_error(req.base_rev))?,
+                i64::from(was_deleted),
             ],
         )?
     };
@@ -450,6 +463,161 @@ pub fn purge_tombstones(
         removed: u64::try_from(removed).map_err(|_| int_error_signed(removed))?,
         min_valid_since: u64::try_from(horizon).map_err(|_| int_error_signed(horizon))?,
     })
+}
+
+/// The checkpoint a vault keeps: the one with the highest `seq` that a client
+/// uploaded. The store keeps the bytes as they came; it checks no MAC (it has
+/// no key), and the caller checks the structure.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredCheckpoint {
+    /// The sequence number it covers.
+    pub seq: u64,
+    /// The digest of `entries`.
+    pub digest: [u8; 32],
+    /// The MAC over `seq` and the digest, as the client made it.
+    pub mac: [u8; 32],
+    /// The entries the digest covers, 56 bytes each.
+    pub entries: Vec<u8>,
+}
+
+impl std::fmt::Debug for StoredCheckpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredCheckpoint")
+            .field("seq", &self.seq)
+            .field("entries", &format_args!("[{} bytes]", self.entries.len()))
+            .finish_non_exhaustive()
+    }
+}
+
+/// How an upload of a checkpoint ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckpointOutcome {
+    /// The checkpoint replaced the stored one (its `seq` is higher).
+    Stored {
+        /// The sequence number now stored.
+        seq: u64,
+    },
+    /// The stored checkpoint is the same, byte for byte. Nothing was written.
+    Unchanged {
+        /// The sequence number stored.
+        seq: u64,
+    },
+    /// The stored checkpoint is newer, or has the same `seq` with other bytes.
+    /// Nothing was written.
+    Stale {
+        /// The sequence number that is stored.
+        stored_seq: u64,
+    },
+    /// The checkpoint claims a `seq` above the one of the vault. Nothing was
+    /// written.
+    AboveVault,
+}
+
+/// Stores `cp` if it is newer than the checkpoint of the vault.
+///
+/// Spec: Fase 1 § 8.6: the server keeps the checkpoint with the highest
+/// `seq`; a lower one is refused (harmless), and the `seq` cannot be higher
+/// than the one of the vault. The same `seq` is accepted only for the same
+/// bytes (a client that retries); other bytes under a `seq` that is already
+/// stored would let one upload silently replace another. One `IMMEDIATE`
+/// transaction, so two uploads cannot both pass the comparison. An unknown
+/// vault, or one without a checkpoint, is [`StoreError::NotFound`].
+pub fn put_checkpoint(
+    conn: &mut Connection,
+    vault: &VaultId,
+    cp: &StoredCheckpoint,
+) -> Result<CheckpointOutcome, StoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let vault_seq: i64 = tx
+        .query_row(
+            "SELECT seq FROM ferret_vaults WHERE vault_id = ?1",
+            [vault.as_bytes()],
+            |row| row.get(0),
+        )
+        .map_err(missing)?;
+    let vault_seq = u64::try_from(vault_seq).map_err(|_| int_error_signed(vault_seq))?;
+    if cp.seq > vault_seq {
+        return Ok(CheckpointOutcome::AboveVault);
+    }
+    let stored = read_checkpoint(&tx, vault)?;
+    if cp.seq < stored.seq {
+        return Ok(CheckpointOutcome::Stale {
+            stored_seq: stored.seq,
+        });
+    }
+    if cp.seq == stored.seq {
+        return Ok(if &stored == cp {
+            CheckpointOutcome::Unchanged { seq: cp.seq }
+        } else {
+            CheckpointOutcome::Stale {
+                stored_seq: stored.seq,
+            }
+        });
+    }
+    let seq_sql = i64::try_from(cp.seq).map_err(|_| int_error(cp.seq))?;
+    let changed = tx.execute(
+        "UPDATE ferret_checkpoints SET seq = ?2, digest = ?3, mac = ?4, entries = ?5          WHERE vault_id = ?1 AND seq < ?2",
+        params![
+            vault.as_bytes(),
+            seq_sql,
+            cp.digest.as_slice(),
+            cp.mac.as_slice(),
+            cp.entries
+        ],
+    )?;
+    if changed != 1 {
+        // The transaction is IMMEDIATE and the row was read above, so this is
+        // not a race: refuse rather than report a write that did not happen.
+        return Err(StoreError::Invalid("the checkpoint row changed"));
+    }
+    tx.commit()?;
+    Ok(CheckpointOutcome::Stored { seq: cp.seq })
+}
+
+/// The checkpoint of a vault, with its entries. An unknown vault is
+/// [`StoreError::NotFound`].
+pub fn get_checkpoint(conn: &Connection, vault: &VaultId) -> Result<StoredCheckpoint, StoreError> {
+    read_checkpoint(conn, vault)
+}
+
+/// The head of a checkpoint: `seq`, digest and MAC, no entries.
+pub type CheckpointHead = (u64, [u8; 32], [u8; 32]);
+
+/// The head of the checkpoint of a vault (`seq`, digest and MAC, no entries):
+/// what the changes feed carries. `None` for a vault without a checkpoint.
+pub fn checkpoint_head(
+    conn: &Connection,
+    vault: &VaultId,
+) -> Result<Option<CheckpointHead>, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT seq, digest, mac FROM ferret_checkpoints WHERE vault_id = ?1",
+            [vault.as_bytes()],
+            |row| {
+                Ok((
+                    column_u64(row, 0)?,
+                    column_array32(row, 1)?,
+                    column_array32(row, 2)?,
+                ))
+            },
+        )
+        .optional()?)
+}
+
+fn read_checkpoint(conn: &Connection, vault: &VaultId) -> Result<StoredCheckpoint, StoreError> {
+    conn.query_row(
+        "SELECT seq, digest, mac, entries FROM ferret_checkpoints WHERE vault_id = ?1",
+        [vault.as_bytes()],
+        |row| {
+            Ok(StoredCheckpoint {
+                seq: column_u64(row, 0)?,
+                digest: column_array32(row, 1)?,
+                mac: column_array32(row, 2)?,
+                entries: row.get(3)?,
+            })
+        },
+    )
+    .map_err(missing)
 }
 
 fn read_item(
@@ -1091,86 +1259,195 @@ mod tests {
         (conn, vault, DeviceId(id16(0xd0)))
     }
 
-    #[test]
-    fn put_request_resurrect_is_ignored_by_the_store_for_now() {
-        let (mut conn, vault, device) = with_account();
-        let item = ItemId::from_bytes(id16(0x10));
-        let write = |body: PutBody<'static>, base_rev: u64, n: u8, resurrect: bool| PutRequest {
-            item_id: item,
+    /// A write of item `n` with the given body, `base_rev` and idempotency key.
+    fn write(
+        n: u8,
+        body: PutBody<'static>,
+        base_rev: u64,
+        key: u8,
+        resurrect: bool,
+    ) -> PutRequest<'static> {
+        PutRequest {
+            item_id: ItemId::from_bytes(id16(n)),
             base_rev,
             body,
-            idem: [n; 16],
-            request_hash: [n; 32],
+            idem: [key; 16],
+            request_hash: [key; 32],
             resurrect,
-        };
-        let limits = Limits::DEFAULT;
-        let created = put_item(
-            &mut conn,
-            &vault,
-            &device,
-            &write(
-                PutBody::Live {
-                    blob: b"one",
-                    tag: [1; 32],
-                },
-                0,
-                1,
-                false,
-            ),
-            &limits,
-            NOW,
-        )
-        .expect("create");
-        assert!(
-            matches!(created, PutOutcome::Stored { rev: 1, .. }),
-            "{created:?}"
-        );
-        let deleted = put_item(
-            &mut conn,
-            &vault,
-            &device,
-            &write(PutBody::Deleted { tomb: b"gone" }, 1, 2, false),
-            &limits,
-            NOW,
-        )
-        .expect("delete");
-        assert!(
-            matches!(deleted, PutOutcome::Stored { rev: 2, .. }),
-            "{deleted:?}"
-        );
+        }
+    }
 
-        // Written against the tombstone's revision and asking to replace it:
-        // the store still reads the flag as `false` and answers with the
-        // conflict of a row that is deleted.
-        let attempt = put_item(
-            &mut conn,
-            &vault,
-            &device,
-            &write(
-                PutBody::Live {
-                    blob: b"back",
-                    tag: [3; 32],
-                },
-                2,
-                3,
-                true,
-            ),
-            &limits,
-            NOW,
-        )
-        .expect("the write is answered");
-        let PutOutcome::Conflict(conflict) = attempt else {
-            panic!("expected a conflict, got {attempt:?}");
+    fn live(tag: u8) -> PutBody<'static> {
+        PutBody::Live {
+            blob: b"envelope",
+            tag: [tag; 32],
+        }
+    }
+
+    fn gone() -> PutBody<'static> {
+        PutBody::Deleted { tomb: b"gone" }
+    }
+
+    #[test]
+    fn only_a_live_body_with_the_tombstones_rev_resurrects_it() {
+        let (mut conn, vault, device) = with_account();
+        let limits = Limits::DEFAULT;
+        let put = |conn: &mut Connection, req: PutRequest<'static>| {
+            put_item(conn, &vault, &device, &req, &limits, NOW).expect("a write")
         };
-        assert!(conflict.deleted);
-        assert_eq!(conflict.current_rev, 2);
-        let rows: i64 = conn
+        assert!(matches!(
+            put(&mut conn, write(0x10, live(1), 0, 1, false)),
+            PutOutcome::Stored { rev: 1, .. }
+        ));
+        assert!(matches!(
+            put(&mut conn, write(0x10, gone(), 1, 2, false)),
+            PutOutcome::Stored { rev: 2, .. }
+        ));
+        // Without the flag, with an older basis, and with a tombstone body that
+        // carries the flag: each is the conflict of a deleted row.
+        for (n, req) in [
+            (3, write(0x10, live(3), 2, 3, false)),
+            (4, write(0x10, live(4), 1, 4, true)),
+            (5, write(0x10, gone(), 2, 5, true)),
+        ] {
+            let PutOutcome::Conflict(conflict) = put(&mut conn, req) else {
+                panic!("write {n} should conflict");
+            };
+            assert!(conflict.deleted, "write {n}");
+            assert_eq!(conflict.current_rev, 2, "write {n}");
+        }
+        let PutOutcome::Stored { rev, seq, replayed } =
+            put(&mut conn, write(0x10, live(6), 2, 6, true))
+        else {
+            panic!("the resurrection should be stored");
+        };
+        assert_eq!((rev, replayed), (3, false));
+        assert_eq!(
+            seq, 4,
+            "a new seq: manifest 1, create 2, delete 3, resurrect 4"
+        );
+        let (deleted, count): (i64, i64) = conn
             .query_row(
-                "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2 AND deleted = 1",
-                params![vault.as_bytes(), item.as_bytes()],
+                "SELECT (SELECT deleted FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2),                         (SELECT item_count FROM ferret_vaults WHERE vault_id = ?1)",
+                params![vault.as_bytes(), ItemId::from_bytes(id16(0x10)).as_bytes()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the row");
+        assert_eq!(deleted, 0, "the row is live again");
+        assert_eq!(count, 2, "the manifest and the resurrected item");
+    }
+
+    #[test]
+    fn a_resurrection_needs_room_under_max_items() {
+        let (mut conn, vault, device) = with_account();
+        // Room for the manifest and one item.
+        let limits = Limits {
+            max_items: 2,
+            ..Limits::DEFAULT
+        };
+        let put = |conn: &mut Connection, req: PutRequest<'static>| {
+            put_item(conn, &vault, &device, &req, &limits, NOW).expect("a write")
+        };
+        assert!(matches!(
+            put(&mut conn, write(0x10, live(1), 0, 1, false)),
+            PutOutcome::Stored { .. }
+        ));
+        assert!(matches!(
+            put(&mut conn, write(0x10, gone(), 1, 2, false)),
+            PutOutcome::Stored { rev: 2, .. }
+        ));
+        // The freed slot is used by another item.
+        assert!(matches!(
+            put(&mut conn, write(0x11, live(3), 0, 3, false)),
+            PutOutcome::Stored { .. }
+        ));
+        assert_eq!(
+            put(&mut conn, write(0x10, live(4), 2, 4, true)),
+            PutOutcome::QuotaExceeded
+        );
+        let deleted: i64 = conn
+            .query_row(
+                "SELECT deleted FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2",
+                params![vault.as_bytes(), ItemId::from_bytes(id16(0x10)).as_bytes()],
                 |row| row.get(0),
             )
-            .expect("count");
-        assert_eq!(rows, 1, "the tombstone is still the row");
+            .expect("the row");
+        assert_eq!(deleted, 1, "the tombstone is still the row");
+    }
+
+    fn checkpoint(seq: u64, byte: u8) -> StoredCheckpoint {
+        StoredCheckpoint {
+            seq,
+            digest: [byte; 32],
+            mac: [byte.wrapping_add(1); 32],
+            entries: vec![byte; 56],
+        }
+    }
+
+    #[test]
+    fn put_checkpoint_keeps_the_highest_seq_and_never_a_seq_above_the_vault() {
+        let (mut conn, vault, device) = with_account();
+        let limits = Limits::DEFAULT;
+        // The registration checkpoint is at seq 1.
+        assert_eq!(
+            checkpoint_head(&conn, &vault).expect("a head").map(|h| h.0),
+            Some(1)
+        );
+        for n in 1..=3u8 {
+            put_item(
+                &mut conn,
+                &vault,
+                &device,
+                &write(0x20 + n, live(n), 0, n, false),
+                &limits,
+                NOW,
+            )
+            .expect("a write");
+        }
+        // The vault is at seq 4.
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &checkpoint(5, 0x51)).expect("a result"),
+            CheckpointOutcome::AboveVault
+        );
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &checkpoint(3, 0x31)).expect("a result"),
+            CheckpointOutcome::Stored { seq: 3 }
+        );
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &checkpoint(3, 0x31)).expect("a result"),
+            CheckpointOutcome::Unchanged { seq: 3 }
+        );
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &checkpoint(3, 0x32)).expect("a result"),
+            CheckpointOutcome::Stale { stored_seq: 3 }
+        );
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &checkpoint(2, 0x21)).expect("a result"),
+            CheckpointOutcome::Stale { stored_seq: 3 }
+        );
+        assert_eq!(
+            get_checkpoint(&conn, &vault).expect("a checkpoint"),
+            checkpoint(3, 0x31),
+            "nothing but the first upload at seq 3 was written"
+        );
+        assert_eq!(
+            checkpoint_head(&conn, &vault).expect("a head"),
+            Some((3, [0x31; 32], [0x32; 32]))
+        );
+    }
+
+    #[test]
+    fn a_vault_that_is_not_there_has_no_checkpoint() {
+        let (mut conn, _vault, _device) = with_account();
+        let nobody = VaultId::from_bytes([0xee; 16]);
+        assert_eq!(checkpoint_head(&conn, &nobody).expect("a head"), None);
+        assert!(matches!(
+            get_checkpoint(&conn, &nobody),
+            Err(StoreError::NotFound)
+        ));
+        assert!(matches!(
+            put_checkpoint(&mut conn, &nobody, &checkpoint(1, 1)),
+            Err(StoreError::NotFound)
+        ));
     }
 }

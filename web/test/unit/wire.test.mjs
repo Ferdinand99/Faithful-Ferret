@@ -71,13 +71,8 @@ test("wire_fixtures_decode_and_reencode_identically", () => {
     const kind = kindOf(name);
     const text = read(name);
     const value = readWire(kind, text);
-    if (name === "put_item_req.resurrect.json") {
-      // It reads; a request that asks for it is refused before it is sent.
-      assert.equal(refusalOf(() => encodeWire(kind, value)), "bad_request");
-    } else {
-      assert.equal(`${encodeWire(kind, value)}
+    assert.equal(`${encodeWire(kind, value)}
 `, text, name);
-    }
     // Every text that decodes as base64url encodes back to the same text.
     for (const leaf of strings(value)) {
       let bytes;
@@ -116,12 +111,7 @@ test("the_fixtures_are_what_generate_mjs_makes", () => {
 test("every_fixture_passes_its_own_check", () => {
   for (const name of fixtures()) {
     const value = readWire(kindOf(name), read(name));
-    if (name === "put_item_req.resurrect.json") {
-      // It reads, and this version of the server refuses it.
-      assert.equal(refusalOf(() => checkStep(kindOf(name), value)), "bad_request");
-    } else {
-      checkStep(kindOf(name), value);
-    }
+    checkStep(kindOf(name), value);
   }
 });
 
@@ -226,11 +216,33 @@ test("put_item_requires_exactly_one_form", () => {
     { ...gone, blob: live.blob, tag: live.tag },
     { ...gone, deleted: false },
     { base_rev: 0, idem: live.idem },
-    { ...live, resurrect: true },
     { ...gone, resurrect: true },
   ]) {
     assert.equal(refusalOf(() => checkStep("put_item_req", bad)), "bad_request");
   }
+});
+
+test("resurrect_is_accepted_only_with_a_live_body", () => {
+  const live = readWire("put_item_req", read("put_item_req.live.json"));
+  const gone = readWire("put_item_req", read("put_item_req.tombstone.json"));
+  const asking = readWire("put_item_req", read("put_item_req.resurrect.json"));
+  // The fixture is a live row that asks, written against the tombstone's revision.
+  assert.equal(asking.resurrect, true);
+  assert.ok(asking.blob && asking.tag && !asking.tomb && asking.deleted === undefined);
+  assert.equal(asking.base_rev, gone.base_rev);
+  for (const ok of [live, asking, { ...live, resurrect: true }, { ...live, resurrect: false }, gone, { ...gone, resurrect: false }]) {
+    checkStep("put_item_req", ok);
+  }
+  for (const bad of [
+    { ...gone, resurrect: true },
+    { base_rev: gone.base_rev, idem: gone.idem, deleted: true, tomb: gone.tomb, resurrect: true },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("put_item_req", bad)), "bad_request");
+  }
+  // The invalid case of the shared fixtures is the tombstone that asks.
+  const cases = parseFile("invalid.json");
+  const found = cases.find((c) => c.name === "put resurrect true on a tombstone");
+  assert.ok(found && found.shape === "put_item_req");
 });
 
 test("error_codes_are_stable_and_unique", () => {
@@ -299,7 +311,7 @@ test("encode_wire_bytes_is_the_utf8_of_the_text", () => {
 });
 
 test("a_conflict_answer_is_a_live_row_or_a_deleted_one", () => {
-  for (const name of ["conflict_res.live.json", "conflict_res.deleted.json"]) {
+  for (const name of ["conflict_res.live.json", "conflict_res.deleted.json", "conflict_res.absent.json"]) {
     checkStep("conflict_res", parseFile(name));
   }
   const live = parseFile("conflict_res.live.json");
@@ -308,8 +320,36 @@ test("a_conflict_answer_is_a_live_row_or_a_deleted_one", () => {
     { ...live, tag: null },
     { ...live, deleted: true },
     { current_rev: 1, deleted: true, tag: live.tag },
+    { ...live, current_rev: 0 },
+    { current_rev: 0, deleted: false, blob: live.blob },
+    { current_rev: 0, deleted: false, tag: live.tag },
+    { current_rev: 4, deleted: false },
   ]) {
     assert.equal(refusalOf(() => checkStep("conflict_res", bad)), "bad_request");
+  }
+});
+
+test("a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row", () => {
+  const absent = parseFile("conflict_res.absent.json");
+  assert.deepEqual(absent, { current_rev: 0, deleted: false });
+  const live = parseFile("conflict_res.live.json");
+  const result = (fields) => ({ results: [{ status: 409, ...fields }] });
+  checkStep("batch_res", result(absent));
+  checkStep("batch_res", result({ current_rev: 4, deleted: false, blob: live.blob, tag: live.tag }));
+  checkStep("batch_res", result({ current_rev: 5, deleted: true }));
+  for (const bad of [
+    { current_rev: 0, deleted: false, blob: live.blob },
+    { current_rev: 0, deleted: false, tag: live.tag },
+    { current_rev: 0, deleted: false, blob: live.blob, tag: live.tag },
+    { current_rev: 4, deleted: false },
+    { current_rev: 4, deleted: false, blob: live.blob },
+    { current_rev: 5, deleted: true, blob: live.blob, tag: live.tag },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("batch_res", result(bad))), "bad_request", JSON.stringify(bad));
+  }
+  const cases = parseFile("invalid.json");
+  for (const name of ["conflict_res: current_rev 0 with blob and tag", "conflict_res: current_rev 4 live without blob", "batch result: conflict absent with a blob"]) {
+    assert.ok(cases.some((c) => c.name === name), name);
   }
 });
 

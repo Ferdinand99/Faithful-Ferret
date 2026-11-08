@@ -292,10 +292,12 @@ export function fixtures() {
       tomb: b64("item two tomb", 40),
       idem: id("idem two"),
     },
+    // A live row that asks to bring a deleted item back, written against the
+    // revision of the tombstone ("put_item_req.tombstone.json" is at rev 2).
     "put_item_req.resurrect.json": {
       base_rev: 2,
-      deleted: true,
-      tomb: b64("item two tomb", 40),
+      blob: envelope("item two", 1, 200),
+      tag: b64("item two tag", 32),
       idem: id("idem three"),
       resurrect: true,
     },
@@ -308,6 +310,8 @@ export function fixtures() {
       deleted: false,
     },
     "conflict_res.deleted.json": { current_rev: 5, deleted: true },
+    // A write against a row that is not there: revision 0, no blob, no tag.
+    "conflict_res.absent.json": { current_rev: 0, deleted: false },
     "error_res.json": { error: "unauthorized" },
     "batch_req.json": { ops: [batchLive(), batchResurrect(), batchDeleted()] },
     "batch_res.json": {
@@ -682,7 +686,7 @@ export function invalidCases() {
   parse("next 513 characters", "handoff_req", with_("handoff_req.json", { next: "/".repeat(513) }), "next has 1 to 512 characters");
   parse("next is a number", "handoff_req", with_("handoff_req.json", { next: 5 }), "next is a string");
 
-  // A put request has exactly one form, and asks for no resurrection.
+  // A put request has exactly one form, and only a live row asks to bring an item back.
   const blob = b64("form blob", 20);
   const tag = b64("form tag", 32);
   const tomb = b64("form tomb", 40);
@@ -705,8 +709,7 @@ export function invalidCases() {
   ]) {
     validate(`put form: ${name}`, "put_item_req", put(fields), "a put request is a live row (blob, tag) or a tombstone (deleted true, tomb), never both");
   }
-  validate("put resurrect true on a live row", "put_item_req", put({ blob, tag, resurrect: true }), "resurrect is not supported yet");
-  validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "resurrect is not supported yet");
+  validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "only a live row asks to bring an item back");
 
   // A hand-over code is 43 characters of strict base64url that decode to 32 bytes.
   const code = all["redeem_req.json"].code;
@@ -813,6 +816,9 @@ export function invalidCases() {
     ["conflict live without tag", { status: 409, current_rev: 4, blob: conflictLive.blob, deleted: false }],
     ["conflict live without blob", { status: 409, current_rev: 4, tag: conflictLive.tag, deleted: false }],
     ["conflict live with neither", { status: 409, current_rev: 4, deleted: false }],
+    ["conflict absent with a blob", { status: 409, current_rev: 0, blob: conflictLive.blob, deleted: false }],
+    ["conflict absent with a tag", { status: 409, current_rev: 0, tag: conflictLive.tag, deleted: false }],
+    ["conflict absent with blob and tag", { ...conflictLive, current_rev: 0 }],
     ["conflict deleted with blob and tag", { ...conflictLive, deleted: true }],
     ["conflict deleted with a tag", { status: 409, current_rev: 5, tag: conflictLive.tag, deleted: true }],
     ["conflict without deleted", { status: 409, current_rev: 4, blob: conflictLive.blob, tag: conflictLive.tag }],
@@ -837,6 +843,15 @@ export function invalidCases() {
   ]) {
     validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result is stored (200, rev, seq, replayed), a conflict (409, current_rev, deleted, and blob and tag for a live row) or refused (an error code with the status of that code, never 409), and carries no field of another form");
   }
+  // The answer of a single write: the same rule for the row it describes.
+  const conflictRes = (fields) => text({ ...fields });
+  const liveRow = { blob: envelope("item one", 1, 200), tag: b64("item one tag", 32) };
+  const conflictWhy = "a conflict answer is a live row (blob and tag, current_rev at least 1), a deleted one or an absent one (current_rev 0): neither blob nor tag";
+  validate("conflict_res: current_rev 0 with blob and tag", "conflict_res", conflictRes({ current_rev: 0, ...liveRow, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 0 with a blob", "conflict_res", conflictRes({ current_rev: 0, blob: liveRow.blob, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 4 live without blob", "conflict_res", conflictRes({ current_rev: 4, tag: liveRow.tag, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 4 live without blob and tag", "conflict_res", conflictRes({ current_rev: 4, deleted: false }), conflictWhy);
+  validate("conflict_res: deleted with blob and tag", "conflict_res", conflictRes({ current_rev: 5, ...liveRow, deleted: true }), conflictWhy);
   const manyResults = (n) => text({ results: Array.from({ length: n }, (_, i) => ({ ...stored, rev: i + 1 })) });
   validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");
   validate("batch results: 101", "batch_res", manyResults(101), "a batch answer has 1 to 100 results");

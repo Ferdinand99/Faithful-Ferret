@@ -751,6 +751,10 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
             let answer: BatchRes = serde_json::from_str(text).unwrap();
             answer.validate().map_err(|e| e.code())
         }
+        "conflict_res" => {
+            let answer: ConflictRes = serde_json::from_str(text).unwrap();
+            answer.validate().map_err(|e| e.code())
+        }
         "items_res" => {
             let page: ItemsRes = serde_json::from_str(text).unwrap();
             page.validate().map_err(|e| e.code())
@@ -823,36 +827,61 @@ fn invalid_inputs_are_refused_at_their_layer_with_their_code() {
 fn every_fixture_passes_its_own_check() {
     for (name, shape) in fixtures() {
         let text = read(&name);
-        let result = check_step(&shape, &text);
-        if name == "put_item_req.resurrect.json" {
-            // It reads, and this version of the server refuses it.
-            assert_eq!(result, Err("bad_request"));
-        } else {
-            assert_eq!(result, Ok(()), "{name}");
-        }
+        assert_eq!(check_step(&shape, &text), Ok(()), "{name}");
     }
 }
 
 #[test]
-fn resurrect_is_read_and_refused_only_when_true() {
+fn resurrect_is_accepted_only_with_a_live_body() {
+    let blob = b64url::encode(&[1, 1, 1, 9]);
+    let tag = b64url::encode(&[3; 32]);
+    let tomb = b64url::encode(&[4; 40]);
     let live = |resurrect: Value| {
-        let mut fields = json!({
-            "blob": b64url::encode(&[1, 1, 1, 9]),
-            "tag": b64url::encode(&[3; 32]),
-        });
+        let mut fields = json!({ "blob": blob, "tag": tag });
         if !resurrect.is_null() {
             fields["resurrect"] = resurrect;
         }
         put_item(fields)
     };
-    assert!(live(Value::Null).validate().is_ok());
-    assert!(live(json!(false)).validate().is_ok());
-    assert!(live(json!(true)).validate().is_err());
-    // The field reads back as it came.
+    let gone = |resurrect: Value| {
+        let mut fields = json!({ "deleted": true, "tomb": tomb });
+        if !resurrect.is_null() {
+            fields["resurrect"] = resurrect;
+        }
+        put_item(fields)
+    };
+    // A live row may ask, and the answer to `resurrect_requested` follows.
+    for (value, asked) in [
+        (Value::Null, false),
+        (json!(false), false),
+        (json!(true), true),
+    ] {
+        let request = live(value);
+        assert!(matches!(request.validate(), Ok(PutItemForm::Live { .. })));
+        assert_eq!(request.resurrect_requested(), asked);
+    }
+    // A tombstone may carry `false`, never `true`.
+    assert!(gone(Value::Null).validate().is_ok());
+    assert!(gone(json!(false)).validate().is_ok());
+    assert_eq!(
+        gone(json!(true)).validate(),
+        Err(WireError::Field("resurrect"))
+    );
+    assert!(!gone(json!(false)).resurrect_requested());
+    // The fixture is a live row that asks, and it reads back as it came.
     let text = read("put_item_req.resurrect.json");
     let request: PutItemReq = serde_json::from_str(&text).unwrap();
     assert_eq!(request.resurrect, Some(true));
-    assert_eq!(request.validate(), Err(WireError::Field("resurrect")));
+    assert!(matches!(request.validate(), Ok(PutItemForm::Live { .. })));
+    assert!(request.resurrect_requested());
+    // The same request with a tombstone is one of the invalid cases.
+    let cases: Vec<Invalid> = parse("invalid.json");
+    let case = cases
+        .iter()
+        .find(|c| c.name == "put resurrect true on a tombstone")
+        .expect("a case for a tombstone that asks to be brought back");
+    assert_eq!(case.shape, "put_item_req");
+    assert_refused(case);
 }
 
 #[test]
@@ -1182,6 +1211,64 @@ fn batch_result_has_exactly_one_form_and_no_null_fields() {
         let refusal: BatchResultJson =
             serde_json::from_value(json!({ "status": status, "error": code })).unwrap();
         assert_eq!(refusal.validate().is_ok(), status != 409, "{code}");
+    }
+}
+
+#[test]
+fn a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row() {
+    let blob = b64url::encode(&[1, 1, 1, 9]);
+    let tag = b64url::encode(&[3; 32]);
+    let conflict = |fields: Value| -> ConflictRes { serde_json::from_value(fields).unwrap() };
+    let result = |fields: Value| -> BatchResultJson {
+        let mut value = json!({ "status": 409 });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        serde_json::from_value(value).unwrap()
+    };
+
+    // The fixture is what the store answers: revision 0, not deleted, no row.
+    let absent: ConflictRes = parse("conflict_res.absent.json");
+    assert_eq!(absent.current_rev, 0);
+    assert!(!absent.deleted && absent.blob.is_none() && absent.tag.is_none());
+    assert_eq!(absent.validate(), Ok(()));
+    assert_eq!(
+        BatchResultJson::conflict(absent).validate(),
+        Ok(()),
+        "the same answer inside a batch"
+    );
+    assert!(
+        result(json!({ "current_rev": 0, "deleted": false }))
+            .validate()
+            .is_ok()
+    );
+
+    // Revision 0 never carries a row.
+    for fields in [
+        json!({ "current_rev": 0, "deleted": false, "blob": blob }),
+        json!({ "current_rev": 0, "deleted": false, "tag": tag }),
+        json!({ "current_rev": 0, "deleted": false, "blob": blob, "tag": tag }),
+    ] {
+        assert!(conflict(fields.clone()).validate().is_err(), "{fields}");
+        assert!(result(fields.clone()).validate().is_err(), "{fields}");
+    }
+    // A live row from revision 1 on has both, and a tombstone has neither.
+    for fields in [
+        json!({ "current_rev": 4, "deleted": false }),
+        json!({ "current_rev": 4, "deleted": false, "blob": blob }),
+        json!({ "current_rev": 4, "deleted": false, "tag": tag }),
+        json!({ "current_rev": 5, "deleted": true, "blob": blob, "tag": tag }),
+    ] {
+        assert!(conflict(fields.clone()).validate().is_err(), "{fields}");
+        assert!(result(fields.clone()).validate().is_err(), "{fields}");
+    }
+    for fields in [
+        json!({ "current_rev": 4, "deleted": false, "blob": blob, "tag": tag }),
+        json!({ "current_rev": 5, "deleted": true }),
+    ] {
+        assert!(conflict(fields.clone()).validate().is_ok(), "{fields}");
+        assert!(result(fields.clone()).validate().is_ok(), "{fields}");
     }
 }
 

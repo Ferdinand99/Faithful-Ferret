@@ -8,6 +8,10 @@
 //! tombstones are purged) is `410 Gone`: the client may have missed deletions
 //! and must list the vault again. `since=0` is never refused: a client with no
 //! state has nothing to miss.
+//!
+//! The answer carries the head of the stored checkpoint (`seq`, digest and
+//! MAC), never its entries: those are fetched with `GET /api/sync/checkpoint`
+//! when a client needs them. Spec: Fase 1 § 8.2, § 8.6.
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{FromRef, Query, State};
@@ -16,11 +20,11 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use super::store::{self, Change, Changes};
+use super::store::{self, Change, Changes, CheckpointHead};
 use crate::error::{ApiError, status_of};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::state::VaultDb;
-use crate::wire::{ChangeJson, ChangesRes, MAX_JSON_INT};
+use crate::wire::{ChangeJson, ChangesRes, CheckpointHeadJson, MAX_JSON_INT};
 
 /// The most rows in one answer (spec § 8.2).
 pub const MAX_LIMIT: u32 = 500;
@@ -71,8 +75,17 @@ async fn get_changes(
     }
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let vault = session.vault;
-    let page = db
-        .with_conn(move |conn| store::changes_since(conn, &vault, since, limit, PAGE_BYTES))
+    // The head is read first, in the same closure as the page: the `seq` of a checkpoint never exceeds the
+    // `seq` of the vault when it was stored, and the vault's `seq` only
+    // grows, so `latest_seq` of the page, read after, is never below the head.
+    // (The other order could show a head above `latest_seq`, which a client
+    // reads as a server that lies about its top.)
+    let (head, page) = db
+        .with_conn(move |conn| {
+            let head = store::checkpoint_head(conn, &vault)?;
+            let page = store::changes_since(conn, &vault, since, limit, PAGE_BYTES)?;
+            Ok((head, page))
+        })
         .await?;
     // Tombstones at or below the floor may be gone: a cursor below it cannot be
     // trusted, and the client must list the vault again (spec 8.4). `since = 0`
@@ -81,7 +94,7 @@ async fn get_changes(
     if since != 0 && since < page.min_valid_since {
         return Ok(gone(page.min_valid_since));
     }
-    Ok(Json(changes_res(page)).into_response())
+    Ok(Json(changes_res(page, head)).into_response())
 }
 
 /// `410 Gone {"error":"gone","min_valid_since":n}`: the cursor is below the floor
@@ -94,15 +107,14 @@ fn gone(min_valid_since: u64) -> Response {
         .into_response()
 }
 
-/// The wire shape of a page. The checkpoint head is left out: this version
-/// does not store checkpoints that a client uploads.
-fn changes_res(page: Changes) -> ChangesRes {
+/// The wire shape of a page, with the head of the stored checkpoint.
+fn changes_res(page: Changes, head: Option<CheckpointHead>) -> ChangesRes {
     ChangesRes {
         changes: page.changes.into_iter().map(change_json).collect(),
         latest_seq: page.latest_seq,
         vk_epoch: page.vk_epoch,
         restore_epoch: page.restore_epoch,
-        checkpoint: None,
+        checkpoint: head.map(|(seq, digest, mac)| CheckpointHeadJson { seq, digest, mac }),
         has_more: page.has_more,
     }
 }

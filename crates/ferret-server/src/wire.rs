@@ -972,10 +972,9 @@ pub struct PutItemReq {
     /// Makes a retry of this request safe.
     #[serde(with = "serde_hex16")]
     pub idem: [u8; 16],
-    /// `true` asks to bring a deleted item back. The field is part of the
-    /// protocol, so a client that sends it parses. This version of the server
-    /// does not bring items back: [`PutItemReq::validate`] refuses `true`, and
-    /// the answer is `bad_request`. Absent and `false` are the same.
+    /// `true` asks to bring a deleted item back; only a live row may ask
+    /// ([`PutItemReq::validate`] refuses `true` on a tombstone with
+    /// `bad_request`). Absent and `false` are the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resurrect: Option<bool>,
 }
@@ -1009,21 +1008,33 @@ impl fmt::Debug for PutItemForm<'_> {
 impl PutItemReq {
     /// Checks that the request has exactly one form: `blob` and `tag` (and
     /// neither `tomb` nor `deleted: true`), or `deleted: true` and `tomb` (and
-    /// neither `blob` nor `tag`), and that it does not ask to bring an item
-    /// back (`resurrect: true`, not supported yet). The size of the tombstone
-    /// is already checked by parsing; the envelope is the caller's to check.
-    /// Every failure is answered with `bad_request`.
+    /// neither `blob` nor `tag`), and that only the live form asks to bring an
+    /// item back (`resurrect: true`): a tombstone that asks to be brought back
+    /// means nothing. `resurrect: false` is allowed on either form. The size of
+    /// the tombstone is already checked by parsing; the envelope is the
+    /// caller's to check. Every failure is answered with `bad_request`.
+    ///
+    /// Spec: Fase 1 § 8.4 ("No resurrection without an active choice").
     pub fn validate(&self) -> Result<PutItemForm<'_>, WireError> {
-        if self.resurrect == Some(true) {
-            return Err(WireError::Field("resurrect"));
-        }
         match (&self.blob, &self.tag, self.deleted, &self.tomb) {
             (Some(blob), Some(tag), None | Some(false), None) => {
                 Ok(PutItemForm::Live { blob, tag })
             }
-            (None, None, Some(true), Some(tomb)) => Ok(PutItemForm::Deleted { tomb }),
+            (None, None, Some(true), Some(tomb)) => {
+                if self.resurrect == Some(true) {
+                    return Err(WireError::Field("resurrect"));
+                }
+                Ok(PutItemForm::Deleted { tomb })
+            }
             _ => Err(WireError::Field("blob, tag, deleted, tomb")),
         }
+    }
+
+    /// Whether the request asks to bring a deleted item back (`resurrect:
+    /// true`). Absent and `false` are `false`. Read it after
+    /// [`PutItemReq::validate`]: only a live row can ask.
+    pub fn resurrect_requested(&self) -> bool {
+        self.resurrect == Some(true)
     }
 }
 
@@ -1064,6 +1075,37 @@ pub struct ConflictRes {
     pub tag: Option<[u8; 32]>,
     /// Whether the row is a tombstone.
     pub deleted: bool,
+}
+
+/// Whether the row that a conflict answer describes is one of the three
+/// things a server can hold: a row that is not there (`current_rev` 0, not
+/// deleted, no blob and no tag: the answer to a write against a row that does
+/// not exist), a live row (a `current_rev` of at least 1 with its blob and
+/// tag), or a tombstone (no blob and no tag).
+fn conflict_row_is_valid(current_rev: u64, deleted: bool, has_blob: bool, has_tag: bool) -> bool {
+    match (deleted, current_rev) {
+        (true, _) => !has_blob && !has_tag,
+        (false, 0) => !has_blob && !has_tag,
+        (false, _) => has_blob && has_tag,
+    }
+}
+
+impl ConflictRes {
+    /// Checks the row of the answer (see [`conflict_row_is_valid`]): a live
+    /// row has its blob and tag, a tombstone and a row that is not there
+    /// (`current_rev` 0) have neither. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if conflict_row_is_valid(
+            self.current_rev,
+            self.deleted,
+            self.blob.is_some(),
+            self.tag.is_some(),
+        ) {
+            Ok(())
+        } else {
+            Err(WireError::Field("current_rev, blob, tag, deleted"))
+        }
+    }
 }
 
 /// One operation of a batch: the same as a [`PutItemReq`], with the id of the
@@ -1192,7 +1234,8 @@ impl BatchReq {
 ///
 /// * stored: `status` 200 with `rev`, `seq` and `replayed`;
 /// * conflict: `status` 409 with `current_rev` and `deleted`, and `blob` and
-///   `tag` when the row is live;
+///   `tag` when the row is live (`current_rev` of at least 1, not deleted); a
+///   deleted row, and a row that is not there (`current_rev` 0), have neither;
 /// * refused: a `status` from 400 to 599 with the `error` code.
 ///
 /// Call [`BatchResultJson::validate`] on a result that comes from outside.
@@ -1315,19 +1358,21 @@ impl BatchResultJson {
                     && self.replayed.is_some()
                     && self.status == 200
             }
-            // Conflict: 409, and the row of the server is live (blob and tag)
-            // or deleted (neither).
-            (false, true, None) => {
-                let live = self.blob.is_some() && self.tag.is_some();
-                let neither = self.blob.is_none() && self.tag.is_none();
-                self.current_rev.is_some()
-                    && self.status == 409
-                    && match self.deleted {
-                        Some(true) => neither,
-                        Some(false) => live,
-                        None => false,
-                    }
-            }
+            // Conflict: 409, and the row of the server is live (blob and tag),
+            // deleted, or not there at all (`current_rev` 0): neither blob
+            // nor tag for the last two.
+            (false, true, None) => match (self.current_rev, self.deleted) {
+                (Some(current_rev), Some(deleted)) => {
+                    self.status == 409
+                        && conflict_row_is_valid(
+                            current_rev,
+                            deleted,
+                            self.blob.is_some(),
+                            self.tag.is_some(),
+                        )
+                }
+                _ => false,
+            },
             // Refused: one of the codes, with the status of that code. 409 is
             // the conflict form, so a code with that status is never a refusal.
             (false, false, Some(code)) => {
