@@ -1,7 +1,7 @@
 // Opening the database.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serverKey } from "../../src/store/idb.mjs";
+import { DB_VERSION, serverKey, STORES } from "../../src/store/idb.mjs";
 import { freshStore } from "./idbHelpers.mjs";
 
 test("the_store_tells_its_owner_when_another_tab_upgrades_the_database", async () => {
@@ -10,7 +10,7 @@ test("the_store_tells_its_owner_when_another_tab_upgrades_the_database", async (
     closed += 1;
   });
   // Another tab opens a newer version: this connection is asked to let go.
-  const upgrade = db.factory.open("ferret", 2);
+  const upgrade = db.factory.open("ferret", DB_VERSION + 1);
   await new Promise((resolve, reject) => {
     upgrade.onsuccess = () => {
       upgrade.result.close();
@@ -19,6 +19,13 @@ test("the_store_tells_its_owner_when_another_tab_upgrades_the_database", async (
     upgrade.onerror = () => reject(upgrade.error);
   });
   assert.equal(closed, 1);
+});
+
+test("the_database_has_the_seven_stores_of_version_2", async () => {
+  const db = await freshStore();
+  assert.equal(DB_VERSION, 2);
+  assert.equal(STORES.length, 7);
+  assert.deepEqual([...db.store.db.objectStoreNames].sort(), [...STORES].sort());
 });
 
 test("a_server_is_known_by_its_origin", () => {
@@ -38,4 +45,15 @@ test("the_store_service_offers_one_sign_in_lookup", async () => {
   assert.equal(typeof store.pinnedForSignIn, "function");
   assert.equal("loadPinned" in store, false);
   assert.equal("loadPinnedByAccount" in store, false);
+});
+
+test("the_store_service_offers_sync_state_trash_and_forget", async () => {
+  const { default: service } = await import("../../src/services/store.service.mjs");
+  const store = service.create({});
+  for (const name of ["loadSyncState", "saveSyncState", "forgetServer", "pendingWrites"]) {
+    assert.equal(typeof store[name], "function", name);
+  }
+  for (const name of ["put", "all", "get", "remove", "purgeBefore", "clear"]) {
+    assert.equal(typeof store.trash[name], "function", `trash.${name}`);
+  }
 });

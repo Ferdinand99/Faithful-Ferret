@@ -6,6 +6,7 @@ import { cache, rowOfChange } from "../../src/store/cache.mjs";
 import { StoreError } from "../../src/store/idb.mjs";
 import { loadPinned, savePinned } from "../../src/store/pinned.mjs";
 import { deviceId } from "../../src/store/settings.mjs";
+import { trash } from "../../src/store/trash.mjs";
 import { ACCOUNT, SERVER, VAULT, freshStore, pinnedRecord, scope } from "./idbHelpers.mjs";
 
 const id = (n) => n.toString(16).padStart(32, "0");
@@ -138,4 +139,20 @@ test("cache_removes_only_the_named_rows_of_the_scope", async () => {
   assert.deepEqual((await cache.getRows(db.store, scope(1))).map((r) => r.itemId), [id(1), id(3)]);
   assert.equal((await cache.getRows(db.store, scope(2))).length, 1, "another epoch is untouched");
   await assert.rejects(cache.removeRows(db.store, scope(1), ["nothex"]), TypeError);
+});
+
+test("the_cache_is_cleared_with_its_trash_and_nothing_else", async () => {
+  const db = await freshStore();
+  const email = "ada@example.org";
+  await savePinned(db.store, SERVER, ACCOUNT, email, pinnedRecord({ vk: 2 }));
+  await cache.putRows(db.store, scope(1), [live(1, 1)]);
+  await trash.put(db.store, scope(1), { itemId: id(1), rev: 1, envelope: bytes(8, 1), tag: bytes(32, 1), tombRev: 2, deletedAt: 5 });
+  await trash.put(db.store, scope(1, ACCOUNT, id(0xabc)), { itemId: id(2), rev: 1, envelope: bytes(8, 2), tag: bytes(32, 2), tombRev: 2, deletedAt: 5 });
+
+  await cache.clear(db.store, scope(1));
+  assert.deepEqual(await trash.all(db.store, scope(1)), []);
+  assert.equal((await trash.all(db.store, scope(1, ACCOUNT, id(0xabc)))).length, 1, "another vault keeps its trash");
+  await cache.clearAccount(db.store, ACCOUNT);
+  assert.deepEqual(await trash.all(db.store, scope(1, ACCOUNT, id(0xabc))), []);
+  assert.equal((await loadPinned(db.store, SERVER, email)).vk_epoch_max, 2);
 });
