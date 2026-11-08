@@ -71,6 +71,36 @@ const checkpoint = () => ({
   entries: entries.toString("base64url"),
 });
 const head = () => ({ seq: 7, digest: b64("head digest", 32), mac: b64("head mac", 32) });
+
+/**
+ * A checkpoint as it is uploaded after a sync: three entries, sorted by item
+ * id, each the item id (16), the revision as 8 bytes big endian and the hash
+ * of the envelope (32).
+ */
+const checkpointEntries = () => {
+  const rows = [
+    ["entry one", 2],
+    ["entry two", 1],
+    ["entry three", 5],
+  ].map(([label, rev]) => ({ item: bytes(label, 16), rev, hash: bytes(`${label} hash`, 32) }));
+  rows.sort((x, y) => Buffer.compare(x.item, y.item));
+  return Buffer.concat(
+    rows.map(({ item, rev, hash }) => {
+      const rev8 = Buffer.alloc(8);
+      rev8.writeBigUInt64BE(BigInt(rev));
+      return Buffer.concat([item, rev8, hash]);
+    }),
+  );
+};
+const checkpointPut = () => {
+  const all = checkpointEntries();
+  return {
+    seq: 7,
+    digest: createHash("sha256").update(all).digest("base64url"),
+    mac: b64("checkpoint put mac", 32),
+    entries: all.toString("base64url"),
+  };
+};
 const liveChange = () => ({
   id: id("item one"),
   rev: 2,
@@ -85,6 +115,33 @@ const deletedChange = () => ({
   seq: 6,
   deleted: true,
   tomb: b64("item two tomb", 40),
+});
+
+/** Changes in item id order, as the listing writes them. */
+const listed = () => [liveChange(), deletedChange()].sort((x, y) => (x.id < y.id ? -1 : 1));
+
+/** The operations of a batch: a live row, a row that asks to bring an item back, a tombstone. */
+const batchLive = () => ({
+  id: id("item one"),
+  base_rev: 1,
+  blob: envelope("item one", 1, 200),
+  tag: b64("item one tag", 32),
+  idem: id("idem one"),
+});
+const batchResurrect = () => ({
+  id: id("item three"),
+  base_rev: 3,
+  blob: envelope("item three", 1, 180),
+  tag: b64("item three tag", 32),
+  idem: id("idem three"),
+  resurrect: true,
+});
+const batchDeleted = () => ({
+  id: id("item two"),
+  base_rev: 2,
+  deleted: true,
+  tomb: b64("item two tomb", 40),
+  idem: id("idem two"),
 });
 
 /** Every fixture: file name -> object. The type is the name before the first dot. */
@@ -252,6 +309,42 @@ export function fixtures() {
     },
     "conflict_res.deleted.json": { current_rev: 5, deleted: true },
     "error_res.json": { error: "unauthorized" },
+    "batch_req.json": { ops: [batchLive(), batchResurrect(), batchDeleted()] },
+    "batch_res.json": {
+      results: [
+        { status: 200, rev: 2, seq: 5, replayed: false },
+        { status: 200, rev: 3, seq: 6, replayed: true },
+        {
+          status: 409,
+          current_rev: 4,
+          blob: envelope("item one", 1, 200),
+          tag: b64("item one tag", 32),
+          deleted: false,
+        },
+        { status: 409, current_rev: 5, deleted: true },
+        { status: 422, error: "idem_reuse" },
+        { status: 400, error: "bad_request" },
+      ],
+    },
+    "checkpoint_put_req.json": checkpointPut(),
+    "checkpoint_put_res.json": { seq: 7 },
+    "checkpoint_stale_res.json": { error: "checkpoint_stale", stored_seq: 9 },
+    "items_res.json": {
+      items: listed(),
+      as_of_seq: 7,
+      vk_epoch: 1,
+      restore_epoch: 0,
+      next_after: listed()[1].id,
+      has_more: true,
+    },
+    "items_res.last.json": {
+      items: [deletedChange()],
+      as_of_seq: 7,
+      vk_epoch: 1,
+      restore_epoch: 0,
+      has_more: false,
+    },
+    "sync_event.json": { seq: 7 },
   };
 }
 
@@ -287,6 +380,9 @@ export const ERROR_CODES = [
   "bad_request",
   "internal",
   "gone",
+  "busy",
+  "checkpoint_stale",
+  "checkpoint_invalid",
 ];
 
 /**
@@ -294,7 +390,7 @@ export const ERROR_CODES = [
  * ERROR_CODES). The server checks it against its status table, and the web
  * vault against what its client does with each status.
  */
-const STATUS_OF = {
+export const STATUS_OF = {
   unauthorized: 401,
   denied: 401,
   forbidden: 403,
@@ -325,6 +421,9 @@ const STATUS_OF = {
   bad_request: 400,
   internal: 500,
   gone: 410,
+  busy: 503,
+  checkpoint_stale: 409,
+  checkpoint_invalid: 422,
 };
 
 /**
@@ -623,6 +722,156 @@ export function invalidCases() {
   ]) {
     validate(`handoff code ${name}`, "redeem_req", with_("redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
   }
+
+  // A batch: the parts of an operation, then the number and the form of the
+  // operations. Every operation is read like a put request, with the item id in
+  // the body.
+  const batchWith = (op, fields) => {
+    const value = clone("batch_req.json");
+    const next = { ...value.ops[op] };
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete next[key];
+      else next[key] = v;
+    }
+    value.ops[op] = next;
+    return text(value);
+  };
+  parse("batch ops is not a list", "batch_req", text({ ops: {} }), "ops is a list");
+  parse("batch ops is null", "batch_req", text({ ops: null }), "ops is a list");
+  parse("batch without ops", "batch_req", "{}", "ops is required");
+  parse("batch ops holds a string", "batch_req", text({ ops: ["x"] }), "an operation is an object");
+  parse("batch op without id", "batch_req", batchWith(0, { id: undefined }), "id is required");
+  parse("batch op without idem", "batch_req", batchWith(0, { idem: undefined }), "idem is required");
+  parse("batch op without base_rev", "batch_req", batchWith(0, { base_rev: undefined }), "base_rev is required");
+  parse("batch op id upper case", "batch_req", batchWith(0, { id: id("item one").toUpperCase() }), "an id is lower case");
+  parse("batch op id short", "batch_req", batchWith(0, { id: id("item one").slice(1) }), "an id is 32 characters");
+  parse("batch op idem upper case", "batch_req", batchWith(0, { idem: id("idem one").toUpperCase() }), "an id is lower case");
+  parse("batch op blob with padding", "batch_req", batchWith(0, { blob: "AA==" }), "not strict base64url");
+  parse("batch op tag 31 bytes", "batch_req", batchWith(0, { tag: b64("short tag", 31) }), "a tag is 32 bytes");
+  parse("batch op base_rev 2^53", "batch_req", batchWith(0, { base_rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("batch op base_rev negative", "batch_req", batchWith(0, { base_rev: -1 }), "an integer is not negative");
+  parse("batch op resurrect is a string", "batch_req", batchWith(1, { resurrect: "true" }), "resurrect is a boolean");
+  parse("batch op deleted is a string", "batch_req", batchWith(2, { deleted: "true" }), "deleted is a boolean");
+  for (const [name, n] of [["one short", 39], ["one long", 41], ["empty", 0]]) {
+    parse(`batch op tomb ${name}`, "batch_req", batchWith(2, { tomb: b64(`batch tomb ${name}`, n) }), "tomb is 40 bytes", "tombstone_invalid");
+  }
+  parse(
+    "repeated base_rev in a batch op",
+    "batch_req",
+    text(all["batch_req.json"]).replace('"base_rev":1', '"base_rev":1,"base_rev":1'),
+    "a repeated field is refused inside a part",
+  );
+  const batchOf = (n) => text({ ops: Array.from({ length: n }, (_, i) => ({ ...clone("batch_req.json").ops[2], id: id(`bulk ${i}`), idem: id(`bulk idem ${i}`) })) });
+  validate("batch with no operations", "batch_req", text({ ops: [] }), "a batch has 1 to 100 operations");
+  validate("batch with 101 operations", "batch_req", batchOf(101), "a batch has 1 to 100 operations");
+  for (const [name, fields] of [
+    ["blob, tag and tomb", { blob, tag, tomb }],
+    ["blob, tag, deleted true and tomb", { blob, tag, deleted: true, tomb }],
+    ["nothing", {}],
+    ["deleted true only", { deleted: true }],
+    ["deleted false with tomb", { deleted: false, tomb }],
+    ["tomb without deleted", { tomb }],
+    ["blob without tag", { blob }],
+    ["tag without blob", { tag }],
+    ["deleted true with blob and tag", { deleted: true, blob, tag }],
+    ["resurrect true on a tombstone", { deleted: true, tomb, resurrect: true }],
+  ]) {
+    const op = { id: id("form item"), base_rev: 1, ...fields, idem };
+    validate(`batch op form: ${name}`, "batch_req", text({ ops: [batchLive(), op] }), "an operation is a live row (blob, tag) or a tombstone (deleted true, tomb), never both, and only a live row asks to bring an item back");
+  }
+
+  // The results of a batch: one form each, with the status that goes with it.
+  const results = (...list) => text({ results: list });
+  const stored = { status: 200, rev: 2, seq: 5, replayed: false };
+  const conflictLive = { status: 409, current_rev: 4, blob: envelope("item one", 1, 200), tag: b64("item one tag", 32), deleted: false };
+  const conflictDeleted = { status: 409, current_rev: 5, deleted: true };
+  const refused = { status: 422, error: "idem_reuse" };
+  parse("batch results is not a list", "batch_res", text({ results: {} }), "results is a list");
+  parse("batch without results", "batch_res", "{}", "results is required");
+  parse("batch result is a string", "batch_res", text({ results: ["x"] }), "a result is an object");
+  parse("batch result without status", "batch_res", results({ rev: 2, seq: 5, replayed: false }), "status is required");
+  parse("batch result status is a string", "batch_res", results({ ...stored, status: "200" }), "status is a number");
+  parse("batch result status 65536", "batch_res", results({ ...stored, status: 65536 }), "status fits in 16 bits");
+  parse("batch result rev 2^53", "batch_res", results({ ...stored, rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("batch result seq negative", "batch_res", results({ ...stored, seq: -1 }), "an integer is not negative");
+  parse("batch result replayed is a number", "batch_res", results({ ...stored, replayed: 0 }), "replayed is a boolean");
+  parse("batch result blob with padding", "batch_res", results({ ...conflictLive, blob: "AA==" }), "not strict base64url");
+  parse("batch result tag 31 bytes", "batch_res", results({ ...conflictLive, tag: b64("short tag", 31) }), "a tag is 32 bytes");
+  parse("batch result deleted is a string", "batch_res", results({ ...conflictDeleted, deleted: "true" }), "deleted is a boolean");
+  parse("batch result error is a number", "batch_res", results({ ...refused, error: 5 }), "error is a string");
+  parse("batch result unknown field", "batch_res", results({ ...stored, x: 1 }), "an unknown field is refused inside a part");
+  for (const [name, result] of [
+    ["status only", { status: 200 }],
+    ["stored without seq", { status: 200, rev: 2, replayed: false }],
+    ["stored without replayed", { status: 200, rev: 2, seq: 5 }],
+    ["stored with status 409", { ...stored, status: 409 }],
+    ["stored with status 201", { ...stored, status: 201 }],
+    ["stored with an error", { ...stored, error: "bad_request" }],
+    ["stored with current_rev", { ...stored, current_rev: 2 }],
+    ["conflict with status 200", { ...conflictLive, status: 200 }],
+    ["conflict with status 422", { ...conflictLive, status: 422 }],
+    ["conflict live without tag", { status: 409, current_rev: 4, blob: conflictLive.blob, deleted: false }],
+    ["conflict live without blob", { status: 409, current_rev: 4, tag: conflictLive.tag, deleted: false }],
+    ["conflict live with neither", { status: 409, current_rev: 4, deleted: false }],
+    ["conflict deleted with blob and tag", { ...conflictLive, deleted: true }],
+    ["conflict deleted with a tag", { status: 409, current_rev: 5, tag: conflictLive.tag, deleted: true }],
+    ["conflict without deleted", { status: 409, current_rev: 4, blob: conflictLive.blob, tag: conflictLive.tag }],
+    ["conflict without current_rev", { status: 409, deleted: true }],
+    ["conflict with rev", { ...conflictDeleted, rev: 2 }],
+    ["conflict with an error", { ...conflictDeleted, error: "conflict" }],
+    ["refused with status 200", { ...refused, status: 200 }],
+    ["refused with status 399", { ...refused, status: 399 }],
+    ["refused with status 600", { ...refused, status: 600 }],
+    ["refused with an empty error", { ...refused, error: "" }],
+    ["refused with rev", { ...refused, rev: 2 }],
+    ["refused with a blob", { ...refused, blob: conflictLive.blob }],
+    ["refused with deleted", { ...refused, deleted: false }],
+    ["stored with rev 0", { ...stored, rev: 0 }],
+    ["refused with the status of another code", { status: 400, error: "idem_reuse" }],
+    ["refused with 422 for a 400 code", { status: 422, error: "bad_request" }],
+    ["refused with an unknown code", { status: 400, error: "not_a_code" }],
+    ["refused with an unknown code and status 500", { status: 500, error: "not_a_code" }],
+    ["refused with status 409 and the code conflict", { status: 409, error: "conflict" }],
+    ["refused with status 409 and the code checkpoint_stale", { status: 409, error: "checkpoint_stale" }],
+    ["refused with status 409 and the code registration_closed", { status: 409, error: "registration_closed" }],
+  ]) {
+    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result is stored (200, rev, seq, replayed), a conflict (409, current_rev, deleted, and blob and tag for a live row) or refused (an error code with the status of that code, never 409), and carries no field of another form");
+  }
+  const manyResults = (n) => text({ results: Array.from({ length: n }, (_, i) => ({ ...stored, rev: i + 1 })) });
+  validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");
+  validate("batch results: 101", "batch_res", manyResults(101), "a batch answer has 1 to 100 results");
+
+  // A checkpoint upload, the answers, the listing and an event.
+  parse("checkpoint_put_req digest 31 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { digest: b64("short digest", 31) }), "a digest is 32 bytes");
+  parse("checkpoint_put_req mac 33 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { mac: b64("long mac", 33) }), "a MAC is 32 bytes");
+  parse("checkpoint_put_req entries with padding", "checkpoint_put_req", with_("checkpoint_put_req.json", { entries: "AA==" }), "not strict base64url");
+  parse("checkpoint_put_req seq 2^53", "checkpoint_put_req", with_("checkpoint_put_req.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("checkpoint_put_req without entries", "checkpoint_put_req", with_("checkpoint_put_req.json", { entries: undefined }), "entries is required");
+  parse("checkpoint_put_req without seq", "checkpoint_put_req", with_("checkpoint_put_req.json", { seq: undefined }), "seq is required");
+  parse("checkpoint_put_res seq negative", "checkpoint_put_res", with_("checkpoint_put_res.json", { seq: -1 }), "an integer is not negative");
+  parse("checkpoint_put_res without seq", "checkpoint_put_res", "{}", "seq is required");
+  parse("checkpoint_stale_res with another code", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { error: "conflict" }), "the code is checkpoint_stale");
+  parse("checkpoint_stale_res with an empty code", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { error: "" }), "the code is checkpoint_stale");
+  parse("checkpoint_stale_res without stored_seq", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { stored_seq: undefined }), "stored_seq is required");
+  parse("checkpoint_stale_res stored_seq 1.5", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { stored_seq: 1.5 }), "an integer is whole");
+  parse("items_res next_after upper case", "items_res", with_("items_res.json", { next_after: listed()[1].id.toUpperCase() }), "an id is lower case");
+  parse("items_res next_after short", "items_res", with_("items_res.json", { next_after: listed()[1].id.slice(1) }), "an id is 32 characters");
+  parse("items_res next_after is a number", "items_res", with_("items_res.json", { next_after: 5 }), "an id is a string");
+  parse("items_res without as_of_seq", "items_res", with_("items_res.json", { as_of_seq: undefined }), "as_of_seq is required");
+  parse("items_res without restore_epoch", "items_res", with_("items_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("items_res without has_more", "items_res", with_("items_res.json", { has_more: undefined }), "has_more is required");
+  parse("items_res has_more is a string", "items_res", with_("items_res.json", { has_more: "true" }), "has_more is a boolean");
+  validate("items_res: more rows without next_after", "items_res", with_("items_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
+  validate("items_res: the last page with next_after", "items_res", with_("items_res.last.json", { next_after: listed()[1].id }), "next_after is there exactly when has_more is true");
+  parse("items_res items holds a string", "items_res", with_("items_res.json", { items: ["x"] }), "an item is an object");
+  parse("items_res as_of_seq 2^53", "items_res", with_("items_res.json", { as_of_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  nested("items_res: unknown field in an item", "items_res", "items_res.json", ["items", 0], "an unknown field is refused inside a part");
+  nested("batch_req: unknown field in an operation", "batch_req", "batch_req.json", ["ops", 0], "an unknown field is refused inside a part");
+  parse("sync_event seq is a string", "sync_event", with_("sync_event.json", { seq: "7" }), "seq is a number");
+  parse("sync_event without seq", "sync_event", "{}", "seq is required");
+  parse("sync_event seq 2^53", "sync_event", with_("sync_event.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("sync_event seq negative", "sync_event", with_("sync_event.json", { seq: -1 }), "an integer is not negative");
+  parse("sync_event with a second field", "sync_event", text({ seq: 7, vault: id("vault") }), "an event carries the sequence number and nothing else");
 
   return cases;
 }

@@ -8,11 +8,13 @@ use std::path::PathBuf;
 
 use ferret_server::error::ApiError;
 use ferret_server::wire::{
-    self, ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, ConflictRes, ERROR_CODES,
-    ErrorRes, HandoffRedeemRes, HandoffReq, HandoffRes, LoginFinishReq, LoginFinishRes,
-    LoginPurposeJson, LoginStartReq, LoginStartRes, MethodsRes, PutItemForm, PutItemReq,
-    PutItemRes, RedeemReq, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
-    RegisterStartRes, SealedRowJson, SessionRes, WireError, WrapJson, b64url, hex16,
+    self, BatchOpForm, BatchOpJson, BatchReq, BatchRes, BatchResultJson, CHECKPOINT_ENTRY_LEN,
+    ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, CheckpointPutRes,
+    CheckpointStaleRes, ConflictRes, ERROR_CODES, ErrorRes, HandoffRedeemRes, HandoffReq,
+    HandoffRes, ItemsRes, LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq,
+    LoginStartRes, MAX_BATCH_BYTES, MAX_BATCH_OPS, MAX_CHECKPOINT_ENTRIES, MethodsRes, PutItemForm,
+    PutItemReq, PutItemRes, RedeemReq, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
+    RegisterStartRes, SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson, b64url, hex16,
     parse_handoff_code, refusal_code,
 };
 use ferret_server_auth::{AuthError, DenyReason, Malformed};
@@ -93,6 +95,13 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "put_item_res" => through::<PutItemRes>(text),
         "conflict_res" => through::<ConflictRes>(text),
         "error_res" => through::<ErrorRes>(text),
+        "batch_req" => through::<BatchReq>(text),
+        "batch_res" => through::<BatchRes>(text),
+        "checkpoint_put_req" => through::<CheckpointJson>(text),
+        "checkpoint_put_res" => through::<CheckpointPutRes>(text),
+        "checkpoint_stale_res" => through::<CheckpointStaleRes>(text),
+        "items_res" => through::<ItemsRes>(text),
+        "sync_event" => through::<SyncEventJson>(text),
         other => panic!("no shape for the fixture kind {other}"),
     }
 }
@@ -122,6 +131,24 @@ const SHAPES: &[&str] = &[
     "put_item_res",
     "conflict_res",
     "error_res",
+    "batch_req",
+    "batch_res",
+    "checkpoint_put_req",
+    "checkpoint_put_res",
+    "checkpoint_stale_res",
+    "items_res",
+    "sync_event",
+];
+
+/// The shapes that came with the second milestone.
+const M2_SHAPES: &[&str] = &[
+    "batch_req",
+    "batch_res",
+    "checkpoint_put_req",
+    "checkpoint_put_res",
+    "checkpoint_stale_res",
+    "items_res",
+    "sync_event",
 ];
 
 #[test]
@@ -422,7 +449,7 @@ fn lengths_match_the_spec() {
 }
 
 #[test]
-fn error_statuses_are_the_status_table() {
+fn error_statuses_json_matches_code_status() {
     // The same file is read by the web vault, which decides what to do with an
     // error from its status; both sides must agree on every code.
     let golden: serde_json::Map<String, Value> =
@@ -711,7 +738,53 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
                 .map(|_| ())
                 .map_err(|_| "handoff_invalid")
         }
+        "batch_req" => {
+            let request: BatchReq = serde_json::from_str(text).unwrap();
+            request.validate().map_err(|e| e.code())?;
+            request
+                .ops
+                .iter()
+                .try_for_each(|op| op.validate().map(|_| ()))
+                .map_err(|e| e.code())
+        }
+        "batch_res" => {
+            let answer: BatchRes = serde_json::from_str(text).unwrap();
+            answer.validate().map_err(|e| e.code())
+        }
+        "items_res" => {
+            let page: ItemsRes = serde_json::from_str(text).unwrap();
+            page.validate().map_err(|e| e.code())
+        }
         _ => Ok(()),
+    }
+}
+
+/// Asserts that `case` is refused at its layer with its code.
+fn assert_refused(case: &Invalid) {
+    let label = format!("{} ({})", case.name, case.why);
+    assert!(!case.why.is_empty(), "{label}");
+    assert!(
+        ERROR_CODES.contains(&case.error.as_str()),
+        "{label}: {} is not a listed code",
+        case.error
+    );
+    match round_trip(&case.shape, &case.json) {
+        Err(error) => {
+            assert_eq!(case.layer, "parse", "{label}: refused at parse time");
+            assert_eq!(
+                refusal_code(&error.to_string()),
+                case.error,
+                "{label}: {error}"
+            );
+        }
+        Ok(_) => {
+            assert_eq!(case.layer, "validate", "{label}: read without error");
+            assert_eq!(
+                check_step(&case.shape, &case.json),
+                Err(case.error.as_str()),
+                "{label}: check passed"
+            );
+        }
     }
 }
 
@@ -722,31 +795,7 @@ fn invalid_inputs_are_refused_at_their_layer_with_their_code() {
     let names: BTreeSet<&str> = cases.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names.len(), cases.len(), "a case name is used twice");
     for case in &cases {
-        let label = format!("{} ({})", case.name, case.why);
-        assert!(!case.why.is_empty(), "{label}");
-        assert!(
-            ERROR_CODES.contains(&case.error.as_str()),
-            "{label}: {} is not a listed code",
-            case.error
-        );
-        match round_trip(&case.shape, &case.json) {
-            Err(error) => {
-                assert_eq!(case.layer, "parse", "{label}: refused at parse time");
-                assert_eq!(
-                    refusal_code(&error.to_string()),
-                    case.error,
-                    "{label}: {error}"
-                );
-            }
-            Ok(_) => {
-                assert_eq!(case.layer, "validate", "{label}: read without error");
-                assert_eq!(
-                    check_step(&case.shape, &case.json),
-                    Err(case.error.as_str()),
-                    "{label}: check passed"
-                );
-            }
-        }
+        assert_refused(case);
     }
     // Both layers and every code the parse layer can give are covered.
     let layers: BTreeSet<&str> = cases.iter().map(|c| c.layer.as_str()).collect();
@@ -824,4 +873,553 @@ fn refusal_codes_come_from_the_message_prefix_only() {
         refusal_code("invalid type: string \"malformed_ke1: x\""),
         "bad_request"
     );
+}
+
+// ------------------------------------------------------------ the sync shapes
+
+/// A batch operation with the fields of `value` on top of an id, a base
+/// revision and an idem.
+fn batch_op(value: Value) -> BatchOpJson {
+    let mut base = json!({
+        "id": hex16::encode(&[9; 16]),
+        "base_rev": 1,
+        "idem": hex16::encode(&[7; 16]),
+    });
+    base.as_object_mut()
+        .unwrap()
+        .extend(value.as_object().unwrap().clone());
+    serde_json::from_value(base).unwrap()
+}
+
+/// The names of the fields of an object.
+fn keys(value: &Value) -> BTreeSet<&str> {
+    value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// Whether a `null` is anywhere in `value`.
+fn has_null(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Array(items) => items.iter().any(has_null),
+        Value::Object(fields) => fields.values().any(has_null),
+        _ => false,
+    }
+}
+
+#[test]
+fn m2_fixtures_roundtrip_byte_for_byte() {
+    let all = fixtures();
+    let m2: Vec<&(String, String)> = all
+        .iter()
+        .filter(|(_, shape)| M2_SHAPES.contains(&shape.as_str()))
+        .collect();
+    let names: BTreeSet<&str> = m2.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        BTreeSet::from([
+            "batch_req.json",
+            "batch_res.json",
+            "checkpoint_put_req.json",
+            "checkpoint_put_res.json",
+            "checkpoint_stale_res.json",
+            "items_res.json",
+            "items_res.last.json",
+            "sync_event.json",
+        ])
+    );
+    for (name, shape) in m2 {
+        let text = read(name);
+        let text = text.trim_end_matches('\n');
+        assert_eq!(
+            round_trip(shape, text).unwrap_or_else(|e| panic!("{name}: {e}")),
+            text,
+            "{name} changes when it is read and written"
+        );
+        assert_eq!(check_step(shape, text), Ok(()), "{name}");
+    }
+}
+
+#[test]
+fn a_checkpoint_upload_has_whole_sorted_entries_and_the_digest_of_them() {
+    let upload: CheckpointJson = parse("checkpoint_put_req.json");
+    let entries = &upload.entries;
+    assert_eq!(entries.len() % CHECKPOINT_ENTRY_LEN, 0);
+    assert!(!entries.is_empty() && entries.len() <= MAX_CHECKPOINT_ENTRIES * CHECKPOINT_ENTRY_LEN);
+    assert_eq!(upload.digest[..], Sha256::digest(entries)[..]);
+    let mut last: Option<&[u8]> = None;
+    for entry in entries.chunks(CHECKPOINT_ENTRY_LEN) {
+        let (id, rest) = entry.split_at(16);
+        assert!(last.is_none_or(|before| before < id), "ids rise strictly");
+        last = Some(id);
+        let rev = u64::from_be_bytes(rest[..8].try_into().unwrap());
+        assert!(rev >= 1, "a revision starts at 1");
+    }
+    assert_eq!(
+        (MAX_BATCH_OPS, MAX_BATCH_BYTES, CHECKPOINT_ENTRY_LEN),
+        (100, 6 * 1024 * 1024, 56)
+    );
+}
+
+#[test]
+fn batch_op_resurrect_is_accepted_only_with_a_live_body() {
+    let blob = b64url::encode(&[1, 1, 1, 9, 9]);
+    let tag = b64url::encode(&[3; 32]);
+    let tomb = b64url::encode(&[4; 40]);
+    let resurrects = |op: &BatchOpJson| match op.validate().unwrap() {
+        BatchOpForm::Live { resurrect, .. } => resurrect,
+        BatchOpForm::Deleted { .. } => panic!("a live row is not a tombstone"),
+    };
+    // A live row may ask; `false` and a left-out field are the same.
+    assert!(resurrects(&batch_op(
+        json!({ "blob": blob, "tag": tag, "resurrect": true })
+    )));
+    assert!(!resurrects(&batch_op(
+        json!({ "blob": blob, "tag": tag, "resurrect": false })
+    )));
+    assert!(!resurrects(&batch_op(json!({ "blob": blob, "tag": tag }))));
+    let fixture: BatchReq = parse("batch_req.json");
+    assert!(resurrects(&fixture.ops[1]));
+    assert_eq!(fixture.ops[1].resurrect, Some(true));
+    // A tombstone may not.
+    assert_eq!(
+        batch_op(json!({ "deleted": true, "tomb": tomb, "resurrect": true })).validate(),
+        Err(WireError::Field("resurrect"))
+    );
+    match batch_op(json!({ "deleted": true, "tomb": tomb, "resurrect": false }))
+        .validate()
+        .unwrap()
+    {
+        BatchOpForm::Deleted { tomb } => assert_eq!(tomb, &[4; 40][..]),
+        BatchOpForm::Live { .. } => panic!("a tombstone is not live"),
+    }
+    assert!(matches!(
+        fixture.ops[2].validate(),
+        Ok(BatchOpForm::Deleted { .. })
+    ));
+}
+
+#[test]
+fn batch_req_rejects_zero_and_101_ops_unknown_fields_and_an_op_with_both_forms() {
+    let fixture: BatchReq = parse("batch_req.json");
+    assert_eq!(fixture.validate(), Ok(()));
+    assert!(fixture.ops.iter().all(|op| op.validate().is_ok()));
+
+    // The number of operations: 1 to 100.
+    let with_ops = |n: usize| BatchReq {
+        ops: (0..n).map(|_| fixture.ops[0].clone()).collect(),
+    };
+    assert_eq!(with_ops(0).validate(), Err(WireError::Field("ops")));
+    assert_eq!(with_ops(1).validate(), Ok(()));
+    assert_eq!(with_ops(MAX_BATCH_OPS).validate(), Ok(()));
+    assert_eq!(
+        with_ops(MAX_BATCH_OPS + 1).validate(),
+        Err(WireError::Field("ops"))
+    );
+
+    // Unknown fields, in the batch and in an operation.
+    let base = json_of("batch_req.json");
+    let mut value = base.clone();
+    value["x"] = json!(1);
+    assert!(serde_json::from_value::<BatchReq>(value).is_err());
+    let mut value = base.clone();
+    value["ops"][0]["x"] = json!(1);
+    assert!(serde_json::from_value::<BatchReq>(value).is_err());
+    // An operation needs its item id, its base revision and its idem.
+    for field in ["id", "idem", "base_rev"] {
+        let mut value = base.clone();
+        value["ops"][0].as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<BatchReq>(value).is_err(),
+            "{field}"
+        );
+    }
+
+    // An operation with both forms, or with neither, is refused as one op.
+    let blob = b64url::encode(&[1, 1, 1, 9, 9]);
+    let tag = b64url::encode(&[3; 32]);
+    let tomb = b64url::encode(&[4; 40]);
+    for (label, fields) in [
+        ("both", json!({ "blob": blob, "tag": tag, "tomb": tomb })),
+        (
+            "all four",
+            json!({ "blob": blob, "tag": tag, "deleted": true, "tomb": tomb }),
+        ),
+        ("neither", json!({})),
+        ("deleted only", json!({ "deleted": true })),
+        ("tomb only", json!({ "tomb": tomb })),
+        ("blob only", json!({ "blob": blob })),
+        (
+            "deleted false with a tomb",
+            json!({ "deleted": false, "tomb": tomb }),
+        ),
+    ] {
+        let op = batch_op(fields);
+        assert!(op.validate().is_err(), "{label}");
+        // The count is fine; the bad operation is answered in its own place.
+        let request = BatchReq {
+            ops: vec![fixture.ops[0].clone(), op],
+        };
+        assert_eq!(request.validate(), Ok(()), "{label}");
+    }
+}
+
+#[test]
+fn batch_result_has_exactly_one_form_and_no_null_fields() {
+    let live_conflict = ConflictRes {
+        current_rev: 4,
+        blob: Some(vec![1, 1, 1, 9]),
+        tag: Some([3; 32]),
+        deleted: false,
+    };
+    let deleted_conflict = ConflictRes {
+        current_rev: 5,
+        blob: None,
+        tag: None,
+        deleted: true,
+    };
+    let stored = vec!["status", "rev", "seq", "replayed"];
+    let refused = vec!["status", "error"];
+    let made = [
+        (BatchResultJson::stored(2, 5, false), 200, stored.clone()),
+        (BatchResultJson::stored(3, 6, true), 200, stored),
+        (
+            BatchResultJson::conflict(live_conflict),
+            409,
+            vec!["status", "current_rev", "blob", "tag", "deleted"],
+        ),
+        (
+            BatchResultJson::conflict(deleted_conflict),
+            409,
+            vec!["status", "current_rev", "deleted"],
+        ),
+        (BatchResultJson::refused("idem_reuse"), 422, refused.clone()),
+        (
+            BatchResultJson::refused("bad_request"),
+            400,
+            refused.clone(),
+        ),
+        (BatchResultJson::refused("busy"), 503, refused.clone()),
+        (BatchResultJson::refused("tombstone_invalid"), 422, refused),
+    ];
+    for (result, status, fields) in &made {
+        assert_eq!(result.validate(), Ok(()), "{status} {fields:?}");
+        assert_eq!(result.status, *status);
+        let value = serde_json::to_value(result).unwrap();
+        assert!(!has_null(&value), "{value}");
+        assert_eq!(
+            keys(&value),
+            fields.iter().copied().collect::<BTreeSet<&str>>(),
+            "{value}"
+        );
+        // It reads back as it was written.
+        let back: BatchResultJson = serde_json::from_value(value).unwrap();
+        assert!(back == *result);
+    }
+    // The error of a refusal is the code.
+    assert_eq!(
+        BatchResultJson::refused("busy").error.as_deref(),
+        Some("busy")
+    );
+
+    // The results of the fixture have one form each and no null.
+    let fixture: BatchRes = parse("batch_res.json");
+    assert_eq!(fixture.results.len(), 6);
+    assert!(fixture.results.iter().all(|r| r.validate().is_ok()));
+    assert!(!has_null(&json_of("batch_res.json")));
+
+    // A result that mixes forms, or has a field that is not its form's, is refused.
+    let bad = |value: Value| {
+        serde_json::from_value::<BatchResultJson>(value)
+            .unwrap()
+            .validate()
+            .is_err()
+    };
+    assert!(bad(json!({ "status": 200 })));
+    assert!(bad(json!({ "status": 200, "rev": 2, "seq": 5 })));
+    assert!(bad(
+        json!({ "status": 409, "rev": 2, "seq": 5, "replayed": false })
+    ));
+    assert!(bad(
+        json!({ "status": 200, "rev": 2, "seq": 5, "replayed": false, "error": "internal" })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "current_rev": 4, "deleted": false })
+    ));
+    assert!(bad(
+        json!({ "status": 409, "current_rev": 4, "deleted": true, "blob": "AAAA" })
+    ));
+    assert!(bad(
+        json!({ "status": 200, "current_rev": 4, "deleted": true })
+    ));
+    assert!(bad(json!({ "status": 200, "error": "internal" })));
+    assert!(bad(json!({ "status": 422, "error": "" })));
+    assert!(bad(
+        json!({ "status": 422, "error": "idem_reuse", "rev": 2 })
+    ));
+    // A revision starts at 1.
+    assert!(bad(
+        json!({ "status": 200, "rev": 0, "seq": 5, "replayed": false })
+    ));
+    // A refusal has one of the codes and the status of that code.
+    assert!(bad(json!({ "status": 400, "error": "idem_reuse" })));
+    assert!(bad(json!({ "status": 422, "error": "bad_request" })));
+    assert!(bad(json!({ "status": 400, "error": "not_a_code" })));
+    assert!(bad(json!({ "status": 500, "error": "not_a_code" })));
+    // 409 is the conflict form, so no refusal has it, whatever the code.
+    assert!(bad(json!({ "status": 409, "error": "conflict" })));
+    assert!(bad(json!({ "status": 409, "error": "checkpoint_stale" })));
+    assert!(bad(
+        json!({ "status": 409, "error": "registration_closed" })
+    ));
+    // Every other code is a good refusal with its own status.
+    for code in ERROR_CODES {
+        let status = ferret_server::error::status_of(code).as_u16();
+        let refusal: BatchResultJson =
+            serde_json::from_value(json!({ "status": status, "error": code })).unwrap();
+        assert_eq!(refusal.validate().is_ok(), status != 409, "{code}");
+    }
+}
+
+#[test]
+fn batch_res_has_one_to_100_valid_results() {
+    let one = BatchResultJson::stored(2, 5, false);
+    let with = |n: usize| BatchRes {
+        results: vec![one.clone(); n],
+    };
+    assert_eq!(with(0).validate(), Err(WireError::Field("results")));
+    assert_eq!(with(1).validate(), Ok(()));
+    assert_eq!(with(MAX_BATCH_OPS).validate(), Ok(()));
+    assert_eq!(
+        with(MAX_BATCH_OPS + 1).validate(),
+        Err(WireError::Field("results"))
+    );
+    let mut mixed = with(2);
+    mixed.results[1].error = Some("internal".to_owned());
+    assert!(mixed.validate().is_err());
+    assert_eq!(parse::<BatchRes>("batch_res.json").validate(), Ok(()));
+}
+
+#[test]
+fn null_counts_as_absent_for_batch_ops() {
+    let live = json!({
+        "id": hex16::encode(&[9; 16]),
+        "base_rev": 1,
+        "blob": b64url::encode(&[1, 1, 1, 9]),
+        "tag": b64url::encode(&[3; 32]),
+        "deleted": null,
+        "tomb": null,
+        "idem": hex16::encode(&[7; 16]),
+        "resurrect": null,
+    });
+    let op: BatchOpJson = serde_json::from_value(live).unwrap();
+    assert_eq!(
+        (op.deleted, op.tomb.as_ref(), op.resurrect),
+        (None, None, None)
+    );
+    assert!(matches!(
+        op.validate(),
+        Ok(BatchOpForm::Live {
+            resurrect: false,
+            ..
+        })
+    ));
+    // Written back, the nulls are left out.
+    let text = serde_json::to_string(&op).unwrap();
+    assert!(!text.contains("null"), "{text}");
+
+    let gone = json!({
+        "id": hex16::encode(&[9; 16]),
+        "base_rev": 2,
+        "blob": null,
+        "tag": null,
+        "deleted": true,
+        "tomb": b64url::encode(&[4; 40]),
+        "idem": hex16::encode(&[7; 16]),
+        "resurrect": null,
+    });
+    let op: BatchOpJson = serde_json::from_value(gone).unwrap();
+    assert!(matches!(op.validate(), Ok(BatchOpForm::Deleted { .. })));
+    assert!(!serde_json::to_string(&op).unwrap().contains("null"));
+}
+
+#[test]
+fn items_res_next_after_is_32_lower_hex_or_absent() {
+    let page: ItemsRes = parse("items_res.json");
+    let value = json_of("items_res.json");
+    let next = value["next_after"].as_str().unwrap();
+    assert_eq!(next.len(), 32);
+    assert!(next.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+    assert_eq!(page.next_after, Some(hex16::decode(next).unwrap()));
+    assert!(page.has_more);
+    // The last page leaves it out; written back, the field is not there.
+    let last: ItemsRes = parse("items_res.last.json");
+    assert_eq!(last.next_after, None);
+    assert!(!last.has_more);
+    assert!(json_of("items_res.last.json")["next_after"].is_null());
+    assert!(!serde_json::to_string(&last).unwrap().contains("next_after"));
+    // Anything else is refused.
+    for bad in [
+        next.to_uppercase(),
+        next[1..].to_string(),
+        format!("{next}0"),
+        String::new(),
+        format!("0x{}", &next[2..]),
+    ] {
+        let mut changed = value.clone();
+        changed["next_after"] = json!(bad);
+        assert!(
+            serde_json::from_value::<ItemsRes>(changed).is_err(),
+            "{bad:?}"
+        );
+    }
+    let mut number = value.clone();
+    number["next_after"] = json!(5);
+    assert!(serde_json::from_value::<ItemsRes>(number).is_err());
+    // The page holds changes the same way /changes does.
+    assert_eq!(page.items.len(), 2);
+    assert!(page.items.iter().any(|row| row.deleted));
+    // `next_after` is there exactly when `has_more` is true.
+    assert_eq!(page.validate(), Ok(()));
+    assert_eq!(last.validate(), Ok(()));
+    let mut more_without_next = page.clone();
+    more_without_next.next_after = None;
+    assert!(more_without_next.validate().is_err());
+    let mut next_on_the_last = last.clone();
+    next_on_the_last.next_after = page.next_after;
+    assert!(next_on_the_last.validate().is_err());
+}
+
+#[test]
+fn sync_event_payload_is_seq_only() {
+    let event: SyncEventJson = parse("sync_event.json");
+    assert_eq!(event.seq, 7);
+    assert_eq!(keys(&json_of("sync_event.json")), BTreeSet::from(["seq"]));
+    assert_eq!(
+        serde_json::to_string(&SyncEventJson { seq: 12 }).unwrap(),
+        r#"{"seq":12}"#
+    );
+    for bad in [
+        r#"{"seq":7,"vault":"x"}"#,
+        r#"{"seq":7,"x":1}"#,
+        r#"{}"#,
+        r#"{"seq":"7"}"#,
+        r#"{"seq":-1}"#,
+        r#"{"seq":9007199254740992}"#,
+        r#"{"seq":1.5}"#,
+    ] {
+        assert!(serde_json::from_str::<SyncEventJson>(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn checkpoint_answers_are_the_seq_and_the_stale_code() {
+    let stored: CheckpointPutRes = parse("checkpoint_put_res.json");
+    assert_eq!(stored.seq, 7);
+    let stale: CheckpointStaleRes = parse("checkpoint_stale_res.json");
+    assert_eq!(
+        (stale.error.as_str(), stale.stored_seq),
+        ("checkpoint_stale", 9)
+    );
+    assert_eq!(CheckpointStaleRes::new(9), stale);
+    assert!(ERROR_CODES.contains(&stale.error.as_str()));
+    // Only that code, and only those two fields.
+    for bad in [
+        r#"{"error":"conflict","stored_seq":9}"#,
+        r#"{"error":"","stored_seq":9}"#,
+        r#"{"error":"checkpoint_stale"}"#,
+        r#"{"error":"checkpoint_stale","stored_seq":9,"x":1}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<CheckpointStaleRes>(bad).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn new_codes_have_their_status() {
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(&read("error_statuses.json")).unwrap();
+    for (code, status) in [
+        ("busy", 503),
+        ("checkpoint_stale", 409),
+        ("checkpoint_invalid", 422),
+    ] {
+        assert!(ERROR_CODES.contains(&code), "{code}");
+        assert_eq!(ferret_server::error::status_of(code).as_u16(), status);
+        assert_eq!(ApiError::coded(code).status.as_u16(), status);
+        assert_eq!(golden[code], status, "{code} in error_statuses.json");
+    }
+    // They come after the codes of the first version, so that list is unchanged.
+    let at = |code: &str| ERROR_CODES.iter().position(|c| *c == code).unwrap();
+    assert!(at("gone") < at("busy") && at("busy") < at("checkpoint_stale"));
+    assert!(at("checkpoint_stale") < at("checkpoint_invalid"));
+}
+
+#[test]
+fn invalid_cases_are_refused_the_same_way_in_rust_and_js() {
+    // `web/test/unit/wire.test.mjs` runs the same cases of the same file under
+    // the same name; both sides refuse each at its layer with its code.
+    let cases: Vec<Invalid> = parse("invalid.json");
+    let m2: Vec<&Invalid> = cases
+        .iter()
+        .filter(|case| M2_SHAPES.contains(&case.shape.as_str()))
+        .collect();
+    assert!(m2.len() >= 100, "found only {} cases", m2.len());
+    for case in &m2 {
+        assert_refused(case);
+    }
+    // Every new shape has cases, and the two with a second step have it at
+    // both layers.
+    for shape in M2_SHAPES {
+        assert!(m2.iter().any(|case| case.shape == *shape), "{shape}");
+    }
+    for shape in ["batch_req", "batch_res"] {
+        assert!(
+            m2.iter()
+                .any(|case| case.shape == shape && case.layer == "validate"),
+            "{shape}"
+        );
+    }
+    assert!(m2.iter().any(|case| case.error == "tombstone_invalid"));
+}
+
+#[test]
+fn debug_of_the_new_types_is_redacted() {
+    let batch: BatchReq = parse("batch_req.json");
+    let result: BatchRes = parse("batch_res.json");
+    let upload: CheckpointJson = parse("checkpoint_put_req.json");
+    let page: ItemsRes = parse("items_res.json");
+    let event: SyncEventJson = parse("sync_event.json");
+    let stored: CheckpointPutRes = parse("checkpoint_put_res.json");
+    let stale: CheckpointStaleRes = parse("checkpoint_stale_res.json");
+    for (shown, expected) in [
+        (format!("{batch:?}"), "BatchReq([redacted])"),
+        (format!("{:?}", batch.ops[0]), "BatchOpJson([redacted])"),
+        (format!("{result:?}"), "BatchRes([redacted])"),
+        (
+            format!("{:?}", result.results[2]),
+            "BatchResultJson([redacted])",
+        ),
+        (format!("{upload:?}"), "CheckpointJson([redacted])"),
+        (format!("{page:?}"), "ItemsRes([redacted])"),
+        (format!("{event:?}"), "SyncEventJson([redacted])"),
+        (format!("{stored:?}"), "CheckpointPutRes([redacted])"),
+        (format!("{stale:?}"), "CheckpointStaleRes([redacted])"),
+        (
+            format!("{:?}", batch.ops[0].validate().unwrap()),
+            "BatchOpForm::Live([redacted])",
+        ),
+        (
+            format!("{:?}", batch.ops[2].validate().unwrap()),
+            "BatchOpForm::Deleted([redacted])",
+        ),
+    ] {
+        assert_eq!(shown, expected);
+    }
 }

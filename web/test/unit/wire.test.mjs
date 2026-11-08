@@ -11,9 +11,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SERVER_HEADERS_JSON } from "../serve.mjs";
-import { files } from "../../../crates/ferret-server/tests/fixtures/wire/generate.mjs";
+import { files, STATUS_OF } from "../../../crates/ferret-server/tests/fixtures/wire/generate.mjs";
 import { b64u, hex16, WireError } from "../../src/b64.mjs";
-import { checkStep, encodeWire, encodeWireBytes, handoffCode, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
+import { checkStep, encodeWire, encodeWireBytes, ERROR_STATUS, handoffCode, MAX_BATCH_OPS, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
 const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json"];
@@ -311,4 +311,270 @@ test("a_conflict_answer_is_a_live_row_or_a_deleted_one", () => {
   ]) {
     assert.equal(refusalOf(() => checkStep("conflict_res", bad)), "bad_request");
   }
+});
+
+// ------------------------------------------------------- the sync shapes
+
+const M2_SHAPES = [
+  "batch_req", "batch_res", "checkpoint_put_req", "checkpoint_put_res", "checkpoint_stale_res", "items_res", "sync_event",
+];
+const m2Fixtures = () => fixtures().filter((name) => M2_SHAPES.includes(kindOf(name)));
+
+/** Whether a `null` is anywhere in `value`. */
+const hasNull = (value) =>
+  value === null || (typeof value === "object" && Object.values(value).some((item) => hasNull(item)));
+
+test("m2_fixtures_decode_and_reencode_identically", () => {
+  assert.deepEqual(m2Fixtures(), [
+    "batch_req.json", "batch_res.json", "checkpoint_put_req.json", "checkpoint_put_res.json",
+    "checkpoint_stale_res.json", "items_res.json", "items_res.last.json", "sync_event.json",
+  ]);
+  for (const name of m2Fixtures()) {
+    const kind = kindOf(name);
+    const text = read(name);
+    const value = readWire(kind, text);
+    assert.equal(`${JSON.stringify(value)}\n`, text, name);
+    assert.equal(`${encodeWire(kind, value)}\n`, text, name);
+    checkStep(kind, value);
+  }
+  for (const kind of M2_SHAPES) assert.ok(kind in SHAPES, kind);
+});
+
+test("a_checkpoint_upload_has_whole_sorted_entries_and_the_digest_of_them", () => {
+  const upload = readWire("checkpoint_put_req", read("checkpoint_put_req.json"));
+  const entries = decode(upload.entries);
+  assert.equal(entries.length % 56, 0);
+  assert.ok(entries.length > 0 && entries.length <= 50_000 * 56);
+  assert.equal(decode(upload.digest).toString("hex"), createHash("sha256").update(entries).digest("hex"));
+  let last = null;
+  for (let at = 0; at < entries.length; at += 56) {
+    const entryId = entries.subarray(at, at + 16);
+    assert.ok(last === null || Buffer.compare(last, entryId) < 0, "ids rise strictly");
+    last = entryId;
+    assert.ok(entries.readBigUInt64BE(at + 16) >= 1n, "a revision starts at 1");
+  }
+  assert.equal(MAX_BATCH_OPS, 100);
+});
+
+test("batch_op_resurrect_is_accepted_only_with_a_live_body", () => {
+  const batch = readWire("batch_req", read("batch_req.json"));
+  const [live, resurrecting, gone] = batch.ops;
+  assert.equal(live.resurrect, undefined);
+  assert.equal(resurrecting.resurrect, true);
+  assert.ok(resurrecting.blob && resurrecting.tag);
+  for (const op of [live, resurrecting, { ...live, resurrect: false }, gone, { ...gone, resurrect: false }]) {
+    checkStep("batch_req", { ops: [op] });
+  }
+  for (const bad of [
+    { ...gone, resurrect: true },
+    { id: gone.id, base_rev: 1, idem: gone.idem, deleted: true, tomb: gone.tomb, resurrect: true },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("batch_req", { ops: [live, bad] })), "bad_request");
+    assert.equal(refusalOf(() => encodeWire("batch_req", { ops: [bad] })), "bad_request");
+  }
+});
+
+test("batch_req_rejects_zero_and_101_ops_unknown_fields_and_an_op_with_both_forms", () => {
+  const batch = readWire("batch_req", read("batch_req.json"));
+  const [live, , gone] = batch.ops;
+  const ops = (n) => ({ ops: Array.from({ length: n }, () => live) });
+  checkStep("batch_req", batch);
+  checkStep("batch_req", ops(1));
+  checkStep("batch_req", ops(MAX_BATCH_OPS));
+  for (const n of [0, MAX_BATCH_OPS + 1]) {
+    assert.equal(refusalOf(() => checkStep("batch_req", ops(n))), "bad_request", `${n} operations`);
+  }
+  // Unknown fields, in the batch and in an operation; a missing field.
+  assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ...batch, x: 1 })), "bad_request");
+  assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ops: [{ ...live, x: 1 }] })), "bad_request");
+  for (const field of ["id", "idem", "base_rev"]) {
+    const { [field]: dropped, ...without } = live;
+    assert.ok(dropped !== undefined);
+    assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ops: [without] })), "bad_request", field);
+  }
+  assert.equal(refusalOf(() => shape(SHAPES.batch_req, {})), "bad_request");
+  assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ops: null })), "bad_request");
+  // An operation with both forms, or with neither.
+  for (const bad of [
+    { ...live, tomb: gone.tomb },
+    { ...live, tomb: gone.tomb, deleted: true },
+    { id: live.id, base_rev: 1, idem: live.idem },
+    { id: live.id, base_rev: 1, idem: live.idem, deleted: true },
+    { id: live.id, base_rev: 1, idem: live.idem, tomb: gone.tomb },
+    { id: live.id, base_rev: 1, idem: live.idem, blob: live.blob },
+    { ...gone, deleted: false },
+    { ...gone, blob: live.blob, tag: live.tag },
+  ]) {
+    shape(SHAPES.batch_req, { ops: [bad] }); // it reads
+    assert.equal(refusalOf(() => checkStep("batch_req", { ops: [live, bad] })), "bad_request");
+  }
+  // A `null` is a field that is left out.
+  checkStep("batch_req", { ops: [{ ...live, tomb: null, deleted: null, resurrect: null }] });
+});
+
+test("batch_result_has_exactly_one_form_and_no_null_fields", () => {
+  const fixture = readWire("batch_res", read("batch_res.json"));
+  assert.equal(fixture.results.length, 6);
+  assert.ok(!hasNull(fixture));
+  const forms = {
+    stored: ["status", "rev", "seq", "replayed"],
+    conflictLive: ["status", "current_rev", "blob", "tag", "deleted"],
+    conflictDeleted: ["status", "current_rev", "deleted"],
+    refused: ["status", "error"],
+  };
+  const expected = ["stored", "stored", "conflictLive", "conflictDeleted", "refused", "refused"];
+  fixture.results.forEach((result, at) => {
+    assert.deepEqual(Object.keys(result), forms[expected[at]], `result ${at}`);
+  });
+  assert.deepEqual(fixture.results.map((r) => r.status), [200, 200, 409, 409, 422, 400]);
+  checkStep("batch_res", fixture);
+  const stored0 = fixture.results[0];
+  assert.equal(refusalOf(() => checkStep("batch_res", { results: [] })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("batch_res", { results: Array.from({ length: 101 }, () => stored0) })), "bad_request");
+  checkStep("batch_res", { results: Array.from({ length: 100 }, () => stored0) });
+
+  const [stored, , conflictLive, conflictDeleted, refused] = fixture.results;
+  for (const bad of [
+    { status: 200 },
+    { status: 200, rev: 2, seq: 5 },
+    { ...stored, status: 409 },
+    { ...stored, status: 201 },
+    { ...stored, error: "internal" },
+    { ...stored, current_rev: 2 },
+    { ...conflictLive, status: 200 },
+    { ...conflictLive, tag: undefined },
+    { ...conflictLive, blob: undefined },
+    { status: 409, current_rev: 4, deleted: false },
+    { ...conflictDeleted, blob: conflictLive.blob },
+    { ...conflictLive, deleted: true },
+    { status: 409, current_rev: 4, blob: conflictLive.blob, tag: conflictLive.tag },
+    { status: 409, deleted: true },
+    { ...conflictDeleted, rev: 2 },
+    { ...conflictDeleted, error: "conflict" },
+    { ...refused, status: 200 },
+    { ...refused, status: 399 },
+    { ...refused, status: 600 },
+    { ...refused, error: "" },
+    { ...refused, rev: 2 },
+    { ...refused, deleted: false },
+    { ...stored, rev: 0 },
+    { status: 400, error: "idem_reuse" },
+    { status: 422, error: "bad_request" },
+    { status: 400, error: "not_a_code" },
+    { status: 500, error: "not_a_code" },
+    { status: 409, error: "conflict" },
+    { status: 409, error: "checkpoint_stale" },
+    { status: 409, error: "registration_closed" },
+  ]) {
+    assert.equal(refusalOf(() => checkStep("batch_res", { results: [stored, bad] })), "bad_request", JSON.stringify(bad));
+  }
+  // A `null` is a field that is left out.
+  checkStep("batch_res", { results: [{ ...stored, error: null, current_rev: null }] });
+  // Every code with a status other than 409 is a good refusal with its own status.
+  for (const [code, status] of Object.entries(ERROR_STATUS)) {
+    const run = () => checkStep("batch_res", { results: [{ status, error: code }] });
+    if (status === 409) assert.equal(refusalOf(run), "bad_request", code);
+    else run();
+  }
+});
+
+test("items_res_next_after_is_32_lower_hex_or_absent", () => {
+  const page = readWire("items_res", read("items_res.json"));
+  assert.match(page.next_after, /^[0-9a-f]{32}$/);
+  assert.equal(page.has_more, true);
+  assert.equal(page.items.length, 2);
+  assert.ok(page.items.some((row) => row.deleted));
+  const last = readWire("items_res", read("items_res.last.json"));
+  assert.equal("next_after" in last, false);
+  assert.equal(last.has_more, false);
+  // `next_after` is there exactly when `has_more` is true.
+  checkStep("items_res", page);
+  checkStep("items_res", last);
+  checkStep("items_res", { ...last, next_after: null });
+  assert.equal(refusalOf(() => checkStep("items_res", { ...page, next_after: undefined })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("items_res", { ...page, next_after: null })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("items_res", { ...last, next_after: page.next_after })), "bad_request");
+  shape(SHAPES.items_res, { ...last, next_after: null });
+  for (const bad of [
+    page.next_after.toUpperCase(),
+    page.next_after.slice(1),
+    `${page.next_after}0`,
+    "",
+    `0x${page.next_after.slice(2)}`,
+    5,
+  ]) {
+    assert.equal(refusalOf(() => shape(SHAPES.items_res, { ...page, next_after: bad })), "bad_request", String(bad));
+  }
+});
+
+test("sync_event_payload_is_seq_only", () => {
+  const event = readWire("sync_event", read("sync_event.json"));
+  assert.deepEqual(Object.keys(event), ["seq"]);
+  assert.equal(event.seq, 7);
+  for (const bad of [
+    '{"seq":7,"vault":"x"}', '{"seq":7,"x":1}', "{}", '{"seq":"7"}', '{"seq":-1}', '{"seq":9007199254740992}', '{"seq":1.5}',
+  ]) {
+    assert.equal(refusalOf(() => readWire("sync_event", bad)), "bad_request", bad);
+  }
+});
+
+test("checkpoint_answers_are_the_seq_and_the_stale_code", () => {
+  assert.equal(readWire("checkpoint_put_res", read("checkpoint_put_res.json")).seq, 7);
+  const stale = readWire("checkpoint_stale_res", read("checkpoint_stale_res.json"));
+  assert.deepEqual({ ...stale }, { error: "checkpoint_stale", stored_seq: 9 });
+  assert.ok(errorCodes().includes(stale.error));
+  for (const bad of [
+    '{"error":"conflict","stored_seq":9}',
+    '{"error":"","stored_seq":9}',
+    '{"error":"checkpoint_stale"}',
+    '{"error":"checkpoint_stale","stored_seq":9,"x":1}',
+  ]) {
+    assert.equal(refusalOf(() => readWire("checkpoint_stale_res", bad)), "bad_request", bad);
+  }
+});
+
+test("new_codes_have_their_status", () => {
+  const statuses = parseFile("error_statuses.json");
+  const codes = errorCodes();
+  for (const [code, status] of [["busy", 503], ["checkpoint_stale", 409], ["checkpoint_invalid", 422]]) {
+    assert.ok(codes.includes(code), code);
+    assert.equal(statuses[code], status, code);
+    assert.equal(STATUS_OF[code], status, code);
+  }
+  // They come after the codes of the first version, so that list is unchanged.
+  assert.deepEqual(codes.slice(-4), ["gone", "busy", "checkpoint_stale", "checkpoint_invalid"]);
+});
+
+test("error_statuses_json_matches_code_status", () => {
+  const statuses = parseFile("error_statuses.json");
+  const codes = errorCodes();
+  assert.deepEqual(Object.entries(statuses), codes.map((code) => [code, STATUS_OF[code]]));
+  assert.equal(Object.keys(STATUS_OF).length, codes.length, "no status for a code that is not listed");
+  // The copy the reader checks refusals against is the same table.
+  assert.deepEqual(Object.entries(ERROR_STATUS), Object.entries(statuses));
+  for (const [code, status] of Object.entries(statuses)) {
+    assert.ok(Number.isInteger(status) && status >= 400 && status <= 599, `${code}: ${status}`);
+  }
+});
+
+test("invalid_cases_are_refused_the_same_way_in_rust_and_js", () => {
+  const cases = parseFile("invalid.json").filter((c) => M2_SHAPES.includes(c.shape));
+  assert.ok(cases.length >= 100, `found only ${cases.length} cases`);
+  const codes = errorCodes();
+  for (const c of cases) {
+    const label = `${c.name} (${c.why})`;
+    assert.ok(codes.includes(c.error), label);
+    if (c.layer === "parse") {
+      assert.equal(refusalOf(() => readWire(c.shape, c.json)), c.error, label);
+    } else {
+      assert.equal(c.layer, "validate", label);
+      const value = readWire(c.shape, c.json); // reads without error
+      assert.equal(refusalOf(() => checkStep(c.shape, value)), c.error, label);
+    }
+  }
+  for (const kind of M2_SHAPES) assert.ok(cases.some((c) => c.shape === kind), kind);
+  for (const kind of ["batch_req", "batch_res"]) {
+    assert.ok(cases.some((c) => c.shape === kind && c.layer === "validate"), kind);
+  }
+  assert.ok(cases.some((c) => c.error === "tombstone_invalid"));
 });
