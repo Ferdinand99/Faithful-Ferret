@@ -1285,17 +1285,22 @@ impl BatchResultJson {
     }
 
     /// The result of an operation the server refused with `code`: the status
-    /// is the one of the code (see [`crate::error::status_of`]).
+    /// is the one of the code (see [`crate::error::status_of`]). The code must
+    /// be one of [`ERROR_CODES`] and not have the status 409, which always
+    /// means a conflict (a debug build panics otherwise).
     pub fn refused(code: &'static str) -> Self {
-        Self {
+        let result = Self {
             status: crate::error::status_of(code).as_u16(),
             error: Some(code.to_owned()),
             ..Self::BLANK
-        }
+        };
+        debug_assert!(result.validate().is_ok(), "{code:?} cannot be a refusal");
+        result
     }
 
     /// Checks that the result has exactly one form (see the type) with the
-    /// status that goes with it. Every failure is `bad_request`.
+    /// status that goes with it: 200 for stored, 409 for a conflict, and for a
+    /// refusal the status of its code. Every failure is `bad_request`.
     pub fn validate(&self) -> Result<(), WireError> {
         let has_stored = self.rev.is_some() || self.seq.is_some() || self.replayed.is_some();
         let has_conflict = self.current_rev.is_some()
@@ -1303,9 +1308,9 @@ impl BatchResultJson {
             || self.blob.is_some()
             || self.tag.is_some();
         let ok = match (has_stored, has_conflict, self.error.as_deref()) {
-            // Stored: all three fields, and 200.
+            // Stored: all three fields (a revision starts at 1), and 200.
             (true, false, None) => {
-                self.rev.is_some()
+                self.rev.is_some_and(|rev| rev >= 1)
                     && self.seq.is_some()
                     && self.replayed.is_some()
                     && self.status == 200
@@ -1323,8 +1328,13 @@ impl BatchResultJson {
                         None => false,
                     }
             }
-            // Refused: a client or server error with its code.
-            (false, false, Some(code)) => !code.is_empty() && (400..=599).contains(&self.status),
+            // Refused: one of the codes, with the status of that code. 409 is
+            // the conflict form, so a code with that status is never a refusal.
+            (false, false, Some(code)) => {
+                ERROR_CODES.contains(&code)
+                    && self.status != 409
+                    && self.status == crate::error::status_of(code).as_u16()
+            }
             _ => false,
         };
         if ok {
@@ -1342,6 +1352,18 @@ impl BatchResultJson {
 pub struct BatchRes {
     /// The results.
     pub results: Vec<BatchResultJson>,
+}
+
+impl BatchRes {
+    /// Checks the number of results (1 to [`MAX_BATCH_OPS`], one for each
+    /// operation of the request) and that each result is valid. Every
+    /// failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.results.is_empty() || self.results.len() > MAX_BATCH_OPS {
+            return Err(WireError::Field("results"));
+        }
+        self.results.iter().try_for_each(BatchResultJson::validate)
+    }
 }
 
 /// The `200` answer to `PUT /api/sync/checkpoint`.
@@ -1402,6 +1424,18 @@ pub struct ItemsRes {
     pub next_after: Option<[u8; 16]>,
     /// Whether more rows follow.
     pub has_more: bool,
+}
+
+impl ItemsRes {
+    /// Checks that `next_after` is there exactly when `has_more` is true: a
+    /// page with more behind it says where to go on, and the last page does
+    /// not. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.next_after.is_some() != self.has_more {
+            return Err(WireError::Field("next_after, has_more"));
+        }
+        Ok(())
+    }
 }
 
 /// The data of an event on `GET /api/sync/events` (`hello` and `sync`): the

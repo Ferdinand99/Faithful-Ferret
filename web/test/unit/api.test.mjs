@@ -328,7 +328,7 @@ test("api_handles_every_error_code_with_the_status_the_server_gives_it", async (
     assert.equal(error.code, code);
     assert.equal(error.terminal, TERMINAL.includes(status), `${code} (${status})`);
   }
-  // The 4xx codes the sync engine must not retry: everything except these.
+  // The codes the sync engine may retry: every code whose status is not terminal (this includes 5xx).
   const retryable = codes.filter((code) => !TERMINAL.includes(statuses[code]));
   assert.deepEqual(retryable, [
     "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone", "busy",

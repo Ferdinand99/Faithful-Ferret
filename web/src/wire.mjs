@@ -340,10 +340,27 @@ function checkBatchOp(op) {
 }
 
 /**
+ * The HTTP status of every error code, as the server's status table has it
+ * (`error_statuses.json` pins this copy; a test fails when they differ). A
+ * refused batch result carries a code and the status of that code.
+ * @type {Readonly<Record<string, number>>}
+ */
+export const ERROR_STATUS = Object.freeze({
+  unauthorized: 401, denied: 401, forbidden: 403, insecure_transport: 400, handoff_invalid: 400,
+  manifest_not_writable: 403, malformed_registration_request: 400, malformed_registration_record: 400,
+  malformed_ke1: 400, malformed_ke3: 400, malformed_login_id: 400, malformed_nonce: 400, malformed_proof: 400,
+  malformed_login_name: 400, malformed_recovery_key: 400, registration_closed: 409, throttled: 429,
+  profile_rejected: 422, unsupported_envelope: 422, tombstone_invalid: 422, too_large: 413, quota_exceeded: 413,
+  idem_reuse: 422, conflict: 409, protocol_header_missing: 400, forbidden_origin: 403, not_found: 404,
+  bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
+});
+
+/**
  * A result of a batch has one form and carries no field of another: stored
  * (200 with rev, seq and replayed), a conflict (409 with current_rev and
- * deleted, and blob and tag when the row is live) or refused (400 to 599 with
- * the error code).
+ * deleted, and blob and tag when the row is live) or refused (an error code
+ * with the status of that code; 409 is the conflict form, so a code with that
+ * status is never a refusal). A revision starts at 1.
  * @param {any} result
  */
 function checkBatchResult(result) {
@@ -354,12 +371,13 @@ function checkBatchResult(result) {
   if (Number(stored) + Number(conflict) + Number(refused) !== 1) bad();
   if (stored) {
     if (!(present(result, "rev") && present(result, "seq") && present(result, "replayed") && result.status === 200)) bad();
+    if (result.rev < 1) bad();
   } else if (conflict) {
     const rows = present(result, "blob") && present(result, "tag");
     const neither = !present(result, "blob") && !present(result, "tag");
     if (!present(result, "current_rev") || !present(result, "deleted") || result.status !== 409) bad();
     if (result.deleted ? !neither : !rows) bad();
-  } else if (result.error === "" || result.status < 400 || result.status > 599) {
+  } else if (!Object.hasOwn(ERROR_STATUS, result.error) || result.status === 409 || result.status !== ERROR_STATUS[result.error]) {
     bad();
   }
 }
@@ -378,7 +396,15 @@ export function checkStep(kind, value) {
     if (value.ops.length < 1 || value.ops.length > MAX_BATCH_OPS) refuse("a batch has 1 to 100 operations");
     for (const op of value.ops) checkBatchOp(op);
   }
-  if (kind === "batch_res") for (const result of value.results) checkBatchResult(result);
+  if (kind === "batch_res") {
+    if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
+    for (const result of value.results) checkBatchResult(result);
+  }
+  if (kind === "items_res") {
+    // `next_after` is there exactly when more rows follow.
+    const next = value.next_after !== undefined && value.next_after !== null;
+    if (next !== value.has_more) refuse("next_after is there exactly when has_more is true");
+  }
   if (kind === "conflict_res") {
     // The current row of an item: a live row has its blob and tag, a deleted one neither.
     const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;

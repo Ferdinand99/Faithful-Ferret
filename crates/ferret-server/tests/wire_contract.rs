@@ -749,11 +749,11 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
         }
         "batch_res" => {
             let answer: BatchRes = serde_json::from_str(text).unwrap();
-            answer
-                .results
-                .iter()
-                .try_for_each(BatchResultJson::validate)
-                .map_err(|e| e.code())
+            answer.validate().map_err(|e| e.code())
+        }
+        "items_res" => {
+            let page: ItemsRes = serde_json::from_str(text).unwrap();
+            page.validate().map_err(|e| e.code())
         }
         _ => Ok(()),
     }
@@ -1161,6 +1161,90 @@ fn batch_result_has_exactly_one_form_and_no_null_fields() {
     assert!(bad(
         json!({ "status": 422, "error": "idem_reuse", "rev": 2 })
     ));
+    // A revision starts at 1.
+    assert!(bad(
+        json!({ "status": 200, "rev": 0, "seq": 5, "replayed": false })
+    ));
+    // A refusal has one of the codes and the status of that code.
+    assert!(bad(json!({ "status": 400, "error": "idem_reuse" })));
+    assert!(bad(json!({ "status": 422, "error": "bad_request" })));
+    assert!(bad(json!({ "status": 400, "error": "not_a_code" })));
+    assert!(bad(json!({ "status": 500, "error": "not_a_code" })));
+    // 409 is the conflict form, so no refusal has it, whatever the code.
+    assert!(bad(json!({ "status": 409, "error": "conflict" })));
+    assert!(bad(json!({ "status": 409, "error": "checkpoint_stale" })));
+    assert!(bad(
+        json!({ "status": 409, "error": "registration_closed" })
+    ));
+    // Every other code is a good refusal with its own status.
+    for code in ERROR_CODES {
+        let status = ferret_server::error::status_of(code).as_u16();
+        let refusal: BatchResultJson =
+            serde_json::from_value(json!({ "status": status, "error": code })).unwrap();
+        assert_eq!(refusal.validate().is_ok(), status != 409, "{code}");
+    }
+}
+
+#[test]
+fn batch_res_has_one_to_100_valid_results() {
+    let one = BatchResultJson::stored(2, 5, false);
+    let with = |n: usize| BatchRes {
+        results: vec![one.clone(); n],
+    };
+    assert_eq!(with(0).validate(), Err(WireError::Field("results")));
+    assert_eq!(with(1).validate(), Ok(()));
+    assert_eq!(with(MAX_BATCH_OPS).validate(), Ok(()));
+    assert_eq!(
+        with(MAX_BATCH_OPS + 1).validate(),
+        Err(WireError::Field("results"))
+    );
+    let mut mixed = with(2);
+    mixed.results[1].error = Some("internal".to_owned());
+    assert!(mixed.validate().is_err());
+    assert_eq!(parse::<BatchRes>("batch_res.json").validate(), Ok(()));
+}
+
+#[test]
+fn null_counts_as_absent_for_batch_ops() {
+    let live = json!({
+        "id": hex16::encode(&[9; 16]),
+        "base_rev": 1,
+        "blob": b64url::encode(&[1, 1, 1, 9]),
+        "tag": b64url::encode(&[3; 32]),
+        "deleted": null,
+        "tomb": null,
+        "idem": hex16::encode(&[7; 16]),
+        "resurrect": null,
+    });
+    let op: BatchOpJson = serde_json::from_value(live).unwrap();
+    assert_eq!(
+        (op.deleted, op.tomb.as_ref(), op.resurrect),
+        (None, None, None)
+    );
+    assert!(matches!(
+        op.validate(),
+        Ok(BatchOpForm::Live {
+            resurrect: false,
+            ..
+        })
+    ));
+    // Written back, the nulls are left out.
+    let text = serde_json::to_string(&op).unwrap();
+    assert!(!text.contains("null"), "{text}");
+
+    let gone = json!({
+        "id": hex16::encode(&[9; 16]),
+        "base_rev": 2,
+        "blob": null,
+        "tag": null,
+        "deleted": true,
+        "tomb": b64url::encode(&[4; 40]),
+        "idem": hex16::encode(&[7; 16]),
+        "resurrect": null,
+    });
+    let op: BatchOpJson = serde_json::from_value(gone).unwrap();
+    assert!(matches!(op.validate(), Ok(BatchOpForm::Deleted { .. })));
+    assert!(!serde_json::to_string(&op).unwrap().contains("null"));
 }
 
 #[test]
@@ -1199,6 +1283,15 @@ fn items_res_next_after_is_32_lower_hex_or_absent() {
     // The page holds changes the same way /changes does.
     assert_eq!(page.items.len(), 2);
     assert!(page.items.iter().any(|row| row.deleted));
+    // `next_after` is there exactly when `has_more` is true.
+    assert_eq!(page.validate(), Ok(()));
+    assert_eq!(last.validate(), Ok(()));
+    let mut more_without_next = page.clone();
+    more_without_next.next_after = None;
+    assert!(more_without_next.validate().is_err());
+    let mut next_on_the_last = last.clone();
+    next_on_the_last.next_after = page.next_after;
+    assert!(next_on_the_last.validate().is_err());
 }
 
 #[test]

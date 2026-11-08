@@ -826,9 +826,20 @@ export function invalidCases() {
     ["refused with rev", { ...refused, rev: 2 }],
     ["refused with a blob", { ...refused, blob: conflictLive.blob }],
     ["refused with deleted", { ...refused, deleted: false }],
+    ["stored with rev 0", { ...stored, rev: 0 }],
+    ["refused with the status of another code", { status: 400, error: "idem_reuse" }],
+    ["refused with 422 for a 400 code", { status: 422, error: "bad_request" }],
+    ["refused with an unknown code", { status: 400, error: "not_a_code" }],
+    ["refused with an unknown code and status 500", { status: 500, error: "not_a_code" }],
+    ["refused with status 409 and the code conflict", { status: 409, error: "conflict" }],
+    ["refused with status 409 and the code checkpoint_stale", { status: 409, error: "checkpoint_stale" }],
+    ["refused with status 409 and the code registration_closed", { status: 409, error: "registration_closed" }],
   ]) {
-    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result is stored (200, rev, seq, replayed), a conflict (409, current_rev, deleted, and blob and tag for a live row) or refused (4xx or 5xx, error), and carries no field of another form");
+    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result is stored (200, rev, seq, replayed), a conflict (409, current_rev, deleted, and blob and tag for a live row) or refused (an error code with the status of that code, never 409), and carries no field of another form");
   }
+  const manyResults = (n) => text({ results: Array.from({ length: n }, (_, i) => ({ ...stored, rev: i + 1 })) });
+  validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");
+  validate("batch results: 101", "batch_res", manyResults(101), "a batch answer has 1 to 100 results");
 
   // A checkpoint upload, the answers, the listing and an event.
   parse("checkpoint_put_req digest 31 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { digest: b64("short digest", 31) }), "a digest is 32 bytes");
@@ -850,6 +861,8 @@ export function invalidCases() {
   parse("items_res without restore_epoch", "items_res", with_("items_res.json", { restore_epoch: undefined }), "restore_epoch is required");
   parse("items_res without has_more", "items_res", with_("items_res.json", { has_more: undefined }), "has_more is required");
   parse("items_res has_more is a string", "items_res", with_("items_res.json", { has_more: "true" }), "has_more is a boolean");
+  validate("items_res: more rows without next_after", "items_res", with_("items_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
+  validate("items_res: the last page with next_after", "items_res", with_("items_res.last.json", { next_after: listed()[1].id }), "next_after is there exactly when has_more is true");
   parse("items_res items holds a string", "items_res", with_("items_res.json", { items: ["x"] }), "an item is an object");
   parse("items_res as_of_seq 2^53", "items_res", with_("items_res.json", { as_of_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
   nested("items_res: unknown field in an item", "items_res", "items_res.json", ["items", 0], "an unknown field is refused inside a part");

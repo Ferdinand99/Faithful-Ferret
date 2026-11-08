@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { SERVER_HEADERS_JSON } from "../serve.mjs";
 import { files, STATUS_OF } from "../../../crates/ferret-server/tests/fixtures/wire/generate.mjs";
 import { b64u, hex16, WireError } from "../../src/b64.mjs";
-import { checkStep, encodeWire, encodeWireBytes, handoffCode, MAX_BATCH_OPS, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
+import { checkStep, encodeWire, encodeWireBytes, ERROR_STATUS, handoffCode, MAX_BATCH_OPS, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
 const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json"];
@@ -428,7 +428,10 @@ test("batch_result_has_exactly_one_form_and_no_null_fields", () => {
   });
   assert.deepEqual(fixture.results.map((r) => r.status), [200, 200, 409, 409, 422, 400]);
   checkStep("batch_res", fixture);
-  checkStep("batch_res", { results: [] });
+  const stored0 = fixture.results[0];
+  assert.equal(refusalOf(() => checkStep("batch_res", { results: [] })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("batch_res", { results: Array.from({ length: 101 }, () => stored0) })), "bad_request");
+  checkStep("batch_res", { results: Array.from({ length: 100 }, () => stored0) });
 
   const [stored, , conflictLive, conflictDeleted, refused] = fixture.results;
   for (const bad of [
@@ -454,11 +457,25 @@ test("batch_result_has_exactly_one_form_and_no_null_fields", () => {
     { ...refused, error: "" },
     { ...refused, rev: 2 },
     { ...refused, deleted: false },
+    { ...stored, rev: 0 },
+    { status: 400, error: "idem_reuse" },
+    { status: 422, error: "bad_request" },
+    { status: 400, error: "not_a_code" },
+    { status: 500, error: "not_a_code" },
+    { status: 409, error: "conflict" },
+    { status: 409, error: "checkpoint_stale" },
+    { status: 409, error: "registration_closed" },
   ]) {
     assert.equal(refusalOf(() => checkStep("batch_res", { results: [stored, bad] })), "bad_request", JSON.stringify(bad));
   }
   // A `null` is a field that is left out.
   checkStep("batch_res", { results: [{ ...stored, error: null, current_rev: null }] });
+  // Every code with a status other than 409 is a good refusal with its own status.
+  for (const [code, status] of Object.entries(ERROR_STATUS)) {
+    const run = () => checkStep("batch_res", { results: [{ status, error: code }] });
+    if (status === 409) assert.equal(refusalOf(run), "bad_request", code);
+    else run();
+  }
 });
 
 test("items_res_next_after_is_32_lower_hex_or_absent", () => {
@@ -470,6 +487,13 @@ test("items_res_next_after_is_32_lower_hex_or_absent", () => {
   const last = readWire("items_res", read("items_res.last.json"));
   assert.equal("next_after" in last, false);
   assert.equal(last.has_more, false);
+  // `next_after` is there exactly when `has_more` is true.
+  checkStep("items_res", page);
+  checkStep("items_res", last);
+  checkStep("items_res", { ...last, next_after: null });
+  assert.equal(refusalOf(() => checkStep("items_res", { ...page, next_after: undefined })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("items_res", { ...page, next_after: null })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("items_res", { ...last, next_after: page.next_after })), "bad_request");
   shape(SHAPES.items_res, { ...last, next_after: null });
   for (const bad of [
     page.next_after.toUpperCase(),
@@ -526,6 +550,8 @@ test("error_statuses_json_matches_code_status", () => {
   const codes = errorCodes();
   assert.deepEqual(Object.entries(statuses), codes.map((code) => [code, STATUS_OF[code]]));
   assert.equal(Object.keys(STATUS_OF).length, codes.length, "no status for a code that is not listed");
+  // The copy the reader checks refusals against is the same table.
+  assert.deepEqual(Object.entries(ERROR_STATUS), Object.entries(statuses));
   for (const [code, status] of Object.entries(statuses)) {
     assert.ok(Number.isInteger(status) && status >= 400 && status <= 599, `${code}: ${status}`);
   }
