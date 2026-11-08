@@ -65,6 +65,9 @@ export function makeRoot(extra = {}) {
   for (const name of ["manifest", "src", "shared.json", "package.json"]) {
     cpSync(join(extensionRoot, name), join(root, name), { recursive: true });
   }
+  // The release check needs the list of internal host names.
+  mkdirSync(join(root, "test", "fixtures"), { recursive: true });
+  cpSync(join(extensionRoot, "test", "fixtures", "hosts.json"), join(root, "test", "fixtures", "hosts.json"));
   for (const [path, text] of Object.entries(extra)) {
     const file = join(root, ...path.split("/"));
     if (text === null) {

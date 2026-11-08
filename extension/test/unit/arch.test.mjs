@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { build, handlerRegister, isTestOnlyPath, releaseProblems } from "../../scripts/build.mjs";
+import { build, handlerRegister, isTestOnlyPath, readInternalHosts, releaseProblems } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 import { createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 import { createPort } from "./backgroundHelpers.mjs";
@@ -383,7 +383,7 @@ test("anything_in_a_test_only_folder_is_left_out_of_a_release_and_refused_by_the
     assert.deepEqual(importsOf(registerOf(release.files)).specifiers, []);
     // The release check refuses such a path even if the build were bypassed.
     for (const path of ["background/test-only/x.mjs", "pages/test-only/x.html", "background/handlers/test-only/x.handler.mjs"]) {
-      const problems = releaseProblems(new Map([...release.files, [path, Buffer.from("export {};\n")]]));
+      const problems = releaseProblems(new Map([...release.files, [path, Buffer.from("export {};\n")]]), readInternalHosts());
       assert.ok(problems.some((p) => p.startsWith(`${path}:`)), path);
     }
     assert.equal(isTestOnlyPath("background/test-only/testHooks.mjs"), true);

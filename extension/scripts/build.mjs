@@ -13,7 +13,7 @@
 //    writes dist/shared/MANIFEST.json (path -> SHA-256). An empty list writes
 //    nothing, and not even the folder.
 // 3. Merges manifest/base.json, the overlay of the chosen manifest version and
-//    manifest/parts/*.json. A permission outside permissions.allow.json is a
+//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json is a
 //    build error, and so is a key that is never allowed (content_scripts,
 //    web_accessible_resources, externally_connectable). The manifest declares
 //    data_collection_permissions required: ["authenticationInfo"]: the extension
@@ -37,6 +37,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
 import { danglingImports } from "./lib/imports.mjs";
+import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
 
 export { sha256 };
 
@@ -82,6 +83,8 @@ export const TEST_ONLY_DIR = "test-only";
 export const isTestOnlyPath = (path) => path.split("/").includes(TEST_ONLY_DIR);
 /** Files below test/ that the test variant ships, to dist/test/. */
 export const TEST_ONLY_FILES = ["test/bridge.html", "test/bridge.mjs"];
+/** The host names of the fixture server and of the end-to-end stack: internal, never in a release. */
+export const HOSTS_FILE = "test/fixtures/hosts.json";
 
 /** Manifest keys that no part may carry. */
 const FORBIDDEN_KEYS = ["content_scripts", "web_accessible_resources", "externally_connectable"];
@@ -206,6 +209,18 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
     }
     mergeInto(merged, part, label);
   }
+  if (variant === "test") {
+    // Only the test variant: a test command and a menu item for the browser tests.
+    for (const name of listDir(join(dir, "test-parts")).filter((n) => n.endsWith(".json"))) {
+      const part = readJson(join(dir, "test-parts", name));
+      const label = `manifest/test-parts/${name}`;
+      if (!isPlainObject(part)) throw new Error(`${label}: expected an object`);
+      for (const key of FORBIDDEN_KEYS) {
+        if (key in part) throw new Error(`${label}: ${key} is not allowed`);
+      }
+      mergeInto(merged, part, label);
+    }
+  }
   for (const key of FORBIDDEN_KEYS) {
     if (key in merged) throw new Error(`manifest: ${key} is not allowed`);
   }
@@ -292,12 +307,39 @@ function manifestFiles(manifest) {
 }
 
 /**
+ * The internal host names (fixture server and end-to-end stack) from
+ * test/fixtures/hosts.json. A missing or malformed file is an error, so a check
+ * never passes for want of the list.
+ * @param {string} [root] the extension folder
+ * @returns {string[]} lower case host names
+ */
+export function readInternalHosts(root = defaultRoot) {
+  const file = join(root, ...HOSTS_FILE.split("/"));
+  if (!existsSync(file)) throw new Error(`${HOSTS_FILE} is missing (the release check needs the internal host names)`);
+  const data = readJson(file);
+  /** @type {string[]} */
+  const hosts = [];
+  for (const list of Object.values(data)) {
+    if (!Array.isArray(list)) throw new Error(`${HOSTS_FILE}: every value must be a list of host names`);
+    for (const host of list) {
+      if (typeof host !== "string" || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)) throw new Error(`${HOSTS_FILE}: not a host name: ${JSON.stringify(host)}`);
+      hosts.push(host);
+    }
+  }
+  if (hosts.length === 0) throw new Error(`${HOSTS_FILE}: no host names`);
+  return hosts;
+}
+
+/**
  * What a release package must not hold: test files, a fixed extension UUID, the
- * test name and anything under test/. Returns the problems, empty when clean.
+ * test name, an internal host name and anything under test/. Returns the problems,
+ * empty when clean.
  * @param {Map<string, Buffer>} files path -> bytes
+ * @param {string[]} internalHosts host names of the fixture server and the end-to-end stack
  * @returns {string[]}
  */
-export function releaseProblems(files) {
+export function releaseProblems(files, internalHosts) {
+  if (!Array.isArray(internalHosts)) throw new Error("releaseProblems needs the list of internal host names");
   /** @type {string[]} */
   const problems = [];
   const testNames = new Set(TEST_ONLY_FILES.map((p) => p.slice(p.lastIndexOf("/") + 1)).concat(TEST_ONLY_SRC.map((p) => p.slice(p.lastIndexOf("/") + 1))));
@@ -307,7 +349,14 @@ export function releaseProblems(files) {
     if (/\.(?:html|mjs|js|json|css)$/.test(path)) {
       const text = bytes.toString("utf8");
       if (/moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(text)) problems.push(`${path}: a fixed extension UUID`);
+      for (const id of [FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID]) {
+        if (text.includes(id)) problems.push(`${path}: names the test-only id ${id}`);
+      }
       if (text.includes("extensions.webextensions.uuids")) problems.push(`${path}: names the UUID preference of the test profile`);
+      const lower = text.toLowerCase();
+      for (const host of internalHosts) {
+        if (lower.includes(host)) problems.push(`${path}: names the internal host ${host}`);
+      }
     }
   }
   const raw = files.get("manifest.json");
@@ -551,7 +600,7 @@ export async function build({
     if (!dist.has(path)) throw new Error(`manifest.json: ${path} is not in the package`);
   }
   if (variant === "release") {
-    const problems = releaseProblems(dist);
+    const problems = releaseProblems(dist, readInternalHosts(root));
     if (problems.length > 0) throw new Error(`release: ${problems.join("; ")}`);
   }
 
@@ -591,9 +640,10 @@ async function main(args) {
   if (args[0] === "--check-release") {
     const targets = args.slice(1);
     if (targets.length === 0) throw new Error("--check-release needs a .xpi file or a folder");
+    const internalHosts = readInternalHosts();
     let failed = false;
     for (const target of targets) {
-      const problems = releaseProblems(readPackage(target));
+      const problems = releaseProblems(readPackage(target), internalHosts);
       for (const problem of problems) console.error(`check-release: ${target}: ${problem}`);
       if (problems.length > 0) failed = true;
       else console.log(`check-release: ${target}: clean`);

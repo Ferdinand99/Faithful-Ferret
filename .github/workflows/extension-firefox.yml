@@ -1,0 +1,63 @@
+# Short probes of the extension's test build in real Firefox (unbranded Release and
+# Firefox ESR, through geckodriver), in the runner image docker/ext-runner.Dockerfile.
+# The image is built here from the Dockerfile, whose every download is pinned by
+# version and SHA-256. The test step runs with --network none: the WASM package is
+# fetched and checked before it, in its own step, and goes in with the source tree.
+# Nothing is signed or submitted anywhere, and the workflow has read access only.
+name: Extension Firefox
+
+on:
+  pull_request:
+  push:
+    branches: [main, ext]
+
+concurrency:
+  group: extension-firefox-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  firefox:
+    name: Firefox ${{ matrix.channel }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [release, esr]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build the runner image
+        run: docker build -t ferret-ext-runner - < docker/ext-runner.Dockerfile
+      - name: Fetch the published WASM package and check its SHA-256
+        run: |
+          url="$(jq -r .url web/wasm.lock.json)"
+          sha="$(jq -r .sha256 web/wasm.lock.json)"
+          curl -fsSL -o wasm.tar.gz "$url"
+          echo "$sha  wasm.tar.gz" | sha256sum -c -
+      - name: Run the probes (no network)
+        run: |
+          tar -cf in.tar --exclude='extension/node_modules' --exclude='extension/dist' extension web/wasm.lock.json
+          tar -rf in.tar wasm.tar.gz
+          docker run --rm -i --init \
+            --network none \
+            --shm-size 2g \
+            --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+            --security-opt no-new-privileges:true \
+            -e CI=1 \
+            -e FERRET_EXT_STEP=firefox \
+            -e FERRET_CHANNELS=${{ matrix.channel }} \
+            -e FERRET_MANIFEST=mv3 \
+            -e FERRET_GREP= \
+            -e FERRET_HEADLESS=1 \
+            -e FERRET_E2E_CA_PEM= \
+            --tmpfs /work:exec,size=2g \
+            --tmpfs /tmp:exec,size=2g \
+            --tmpfs /home/ferret:uid=10001,gid=10001,size=1g \
+            -w /work \
+            ferret-ext-runner \
+            sh -c 'tar -x --no-same-owner -C /work && exec sh /work/extension/test/firefox/run.sh "$0"' firefox < in.tar

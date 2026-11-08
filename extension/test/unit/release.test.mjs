@@ -3,10 +3,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { build, releaseProblems } from "../../scripts/build.mjs";
+import { build, readInternalHosts, releaseProblems } from "../../scripts/build.mjs";
 import { makeRoot, repoRoot } from "./buildHelpers.mjs";
 
 const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
+/** The internal host names of the repository's own test/fixtures/hosts.json. */
+const HOSTS = readInternalHosts();
 
 const MEASURE_HTML = '<!doctype html><html><head><script type="module" src="measure.mjs"></script></head></html>\n';
 
@@ -36,7 +38,7 @@ test("release_variant_contains_no_test_files_and_no_fixed_uuid", async () => {
     for (const path of ["test/bridge.html", "test/bridge.mjs", "pages/measure.html", "pages/measure.mjs"]) {
       assert.ok(test.files.has(path), path);
     }
-    assert.deepEqual(releaseProblems(release.files), []);
+    assert.deepEqual(releaseProblems(release.files, HOSTS), []);
 
     // The check passes for the release (folder and .xpi) and fails for the test build.
     for (const target of [release.dir, release.xpi]) {
@@ -79,7 +81,7 @@ test("release_variant_refuses_a_fixed_extension_uuid_and_the_test_profile_prefer
       env.cleanup();
     }
   }
-  assert.deepEqual(releaseProblems(new Map()), ["manifest.json is missing"]);
+  assert.deepEqual(releaseProblems(new Map(), HOSTS), ["manifest.json is missing"]);
 });
 
 test("release_package_must_carry_exactly_the_release_add_on_id", () => {
@@ -88,14 +90,14 @@ test("release_package_must_carry_exactly_the_release_add_on_id", () => {
     "manifest.json",
     Buffer.from(JSON.stringify({ name: "Faithful Ferret", browser_specific_settings: { gecko: { id } } })),
   ]]);
-  assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools")), []);
+  assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools"), HOSTS), []);
   for (const id of ["ferret-test@hedgerow.tools", "other@example.com", "Ferret@hedgerow.tools", "ferret@hedgerow.tools ", undefined]) {
-    const problems = releaseProblems(manifestWith(id));
+    const problems = releaseProblems(manifestWith(id), HOSTS);
     assert.equal(problems.length, 1, String(id));
     assert.match(problems[0], /the add-on id is/);
   }
   // No gecko section at all.
-  assert.match(releaseProblems(new Map([["manifest.json", Buffer.from('{ "name": "x" }')]]))[0], /the add-on id is undefined/);
+  assert.match(releaseProblems(new Map([["manifest.json", Buffer.from('{ "name": "x" }')]]), HOSTS)[0], /the add-on id is undefined/);
 });
 
 test("release_build_carries_the_release_id_and_the_test_build_its_own", async () => {
@@ -117,4 +119,44 @@ test("release_build_carries_the_release_id_and_the_test_build_its_own", async ()
 test("check_ext_release_needs_a_package", () => {
   const result = spawnSync("bash", [CHECK, join(repoRoot, "extension", "does-not-exist.xpi")], { encoding: "utf8" });
   assert.notEqual(result.status, 0);
+});
+
+test("release_check_refuses_an_internal_host_name", async () => {
+  assert.ok(HOSTS.includes("fixture.test") && HOSTS.includes("vault-e2e.test"), "the fixture and e2e hosts are in hosts.json");
+  for (const host of HOSTS) {
+    const env = makeRoot({ "src/pages/leak.mjs": `export const url = "https://${host.toUpperCase()}/login";
+` });
+    try {
+      const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+      await assert.rejects(build({ ...options, variant: "release" }), new RegExp(`pages/leak\\.mjs: names the internal host ${host.replaceAll(".", "\\.")}`));
+      // The test variant may name them.
+      await build({ ...options, variant: "test" });
+    } finally {
+      env.cleanup();
+    }
+  }
+  // A package folder that holds one fails the standalone check.
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+    const release = await build({ ...options, variant: "release" });
+    writeFileSync(join(release.dir, "pages", "about.mjs"), `${release.files.get("pages/about.mjs")}
+// https://${HOSTS[0]}/
+`);
+    const result = runCheck(release.dir);
+    assert.notEqual(result.status, 0);
+    assert.match(result.output, /names the internal host/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("release_check_fails_closed_without_the_host_list", async () => {
+  const env = makeRoot({ "test/fixtures/hosts.json": null });
+  try {
+    await assert.rejects(build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, variant: "release" }), /hosts.json is missing/);
+  } finally {
+    env.cleanup();
+  }
+  assert.throws(() => releaseProblems(new Map(), /** @type {any} */ (undefined)));
 });
