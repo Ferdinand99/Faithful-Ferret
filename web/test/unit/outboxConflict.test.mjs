@@ -259,3 +259,38 @@ test("restamp_replaces_only_the_writes_that_were_queued_when_it_began", async ()
   assert.ok(!stored.some((e) => gone.includes(e.idem)));
   t.run.stop();
 });
+
+test("replace_with_expect_swaps_exactly_the_writes_that_were_looked_at_in_one_transaction", async () => {
+  const t = await senderOf();
+  t.run.hold();
+  const [one, two] = [writeFor(1, { idem: 8201 }), writeFor(1, { idem: 8202, baseRev: 1 })];
+  await t.run.enqueue(one);
+  await t.run.enqueue(two);
+  const other = writeFor(2, { idem: 8210 });
+  await t.run.enqueue(other); // another item: never touched
+  const fresh = writeFor(1, { idem: 8203, baseRev: 5 });
+  const dropped = await t.run.replace(fresh, [one.idem, two.idem]);
+  assert.deepEqual(dropped.sort(), [one.idem, two.idem].sort());
+  assert.deepEqual((await t.stored()).map((e) => e.idem), [other.idem, fresh.idem]);
+  assert.deepEqual(t.run.entriesOf(fresh.itemId).map((e) => e.idem), [fresh.idem]);
+  t.run.stop();
+});
+
+test("replace_with_expect_does_not_drop_a_write_another_tab_queued_between_the_look_and_the_removal", async () => {
+  const t = await senderOf();
+  t.run.hold();
+  const mine = writeFor(1, { idem: 8301 });
+  await t.run.enqueue(mine);
+  // The caller has looked at the store and sees only `mine`. Just before the swap another tab of the browser queues a write of the item.
+  const theirs = writeFor(1, { idem: 8302, baseRev: 1 });
+  const swap = t.store.outbox.swap;
+  t.store.outbox.swap = async (db, scope, ...rest) => {
+    await outbox.enqueue(db, scope, theirs);
+    return swap(db, scope, ...rest);
+  };
+  const fresh = writeFor(1, { idem: 8303, baseRev: 3 });
+  await assert.rejects(() => t.run.replace(fresh, [mine.idem]), { code: "outbox_changed" });
+  assert.deepEqual((await t.stored()).map((e) => e.idem), [mine.idem, theirs.idem], "nothing was added and nothing was removed");
+  assert.deepEqual(t.run.entriesOf(mine.itemId).map((e) => e.idem), [mine.idem], "and the lane is as it was");
+  t.run.stop();
+});

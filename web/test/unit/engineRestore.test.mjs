@@ -1761,3 +1761,54 @@ test("a_write_another_tab_queues_while_an_older_state_is_accepted_is_not_dropped
   assert.deepEqual(await queued(d), []);
   d.engine.stop();
 });
+
+// ------------------------------------------------------------------ a chain of unsent writes on one item
+
+/** A write that waits in the outbox with the bytes of `live(id, rev, n)`: when `rev` is the server's, it is the server's row. */
+const writeOf = (id, baseRev, n) => ({ idem: "ab".repeat(16), itemId: id, baseRev, bytes: new Uint8Array(0), body: { blob: bytes(n), tag: bytes(n + 1) } });
+
+test("a_chain_of_unsent_writes_is_judged_by_the_base_of_its_first_write", async () => {
+  // Item A: the restored row is at revision 4 and has not been written since. Another device took it there before the backup.
+  const restore = frozenOf(5, [ID_A, 4, 1, 1], [ID_B, 4, 2, 1], [ID_C, 4, 3, 1]);
+  const items = await restoreItems({
+    listing: [live(ID_A, 4, 1, 1), live(ID_B, 4, 1, 2), live(ID_C, 4, 1, 3)],
+    restore,
+    rows: [live(ID_A, 3, 1), live(ID_B, 3, 1), live(ID_C, 3, 1)],
+    outbox: [
+      // A: the first write was built on 3 (below the restored row), the second on this device's own revision 4: a conflict.
+      write(ID_A, 3), write(ID_A, 4),
+      // B: the first was built on 4, the restored row itself: made again.
+      write(ID_B, 4), write(ID_B, 5),
+      // C: three writes, the first below the restored row, the last above it: still a conflict.
+      write(ID_C, 2), write(ID_C, 3), write(ID_C, 4),
+    ],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "reseal", baseRev: 4, conflict: true },
+    { id: ID_B, kind: "reseal", baseRev: 4, conflict: false },
+    { id: ID_C, kind: "reseal", baseRev: 4, conflict: true },
+  ]);
+  assert.deepEqual(items.map((i) => i.localRev), [5, 6, 5], "the newest local version is the last write of the chain");
+});
+
+test("a_chain_that_leads_with_this_devices_own_write_equal_to_the_server_row_is_judged_from_the_rest", async () => {
+  const restore = frozenOf(5, [ID_A, 4, 1, 5], [ID_B, 4, 2, 5], [ID_C, 4, 3, 5]);
+  const items = await restoreItems({
+    listing: [live(ID_A, 4, 5, 1), live(ID_B, 4, 5, 2), live(ID_C, 4, 5, 3)],
+    restore,
+    rows: [live(ID_A, 3, 1), live(ID_B, 3, 1), live(ID_C, 3, 1)],
+    outbox: [
+      // A: the first write is the server's row at its base + 1 (done); the second is built on it: made again over the row.
+      writeOf(ID_A, 3, 5), write(ID_A, 4),
+      // B: only the own write: done.
+      writeOf(ID_B, 3, 5),
+      // C: the own write, then one built on a revision below the row: not built on the own write, so a conflict.
+      writeOf(ID_C, 3, 5), write(ID_C, 2),
+    ],
+  });
+  assert.deepEqual(kindsOf(items), [
+    { id: ID_A, kind: "reseal", baseRev: 4, conflict: false },
+    { id: ID_B, kind: "skip", baseRev: 4, conflict: false },
+    { id: ID_C, kind: "reseal", baseRev: 4, conflict: true },
+  ]);
+});

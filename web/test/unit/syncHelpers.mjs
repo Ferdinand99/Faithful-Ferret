@@ -646,16 +646,16 @@ export async function createFakeStore({ order = [], db = null } = {}) {
         }
         return outbox.remove(store, scope, idem);
       },
-      swap: async (store, scope, remove, entries) => {
+      swap: async (store, scope, remove, entries, only = null) => {
         if (service.failEnqueue > 0) {
           service.failEnqueue -= 1;
           throw new Error("the disk is full");
         }
+        await outbox.swap(store, scope, remove, entries, only);
         for (const entry of entries) {
           spy.log.push("outbox.enqueue");
           spy.enqueued.push(entry);
         }
-        return outbox.swap(store, scope, remove, entries);
       },
       enqueue: async (store, scope, entry) => {
         if (service.failEnqueue > 0) {

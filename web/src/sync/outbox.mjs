@@ -270,8 +270,9 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
      * Makes `entry` the only queued write of its item. The new entry is stored first and the old ones are removed after,
      * so a crash in between leaves the newest write (never none): the next start sees both and the last one wins. The lane
      * is not blocked afterwards, and nothing is sent while the runner is held.
-     * With `expect` (the keys of the writes the caller has looked at) nothing is done when the store holds other writes of the item
-     * than those (another tab queued one meanwhile): it throws `SyncError("outbox_changed")`, and the caller decides again.
+     * With `expect` (the keys of the writes the caller has looked at) the new entry goes in and exactly those go out in one
+     * transaction, and nothing is done when the store holds other writes of the item than those (another tab queued one meanwhile,
+     * even a moment ago): it throws `SyncError("outbox_changed")`, and the caller decides again. A write is never dropped unseen.
      * @param {OutboxEntry} entry
      * @param {string[] | null} [expect]
      * @returns {Promise<string[]>} the idempotency keys of the writes that were dropped
@@ -279,16 +280,24 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     async replace(entry, expect = null) {
       await this.whenIdle();
       const db = await store.open();
+      /** @type {string[]} */
+      let old;
       if (expect !== null) {
-        const present = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem);
-        if (present.length !== expect.length || !present.every((stored) => expect.includes(stored.idem))) throw new SyncError("outbox_changed");
+        try {
+          await store.outbox.swap(db, scope, expect, [entry], { itemId: entry.itemId, keys: expect });
+        } catch (error) {
+          if (/** @type {any} */ (error)?.code === "outbox_changed") throw new SyncError("outbox_changed");
+          throw error;
+        }
+        old = expect.filter((idem) => idem !== entry.idem);
+      } else {
+        await store.outbox.enqueue(db, scope, entry);
+        old = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem).map((stored) => stored.idem);
+        for (const idem of old) await store.outbox.remove(db, scope, idem);
       }
-      await store.outbox.enqueue(db, scope, entry);
-      const old = (await store.outbox.all(db, scope)).filter((stored) => stored.itemId === entry.itemId && stored.idem !== entry.idem);
-      for (const stored of old) await store.outbox.remove(db, scope, stored.idem);
       if (stopped) return [];
       const lane = laneOf(entry.itemId);
-      const dropped = new Set([...old, ...lane.entries].filter((one) => one.idem !== entry.idem).map((one) => one.idem));
+      const dropped = new Set([...old, ...lane.entries.map((one) => one.idem)].filter((idem) => idem !== entry.idem));
       cancelWait(lane);
       lane.entries.length = 0;
       lane.entries.push(entry);

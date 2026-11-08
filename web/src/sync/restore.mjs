@@ -145,14 +145,18 @@ export async function restoreItems({ listing, restore = null, rows, outbox, bloc
     // A version byte for byte the server's row is nothing to do (the honest case: the server has what this device has).
     const identical = local.from === "row" && !local.deleted && row !== undefined && !server.deleted &&
       sameBytes(row.envelope, server.envelope) && sameBytes(row.tag, server.tag);
-    // A write in the outbox that is the very row the server holds, one revision above its base: this device's own write, which got
-    // there (the answer was lost).
-    const own = local.from === "outbox" && last !== undefined && last.baseRev + 1 === server.rev && (
-      "tomb" in last.body
-        ? server.deleted && sameBytes(last.body.tomb, server.tomb)
-        : !server.deleted && sameBytes(last.body.blob, server.envelope) && sameBytes(last.body.tag, server.tag)
+    // The writes of the item that wait in the outbox, oldest first: a chain, each built on the one before. A leading write that is the
+    // very row the server holds, one revision above its base, is this device's own write, which got there (the answer was lost): it
+    // counts as done, and the rest of the chain (if any) is judged against the server's row.
+    const chain = local.from === "outbox" ? (queued.get(id) ?? []) : [];
+    const first = chain[0];
+    const leadsWithOwn = first !== undefined && first.baseRev + 1 === server.rev && (
+      "tomb" in first.body
+        ? server.deleted && sameBytes(first.body.tomb, server.tomb)
+        : !server.deleted && sameBytes(first.body.blob, server.envelope) && sameBytes(first.body.tag, server.tag)
     );
-    if (identical || own) {
+    const rest = leadsWithOwn ? chain.slice(1) : chain;
+    if (identical || (local.from === "outbox" && rest.length === 0)) {
       decide("skip", false);
       continue;
     }
@@ -170,8 +174,10 @@ export async function restoreItems({ listing, restore = null, rows, outbox, bloc
       // Not written since the restore: what is here is the restored row.
       if (local.from === "outbox") {
         // A change made here and never sent. Over the restored row only when it was built on that row or on a later revision the
-        // restore lost; built on an older one the server would have refused it, and so does the restore.
-        decide(kind, /** @type {OutboxEntry} */ (last).baseRev < server.rev);
+        // restore lost; built on an older one the server would have refused it, and so does the restore. Of a chain of writes the
+        // first one decides: the later ones are built on this device's own unsent revisions, and the first one names the server
+        // revision the whole chain was built on.
+        decide(kind, rest[0].baseRev < server.rev);
       } else if (local.rev > server.rev) {
         decide(kind, false); // a version the restore lost
       } else {

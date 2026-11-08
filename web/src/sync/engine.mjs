@@ -2205,7 +2205,8 @@ export function createSyncEngine({
       alive();
       // A new key, and the epoch that is being accepted: the epoch is part of what the server hashes under the key, so a write
       // that was queued for the old epoch cannot be sent again as it was.
-      const idem = randomId();
+      let idem = randomId();
+      while (seen.includes(idem)) idem = randomId(); // never the key of a write that waits (the random source of a test may repeat)
       const bytes = writeBytes({ baseRev: decision.baseRev, body, idem, resurrect: decision.kind === "resurrect", restoreEpoch: inputs.epoch });
       if (decision.conflict) {
         blocked.set(id, "conflict");
