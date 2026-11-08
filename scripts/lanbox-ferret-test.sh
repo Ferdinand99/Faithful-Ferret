@@ -2,7 +2,7 @@
 # The Faithful Ferret test stacks on the LANBox. Everything goes through the Docker
 # context `unraid`; never Docker Desktop, never Tower.
 #
-# The owner's stack (compose project ferret-test, behind Pangolin). Only resources
+# The test stack (compose project ferret-test, behind Pangolin). Only resources
 # named ferret-test* and labelled owner=ferret-test are created, changed or removed:
 #
 #   scripts/lanbox-ferret-test.sh up       build and start (alias: redeploy); refuses when the
@@ -33,15 +33,24 @@
 #   scripts/lanbox-ferret-test.sh e2e-down     remove the stack and its image
 #
 # docker/.env (not in git; on a Unix host it is made with mode 600) holds
-# FERRET_SETUP_TOKEN and FERRET_TRUSTED_PROXIES of the owner's stack. It is made on
+# FERRET_SETUP_TOKEN and FERRET_TRUSTED_PROXIES of the test stack. It is made on
 # the first `up`: the proxy address is the one of the Newt container on the LANBox
 # (read only, `docker inspect`), or FERRET_TRUSTED_PROXIES from the environment. Like compose,
 # a variable in the environment of the shell wins over the file. Edit the file and
 # run `up` again to change it; `peers` shows which addresses the server has seen.
 #
+# Newt outside Docker (Proxmox CT 130 at 10.0.3.169, which `docker inspect` cannot see):
+# set FERRET_TRUSTED_PROXIES=10.0.3.169 in docker/.env. When no Docker container of the
+# tunnel client exists, `up` accepts that value only as exactly one valid IPv4 address
+# (no list, no network, no loopback, not .0 or .255, not link-local) and warns when the build VM gets no ping answer
+# from it. With a Docker container, its address is still the only one that is accepted;
+# a container that exists but has no readable address (stopped, host network) is refused,
+# never treated as "outside Docker". The CT needs a static IP (a fixed address or a DHCP
+# reservation), because the server trusts exactly this address.
+#
 # Env overrides:
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
-#   FERRET_LANBOX       address of the LANBox (default 10.0.3.26)
+#   FERRET_LANBOX       address of the LANBox (default 10.0.3.152, the build VM)
 #   FERRET_PROXY_CONTAINER  name of the tunnel client container (default Newt)
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -52,7 +61,7 @@ project=ferret-test
 container=ferret-test-app
 volume=ferret-test-data
 label=owner=ferret-test
-lanbox="${FERRET_LANBOX:-10.0.3.26}"
+lanbox="${FERRET_LANBOX:-10.0.3.152}"
 admin_port=3040
 vault_port=3041
 envfile="${FERRET_ENV_FILE:-docker/.env}"
@@ -75,19 +84,47 @@ e2e_image=ferret-e2e-app:latest
 # list the stack do not need the real one.
 dce() { FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" dk compose -p "$e2e_project" -f "$e2e_composefile" "$@"; }
 
-# The address of the proxy's tunnel client (the Newt container) on the network it
-# uses to reach the LANBox, read only. The container name can be changed with
-# FERRET_PROXY_CONTAINER. Empty when the address cannot be told.
+# The tunnel client of the proxy (the Newt container) as Docker on the build VM
+# knows it, read only. The container name can be changed with
+# FERRET_PROXY_CONTAINER. Prints exactly one of:
+#   address <ip>  the container runs on a network with an address
+#   notfound      Docker answered that there is no container with that name (the
+#                 tunnel client runs outside Docker, for example in a Proxmox CT)
+#   unreadable    anything else: the container exists but is stopped or has no
+#                 address of its own (host, none or another container's network),
+#                 or Docker could not be asked (a failed ssh or daemon call).
+#                 This fails closed: it is never treated as "outside Docker".
 tunnel_container="${FERRET_PROXY_CONTAINER:-Newt}"
-tunnel_address() {
-  local mode
-  mode="$(dk inspect "$tunnel_container" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null || true)"
+tunnel_lookup() {
+  local out running mode ip
+  if ! out="$(dk container inspect "$tunnel_container" --format '{{.State.Running}} {{.HostConfig.NetworkMode}}' 2>&1)"; then
+    case "$out" in
+      *"No such object"* | *"No such container"*) echo notfound ;;
+      *) echo unreadable ;;
+    esac
+    return 0
+  fi
+  out="$(printf '%s\n' "$out" | tail -n 1)"
+  running="${out%% *}"
+  mode="${out#* }"
+  if [ "$running" != true ]; then
+    echo unreadable
+    return 0
+  fi
   case "$mode" in
-    "" | host | none | container:*) return 0 ;;
+    "" | host | none | container:*) echo unreadable; return 0 ;;
     default) mode=bridge ;;
   esac
-  dk inspect "$tunnel_container" \
-    --format "{{with index .NetworkSettings.Networks \"$mode\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true
+  ip="$(dk container inspect "$tunnel_container" \
+    --format "{{with index .NetworkSettings.Networks \"$mode\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true)"
+  if [ -n "$ip" ]; then echo "address $ip"; else echo unreadable; fi
+}
+
+# The address from tunnel_lookup, or nothing when there is none to read.
+tunnel_address() {
+  local found
+  found="$(tunnel_lookup)"
+  case "$found" in "address "*) echo "${found#address }" ;; esac
 }
 
 # The values compose will inject, asked from compose itself (last definition
@@ -145,33 +182,105 @@ make_env() {
   first_deploy=1
 }
 
+# Whether the text is one plain IPv4 address (four numbers from 0 to 255, no
+# leading zeros, no prefix length, no list) that can be a tunnel client: not the
+# unspecified address, not loopback, not a multicast or the broadcast address, not
+# a link-local address (169.254.0.0/16), and not the first or last address of a
+# /24 (.0 and .255: network and broadcast forms).
+single_ipv4() {
+  local ip="$1" octet
+  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  local IFS=.
+  # shellcheck disable=SC2086
+  set -- $ip
+  for octet in "$@"; do
+    [ "${#octet}" -eq 1 ] || [ "${octet#0}" = "$octet" ] || return 1
+    [ "$octet" -le 255 ] || return 1
+  done
+  [ "$1" -ne 0 ] && [ "$1" -ne 127 ] && [ "$1" -lt 224 ] || return 1
+  [ "$4" -ne 0 ] && [ "$4" -ne 255 ] || return 1
+  ! { [ "$1" -eq 169 ] && [ "$2" -eq 254 ]; }
+}
+
+# Whether the build VM can reach the address (one ping from a throwaway container
+# on the host network). Only a warning when it cannot: a tunnel client may drop
+# ping, and a wrong address fails closed (nobody is trusted).
+reachable() {
+  dk run --rm --name ferret-test-reachcheck --network host --label "$label" \
+    --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges:true --read-only \
+    --pids-limit 16 --memory 16m \
+    "$alpine_image" ping -c 1 -W 3 "$1" >/dev/null 2>&1
+}
+
 # Whether the trusted proxy that compose will use is exactly the address of the
 # tunnel client now. Prints the reason when it is not.
+#
+# The tunnel client is found in two ways (see tunnel_lookup):
+#  * As a Docker container on the build VM. Its address is then the only one that
+#    is believed: any other FERRET_TRUSTED_PROXIES is a mismatch. When the
+#    container exists but its address cannot be read (stopped, host or none
+#    network, another container's network) or Docker cannot be asked, the answer
+#    is a refusal, never the explicit value below.
+#  * Outside Docker: only when Docker answers that there is no container with that
+#    name (since the move to Proxmox, Newt runs in its own CT). Then
+#    FERRET_TRUSTED_PROXIES is the one source of the address and it is accepted
+#    only as exactly one valid IPv4 address. A list, a network, a name, an empty
+#    value or an address that cannot be a client is refused.
 tunnel_mismatch() {
-  local now configured
-  now="$(tunnel_address)"
+  local found now configured
+  found="$(tunnel_lookup)"
   configured="$(configured_proxies)"
-  if [ -z "$now" ]; then
-    echo "cannot read the address of $tunnel_container on the network it uses to reach the LANBox"
+  case "$found" in
+    "address "*)
+      now="${found#address }"
+      if ! same_addresses "$now" "$configured"; then
+        echo "$tunnel_container is at $now but FERRET_TRUSTED_PROXIES is ${configured:-empty}"
+        return 0
+      fi
+      return 1
+      ;;
+    notfound) ;;
+    *)
+      echo "cannot read the address of $tunnel_container on the network it uses to reach the LANBox (the container exists but is stopped or has no address of its own, or Docker on the LANBox could not be asked)"
+      return 0
+      ;;
+  esac
+  if [ -z "$configured" ]; then
+    echo "there is no Docker container named $tunnel_container on the LANBox, and FERRET_TRUSTED_PROXIES is empty"
     return 0
   fi
-  if ! same_addresses "$now" "$configured"; then
-    echo "$tunnel_container is at $now but FERRET_TRUSTED_PROXIES is ${configured:-empty}"
+  if ! single_ipv4 "$configured"; then
+    echo "there is no Docker container named $tunnel_container on the LANBox, so FERRET_TRUSTED_PROXIES must be exactly one IPv4 address (no list, no network, no loopback, not .0 or .255), but it is $configured"
     return 0
   fi
   return 1
 }
 
+# Prints a warning when the address of a tunnel client that runs outside Docker
+# does not answer from the build VM. Nothing when the address comes from Docker.
+unreachable_warning() {
+  local configured
+  [ "$(tunnel_lookup)" = notfound ] || return 0
+  configured="$(configured_proxies)"
+  single_ipv4 "$configured" || return 0
+  reachable "$configured" || echo "the address $configured does not answer ping from the LANBox (a tunnel client may block ping; check that it is the right address, and run the peers command after a sign-in to see which addresses the server sees)"
+}
+
 # `up` refuses to start on a mismatch: a proxy address that is not the tunnel
-# client's would trust some other container, or nobody.
+# client's would trust some other host, or nobody.
 require_tunnel() {
-  local why
+  local why warning
   if why="$(tunnel_mismatch)"; then
     echo "lanbox-ferret-test: refusing to start: $why." >&2
     echo "Set FERRET_TRUSTED_PROXIES in $envfile (and not in the shell) to the address of" >&2
-    echo "$tunnel_container and run up again." >&2
+    echo "$tunnel_container. When it runs outside Docker (a Proxmox CT, for example), that is" >&2
+    echo "its own LAN address, as one single IPv4 address (not a list, not a network), and that" >&2
+    echo "CT needs a static IP (a fixed address or a DHCP reservation)." >&2
+    echo "Run up again." >&2
     exit 1
   fi
+  warning="$(unreachable_warning)"
+  [ -z "$warning" ] || echo "lanbox-ferret-test: WARNING: $warning." >&2
 }
 
 # `status` only warns.
@@ -180,6 +289,9 @@ check_tunnel() {
   if why="$(tunnel_mismatch)"; then
     echo "WARNING: $why." >&2
     echo "         Until they match, sign-in through Pangolin fails closed. Edit $envfile and run up." >&2
+  else
+    why="$(unreachable_warning)"
+    [ -z "$why" ] || echo "WARNING: $why." >&2
   fi
 }
 
@@ -326,7 +438,7 @@ e2e_down() {
 # The runner image (docker/e2e-runner.Dockerfile: the Playwright image of
 # scripts/lanbox-browsers.sh plus certutil), built on first use. The tag follows the
 # content of the file. The Dockerfile goes in on stdin, so no build context (and
-# nothing from docker/, where the owner's .env lives) is sent.
+# nothing from docker/, where the .env of the test stack lives) is sent.
 runner_hash="$(tr -d '' < docker/e2e-runner.Dockerfile | sha256sum | cut -c1-12)"
 runner_image="ferret-e2e-playwright:$runner_hash"
 e2e_runner_image() {
