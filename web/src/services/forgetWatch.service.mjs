@@ -8,17 +8,24 @@
 // records go) and "forgotten" (sent when it is done). Both do the same, and a tab that
 // has locked already does nothing the second time. They are checked all the same: the
 // type, this server and the open account must all match, and anything else is ignored.
+//
+// The message carries the name of the tab that sends it (`from`). The tab that forgets the server
+// has its own watch, which hears the message too (a tab's channels hear each other when they
+// are made apart); it ignores it, so that the page that says what was forgotten is not replaced
+// by the sign-in page. The tab that forgot has locked and moved on by itself.
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "../store/idb.mjs";
+import { TAB_ID } from "../tabId.mjs";
 
 /** @type {import("../app.mjs").ServiceDef} */
 export default {
   name: "forgetWatch",
   deps: ["crypto", "sync"],
-  // `serverUrl`, `makeChannel` and `navigate` are for tests: in the browser they are the page's own.
+  // `serverUrl`, `makeChannel`, `navigate` and `tabId` are for tests: in the browser they are the page's own.
   create: ({
     crypto: session, sync,
     serverUrl = globalThis.location?.origin,
+    tabId = TAB_ID,
     makeChannel = () => (typeof BroadcastChannel === "function" ? new BroadcastChannel("ferret") : null),
     navigate = (/** @type {string} */ hash) => {
       if (globalThis.location) globalThis.location.hash = hash;
@@ -38,6 +45,7 @@ export default {
       const message = /** @type {any} */ (data);
       if (message === null || typeof message !== "object" || (message.type !== "forgotten" && message.type !== "forgetting")) return;
       if (message.serverKey !== server || !hex16.is(message.accountId)) return;
+      if (message.from === tabId) return; // this tab is the one that forgets: it has locked itself already
       const open = session.current?.();
       if (!open || open.accountId !== message.accountId) return;
       try {

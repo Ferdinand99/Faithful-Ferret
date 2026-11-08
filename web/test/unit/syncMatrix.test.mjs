@@ -1,17 +1,14 @@
-// The sync matrix against the engine: the seven scenarios of the first prototype, then seeded random runs of two or three engines (on
-// storages of their own, and as tabs over one) against a model of the server that has every rule of the sync routes and can fail on
-// request, with the invariants of the design checked after every step and at rest. Spec: Fase 1 section 8 and section 14.7.
+// The sync matrix against the engine: the seven scenarios of the first prototype, then seeded random runs of two or three browsers (a browser
+// can have two or three tabs: one holds the owner lock and runs the engine, the others are on standby, and the user moves the engine with "Use
+// here") against a model of the server that has every rule of the sync routes and can fail on request, with the invariants of the design checked
+// after every step and at rest. Spec: Fase 1 section 8 and section 14.7.
 //
 // `FERRET_MATRIX_RUNS` sets how many seeded runs the randomised tests make (500 by default, 5000 at the gate); a failing run names its
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
-// What the model does not assert, because it is reported (each has a todo test below). `FERRET_MATRIX_STRICT=1` takes every one of these
-// tolerances away (`KNOWN_GAPS` in `syncModel.mjs`), and the random runs then fail on them; `FERRET_MATRIX_TOLERATE=tabs,purge` names the ones
-// that are still let through in a strict run:
-//   known gap, writing tabs  two tabs of one browser that both change things can drop or hide each other's queued writes (the outbox and the marks
-//            are stored once and kept in memory by each tab); in the runs only the first tab of a browser changes things, and the other tabs are
-//            checked after the pages are reloaded, and a browser with several tabs is not asked to keep its checkpoint alive (todo tests
-//            `two_tabs_that_both_write_keep_every_write` and `tabs_that_only_read_hold_no_unsent_write_after_a_reload`)
+// What the model does not assert, because it is reported (the todo tests below). `FERRET_MATRIX_STRICT=1` takes every one of these tolerances
+// away (`KNOWN_GAPS` in `syncModel.mjs`), and the random runs then fail on them; `FERRET_MATRIX_TOLERATE=purge` names the ones that are still
+// let through in a strict run:
 //   known gap, purged tombstone  a checkpoint can list the item of a purged tombstone live, and a device that still holds a purged tombstone is
 //            at odds with a checkpoint that lacks it (todo tests `a_purged_tombstone_that_the_checkpoint_still_lists_live_is_no_alarm` and
 //            `a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it`); the model purges only what the checkpoint
@@ -366,7 +363,7 @@ test("seven_phase_0a_scenarios_against_the_engine", async (t) => {
 
 // ------------------------------------------------------------------------- random runs
 
-/** Two or three engines: on storages of their own, and two or three tabs over one. */
+/** Two or three browsers, and one to three tabs in each (the first tab runs the engine, the others are on standby). */
 const LAYOUTS = [[1, 1], [1, 1], [1, 1, 1], [1, 1, 1], [2], [3], [2, 1]];
 
 /** What must be true of a run that is over: the checks of the design, against the model. */
@@ -378,7 +375,8 @@ async function check(sim) {
     await sim.calm();
   }
   sim.checkHealthy();
-  await sim.checkConverged({ readers: sim.tabs }); // after a reload the tabs that only read are held to it too
+  await sim.checkConverged();
+  sim.checkOwners();
   await sim.checkWrites();
   sim.checkResurrections();
   await sim.checkFloorsCoverRows();
@@ -388,9 +386,9 @@ async function check(sim) {
 }
 
 /** One seeded run of `steps` random steps. */
-async function randomRun(seed, { layouts = LAYOUTS, steps = STEPS, actions = ACTIONS, tabsWrite = false } = {}) {
+async function randomRun(seed, { layouts = LAYOUTS, steps = STEPS, actions = ACTIONS } = {}) {
   const pick = rngOf(seed * 7919 + 13);
-  const sim = new Sim(seed, { layout: pick.pick(layouts), tabsWrite, pageSize: pick.between(1, 4) });
+  const sim = new Sim(seed, { layout: pick.pick(layouts), pageSize: pick.between(1, 4) });
   try {
     await sim.start();
     await sim.run(steps, { actions });
@@ -429,29 +427,22 @@ const seedsOf = (count) => (ONLY !== null ? ONLY : Array.from({ length: count },
 /** How many runs a test makes that is not the main one: a fifth of them, and at least 50. */
 const fewer = () => Math.max(50, Math.ceil(RUNS / 5));
 
-/**
- * Seeds of the main test that run into a gap the model has no way to tolerate: the todo tests at the end run them (they pass when the gap is
- * closed). The seeds belong to the model as it is: a change to it moves them, and a run of more seeds can find more.
- */
-const GAP_SEEDS = {
-  readerTab: [1494, 4347], // the tab that only reads still holds an unsent write of the browser after a reload
-};
-const GAP_ALL = new Set(Object.values(GAP_SEEDS).flat());
-
 test("random_runs_keep_every_write_and_converge", async () => {
-  const total = await runSeeds(ONLY !== null ? ONLY : seedsOf(RUNS).filter((seed) => !GAP_ALL.has(seed)), (seed) => randomRun(seed));
-  // The runs do what they are meant to do: writes, conflicts, choices, restarts, listings after a 410, checkpoints verified and uploaded.
+  const total = await runSeeds(seedsOf(RUNS), (seed) => randomRun(seed));
+  // The runs do what they are meant to do: writes, conflicts, choices, restarts, listings after a 410, checkpoints verified and uploaded, and the vault
+  // moved from one tab to another (asked, stolen, the owner tab closed).
   if (ONLY === null && RUNS >= 100) {
-    for (const key of ["server_writes", "error:conflict", "resurrect_writes", "act:restart", "listings", "verify_checkpoint_calls", "server_checkpoint_puts"]) {
+    for (const key of ["server_writes", "error:conflict", "resurrect_writes", "act:restart", "listings", "verify_checkpoint_calls", "server_checkpoint_puts", "owner:ask", "owner:steal", "owner:closed"]) {
       assert.ok((total[key] ?? 0) > 0, `the runs never made ${key}`);
     }
   }
 });
 
 test("two_engines_on_one_store_never_lower_a_floor_under_random_runs", async () => {
-  // Tabs of one browser: more reading than writing, restarts, and passes that run at the same time, so the sync memory is read and
-  // saved by two engines in turns. The floors are read from the store after every step (`checkFloors`).
-  const tabsActions = [["sync", 20], ["poll", 16], ["restart", 8], ["fault", 6], ["offline", 4], ["create", 8], ["update", 12], ["remove", 3], ["jump", 2], ["both", 14], ["race", 12]];
+  // Tabs of one browser: the vault moves between them all the time, with a pass in the air (`race`) and while the engine reads (`both`), so the
+  // sync memory is read and saved by one engine after another, and for a moment by two (an old pass that is let go after the new engine has
+  // stored a newer feed). The floors are read from the store after every step (`checkFloors`).
+  const tabsActions = [["sync", 20], ["poll", 16], ["restart", 6], ["fault", 6], ["offline", 4], ["create", 8], ["update", 12], ["remove", 3], ["jump", 2], ["both", 10], ["race", 12], ["useHere", 12]];
   const total = await runSeeds(seedsOf(Math.max(50, Math.ceil(RUNS / 2))), async (seed) => {
     const sim = new Sim(seed, { layout: [[2], [3], [2, 1]][seed % 3], pageSize: 1 + (seed % 4) });
     try {
@@ -465,6 +456,8 @@ test("two_engines_on_one_store_never_lower_a_floor_under_random_runs", async () 
     return sim.tally();
   });
   assert.ok((total["act:both"] ?? 0) > 0);
+  assert.ok((total["act:race"] ?? 0) > 0);
+  assert.ok((total["owner:ask"] ?? 0) > 0 && (total["owner:steal"] ?? 0) > 0 && (total["owner:closed"] ?? 0) > 0, "the vault moved in every way");
 });
 
 // ------------------------------------------------------------------------- a restored server
@@ -774,6 +767,31 @@ async function sharedItem(layout = [1, 1], options = {}) {
   return { sim, a, b, id };
 }
 
+test("a_chain_that_restores_and_deletes_again_is_kept_when_another_device_brought_the_item_back_first", async () => {
+  // B holds the tombstone of the item and has it in its trash. Offline, B restores it and deletes it again (a chain of two writes). Meanwhile
+  // A restores it, so the server shows it live again. B's first write is refused (the server says live, at a revision above the tombstone B holds):
+  // B has not read that yet, so its tombstone is out of date, and the chain must not be dropped as moot: that would leave a live item hidden.
+  const { sim, a, b, id } = await sharedItem();
+  await a.engine.remove(id);
+  await untilServerRev(sim, id, 2);
+  await pump(b); // B holds the tombstone
+  offline(b);
+  await b.engine.restoreFromTrash(id);
+  await b.engine.remove(id);
+  assert.equal((await queued(b)).length, 2);
+  await a.engine.restoreFromTrash(id);
+  await untilServerRev(sim, id, 3);
+  online(b);
+  b.d.timers.advance(3_000);
+  await settle(40);
+  assert.equal(sim.server.items.get(id)?.deleted, false, "the server shows the item live");
+  assert.equal((await queued(b)).length >= 1, true, "the chain was not dropped");
+  const shown = shows(b, id);
+  assert.ok(shown, "the live item is not hidden on B");
+  assert.equal(shown.blocked || shown.pending, true, "it says that something waits or needs a choice");
+  await sim.stopAll();
+});
+
 test("a_write_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_screen", async () => {
   const { sim, a, b, id } = await sharedItem();
   offline(b);
@@ -848,6 +866,28 @@ test("uploads_resume_after_a_refused_chain_over_a_tombstone_is_dropped", async (
   await sim.stopAll();
 });
 
+test("a_409_that_says_live_over_a_verified_tombstone_is_settled_by_the_next_feed_pass_not_by_the_409", async () => {
+  // The device holds the verified tombstone, and the server really is at that tombstone, but the first answer to its chain is a lie: "409, the item is
+  // live". The chain is kept for one pass of the feed; the pass brings no live row, so the verified tombstone decides and the chain is dropped. Nothing
+  // may stay hidden or blocked, and the checkpoints go on.
+  const { sim, b, id } = await bothDelete();
+  b.d.api.faults.push({ kind: "status", status: 409, code: "conflict", body: { current_rev: 3, deleted: false } });
+  online(b);
+  await b.engine.syncNow();
+  await pump(b);
+  await pump(b);
+  assert.equal(b.d.api.faults.length, 0, "the lie was told");
+  assert.equal((await queued(b)).length, 0, "the chain was dropped from verified state");
+  assert.equal(shows(b, id), undefined, "the deleted item is on no screen");
+  assert.equal(b.engine.list().some((item) => item.blocked || item.conflict), false);
+  assert.equal(b.d.events.error.some((e) => e.code === "conflict"), false, "no conflict was announced");
+  b.d.timers.advance(11 * 60_000);
+  await b.engine.syncNow();
+  await settle(20);
+  assert.equal(sim.server.checkpoint.seq, sim.server.seq, "the device stores a checkpoint again after the next feed pass");
+  await sim.stopAll();
+});
+
 test("a_chain_that_is_dropped_with_the_deletion_at_its_end_takes_every_edit_before_it", async () => {
   const { sim, a, b, id } = await sharedItem();
   offline(b);
@@ -886,14 +926,13 @@ test("a_409_that_says_deleted_does_not_drop_a_chain_while_the_row_the_device_hol
 });
 
 test("a_refused_chain_over_a_tombstone_that_is_held_when_the_page_starts_is_dropped_at_start_up", async () => {
-  // Two tabs of one browser (the first writes, the second reads) and a second browser. The first tab's chain is refused while its row is
-  // live (a server that says "deleted" too early): blocked, the chain kept. Then the tombstone is cached by the other tab, and the first
-  // tab's page is reloaded: with a verified tombstone held and a chain that ends in a deletion, nothing is left to choose.
-  const sim = await world([2, 1]);
-  const [writer, reader, other] = sim.devices;
+  // Two browsers. The first one's chain is refused while its row is live (a server that says "deleted" too early): blocked, the chain kept. Then
+  // the tombstone is cached by another engine over the same storage (the vault was in another tab for a moment, here a bare engine), and the
+  // page is opened again: with a verified tombstone held and a chain that ends in a deletion, nothing is left to choose.
+  const sim = await world([1, 1]);
+  const [writer, other] = sim.devices;
   const id = await writer.engine.create(draft("v0"));
   await untilServerRev(sim, id, 1);
-  await reader.engine.syncNow();
   await other.engine.syncNow();
   offline(writer);
   await writer.engine.update(id, { name: "edited, then deleted" }, currentRev(writer.engine, id));
@@ -906,8 +945,12 @@ test("a_refused_chain_over_a_tombstone_that_is_held_when_the_page_starts_is_drop
   assert.equal((await queued(writer)).length, 2);
   await other.engine.remove(id);
   await untilServerRev(sim, id, 2);
-  await reader.engine.syncNow(); // the other tab caches the tombstone
+  sim.retire(writer); // the page is closed
+  const helper = await sim.spawn(writer.group, "helper", 1);
+  await helper.engine.start();
+  await helper.engine.syncNow(); // an engine of the same storage caches the tombstone
   await settle(20);
+  helper.engine.stop();
   const reloaded = await sim.restart(writer);
   await settle(20);
   assert.equal((await queued(reloaded)).length, 0, "the chain was dropped at start-up");
@@ -1312,12 +1355,90 @@ test("a_device_that_lists_the_vault_again_shows_every_row_in_every_run", async (
   await runSeeds([3176, 3359], (seed) => randomRun(seed));
 });
 
-test("tabs_that_only_read_hold_no_unsent_write_after_a_reload", { todo: "two tabs that both write can lose writes" }, async () => {
-  await runSeeds(GAP_SEEDS.readerTab, (seed) => randomRun(seed));
+test("tabs_that_only_read_hold_no_unsent_write_after_a_reload", async () => {
+  // A tab that does not run the engine holds nothing: no engine, no queue, no marks. After every page is opened again the writes of the browser are in
+  // the outbox, once, and they leave from the tab that holds the vault.
+  const sim = await world([3]);
+  const [dev] = sim.devices;
+  assert.equal(dev.tab, 0);
+  assert.deepEqual(dev.group.owners.map((owner) => owner.isOwner()), [true, false, false], "the other tabs have no engine and hold no lock");
+  offline(dev);
+  const id = await dev.engine.create(draft("written offline"));
+  await dev.engine.update(id, { name: "edited offline" }, currentRev(dev.engine, id));
+  assert.equal((await queued(dev)).length >= 1, true);
+  const reloaded = await sim.restart(dev);
+  assert.equal(reloaded.engine.list().find((item) => item.id === id)?.pending, true, "what was not sent is shown after the reload");
+  online(reloaded);
+  await pump(reloaded);
+  await untilServerRev(sim, id, 2);
+  assert.equal((await queued(reloaded)).length, 0);
+  sim.checkOwners();
+  assert.deepEqual(sim.problems, []);
+  await sim.stopAll();
+  // The seeds that found the reader-tab gap, before the vault had one owner per browser.
+  await runSeeds([1494, 4347], (seed) => randomRun(seed));
 });
 
-test("two_tabs_that_both_write_keep_every_write", { todo: "two tabs that both write can lose writes" }, async () => {
-  await runSeeds(seedsOf(fewer()), (seed) => randomRun(seed, { layouts: [[2], [2, 1]], tabsWrite: true }));
+test("two_tabs_that_both_write_keep_every_write", async () => {
+  // The user writes in one tab, moves the vault to another ("Use here") and writes there, again and again, while the network drops and answers get lost.
+  const total = await runSeeds(seedsOf(fewer()), (seed) => randomRun(seed, { layouts: [[2], [2, 1], [3]] }));
+  assert.ok((total["owner:ask"] ?? 0) + (total["owner:steal"] ?? 0) + (total["owner:closed"] ?? 0) > 0, "the vault moved");
+});
+
+test("use_here_moves_the_vault_and_a_write_that_was_queued_goes_out_once_from_the_new_tab", async () => {
+  for (const variant of ["ask", "steal", "closed"]) {
+    const sim = await world([2]);
+    const [first] = sim.devices;
+    offline(first);
+    const id = await first.engine.create(draft(`queued before ${variant}`));
+    await settle(10);
+    assert.equal((await queued(first)).length, 1);
+    online(first);
+    const second = await sim.useHere(first, { variant });
+    assert.ok(second, variant);
+    assert.equal(second.tab, 1);
+    assert.equal(first.stopped, true, "the first tab has stopped its engine");
+    assert.deepEqual(second.group.owners.map((owner) => owner.isOwner()), [false, true], "and let go of the lock");
+    await untilServerRev(sim, id, 1);
+    await pump(second);
+    assert.equal((await queued(second)).length, 0, variant);
+    assert.equal(sim.server.accepted().filter((write) => write.id === id).length, 1, `${variant}: once on the server`);
+    assert.equal(second.engine.list().find((item) => item.id === id)?.pending, false);
+    await sim.stopAll();
+    assert.deepEqual(sim.problems, [], variant);
+  }
+});
+
+test("a_pass_of_the_old_owner_that_is_let_go_after_the_vault_moved_does_nothing", async () => {
+  // The first tab has a pass in the air (the server has answered, the engine has not used the answer); the vault moves to the second tab, which reads
+  // and stores a newer feed; then the old pass is let go. It asks nothing, writes nothing and lowers no floor.
+  for (const variant of ["ask", "steal"]) {
+    const sim = await world([2]);
+    const [first] = sim.devices;
+    const id = await first.engine.create(draft("one"));
+    await untilServerRev(sim, id, 1);
+    await pump(first);
+    const gate = { arrived: false, release: () => {}, promise: null };
+    gate.promise = new Promise((resolve) => (gate.release = resolve));
+    first.hold = gate;
+    sim.elsewhere();
+    const pass = first.engine.syncNow().catch(() => {});
+    await until(() => gate.arrived, "the pass is in the air");
+    first.hold = null;
+    sim.elsewhere();
+    const second = await sim.useHere(first, { variant, during: (made) => made.engine.syncNow() });
+    const floorBefore = await sim.floorsOfGroup(first.group);
+    gate.release();
+    await pass;
+    await settle(30);
+    const floorAfter = await sim.floorsOfGroup(first.group);
+    assert.ok(floorAfter.maxSeq >= floorBefore.maxSeq, `${variant}: no floor went down`);
+    assert.deepEqual(first.lateCalls, [], `${variant}: the old engine asked the server after it stopped`);
+    assert.equal(second.engine.list().length, 3, variant);
+    await sim.checkFloors();
+    await sim.stopAll();
+    assert.deepEqual(sim.problems, [], variant);
+  }
 });
 
 test("a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it", { todo: "a purged tombstone can look like a rollback" }, async () => {

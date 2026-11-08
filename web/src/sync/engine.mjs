@@ -186,7 +186,11 @@ export function createSyncEngine({
     throw new TypeError("the sync engine needs a sync memory");
   }
   const flagsKey = `sync.flags.${scope.accountId}.${scope.vaultId}.${scope.vkEpoch}`;
-  /** The note that a listing has been begun and the feed after it not yet read to its end (under the prefix "forget" removes). */
+  /**
+   * The note that a listing has been begun and the feed after it not yet read to its end (under the prefix "forget" removes). It is
+   * one note for the browser, and only the engine of the tab that holds the owner lock (`sync/owner.mjs`) writes or removes it; a tab on
+   * standby has no engine.
+   */
   const listingKey = `${flagsKey}.listing`;
 
   let started = false;
@@ -480,11 +484,41 @@ export function createSyncEngine({
     blocked.delete(id);
     conflictNotes.delete(id);
     overlay.delete(id);
+    // The row may have changed while the chain was being discarded (a page of the feed can bring the item back): the screen follows the row
+    // that is held now, never the row that was held when the decision was made.
     if (rows.get(id)?.deleted === true) index.delete(id);
+    else if (rows.has(id)) await showServerVersion(id);
+    if (stopped) return false;
     flagsDirty = true;
     await persistFlags();
     changed([id]);
     return true;
+  }
+
+  /**
+   * Refusals of a chain that the moot rule covers, waiting for the next completed feed pass: id -> what `refuse` needs, and the number of
+   * the last pass that had begun when the refusal came (only a pass that begins later counts).
+   * @type {Map<string, { entry: import("../store/outbox.mjs").OutboxEntry, error: import("../api.mjs").ApiError, kind: string, automatic: boolean, after: number }>}
+   */
+  const mootRecheck = new Map();
+  /** The number of the last pass of the feed that was read to its end. */
+  let completedPass = 0;
+
+  /**
+   * After a pass of the feed that began after the refusal: the chain is dropped when the moot rule still holds (the verified tombstone is
+   * still the newest row this device holds); otherwise the refusal stands as a conflict, now with the verified row the pass brought.
+   * The 409 itself decides nothing.
+   */
+  async function settleMootRecheck() {
+    for (const [id, waiting] of [...mootRecheck]) {
+      if (stopped) return;
+      if (completedPass <= waiting.after) continue;
+      mootRecheck.delete(id);
+      if (!runner.entriesOf(id).some((entry) => entry.idem === waiting.entry.idem)) continue; // gone meanwhile
+      if (mootChain(id) && (await dropMoot(id))) continue;
+      if (stopped) return;
+      refuse(waiting.entry, waiting.error, waiting.kind, waiting.automatic);
+    }
   }
 
   const runner = createOutboxRunner({
@@ -520,14 +554,13 @@ export function createSyncEngine({
         // refuses is not a change of the user's: it says so, and it is not a conflict the user can resolve with a choice.
         const automatic = kind === "conflict" && entry.baseRev === 0 && flags.get(entry.itemId)?.kind === "missing_on_server";
         // The refusal of a write over an item this device already holds a verified tombstone for, when everything that waits for the
-        // item ends in a deletion: the item is deleted on both sides and there is nothing to choose, so the chain is dropped and the
-        // checkpoints can go on. Decided from the verified row, never from what the 409 says. A chain that cannot be dropped is a conflict.
+        // item ends in a deletion: the item may be deleted on both sides, with nothing to choose. The 409 does not decide that, whatever
+        // it says: the chain is kept, the item is marked for a check, and the next pass of the feed that begins from here settles it
+        // from the verified rows alone (`settleMootRecheck`): dropped when the tombstone is still the newest row, a conflict when the
+        // feed brought a live one.
         if (kind === "conflict" && !automatic && mootChain(entry.itemId)) {
-          void dropMoot(entry.itemId).then((dropped) => {
-            if (stopped) return;
-            if (dropped) void syncNow();
-            else refuse(entry, error, kind, automatic);
-          });
+          mootRecheck.set(entry.itemId, { entry, error, kind, automatic, after: passes });
+          void syncNow();
           return;
         }
         refuse(entry, error, kind, automatic);
@@ -763,6 +796,7 @@ export function createSyncEngine({
     if (stopped) return;
     // The feed is read to its end: the checkpoint step needs the `latest_seq` of that last page (the drained state, even when
     // the last row was a tombstone that has since been purged), and what the listing, if any, showed.
+    completedPass = pass.id;
     lastDrain = {
       seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
       refused: pass.refused, memory: (await memory.load()).memory, epoch: raised === null ? null : { from: pass.stored, to: raised },
@@ -1884,6 +1918,8 @@ export function createSyncEngine({
         if (stopped) return;
       }
       await cycle();
+      if (stopped) return;
+      await settleMootRecheck();
       if (stopped) return;
       await checkpointStep();
       if (stopped) return;
@@ -3012,6 +3048,7 @@ export function createSyncEngine({
       sealing.clear();
       abandoned.clear();
       droppedIdems.clear();
+      mootRecheck.clear();
       unconditioned.clear();
       epochRefusals.clear();
       standing.clear();

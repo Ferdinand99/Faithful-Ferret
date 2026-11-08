@@ -1,0 +1,7 @@
+{
+  "standby.body": "Sync runs in one tab at a time, so that no change is lost or mixed up. Nothing from the vault is shown in this tab.",
+  "standby.error": "The vault could not be moved to this tab. Try again.",
+  "standby.title": "The vault is open in another tab",
+  "standby.use_here": "Use here",
+  "standby.working": "Moving the vault to this tab…"
+}

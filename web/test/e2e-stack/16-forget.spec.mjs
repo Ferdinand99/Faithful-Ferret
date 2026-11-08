@@ -21,12 +21,12 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
     expect(before.device_secrets.count, "the device remembers the secret key").toBeGreaterThan(0);
     expect(before.sync_state?.count ?? 0, "the device holds the record of what the server showed").toBeGreaterThan(0);
 
-    // A second tab of the same browser has the vault open.
+    // A second tab of the same browser is unlocked: the vault is open in the first tab, so this one shows the notice and no items.
     const second = await context.newPage();
     await second.goto(`${vaultUrl}/vault/#/items`);
     await unlockWith(second, secrets.password);
-    await expect(second.locator('[data-role="list"]')).toBeVisible({ timeout: 90_000 });
-    await expect(rowsNamed(second, name)).toHaveCount(1, { timeout: 30_000 });
+    await expect(second.locator('[data-role="standby"]')).toBeVisible({ timeout: 90_000 });
+    await expect(second.locator('[data-role="list"]')).toHaveCount(0);
 
     // Forget, from the first tab, with the question first.
     await first.evaluate(() => {
@@ -38,13 +38,12 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
     await expect(first.locator('[data-role="dialog-confirm"]')).toBeVisible();
     await shot(first, "16-forget-the-question");
     await first.locator('[data-role="dialog-confirm"]').click();
-    // The tab that forgot shows the page that says what was forgotten, or (the fault in the test marked fixme below) the
-    // sign-in page that replaces it at once. Either is fine here: what this test asks for is what is left on the device.
-    await expect(first.locator('[data-role="forget-done"], [data-role="credentials"]').first()).toBeVisible({ timeout: 60_000 });
+    // The tab that forgot shows the page that says what was forgotten, and keeps showing it.
+    await expect(first.locator('[data-role="forget-done"]')).toBeVisible({ timeout: 60_000 });
     await shot(first, "16-forget-done");
 
-    // The other tab locked and shows no items.
-    await expect(second.locator('[data-role="list"]')).toHaveCount(0, { timeout: 30_000 });
+    // The other tab locked: the notice is gone, and the unlock (or sign-in) screen is there.
+    await expect(second.locator('[data-role="standby"]')).toHaveCount(0, { timeout: 30_000 });
     await expect(second.locator('[data-role="unlock"], [data-role="credentials"], [data-role="account-page"]').first()).toBeVisible();
     await shot(second, "16-forget-the-other-tab");
 
@@ -70,20 +69,25 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
   }
 });
 
-// Known fault: the page that says what was forgotten is replaced by the sign-in page about 8 ms after the confirmation, so the
-// person never reads it. The tab that forgets seems to lock itself through its own listener for the message that it sends to
-// the other tabs (the watch of the forget messages reacts to a message that this tab made itself). Nothing is lost by it: the
-// data is gone and the next sign-in is first use, as the test above shows. Remove the fixme when the page stays.
-test.fixme("forget_shows_what_was_forgotten_on_the_tab_that_forgot", async ({ browser }) => {
+// The page that says what was forgotten stays: the tab that forgets does not act on the message that it sends to the other tabs
+// (the message names the tab that sends it).
+test("forget_shows_what_was_forgotten_on_the_tab_that_forgot", async ({ browser }) => {
   useAccount();
   const context = await freshContext(browser);
-  const page = await context.newPage();
-  await signInOn(page);
-  await page.evaluate(() => {
-    window.location.hash = "#/forget";
-  });
-  await page.locator('[data-role="forget-start"]').click();
-  await page.locator('[data-role="dialog-confirm"]').click();
-  await expect(page.locator('[data-role="forget-done"]')).toBeVisible({ timeout: 10_000 });
-  await context.close();
+  try {
+    const page = await context.newPage();
+    await signInOn(page);
+    await page.evaluate(() => {
+      window.location.hash = "#/forget";
+    });
+    await page.locator('[data-role="forget-start"]').click();
+    await page.locator('[data-role="dialog-confirm"]').click();
+    await expect(page.locator('[data-role="forget-done"]')).toBeVisible({ timeout: 10_000 });
+    // It is still there after a while: nothing replaces it with the sign-in page.
+    await page.waitForTimeout(2_000);
+    await expect(page.locator('[data-role="forget-done"]')).toBeVisible();
+    await expect(page.locator('[data-role="credentials"]')).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
 });

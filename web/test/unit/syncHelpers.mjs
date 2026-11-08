@@ -16,31 +16,134 @@ import { memoryStore } from "../../src/sync/memory.mjs";
 import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
 
 /**
- * The Web Locks of a browser, as far as the sync memory uses them: `request(name, callback)`
- * runs the callbacks of one name one at a time. `held` says which names are locked right now,
+ * The Web Locks of a browser: `request(name, [options], callback)` runs the callbacks of one name one at a time, first come
+ * first served. The options are the real ones: `ifAvailable` (the callback gets null when the lock is held or others wait),
+ * `steal` (the holder loses the lock now: its request rejects with an AbortError, and this request goes first), and `signal`
+ * (a request that still waits is dropped and rejects with the signal's reason). `held` says which names are locked right now,
  * `requests` counts the calls.
  */
 export class FakeLocks {
   constructor() {
-    this.tails = new Map();
+    this.slots = new Map();
     this.held = new Set();
     this.requests = 0;
   }
 
+  slot(name) {
+    let slot = this.slots.get(name);
+    if (!slot) {
+      slot = { holder: null, queue: [] };
+      this.slots.set(name, slot);
+    }
+    return slot;
+  }
+
   request(name, optionsOrCallback, maybeCallback) {
     const callback = maybeCallback ?? optionsOrCallback;
+    const options = maybeCallback ? (optionsOrCallback ?? {}) : {};
     this.requests += 1;
-    const before = this.tails.get(name) ?? Promise.resolve();
-    const run = before.then(async () => {
-      this.held.add(name);
-      try {
-        return await callback({ name, mode: "exclusive" });
-      } finally {
+    return new Promise((resolve, reject) => {
+      const slot = this.slot(name);
+      const entry = { callback, resolve, reject, settled: false };
+      const abort = (reason) => Object.assign(new Error(reason), { name: "AbortError" });
+      if (options.signal?.aborted) return reject(options.signal.reason ?? abort("aborted"));
+      if (options.steal) {
+        const old = slot.holder;
+        slot.queue.unshift(entry);
+        if (old) {
+          slot.holder = null;
+          this.held.delete(name);
+          old.settled = true;
+          old.reject(abort("the lock was stolen"));
+        }
+        this.pump(name);
+        return undefined;
+      }
+      if (options.ifAvailable && (slot.holder || slot.queue.length > 0)) {
+        Promise.resolve().then(() => callback(null)).then(resolve, reject);
+        return undefined;
+      }
+      slot.queue.push(entry);
+      options.signal?.addEventListener?.("abort", () => {
+        const at = slot.queue.indexOf(entry);
+        if (at < 0) return;
+        slot.queue.splice(at, 1);
+        entry.settled = true;
+        reject(options.signal.reason ?? abort("aborted"));
+      });
+      this.pump(name);
+      return undefined;
+    });
+  }
+
+  pump(name) {
+    const slot = this.slot(name);
+    if (slot.holder || slot.queue.length === 0) return;
+    const entry = slot.queue.shift();
+    slot.holder = entry;
+    this.held.add(name);
+    const finish = (settle, value) => {
+      if (slot.holder === entry) {
+        slot.holder = null;
         this.held.delete(name);
       }
-    });
-    this.tails.set(name, run.catch(() => {}));
-    return run;
+      if (!entry.settled) {
+        entry.settled = true;
+        settle(value);
+      }
+      this.pump(name);
+    };
+    Promise.resolve().then(() => entry.callback({ name, mode: "exclusive" })).then((value) => finish(entry.resolve, value), (error) => finish(entry.reject, error));
+  }
+}
+
+/**
+ * The BroadcastChannels of one browser: `channel(name)` makes a channel object; what one object posts reaches every
+ * other object of the same name (not itself), one turn later. `mute(channel)` makes an object deaf (a frozen tab).
+ */
+export class FakeChannels {
+  constructor() {
+    this.all = new Set();
+    this.posted = [];
+  }
+
+  channel(name) {
+    const bus = this;
+    const listeners = new Set();
+    const channel = {
+      name,
+      muted: false,
+      closed: false,
+      listeners,
+      postMessage(data) {
+        if (channel.closed) throw new Error("the channel is closed");
+        bus.posted.push({ name, data });
+        for (const other of bus.all) {
+          if (other === channel || other.name !== name || other.closed) continue;
+          setImmediate(() => {
+            if (other.closed || other.muted) return;
+            for (const fn of [...other.listeners]) fn({ data: structuredClone(data) });
+          });
+        }
+      },
+      addEventListener(type, fn) {
+        if (type === "message") listeners.add(fn);
+      },
+      removeEventListener(type, fn) {
+        if (type === "message") listeners.delete(fn);
+      },
+      close() {
+        channel.closed = true;
+        bus.all.delete(channel);
+      },
+    };
+    this.all.add(channel);
+    return channel;
+  }
+
+  /** Makes a `makeChannel` for a tab, for the owner service. */
+  maker(name) {
+    return () => this.channel(name);
   }
 }
 

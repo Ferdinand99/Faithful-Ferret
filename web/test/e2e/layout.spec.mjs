@@ -109,6 +109,11 @@ async function scene(page, which) {
       mount(root, view);
       view.querySelector('[data-role="forget-start"]').click();
       await new Promise((resolve) => setTimeout(resolve, 50));
+    } else if (name === "standby") {
+      // A tab that does not hold the vault: the notice, with "Use here" that never finishes (the progress is on the page).
+      const { standbyView } = await import("/app/views/standby.mjs");
+      const view = standbyView({ t, sync: { standby: () => true, takeOver: () => new Promise(() => {}) }, onTaken() {}, lock: async () => {} });
+      mount(root, view.root);
     } else if (name === "conflict") {
       const { conflictView } = await import("/app/views/conflict.mjs");
       const long = "Firefox on a laptop with a long device name that has to wrap inside its cell and never push the page sideways";
@@ -175,7 +180,7 @@ for (const locale of ["en", "nb-NO"]) {
       test(`nothing_is_cut_off_or_outside_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);
-        for (const name of ["signed-in", "list", "item", "warnings", "restored", "forget", "conflict", "trash"]) {
+        for (const name of ["signed-in", "list", "item", "warnings", "restored", "forget", "conflict", "trash", "standby"]) {
           await scene(page, name);
           expect(await clipped(page), `${name} at ${width}px`).toEqual([]);
         }
@@ -185,6 +190,27 @@ for (const locale of ["en", "nb-NO"]) {
     }
 
     for (const width of [320, 360, 1100]) {
+      test(`the_standby_notice_keeps_its_size_while_it_works_and_fits_at_${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 800 });
+        await pageIsReady(page, locale);
+        await scene(page, "standby");
+        const card = page.locator('[data-role="standby"]');
+        await expect(card).toBeVisible();
+        const size = async () => {
+          const box = await card.boundingBox();
+          return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null;
+        };
+        const before = await size();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `no sideways scroll at ${width}px`).toBe(true);
+        expect(await clipped(page)).toEqual([]);
+        await page.locator('[data-role="use-here"]').click();
+        await expect(page.locator('[data-role="use-here"]')).toHaveAttribute("aria-busy", "true");
+        await expect(page.locator('[data-role="status"]')).not.toHaveText("");
+        expect(await size(), "the notice has the same size while the progress shows").toEqual(before);
+        expect(await clipped(page)).toEqual([]);
+        await expect(card.locator("h1")).toBeVisible();
+      });
+
       test(`a_long_value_in_the_conflict_view_does_not_move_its_button_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         await pageIsReady(page, locale);

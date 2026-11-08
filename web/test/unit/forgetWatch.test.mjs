@@ -35,7 +35,8 @@ function bus() {
 }
 
 /** A tab: a session that is open for an account (or not), an engine that can be stopped, and the watch. */
-function tab(channels, { accountId = ACCOUNT, serverUrl = SERVER, open = true } = {}) {
+let tabs = 0;
+function tab(channels, { accountId = ACCOUNT, serverUrl = SERVER, open = true, tabId = `tab-${(tabs += 1)}` } = {}) {
   const log = [];
   const session = {
     isOpen: open,
@@ -46,7 +47,7 @@ function tab(channels, { accountId = ACCOUNT, serverUrl = SERVER, open = true } 
     },
   };
   const sync = { stop: () => log.push("stop") };
-  const service = forgetWatch.create({ crypto: session, sync, serverUrl, makeChannel: () => channels.make(), navigate: (hash) => log.push(["navigate", hash]) });
+  const service = forgetWatch.create({ crypto: session, sync, serverUrl, makeChannel: () => channels.make(), navigate: (hash) => log.push(["navigate", hash]), tabId });
   return { session, sync, service, log };
 }
 
@@ -63,7 +64,7 @@ test("forget_tells_other_tabs_and_they_lock", async () => {
     api: { post: async () => ({}) },
     session: { lock: async () => {}, forgetSecretKey: async () => {} },
     store: { open: async () => ({}), pendingWrites: async () => 0, sharedAccount: async () => false, forgetServer: async () => ({ removed: {} }) },
-    serverUrl: SERVER, accountId: ACCOUNT, confirm: async () => true, navigate() {}, channel: here, locks: null,
+    serverUrl: SERVER, accountId: ACCOUNT, confirm: async () => true, navigate() {}, channel: here, locks: null, tabId: "the-tab-that-forgets",
   });
   assert.equal(result, "forgotten");
   await settle();
@@ -72,6 +73,35 @@ test("forget_tells_other_tabs_and_they_lock", async () => {
   // A tab for another account, another server, or one that is locked already, is left alone.
   for (const t of [otherAccount, otherServer, closedTab]) assert.deepEqual(t.log, []);
   assert.equal(otherAccount.session.isOpen, true);
+});
+
+test("the_tab_that_forgets_ignores_its_own_forget_message", async () => {
+  const channels = bus();
+  // The tab that forgets has a watch of its own, made apart from the flow's channel: it hears the flow's messages.
+  const forgetting = tab(channels, { tabId: "the-tab-that-forgets" });
+  const other = tab(channels);
+  const result = await forgetServer({
+    api: { post: async () => ({}) },
+    session: { lock: async () => {}, forgetSecretKey: async () => {} },
+    store: { open: async () => ({}), pendingWrites: async () => 0, sharedAccount: async () => false, forgetServer: async () => ({ removed: {} }) },
+    serverUrl: SERVER, accountId: ACCOUNT, confirm: async () => true, navigate() {}, channel: channels.make(), locks: null, tabId: "the-tab-that-forgets",
+  });
+  assert.equal(result, "forgotten");
+  await settle();
+  assert.deepEqual(forgetting.log, [], "no lock, no stop, and the page that says what was forgotten stays");
+  assert.deepEqual(other.log, ["lock", "stop", ["navigate", "#/login"]], "another tab of the account does lock");
+});
+
+test("a_message_that_names_another_tab_or_none_is_heard", async () => {
+  const channels = bus();
+  const t = tab(channels, { tabId: "mine" });
+  const sender = channels.make();
+  sender.postMessage({ type: "forgetting", serverKey: SERVER, accountId: ACCOUNT, from: "mine" });
+  await settle();
+  assert.deepEqual(t.log, []);
+  sender.postMessage({ type: "forgetting", serverKey: SERVER, accountId: ACCOUNT, from: "someone-else" });
+  await settle();
+  assert.deepEqual(t.log, ["lock", "stop", ["navigate", "#/login"]]);
 });
 
 test("a_message_that_is_not_a_forget_message_for_this_tab_is_ignored", async () => {
