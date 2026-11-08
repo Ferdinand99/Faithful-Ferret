@@ -29,3 +29,27 @@ SHA-256. The header of the file says where each checksum comes from.
   was measured with the sandboxes off.
 - Old image tags of the runner are removed one by one when a new one is built;
   nothing is pruned.
+
+## The test sites
+
+`extension/test/fixtures/sites/` holds the adversarial pages the fill engine and
+the frame rules are tested against: look-alike hosts (a dash, a foreign suffix,
+a Cyrillic homograph), the same host over http and on another port, a foreign
+frame, frames without a usable origin (about:blank, srcdoc, sandboxes), a
+private suffix (`a.github.io`, `b.github.io`), overlays, hidden and off-screen
+fields, CSS on a parent (opacity, filter, transform, clip-path, mask,
+mix-blend-mode, also through a shadow root), a frame that moves to a foreign
+origin on request, and a page that imitates Ferret's title and icon. `pages.mjs`
+lists each site with its expected outcome; `origins.mjs` names the origins.
+
+The fixture server serves them on three listeners (https on 443, a second https
+port 8443 and http on 80 in the runner; the container allows unprivileged
+processes to bind them), so `https://login.example.test/` is an ordinary origin
+without a port. `server.siteUrl(id)` and `server.origin(name)` give the
+addresses of a run. Every host is in `test/fixtures/hosts.json`, so the runner
+maps it to the server and the release check refuses it in a release. Nothing
+under `test/` is ever packaged.
+
+A password field whose verdict does not depend on the page carries
+`data-fixture-expect="fill"` (a clear control field) or `"reject"` (a hidden,
+covered or off-screen one that must never be filled).

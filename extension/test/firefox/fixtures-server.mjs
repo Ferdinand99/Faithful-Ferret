@@ -1,5 +1,5 @@
-// The minimal fixture server of the Firefox tests: https with a certificate
-// authority made at start (nothing is baked into the image), the host names of
+// The fixture server of the Firefox tests: https with a certificate authority
+// made at start (nothing is baked into the image), the host names of
 // test/fixtures/hosts.json, a server-sent-events stream and one sign-in page.
 //
 //   /sse                  an event every `sseIntervalMs` (10 s by default)
@@ -7,13 +7,18 @@
 //   /static/blank.html    an empty page
 //   /healthz              "ok"
 //
-// More sites (the test pages for the fill engine) are added under sites/ later.
+// The adversarial test sites of test/fixtures/sites (phishing and clickjacking
+// pages) are served on three listeners: the main https port, a second https port
+// and plain http, so one host name can be tested on another port and over http.
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findSite, siteById } from "../fixtures/sites/index.mjs";
+import { originText } from "../fixtures/sites/origins.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -73,20 +78,34 @@ export function makeCertificates(dir, hosts) {
 
 /**
  * @typedef {{
- *   hosts: string[], port: number, caFile: string, caPem: string, dir: string,
- *   requests: { host: string, method: string, path: string }[],
+ *   hosts: string[], port: number, altPort: number, httpPort: number,
+ *   ports: import("../fixtures/sites/origins.mjs").Ports,
+ *   caFile: string, caPem: string, dir: string,
+ *   requests: { host: string, method: string, path: string, listener: string }[],
  *   url: (host: string, path?: string) => string,
+ *   origin: (name: string) => string,
+ *   siteUrl: (id: string) => string,
  *   close: () => Promise<void>,
  * }} Fixtures
+ *   `port` is the main https port, `altPort` the second https port, `httpPort` the
+ *   plain http port. `origin(name)` is the origin text of a named origin of the
+ *   sites (no port when it is the scheme's default); `siteUrl(id)` the address of a site.
  */
 
 /**
  * Starts the server on 127.0.0.1. The host names resolve to this machine (the
  * runner's /etc/hosts and the profile's network.dns.localDomains).
- * @param {{ hosts?: string[], port?: number, sseIntervalMs?: number, dir?: string }} [options]
+ *
+ * `port`, `altPort` and `httpPort` are the three listeners; 0 picks a free port.
+ * The runner uses 443, 8443 and 80, so the test sites have the same origins as
+ * a real site (https://login.example.test/ has no port in it). Two listeners
+ * cannot share a port.
+ * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string }} [options]
  * @returns {Promise<Fixtures>}
  */
-export async function startFixtures({ hosts = readHosts().fixture, port = Number(process.env.FERRET_FIXTURE_PORT ?? 8443), sseIntervalMs = 10_000, dir } = {}) {
+export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir } = {}) {
+  const wanted = [port, altPort, httpPort].filter((p) => p !== 0);
+  if (new Set(wanted).size !== wanted.length) throw new Error(`fixtures: two listeners want the same port (${port}, ${altPort}, ${httpPort})`);
   const work = dir ?? mkdtempSync(join(tmpdir(), "ferret-fixtures-"));
   mkdirSync(work, { recursive: true });
   const { caPem, caFile, keyPem, certPem } = makeCertificates(work, hosts);
@@ -95,16 +114,24 @@ export async function startFixtures({ hosts = readHosts().fixture, port = Number
   const requests = [];
   /** @type {Set<import("node:http").ServerResponse>} */
   const streams = new Set();
-  const server = createServer({ key: keyPem, cert: certPem }, (req, res) => {
+  /** @type {import("../fixtures/sites/origins.mjs").Ports} */
+  const ports = { https: 0, alt: 0, http: 0 };
+
+  /** @param {import("../fixtures/sites/origins.mjs").Listener} listener */
+  const handler = (listener) => (/** @type {import("node:http").IncomingMessage} */ req, /** @type {import("node:http").ServerResponse} */ res) => {
     const host = String(req.headers.host ?? "").split(":")[0].toLowerCase();
     const path = new URL(req.url ?? "/", "https://placeholder.invalid").pathname;
-    requests.push({ host, method: req.method ?? "GET", path });
+    requests.push({ host, method: req.method ?? "GET", path, listener });
     if (!hosts.includes(host)) {
       res.writeHead(421, { "content-type": "text/plain" }).end("unknown host\n");
       return;
     }
     const common = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
-    if (path === "/sse" && req.method === "GET") {
+    const site = req.method === "GET" || req.method === "HEAD" ? findSite(listener, host, path) : undefined;
+    if (site) {
+      const html = site.render({ url: (origin, p = "/") => `${originText(origin, ports)}${p}` });
+      res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(req.method === "HEAD" ? undefined : html);
+    } else if (path === "/sse" && req.method === "GET") {
       res.writeHead(200, { ...common, "content-type": "text/event-stream", connection: "keep-alive" });
       res.write(": open\n\n");
       streams.add(res);
@@ -120,28 +147,59 @@ export async function startFixtures({ hosts = readHosts().fixture, port = Number
     } else {
       res.writeHead(404, { ...common, "content-type": "text/plain" }).end("not found\n");
     }
-  });
-  await new Promise((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(port, "127.0.0.1", () => resolveListen(undefined));
-  });
-  const address = /** @type {import("node:net").AddressInfo} */ (server.address());
-  const bound = address.port;
+  };
+
+  const tls = { key: keyPem, cert: certPem };
+  const servers = {
+    https: createServer(tls, handler("https")),
+    alt: createServer(tls, handler("alt")),
+    http: createHttpServer(handler("http")),
+  };
+  const wantedPorts = { https: port, alt: altPort, http: httpPort };
+  const listening = [];
+  try {
+    for (const name of /** @type {const} */ (["https", "alt", "http"])) {
+      const server = servers[name];
+      await new Promise((resolveListen, rejectListen) => {
+        server.once("error", rejectListen);
+        server.listen(wantedPorts[name], "127.0.0.1", () => resolveListen(undefined));
+      });
+      listening.push(server);
+      ports[name] = /** @type {import("node:net").AddressInfo} */ (server.address()).port;
+    }
+  } catch (error) {
+    for (const server of listening) server.close();
+    rmSync(work, { recursive: true, force: true });
+    throw error;
+  }
   return {
     hosts,
-    port: bound,
+    port: ports.https,
+    altPort: ports.alt,
+    httpPort: ports.http,
+    ports,
     caFile,
     caPem,
     dir: work,
     requests,
-    url: (host, path = "/") => `https://${host}:${bound}${path}`,
+    url: (host, path = "/") => `https://${host}${ports.https === 443 ? "" : `:${ports.https}`}${path}`,
+    origin: (name) => originText(name, ports),
+    siteUrl: (id) => {
+      const site = siteById(id);
+      return `${originText(site.origin, ports)}${site.path}`;
+    },
     close: () => new Promise((done) => {
       for (const res of streams) res.destroy();
-      server.close(() => {
+      let open = listening.length;
+      const finished = () => {
+        if (--open > 0) return;
         rmSync(work, { recursive: true, force: true });
         done(undefined);
-      });
-      server.closeAllConnections();
+      };
+      for (const server of listening) {
+        server.close(finished);
+        server.closeAllConnections();
+      }
     }),
   };
 }
