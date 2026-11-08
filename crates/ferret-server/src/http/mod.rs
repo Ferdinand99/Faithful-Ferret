@@ -150,22 +150,22 @@ mod tests {
 
     /// An invitation link and a sign-in code travel in the path of the page that
     /// takes them. Turning either feature on needs a strict policy for its page
-    /// first: add the path to `admin_referrer_policy` and make it
-    /// `strict-origin` (the origin only, and nothing to a less safe one), then
-    /// this test passes again. The features are off now.
+    /// first: add the path to `admin_referrer_policy` and make it `no-referrer`
+    /// or `strict-origin` (no referrer at all, or the origin only and nothing to
+    /// a less safe one), then this test passes again. The features are off now.
     #[test]
     fn a_feature_with_a_secret_in_its_path_needs_a_strict_referrer_policy() {
+        let strict =
+            |path: &str| matches!(admin_referrer_policy(path), "no-referrer" | "strict-origin");
         if FEATURES.invites {
-            assert_eq!(
-                admin_referrer_policy("/invite/token"),
-                "strict-origin",
+            assert!(
+                strict("/invite/token"),
                 "FEATURES.invites is on but /invite/ has no strict referrer policy"
             );
         }
         if FEATURES.sign_in_codes {
-            assert_eq!(
-                admin_referrer_policy("/sign-in-code"),
-                "strict-origin",
+            assert!(
+                strict("/sign-in-code"),
                 "FEATURES.sign_in_codes is on but /sign-in-code has no strict referrer policy"
             );
         }

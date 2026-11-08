@@ -173,22 +173,34 @@ test("the_history_cache_of_an_earlier_session_is_dropped_by_its_kit_key", () => 
     ["other", "kept"],
   ]);
   const storage = { removeItem: (key) => store.delete(key) };
-  clearHistoryCache(storage);
+  clearHistoryCache(() => storage);
   assert.equal(store.has(HISTORY_CACHE_KEY), false);
   // Only that key goes.
   assert.equal(store.get("other"), "kept");
   // No storage, or storage that throws, is not an error.
-  clearHistoryCache(undefined);
-  clearHistoryCache({
+  clearHistoryCache(() => undefined);
+  clearHistoryCache(() => ({
     removeItem: () => {
       throw new Error("blocked");
     },
-  });
+  }));
+});
+
+test("blocked_site_storage_does_not_stop_the_hand_over", async () => {
+  // A browser that blocks site storage throws a SecurityError on the read of sessionStorage itself.
+  const blocked = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
+  assert.doesNotThrow(() => clearHistoryCache(blocked));
+  // The hand-over that follows still runs and navigates.
+  const { env, log } = browser();
+  assert.equal(await run(env), true);
+  assert.deepEqual(log.navigated, [`${ORIGIN}/settings`]);
 });
 
 test("the_hand_over_page_starts_by_clearing_the_cache", () => {
   const source = readFileSync(join(web, "admin", "handoff.mjs"), "utf8");
-  const start = source.indexOf("clearHistoryCache(globalThis.sessionStorage)");
+  const start = source.indexOf("clearHistoryCache(() => globalThis.sessionStorage)");
   assert.ok(start > 0);
   assert.ok(start < source.indexOf("run({ location"), "the cache is cleared before the hand-over runs");
 });

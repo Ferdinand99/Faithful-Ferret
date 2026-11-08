@@ -108,12 +108,14 @@ export const HISTORY_CACHE_KEY = "htmx-history-cache";
  * Drops htmx's snapshots of the pages this tab left. A session that ended with no
  * Log out (it expired, was revoked, or was ended by "sign out others") leaves
  * them behind, so every new hand-over starts with none. Storage that is not
- * there or is blocked holds nothing to drop.
- * @param {{ removeItem(key: string): void } | undefined} storage
+ * there or is blocked holds nothing to drop. The storage is read inside the guard
+ * (a getter): a browser that blocks site storage throws a `SecurityError` on the
+ * very read of `sessionStorage`, and that must not stop the hand-over.
+ * @param {() => { removeItem(key: string): void } | undefined} getStorage
  */
-export function clearHistoryCache(storage) {
+export function clearHistoryCache(getStorage) {
   try {
-    storage?.removeItem(HISTORY_CACHE_KEY);
+    getStorage()?.removeItem(HISTORY_CACHE_KEY);
   } catch {
     // Blocked storage has nothing cached either.
   }
@@ -133,7 +135,7 @@ if (typeof document !== "undefined" && document.getElementById("handoff-status")
   status.textContent = text.working;
   // Before anything else: the snapshots of an earlier session in this tab are gone
   // before this one starts.
-  clearHistoryCache(globalThis.sessionStorage);
+  clearHistoryCache(() => globalThis.sessionStorage);
   run({ location, history, fetch: globalThis.fetch.bind(globalThis) }).then((went) => {
     if (went) return;
     status.textContent = text.failed;
