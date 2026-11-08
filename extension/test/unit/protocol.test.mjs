@@ -7,10 +7,13 @@ import {
   PROTOCOL_VERSION,
   ProtocolError,
   PUSH_TYPES,
+  REFUSAL_REASONS,
+  REFUSED,
   UI_PORT,
   UI_TYPES,
   decode,
   encode,
+  encodeRefusal,
 } from "../../src/shared/protocol.mjs";
 import { keysOf, walk } from "../../src/shared/schema.mjs";
 
@@ -208,4 +211,39 @@ test("a content script cannot send a message type that carries a value", () => {
     "reason",
     "request_id",
   ]);
+});
+
+test("a_refusal_is_a_typed_reply_with_a_reason_from_a_fixed_list", () => {
+  assert.equal(REFUSED, "refused");
+  assert.deepEqual([...REFUSAL_REASONS], ["vault_locked", "not_available", "invalid_input", "internal_error"]);
+  assert.equal(Object.isFrozen(REFUSAL_REASONS), true);
+  for (const reason of REFUSAL_REASONS) {
+    const raw = encodeRefusal("req-9", reason);
+    // The page decodes it like any other reply of the UI channel.
+    assert.deepEqual(decode(raw, UI_TYPES, { reply: true }), { id: "req-9", type: "refused", body: { reason } });
+  }
+  // A reason from anywhere else is sent as internal_error, never passed on.
+  for (const reason of ["bad_credentials", "worker_failed", "hunter2", "", "VAULT_LOCKED", "vault_locked ", "x".repeat(5000)]) {
+    assert.equal(JSON.parse(encodeRefusal("req-9", reason)).body.reason, "internal_error");
+  }
+  refuses(() => encodeRefusal("not an id!", "vault_locked"), "bad_shape");
+  // The body has the reason and nothing else; the checker refuses more or less.
+  for (const body of [{}, { reason: "vault_locked", extra: 1 }, { reason: "other" }, { reason: 5 }, null]) {
+    refuses(() => decode(envelope({ type: "refused", body }), UI_TYPES, { reply: true }), "bad_shape");
+  }
+});
+
+test("refused_is_not_a_request_or_a_content_type", () => {
+  const raw = encodeRefusal("req-9", "vault_locked");
+  // As a request, on any channel.
+  for (const table of [UI_TYPES, CONTENT_TYPES, PUSH_TYPES]) refuses(() => decode(raw, table), "unknown_type");
+  // As a reply, only on the UI channel.
+  refuses(() => decode(raw, CONTENT_TYPES, { reply: true }), "unknown_type");
+  refuses(() => decode(raw, PUSH_TYPES, { reply: true }), "unknown_type");
+  // No table has a type of that name, and nothing can encode one.
+  for (const table of [UI_TYPES, CONTENT_TYPES, PUSH_TYPES]) assert.equal(Object.hasOwn(table, REFUSED), false);
+  refuses(() => encode("refused", { reason: "vault_locked" }), "unknown_type");
+  refuses(() => encode("refused", { reason: "vault_locked" }, { reply: true }), "unknown_type");
+  // The size limit applies to it as to everything.
+  refuses(() => decode(" ".repeat(MAX_MESSAGE_BYTES + 1) + raw, UI_TYPES, { reply: true }), "too_large");
 });

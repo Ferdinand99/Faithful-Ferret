@@ -13,6 +13,11 @@
 // The router reads a generated register of these files. There is no central
 // list and no central `switch`: two features never edit the same file.
 //
+// A handler for the test build only goes in the test folder that scripts/build.mjs
+// names (TEST_ONLY_DIR), below this one: a release
+// leaves it out. A handler never answers a refusal itself: it returns its
+// reply, or throws, and the router sends the typed `refused` reply.
+//
 // This file holds only the rule above. The build accepts only `.mjs` and
 // `.html` files under `src`, so the rule is a comment in a module with no code.
 export {};

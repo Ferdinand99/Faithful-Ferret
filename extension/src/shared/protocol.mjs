@@ -11,6 +11,12 @@
 //   as the answer to a pending action in the extension's own UI. Only here does
 //   a secret travel to a page, and it is one value for one field of one frame.
 //
+// One more type is not in any table: `refused`, the background's answer when it
+// could not answer a request (see REFUSAL_REASONS). It is a reply only, valid
+// for every UI request and for no other channel; as a request it is an unknown
+// type. What an answer means for the user (a wrong password, say) stays in the
+// reply of its own type.
+//
 // Envelope: { v, id, type, body }, at most MAX_MESSAGE_BYTES, sent as a JSON
 // string. Every body has a schema that refuses unknown keys, and every string
 // and array in a schema has an upper bound. The origin of a sender is never
@@ -59,6 +65,21 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   unlock: Object.freeze(["mp"]),
 });
 
+/** The type of the background's refusal. No table may define it. */
+export const REFUSED = "refused";
+
+/**
+ * Why the background could not answer. A short fixed list: a reason from
+ * anywhere else (a handler's own code, a client's error) becomes
+ * "internal_error".
+ */
+export const REFUSAL_REASONS = Object.freeze([
+  "vault_locked",
+  "not_available",
+  "invalid_input",
+  "internal_error",
+]);
+
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const REASON = /^[a-z][a-z0-9_]*$/;
 
@@ -92,6 +113,7 @@ const empty = object({});
  * @returns {Readonly<T>}
  */
 function defineTypes(table) {
+  if (Object.hasOwn(table, REFUSED)) throw new TypeError("a table cannot define refused");
   for (const def of Object.values(table)) Object.freeze(def);
   return Object.freeze(table);
 }
@@ -191,6 +213,8 @@ export const PUSH_TYPES = defineTypes({
   },
 });
 
+const refusal = object({ reason: string({ max: 32, oneOf: REFUSAL_REASONS }) });
+
 const ALL_TYPES = [UI_TYPES, CONTENT_TYPES, PUSH_TYPES];
 
 /** @param {string} type */
@@ -233,6 +257,25 @@ export function encode(type, body, opts = {}) {
     throw new ProtocolError("too_large");
   }
   return raw;
+}
+
+/**
+ * The refusal of the request `id`. A reason that is not in REFUSAL_REASONS is
+ * sent as "internal_error".
+ *
+ * @param {string} id the request's id
+ * @param {string} reason
+ * @returns {string}
+ */
+export function encodeRefusal(id, reason) {
+  if (!ID.test(id)) throw new ProtocolError("bad_shape", "id");
+  const known = REFUSAL_REASONS.includes(reason) ? reason : "internal_error";
+  return JSON.stringify({
+    v: PROTOCOL_VERSION,
+    id,
+    type: REFUSED,
+    body: validate(refusal, { reason: known }),
+  });
 }
 
 /**
@@ -286,6 +329,11 @@ export function decode(raw, allowed, opts = {}) {
   }
   if (typeof type !== "string" || type.length > 64) {
     throw new ProtocolError("bad_shape", "type");
+  }
+  if (type === REFUSED) {
+    // Only an answer, and only on the UI channel (the page that asked).
+    if (!opts.reply || allowed !== UI_TYPES) throw new ProtocolError("unknown_type");
+    return { id, type, body: validate(refusal, body) };
   }
   if (!Object.hasOwn(allowed, type)) throw new ProtocolError("unknown_type");
   const def = allowed[type];
