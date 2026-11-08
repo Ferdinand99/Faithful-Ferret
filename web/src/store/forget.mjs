@@ -98,3 +98,25 @@ export async function pendingWrites(store, accountId) {
   const range = store.keyRange.bound([accountId], [accountId, []]);
   return run(store, ["outbox"], "readonly", ([outbox]) => req(outbox.index("by_scope").count(range)));
 }
+
+/**
+ * Whether another origin has the same account id pinned, so that forgetting this server
+ * would keep the records that are kept per account (rows, outbox, trash, flags). The same
+ * test `forgetServer` makes inside its transaction; the screen asks it first, to say what
+ * will be lost and what will stay.
+ * @param {import("./idb.mjs").Store} store
+ * @param {string} serverUrl
+ * @param {string} accountId
+ * @returns {Promise<boolean>}
+ */
+export async function sharedAccount(store, serverUrl, accountId) {
+  const server = serverKey(serverUrl);
+  checkAccount(accountId);
+  return run(store, ["pinned", "sync_state", "device_secrets"], "readonly", async (tables) => {
+    for (const table of tables) {
+      const keys = await req(table.getAllKeys());
+      if (keys.some((other) => Array.isArray(other) && other[1] === accountId && other[0] !== server)) return true;
+    }
+    return false;
+  });
+}

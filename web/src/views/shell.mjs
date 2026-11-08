@@ -9,6 +9,7 @@
 import { el, mount } from "../dom.mjs";
 import { autoLockFor } from "../lock.mjs";
 import { createWipeScope, describeError, listenWhileShown } from "./common.mjs";
+import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
@@ -27,11 +28,15 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {() => HTMLElement} onLocked makes the unlock screen
  * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
  * @property {LiveSource} [live] the live-update channel (`state`, `on`); without it the frame has no live field
+ * @property {{ go(path: string): void }} [router] where the actions of the sync banner lead
  *
  * @typedef {object} LiveSource
  * @property {() => string} state
  * @property {(event: "state", fn: (state: string) => void) => () => void} on
  */
+
+/** More conflicts than this are shown as one banner with the count. */
+const MAX_CONFLICT_BANNERS = 3;
 
 /** The states of the live-update channel that the frame has a text for. */
 const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
@@ -93,7 +98,7 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -110,7 +115,10 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     liveStatus ? el("span", { class: "vault-status", "data-role": "status-group" }, status, liveStatus) : status,
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
-  mount(root, bar, banners, main);
+  // What the engine has found out about the server (warnings and stops) has its own banner, which follows the engine's
+  // table of warnings. An engine without `health` (a stand-in in a test) has none.
+  const warnings = typeof engine.health === "function" ? syncBanner({ engine, router, t }) : null;
+  mount(root, ...[bar, warnings, banners, main].filter((node) => node !== null));
 
   /** @type {Map<string, HTMLElement>} */
   const shown = new Map();
@@ -132,20 +140,49 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   function onState(payload) {
     if (payload?.kind === "warning") {
       const code = String(payload.code ?? "");
+      if (warnings !== null && isBannerCode(code)) return; // the sync banner shows it
       if (/^[a-z_]{1,64}$/.test(code)) banner(`warning:${code}`, "warning", t(`sync.warning.${code}`));
       return;
     }
     const kind = String(payload?.kind ?? "");
-    if (/^(?:failed|idle|offline|retrying|syncing|unauthorized)$/.test(kind)) {
-      mount(status, document.createTextNode(t(`sync.state.${kind}`)));
+    if (/^(?:failed|halted|idle|offline|retrying|syncing|unauthorized)$/.test(kind)) {
+      mount(status, document.createTextNode(t(kind === "halted" ? "syncwarnings.pill.halted" : `sync.state.${kind}`)));
       status.setAttribute("data-state", kind);
       if (kind === "unauthorized") banner("unauthorized", "error", t("vault.banner.sign_in_again"));
     }
   }
 
+  /** The items a conflict was reported for, so that many of them become one banner. @type {Set<string>} */
+  const conflictIds = new Set();
   /** @param {any} payload */
   function onError(payload) {
     const code = String(payload?.code ?? "");
+    if (warnings !== null && code === "bad_feed") return; // the sync banner shows it, with a way to try again
+    // After an older state is accepted, every item that exists on the server is a conflict: there can be hundreds. The
+    // first few are shown by name as before; past that they are one banner with the count, and no names.
+    // A pass found that the older state of a restored server does not check out; the engine has stopped again.
+    if (code === "restore_not_verified") {
+      const extra = payload?.reason === "no_checkpoint" ? ` ${t("syncwarnings.restored.not_verified_no_checkpoint")}` : "";
+      banner("error:restore_not_verified", "error", `${t("syncwarnings.restored.not_verified")}${extra}`);
+      return;
+    }
+    if (code === "restore_item_unreadable") {
+      banner("error:restore_item_unreadable", "warning", t("syncwarnings.error.restore_item_unreadable"));
+      return;
+    }
+    if (code === "conflict" && typeof payload?.id === "string") {
+      conflictIds.add(payload.id);
+      if (conflictIds.size > MAX_CONFLICT_BANNERS) {
+        for (const [key, node] of [...shown]) {
+          if (key.startsWith("error:conflict:")) {
+            node.remove();
+            shown.delete(key);
+          }
+        }
+        banner("error:conflicts", "warning", t("syncwarnings.error.conflicts_many", { count: conflictIds.size }));
+        return;
+      }
+    }
     const named = typeof payload?.id === "string" ? engine.list().find((/** @type {any} */ i) => i.id === payload.id) : null;
     const text = describeError(t, { code, reason: payload?.reason });
     banner(`error:${code}:${payload?.id ?? ""}`, "error", named ? t("vault.banner.item", { name: named.name, message: text }) : text);
@@ -185,6 +222,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     scope.add(listenWhileShown(root, live, "state", onLive));
   }
 
+  // A frame built while the engine is stopped says so from the start.
+  if (warnings !== null && engine.health().halted !== null) onState({ kind: "halted", code: engine.health().halted });
   listenWhileShown(root, engine, "state", onState);
   listenWhileShown(root, engine, "error", onError);
 
@@ -275,7 +314,7 @@ export async function enterVault(ctx) {
     page: (content) => {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
-      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync });
+      return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go } });
     },
   };
 }

@@ -34,15 +34,11 @@ export default {
       }
     }
 
-    /** @param {ReturnType<typeof import("../sync/engine.mjs").createSyncEngine> | null} engine */
-    function follow(engine) {
-      const old = channel;
-      channel = null;
-      old?.stop();
-      if (engine === null) {
-        setState("offline");
-        return;
-      }
+    /** Stops listening to the engine that is followed. @type {(() => void) | null} */
+    let offEngine = null;
+
+    /** @param {any} engine */
+    function open(engine) {
       const made = createLiveChannel({
         api,
         onHint: () => engine.syncNow(),
@@ -52,6 +48,42 @@ export default {
       });
       channel = made;
       made.start();
+    }
+
+    function close() {
+      const old = channel;
+      channel = null;
+      old?.stop();
+    }
+
+    /**
+     * A stopped engine ignores every hint, so an open stream would only hold one of the device's
+     * stream places for nothing: the channel is closed while the engine is stopped and opened again
+     * when it runs again (a retry, or an older state accepted), which the engine tells with its next
+     * `syncing`.
+     * @param {ReturnType<typeof import("../sync/engine.mjs").createSyncEngine> | null} engine
+     */
+    function follow(engine) {
+      offEngine?.();
+      offEngine = null;
+      close();
+      if (engine === null) {
+        setState("offline");
+        return;
+      }
+      const stopped = () => typeof engine.health === "function" && engine.health().halted !== null;
+      if (stopped()) setState("offline");
+      else open(engine);
+      if (typeof engine.on === "function") {
+        offEngine = engine.on("state", (payload) => {
+          if (payload?.kind === "halted") {
+            close();
+            setState("offline");
+          } else if (channel === null && !stopped()) {
+            open(engine);
+          }
+        });
+      }
     }
 
     sync.onEngine(follow);

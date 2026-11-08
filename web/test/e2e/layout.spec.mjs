@@ -85,6 +85,29 @@ async function scene(page, which) {
       mount(root, await frame(eng, listView({ engine: eng, router: { go() {} }, t })));
       handlers.get("state")?.({ kind: "unauthorized" });
       handlers.get("state")?.({ kind: "warning", code: "server_behind" });
+    } else if (name === "warnings" || name === "restored") {
+      // Every warning at once (the longest page), and a stop with two actions or the page for a restored server.
+      const { WARNING_TABLE } = await import("/app/sync/checkpoint.mjs");
+      const halted = name === "restored" ? "server_restored" : "restore_epoch_lowered";
+      const health = () => ({ halted, warnings: Object.keys(WARNING_TABLE).filter((code) => WARNING_TABLE[code].kind !== "stop") });
+      const eng = { ...engine([]), health, verifyNow: async () => "ok", resumeAfterHalt: async () => {},
+        restorePreview: async () => ({ reupload: 12, conflicts: 3, manifestOlder: true }), acceptOlderState: async () => ({ reuploaded: 12, conflicts: 3 }) };
+      let content = document.createElement("div");
+      if (name === "restored") {
+        const { restoredView } = await import("/app/views/restored.mjs");
+        content = restoredView({ engine: eng, t, router: { go() {} } });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const { shellView } = await import("/app/views/shell.mjs");
+      mount(root, shellView({ t, engine: eng, session: session(), content, lock: async () => {}, touch: () => true, scope: common.createWipeScope(), onLocked: () => document.createElement("div") }));
+      handlers.get("state")?.({ kind: "halted", code: halted });
+    } else if (name === "forget") {
+      const { forgetView } = await import("/app/views/forget.mjs");
+      const forget = ({ confirm }) => confirm({ pending: 3 }).then(() => "cancelled");
+      const view = forgetView({ t, session: session(), store: {}, api: {}, serverUrl: "https://vault.example.com", accountId: "0f6c9b1e2a7d4c58b3e1a9d047c25f66", go() {}, forget });
+      mount(root, view);
+      view.querySelector('[data-role="forget-start"]').click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } else if (name === "item") {
       const { itemView } = await import("/app/views/item.mjs");
       const eng = engine([{ id: "a1", name: "GitHub", damaged: true, blocked: true, blockedReason: "conflict", missingOnServer: true }]);
@@ -122,7 +145,7 @@ for (const locale of ["en", "nb-NO"]) {
       test(`nothing_is_cut_off_or_outside_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);
-        for (const name of ["signed-in", "list", "item"]) {
+        for (const name of ["signed-in", "list", "item", "warnings", "restored", "forget"]) {
           await scene(page, name);
           expect(await clipped(page), `${name} at ${width}px`).toEqual([]);
         }
@@ -186,6 +209,61 @@ for (const locale of ["en", "nb-NO"]) {
           expect(new Set(live.map((row) => row.pill)).size, `field width by live state, sync ${sync}, ${width}px: ${JSON.stringify(live.map((r) => [r.state, r.pill]))}`).toBe(1);
           expect(live.some((row) => row.sideways), `no sideways scroll, sync ${sync}, ${width}px`).toBe(false);
         }
+      });
+    }
+
+    for (const width of [320, 360, 1100]) {
+      test(`the_warning_banners_do_not_change_the_bar_and_nothing_sticks_out_at_${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 800 });
+        await pageIsReady(page, locale);
+        const rows = await page.evaluate(async () => {
+          const { ready } = await import("/app/boot.mjs");
+          const { i18n } = await ready;
+          const { mount } = await import("/app/dom.mjs");
+          const common = await import("/app/views/common.mjs");
+          const { shellView } = await import("/app/views/shell.mjs");
+          const { WARNING_TABLE } = await import("/app/sync/checkpoint.mjs");
+          const root = document.getElementById("app");
+          const out = [];
+          for (const sync of ["idle", "syncing", "halted"]) {
+            for (const withBanners of [false, true]) {
+              /** @type {Map<string, Function>} */
+              const handlers = new Map();
+              const engine = {
+                list: () => [], on: (/** @type {string} */ event, /** @type {Function} */ fn) => { handlers.set(event, fn); return () => {}; },
+                ...(withBanners ? {
+                  health: () => ({ halted: null, warnings: Object.keys(WARNING_TABLE).filter((code) => WARNING_TABLE[code].kind !== "stop") }),
+                  verifyNow: async () => "ok",
+                } : {}),
+              };
+              const frame = shellView({
+                t: i18n.t, engine, session: { onLock() {} }, content: document.createElement("div"), lock: async () => {}, touch: () => true,
+                scope: common.createWipeScope(), onLocked: () => document.createElement("div"),
+              });
+              mount(root, frame);
+              handlers.get("state")?.({ kind: sync, code: "server_restored" });
+              const bar = /** @type {HTMLElement} */ (frame.querySelector(".vault-bar"));
+              out.push({
+                sync, withBanners,
+                bar: Math.round(bar.getBoundingClientRect().height * 100) / 100,
+                banners: frame.querySelectorAll('[data-role="sync-banner"]').length,
+                sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+              });
+            }
+          }
+          return out;
+        });
+        for (const sync of ["idle", "syncing", "halted"]) {
+          const [bare, banners] = rows.filter((row) => row.sync === sync);
+          expect(banners.banners, "every warning of the table has a banner").toBeGreaterThan(5);
+          expect(banners.bar, `the bar is as high with the banners as without, ${sync}, ${width}px`).toBe(bare.bar);
+          expect(banners.sideways || bare.sideways, `no sideways scroll, ${sync}, ${width}px`).toBe(false);
+        }
+        // The stopped text takes no more room than the longest text sync has already (the bar differs between idle and syncing
+        // on a phone in Norwegian, as it did before).
+        const bare = rows.filter((row) => !row.withBanners);
+        const longest = Math.max(...bare.filter((row) => row.sync !== "halted").map((row) => row.bar));
+        expect(bare.find((row) => row.sync === "halted").bar, `the stopped text adds no row, ${width}px: ${JSON.stringify(bare)}`).toBeLessThanOrEqual(longest);
       });
     }
 
