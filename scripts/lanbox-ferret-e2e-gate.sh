@@ -40,7 +40,7 @@ cd "$(dirname "$0")/.."
 
 browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
 main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 07-transport 08-plaintext 09-csp)
-m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil 17-owner)
+m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 shots_dir=test-results/out/m2-shots
 failures=0
 vault_origin=https://vault-e2e.test
@@ -393,9 +393,11 @@ m2_phase() {
       continue
     fi
     state="$(left "$phase_out" state)"
-    if run_m2 m2-sync "$state" "$browser" "${m2_sync_specs[@]}"; then ok "$browser: scenarios 10 to 14 and 17 passed"; else bad "$browser: scenarios 10 to 14 and 17 failed"; fi
+    if run_m2 m2-sync "$state" "$browser" "${m2_sync_specs[@]}"; then ok "$browser: scenarios 10 to 14 passed"; else bad "$browser: scenarios 10 to 14 failed"; fi
     if run_m2_hosted m2-restore "$state" "$browser" 15-restored; then ok "$browser: scenario 15 (restored server) passed"; else bad "$browser: scenario 15 (restored server) failed"; fi
     if run_m2 m2-forget "$state" "$browser" 16-forget; then ok "$browser: scenario 16 (forget this server) passed"; else bad "$browser: scenario 16 (forget this server) failed"; fi
+    # Last: it signs in and unlocks several times, and the server limits how often an account may.
+    if run_m2 m2-owner "$state" "$browser" 17-owner; then ok "$browser: scenario 17 (one tab runs the sync) passed"; else bad "$browser: scenario 17 (one tab runs the sync) failed"; fi
   done
 }
 
