@@ -7,9 +7,10 @@ import { b64u } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
 import { trash } from "../../src/store/trash.mjs";
-import { alreadyDone } from "../../src/sync/outbox.mjs";
+import { encodeWireBytes } from "../../src/wire.mjs";
+import { alreadyDone, classify, createOutboxRunner, isRestoreEpochChanged } from "../../src/sync/outbox.mjs";
 import { scope } from "./idbHelpers.mjs";
-import { createFakeClient, Model, settle, syncDevice, until } from "./syncHelpers.mjs";
+import { createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, settle, syncDevice, until } from "./syncHelpers.mjs";
 
 const ID_A = "11".repeat(16);
 const DRAFT = { item_type: "login", name: "Written here" };
@@ -118,4 +119,110 @@ test("a_409_that_says_deleted_at_another_revision_is_a_conflict", async () => {
   await until(() => d.events.error.some((e) => e.code === "conflict"), "a conflict");
   assert.equal((await queued(d)).length, 1);
   d.engine.stop();
+});
+
+// ------------------------------------------------------------------ restore_epoch_changed is not a conflict
+
+const hexId = (n) => n.toString(16).padStart(32, "0");
+
+/** A queued live write for item `n`, as the engine builds it (the bytes are what the server hashes). */
+function writeFor(n, { baseRev = 0, idem = 7000 + n, restoreEpoch } = {}) {
+  const blob = new Uint8Array(48).fill(n);
+  const tag = new Uint8Array(32).fill(n + 100);
+  const bytes = encodeWireBytes("put_item_req", {
+    base_rev: baseRev, blob: b64u.encode(blob), tag: b64u.encode(tag), idem: hexId(idem), ...(restoreEpoch === undefined ? {} : { restore_epoch: restoreEpoch }),
+  });
+  return { idem: hexId(idem), itemId: hexId(n), baseRev, body: { blob, tag }, bytes };
+}
+
+async function senderOf({ model = new Model() } = {}) {
+  const store = await createFakeStore();
+  const api = createFakeApi(model);
+  const log = { done: [], blocked: [], epoch: [] };
+  const run = createOutboxRunner({
+    api, store, scope: scope(), timers: new FakeTimers(),
+    hooks: {
+      onDone: (entry) => log.done.push(entry.itemId),
+      onBlocked: (entry, error, kind) => log.blocked.push([entry.itemId, error.code, kind]),
+      onRestoreEpochChanged: (entry, error) => log.epoch.push([entry.itemId, error.body?.restore_epoch]),
+    },
+  });
+  return { run, api, model, log, stored: () => outbox.all(store.database.store, scope()) };
+}
+
+test("restore_epoch_changed_is_classified_before_the_status_and_is_no_conflict", () => {
+  const changed = new ApiError(409, "restore_epoch_changed", null, { error: "restore_epoch_changed", restore_epoch: 4 });
+  assert.equal(classify(changed), "epoch_changed");
+  assert.equal(classify(new ApiError(409, "conflict", null, { current_rev: 1, deleted: false })), "conflict", "another 409 is still a conflict");
+  assert.equal(classify(new ApiError(409, "checkpoint_stale")), "conflict", "(a 409 of an item write that says anything else)");
+  assert.equal(isRestoreEpochChanged(changed), true);
+  // A batch result of that form is the same answer.
+  assert.equal(isRestoreEpochChanged({ status: 409, error: "restore_epoch_changed", restore_epoch: 4 }), true);
+  assert.equal(isRestoreEpochChanged({ status: 409, current_rev: 3, deleted: false }), false);
+  assert.equal(isRestoreEpochChanged({ status: 200, rev: 1, seq: 1, replayed: false }), false);
+  assert.equal(isRestoreEpochChanged(null), false);
+  assert.equal(isRestoreEpochChanged(new ApiError(0, "network")), false);
+});
+
+test("a_restore_epoch_changed_answer_holds_every_lane_and_is_neither_done_nor_blocked", async () => {
+  const model = new Model();
+  model.restoreEpoch = 3;
+  const t = await senderOf({ model });
+  const stale = writeFor(1, { restoreEpoch: 2 });
+  await t.run.enqueue(stale);
+  await until(() => t.log.epoch.length === 1, "the engine hears of it");
+  assert.deepEqual(t.log.epoch, [[stale.itemId, 3]], "with the epoch the server shows");
+  assert.deepEqual(t.log.blocked, [], "not a conflict, not blocked");
+  assert.deepEqual(t.log.done, []);
+  assert.equal(model.writes.length, 0, "and nothing was stored");
+  assert.deepEqual((await t.stored()).map((e) => e.idem), [stale.idem], "the write is kept");
+  assert.deepEqual(t.run.entriesOf(stale.itemId).map((e) => e.idem), [stale.idem], "at the head of its lane, as it was");
+  assert.equal(Buffer.from(t.run.entriesOf(stale.itemId)[0].bytes).toString("hex"), Buffer.from(stale.bytes).toString("hex"), "byte for byte");
+  // Every lane is held: a write of another item that is queued now is stored and not sent.
+  const other = writeFor(2, { restoreEpoch: 3 });
+  await t.run.enqueue(other);
+  await settle(30);
+  assert.equal(t.api.puts.length, 1, "no request after the answer");
+  assert.equal((await t.stored()).length, 2);
+  assert.equal(t.log.epoch.length, 1);
+  // Letting go sends again (the same bytes: nothing about the write was changed).
+  t.run.release();
+  await until(() => t.log.epoch.length === 2 && t.log.done.length === 1, "the other lane goes out, the first is refused once more");
+  assert.deepEqual(t.log.done, [other.itemId]);
+  t.run.stop();
+});
+
+test("a_write_that_names_the_epoch_the_server_shows_is_stored", async () => {
+  const model = new Model();
+  model.restoreEpoch = 3;
+  const t = await senderOf({ model });
+  await t.run.enqueue(writeFor(5, { restoreEpoch: 3 }));
+  await until(() => t.log.done.length === 1, "done");
+  assert.deepEqual(t.log.epoch, []);
+  // Without a condition (a device that has not stored an epoch yet) it is stored as well.
+  await t.run.enqueue(writeFor(6));
+  await until(() => t.log.done.length === 2, "done without a condition");
+  assert.equal(model.writes.length, 2);
+  t.run.stop();
+});
+
+test("a_retry_of_a_stored_write_is_a_replay_even_after_the_epoch_has_moved", async () => {
+  // The server checks the key before the epoch: a write that was stored and whose answer was lost is answered as a replay, so the
+  // bytes of a write that may have been stored are never changed, and never need to be.
+  const model = new Model();
+  const t = await senderOf({ model });
+  const entry = writeFor(7, { restoreEpoch: 0 });
+  t.api.faults.push({ kind: "lost" });
+  await t.run.enqueue(entry);
+  await until(() => model.writes.length === 1, "stored, the answer lost");
+  model.restoreEpoch = 1; // the server is restored meanwhile (to a state that still holds this write)
+  await until(() => t.api.puts.length === 1);
+  // The retry after the wait: the same bytes under the same key.
+  t.run.stop();
+  const again = await senderOf({ model });
+  await again.run.enqueue(entry);
+  await until(() => again.log.done.length === 1, "answered as a replay");
+  assert.deepEqual(again.log.epoch, []);
+  assert.equal(model.writes.length, 1, "stored once");
+  again.run.stop();
 });

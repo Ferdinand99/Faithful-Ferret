@@ -13,6 +13,9 @@
 //     200                           done: the entry leaves the outbox
 //     network, 5xx, 408, 429, a      sent again with the same bytes after a wait
 //       garbled answer               of 1, 2, 4, ... seconds (at most 60)
+//     409 `restore_epoch_changed`  not a conflict, and the write was NOT stored: every
+//                                   lane is held, the write stays at the head of its
+//                                   lane unchanged, and the engine hears of it
 //     409 (`conflict`)              done when it only shows our own write (see
 //                                   `alreadyDone`); otherwise not done and not
 //                                   sent again: the draft stays in the outbox and
@@ -41,6 +44,8 @@ import { b64u } from "../b64.mjs";
  * @property {(entry: OutboxEntry, error: import("../api.mjs").ApiError, kind: string) => void} [onBlocked] the write will not be sent again
  * @property {(entry: OutboxEntry, delayMs: number, error: import("../api.mjs").ApiError) => void} [onRetry] the write is sent again after the wait
  * @property {(error: unknown) => void} [onStorageError] the local store failed (the write is not lost: it goes out again after a restart)
+ * @property {(entry: OutboxEntry, error: import("../api.mjs").ApiError) => void} [onRestoreEpochChanged] the server was restored
+ *   (its restore epoch is not the one the write names): nothing is sent from any lane until `release()`, and the write has not been stored
  */
 
 /** The longest wait between two tries of one write. */
@@ -59,17 +64,32 @@ export function backoffMs(attempt, retryAfter = null) {
 }
 
 /**
+ * Whether an answer says the write was refused because the restore epoch of the vault is not the one the write names: a 409
+ * with the code `restore_epoch_changed` (an error of a single write) or a result of a batch in that form
+ * (`{ status: 409, error: "restore_epoch_changed", restore_epoch }`). It is no conflict. The server checks the epoch after the
+ * idempotency key and before anything is stored, so such a write was certainly not stored.
+ * @param {unknown} answer
+ */
+export function isRestoreEpochChanged(answer) {
+  const one = /** @type {any} */ (answer);
+  if (one === null || typeof one !== "object") return false;
+  return one.code === "restore_epoch_changed" || one.error === "restore_epoch_changed";
+}
+
+/**
  * What to do with a write that failed.
  *   retry         the server may not have seen it, or is busy: send it again
+ *   epoch_changed 409 `restore_epoch_changed`: the server was restored; hold everything
  *   conflict      409: another write got there first; keep the draft
  *   unauthorized  401: sign in again, then resume
  *   terminal      400, 403, 413, 422: sending it again cannot help
  *   other         404 and anything else not understood: do not send it again
  * @param {import("../api.mjs").ApiError} error
- * @returns {"retry" | "conflict" | "unauthorized" | "terminal" | "other"}
+ * @returns {"retry" | "epoch_changed" | "conflict" | "unauthorized" | "terminal" | "other"}
  */
 export function classify(error) {
   if (!error || typeof error.status !== "number") return "retry";
+  if (isRestoreEpochChanged(error)) return "epoch_changed"; // before the status: it is a 409, and no conflict
   if (error.code === "conflict" || error.status === 409) return "conflict";
   if (error.status === 401) return "unauthorized";
   if (error.terminal) return "terminal";
@@ -165,6 +185,13 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
           const settled = kind === "conflict" ? alreadyDone(entry, err) : null;
           if (settled !== null) {
             answer = settled; // the server already holds this very write: done, and no conflict is shown
+          } else if (kind === "epoch_changed") {
+            // The write was not stored (the epoch is checked before anything is). It stays as it is at the head of its lane; no lane
+            // sends until the engine has looked at the server and lets go. Its bytes are never changed here: a write that may have been
+            // stored must be sent again exactly as it was.
+            held = true;
+            hooks.onRestoreEpochChanged?.(entry, err);
+            return;
           } else if (kind === "retry") {
             lane.attempt += 1;
             const delay = backoffMs(lane.attempt - 1, err.retryAfter);
@@ -261,6 +288,34 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
       lane.blocked = null;
       void pump(entry.itemId);
       return [...dropped];
+    },
+
+    /**
+     * Puts new entries in the place of the queued writes of an item, one for one and in the same order (the same writes made again,
+     * for example with a new idempotency key and a new restore epoch). Only for writes the server has certainly not stored (it
+     * refused them with `restore_epoch_changed`). The new entries are stored first and the old ones removed after, so a crash in
+     * between leaves the writes (twice, never none). The lane is not blocked afterwards, and nothing is sent while the runner is held.
+     * @param {string} itemId
+     * @param {(entry: OutboxEntry) => OutboxEntry} remake
+     * @returns {Promise<string[]>} the idempotency keys of the writes that were taken out
+     */
+    async restamp(itemId, remake) {
+      await this.whenIdle();
+      const lane = lanes.get(itemId);
+      const old = [...(lane?.entries ?? [])];
+      if (old.length === 0) return [];
+      const next = old.map(remake);
+      const db = await store.open();
+      for (const entry of next) await store.outbox.enqueue(db, scope, entry);
+      for (const entry of old) await store.outbox.remove(db, scope, entry.idem);
+      if (stopped) return [];
+      const now = lanes.get(itemId);
+      if (now === undefined) return [];
+      cancelWait(now);
+      now.entries.splice(0, now.entries.length, ...next);
+      now.attempt = 0;
+      void pump(itemId);
+      return old.map((entry) => entry.idem);
     },
 
     /** Lets the entries go out again after `hold()`. */

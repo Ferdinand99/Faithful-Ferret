@@ -38,6 +38,7 @@ function fakeVault() {
     /** @type {any} */
     full: null,
     restoreEpoch: 3,
+    restoreSeq: 7,
     /** @type {{ method: string, url: string, headers: http.IncomingHttpHeaders, body: Buffer }[]} */
     calls: [],
   };
@@ -75,7 +76,7 @@ function fakeVault() {
         const newer = sorted((a, b) => a.seq - b.seq).filter((r) => r.seq > since);
         out = {
           status: 200,
-          json: { changes: newer.slice(0, limit), latest_seq: state.seq, vk_epoch: 1, restore_epoch: state.restoreEpoch, ...(head() ? { checkpoint: head() } : {}), has_more: newer.length > limit },
+          json: { changes: newer.slice(0, limit), latest_seq: state.seq, vk_epoch: 1, restore_epoch: state.restoreEpoch, restore_seq: state.restoreSeq, ...(head() ? { checkpoint: head() } : {}), has_more: newer.length > limit },
         };
       } else if (req.method === "GET" && url.pathname === "/api/sync/items") {
         const after = q.get("after") ?? "";
@@ -84,7 +85,7 @@ function fakeVault() {
         const page = rest.slice(0, limit);
         out = {
           status: 200,
-          json: { items: page, as_of_seq: state.seq, vk_epoch: 1, restore_epoch: state.restoreEpoch, ...(rest.length > limit ? { next_after: page[page.length - 1].id } : {}), has_more: rest.length > limit },
+          json: { items: page, as_of_seq: state.seq, vk_epoch: 1, restore_epoch: state.restoreEpoch, restore_seq: state.restoreSeq, ...(rest.length > limit ? { next_after: page[page.length - 1].id } : {}), has_more: rest.length > limit },
         };
       } else if (req.method === "GET" && url.pathname === "/api/sync/checkpoint") {
         out = state.full ? { status: 200, json: state.full } : { status: 404, json: { error: "not_found" } };
@@ -534,6 +535,35 @@ describe("evil modes", () => {
     assert.ok(checkpoint);
     assert.deepEqual(lie, rest);
     assert.equal((await r.get("/api/sync/checkpoint")).seq, 1, "the checkpoint itself is still served");
+  });
+
+  it("every_mode_passes_restore_seq_through_on_changes_and_items", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.put(A, live(0, 1));
+    await r.put(B, live(0, 2));
+    await call(r.ports.vault, "PUT", "/api/sync/checkpoint", { headers: { "content-type": "application/json", ...cookie(SID_A) }, body: JSON.stringify({ seq: 2, digest: b64(32, 1), mac: b64(32, 2), entries: b64(56, 3) }) });
+    r.vault.state.restoreSeq = 41; // what the real server froze at the last restore bump: no mode invents or drops it
+    const modes = [
+      ["honest", {}],
+      ["swap_blobs", { a: A, b: B }],
+      ["replay_old", { id: A }],
+      ["hide", { id: A }],
+      ["gone", { hide: A }],
+      ["fake_tombstone", { id: A }],
+      ["seq_lie", { latest_seq: 9 }],
+      ["rollback", { at: r.clock.t + 1 }],
+      ["fork", { sid: SID_A }],
+      ["forge_checkpoint", {}],
+      ["drop_checkpoint_head", {}],
+    ];
+    for (const [mode, params] of modes) {
+      await r.mode(/** @type {string} */ (mode), /** @type {object} */ (params));
+      const changes = await r.get("/api/sync/changes?since=0");
+      const items = await r.get("/api/sync/items");
+      assert.equal(changes.restore_seq, 41, `${mode}: /changes carries restore_seq`);
+      assert.equal(items.restore_seq, 41, `${mode}: /items carries restore_seq`);
+    }
   });
 
   it("honest_mode_is_byte_identical", async () => {

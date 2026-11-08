@@ -682,3 +682,62 @@ test("a_second_tab_with_a_stale_conflict_cannot_choose_again", async () => {
   d.engine.stop();
   other.engine.stop();
 });
+
+test("a_stale_tab_whose_draft_is_gone_from_the_store_clears_its_block_and_chooses_nothing", async () => {
+  // Another tab has dealt with the draft (replaced it or dropped it) but the record of the flags still says conflict, so the
+  // check of the saved flags lets this tab through. The draft itself is no longer stored: nothing may be dropped or written.
+  const d = await conflictWorld();
+  const [draft] = await queued(d);
+  await outbox.remove(d.store.database.store, scope(), draft.idem);
+  assert.equal((await savedFlags(d)).blocked[ID_A], "conflict");
+  const writes = d.model.writes.length;
+  await assert.rejects(() => d.engine.keepMine(ID_A), { code: "not_found" });
+  assert.equal(itemOf(d).conflict, false, "the block is cleared in this tab");
+  assert.equal(itemOf(d).blocked, false);
+  await assert.rejects(() => d.engine.resolve(ID_A, "theirs"), { code: "not_found" });
+  await assert.rejects(() => d.engine.resolve(ID_A, "mine"), { code: "not_found" });
+  assert.equal(d.model.writes.length, writes, "nothing was written");
+  assert.deepEqual(await queued(d), [], "and nothing was added to the store");
+  assert.deepEqual(await trash.all(d.store.database.store, scope()), []);
+  assert.equal((await savedFlags(d)).blocked[ID_A], "conflict", "the other tab's record is not touched by this one");
+  d.engine.stop();
+});
+
+test("keep_theirs_over_a_deletion_at_revision_1_is_refused_because_no_trash_copy_can_be_made", async () => {
+  // A new item whose id the server holds as a tombstone at revision 1: the draft is a conflict with a deleted server row, and a
+  // deletion at revision 1 has no earlier version below it to keep. Dropping the draft would lose the only copy.
+  const model = new Model();
+  const client = createFakeClient();
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  d.api.faults.push({ kind: "network" });
+  const id = await d.engine.create({ item_type: "login", name: "Only copy" });
+  await until(() => d.api.puts.length === 1 && d.timers.pending > 0, "the write waits for its retry");
+  setTomb(model, client, id, 1);
+  d.timers.advance(1_000);
+  await until(() => itemOf(d, id)?.conflict === true && d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 1), "the conflict with the deleted row");
+  await assert.rejects(() => d.engine.resolve(id, "theirs"), { code: "invalid_state" });
+  assert.equal((await queued(d)).length, 1, "the draft is still there");
+  assert.equal(itemOf(d, id).conflict, true);
+  assert.deepEqual(await trash.all(d.store.database.store, scope()), []);
+  // Keeping mine is still possible: a resurrection on top of the tombstone.
+  await d.engine.resolve(id, "mine");
+  await until(() => d.model.items.get(id).deleted === false, "brought back");
+  const sent = JSON.parse(d.model.writes.at(-1).body);
+  assert.deepEqual([sent.base_rev, sent.resurrect], [1, true]);
+  d.engine.stop();
+});
+
+test("keep_mine_and_a_restore_from_the_trash_name_the_restore_epoch", async () => {
+  const d = await conflictWorld();
+  await d.engine.resolve(ID_A, "mine");
+  await until(() => d.model.items.get(ID_A).rev === 3, "written");
+  assert.equal(JSON.parse(d.model.writes.at(-1).body).restore_epoch, 0, "keep mine names the epoch this device has accepted");
+  d.engine.stop();
+  const gone = await conflictWorld({ deletedThere: true });
+  await gone.engine.resolve(ID_A, "theirs");
+  await gone.engine.restoreFromTrash(ID_A);
+  await until(() => gone.model.items.get(ID_A).deleted === false, "restored");
+  assert.equal(JSON.parse(gone.model.writes.at(-1).body).restore_epoch, 0, "and so does a restore from the trash");
+  gone.engine.stop();
+});
