@@ -90,12 +90,12 @@ export class SimServer extends Model {
    * where none has (a checkpoint that lists an item live and no row, no tombstone) is a false alarm that has a test of its own.
    * @returns {number} how many tombstones went
    */
-  purgeTombstones(keep = () => false) {
+  purgeTombstones(keep = () => false, narrow = true) {
     let top = 0;
     let gone = 0;
     const covered = this.checkpoint === "auto" ? this.seq : (this.checkpoint?.seq ?? 0);
     for (const [id, row] of [...this.items]) {
-      if (!row.deleted || keep(id) || row.seq > covered) continue;
+      if (!row.deleted || (narrow && (keep(id) || row.seq > covered))) continue;
       this.items.delete(id);
       top = Math.max(top, row.seq);
       gone += 1;
@@ -211,10 +211,11 @@ export class Sim {
    * @param {{ layout?: number[], skews?: number[] }} [options] `layout`: the number of tabs of each browser (`[1, 1]` two devices, `[2, 1]`
    *   two tabs of one browser and a second browser); `skews`: the clock of each device is that many ms off
    */
-  constructor(seed, { layout = [1, 1], skews = [], tabsWrite = false } = {}) {
+  constructor(seed, { layout = [1, 1], skews = [], tabsWrite = false, pageSize = 500 } = {}) {
     this.seed = seed;
     this.rng = rngOf(seed);
     this.server = new SimServer();
+    this.server.pageSize = pageSize; // the server never answers with more rows than this: the feed, the listing and the frozen rows come in pages
     this.client = createFakeClient();
     const verify = this.client.vault.verify_checkpoint;
     this.client.vault.verify_checkpoint = async (...args) => {
@@ -248,7 +249,10 @@ export class Sim {
     this.floors = new Map(); // group label -> the last sync memory read
     this.problems = [];
     this.step = 0;
-    this.stuck = new Set(); // known gap, hidden draft: `${dev.label}:${id}` of drafts that are hidden
+    this.hiddenDrafts = 0; // known gap, hidden draft: how many refused deletions were found left behind
+    this.seen = new Map(); // browser label -> Set of "id:rev": the rows its engines were shown by the feed and the listing, and wrote themselves
+    this.keptMine = new Set(); // "browser:id": the user chose "keep mine" for the item in that browser
+    this.tallied = false;
     this.knownGaps = !process.env.FERRET_MATRIX_STRICT; // the known gaps are not asserted against (the todo tests hold them); FERRET_MATRIX_STRICT=1 asserts against them too
     this.stats = {}; // how often each thing happened, to see that a run does what it is meant to
     this.restoredAt = null; // the write index of the server when it was restored
@@ -273,6 +277,8 @@ export class Sim {
 
   /** The counts of what the engines said (errors, states) over the whole run. */
   tally() {
+    if (this.tallied) return this.stats;
+    this.tallied = true;
     for (const dev of [...this.devices, ...this.retired]) {
       for (const event of dev.d.events.error) this.count(`error:${event.code}`);
       for (const event of dev.d.events.state) this.count(`state:${event.kind}${event.code ? `:${event.code}` : ""}`);
@@ -334,6 +340,12 @@ export class Sim {
     api.get = async (path, ...rest) => {
       guard("get", path);
       const answer = await get(path, ...rest);
+      const shown = answer?.changes ?? answer?.items;
+      if (Array.isArray(shown)) {
+        const rows = this.seen.get(dev.group.label) ?? new Set();
+        this.seen.set(dev.group.label, rows);
+        for (const row of shown) rows.add(`${row.id}:${row.rev}`);
+      }
       // A read that is held after the server has answered, so that something else can happen before the engine uses the answer.
       if (dev.hold && path.startsWith("/api/sync/changes")) {
         const gate = dev.hold;
@@ -353,16 +365,38 @@ export class Sim {
       if (this.server.writes.length + this.server.checkpointPuts.length > writes) {
         dev.landed.push(path);
         this.onLanded(dev, path, top);
+        this.checkBuiltOnSeen(dev, path, body);
       }
       return answer;
     };
   }
 
+  /**
+   * No blind overwrite: a write the server took over a row (`base_rev` above 0) was built on a row of that revision that this browser had been
+   * shown (by the feed or the listing) or had written itself, or it follows a "keep mine" the user chose for the item.
+   */
+  checkBuiltOnSeen(dev, path, body) {
+    if (path === "/api/sync/checkpoint") return;
+    const request = JSON.parse(body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body));
+    const id = path.split("/").pop();
+    const rows = this.seen.get(dev.group.label) ?? new Set();
+    this.seen.set(dev.group.label, rows);
+    if (request.base_rev > 0 && !rows.has(`${id}:${request.base_rev}`) && !this.keptMine.has(`${dev.group.label}:${id}`)) {
+      this.fail(`${dev.label} overwrote ${short(id)} at rev ${request.base_rev} that it had never been shown, with no "keep mine"`);
+    }
+    rows.add(`${id}:${request.base_rev + 1}`);
+  }
+
   /** A write or a checkpoint of a device was taken by the server. */
   onLanded(dev, path, top) {
-    // The floors are the ones read after the last step: the real ones are not lower, so a floor above the top of the server is surely one.
+    // Strict: a device that remembers more than the backup holds, and has not accepted, writes nothing. With the known gap: the floors are the
+    // ones read after the last step (the real ones are not lower), so a floor above the top of the server is surely one.
+    if (!this.knownGaps && this.watching && this.restoredAt !== null && this.mustHalt.has(dev.label) && !this.accepted.has(dev.label)) {
+      this.fail(`${dev.label} landed ${path.split("/").slice(-2).join("/")} on a restored server it remembers more than and had not accepted`);
+      return;
+    }
     const remembered = this.floors.get(dev.group.label)?.memory.maxSeq ?? 0;
-    if (this.watching && this.restoredAt !== null && remembered > top && !this.accepted.has(dev.label)) {
+    if (this.knownGaps && this.watching && this.restoredAt !== null && remembered > top && !this.accepted.has(dev.label)) {
       this.fail(`${dev.label} landed ${path.split("/").slice(-2).join("/")} on a restored server (seq ${top}) that shows less than it remembers (${remembered}) and that it had not accepted`);
     }
   }
@@ -456,13 +490,14 @@ export class Sim {
       const serverDeleted = shown.server.deleted;
       await shown.close();
       const pick = choice ?? this.rng.pick(["mine", "theirs"]);
+      if (pick === "mine") this.keptMine.add(`${dev.group.label}:${item.id}`); // before the write can leave
       await dev.engine.resolve(item.id, pick);
       const key = this.keyOf(dev, item.id);
       this.conflicted.add(key);
       if (pick === "theirs") this.discarded.add(key);
       // "Keep mine" is the one choice that can bring a deleted item back. It counts whatever the screen showed: the server row can turn into a
       // tombstone between the moment the user looked and the moment the choice is made, and the engine builds the write on what it knows then.
-      else this.choices.set(item.id, (this.choices.get(item.id) ?? 0) + 1);
+      else if (this.knownGaps || serverDeleted) this.choices.set(item.id, (this.choices.get(item.id) ?? 0) + 1);
       this.note(`${dev.label} resolve ${short(item.id)} ${pick}${serverDeleted ? " over a deleted row" : ""}`);
       return true;
     });
@@ -631,13 +666,13 @@ export class Sim {
         // No waiting from here to the purge: no device reads the tombstone in between.
         this.server.set(id, { rev: 2, deleted: true, tomb: this.client.wireTomb(id, 2) });
         this.server.pinCheckpoint();
-        const gone = this.server.purgeTombstones((other) => held.has(other));
+        const gone = this.server.purgeTombstones((other) => held.has(other), this.knownGaps);
         this.note(`retention: ${gone} tombstones purged, min_valid_since ${this.server.minValidSince}`);
         break;
       }
       case "purge": {
         const held = await this.heldIds();
-        const gone = this.server.purgeTombstones((id) => held.has(id));
+        const gone = this.server.purgeTombstones((id) => held.has(id), this.knownGaps);
         this.note(`server purged ${gone} tombstones, min_valid_since ${this.server.minValidSince}`);
         break;
       }
@@ -760,8 +795,25 @@ export class Sim {
 
   /** The floors of the sync memory a device's browser stores now. */
   async floorsOf(dev) {
-    const state = await loadSyncState(dev.group.db.store, SERVER, ACCOUNT);
+    return this.floorsOfGroup(dev.group);
+  }
+
+  async floorsOfGroup(group) {
+    const state = await loadSyncState(group.db.store, SERVER, ACCOUNT);
     return state ? memoryOf(state.memory) : { maxSeq: 0, checkpointSeq: 0, revs: {} };
+  }
+
+  /**
+   * After a restore nobody has accepted: a device the restored server shows less than it remembers stops, and is still stopped. (With the known
+   * gap, late restore contact: only a device that is shown a top below what it remembers; one that first meets a server whose seq has passed what
+   * it remembers finds nothing lower.) Strict: every device that remembered more than the backup holds.
+   */
+  async checkStopped() {
+    for (const dev of this.devices) {
+      const remembered = (await this.floorsOf(dev)).maxSeq;
+      const must = this.knownGaps ? remembered > this.server.seq : this.mustHalt.has(dev.label) && !this.accepted.has(dev.label);
+      if (must && dev.engine.health().halted !== "server_restored") this.fail(`${dev.label} has seen more than the restored server shows and is ${dev.engine.health().halted ?? "not stopped"}`);
+    }
   }
 
   /** An older state was accepted by a browser: its floors are allowed to start again. */
@@ -781,10 +833,10 @@ export class Sim {
   }
 
   /** The devices show what the server holds, and nothing waits, is blocked or is marked. */
-  async checkConverged() {
+  async checkConverged({ readers = false } = {}) {
     const live = await this.serverLive();
     for (const dev of this.devices) {
-      if (this.knownGaps && !this.writer(dev)) continue; // known gap, writing tabs: the other tab of a browser shows what the first one stored, with a delay
+      if (this.knownGaps && !readers && !this.writer(dev)) continue; // known gap, writing tabs: the other tab of a browser shows what the first one stored, with a delay
       const shown = new Map(dev.engine.list().map((item) => [item.id, item]));
       for (const [id, row] of live) {
         const item = shown.get(id);
@@ -798,14 +850,59 @@ export class Sim {
         }
       }
       const everything = await outbox.all(dev.d.store.database.store, scope());
-      // known gap, hidden draft (todo test `a_write_refused_over_a_tombstone_the_feed_has_already_brought_stays_on_screen`): a write that waits in the outbox when
-      // the feed brings the tombstone of its item is refused with 409 afterwards and stays as a blocked draft that is not on any screen.
-      const stuck = (e) => (this.server.items.get(e.itemId)?.deleted ?? true) && dev.engine.list().every((i) => i.id !== e.itemId);
+      // known gap, hidden draft (todo test `a_deletion_refused_over_a_tombstone_the_feed_has_already_brought_leaves_no_blocked_draft`): a deletion
+      // that waits in the outbox when the feed brings the tombstone of its item is refused with 409 afterwards and stays as a blocked draft that is
+      // not on any screen. Only that shape is let through: the last write waiting for the item is a deletion and this device holds a deleted row.
+      const rows = new Map((await cache.getRows(dev.d.store.database.store, scope())).map((row) => [row.itemId, row]));
+      const last = new Map(everything.map((e) => [e.itemId, e]));
+      const stuck = (e) => "tomb" in last.get(e.itemId).body && rows.get(e.itemId)?.deleted === true;
       const queued = everything.filter((e) => !(this.knownGaps && stuck(e)));
-      for (const e of everything) if (this.knownGaps && stuck(e)) this.stuck.add(`${dev.label}:${e.itemId}`);
-      if (queued.length !== everything.length) this.count("known:hidden_blocked_draft", everything.length - queued.length);
+      if (queued.length !== everything.length) {
+        this.hiddenDrafts += everything.length - queued.length;
+        this.count("known:hidden_blocked_draft", everything.length - queued.length);
+      }
       if (queued.length > 0) this.fail(`${dev.label} still has ${queued.length} writes in the outbox: ${queued.map((e) => `${short(e.itemId)} base ${e.baseRev} ${"tomb" in e.body ? "tombstone" : "live"}`).join(", ")}; last errors ${JSON.stringify(dev.d.events.error.slice(-4))}; server has ${JSON.stringify(queued.map((e) => { const row = this.server.items.get(e.itemId); return row ? { rev: row.rev, deleted: row.deleted } : null; }))}`);
     }
+  }
+
+  /**
+   * Checkpoints stay alive: when everything is at rest, more than ten minutes pass and every device reads once more, the checkpoint the server
+   * holds is for the `seq` the server is at. A device that was reloaded within a day of its last verification does not verify in its new session
+   * and so stores no checkpoint (known gap, checkpoint waits for a verification, todo test
+   * `a_device_that_was_reloaded_stores_a_checkpoint_within_minutes`): with the known gaps that is let through when a day later every device has
+   * verified and the checkpoint is there (the clock is set a day on without running the polls in between). Also let through are the gaps that
+   * keep a device from storing one: a refused deletion left behind, and two tabs over one storage.
+   */
+  async checkCheckpointLive() {
+    const held = () => (this.server.checkpoint === "auto" ? this.server.seq : (this.server.checkpoint?.seq ?? 0));
+    const readAgain = async (jump) => {
+      for (const dev of this.devices) {
+        if (jump > 0) dev.d.timers.time += jump;
+        dev.d.timers.advance(11 * 60_000);
+        await dev.engine.syncNow();
+        await settle(10);
+      }
+      await settle(20);
+    };
+    await readAgain(0);
+    if (held() === this.server.seq) return;
+    if (this.knownGaps) {
+      if (this.tabs || this.hiddenDrafts > 0) {
+        this.count("known:checkpoint_not_live");
+        return;
+      }
+      await readAgain(25 * 3_600_000);
+      if (held() === this.server.seq) {
+        this.count("known:checkpoint_waits_for_verification");
+        return;
+      }
+    }
+    const states = [];
+    for (const dev of this.devices) {
+      const state = await loadSyncState(dev.group.db.store, SERVER, ACCOUNT);
+      states.push(`${dev.label}: ${JSON.stringify(dev.engine.health())} stored ${JSON.stringify({ verifiedAt: state?.verifiedAt, uploadedAt: state?.uploadedAt, uploadedSeq: state?.uploadedSeq, hardWarning: state?.hardWarning })} last errors ${JSON.stringify(dev.d.events.error.slice(-3))} marks ${JSON.stringify(dev.engine.list().filter((i) => i.pending || i.blocked || i.missingOnServer).map((i) => short(i.id)))}`);
+    }
+    this.fail(`the checkpoint of the server is at seq ${held()} and the server at ${this.server.seq}, though every device has read the feed to its end more than ten minutes after the last change${this.knownGaps ? " and a day later" : ""}; ${states.join("; ")}`);
   }
 
   /** Every write a user made is on the server, unless the user dropped it; and a deletion is on the server too. */
@@ -817,7 +914,7 @@ export class Sim {
     for (const write of this.writes) last.set(this.keyOf({ label: write.dev }, write.id), write);
     for (const write of this.writes.slice(fromWrite)) {
       const key = this.keyOf({ label: write.dev }, write.id);
-      if (this.discarded.has(key) || this.stuck.has(key)) continue;
+      if (this.discarded.has(key)) continue;
       if (this.conflicted.has(key) && last.get(key) !== write) continue; // a version that was replaced by a newer one of the same device in a conflict
       // The same user deleted the item after the edit and the server holds it deleted: the edit went with the deletion (a draft that only
       // deletes, or a chain that ends in a deletion, is moot once the server has deleted the item), as the user's last word was the deletion.
@@ -882,7 +979,7 @@ export class Sim {
     for (const dev of [...this.devices, ...this.retired]) {
       // known gap, request after stop (todo test `a_pass_that_is_stopped_while_it_reads_the_memory_does_not_ask_the_server`): a feed read can still go out when
       // `stop()` comes while the pass reads the sync memory. A write or a checkpoint upload after `stop()` is never let through.
-      const late = dev.lateCalls.filter((call) => !(this.knownGaps && call.startsWith("get ")));
+      const late = dev.lateCalls.filter((call) => !(this.knownGaps && (call.startsWith("get /api/sync/changes") || call.startsWith("get /api/sync/items"))));
       if (late.length < dev.lateCalls.length) this.count("known:get_after_stop", dev.lateCalls.length - late.length);
       if (late.length > 0) this.fail(`${dev.label} asked the server after stop(): ${late.slice(0, 3).join(", ")}`);
     }
@@ -893,6 +990,12 @@ export class Sim {
   /** The database of the server is put back from `backup` and the restore is recorded (`ferret restore-epoch bump`). */
   async restoreServer(backup, { watch = true } = {}) {
     this.watching = watch;
+    this.mustHalt = new Set();
+    if (watch) {
+      for (const group of this.groups) {
+        if ((await this.floorsOfGroup(group)).maxSeq > backup.seq) for (const dev of this.devices.filter((d) => d.group === group)) this.mustHalt.add(dev.label);
+      }
+    }
     this.restoredAt = this.server.writes.length;
     this.restoreWrites = this.writes.length;
     this.restoreMark = new Map([...this.devices, ...this.retired].map((dev) => [dev, dev.d.events.error.length]));

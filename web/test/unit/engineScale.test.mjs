@@ -7,11 +7,11 @@ import { test } from "node:test";
 import { b64u } from "../../src/b64.mjs";
 import { loadSyncState } from "../../src/store/syncState.mjs";
 import { ACCOUNT, SERVER } from "./idbHelpers.mjs";
-import { createFakeClient, memoryBytes, memoryOf, settle } from "./syncHelpers.mjs";
+import { createFakeClient, memoryBytes, memoryOf, settle, until } from "./syncHelpers.mjs";
 import { SimServer, simEngine } from "./syncModel.mjs";
 
 const ITEMS = 10_000;
-/** The start from the cache must take less than this (ms). The brief says five seconds on the build host. */
+/** The start from the cache must take less than this (ms). The budget is five seconds. */
 const START_BUDGET_MS = 5_000;
 /** A cold read of the whole feed, and a full listing after a 410, are slower; these are ceilings with room, not goals. */
 const COLD_BUDGET_MS = 120_000;
@@ -117,8 +117,7 @@ test("ten_thousand_items_start_list_and_sync_within_budget", async () => {
   const other = await simEngine({ model: server, client, seed: 3, deviceName: "other" });
   await other.engine.start();
   const changed = await Promise.all(Array.from({ length: 100 }, (_, n) => other.engine.create({ item_type: "login", name: `New ${n}` })));
-  await settle(200);
-  while ((await Promise.all(changed.map(async (id) => server.items.has(id)))).includes(false)) await settle(50);
+  await until(() => changed.every((id) => server.items.has(id)), "the hundred new items are on the server");
   assert.equal(server.seq, ITEMS + 100);
   await timed("read 100 new rows", () => again.engine.syncNow());
   assert.equal(again.engine.list().length, ITEMS + 100);
