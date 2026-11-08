@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "action": {
+    "default_title": "Faithful Ferret",
+    "default_popup": "pages/about.html"
+  },
+  "background": {
+    "scripts": ["background/compat.mjs"],
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+  }
+}

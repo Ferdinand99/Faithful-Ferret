@@ -1,0 +1,21 @@
+{
+  "name": "ferret-extension",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "description": "The Faithful Ferret browser extension: no runtime dependencies, tools only",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs --browser firefox --manifest mv3 --variant release",
+    "tsc": "tsc -p jsconfig.json --noEmit",
+    "test:unit": "node --test \"test/unit/*.test.mjs\"",
+    "lint": "web-ext lint --source-dir dist/ferret-firefox-mv3-release --warnings-as-errors"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "143.0.1",
+    "typescript": "7.0.2",
+    "web-ext": "10.8.0"
+  }
+}
