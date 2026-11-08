@@ -819,6 +819,7 @@ export function invalidCases() {
     ["conflict absent with a blob", { status: 409, current_rev: 0, blob: conflictLive.blob, deleted: false }],
     ["conflict absent with a tag", { status: 409, current_rev: 0, tag: conflictLive.tag, deleted: false }],
     ["conflict absent with blob and tag", { ...conflictLive, current_rev: 0 }],
+    ["conflict deleted at current_rev 0", { status: 409, current_rev: 0, deleted: true }],
     ["conflict deleted with blob and tag", { ...conflictLive, deleted: true }],
     ["conflict deleted with a tag", { status: 409, current_rev: 5, tag: conflictLive.tag, deleted: true }],
     ["conflict without deleted", { status: 409, current_rev: 4, blob: conflictLive.blob, tag: conflictLive.tag }],
@@ -846,11 +847,12 @@ export function invalidCases() {
   // The answer of a single write: the same rule for the row it describes.
   const conflictRes = (fields) => text({ ...fields });
   const liveRow = { blob: envelope("item one", 1, 200), tag: b64("item one tag", 32) };
-  const conflictWhy = "a conflict answer is a live row (blob and tag, current_rev at least 1), a deleted one or an absent one (current_rev 0): neither blob nor tag";
+  const conflictWhy = "a conflict answer is a live row (blob and tag, current_rev at least 1), a deleted one (current_rev at least 1) or an absent one (current_rev 0, not deleted): neither blob nor tag";
   validate("conflict_res: current_rev 0 with blob and tag", "conflict_res", conflictRes({ current_rev: 0, ...liveRow, deleted: false }), conflictWhy);
   validate("conflict_res: current_rev 0 with a blob", "conflict_res", conflictRes({ current_rev: 0, blob: liveRow.blob, deleted: false }), conflictWhy);
   validate("conflict_res: current_rev 4 live without blob", "conflict_res", conflictRes({ current_rev: 4, tag: liveRow.tag, deleted: false }), conflictWhy);
   validate("conflict_res: current_rev 4 live without blob and tag", "conflict_res", conflictRes({ current_rev: 4, deleted: false }), conflictWhy);
+  validate("conflict_res: deleted at current_rev 0", "conflict_res", conflictRes({ current_rev: 0, deleted: true }), conflictWhy);
   validate("conflict_res: deleted with blob and tag", "conflict_res", conflictRes({ current_rev: 5, ...liveRow, deleted: true }), conflictWhy);
   const manyResults = (n) => text({ results: Array.from({ length: n }, (_, i) => ({ ...stored, rev: i + 1 })) });
   validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");

@@ -75,17 +75,11 @@ async fn get_changes(
     }
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let vault = session.vault;
-    // The head is read first, in the same closure as the page: the `seq` of a checkpoint never exceeds the
-    // `seq` of the vault when it was stored, and the vault's `seq` only
-    // grows, so `latest_seq` of the page, read after, is never below the head.
-    // (The other order could show a head above `latest_seq`, which a client
-    // reads as a server that lies about its top.)
-    let (head, page) = db
-        .with_conn(move |conn| {
-            let head = store::checkpoint_head(conn, &vault)?;
-            let page = store::changes_since(conn, &vault, since, limit, PAGE_BYTES)?;
-            Ok((head, page))
-        })
+    // The page and the head come out of one read transaction: one snapshot, so
+    // the head is never above `latest_seq` (a client reads that as a server
+    // that lies about its top).
+    let (page, head) = db
+        .with_conn(move |conn| store::changes_with_head(conn, &vault, since, limit, PAGE_BYTES))
         .await?;
     // Tombstones at or below the floor may be gone: a cursor below it cannot be
     // trusted, and the client must list the vault again (spec 8.4). `since = 0`

@@ -15,14 +15,17 @@
 //! 2. the JSON (unknown, repeated and mistyped fields are refused, `400`);
 //! 3. the structure ([`check_structure`]): `422 checkpoint_invalid`, and more
 //!    than 50 000 entries `413 too_large`;
-//! 4. the pace of the device: one stored upload per ten minutes (`429
+//! 4. the rate limit of the device (`429 throttled`): one operation and the
+//!    bytes of the body from its bucket, like an item write, so uploads that
+//!    the store refuses (stale, above the vault) are limited too;
+//! 5. the pace of the device: one stored upload per ten minutes (`429
 //!    throttled`). A refused or failed upload does not use up the turn;
-//! 5. a turn at the write gate (`503 busy`);
-//! 6. the write ([`store::put_checkpoint`]): a `seq` above the vault's is
+//! 6. a turn at the write gate (`503 busy`);
+//! 7. the write ([`store::put_checkpoint`]): a `seq` above the vault's is
 //!    `422 checkpoint_invalid`, a lower one (or the same `seq` with other
 //!    bytes) is `409 checkpoint_stale` with the stored `seq`, and the same
 //!    bytes again are `200`;
-//! 7. after a stored checkpoint, the turn of the device is used up.
+//! 8. after a stored checkpoint, the turn of the device is used up.
 //!
 //! The answers carry `no-store` through the vault layer, and nothing of the
 //! body reaches the log: the log line holds the `seq` and a count.
@@ -130,6 +133,16 @@ async fn put_checkpoint(
 
     let vault = session.vault;
     let device = session.device;
+    // An upload that the store will refuse costs the device its bucket too.
+    limits
+        .admit(
+            &vault,
+            &device,
+            1,
+            u64::try_from(raw.len()).unwrap_or(u64::MAX),
+        )
+        .map_err(throttled)
+        .inspect_err(refused)?;
     limits
         .checkpoint_allowed(&vault, &device)
         .map_err(throttled)
@@ -142,20 +155,23 @@ async fn put_checkpoint(
         mac: cp.mac,
         entries: cp.entries,
     };
-    // The turn is held for the transaction and given back at the end of the block.
-    let outcome = {
-        let _turn = permit;
-        db.with_conn(move |conn| store::put_checkpoint(conn, &vault, &stored))
-            .await
-    };
-    let outcome = outcome.map_err(ApiError::from).inspect_err(|e| {
-        tracing::info!(
-            seq,
-            status = e.status.as_u16(),
-            code = e.code,
-            "checkpoint write failed"
-        );
-    })?;
+    let outcome = db
+        .with_conn(move |conn| {
+            // The turn moves into the closure: it is held until the write has
+            // committed, even if this handler is dropped while it waits.
+            let _turn = permit;
+            store::put_checkpoint(conn, &vault, &stored)
+        })
+        .await
+        .map_err(ApiError::from)
+        .inspect_err(|e| {
+            tracing::info!(
+                seq,
+                status = e.status.as_u16(),
+                code = e.code,
+                "checkpoint write failed"
+            );
+        })?;
 
     match outcome {
         CheckpointOutcome::Stored { seq } => {

@@ -1081,9 +1081,11 @@ pub struct ConflictRes {
 /// things a server can hold: a row that is not there (`current_rev` 0, not
 /// deleted, no blob and no tag: the answer to a write against a row that does
 /// not exist), a live row (a `current_rev` of at least 1 with its blob and
-/// tag), or a tombstone (no blob and no tag).
+/// tag), or a tombstone (a `current_rev` of at least 1, no blob and no tag:
+/// a row that was written has a revision, so a deleted one at 0 is no row).
 fn conflict_row_is_valid(current_rev: u64, deleted: bool, has_blob: bool, has_tag: bool) -> bool {
     match (deleted, current_rev) {
+        (true, 0) => false,
         (true, _) => !has_blob && !has_tag,
         (false, 0) => !has_blob && !has_tag,
         (false, _) => has_blob && has_tag,
@@ -1092,8 +1094,9 @@ fn conflict_row_is_valid(current_rev: u64, deleted: bool, has_blob: bool, has_ta
 
 impl ConflictRes {
     /// Checks the row of the answer (see [`conflict_row_is_valid`]): a live
-    /// row has its blob and tag, a tombstone and a row that is not there
-    /// (`current_rev` 0) have neither. Every failure is `bad_request`.
+    /// row has its blob and tag, a tombstone (`current_rev` of at least 1) and
+    /// a row that is not there (`current_rev` 0, not deleted) have neither.
+    /// Every failure is `bad_request`.
     pub fn validate(&self) -> Result<(), WireError> {
         if conflict_row_is_valid(
             self.current_rev,
@@ -1235,7 +1238,8 @@ impl BatchReq {
 /// * stored: `status` 200 with `rev`, `seq` and `replayed`;
 /// * conflict: `status` 409 with `current_rev` and `deleted`, and `blob` and
 ///   `tag` when the row is live (`current_rev` of at least 1, not deleted); a
-///   deleted row, and a row that is not there (`current_rev` 0), have neither;
+///   deleted row (`current_rev` of at least 1), and a row that is not there
+///   (`current_rev` 0, not deleted), have neither;
 /// * refused: a `status` from 400 to 599 with the `error` code.
 ///
 /// Call [`BatchResultJson::validate`] on a result that comes from outside.

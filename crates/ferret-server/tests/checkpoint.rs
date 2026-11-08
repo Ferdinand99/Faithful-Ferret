@@ -21,7 +21,8 @@ use ferret_core::{
     make_checkpoint, make_tombstone, verify_checkpoint,
 };
 use ferret_server::auth::session::Origin;
-use ferret_server::ids::{ItemId, MANIFEST_ITEM_ID};
+use ferret_server::ids::{DeviceId, ItemId, MANIFEST_ITEM_ID, VaultId};
+use ferret_server::vault::rate::RateConfig;
 use ferret_server::wire::{CheckpointJson, b64url, hex16};
 use ferret_server_auth::SessionScope;
 use serde_json::{Value, json};
@@ -468,6 +469,94 @@ async fn changes_carries_the_checkpoint_head_and_never_the_entries() {
     // Another vault has its own head.
     let other = user(&app, 2).await;
     assert_eq!(changes(&app, &other).await["checkpoint"]["seq"], 1);
+}
+
+#[tokio::test]
+async fn a_checkpoint_of_another_vault_leaves_this_vault_unchanged() {
+    let app = TestApp::new().await;
+    let a = user(&app, 1).await;
+    let b = user(&app, 2).await;
+    write_note(&app, &a, item(1), 1).await;
+    write_note(&app, &b, item(1), 2).await;
+    let a_entries = entry(ordered_id(1), 1, [0xa1; 32]);
+    let a_sent = body(2, &a_entries, None, [0xa2; 32]);
+    assert_eq!(upload(&app, &a, &a_sent).await.status, StatusCode::OK);
+    let a_before = stored(&app, &a).await;
+    let a_head_before = changes(&app, &a).await["checkpoint"].clone();
+    assert_eq!(a_before, a_sent);
+
+    // B uploads a newer checkpoint, a stale one and a refused one.
+    write_note(&app, &b, item(2), 3).await;
+    let b_entries = entry(ordered_id(7), 3, [0xb1; 32]);
+    let b_sent = body(3, &b_entries, None, [0xb2; 32]);
+    assert_eq!(upload(&app, &b, &b_sent).await.status, StatusCode::OK);
+    let stale = body(2, &b_entries, None, [0xb3; 32]);
+    assert_eq!(upload(&app, &b, &stale).await.status, StatusCode::CONFLICT);
+    let above = body(99, &b_entries, None, [0xb4; 32]);
+    assert_eq!(
+        upload(&app, &b, &above).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    assert_eq!(stored(&app, &b).await, b_sent, "B has its own checkpoint");
+    assert_eq!(stored(&app, &a).await, a_before, "A's is untouched");
+    assert_eq!(changes(&app, &a).await["checkpoint"], a_head_before);
+    assert_ne!(changes(&app, &b).await["checkpoint"], a_head_before);
+}
+
+#[tokio::test]
+async fn a_burst_of_refused_uploads_ends_in_429() {
+    // Only three operations in the bucket of a device.
+    let app = TestApp::builder()
+        .rate(RateConfig {
+            ops_burst: 3,
+            ..RateConfig::DEFAULT
+        })
+        .build()
+        .await;
+    // The limiter is shared with the item routes and is tested by its own
+    // numbers in tests/rate.rs. While the state still holds a limiter that
+    // admits everything, there is nothing to observe here.
+    let (probe_vault, probe_device) = (VaultId::from_bytes([0xee; 16]), DeviceId([0xee; 16]));
+    let limits = app.state.limits.clone();
+    if (0..4).all(|_| limits.admit(&probe_vault, &probe_device, 1, 0).is_ok()) {
+        eprintln!("skipped: the rate limiter of this build admits everything");
+        return;
+    }
+
+    let u = user(&app, 1).await;
+    write_note(&app, &u, item(1), 1).await; // 1 of 3 operations
+    let before = stored(&app, &u).await;
+
+    // Same seq as the checkpoint of the registration with other bytes, above
+    // the vault, and the same again: the store refuses each, and each takes an
+    // operation, so the burst runs out. (No upload of this device was stored,
+    // so the pace of ten minutes does not come into it.)
+    let entries = entry(ordered_id(1), 1, [1; 32]);
+    let stale = body(1, &entries, None, [2; 32]).to_string().into_bytes();
+    let above = body(99, &entries, None, [3; 32]).to_string().into_bytes();
+    let mut statuses = Vec::new();
+    let mut last = None;
+    for raw in [stale.clone(), above, stale.clone(), stale.clone(), stale] {
+        let res = upload_now(&app, &u, raw).await;
+        statuses.push(res.status);
+        last = Some(res);
+    }
+    assert_eq!(
+        statuses,
+        [
+            StatusCode::CONFLICT,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::TOO_MANY_REQUESTS,
+        ]
+    );
+    let refused = last.expect("a response");
+    assert_eq!(error(&refused), "throttled");
+    assert!(refused.header("retry-after").parse::<u32>().unwrap() >= 1);
+    // What was stored stays.
+    assert_eq!(stored(&app, &u).await, before);
 }
 
 #[tokio::test]

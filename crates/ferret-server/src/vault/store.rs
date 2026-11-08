@@ -438,7 +438,7 @@ pub fn purge_tombstones(
 ) -> Result<Purged, StoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let (removed, bytes, top_seq): (i64, i64, i64) = tx.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(MAX(seq), 0) FROM ferret_items          WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
+        "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(MAX(seq), 0) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
         params![vault.as_bytes(), older_than],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
@@ -447,7 +447,7 @@ pub fn purge_tombstones(
         params![vault.as_bytes(), older_than],
     )?;
     let changed = tx.execute(
-        "UPDATE ferret_vaults          SET bytes_used = bytes_used - ?2, min_valid_since = MAX(min_valid_since, ?3)          WHERE vault_id = ?1",
+        "UPDATE ferret_vaults SET bytes_used = bytes_used - ?2, min_valid_since = MAX(min_valid_since, ?3) WHERE vault_id = ?1",
         params![vault.as_bytes(), bytes, top_seq],
     )?;
     if changed != 1 {
@@ -513,6 +513,43 @@ pub enum CheckpointOutcome {
     AboveVault,
 }
 
+/// What an upload of a checkpoint needs next, decided from the head (`seq`,
+/// digest, MAC) of the stored one and the `seq` of the vault, before the
+/// stored `entries` (up to 2.8 MB) are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CheckpointStep {
+    /// The upload claims a `seq` above the vault's.
+    AboveVault,
+    /// The stored checkpoint is newer, or has the same `seq` and another head.
+    Stale { stored_seq: u64 },
+    /// The same head as the stored one: only the `entries` can tell whether
+    /// this is a retry (`Unchanged`) or another upload (`Stale`).
+    SameHead,
+    /// Newer than the stored one: write it.
+    Replace,
+}
+
+/// The decision that does not need the stored `entries`: it is a function of
+/// the two heads and the vault's `seq` alone, so a stale upload never reads
+/// them.
+fn decide_checkpoint(
+    vault_seq: u64,
+    stored: &CheckpointHead,
+    incoming: &CheckpointHead,
+) -> CheckpointStep {
+    if incoming.0 > vault_seq {
+        CheckpointStep::AboveVault
+    } else if incoming.0 < stored.0 || (incoming.0 == stored.0 && incoming != stored) {
+        CheckpointStep::Stale {
+            stored_seq: stored.0,
+        }
+    } else if incoming.0 == stored.0 {
+        CheckpointStep::SameHead
+    } else {
+        CheckpointStep::Replace
+    }
+}
+
 /// Stores `cp` if it is newer than the checkpoint of the vault.
 ///
 /// Spec: Fase 1 § 8.6: the server keeps the checkpoint with the highest
@@ -520,8 +557,10 @@ pub enum CheckpointOutcome {
 /// than the one of the vault. The same `seq` is accepted only for the same
 /// bytes (a client that retries); other bytes under a `seq` that is already
 /// stored would let one upload silently replace another. One `IMMEDIATE`
-/// transaction, so two uploads cannot both pass the comparison. An unknown
-/// vault, or one without a checkpoint, is [`StoreError::NotFound`].
+/// transaction, so two uploads cannot both pass the comparison. Under that
+/// lock only the head of the stored checkpoint is read, and its `entries`
+/// only when the heads are equal. An unknown vault, or one without a
+/// checkpoint, is [`StoreError::NotFound`].
 pub fn put_checkpoint(
     conn: &mut Connection,
     vault: &VaultId,
@@ -536,42 +575,47 @@ pub fn put_checkpoint(
         )
         .map_err(missing)?;
     let vault_seq = u64::try_from(vault_seq).map_err(|_| int_error_signed(vault_seq))?;
-    if cp.seq > vault_seq {
-        return Ok(CheckpointOutcome::AboveVault);
-    }
-    let stored = read_checkpoint(&tx, vault)?;
-    if cp.seq < stored.seq {
-        return Ok(CheckpointOutcome::Stale {
-            stored_seq: stored.seq,
-        });
-    }
-    if cp.seq == stored.seq {
-        return Ok(if &stored == cp {
-            CheckpointOutcome::Unchanged { seq: cp.seq }
-        } else {
-            CheckpointOutcome::Stale {
-                stored_seq: stored.seq,
+    let stored = checkpoint_head(&tx, vault)?.ok_or(StoreError::NotFound)?;
+    let incoming = (cp.seq, cp.digest, cp.mac);
+    match decide_checkpoint(vault_seq, &stored, &incoming) {
+        CheckpointStep::AboveVault => Ok(CheckpointOutcome::AboveVault),
+        CheckpointStep::Stale { stored_seq } => Ok(CheckpointOutcome::Stale { stored_seq }),
+        CheckpointStep::SameHead => {
+            let entries: Vec<u8> = tx.query_row(
+                "SELECT entries FROM ferret_checkpoints WHERE vault_id = ?1",
+                [vault.as_bytes()],
+                |row| row.get(0),
+            )?;
+            Ok(if entries == cp.entries {
+                CheckpointOutcome::Unchanged { seq: cp.seq }
+            } else {
+                CheckpointOutcome::Stale {
+                    stored_seq: stored.0,
+                }
+            })
+        }
+        CheckpointStep::Replace => {
+            let seq_sql = i64::try_from(cp.seq).map_err(|_| int_error(cp.seq))?;
+            let changed = tx.execute(
+                "UPDATE ferret_checkpoints SET seq = ?2, digest = ?3, mac = ?4, entries = ?5 WHERE vault_id = ?1 AND seq < ?2",
+                params![
+                    vault.as_bytes(),
+                    seq_sql,
+                    cp.digest.as_slice(),
+                    cp.mac.as_slice(),
+                    cp.entries
+                ],
+            )?;
+            if changed != 1 {
+                // The transaction is IMMEDIATE and the row was read above, so
+                // this is not a race: refuse rather than report a write that
+                // did not happen.
+                return Err(StoreError::Invalid("the checkpoint row changed"));
             }
-        });
+            tx.commit()?;
+            Ok(CheckpointOutcome::Stored { seq: cp.seq })
+        }
     }
-    let seq_sql = i64::try_from(cp.seq).map_err(|_| int_error(cp.seq))?;
-    let changed = tx.execute(
-        "UPDATE ferret_checkpoints SET seq = ?2, digest = ?3, mac = ?4, entries = ?5          WHERE vault_id = ?1 AND seq < ?2",
-        params![
-            vault.as_bytes(),
-            seq_sql,
-            cp.digest.as_slice(),
-            cp.mac.as_slice(),
-            cp.entries
-        ],
-    )?;
-    if changed != 1 {
-        // The transaction is IMMEDIATE and the row was read above, so this is
-        // not a race: refuse rather than report a write that did not happen.
-        return Err(StoreError::Invalid("the checkpoint row changed"));
-    }
-    tx.commit()?;
-    Ok(CheckpointOutcome::Stored { seq: cp.seq })
 }
 
 /// The checkpoint of a vault, with its entries. An unknown vault is
@@ -717,6 +761,19 @@ pub fn changes_since(
     limit: u32,
     max_bytes: usize,
 ) -> Result<Changes, StoreError> {
+    Ok(changes_with_head(conn, vault, since, limit, max_bytes)?.0)
+}
+
+/// [`changes_since`], and with the page the head of the checkpoint of the
+/// vault (`None` if it has none). Both are read in the one transaction, so the
+/// head is never above the `latest_seq` of the page: they are one snapshot.
+pub fn changes_with_head(
+    conn: &Connection,
+    vault: &VaultId,
+    since: u64,
+    limit: u32,
+    max_bytes: usize,
+) -> Result<(Changes, Option<CheckpointHead>), StoreError> {
     let tx = conn.unchecked_transaction()?;
     let (latest_seq, min_valid_since, restore_epoch, vk_epoch) = tx
         .query_row(
@@ -734,6 +791,7 @@ pub fn changes_since(
             },
         )
         .map_err(missing)?;
+    let head = checkpoint_head(&tx, vault)?;
 
     let since_sql = i64::try_from(since).unwrap_or(i64::MAX);
     let mut stmt = tx.prepare(
@@ -766,14 +824,17 @@ pub fn changes_since(
     drop(rows);
     drop(stmt);
     tx.finish()?;
-    Ok(Changes {
-        changes,
-        latest_seq,
-        min_valid_since,
-        vk_epoch,
-        restore_epoch,
-        has_more,
-    })
+    Ok((
+        Changes {
+            changes,
+            latest_seq,
+            min_valid_since,
+            vk_epoch,
+            restore_epoch,
+            has_more,
+        },
+        head,
+    ))
 }
 
 /// A method that unlocks the vault key: a wrap and what is needed to use it.
@@ -1328,7 +1389,7 @@ mod tests {
         );
         let (deleted, count): (i64, i64) = conn
             .query_row(
-                "SELECT (SELECT deleted FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2),                         (SELECT item_count FROM ferret_vaults WHERE vault_id = ?1)",
+                "SELECT (SELECT deleted FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2), (SELECT item_count FROM ferret_vaults WHERE vault_id = ?1)",
                 params![vault.as_bytes(), ItemId::from_bytes(id16(0x10)).as_bytes()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -1434,6 +1495,76 @@ mod tests {
             checkpoint_head(&conn, &vault).expect("a head"),
             Some((3, [0x31; 32], [0x32; 32]))
         );
+    }
+
+    #[test]
+    fn a_checkpoint_is_decided_from_the_heads_and_only_a_same_head_needs_the_entries() {
+        let head =
+            |seq: u64, digest: u8, mac: u8| -> CheckpointHead { (seq, [digest; 32], [mac; 32]) };
+        let stored = head(5, 1, 2);
+        // Above the vault: refused before the stored checkpoint matters.
+        assert_eq!(
+            decide_checkpoint(7, &stored, &head(8, 1, 2)),
+            CheckpointStep::AboveVault
+        );
+        // A stale upload is decided from the heads: nothing asks for entries.
+        for incoming in [
+            head(4, 1, 2),
+            head(0, 1, 2),
+            head(4, 9, 9),
+            head(5, 9, 2),
+            head(5, 1, 9),
+        ] {
+            assert_eq!(
+                decide_checkpoint(7, &stored, &incoming),
+                CheckpointStep::Stale { stored_seq: 5 },
+                "{incoming:?}"
+            );
+        }
+        // Only an equal head can be a retry, and only the entries can tell.
+        assert_eq!(
+            decide_checkpoint(7, &stored, &head(5, 1, 2)),
+            CheckpointStep::SameHead
+        );
+        // Newer, up to the seq of the vault: written.
+        for seq in [6, 7] {
+            assert_eq!(
+                decide_checkpoint(7, &stored, &head(seq, 9, 9)),
+                CheckpointStep::Replace
+            );
+        }
+    }
+
+    #[test]
+    fn a_same_head_with_other_entries_is_stale_and_with_the_same_entries_unchanged() {
+        let (mut conn, vault, device) = with_account();
+        put_item(
+            &mut conn,
+            &vault,
+            &device,
+            &write(0x20, live(1), 0, 1, false),
+            &Limits::DEFAULT,
+            NOW,
+        )
+        .expect("a write");
+        let first = checkpoint(2, 0x31);
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &first).expect("a result"),
+            CheckpointOutcome::Stored { seq: 2 }
+        );
+        let other_entries = StoredCheckpoint {
+            entries: vec![0x99; 56],
+            ..first.clone()
+        };
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &other_entries).expect("a result"),
+            CheckpointOutcome::Stale { stored_seq: 2 }
+        );
+        assert_eq!(
+            put_checkpoint(&mut conn, &vault, &first).expect("a result"),
+            CheckpointOutcome::Unchanged { seq: 2 }
+        );
+        assert_eq!(get_checkpoint(&conn, &vault).expect("a checkpoint"), first);
     }
 
     #[test]

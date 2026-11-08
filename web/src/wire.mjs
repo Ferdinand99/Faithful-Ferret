@@ -382,14 +382,15 @@ function checkBatchResult(result) {
 
 /**
  * Whether the row that a conflict answer describes is one a server can hold: a
- * live row (a current_rev of at least 1, with blob and tag), a tombstone (neither),
- * or a row that is not there (current_rev 0 and not deleted: neither).
+ * live row (a current_rev of at least 1, with blob and tag), a tombstone (a
+ * current_rev of at least 1, neither), or a row that is not there (current_rev 0
+ * and not deleted: neither).
  * @param {any} value
  */
 function conflictRowIsValid(value) {
   const rows = present(value, "blob") && present(value, "tag");
   const neither = !present(value, "blob") && !present(value, "tag");
-  if (value.deleted) return neither;
+  if (value.deleted) return value.current_rev >= 1 && neither;
   return value.current_rev === 0 ? neither : rows;
 }
 

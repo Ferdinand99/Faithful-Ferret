@@ -324,6 +324,7 @@ test("a_conflict_answer_is_a_live_row_or_a_deleted_one", () => {
     { current_rev: 0, deleted: false, blob: live.blob },
     { current_rev: 0, deleted: false, tag: live.tag },
     { current_rev: 4, deleted: false },
+    { current_rev: 0, deleted: true },
   ]) {
     assert.equal(refusalOf(() => checkStep("conflict_res", bad)), "bad_request");
   }
@@ -344,6 +345,7 @@ test("a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row", (
     { current_rev: 4, deleted: false },
     { current_rev: 4, deleted: false, blob: live.blob },
     { current_rev: 5, deleted: true, blob: live.blob, tag: live.tag },
+    { current_rev: 0, deleted: true },
   ]) {
     assert.equal(refusalOf(() => checkStep("batch_res", result(bad))), "bad_request", JSON.stringify(bad));
   }

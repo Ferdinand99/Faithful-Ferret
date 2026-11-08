@@ -1259,6 +1259,8 @@ fn a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row() {
         json!({ "current_rev": 4, "deleted": false, "blob": blob }),
         json!({ "current_rev": 4, "deleted": false, "tag": tag }),
         json!({ "current_rev": 5, "deleted": true, "blob": blob, "tag": tag }),
+        // A tombstone has a revision: deleted at 0 is no row at all.
+        json!({ "current_rev": 0, "deleted": true }),
     ] {
         assert!(conflict(fields.clone()).validate().is_err(), "{fields}");
         assert!(result(fields.clone()).validate().is_err(), "{fields}");

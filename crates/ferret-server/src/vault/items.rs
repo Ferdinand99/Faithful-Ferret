@@ -29,10 +29,10 @@
 //! key. It stores what a signed-in client sends, under the compare-and-set of
 //! the store.
 
-use axum::body::Bytes;
-use axum::extract::rejection::{BytesRejection, PathRejection};
 use std::sync::Arc;
 
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, PathRejection};
 use axum::extract::{DefaultBodyLimit, FromRef, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
@@ -188,10 +188,11 @@ async fn put_item(
             "item write refused"
         );
     })?;
-    // The turn is held for the transaction and given back at the end of the block.
-    let outcome = {
-        let _turn = permit;
-        db.with_conn(move |conn| {
+    let outcome = db
+        .with_conn(move |conn| {
+            // The turn moves into the closure: it is held until the write has
+            // committed, even if this handler is dropped while it waits.
+            let _turn = permit;
             let Prepared {
                 item_id,
                 request,
@@ -214,15 +215,15 @@ async fn put_item(
             store::put_item(conn, &vault, &device, &put, &Limits::DEFAULT, now)
         })
         .await
-    };
-    let outcome = outcome.map_err(ApiError::from).inspect_err(|e| {
-        tracing::info!(
-            item_id = %item_hex,
-            status = e.status.as_u16(),
-            code = e.code,
-            "item write failed"
-        );
-    })?;
+        .map_err(ApiError::from)
+        .inspect_err(|e| {
+            tracing::info!(
+                item_id = %item_hex,
+                status = e.status.as_u16(),
+                code = e.code,
+                "item write failed"
+            );
+        })?;
 
     let (status, code) = match &outcome {
         PutOutcome::Stored { .. } => (StatusCode::OK, "stored"),

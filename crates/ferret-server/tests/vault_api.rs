@@ -1465,4 +1465,29 @@ async fn item_write_notifies_once_with_the_new_seq_and_a_replay_does_not() {
     let change = heard.try_recv().expect("the second write is announced");
     assert_eq!((change.vault, change.seq), (vault, 3));
     assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+
+    // A deletion and the resurrection after it are writes like any other.
+    let t = make_tombstone(&mut OsRng, &u.vault, id, 3).expect("a tombstone");
+    let res = put(&app, &u.jar, id, &tomb(2, &t.tomb, idem(4))).await;
+    assert_eq!(res.json()["seq"], 4);
+    let change = heard.try_recv().expect("the deletion is announced");
+    assert_eq!((change.vault, change.seq), (vault, 4));
+    let back = seal(&u, id, 4, "back");
+    let mut resurrect = live(3, &back, idem(5));
+    resurrect["resurrect"] = json!(true);
+    let res = put(&app, &u.jar, id, &resurrect).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json(), json!({ "rev": 4, "seq": 5, "replayed": false }));
+    let change = heard.try_recv().expect("the resurrection is announced");
+    assert_eq!((change.vault, change.seq), (vault, 5));
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)), "once");
+
+    // Its replay, and a resurrection against an old basis, announce nothing.
+    let replay = put(&app, &u.jar, id, &resurrect).await;
+    assert_eq!(replay.json()["replayed"], true);
+    let mut old_basis = live(2, &back, idem(6));
+    old_basis["resurrect"] = json!(true);
+    let refused = put(&app, &u.jar, id, &old_basis).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT);
+    assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
 }
