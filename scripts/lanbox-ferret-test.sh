@@ -350,8 +350,8 @@ e2e_down() {
 
 # Waits until a container reports healthy (the server has a health check).
 wait_container_healthy() { # container
-  local i status=""
-  for i in $(seq 1 90); do
+  local status=""
+  for _ in $(seq 1 90); do
     status="$(dk inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null || true)"
     [ "$status" = healthy ] && return 0
     sleep 1

@@ -208,14 +208,15 @@ fi
 # it is the only place that the stack's snapshot helper (a pinned Alpine) is named the same as the server's.
 evil_dockerfile=web/test/e2e-stack/evil/Dockerfile
 server_node="$(sed -n 's/^ARG NODE_IMAGE=//p' docker/server.Dockerfile)"
-[ -n "$server_node" ] && grep -qx "FROM $server_node" "$evil_dockerfile" || { echo "check-ferret-test-stack: $evil_dockerfile must start from the Node image of docker/server.Dockerfile, pinned by digest" >&2; exit 1; }
+if [ -z "$server_node" ] || ! grep -qx "FROM $server_node" "$evil_dockerfile"; then echo "check-ferret-test-stack: $evil_dockerfile must start from the Node image of docker/server.Dockerfile, pinned by digest" >&2; exit 1; fi
 server_alpine="$(sed -n 's/^ARG ALPINE_IMAGE=//p' docker/server.Dockerfile)"
-[ -n "$server_alpine" ] && grep -qx "alpine_image=$server_alpine" scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the snapshot helper image of scripts/lanbox-ferret-test.sh must be the pinned Alpine of docker/server.Dockerfile" >&2; exit 1; }
+if [ -z "$server_alpine" ] || ! grep -qx "alpine_image=$server_alpine" scripts/lanbox-ferret-test.sh; then echo "check-ferret-test-stack: the snapshot helper image of scripts/lanbox-ferret-test.sh must be the pinned Alpine of docker/server.Dockerfile" >&2; exit 1; fi
 for f in proxy.mjs modes.mjs recorder.mjs; do
   grep -q "$f" "$evil_dockerfile" || { echo "check-ferret-test-stack: $evil_dockerfile must copy $f" >&2; exit 1; }
 done
 # The snapshot of the ferret-test stack and of the e2e stack: the label of the e2e one is its own.
 grep -q '^e2e_snapshot_volume=ferret-e2e-snapshot$' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be ferret-e2e-snapshot" >&2; exit 1; }
+# shellcheck disable=SC2016
 grep -q 'dk volume create --label "$e2e_label" "$e2e_snapshot_volume"' scripts/lanbox-ferret-test.sh || { echo "check-ferret-test-stack: the e2e snapshot volume must be made with the label owner=ferret-e2e" >&2; exit 1; }
 # The snapshot of the ferret-test stack refuses without --yes-ferret-test, before any Docker call.
 for command in snapshot restore-snapshot; do
