@@ -74,7 +74,7 @@ export function codeOf(error) {
 const SYNC_ERRORS = new Set([
   "bad_feed", "bad_request", "blocked", "busy", "conflict", "conflict_unsettled", "damaged", "draft_unreadable", "epoch_mismatch",
   "forbidden", "gone", "idem_reuse", "invalid_state", "manifest_not_writable", "missing_on_server", "not_found", "quarantined",
-  "quota_exceeded", "read_only", "reupload_refused", "storage", "tombstone_invalid", "too_large", "unsupported_envelope",
+  "quota_exceeded", "read_only", "restore_epoch_refused", "reupload_refused", "storage", "tombstone_invalid", "too_large", "unsupported_envelope",
   "upload_again_failed",
 ]);
 

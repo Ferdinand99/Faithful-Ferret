@@ -18,6 +18,7 @@
   "sync.error.quarantined": "Tjeneren sier at dette elementet er slettet, men det kunne ikke kontrolleres. Den lokale kopien er beholdt.",
   "sync.error.quota_exceeded": "Hvelvet er fullt. Slett noe og prøv igjen.",
   "sync.error.read_only": "Dette elementet er skrivebeskyttet.",
+  "sync.error.restore_epoch_refused": "Tjeneren er gjenopprettet mens en endring ventet på å bli sendt, og den godtok ikke endringen. Endringen er beholdt på denne enheten, og ingenting er slettet. Synkroniseringen av denne endringen er stoppet. Last siden på nytt for å prøve igjen, og si fra til administratoren hvis det skjer igjen.",
   "sync.error.reupload_refused": "Tjeneren har en annen versjon av dette elementet enn kopien denne enheten har beholdt, så kopien ble ikke lastet opp på nytt. Kopien ligger igjen på denne enheten, og ingenting går tapt.",
   "sync.error.storage": "Nettleseren kunne ikke lagre endringen på denne enheten.",
   "sync.error.tombstone_invalid": "Tjeneren avviste denne slettingen.",
@@ -40,5 +41,6 @@
   "sync.warning.server_behind": "Tjeneren ligger bak denne enheten. Den kan ha blitt gjenopprettet fra en sikkerhetskopi. Endringer gjort på denne enheten i mellomtiden vises kanskje ikke etter omstart.",
   "sync.warning.server_restored": "Tjeneren ble gjenopprettet til en tidligere tilstand.",
   "sync.warning.tombstone_unverified": "Tjeneren sier at et element er slettet, men det kunne ikke kontrolleres. Den lokale kopien er beholdt.",
+  "sync.warning.trash_copy_skipped": "Tjeneren slettet et element, og det ble ikke laget en kopi av det i papirkurven på denne enheten. Slettingen er likevel gjennomført her. Elementet kan ikke hentes tilbake fra papirkurven på denne enheten.",
   "sync.warning.unexpected_rev": "Tjeneren lagret en endring under et uventet versjonsnummer."
 }
