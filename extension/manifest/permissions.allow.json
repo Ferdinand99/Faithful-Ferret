@@ -2,5 +2,11 @@
   "permissions": ["activeTab", "alarms", "clipboardWrite", "idle", "menus", "scripting", "storage", "webNavigation"],
   "optional_permissions": [],
   "host_permissions": [],
-  "optional_host_permissions": ["https://*/*"]
+  "optional_host_permissions": ["https://*/*"],
+  "release": {
+    "permissions": ["activeTab", "alarms", "idle", "scripting", "storage"],
+    "optional_permissions": [],
+    "host_permissions": [],
+    "optional_host_permissions": ["https://*/*"]
+  }
 }

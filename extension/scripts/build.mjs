@@ -13,7 +13,7 @@
 //    writes dist/shared/MANIFEST.json (path -> SHA-256). An empty list writes
 //    nothing, and not even the folder.
 // 3. Merges manifest/base.json, the overlay of the chosen manifest version and
-//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json is a
+//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json (its `release` section for the release variant) is a
 //    build error, and so is a key that is never allowed (content_scripts,
 //    web_accessible_resources, externally_connectable). The manifest declares
 //    data_collection_permissions required: ["authenticationInfo"]: the extension
@@ -96,7 +96,7 @@ const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
 /**
  * The top-level manifest keys a release package may carry, by manifest version.
  * This is the key set of the release manifests the build writes (the permission
- * lists are checked entry by entry against permissions.allow.json). A key outside
+ * lists are checked entry by entry against the release list of permissions.allow.json). A key outside
  * this list, such as a new content script declaration, is refused by the release
  * check even when it was added after the build.
  */
@@ -207,10 +207,7 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
   if (manifest !== "mv3" && manifest !== "mv2") throw new Error(`manifest "${manifest}" is not mv3 or mv2`);
   if (variant !== "release" && variant !== "test") throw new Error(`variant "${variant}" is not release or test`);
   const dir = join(root, "manifest");
-  const allow = readJson(join(dir, "permissions.allow.json"));
-  for (const key of PERMISSION_KEYS) {
-    if (!Array.isArray(allow[key])) throw new Error(`permissions.allow.json: ${key} must be a list`);
-  }
+  const allow = readPermissionAllow(root, variant);
 
   /** @type {Record<string, any>} */
   const merged = {};
@@ -369,19 +366,36 @@ export function namesHost(lowerText, host) {
 }
 
 /**
- * The permission allow-list (manifest/permissions.allow.json), checked for its shape.
+ * The permission allow-list of a variant, from manifest/permissions.allow.json. The
+ * file has the four lists of the test variant at its top level and a `release`
+ * section with the lists a release may carry, which must be a subset of the first.
  * A missing or malformed file is an error, so a check never passes for want of it.
  * @param {string} [root] the extension folder
+ * @param {string} [variant] "release" (the default) or "test"
  * @returns {Record<string, string[]>}
  */
-export function readPermissionAllow(root = defaultRoot) {
+export function readPermissionAllow(root = defaultRoot, variant = "release") {
   const file = join(root, "manifest", "permissions.allow.json");
   if (!existsSync(file)) throw new Error("manifest/permissions.allow.json is missing (the release check needs it)");
-  const allow = readJson(file);
+  const all = readJson(file);
+  /** @param {unknown} lists @param {string} where @returns {Record<string, string[]>} */
+  const shaped = (lists, where) => {
+    if (!isPlainObject(lists)) throw new Error(`permissions.allow.json: ${where || "the file"} must be an object`);
+    for (const key of PERMISSION_KEYS) {
+      if (!Array.isArray(lists[key]) || !lists[key].every((x) => typeof x === "string")) {
+        throw new Error(`permissions.allow.json: ${where}${key} must be a list of strings`);
+      }
+    }
+    return /** @type {Record<string, string[]>} */ (lists);
+  };
+  const full = shaped(all, "");
+  const release = shaped(all.release, "release.");
   for (const key of PERMISSION_KEYS) {
-    if (!isPlainObject(allow) || !Array.isArray(allow[key])) throw new Error(`permissions.allow.json: ${key} must be a list`);
+    for (const entry of release[key]) {
+      if (!full[key].includes(entry)) throw new Error(`permissions.allow.json: release.${key} holds "${entry}", which the lists of the test variant do not`);
+    }
   }
-  return allow;
+  return variant === "release" ? release : full;
 }
 
 /**
@@ -418,6 +432,14 @@ function manifestProblems(text, allow) {
     if (keys !== undefined && !keys.includes(key)) problems.push(`manifest.json: the key ${key} is not in the release key list`);
   }
 
+  // The CSP is one constant, in the shape of the manifest version.
+  if (version === 3 || version === 2) {
+    const expected = version === 3 ? { extension_pages: EXTENSION_CSP } : EXTENSION_CSP;
+    if (JSON.stringify(manifest.content_security_policy) !== JSON.stringify(expected)) {
+      problems.push(`manifest.json: content_security_policy is not the extension CSP${version === 3 ? " (an object with extension_pages only)" : " (a string)"}`);
+    }
+  }
+
   for (const key of PERMISSION_KEYS) {
     if (!(key in manifest)) continue;
     const list = manifest[key];
@@ -431,7 +453,7 @@ function manifestProblems(text, allow) {
       for (const entry of allow[key.replace("permissions", "host_permissions")]) allowed.add(entry);
     }
     for (const entry of list) {
-      if (!allowed.has(entry)) problems.push(`manifest.json: ${key} holds "${entry}", which is not in permissions.allow.json`);
+      if (!allowed.has(entry)) problems.push(`manifest.json: ${key} holds "${entry}", which is not in the release list of permissions.allow.json`);
     }
   }
   return problems;

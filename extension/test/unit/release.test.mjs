@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { build, buildManifest, packXpi, readInternalHosts, RELEASE_MANIFEST_KEYS, releaseProblems } from "../../scripts/build.mjs";
+import { build, buildManifest, EXTENSION_CSP, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems } from "../../scripts/build.mjs";
 import { makeRoot, repoRoot } from "./buildHelpers.mjs";
 
 const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
@@ -88,7 +88,7 @@ test("release_package_must_carry_exactly_the_release_add_on_id", () => {
   /** @param {unknown} id */
   const manifestWith = (id) => new Map([[
     "manifest.json",
-    Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, browser_specific_settings: { gecko: { id } } })),
+    Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id } } })),
   ]]);
   assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools"), HOSTS), []);
   for (const id of ["ferret-test@hedgerow.tools", "other@example.com", "Ferret@hedgerow.tools", "ferret@hedgerow.tools ", undefined]) {
@@ -204,6 +204,16 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.browser_action = { default_title: "x" }; }, /the key browser_action is not in the release key list/],
         [(m) => { m.chrome_url_overrides = { newtab: "pages/about.html" }; }, /the key chrome_url_overrides is not in the release key list/],
         [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
+        // Allowed for the test variant, not for a release.
+        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
+        [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
+        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
+        [(m) => { m.optional_permissions = ["menus"]; }, /optional_permissions holds "menus"/],
+        [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(an object/],
+        [(m) => { m.content_security_policy = EXTENSION_CSP; }, /content_security_policy is not the extension CSP \(an object/],
+        [(m) => { m.content_security_policy = { extension_pages: `${EXTENSION_CSP}; script-src-elem 'unsafe-inline'` }; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy = { extension_pages: "script-src 'self' 'unsafe-eval'; object-src 'self'" }; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy.sandbox = "sandbox allow-scripts"; }, /content_security_policy is not the extension CSP/],
         [(m) => { m.permissions.push("<all_urls>"); }, /permissions holds "<all_urls>"/],
         [(m) => { m.permissions.push("https://*/*"); }, /permissions holds "https:\/\/\*\/\*"/],
         [(m) => { m.optional_permissions = ["history"]; }, /optional_permissions holds "history"/],
@@ -223,6 +233,13 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.host_permissions = ["https://*/*"]; }, /the key host_permissions is not in the release key list/],
         [(m) => { m.optional_host_permissions = ["https://*/*"]; }, /the key optional_host_permissions is not in the release key list/],
         [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
+        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
+        [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
+        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
+        [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(a string\)/],
+        [(m) => { m.content_security_policy = { extension_pages: EXTENSION_CSP }; }, /content_security_policy is not the extension CSP \(a string\)/],
+        [(m) => { m.content_security_policy = `${EXTENSION_CSP}; script-src-elem 'unsafe-inline'`; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy = "script-src 'self' 'unsafe-eval'; object-src 'self'"; }, /content_security_policy is not the extension CSP/],
         [(m) => { m.permissions.push("<all_urls>"); }, /permissions holds "<all_urls>"/],
         [(m) => { m.optional_permissions = ["http://*/*"]; }, /optional_permissions holds "http:\/\/\*\/\*"/],
         [(m) => { m.name = `${m.name} (test)`; }, /the name is the test build's/],
@@ -247,7 +264,7 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
   }
 });
 
-test("release_check_accepts_the_optional_origin_the_allow_list_names", async () => {
+test("release_check_accepts_the_optional_origin_the_release_list_names", async () => {
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
@@ -277,6 +294,37 @@ test("release_key_list_covers_the_keys_of_both_release_manifests_and_nothing_els
   } finally {
     env.cleanup();
   }
+});
+
+test("a_release_may_carry_only_the_release_permissions_and_the_test_variant_the_wider_list", async () => {
+  for (const permission of ["menus", "clipboardWrite", "webNavigation"]) {
+    const env = makeRoot({ "manifest/parts/extra.json": `${JSON.stringify({ permissions: [permission] })}\n` });
+    try {
+      const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+      for (const manifest of ["mv3", "mv2"]) {
+        await assert.rejects(build({ ...options, manifest, variant: "release" }), new RegExp(`permission "${permission}" \\(permissions\\) is not in manifest/permissions\\.allow\\.json`), `${manifest} ${permission}`);
+        // The test variant has them in its list.
+        await build({ ...options, manifest, variant: "test" });
+      }
+    } finally {
+      env.cleanup();
+    }
+  }
+  // The release list is a subset of the test variant's: a release entry the wider list lacks is a broken file.
+  const env = makeRoot({ "manifest/permissions.allow.json": `${JSON.stringify({
+    permissions: ["storage"], optional_permissions: [], host_permissions: [], optional_host_permissions: [],
+    release: { permissions: ["storage", "tabs"], optional_permissions: [], host_permissions: [], optional_host_permissions: [] },
+  })}\n` });
+  try {
+    assert.throws(() => readPermissionAllow(env.root, "release"), /release\.permissions holds "tabs"/);
+    assert.throws(() => readPermissionAllow(env.root, "test"), /release\.permissions holds "tabs"/);
+  } finally {
+    env.cleanup();
+  }
+  // The real file: release lists inside the wider ones, and the test-only entries are the three named ones.
+  const release = readPermissionAllow(undefined, "release");
+  const wider = readPermissionAllow(undefined, "test");
+  assert.deepEqual(wider.permissions.filter((p) => !release.permissions.includes(p)), ["clipboardWrite", "menus", "webNavigation"]);
 });
 
 test("release_check_fails_closed_without_the_permission_allow_list", async () => {

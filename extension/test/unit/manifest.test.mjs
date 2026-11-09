@@ -87,7 +87,7 @@ test("manifest_mv3_and_mv2_differ_only_in_the_allowed_keys", () => {
 });
 
 test("manifest_permissions_are_a_subset_of_the_allow_list_and_every_part_permission_is_listed", () => {
-  const allow = readJson(join(extensionRoot, "manifest", "permissions.allow.json"));
+  const allow = readJson(join(extensionRoot, "manifest", "permissions.allow.json")).release;
   const m3 = manifestOf("mv3", "release");
   for (const key of Object.keys(allow)) {
     for (const entry of m3[key] ?? []) assert.ok(allow[key].includes(entry), `mv3 ${key}: ${entry}`);
