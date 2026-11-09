@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { build, readInternalHosts, releaseProblems } from "../../scripts/build.mjs";
+import { build, buildManifest, EXTENSION_CSP, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems } from "../../scripts/build.mjs";
 import { makeRoot, repoRoot } from "./buildHelpers.mjs";
 
 const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
@@ -88,7 +88,7 @@ test("release_package_must_carry_exactly_the_release_add_on_id", () => {
   /** @param {unknown} id */
   const manifestWith = (id) => new Map([[
     "manifest.json",
-    Buffer.from(JSON.stringify({ name: "Faithful Ferret", browser_specific_settings: { gecko: { id } } })),
+    Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id } } })),
   ]]);
   assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools"), HOSTS), []);
   for (const id of ["ferret-test@hedgerow.tools", "other@example.com", "Ferret@hedgerow.tools", "ferret@hedgerow.tools ", undefined]) {
@@ -159,4 +159,179 @@ test("release_check_fails_closed_without_the_host_list", async () => {
     env.cleanup();
   }
   assert.throws(() => releaseProblems(new Map(), /** @type {any} */ (undefined)));
+});
+
+// ------------------------------------------------- the manifest of a release
+
+/** @typedef {{ status: number | null, output: string }} CheckResult */
+
+/**
+ * Plants a change into the manifest.json of a built release and runs the release
+ * check on a folder and on a .xpi packed from it.
+ * @param {{ dir: string, files: Map<string, Buffer> }} release
+ * @param {(manifest: Record<string, any>) => void} change
+ * @param {string} label a file name part, one per case
+ * @returns {{ folder: CheckResult, xpi: CheckResult }}
+ */
+function checkChanged(release, change, label) {
+  const manifest = JSON.parse(/** @type {Buffer} */ (release.files.get("manifest.json")).toString("utf8"));
+  change(manifest);
+  const folder = join(release.dir, "..", `planted-${label}`);
+  const files = new Map(release.files);
+  files.set("manifest.json", Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+  for (const [path, bytes] of files) {
+    const file = join(folder, ...path.split("/"));
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, bytes);
+  }
+  const xpi = join(release.dir, "..", `planted-${label}.xpi`);
+  packXpi(folder, xpi);
+  return { folder: runCheck(folder), xpi: runCheck(xpi) };
+}
+
+test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", async () => {
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+    /** @type {Record<string, [(m: Record<string, any>) => void, RegExp][]>} */
+    const cases = {
+      mv3: [
+        [(m) => { m.content_scripts = [{ matches: ["https://*/*"], js: ["content/fill.inject.js"] }]; }, /content_scripts is not allowed in a release/],
+        [(m) => { m.web_accessible_resources = ["content/fill.inject.js"]; }, /web_accessible_resources is not allowed in a release/],
+        [(m) => { m.externally_connectable = { matches: ["https://*/*"] }; }, /externally_connectable is not allowed in a release/],
+        [(m) => { m.commands = { run: { suggested_key: { default: "Alt+Shift+F9" } } }; }, /the key commands is not in the release key list/],
+        [(m) => { m.options_ui = { page: "pages/about.html" }; }, /the key options_ui is not in the release key list/],
+        [(m) => { m.browser_action = { default_title: "x" }; }, /the key browser_action is not in the release key list/],
+        [(m) => { m.chrome_url_overrides = { newtab: "pages/about.html" }; }, /the key chrome_url_overrides is not in the release key list/],
+        [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
+        // Allowed for the test variant, not for a release.
+        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
+        [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
+        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
+        [(m) => { m.optional_permissions = ["menus"]; }, /optional_permissions holds "menus"/],
+        [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(an object/],
+        [(m) => { m.content_security_policy = EXTENSION_CSP; }, /content_security_policy is not the extension CSP \(an object/],
+        [(m) => { m.content_security_policy = { extension_pages: `${EXTENSION_CSP}; script-src-elem 'unsafe-inline'` }; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy = { extension_pages: "script-src 'self' 'unsafe-eval'; object-src 'self'" }; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy.sandbox = "sandbox allow-scripts"; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.permissions.push("<all_urls>"); }, /permissions holds "<all_urls>"/],
+        [(m) => { m.permissions.push("https://*/*"); }, /permissions holds "https:\/\/\*\/\*"/],
+        [(m) => { m.optional_permissions = ["history"]; }, /optional_permissions holds "history"/],
+        [(m) => { m.host_permissions = ["https://*/*"]; }, /host_permissions holds "https:\/\/\*\/\*"/],
+        [(m) => { m.optional_host_permissions = ["<all_urls>"]; }, /optional_host_permissions holds "<all_urls>"/],
+        [(m) => { m.optional_host_permissions = ["http://*/*"]; }, /optional_host_permissions holds "http:\/\/\*\/\*"/],
+        [(m) => { m.permissions = "storage"; }, /permissions is not a list of strings/],
+        [(m) => { m.manifest_version = 4; }, /manifest_version 4 is not 2 or 3/],
+        [(m) => { m.name = `${m.name} (test)`; }, /the name is the test build's/],
+        [(m) => { m.browser_specific_settings.gecko.id = "ferret-test@hedgerow.tools"; }, /the add-on id is "ferret-test@hedgerow\.tools"/],
+      ],
+      mv2: [
+        [(m) => { m.content_scripts = []; }, /content_scripts is not allowed in a release/],
+        [(m) => { m.web_accessible_resources = []; }, /web_accessible_resources is not allowed in a release/],
+        [(m) => { m.externally_connectable = {}; }, /externally_connectable is not allowed in a release/],
+        [(m) => { m.action = { default_title: "x" }; }, /the key action is not in the release key list/],
+        [(m) => { m.host_permissions = ["https://*/*"]; }, /the key host_permissions is not in the release key list/],
+        [(m) => { m.optional_host_permissions = ["https://*/*"]; }, /the key optional_host_permissions is not in the release key list/],
+        [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
+        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
+        [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
+        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
+        [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(a string\)/],
+        [(m) => { m.content_security_policy = { extension_pages: EXTENSION_CSP }; }, /content_security_policy is not the extension CSP \(a string\)/],
+        [(m) => { m.content_security_policy = `${EXTENSION_CSP}; script-src-elem 'unsafe-inline'`; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.content_security_policy = "script-src 'self' 'unsafe-eval'; object-src 'self'"; }, /content_security_policy is not the extension CSP/],
+        [(m) => { m.permissions.push("<all_urls>"); }, /permissions holds "<all_urls>"/],
+        [(m) => { m.optional_permissions = ["http://*/*"]; }, /optional_permissions holds "http:\/\/\*\/\*"/],
+        [(m) => { m.name = `${m.name} (test)`; }, /the name is the test build's/],
+        [(m) => { m.browser_specific_settings.gecko.id = "ferret-test@hedgerow.tools"; }, /the add-on id is "ferret-test@hedgerow\.tools"/],
+      ],
+    };
+    for (const manifest of ["mv3", "mv2"]) {
+      const release = await build({ ...options, manifest, variant: "release" });
+      assert.deepEqual(releaseProblems(release.files, HOSTS), [], manifest);
+      let n = 0;
+      for (const [change, expected] of cases[manifest]) {
+        n += 1;
+        const result = checkChanged(release, change, `${manifest}-${n}`);
+        for (const [kind, run] of Object.entries(result)) {
+          assert.notEqual(run.status, 0, `${manifest} case ${n} ${kind}: ${expected}`);
+          assert.match(run.output, expected, `${manifest} case ${n} ${kind}`);
+        }
+      }
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("release_check_accepts_the_optional_origin_the_release_list_names", async () => {
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+    const v3 = await build({ ...options, manifest: "mv3", variant: "release" });
+    const okV3 = checkChanged(v3, (m) => { m.optional_host_permissions = ["https://*/*"]; }, "ok-mv3");
+    const v2 = await build({ ...options, manifest: "mv2", variant: "release" });
+    const okV2 = checkChanged(v2, (m) => { m.optional_permissions = ["https://*/*"]; }, "ok-mv2");
+    for (const run of [okV3.folder, okV3.xpi, okV2.folder, okV2.xpi]) assert.equal(run.status, 0, run.output);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("release_key_list_covers_the_keys_of_both_release_manifests_and_nothing_else", async () => {
+  const env = makeRoot();
+  try {
+    for (const manifest of ["mv3", "mv2"]) {
+      const built = Object.keys(buildManifest({ browser: "firefox", manifest, variant: "release", root: env.root }));
+      const listed = RELEASE_MANIFEST_KEYS[manifest === "mv3" ? 3 : 2];
+      for (const key of built) assert.ok(listed.includes(key), `${manifest}: ${key} is built but not listed`);
+      // What is listed and not built is only a permission list, which the allow-list governs entry by entry.
+      for (const key of listed) {
+        assert.ok(built.includes(key) || /permissions$/.test(key), `${manifest}: ${key} is listed but not built`);
+      }
+      for (const key of ["content_scripts", "web_accessible_resources", "externally_connectable"]) assert.ok(!listed.includes(key));
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a_release_may_carry_only_the_release_permissions_and_the_test_variant_the_wider_list", async () => {
+  for (const permission of ["menus", "clipboardWrite", "webNavigation"]) {
+    const env = makeRoot({ "manifest/parts/extra.json": `${JSON.stringify({ permissions: [permission] })}\n` });
+    try {
+      const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+      for (const manifest of ["mv3", "mv2"]) {
+        await assert.rejects(build({ ...options, manifest, variant: "release" }), new RegExp(`permission "${permission}" \\(permissions\\) is not in manifest/permissions\\.allow\\.json`), `${manifest} ${permission}`);
+        // The test variant has them in its list.
+        await build({ ...options, manifest, variant: "test" });
+      }
+    } finally {
+      env.cleanup();
+    }
+  }
+  // The release list is a subset of the test variant's: a release entry the wider list lacks is a broken file.
+  const env = makeRoot({ "manifest/permissions.allow.json": `${JSON.stringify({
+    permissions: ["storage"], optional_permissions: [], host_permissions: [], optional_host_permissions: [],
+    release: { permissions: ["storage", "tabs"], optional_permissions: [], host_permissions: [], optional_host_permissions: [] },
+  })}\n` });
+  try {
+    assert.throws(() => readPermissionAllow(env.root, "release"), /release\.permissions holds "tabs"/);
+    assert.throws(() => readPermissionAllow(env.root, "test"), /release\.permissions holds "tabs"/);
+  } finally {
+    env.cleanup();
+  }
+  // The real file: release lists inside the wider ones, and the test-only entries are the three named ones.
+  const release = readPermissionAllow(undefined, "release");
+  const wider = readPermissionAllow(undefined, "test");
+  assert.deepEqual(wider.permissions.filter((p) => !release.permissions.includes(p)), ["clipboardWrite", "menus", "webNavigation"]);
+});
+
+test("release_check_fails_closed_without_the_permission_allow_list", async () => {
+  const env = makeRoot({ "manifest/permissions.allow.json": null });
+  try {
+    await assert.rejects(build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, variant: "release" }), /permissions\.allow\.json/);
+  } finally {
+    env.cleanup();
+  }
 });

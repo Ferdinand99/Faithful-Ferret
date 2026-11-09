@@ -13,7 +13,7 @@
 //    writes dist/shared/MANIFEST.json (path -> SHA-256). An empty list writes
 //    nothing, and not even the folder.
 // 3. Merges manifest/base.json, the overlay of the chosen manifest version and
-//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json is a
+//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json (its `release` section for the release variant) is a
 //    build error, and so is a key that is never allowed (content_scripts,
 //    web_accessible_resources, externally_connectable). The manifest declares
 //    data_collection_permissions required: ["authenticationInfo"]: the extension
@@ -92,6 +92,22 @@ export const HOSTS_FILE = "test/fixtures/hosts.json";
 const FORBIDDEN_KEYS = ["content_scripts", "web_accessible_resources", "externally_connectable"];
 const PERMISSION_KEYS = ["permissions", "optional_permissions", "host_permissions", "optional_host_permissions"];
 const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
+
+/**
+ * The top-level manifest keys a release package may carry, by manifest version.
+ * This is the key set of the release manifests the build writes (the permission
+ * lists are checked entry by entry against the release list of permissions.allow.json). A key outside
+ * this list, such as a new content script declaration, is refused by the release
+ * check even when it was added after the build.
+ */
+const COMMON_RELEASE_KEYS = [
+  "background", "browser_specific_settings", "content_security_policy", "description",
+  "manifest_version", "name", "optional_permissions", "permissions", "version",
+];
+export const RELEASE_MANIFEST_KEYS = Object.freeze({
+  2: Object.freeze([...COMMON_RELEASE_KEYS, "browser_action"].sort()),
+  3: Object.freeze([...COMMON_RELEASE_KEYS, "action", "host_permissions", "optional_host_permissions"].sort()),
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultRoot = resolve(here, "..");
@@ -191,10 +207,7 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
   if (manifest !== "mv3" && manifest !== "mv2") throw new Error(`manifest "${manifest}" is not mv3 or mv2`);
   if (variant !== "release" && variant !== "test") throw new Error(`variant "${variant}" is not release or test`);
   const dir = join(root, "manifest");
-  const allow = readJson(join(dir, "permissions.allow.json"));
-  for (const key of PERMISSION_KEYS) {
-    if (!Array.isArray(allow[key])) throw new Error(`permissions.allow.json: ${key} must be a list`);
-  }
+  const allow = readPermissionAllow(root, variant);
 
   /** @type {Record<string, any>} */
   const merged = {};
@@ -353,14 +366,110 @@ export function namesHost(lowerText, host) {
 }
 
 /**
- * What a release package must not hold: test files, a fixed extension UUID, the
- * test name, an internal host name and anything under test/. Returns the problems,
- * empty when clean.
- * @param {Map<string, Buffer>} files path -> bytes
- * @param {string[]} internalHosts host names of the fixture server and the end-to-end stack
+ * The permission allow-list of a variant, from manifest/permissions.allow.json. The
+ * file has the four lists of the test variant at its top level and a `release`
+ * section with the lists a release may carry, which must be a subset of the first.
+ * A missing or malformed file is an error, so a check never passes for want of it.
+ * @param {string} [root] the extension folder
+ * @param {string} [variant] "release" (the default) or "test"
+ * @returns {Record<string, string[]>}
+ */
+export function readPermissionAllow(root = defaultRoot, variant = "release") {
+  const file = join(root, "manifest", "permissions.allow.json");
+  if (!existsSync(file)) throw new Error("manifest/permissions.allow.json is missing (the release check needs it)");
+  const all = readJson(file);
+  /** @param {unknown} lists @param {string} where @returns {Record<string, string[]>} */
+  const shaped = (lists, where) => {
+    if (!isPlainObject(lists)) throw new Error(`permissions.allow.json: ${where || "the file"} must be an object`);
+    for (const key of PERMISSION_KEYS) {
+      if (!Array.isArray(lists[key]) || !lists[key].every((x) => typeof x === "string")) {
+        throw new Error(`permissions.allow.json: ${where}${key} must be a list of strings`);
+      }
+    }
+    return /** @type {Record<string, string[]>} */ (lists);
+  };
+  const full = shaped(all, "");
+  const release = shaped(all.release, "release.");
+  for (const key of PERMISSION_KEYS) {
+    for (const entry of release[key]) {
+      if (!full[key].includes(entry)) throw new Error(`permissions.allow.json: release.${key} holds "${entry}", which the lists of the test variant do not`);
+    }
+  }
+  return variant === "release" ? release : full;
+}
+
+/**
+ * The problems in the manifest of a release package: a key outside the release key
+ * list, one of the keys that are never allowed, a permission or host permission
+ * outside the allow-list, and the test build's name and add-on id.
+ * @param {string} text the content of manifest.json
+ * @param {Record<string, string[]>} allow permissions.allow.json
  * @returns {string[]}
  */
-export function releaseProblems(files, internalHosts) {
+function manifestProblems(text, allow) {
+  /** @type {any} */
+  let manifest;
+  try {
+    manifest = JSON.parse(text);
+  } catch {
+    return ["manifest.json is not valid JSON"];
+  }
+  if (!isPlainObject(manifest)) return ["manifest.json is not an object"];
+  /** @type {string[]} */
+  const problems = [];
+  if (typeof manifest.name === "string" && manifest.name.endsWith(TEST_NAME_SUFFIX)) problems.push("manifest.json: the name is the test build's");
+  const id = manifest.browser_specific_settings?.gecko?.id;
+  if (id !== RELEASE_ID) problems.push(`manifest.json: the add-on id is ${JSON.stringify(id)}, a release has ${RELEASE_ID}`);
+
+  for (const key of FORBIDDEN_KEYS) {
+    if (key in manifest) problems.push(`manifest.json: ${key} is not allowed in a release`);
+  }
+  const version = manifest.manifest_version;
+  const keys = version === 2 || version === 3 ? RELEASE_MANIFEST_KEYS[version] : undefined;
+  if (keys === undefined) problems.push(`manifest.json: manifest_version ${JSON.stringify(version)} is not 2 or 3`);
+  for (const key of Object.keys(manifest)) {
+    if (FORBIDDEN_KEYS.includes(key)) continue;
+    if (keys !== undefined && !keys.includes(key)) problems.push(`manifest.json: the key ${key} is not in the release key list`);
+  }
+
+  // The CSP is one constant, in the shape of the manifest version.
+  if (version === 3 || version === 2) {
+    const expected = version === 3 ? { extension_pages: EXTENSION_CSP } : EXTENSION_CSP;
+    if (JSON.stringify(manifest.content_security_policy) !== JSON.stringify(expected)) {
+      problems.push(`manifest.json: content_security_policy is not the extension CSP${version === 3 ? " (an object with extension_pages only)" : " (a string)"}`);
+    }
+  }
+
+  for (const key of PERMISSION_KEYS) {
+    if (!(key in manifest)) continue;
+    const list = manifest[key];
+    if (!Array.isArray(list) || !list.every((x) => typeof x === "string")) {
+      problems.push(`manifest.json: ${key} is not a list of strings`);
+      continue;
+    }
+    // MV2 has no host permission keys: origins sit in permissions and optional_permissions.
+    const allowed = new Set(allow[key]);
+    if (version === 2 && !key.includes("host")) {
+      for (const entry of allow[key.replace("permissions", "host_permissions")]) allowed.add(entry);
+    }
+    for (const entry of list) {
+      if (!allowed.has(entry)) problems.push(`manifest.json: ${key} holds "${entry}", which is not in the release list of permissions.allow.json`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * What a release package must not hold: test files, a fixed extension UUID, the
+ * test name, an internal host name, anything under test/, and a manifest with a
+ * key or permission the release does not have. Returns the problems, empty when
+ * clean.
+ * @param {Map<string, Buffer>} files path -> bytes
+ * @param {string[]} internalHosts host names of the fixture server and the end-to-end stack
+ * @param {Record<string, string[]>} [permissionAllow] permissions.allow.json (the repository's own by default)
+ * @returns {string[]}
+ */
+export function releaseProblems(files, internalHosts, permissionAllow = readPermissionAllow()) {
   if (!Array.isArray(internalHosts)) throw new Error("releaseProblems needs the list of internal host names");
   /** @type {string[]} */
   const problems = [];
@@ -383,12 +492,7 @@ export function releaseProblems(files, internalHosts) {
   }
   const raw = files.get("manifest.json");
   if (raw === undefined) problems.push("manifest.json is missing");
-  else {
-    const manifest = JSON.parse(raw.toString("utf8"));
-    if (manifest.name?.endsWith(TEST_NAME_SUFFIX)) problems.push("manifest.json: the name is the test build's");
-    const id = manifest.browser_specific_settings?.gecko?.id;
-    if (id !== RELEASE_ID) problems.push(`manifest.json: the add-on id is ${JSON.stringify(id)}, a release has ${RELEASE_ID}`);
-  }
+  else problems.push(...manifestProblems(raw.toString("utf8"), permissionAllow));
   return problems;
 }
 
@@ -630,7 +734,7 @@ export async function build({
     if (!dist.has(path)) throw new Error(`manifest.json: ${path} is not in the package`);
   }
   if (variant === "release") {
-    const problems = releaseProblems(dist, readInternalHosts(root));
+    const problems = releaseProblems(dist, readInternalHosts(root), readPermissionAllow(root));
     if (problems.length > 0) throw new Error(`release: ${problems.join("; ")}`);
   }
 
@@ -671,9 +775,10 @@ async function main(args) {
     const targets = args.slice(1);
     if (targets.length === 0) throw new Error("--check-release needs a .xpi file or a folder");
     const internalHosts = readInternalHosts();
+    const permissionAllow = readPermissionAllow();
     let failed = false;
     for (const target of targets) {
-      const problems = releaseProblems(readPackage(target), internalHosts);
+      const problems = releaseProblems(readPackage(target), internalHosts, permissionAllow);
       for (const problem of problems) console.error(`check-release: ${target}: ${problem}`);
       if (problems.length > 0) failed = true;
       else console.log(`check-release: ${target}: clean`);

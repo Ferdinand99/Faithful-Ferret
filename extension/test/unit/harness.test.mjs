@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { get } from "node:https";
 import { test } from "node:test";
-import { build, buildManifest, readInternalHosts, releaseProblems, TEST_ID } from "../../scripts/build.mjs";
+import { build, buildManifest, EXTENSION_CSP, readInternalHosts, releaseProblems, TEST_ID } from "../../scripts/build.mjs";
 import { startFixtures } from "../firefox/fixtures-server.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -124,7 +124,7 @@ test("test_only_ids_are_the_ones_the_variant_and_the_release_check_use", async (
   // A release package that names any of them is refused, a test build is not a release.
   for (const id of [FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID]) {
     const files = new Map([
-      ["manifest.json", Buffer.from(JSON.stringify({ name: "Faithful Ferret", browser_specific_settings: { gecko: { id: "ferret@hedgerow.tools" } } }))],
+      ["manifest.json", Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id: "ferret@hedgerow.tools" } } }))],
       ["pages/leak.mjs", Buffer.from(`export const id = "${id}";
 `)],
     ]);

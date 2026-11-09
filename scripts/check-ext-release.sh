@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Checks release packages of the extension: no test file, no test-only page, no
-# fixed extension UUID and no test name. Takes .xpi files or unpacked folders;
-# without arguments it checks every extension/dist/ferret-*-release.xpi.
+# fixed extension UUID, no test name, and a manifest.json with only the release
+# keys and the permissions of manifest/permissions.allow.json (no content script,
+# no web-accessible resource, no externally_connectable). Takes .xpi files or
+# unpacked folders; without arguments it checks every
+# extension/dist/ferret-*-release.xpi.
 #
 #   scripts/check-ext-release.sh [package ...]
 set -euo pipefail
