@@ -7,9 +7,10 @@ import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { createSyncEngine, MANIFEST_ID, SyncError } from "../../src/sync/engine.mjs";
-import { freshStore, scope } from "./idbHelpers.mjs";
+import { ACCOUNT, freshStore, scope, SERVER } from "./idbHelpers.mjs";
+import { loadSyncState } from "../../src/store/syncState.mjs";
 import {
-  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, FakeTimers, Model, settle, until,
+  counterRand, createFakeApi, createFakeClient, createFakeStore, currentRev, fakeMemory, FakeLocks, FakeTimers, memoryOf, Model, settle, until,
 } from "./syncHelpers.mjs";
 
 const MARKER = "Secret Bank Login";
@@ -18,18 +19,19 @@ const ID_A = "11".repeat(16);
 const ID_B = "22".repeat(16);
 
 /** One device: an engine over its own fake browser storage and a fake clock. */
-async function device({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, win = null } = {}) {
+async function device({ model, client = createFakeClient(), seed = 1, pollMs = 5_000, db = null, win = null, locks = new FakeLocks(), deviceName } = {}) {
   const order = [];
   const store = await createFakeStore({ order, db });
   const api = createFakeApi(model, { order });
   const timers = new FakeTimers();
   const events = { changed: [], error: [], state: [] };
   const engine = createSyncEngine({
-    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), pollMs, win,
+    api, client: { vault: client.vault }, store, scope: scope(), timers, rand: counterRand(seed), pollMs, win, deviceName,
+    memory: fakeMemory({ store, client, locks }),
     now: () => 1_700_000_000_000 + timers.time,
   });
   for (const name of Object.keys(events)) engine.on(name, (payload) => events[name].push(payload));
-  return { model, client, store, api, timers, engine, events, order };
+  return { model, client, store, api, timers, engine, events, order, locks };
 }
 
 const rowsOf = (d) => cache.getRows(d.store.database.store, scope());
@@ -97,11 +99,13 @@ test("second_engine_sees_the_change_within_one_poll", async () => {
 
   await a.engine.update(id, { name: "Changed on A" }, currentRev(a.engine, id));
   await until(() => model.items.get(id).rev === 2);
+  await until(() => b.timers.pending > 0, "B has finished its pass and waits for the next poll");
   b.timers.advance(5_000);
   await until(() => b.engine.list()[0].name === "Changed on A", "B sees the edit");
 
   await a.engine.remove(id);
   await until(() => model.items.get(id).deleted);
+  await until(() => b.timers.pending > 0, "B waits for the next poll");
   b.timers.advance(5_000);
   await until(() => b.engine.list().length === 0, "B sees the deletion");
   a.engine.stop();
@@ -256,8 +260,8 @@ test("lower_rev_than_local_is_rejected_with_a_warning", async () => {
 test("manifest_row_is_skipped_in_list_but_kept_in_cache", async () => {
   const model = new Model();
   const client = createFakeClient();
-  // Not a valid item row: the engine must not try to open it as one.
-  model.set(MANIFEST_ID, { rev: 1, blob: b64u.encode(new Uint8Array(64).fill(3)), tag: b64u.encode(new Uint8Array(32).fill(4)) });
+  // A row with a good tag that is no item: the engine must not try to open it as one.
+  model.set(MANIFEST_ID, { rev: 1, ...client.wireRow(MANIFEST_ID, 1, { item_type: "login", name: "unlock methods" }) });
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "Item" }) });
   const d = await device({ model, client });
   await d.engine.start();
@@ -472,9 +476,10 @@ test("a_410_is_answered_with_one_full_listing_from_zero_and_nothing_is_deleted",
   d.api.gets.length = 0;
   d.api.faults.push({ kind: "network", only: ID_B }, { kind: "network", only: ID_C }); // the uploads wait for a retry
   await d.engine.syncNow();
-  assert.match(d.api.gets[0], /since=3&/);
-  assert.match(d.api.gets[1], /since=0&/, "restarts from 0");
-  assert.equal(d.api.gets.filter((p) => p.includes("since=0")).length, 1, "once");
+  assert.equal(d.api.gets[0], "/api/sync/changes?since=3&limit=500");
+  assert.equal(d.api.gets[1], "/api/sync/items?limit=500", "the listing, from the first id");
+  assert.equal(d.api.gets[2], `/api/sync/changes?since=${model.seq}&limit=500`, "then the feed from the as_of_seq of the first page");
+  assert.equal(d.api.gets.filter((p) => p.includes("/items")).length, 1, "once");
   const byId = Object.fromEntries(d.engine.list().map((i) => [i.id, i]));
   assert.equal(byId[ID_A].name, "Stays 2");
   assert.equal(byId[ID_A].missingOnServer, false);
@@ -568,13 +573,14 @@ test("a_2xx_answer_that_is_not_a_changes_page_is_a_failure_not_offline", async (
   d.engine.stop();
 });
 
-test("a_changed_restore_epoch_and_an_unexpected_revision_are_warnings", async () => {
+test("a_raised_restore_epoch_with_nothing_lower_and_an_unexpected_revision_are_warnings", async () => {
   const model = new Model();
   const d = await device({ model });
   await d.engine.start();
   model.restoreEpoch = 1;
   await d.engine.syncNow();
-  assert.ok(warnings(d).some((w) => w.code === "server_restored" && w.from === 0 && w.to === 1));
+  assert.ok(warnings(d).some((w) => w.code === "restore_epoch_raised" && w.from === 0 && w.to === 1));
+  assert.equal(d.engine.health().halted, null, "nothing was lower, so nothing stops");
 
   const real = d.api.put;
   d.api.put = async (path, body) => ({ ...(await real(path, body)), rev: 9 });
@@ -602,20 +608,25 @@ test("a_410_on_a_later_page_restarts_once_and_then_surfaces_an_error", async () 
   }
   model.pageSize = 2;
   const d = await device({ model, client });
-  // The floor rises while page 2 of the first listing is being read; the second answer is a 410 as well.
+  // The floor rises while page 2 of the feed is being read; the answer after the listing is a 410 as well.
   const real = d.api.get;
   let calls = 0;
+  let gone = 0;
   d.api.get = async (path) => {
     calls += 1;
-    if (calls === 2 || calls === 4) throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 9 });
+    if (path.includes("/changes") && calls >= 2) {
+      gone += 1;
+      throw new ApiError(410, "gone", null, { error: "gone", min_valid_since: 9 });
+    }
     return real(path);
   };
   await d.engine.start();
-  assert.equal(calls, 4, "page 1, 410, restart from 0, 410 again: no third try in the same pass");
+  assert.equal(calls, 5, "page 1, 410, the two pages of the listing, 410 again: no second listing in the same pass");
+  assert.equal(gone, 2);
   assert.deepEqual(d.events.error, [{ code: "gone" }]);
   assert.ok(d.events.state.some((s) => s.kind === "failed" && s.code === "gone"));
   // The next pass can recover.
-  calls = 100;
+  d.api.get = real;
   await d.engine.syncNow();
   assert.equal(d.engine.list().length, 3);
   d.engine.stop();
@@ -643,7 +654,7 @@ test("a_feed_that_cannot_be_right_changes_nothing", async () => {
   e.engine.stop();
 });
 
-test("a_server_behind_the_device_is_a_warning_once_and_nothing_is_lowered", async () => {
+test("a_server_behind_the_device_halts_the_engine_and_nothing_is_lowered", async () => {
   const model = new Model();
   const client = createFakeClient();
   model.set(ID_A, { rev: 1, ...client.wireRow(ID_A, 1, { item_type: "login", name: "A" }) });
@@ -655,7 +666,8 @@ test("a_server_behind_the_device_is_a_warning_once_and_nothing_is_lowered", asyn
   model.latestSeqLie = 1;
   await d.engine.syncNow();
   await d.engine.syncNow();
-  assert.equal(warnings(d).filter((w) => w.code === "server_behind").length, 1);
+  assert.deepEqual(d.events.state.filter((s) => s.kind === "halted"), [{ kind: "halted", code: "rollback_suspected" }], "said once");
+  assert.equal(d.engine.health().halted, "rollback_suspected");
   assert.equal(d.engine.list().length, 2, "the device keeps what it has");
   d.engine.stop();
 });
@@ -672,8 +684,10 @@ test("a_409_on_a_deleted_item_is_checked_through_the_feed", async () => {
   await until(() => d.events.error.some((e) => e.code === "conflict"), "the conflict");
   const conflict = d.events.error.find((e) => e.code === "conflict");
   assert.deepEqual([conflict.id, conflict.currentRev, conflict.deleted], [ID_A, 2, true]);
-  await until(() => d.engine.list().length === 0, "the deletion arrives through /changes and is verified");
-  assert.ok(d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 2));
+  await until(() => d.client.vault.calls.some((c) => c[0] === "verify_tombstone" && c[2] === 2), "the deletion arrives through /changes and is verified");
+  // The refused edit is a conflict with a deleted server: it stays on screen as the draft, for the user to choose.
+  await until(() => d.engine.list()[0]?.conflict === true && d.engine.list()[0]?.name === "Late edit", "the draft is shown as a conflict");
+  assert.equal(d.engine.list().length, 1);
   d.engine.stop();
 
   // The same with a tombstone that does not verify: the item is quarantined, not removed.
@@ -806,6 +820,7 @@ test("a_lock_during_a_mark_save_never_wipes_the_saved_marks", async () => {
   // Another item is refused by the server.
   const id = await d.engine.create({ item_type: "login", name: "C" });
   await until(() => model.items.get(id)?.rev === 1 && d.engine.list().find((i) => i.id === id)?.pending === false);
+  await until(async () => (await rowsOf(d)).some((r) => r.itemId === id && r.rev === 1), "the row is cached");
   model.set(id, { rev: 2, ...client.wireRow(id, 2, { item_type: "login", name: "From elsewhere" }) });
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
@@ -1042,9 +1057,11 @@ test("a_saved_mark_behind_the_cache_does_not_let_an_own_replay_roll_the_item_bac
   await until(async () => ((await marksOf(d))[ID_B]?.sent ?? []).length >= 2, "the keys of rev 1 and rev 2 are saved");
   const older = (await marksOf(d))[ID_B];
   await editB(d, "Mine 3", 3);
-  await until(async () => !(ID_B in (await marksOf(d))), "the mark ended");
+  assert.equal((await marksOf(d))[ID_B]?.kind, "reuploaded", "a row at the old floor itself does not end the mark");
+  await editB(d, "Mine 4", 4);
+  await until(async () => !(ID_B in (await marksOf(d))), "the mark ended above the floor");
   d.engine.stop();
-  // A lock or a crash left the older mark in storage while the cache holds rev 3 (the old floor itself).
+  // A lock or a crash left the older mark in storage while the cache holds rev 4 (above the old floor).
   const saved = (await d.store.getSetting(db.store, settingsKey())) ?? { v: 1, marks: {}, blocked: {} };
   saved.marks[ID_B] = older;
   await d.store.setSetting(db.store, settingsKey(), saved);
@@ -1054,8 +1071,8 @@ test("a_saved_mark_behind_the_cache_does_not_let_an_own_replay_roll_the_item_bac
   await back.engine.start();
   d.model.set(ID_B, { rev: 2, blob: rev2.blob, tag: rev2.tag });
   await back.engine.syncNow();
-  assert.ok(warnings(back).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 3));
-  assert.deepEqual([itemB(back).name, itemB(back).rev], ["Mine 3", 3]);
+  assert.ok(warnings(back).some((w) => w.code === "rev_lower_than_local" && w.rev === 2 && w.localRev === 4));
+  assert.deepEqual([itemB(back).name, itemB(back).rev], ["Mine 4", 4]);
   back.engine.stop();
 });
 
@@ -1063,8 +1080,9 @@ test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => 
   const d = await hideItemB({ floor: 3 });
   await copyIsBack(d);
   await editB(d, "Mine 2", 2);
+  await editB(d, "Mine 3", 3); // a row at the old floor itself does not end the mark
   d.store.failPutRows = 1;
-  await d.engine.update(ID_B, { name: "Mine 3" }, currentRev(d.engine, ID_B)); // its row reaches the old floor and would end the mark
+  await d.engine.update(ID_B, { name: "Mine 4" }, currentRev(d.engine, ID_B)); // its row passes the old floor and ends the mark
   await until(() => d.events.state.some((s) => s.kind === "failed"), "the cache write fails");
   // Another flag save follows (an unrelated item is refused); it must still carry the mark of B.
   d.api.faults.push({ kind: "status", status: 413, code: "too_large" });
@@ -1074,8 +1092,8 @@ test("a_mark_ends_only_after_the_row_that_ends_it_is_in_the_cache", async () => 
   assert.equal((await marksOf(d))[ID_B]?.kind, "reuploaded", "the saved mark is still there");
   await d.engine.syncNow(); // the cache works again: the same row is processed again and ends the mark
   await until(async () => !(ID_B in (await marksOf(d))), "the mark ends once the row is cached");
-  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 3);
-  assert.equal(itemB(d).name, "Mine 3");
+  assert.equal((await rowsOf(d)).find((r) => r.itemId === ID_B).rev, 4);
+  assert.equal(itemB(d).name, "Mine 4");
   d.engine.stop();
 });
 
@@ -1102,7 +1120,7 @@ test("the_heal_also_finishes_an_item_that_was_never_edited", async () => {
   const db = await freshStore();
   const d = await hideItemB({ floor: 1, db });
   await copyIsBack(d);
-  await until(async () => !(ID_B in (await marksOf(d))) && (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 1, "the copy is cached and the mark ended");
+  await until(async () => (await marksOf(d))[ID_B]?.kind === "reuploaded" && (await rowsOf(d)).find((r) => r.itemId === ID_B)?.rev === 1, "the copy is cached and the mark is reuploaded");
   const row = (await rowsOf(d)).find((r) => r.itemId === ID_B);
   d.engine.stop();
   // A crash between caching the copy and saving the mark: the mark is still "missing" in storage.
@@ -1117,7 +1135,8 @@ test("the_heal_also_finishes_an_item_that_was_never_edited", async () => {
   await settle(30);
   assert.equal(back.api.puts.length, 0, "no second upload");
   assert.deepEqual([itemB(back).missingOnServer, itemB(back).blocked], [false, false]);
-  await until(async () => !(ID_B in (await marksOf(back))), "the mark is gone");
+  // The copy sits at the old floor itself (revision 1): the mark is finished as "reuploaded" and stays until a row above the floor comes.
+  await until(async () => (await marksOf(back))[ID_B]?.kind === "reuploaded", "the mark is finished");
   back.engine.stop();
 });
 
@@ -1174,5 +1193,85 @@ test("an_edit_without_the_revision_it_was_made_from_is_refused_and_writes_nothin
   await settle();
   assert.equal(d.model.items.get(id).rev, 1, "no write went out");
   assert.equal(d.engine.list()[0].name, MARKER);
+  d.engine.stop();
+});
+
+// ------------------------------------------------------------------ the memory and the items that were uploaded again
+
+test("own_reupload_below_the_floor_is_accepted_and_the_memory_floor_stays", async () => {
+  const d = await hideItemB();
+  const memoryOfDevice = async () => memoryOf((await loadSyncState(d.store.database.store, SERVER, ACCOUNT)).memory);
+  assert.equal((await memoryOfDevice()).revs[ID_B], 3, "the memory saw the item at revision 3 before it was hidden");
+  const before = d.client.vault.calls.length;
+  await until(() => model_has(d, ID_B) && itemB(d)?.missingOnServer === false, "the copy is back");
+  assert.equal(itemB(d).rev, 1, "the own copy at revision 1 is accepted, below the floor");
+  await d.engine.update(ID_B, { name: "Mine 2" }, 1);
+  await until(() => itemB(d).rev === 2 && !itemB(d).pending, "its own edit too");
+  const given = d.client.vault.calls.slice(before).filter(([op]) => op === "accept_rows").flatMap((call) => call[1]);
+  assert.equal(given.includes(ID_B), false, "none of those rows was given to the memory");
+  assert.equal((await memoryOfDevice()).revs[ID_B], 3, "its floor stays");
+  assert.equal(d.engine.health().halted, null);
+  d.engine.stop();
+});
+
+test("reuploaded_item_missing_from_a_later_listing_is_marked_again", async () => {
+  const d = await hideItemB();
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const marks = async () => (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the copy is back and the mark says so");
+
+  const oldSent = (await marks())[ID_B].sent;
+
+  // The server loses the copy again and a new listing leaves it out.
+  d.model.items.delete(ID_B);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.set(ID_A, { rev: 3, ...d.client.wireRow(ID_A, 3, { item_type: "login", name: "A3" }) });
+  d.api.faults.push({ kind: "network", only: ID_B }); // the new upload waits for a retry
+  await d.engine.syncNow();
+  assert.equal(itemB(d).missingOnServer, true, "marked again");
+  assert.equal(itemB(d).rev, 1, "the copy is kept");
+  const mark = (await marks())[ID_B];
+  assert.deepEqual([mark.kind, mark.rev], ["missing_on_server", 3], "with the floor it had");
+  assert.equal(mark.sent.length, 1, "and only the new upload listed as an own write");
+  assert.equal(oldSent.includes(mark.sent[0]), false);
+  assert.ok(warnings(d).filter((w) => w.code === "missing_on_server").length >= 2);
+
+  // It is uploaded again, and its own row is accepted below the floor once more.
+  d.timers.advance(1_000);
+  await until(() => d.model.items.has(ID_B) && itemB(d)?.missingOnServer === false, "the copy is back again");
+  d.engine.stop();
+});
+
+test("an_offline_edit_queued_when_the_item_is_left_out_again_is_still_taken_as_ours", async () => {
+  const d = await hideItemB();
+  const key = `sync.flags.${scope().accountId}.${scope().vaultId}.${scope().vkEpoch}`;
+  const marks = async () => (await d.store.getSetting(d.store.database.store, key))?.marks ?? {};
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the copy is back and the mark says so");
+  const copy = { ...d.model.items.get(ID_B) };
+
+  // An edit made offline waits for a retry; meanwhile a new listing leaves the item out again.
+  d.api.faults.push({ kind: "network", only: ID_B });
+  await d.engine.update(ID_B, { name: "Offline edit" }, 1);
+  await settle();
+  assert.equal(itemB(d).pending, true);
+  d.model.items.delete(ID_B);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.set(ID_A, { rev: 3, ...d.client.wireRow(ID_A, 3, { item_type: "login", name: "A3" }) });
+  await d.engine.syncNow();
+  const mark = (await marks())[ID_B];
+  assert.deepEqual([mark.kind, mark.rev], ["missing_on_server", 3], "marked again, with its floor");
+  assert.equal(mark.sent.length, 1, "the key of the write that is still queued is kept");
+  assert.deepEqual(mark.fresh, [], "and no write has been made since the mark");
+  assert.equal(itemB(d).pending, true, "the edit is still waiting, so no second upload was queued");
+
+  // The server has the copy again and now takes the edit: its echo is ours, though it is below the floor.
+  d.model.set(ID_B, { rev: 1, blob: copy.blob, tag: copy.tag });
+  d.timers.advance(1_000);
+  await until(() => d.model.items.get(ID_B)?.rev === 2 && itemB(d)?.rev === 2 && !itemB(d).pending, "the edit is on the server and on the screen");
+  assert.equal(itemB(d).name, "Offline edit");
+  assert.equal(warnings(d).filter((w) => w.code === "rev_lower_than_local" || w.code === "rev_same_row_changed").length, 0, "the echo was not refused");
+  await until(async () => (await marks())[ID_B]?.kind === "reuploaded", "the mark is back to reuploaded");
   d.engine.stop();
 });

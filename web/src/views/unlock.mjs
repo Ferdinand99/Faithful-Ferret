@@ -9,13 +9,16 @@
 // seconds, and the form says so.
 import { el, mount } from "../dom.mjs";
 import { codeOf } from "./common.mjs";
-import { describeError as unlockErrorText } from "./form.mjs";
+import { describeError as unlockErrorText, OLDER_METHOD_ERRORS, restoreTextApplies } from "./form.mjs";
+
+/** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<import("../store/restoreNote.mjs").RestoreNote | null>} FindRestoreNote */
+/** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<void>} ClearRestoreNote */
 
 /**
  * What the unlock screen needs to know, found without asking the server for
  * anything but the session.
  * @param {{ info(): Promise<{ accountId: string, email: string } | null>, deviceStatus?(email: string): Promise<{ pinned: boolean, skBit: boolean | null, skStored: boolean }> }} session
- * @returns {Promise<{ signedIn: false } | { signedIn: true, email: string, skRequired: boolean }>}
+ * @returns {Promise<{ signedIn: false } | { signedIn: true, email: string, accountId: string, skRequired: boolean }>}
  */
 export async function prepareUnlock(session) {
   const info = await session.info();
@@ -29,7 +32,7 @@ export async function prepareUnlock(session) {
   } catch {
     skRequired = false;
   }
-  return { signedIn: true, email: info.email, skRequired };
+  return { signedIn: true, email: info.email, accountId: info.accountId, skRequired };
 }
 
 /**
@@ -38,11 +41,16 @@ export async function prepareUnlock(session) {
  *   t: import("./common.mjs").Translate,
  *   go: (path: string) => void,
  *   email: string,
+ *   accountId?: string,
  *   skRequired: boolean,
  *   onUnlocked: () => void,
- * }} options
+ *   restoreNote?: FindRestoreNote,
+ *   clearRestoreNote?: ClearRestoreNote,
+ *   locale?: string,
+ * }} options `restoreNote` finds the local note about an accepted restore; it is asked only after the core has refused with
+ * an older unlock method, and only picks the text (the refusal stands). `clearRestoreNote` removes the note after a successful unlock.
  */
-export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
+export function unlockView({ session, t, go, email, accountId, skRequired, onUnlocked, restoreNote: findRestoreNote, clearRestoreNote, locale }) {
   const root = el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" });
   const password = /** @type {HTMLInputElement} */ (el("input", {
     id: "unlock-password", name: "password", type: "password", autocomplete: "current-password", required: true, "data-role": "password",
@@ -85,12 +93,18 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
     errorBox.hidden = false;
   }
 
+  // After a restore the way out of the refusal is to forget the server; the link is shown only with the restore text.
+  const forgetLink = el("a", { href: "#/forget", "data-role": "forget-link" }, t("syncwarnings.forget.link"));
+  const forgetRow = el("p", { class: "aside", "data-role": "forget-row" }, forgetLink);
+  forgetRow.hidden = true;
+
   const form = el("form", {
     class: "stack",
     "data-role": "unlock-form",
     onsubmit: async (/** @type {Event} */ event) => {
       event.preventDefault();
       errorBox.hidden = true;
+      forgetRow.hidden = true;
       const typed = password.value;
       const skCode = sk ? sk.value.trim() : "";
       if (typed === "") {
@@ -116,11 +130,26 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
           return;
         }
         if (code === "sk_required") showSecretKeyField();
-        showError(unlockErrorText(t, error));
+        let restoreNote = null;
+        if (findRestoreNote && OLDER_METHOD_ERRORS.includes(code)) {
+          try {
+            restoreNote = await findRestoreNote({ accountId, email });
+          } catch {
+            restoreNote = null;
+          }
+        }
+        showError(unlockErrorText(t, error, { restoreNote, locale }));
+        forgetRow.hidden = !restoreTextApplies(error, restoreNote);
         /** @type {any} */ (sk ?? password).focus?.();
         return;
       }
       busy(false);
+      // The unlock worked, so the refusal that the note explains is over; the note goes with it.
+      try {
+        await clearRestoreNote?.({ accountId, email });
+      } catch {
+        // The note expires by itself.
+      }
       onUnlocked();
     },
   },
@@ -128,6 +157,7 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
   skSlot,
   status,
   errorBox,
+  forgetRow,
   el("div", { class: "actions" }, submit));
 
   mount(root,
@@ -147,9 +177,12 @@ export function unlockView({ session, t, go, email, skRequired, onUnlocked }) {
  *   t: import("./common.mjs").Translate,
  *   go: (path: string) => void,
  *   onUnlocked: () => void,
+ *   restoreNote?: FindRestoreNote,
+ *   clearRestoreNote?: ClearRestoreNote,
+ *   locale?: string,
  * }} options
  */
-export function unlockScreen({ session, t, go, onUnlocked }) {
+export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale }) {
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
     el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
   prepareUnlock(session).then(
@@ -162,7 +195,7 @@ export function unlockScreen({ session, t, go, onUnlocked }) {
         go("/login");
         return;
       }
-      mount(box, unlockView({ session, t, go, email: found.email, skRequired: found.skRequired, onUnlocked }));
+      mount(box, unlockView({ session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired, onUnlocked, restoreNote, clearRestoreNote, locale }));
     },
     (error) => {
       mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },

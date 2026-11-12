@@ -867,3 +867,61 @@ fn arch_test_detects_a_planted_violation() {
     );
     assert!(found.is_empty() && checked == 1, "{found:?}");
 }
+
+#[test]
+fn arch_test_covers_the_new_vault_modules() {
+    let dir = manifest_dir().join("src/vault");
+    let scanned: Vec<String> = rust_files(&dir)
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .expect("a file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    for module in [
+        "notify.rs",
+        "rate.rs",
+        "retention.rs",
+        "validate.rs",
+        "batch.rs",
+        "checkpoint.rs",
+        "events.rs",
+        "reconcile.rs",
+    ] {
+        assert!(
+            scanned.iter().any(|name| name == module),
+            "{module} is under the scan"
+        );
+        // Each one passes the scan as it is.
+        let source = std::fs::read_to_string(dir.join(module)).expect("a source file");
+        assert!(
+            scan_names(module, &source).is_empty(),
+            "{module}: {:?}",
+            scan_names(module, &source)
+        );
+    }
+
+    // A copy of `rate.rs` that names the application state is caught by the
+    // same scan, in a directory laid out like `src/vault`.
+    let copy = std::env::temp_dir().join(format!("ferret-test-arch-new-{}", std::process::id()));
+    std::fs::create_dir_all(copy.join("vault")).expect("a temporary directory");
+    let rate = std::fs::read_to_string(dir.join("rate.rs")).expect("rate.rs");
+    // The line goes below the module documentation, which must come first.
+    let at = rate
+        .lines()
+        .take_while(|line| line.starts_with("//!"))
+        .count();
+    let mut lines: Vec<&str> = rate.lines().collect();
+    lines.insert(at, "use crate::state::FerretState;");
+    std::fs::write(copy.join("vault/rate.rs"), lines.join("\n")).expect("a planted copy");
+    let found = scan_dir_names(&copy.join("vault"));
+    let _ = std::fs::remove_dir_all(&copy);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.contains("rate.rs") && f.contains("FerretState")),
+        "{found:?}"
+    );
+}

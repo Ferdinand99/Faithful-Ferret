@@ -86,6 +86,23 @@ pub const HANDOFF_CODE_BYTES: usize = 32;
 /// The longest `next` of a hand-over, in characters.
 pub const NEXT_MAX_CHARS: usize = 512;
 
+/// The most operations in one batch.
+pub const MAX_BATCH_OPS: usize = 100;
+
+/// The largest body of a batch, in bytes.
+pub const MAX_BATCH_BYTES: usize = 6 * 1024 * 1024;
+
+/// The most entries in a checkpoint.
+pub const MAX_CHECKPOINT_ENTRIES: usize = 50_000;
+
+/// The size of one checkpoint entry in bytes: the item id (16), the revision
+/// (8) and the hash of the envelope (32).
+pub const CHECKPOINT_ENTRY_LEN: usize = 56;
+
+/// The code of the `409` answer to a write that names another `restore_epoch`
+/// than the one the vault has.
+pub const RESTORE_EPOCH_CHANGED: &str = "restore_epoch_changed";
+
 /// The code of the answer for a refusal that came out of parsing `message`.
 ///
 /// A field with a fixed size refuses with a message that starts with
@@ -392,6 +409,54 @@ pub mod u53 {
             return Err(de::Error::custom("integer larger than 2^53 - 1"));
         }
         Ok(value)
+    }
+}
+
+/// `deserialize_with = "u53_opt::deserialize"` for `Option<u64>`: a whole
+/// number no larger than [`MAX_JSON_INT`], or `null`. Pair it with `default`
+/// and `skip_serializing_if = "Option::is_none"`.
+pub mod u53_opt {
+    use super::{Deserialize, Deserializer, MAX_JSON_INT, de};
+
+    /// Reads an integer a JavaScript number can hold, or `null`.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u64>, D::Error> {
+        let value = Option::<u64>::deserialize(deserializer)?;
+        if value.is_some_and(|n| n > MAX_JSON_INT) {
+            return Err(de::Error::custom("integer larger than 2^53 - 1"));
+        }
+        Ok(value)
+    }
+}
+
+/// `deserialize_with = "epoch_changed_code::deserialize"`: the `error` of a
+/// `restore_epoch_changed` answer is that code and nothing else.
+pub mod epoch_changed_code {
+    use super::{Deserialize, Deserializer, RESTORE_EPOCH_CHANGED, de};
+
+    /// Reads the code and refuses any other text.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        if code != RESTORE_EPOCH_CHANGED {
+            return Err(de::Error::custom("error is not restore_epoch_changed"));
+        }
+        Ok(code)
+    }
+}
+
+/// `deserialize_with = "stale_code::deserialize"`: the `error` of a stale
+/// checkpoint answer is the code `checkpoint_stale` and nothing else.
+pub mod stale_code {
+    use super::{Deserialize, Deserializer, de};
+
+    /// Reads the code and refuses any other text.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        if code != "checkpoint_stale" {
+            return Err(de::Error::custom("error is not checkpoint_stale"));
+        }
+        Ok(code)
     }
 }
 
@@ -884,6 +949,10 @@ pub struct ChangesRes {
     /// Changes when the vault is restored.
     #[serde(deserialize_with = "u53::deserialize")]
     pub restore_epoch: u64,
+    /// The `seq` of the vault when it was last restored; 0 if it never was.
+    /// Read in the same transaction as the page.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
     /// The head of the newest checkpoint, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<CheckpointHeadJson>,
@@ -926,12 +995,20 @@ pub struct PutItemReq {
     /// Makes a retry of this request safe.
     #[serde(with = "serde_hex16")]
     pub idem: [u8; 16],
-    /// `true` asks to bring a deleted item back. The field is part of the
-    /// protocol, so a client that sends it parses. This version of the server
-    /// does not bring items back: [`PutItemReq::validate`] refuses `true`, and
-    /// the answer is `bad_request`. Absent and `false` are the same.
+    /// `true` asks to bring a deleted item back; only a live row may ask
+    /// ([`PutItemReq::validate`] refuses `true` on a tombstone with
+    /// `bad_request`). Absent and `false` are the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resurrect: Option<bool>,
+    /// The `restore_epoch` the client last saw. When it is not the epoch of the
+    /// vault the write is refused with `409 restore_epoch_changed`. Absent
+    /// means no condition (clients from before this field work as they did).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
 }
 
 /// The one form a [`PutItemReq`] has.
@@ -963,21 +1040,33 @@ impl fmt::Debug for PutItemForm<'_> {
 impl PutItemReq {
     /// Checks that the request has exactly one form: `blob` and `tag` (and
     /// neither `tomb` nor `deleted: true`), or `deleted: true` and `tomb` (and
-    /// neither `blob` nor `tag`), and that it does not ask to bring an item
-    /// back (`resurrect: true`, not supported yet). The size of the tombstone
-    /// is already checked by parsing; the envelope is the caller's to check.
-    /// Every failure is answered with `bad_request`.
+    /// neither `blob` nor `tag`), and that only the live form asks to bring an
+    /// item back (`resurrect: true`): a tombstone that asks to be brought back
+    /// means nothing. `resurrect: false` is allowed on either form. The size of
+    /// the tombstone is already checked by parsing; the envelope is the
+    /// caller's to check. Every failure is answered with `bad_request`.
+    ///
+    /// Spec: Fase 1 § 8.4 ("No resurrection without an active choice").
     pub fn validate(&self) -> Result<PutItemForm<'_>, WireError> {
-        if self.resurrect == Some(true) {
-            return Err(WireError::Field("resurrect"));
-        }
         match (&self.blob, &self.tag, self.deleted, &self.tomb) {
             (Some(blob), Some(tag), None | Some(false), None) => {
                 Ok(PutItemForm::Live { blob, tag })
             }
-            (None, None, Some(true), Some(tomb)) => Ok(PutItemForm::Deleted { tomb }),
+            (None, None, Some(true), Some(tomb)) => {
+                if self.resurrect == Some(true) {
+                    return Err(WireError::Field("resurrect"));
+                }
+                Ok(PutItemForm::Deleted { tomb })
+            }
             _ => Err(WireError::Field("blob, tag, deleted, tomb")),
         }
+    }
+
+    /// Whether the request asks to bring a deleted item back (`resurrect:
+    /// true`). Absent and `false` are `false`. Read it after
+    /// [`PutItemReq::validate`]: only a live row can ask.
+    pub fn resurrect_requested(&self) -> bool {
+        self.resurrect == Some(true)
     }
 }
 
@@ -1020,6 +1109,579 @@ pub struct ConflictRes {
     pub deleted: bool,
 }
 
+/// Whether the row that a conflict answer describes is one of the three
+/// things a server can hold: a row that is not there (`current_rev` 0, not
+/// deleted, no blob and no tag: the answer to a write against a row that does
+/// not exist), a live row (a `current_rev` of at least 1 with its blob and
+/// tag), or a tombstone (a `current_rev` of at least 1, no blob and no tag:
+/// a row that was written has a revision, so a deleted one at 0 is no row).
+fn conflict_row_is_valid(current_rev: u64, deleted: bool, has_blob: bool, has_tag: bool) -> bool {
+    match (deleted, current_rev) {
+        (true, 0) => false,
+        (true, _) => !has_blob && !has_tag,
+        (false, 0) => !has_blob && !has_tag,
+        (false, _) => has_blob && has_tag,
+    }
+}
+
+impl ConflictRes {
+    /// Checks the row of the answer (see [`conflict_row_is_valid`]): a live
+    /// row has its blob and tag, a tombstone (`current_rev` of at least 1) and
+    /// a row that is not there (`current_rev` 0, not deleted) have neither.
+    /// Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if conflict_row_is_valid(
+            self.current_rev,
+            self.deleted,
+            self.blob.is_some(),
+            self.tag.is_some(),
+        ) {
+            Ok(())
+        } else {
+            Err(WireError::Field("current_rev, blob, tag, deleted"))
+        }
+    }
+}
+
+/// One operation of a batch: the same as a [`PutItemReq`], with the id of the
+/// item in the body instead of in the path. A live row (`blob` and `tag`) or a
+/// tombstone (`deleted: true` and `tomb`), never both. Call
+/// [`BatchOpJson::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchOpJson {
+    /// The item.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// The revision the client built on; 0 for a new item.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub base_rev: u64,
+    /// The envelope, for a live row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b64_opt"
+    )]
+    pub blob: Option<Vec<u8>>,
+    /// The tag, for a live row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub tag: Option<[u8; 32]>,
+    /// `true` for a tombstone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<bool>,
+    /// The tombstone (40 bytes), for a deleted row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_tomb_opt"
+    )]
+    pub tomb: Option<Vec<u8>>,
+    /// Makes a retry of this operation safe.
+    #[serde(with = "serde_hex16")]
+    pub idem: [u8; 16],
+    /// `true` asks to bring a deleted item back; only a live row may ask.
+    /// Absent and `false` are the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resurrect: Option<bool>,
+    /// The `restore_epoch` the client last saw, as in [`PutItemReq`]. A
+    /// different one gives this operation `409 restore_epoch_changed` in its
+    /// own place; the other operations are not affected.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
+}
+
+/// The one form a [`BatchOpJson`] has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BatchOpForm<'a> {
+    /// A live row.
+    Live {
+        /// The envelope.
+        blob: &'a [u8],
+        /// The tag.
+        tag: &'a [u8; 32],
+        /// Whether the row asks to bring a deleted item back.
+        resurrect: bool,
+    },
+    /// A tombstone.
+    Deleted {
+        /// The tombstone.
+        tomb: &'a [u8],
+    },
+}
+
+impl fmt::Debug for BatchOpForm<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            BatchOpForm::Live { .. } => "BatchOpForm::Live([redacted])",
+            BatchOpForm::Deleted { .. } => "BatchOpForm::Deleted([redacted])",
+        })
+    }
+}
+
+impl BatchOpJson {
+    /// Checks that the operation has exactly one form: `blob` and `tag` (and
+    /// neither `tomb` nor `deleted: true`), or `deleted: true` and `tomb` (and
+    /// neither `blob` nor `tag`), and that only the live form asks to bring an
+    /// item back (`resurrect: true`). The size of the tombstone is already
+    /// checked by parsing; the envelope is the caller's to check. Every
+    /// failure is answered with `bad_request`.
+    pub fn validate(&self) -> Result<BatchOpForm<'_>, WireError> {
+        match (&self.blob, &self.tag, self.deleted, &self.tomb) {
+            (Some(blob), Some(tag), None | Some(false), None) => Ok(BatchOpForm::Live {
+                blob,
+                tag,
+                resurrect: self.resurrect == Some(true),
+            }),
+            (None, None, Some(true), Some(tomb)) => {
+                if self.resurrect == Some(true) {
+                    return Err(WireError::Field("resurrect"));
+                }
+                Ok(BatchOpForm::Deleted { tomb })
+            }
+            _ => Err(WireError::Field("blob, tag, deleted, tomb")),
+        }
+    }
+}
+
+/// `POST /api/sync/batch`: 1 to [`MAX_BATCH_OPS`] operations, processed in
+/// order. Call [`BatchReq::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchReq {
+    /// The operations.
+    pub ops: Vec<BatchOpJson>,
+}
+
+impl BatchReq {
+    /// Checks the number of operations: at least one and at most
+    /// [`MAX_BATCH_OPS`]. The form of each operation is checked by
+    /// [`BatchOpJson::validate`], one at a time, because a bad operation is
+    /// answered in its own place and does not stop the others.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.ops.is_empty() || self.ops.len() > MAX_BATCH_OPS {
+            return Err(WireError::Field("ops"));
+        }
+        Ok(())
+    }
+}
+
+/// The result of one operation of a batch. It has exactly one form, and a
+/// field that does not belong to the form is left out (never `null`):
+///
+/// * stored: `status` 200 with `rev`, `seq` and `replayed`;
+/// * conflict: `status` 409 with `current_rev` and `deleted`, and `blob` and
+///   `tag` when the row is live (`current_rev` of at least 1, not deleted); a
+///   deleted row (`current_rev` of at least 1), and a row that is not there
+///   (`current_rev` 0, not deleted), have neither;
+/// * refused: a `status` from 400 to 599 with the `error` code;
+/// * restore epoch changed: `status` 409 with `error` `restore_epoch_changed`
+///   and the vault's `restore_epoch` now (the operation named another one).
+///
+/// Call [`BatchResultJson::validate`] on a result that comes from outside.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchResultJson {
+    /// The HTTP status the same operation would have had as a single write.
+    pub status: u16,
+    /// The new revision (stored).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub rev: Option<u64>,
+    /// The sequence number of the change (stored).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub seq: Option<u64>,
+    /// Whether this result repeats an earlier one for the same `idem`
+    /// (stored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replayed: Option<bool>,
+    /// The revision on the server (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub current_rev: Option<u64>,
+    /// The envelope, when the row on the server is live (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b64_opt"
+    )]
+    pub blob: Option<Vec<u8>>,
+    /// The tag, when the row on the server is live (conflict).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub tag: Option<[u8; 32]>,
+    /// Whether the row on the server is a tombstone (conflict).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<bool>,
+    /// One of [`ERROR_CODES`] (refused, and `restore_epoch_changed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The `restore_epoch` of the vault now (`restore_epoch_changed`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
+}
+
+impl BatchResultJson {
+    const BLANK: Self = Self {
+        status: 0,
+        rev: None,
+        seq: None,
+        replayed: None,
+        current_rev: None,
+        blob: None,
+        tag: None,
+        deleted: None,
+        error: None,
+        restore_epoch: None,
+    };
+
+    /// The result of an operation that named another `restore_epoch` than the
+    /// one the vault has (`current`): `409 restore_epoch_changed`.
+    pub fn restore_epoch_changed(current: u64) -> Self {
+        Self {
+            status: 409,
+            error: Some(RESTORE_EPOCH_CHANGED.to_owned()),
+            restore_epoch: Some(current),
+            ..Self::BLANK
+        }
+    }
+
+    /// The result of a stored operation.
+    pub fn stored(rev: u64, seq: u64, replayed: bool) -> Self {
+        Self {
+            status: 200,
+            rev: Some(rev),
+            seq: Some(seq),
+            replayed: Some(replayed),
+            ..Self::BLANK
+        }
+    }
+
+    /// The result of an operation that met another row on the server.
+    pub fn conflict(c: ConflictRes) -> Self {
+        Self {
+            status: 409,
+            current_rev: Some(c.current_rev),
+            blob: c.blob,
+            tag: c.tag,
+            deleted: Some(c.deleted),
+            ..Self::BLANK
+        }
+    }
+
+    /// The result of an operation the server refused with `code`: the status
+    /// is the one of the code (see [`crate::error::status_of`]). The code must
+    /// be one of [`ERROR_CODES`] and not have the status 409, which always
+    /// means a conflict (a debug build panics otherwise); a stale
+    /// `restore_epoch` has its own constructor,
+    /// [`BatchResultJson::restore_epoch_changed`].
+    pub fn refused(code: &'static str) -> Self {
+        let result = Self {
+            status: crate::error::status_of(code).as_u16(),
+            error: Some(code.to_owned()),
+            ..Self::BLANK
+        };
+        debug_assert!(result.validate().is_ok(), "{code:?} cannot be a refusal");
+        result
+    }
+
+    /// Checks that the result has exactly one form (see the type) with the
+    /// status that goes with it: 200 for stored, 409 for a conflict, and for a
+    /// refusal the status of its code. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        let has_stored = self.rev.is_some() || self.seq.is_some() || self.replayed.is_some();
+        let has_conflict = self.current_rev.is_some()
+            || self.deleted.is_some()
+            || self.blob.is_some()
+            || self.tag.is_some();
+        let has_epoch = self.restore_epoch.is_some();
+        let ok = match (has_stored, has_conflict, self.error.as_deref()) {
+            // Restore epoch changed: 409, the code and the epoch now, and no
+            // field of another form.
+            (false, false, Some(RESTORE_EPOCH_CHANGED)) => has_epoch && self.status == 409,
+            // Every other form has no `restore_epoch`.
+            _ if has_epoch => false,
+            // Stored: all three fields (a revision starts at 1), and 200.
+            (true, false, None) => {
+                self.rev.is_some_and(|rev| rev >= 1)
+                    && self.seq.is_some()
+                    && self.replayed.is_some()
+                    && self.status == 200
+            }
+            // Conflict: 409, and the row of the server is live (blob and tag),
+            // deleted, or not there at all (`current_rev` 0): neither blob
+            // nor tag for the last two.
+            (false, true, None) => match (self.current_rev, self.deleted) {
+                (Some(current_rev), Some(deleted)) => {
+                    self.status == 409
+                        && conflict_row_is_valid(
+                            current_rev,
+                            deleted,
+                            self.blob.is_some(),
+                            self.tag.is_some(),
+                        )
+                }
+                _ => false,
+            },
+            // Refused: one of the codes, with the status of that code. 409 is
+            // the conflict form, so a code with that status is never a refusal.
+            (false, false, Some(code)) => {
+                ERROR_CODES.contains(&code)
+                    && self.status != 409
+                    && self.status == crate::error::status_of(code).as_u16()
+            }
+            _ => false,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(WireError::Field("status, rev, seq, current_rev, error"))
+        }
+    }
+}
+
+/// The `200` answer to [`BatchReq`]: one result for each operation, in the
+/// order of the request.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchRes {
+    /// The results.
+    pub results: Vec<BatchResultJson>,
+}
+
+impl BatchRes {
+    /// Checks the number of results (1 to [`MAX_BATCH_OPS`], one for each
+    /// operation of the request) and that each result is valid. Every
+    /// failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.results.is_empty() || self.results.len() > MAX_BATCH_OPS {
+            return Err(WireError::Field("results"));
+        }
+        self.results.iter().try_for_each(BatchResultJson::validate)
+    }
+}
+
+/// The `200` answer to `PUT /api/sync/checkpoint`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointPutRes {
+    /// The sequence number of the checkpoint now stored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// The `409` answer to `PUT /api/sync/checkpoint` when the stored checkpoint
+/// is newer (or the same `seq` with other bytes).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointStaleRes {
+    /// Always `checkpoint_stale`.
+    #[serde(deserialize_with = "stale_code::deserialize")]
+    pub error: String,
+    /// The sequence number of the checkpoint that is stored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub stored_seq: u64,
+}
+
+impl CheckpointStaleRes {
+    /// The answer for a stored checkpoint at `stored_seq`.
+    pub fn new(stored_seq: u64) -> Self {
+        Self {
+            error: "checkpoint_stale".to_owned(),
+            stored_seq,
+        }
+    }
+}
+
+/// `PUT /api/sync/checkpoint`: a checkpoint ([`CheckpointJson`]) and an optional
+/// condition on the `restore_epoch` of the vault.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointPutReq {
+    /// The sequence number the checkpoint covers.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+    /// The digest of `entries`.
+    #[serde(with = "serde_b32")]
+    pub digest: [u8; 32],
+    /// The MAC over the checkpoint.
+    #[serde(with = "serde_b32")]
+    pub mac: [u8; 32],
+    /// The entries: 56 bytes for each row.
+    #[serde(with = "serde_b64")]
+    pub entries: Vec<u8>,
+    /// The `restore_epoch` the client last saw. When it is not the epoch of the
+    /// vault the upload is refused with `409 restore_epoch_changed`, before
+    /// anything about `seq` is looked at. Absent means no condition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub restore_epoch: Option<u64>,
+}
+
+/// The `409` answer to a write that names another `restore_epoch` than the one
+/// the vault has: the code and the epoch the vault has now.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreEpochChangedRes {
+    /// Always `restore_epoch_changed`.
+    #[serde(deserialize_with = "epoch_changed_code::deserialize")]
+    pub error: String,
+    /// The `restore_epoch` of the vault now.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+}
+
+impl RestoreEpochChangedRes {
+    /// The answer for a vault at `restore_epoch`.
+    pub fn new(restore_epoch: u64) -> Self {
+        Self {
+            error: RESTORE_EPOCH_CHANGED.to_owned(),
+            restore_epoch,
+        }
+    }
+}
+
+/// One row of the frozen list in `GET /api/sync/restore-rows`: what the vault
+/// held for an item at the last restore bump.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreRowJson {
+    /// The item.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// Its revision at the bump.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub rev: u64,
+    /// Its sequence number at the bump.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+    /// The SHA-256 of its envelope; left out for a tombstone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_b32_opt"
+    )]
+    pub hash: Option<[u8; 32]>,
+}
+
+/// `GET /api/sync/restore-rows`: one page of the list the server froze at the
+/// last restore bump, in item id order. A vault that was never restored has
+/// `restore_seq` 0 and no rows. The list has no MAC.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreRowsRes {
+    /// Changes when the vault is restored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+    /// The `seq` of the vault at the last restore bump; 0 if it never was.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
+    /// The rows of the page.
+    pub rows: Vec<RestoreRowJson>,
+    /// Where the next page starts: the id of the last row of this page. Left
+    /// out on the last page.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub next_after: Option<[u8; 16]>,
+    /// Whether more rows follow.
+    pub has_more: bool,
+}
+
+impl RestoreRowsRes {
+    /// Checks that `next_after` is there exactly when `has_more` is true, as
+    /// for the listing. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.next_after.is_some() != self.has_more {
+            return Err(WireError::Field("next_after, has_more"));
+        }
+        Ok(())
+    }
+}
+
+/// `GET /api/sync/items`: one page of the full listing, in item id order,
+/// tombstones and the manifest included.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemsRes {
+    /// The rows of the page.
+    pub items: Vec<ChangeJson>,
+    /// The sequence number of the vault when the page was read.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub as_of_seq: u64,
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// Changes when the vault is restored.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_epoch: u64,
+    /// The `seq` of the vault when it was last restored; 0 if it never was.
+    /// Read in the same transaction as the page.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub restore_seq: u64,
+    /// Where the next page starts: the id of the last row of this page. Left
+    /// out on the last page.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub next_after: Option<[u8; 16]>,
+    /// Whether more rows follow.
+    pub has_more: bool,
+}
+
+impl ItemsRes {
+    /// Checks that `next_after` is there exactly when `has_more` is true: a
+    /// page with more behind it says where to go on, and the last page does
+    /// not. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.next_after.is_some() != self.has_more {
+            return Err(WireError::Field("next_after, has_more"));
+        }
+        Ok(())
+    }
+}
+
+/// The data of an event on `GET /api/sync/events` (`hello` and `sync`): the
+/// sequence number of the vault and nothing else.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncEventJson {
+    /// The sequence number of the vault.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
 /// The body of every error: `{"error":"<code>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1052,6 +1714,18 @@ redacted_debug!(
     PutItemReq,
     PutItemRes,
     ConflictRes,
+    BatchOpJson,
+    BatchReq,
+    BatchResultJson,
+    BatchRes,
+    CheckpointPutRes,
+    CheckpointStaleRes,
+    CheckpointPutReq,
+    RestoreEpochChangedRes,
+    RestoreRowJson,
+    RestoreRowsRes,
+    ItemsRes,
+    SyncEventJson,
 );
 
 /// Every code an error body can carry. The list is stable: the web vault
@@ -1088,4 +1762,8 @@ pub const ERROR_CODES: &[&str] = &[
     "bad_request",
     "internal",
     "gone",
+    "busy",
+    "checkpoint_stale",
+    "checkpoint_invalid",
+    "restore_epoch_changed",
 ];

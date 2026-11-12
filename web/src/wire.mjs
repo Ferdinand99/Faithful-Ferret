@@ -191,6 +191,27 @@ const change = [
   ["blob", b, true], ["tag", b32, true], ["tomb", bytes(40, "tombstone_invalid"), true],
 ];
 
+/** A checkpoint upload: a checkpoint and the restore epoch it was built on (left out: no condition). @type {Spec} */
+const checkpointPut = [...checkpoint, ["restore_epoch", int(), true]];
+/** One frozen row of a restore: what the vault held for an item at the last restore bump. @type {Spec} */
+const restoreRow = [["id", id], ["rev", int()], ["seq", int()], ["hash", b32, true]];
+
+/** The most operations in one batch. */
+export const MAX_BATCH_OPS = 100;
+
+/** One operation of a batch: a put request with the item id in the body. @type {Spec} */
+const batchOp = [
+  ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
+  ["tomb", bytes(40, "tombstone_invalid"), true], ["idem", id], ["resurrect", bool, true],
+  ["restore_epoch", int(), true],
+];
+/** The result of one operation of a batch, in all four forms (see `checkStep`). @type {Spec} */
+const batchResult = [
+  ["status", int(65535)], ["rev", int(), true], ["seq", int(), true], ["replayed", bool, true],
+  ["current_rev", int(), true], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
+  ["error", str, true], ["restore_epoch", int(), true],
+];
+
 /** @type {Readonly<Record<string, Spec>>} */
 export const SHAPES = Object.freeze({
   sealed_row: sealedRow,
@@ -231,15 +252,31 @@ export const SHAPES = Object.freeze({
   change,
   changes_res: [
     ["changes", list(change)], ["latest_seq", int()], ["vk_epoch", int()], ["restore_epoch", int()],
-    ["checkpoint", nested(head), true], ["has_more", bool],
+    ["restore_seq", int()], ["checkpoint", nested(head), true], ["has_more", bool],
   ],
   put_item_req: [
     ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
     ["tomb", bytes(40, "tombstone_invalid"), true], ["idem", id], ["resurrect", bool, true],
+    ["restore_epoch", int(), true],
   ],
   put_item_res: [["rev", int()], ["seq", int()], ["replayed", bool]],
   conflict_res: [["current_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool]],
   error_res: [["error", str]],
+  batch_req: [["ops", list(batchOp)]],
+  batch_res: [["results", list(batchResult)]],
+  checkpoint_put_req: checkpointPut,
+  checkpoint_put_res: [["seq", int()]],
+  checkpoint_stale_res: [["error", oneOf("checkpoint_stale")], ["stored_seq", int()]],
+  restore_epoch_changed_res: [["error", oneOf("restore_epoch_changed")], ["restore_epoch", int()]],
+  items_res: [
+    ["items", list(change)], ["as_of_seq", int()], ["vk_epoch", int()], ["restore_epoch", int()],
+    ["restore_seq", int()], ["next_after", id, true], ["has_more", bool],
+  ],
+  restore_rows_res: [
+    ["restore_epoch", int()], ["restore_seq", int()], ["rows", list(restoreRow)],
+    ["next_after", id, true], ["has_more", bool],
+  ],
+  sync_event: [["seq", int()]],
 });
 
 /**
@@ -293,27 +330,128 @@ export function handoffCode(code) {
 }
 
 /**
+ * Whether a field of a value is there: a field that is left out and one that
+ * is `null` are the same.
+ * @param {any} value
+ * @param {string} key
+ */
+const present = (value, key) => value[key] !== undefined && value[key] !== null;
+
+/**
+ * An operation of a batch has one form: a live row (blob and tag, with
+ * `deleted` false or left out and no tomb), or a tombstone (`deleted` true and
+ * tomb, with no blob and no tag). Only a live row may ask to bring an item
+ * back.
+ * @param {any} op
+ */
+function checkBatchOp(op) {
+  const live = present(op, "blob") && present(op, "tag") && !present(op, "tomb") && op.deleted !== true;
+  const gone = !present(op, "blob") && !present(op, "tag") && present(op, "tomb") && op.deleted === true;
+  if (!live && !gone) refuse("a batch operation is a live row or a tombstone, never both");
+  if (gone && op.resurrect === true) refuse("only a live row asks to bring an item back");
+}
+
+/**
+ * The HTTP status of every error code, as the server's status table has it
+ * (`error_statuses.json` pins this copy; a test fails when they differ). A
+ * refused batch result carries a code and the status of that code.
+ * @type {Readonly<Record<string, number>>}
+ */
+export const ERROR_STATUS = Object.freeze({
+  unauthorized: 401, denied: 401, forbidden: 403, insecure_transport: 400, handoff_invalid: 400,
+  manifest_not_writable: 403, malformed_registration_request: 400, malformed_registration_record: 400,
+  malformed_ke1: 400, malformed_ke3: 400, malformed_login_id: 400, malformed_nonce: 400, malformed_proof: 400,
+  malformed_login_name: 400, malformed_recovery_key: 400, registration_closed: 409, throttled: 429,
+  profile_rejected: 422, unsupported_envelope: 422, tombstone_invalid: 422, too_large: 413, quota_exceeded: 413,
+  idem_reuse: 422, conflict: 409, protocol_header_missing: 400, forbidden_origin: 403, not_found: 404,
+  bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
+  restore_epoch_changed: 409,
+});
+
+/**
+ * A result of a batch has one form and carries no field of another: stored
+ * (200 with rev, seq and replayed), a conflict (409 with current_rev and
+ * deleted, and blob and tag when the row is live), refused (an error code
+ * with the status of that code; 409 is the conflict form, so a code with that
+ * status is never a refusal) or "restore epoch changed" (409 with the code
+ * `restore_epoch_changed` and the vault's `restore_epoch`). A revision starts
+ * at 1.
+ * @param {any} result
+ */
+function checkBatchResult(result) {
+  const stored = ["rev", "seq", "replayed"].some((key) => present(result, key));
+  const conflict = ["current_rev", "deleted", "blob", "tag"].some((key) => present(result, key));
+  const refused = present(result, "error");
+  const epoch = present(result, "restore_epoch");
+  const bad = () => refuse("a batch result is stored, a conflict, refused or restore_epoch_changed, with the fields and status of its form");
+  if (Number(stored) + Number(conflict) + Number(refused) !== 1) bad();
+  if (epoch) {
+    // The one form with a restore_epoch: 409, the code, and nothing else.
+    if (!(refused && !stored && !conflict && result.error === "restore_epoch_changed" && result.status === 409)) bad();
+    return;
+  }
+  if (refused && result.error === "restore_epoch_changed") bad();
+  if (stored) {
+    if (!(present(result, "rev") && present(result, "seq") && present(result, "replayed") && result.status === 200)) bad();
+    if (result.rev < 1) bad();
+  } else if (conflict) {
+    if (!present(result, "current_rev") || !present(result, "deleted") || result.status !== 409) bad();
+    if (!conflictRowIsValid(result)) bad();
+  } else if (!Object.hasOwn(ERROR_STATUS, result.error) || result.status === 409 || result.status !== ERROR_STATUS[result.error]) {
+    bad();
+  }
+}
+
+/**
+ * Whether the row that a conflict answer describes is one a server can hold: a
+ * live row (a current_rev of at least 1, with blob and tag), a tombstone (a
+ * current_rev of at least 1, neither), or a row that is not there (current_rev 0
+ * and not deleted: neither).
+ * @param {any} value
+ */
+function conflictRowIsValid(value) {
+  const rows = present(value, "blob") && present(value, "tag");
+  const neither = !present(value, "blob") && !present(value, "tag");
+  if (value.deleted) return value.current_rev >= 1 && neither;
+  return value.current_rev === 0 ? neither : rows;
+}
+
+/**
  * The checks that come with a shape once it is read: a hand-over code, the two
- * forms of an item write (a live row, or a tombstone, never both) and the two
- * forms of a conflict answer.
+ * forms of an item write (a live row, or a tombstone, never both), the two
+ * forms of a conflict answer, and for a batch the number of operations and the
+ * form of each operation and result.
  * @param {string} kind
  * @param {any} value
  */
 export function checkStep(kind, value) {
   if (kind === "redeem_req") handoffCode(value.code);
+  if (kind === "batch_req") {
+    if (value.ops.length < 1 || value.ops.length > MAX_BATCH_OPS) refuse("a batch has 1 to 100 operations");
+    for (const op of value.ops) checkBatchOp(op);
+  }
+  if (kind === "batch_res") {
+    if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
+    for (const result of value.results) checkBatchResult(result);
+  }
+  if (kind === "items_res" || kind === "restore_rows_res") {
+    // `next_after` is there exactly when more rows follow.
+    const next = value.next_after !== undefined && value.next_after !== null;
+    if (next !== value.has_more) refuse("next_after is there exactly when has_more is true");
+  }
   if (kind === "conflict_res") {
-    // The current row of an item: a live row has its blob and tag, a deleted one neither.
-    const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
-    if (value.deleted ? has("blob") || has("tag") : !has("blob") || !has("tag")) {
-      refuse("a conflict answer is a live row (blob and tag) or a deleted one (neither)");
+    // The current row of an item: a live row has its blob and tag, a deleted
+    // one, or a row that is not there (current_rev 0), neither.
+    if (!conflictRowIsValid(value)) {
+      refuse("a conflict answer is a live row (blob and tag), a deleted one or an absent one (neither)");
     }
   }
   if (kind !== "put_item_req") return;
   const has = (/** @type {string} */ key) => value[key] !== undefined && value[key] !== null;
-  if (value.resurrect === true) refuse("resurrect is not supported yet");
   const live = has("blob") && has("tag") && !has("tomb") && value.deleted !== true;
   const gone = !has("blob") && !has("tag") && has("tomb") && value.deleted === true;
   if (!live && !gone) refuse("a put request is a live row or a tombstone, never both");
+  if (gone && value.resurrect === true) refuse("only a live row asks to bring an item back");
 }
 
 /**

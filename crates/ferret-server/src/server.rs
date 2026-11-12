@@ -136,6 +136,10 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     if config.vault_port == config.admin_port {
         return Err("the vault port and the admin port must differ".into());
     }
+    // One process per data directory, taken before the database is touched: a
+    // command that changes the database (`ferret restore-epoch bump`) takes
+    // the same lock, so it cannot run against this server.
+    let _data_lock = crate::data_lock::acquire(&config.data_dir)?;
     let clock = process_clock();
     let state = crate::start(&config, clock).await?;
     // Notifications and other work outside a request use the site language.
@@ -152,6 +156,9 @@ pub async fn run(config: Config) -> Result<(), StartError> {
         config.admin_addr()
     );
 
+    // The event streams end when the server stops: a graceful shutdown waits
+    // for every answer in flight, and a stream has no end of its own for an hour.
+    let streams = state.streams.clone();
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let stopped = move || {
         let mut rx = stop_rx.clone();
@@ -173,6 +180,7 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     tokio::spawn(async move {
         shutdown_signal().await;
         let _ = stop_tx.send(true);
+        streams.shutdown();
     });
     let (a, b) = tokio::join!(vault, admin);
     a?;

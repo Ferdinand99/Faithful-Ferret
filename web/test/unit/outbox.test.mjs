@@ -102,3 +102,25 @@ test("outbox_refuses_an_entry_whose_bytes_do_not_match_it", async () => {
   for (const entry of bad) await refusedWith("outbox_entry", outbox.enqueue(db.store, scope(), entry));
   assert.deepEqual(await outbox.all(db.store, scope()), []);
 });
+
+test("outbox_swap_puts_new_entries_at_the_end_and_takes_old_ones_out_in_one_transaction", async () => {
+  const db = await freshStore();
+  const [one, two, three] = [liveEntry(1), liveEntry(2), liveEntry(3)];
+  for (const entry of [one, two, three]) await outbox.enqueue(db.store, scope(), entry);
+  const next = [liveEntry(11), liveEntry(12)];
+  await outbox.swap(db.store, scope(), [one.idem, two.idem, hex(99)], next); // a key that is not there is ignored
+  assert.deepEqual((await outbox.all(db.store, scope())).map((e) => e.idem), [three.idem, next[0].idem, next[1].idem]);
+});
+
+test("outbox_swap_that_fails_changes_nothing", async () => {
+  const db = await freshStore();
+  const [one, two] = [liveEntry(1), liveEntry(2)];
+  for (const entry of [one, two]) await outbox.enqueue(db.store, scope(), entry);
+  // The second new entry has a key that is queued already: the whole swap is refused, the first new entry is not kept, and the old ones stay.
+  await refusedWith("outbox_duplicate", outbox.swap(db.store, scope(), [one.idem], [liveEntry(11), liveEntry(2)]));
+  assert.deepEqual((await outbox.all(db.store, scope())).map((e) => e.idem), [one.idem, two.idem]);
+  // An entry that does not match its bytes is refused before anything is touched.
+  await refusedWith("outbox_entry", outbox.swap(db.store, scope(), [one.idem], [{ ...liveEntry(13), baseRev: 9 }]));
+  assert.deepEqual((await outbox.all(db.store, scope())).map((e) => e.idem), [one.idem, two.idem]);
+  await assert.rejects(outbox.swap(db.store, scope(), ["not a key"], []), TypeError);
+});

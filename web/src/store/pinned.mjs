@@ -237,6 +237,23 @@ export async function loadPinnedByAccount(store, serverUrl, accountId) {
 }
 
 /**
+ * What this device holds for an account on this server: the e-mail address it is saved
+ * under (null when another account took it over), or null when there is no record. The
+ * pinned record is the device's own account of what it has seen, so an account that has
+ * none here is one this device does not know.
+ * @param {import("./idb.mjs").Store} store
+ * @param {string} serverUrl
+ * @param {string} accountId
+ * @returns {Promise<{ email: string | null } | null>}
+ */
+export async function loadPinnedAccount(store, serverUrl, accountId) {
+  const server = serverKey(serverUrl);
+  checkAccount(accountId);
+  const row = await run(store, ["pinned"], "readonly", ([pinned]) => req(pinned.get([server, accountId])));
+  return row ? { email: typeof row.email === "string" ? row.email : null } : null;
+}
+
+/**
  * The record to sign in with, found once the server has said which account the
  * e-mail is (the `account_id` of the login answer):
  *   1. the record the e-mail maps to;

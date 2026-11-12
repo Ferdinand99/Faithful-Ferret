@@ -60,7 +60,7 @@ rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 rust-embed = "8.12.0"
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["raw_value"] }
 sha2 = "0.11.1"
 time = { version = "0.3.55", default-features = false }
 tokio = { version = "1.53.1", features = ["full"] }
@@ -92,6 +92,12 @@ vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-k
 ferret-core = { path = "../ferret-core", features = ["server-suite", "test-support"] }
 ferret-server-auth = { path = "../ferret-server-auth", features = ["test-support"] }
 tower = "0.5.3"
+# `tokio::time::pause` and `advance`: the heartbeat and lifetime tests of the
+# event stream move the clock by hand.
+tokio = { version = "1.53.1", features = ["test-util"] }
+# A SQL function in a test that waits for the test (the write of a batch that
+# is dropped half way).
+rusqlite = { version = "0.40", features = ["bundled", "backup", "functions"] }
 # The architecture test reads the source files of the vault modules.
 syn = { version = "3", features = ["full", "visit"] }
 

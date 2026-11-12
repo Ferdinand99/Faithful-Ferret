@@ -150,29 +150,31 @@ export const cache = Object.freeze({
   },
 
   /**
-   * Removes the rows of the scope. The pinned record, the outbox, the settings
-   * and the device secrets stay.
+   * Removes the rows of the scope, and the trash of the scope with them (an
+   * entry of the trash is a copy of a row). The pinned record, the sync state,
+   * the outbox, the settings and the device secrets stay.
    * @param {import("./idb.mjs").Store} store
    * @param {Scope} scope
    * @returns {Promise<void>}
    */
   async clear(store, scope) {
     checkScope(scope);
-    await run(store, ["rows"], "readwrite", async ([table]) => {
-      await req(table.delete(range(store, scope)));
+    await run(store, ["rows", "trash"], "readwrite", async (tables) => {
+      for (const table of tables) await req(table.delete(range(store, scope)));
     });
   },
 
   /**
-   * Removes the rows of every vault and epoch of an account (sign-out).
+   * Removes the rows and the trash of every vault and epoch of an account
+   * (sign-out). The sync state stays.
    * @param {import("./idb.mjs").Store} store
    * @param {string} accountId
    * @returns {Promise<void>}
    */
   async clearAccount(store, accountId) {
     if (!hex16.is(accountId)) throw new TypeError("an account id is 32 lower-case hex characters");
-    await run(store, ["rows"], "readwrite", async ([table]) => {
-      await req(table.delete(store.keyRange.bound([accountId], [accountId, []])));
+    await run(store, ["rows", "trash"], "readwrite", async (tables) => {
+      for (const table of tables) await req(table.delete(store.keyRange.bound([accountId], [accountId, []])));
     });
   },
 });

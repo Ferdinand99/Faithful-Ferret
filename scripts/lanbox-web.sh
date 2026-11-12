@@ -14,8 +14,18 @@
 # Everything created is labelled owner=ferret-core and removed on exit (--rm);
 # the work directory, npm's cache and /tmp are tmpfs.
 #
-# Env overrides: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_CPUS
-# (default 4, at most 8), FERRET_MEMORY (default 12g).
+# Env overrides:
+#   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
+#   FERRET_CPUS         CPU limit (default 4, at most 8)
+#   FERRET_MEMORY       container memory limit (default 12g)
+#   FERRET_PASS_ENV     space-separated names of environment variables that are
+#                       passed on into the container
+#   DEV_RUN             optional run id (lowercase letters, digits and dashes, at
+#                       most 63 characters, starting with a letter or digit). When
+#                       set, the container gets the label dev.run=$DEV_RUN and the
+#                       name ferret-$DEV_RUN-<pid>, so the run shows up in devdash
+#   DEV_TITLE           optional title, added as the label dev.title when DEV_RUN
+#                       is set
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
@@ -33,6 +43,28 @@ if [ "$cpus" -gt 8 ]; then
 fi
 # shellcheck disable=SC2206
 docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
+pass_env=()
+for name in ${FERRET_PASS_ENV:-}; do
+  if ! printf '%s' "$name" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+    echo "lanbox-web.sh: FERRET_PASS_ENV holds variable names only" >&2
+    exit 2
+  fi
+  pass_env+=(-e "$name")
+done
+
+dev_args=()
+if [ -n "${DEV_RUN:-}" ]; then
+  # bash's own matcher, so an embedded newline cannot slip past the anchors
+  dev_run_re='^[a-z0-9][a-z0-9-]{0,62}$'
+  if ! (LC_ALL=C; [[ $DEV_RUN =~ $dev_run_re ]]); then
+    echo "lanbox-web.sh: DEV_RUN must match $dev_run_re" >&2
+    exit 2
+  fi
+  dev_args+=(--label "dev.run=$DEV_RUN" --name "ferret-$DEV_RUN-$$")
+  if [ -n "${DEV_TITLE:-}" ]; then
+    dev_args+=(--label "dev.title=$DEV_TITLE")
+  fi
+fi
 
 # The test server needs the server's header fixture; without it, stop.
 if [ ! -f crates/ferret-server/tests/fixtures/wire/headers.json ]; then
@@ -69,11 +101,13 @@ fi'
 
 run=(docker "${docker_args[@]}" run --rm -i --init
   --label owner=ferret-core
+  "${dev_args[@]}"
   --cpus "$cpus"
   --memory "$memory"
   --shm-size 2g
   -e CI=1
   -e FERRET_WEB_MODE="$mode"
+  "${pass_env[@]}"
   --tmpfs /work:exec,size=2g
   --tmpfs /root/.npm:size=512m
   --tmpfs /tmp:exec,size=2g

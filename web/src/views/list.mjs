@@ -3,6 +3,7 @@
 // nowhere (this file has no way to make a request, and the query is not put in
 // the address either). Favourites come first, then the engine's order, which
 // is by name.
+import { hex16 } from "../b64.mjs";
 import { el, mount } from "../dom.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
 import { listenWhileShown, markBadges } from "./common.mjs";
@@ -42,6 +43,8 @@ export function listView({ engine, router, t }) {
   add.addEventListener("click", () => router.go("/items/new"));
   const summary = el("p", { class: "count", role: "status", "data-role": "count" });
   const rows = el("ul", { class: "items", "data-role": "items" });
+  // Holds the note about conflicts; empty (and so without any box) when there are none.
+  const conflicts = el("div", { class: "conflicts", "data-role": "conflicts" });
 
   function render() {
     const query = search.value ?? "";
@@ -55,6 +58,12 @@ export function listView({ engine, router, t }) {
         : shown.length === 0 ? t("vault.list.no_match")
           : t("vault.list.count", { shown: shown.length, total: all.length })));
     mount(rows, ...ordered.map((item) => row(item)));
+    // Every item in conflict is in the list below with its mark; this note says how many and leads to the first.
+    const inConflict = all.filter((item) => item.conflict === true && hex16.is(item.id));
+    mount(conflicts, ...(inConflict.length === 0 ? [] : [
+      el("p", { class: "notice notice-conflict", role: "status", "data-role": "conflict-note" },
+        `${t("conflict.list_count", { count: inConflict.length })} `,
+        el("a", { href: `#/items/${inConflict[0].id}/conflict`, "data-role": "first-conflict" }, t("conflict.list_open")))]));
   }
 
   /** @param {any} item */
@@ -73,8 +82,10 @@ export function listView({ engine, router, t }) {
     el("div", { class: "toolbar" },
       el("label", { for: "vault-search", class: "visually-hidden" }, t("vault.list.search")),
       search, add),
+    conflicts,
     summary,
-    rows);
+    rows,
+    el("p", { class: "aside" }, el("a", { href: "#/trash", "data-role": "trash-link" }, t("conflict.trash.link"))));
   render();
   listenWhileShown(root, engine, "changed", render);
   return root;

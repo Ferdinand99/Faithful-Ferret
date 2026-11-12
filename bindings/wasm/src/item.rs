@@ -164,7 +164,7 @@ pub(crate) struct PasskeyDraft {
 /// item. To remove the one-time-password setup, the notes or the passkey, set
 /// `remove_totp`, `remove_notes` or `remove_passkey`. There is no key for a
 /// private key, a PRF seed or a TOTP secret apart from the address.
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Default, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DraftDto {
     #[serde(default)]
@@ -191,6 +191,19 @@ pub(crate) struct DraftDto {
     passkey: Option<PasskeyDraft>,
     #[serde(default)]
     remove_passkey: bool,
+}
+
+impl DraftDto {
+    /// A draft that sets only the device name (or nothing, for `None`).
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "a struct update would move fields out of a type that wipes itself on drop"
+    )]
+    pub(crate) fn with_device(device: Option<String>) -> Self {
+        let mut draft = Self::default();
+        draft.device = device;
+        draft
+    }
 }
 
 fn field_kind(text: Option<&String>, previous: Option<&FieldKind>) -> FieldKind {
