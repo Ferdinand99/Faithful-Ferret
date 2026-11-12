@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argon2 0.5.3",
  "argon2 0.6.0",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-core-wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-server-auth"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
@@ -510,7 +510,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-vectorgen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ferret-core",
  "ferret-server-auth",
