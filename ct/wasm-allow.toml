@@ -110,12 +110,6 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth 
 
 [[allow]]
 function = "^ferret_core_wasm::item::normalize_otpauth$"
-instruction = "i32\\.div_u"
-max = 1
-reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth URI, which holds the TOTP secret, with ordinary string functions: splitting on `?`, `&`, `=` and `%`, the names of parameters, the digits of numbers. The letters of the secret itself go through ct/harness/base32.rs without a branch or a table. The same text is a JavaScript string that cannot be wiped or made constant time."
-
-[[allow]]
-function = "^ferret_core_wasm::item::normalize_otpauth$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 9
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth URI, which holds the TOTP secret, with ordinary string functions: splitting on `?`, `&`, `=` and `%`, the names of parameters, the digits of numbers. The letters of the secret itself go through ct/harness/base32.rs without a branch or a table. The same text is a JavaScript string that cannot be wiped or made constant time."
@@ -451,6 +445,24 @@ max = 1
 reason = "The load of the byte at `base + index` in the scan of the padding; the index is the loop counter, which runs over the whole buffer whatever it holds. The byte it reads is never used as an address."
 
 [[allow]]
+function = "^ferret_core::item::url_match::parse_web$"
+instruction = "br_table"
+max = 5
+reason = "Reading a page address, the page the user is on or a saved address of an item (the address a login belongs to, which is not a secret field): scheme, host and port checks, the characters of the host and the numeric IPv4 forms, on public text; the index is the loop counter. No password, key or other secret field goes through this function: `match_page` reads the saved addresses only."
+
+[[allow]]
+function = "^ferret_core::item::url_match::parse_web$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 16
+reason = "Reading a page address, the page the user is on or a saved address of an item (the address a login belongs to, which is not a secret field): scheme, host and port checks, the characters of the host and the numeric IPv4 forms, on public text; the index is the loop counter. No password, key or other secret field goes through this function: `match_page` reads the saved addresses only."
+
+[[allow]]
+function = "^ferret_core::item::url_match::url_match$"
+instruction = "br_table"
+max = 1
+reason = "Comparing a saved address of an item with the page address: a match on the match kind of the entry (host, domain, exact, or a kind this version does not know) and on the scheme, public tags that the user chose; the addresses themselves are read by parse_web. No password, key or other secret field goes through this function."
+
+[[allow]]
 function = "^ferret_core::methods::hex$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
@@ -517,24 +529,6 @@ max = 2
 reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
 
 [[allow]]
-function = "^ferret_core::passkey::origin::validate_rp_id$"
-instruction = "br_table"
-max = 1
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
-
-[[allow]]
-function = "^ferret_core::passkey::origin::validate_rp_id$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 3
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
-
-[[allow]]
-function = "^ferret_core::passkey::origin::validate_rp_id$"
-instruction = "i32\\.load\\(static-table\\)"
-max = 2
-reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
-
-[[allow]]
 function = "^ferret_core::passkey::prf::evaluate$"
 instruction = "br_table"
 max = 1
@@ -542,6 +536,24 @@ reason = "Public text: server addresses, QR text, origins, relying party ids, th
 
 [[allow]]
 function = "^ferret_core::passkey::psl::ascii_rule$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 3
+reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+
+[[allow]]
+function = "^ferret_core::passkey::psl::suffix_match$"
+instruction = "br_table"
+max = 1
+reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+
+[[allow]]
+function = "^ferret_core::passkey::psl::suffix_match$"
+instruction = "i32\\.load\\(static-table\\)"
+max = 2
+reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+
+[[allow]]
+function = "^ferret_core::passkey::psl::suffixes$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3
 reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
@@ -669,7 +681,7 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normaliz
 [[allow]]
 function = "^ferret_core::text::unicode::normalize_password$"
 instruction = "i32\\.load\\(static-table\\)"
-max = 3
+max = 1
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations."
 
 [[allow]]
@@ -833,6 +845,24 @@ function = "^vault_manifest_add_method externref shim multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
 reason = "APPROVED: The indexed load is in Manifest::with_method (inlined into the shim): the scan of the list of 56-byte manifest entries for a method id that is already there, and the copy of that list, at a position given by a public loop counter. The values are method types, ids and generations of the manifest, which the server lists too; no key bytes."
+
+[[allow]]
+function = "^vault_match_page multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: The export shim of Vault.match_page, into which wasm-opt inlined the method. The three hits are the walk over the saved addresses of an open item and the match on the result of url_match: the division is the length of the list of addresses divided by the size of one entry, the indexed load is the search of the map of open items by the handle (a counter that JavaScript holds) and the read of the address at base plus the loop counter, and the jump table is the match on the result of the comparison (none, host, domain, exact). The method reads the saved addresses of the items and the page address, which are public text; no password, key or field value is read, and the reply holds a handle and one of three words."
+
+[[allow]]
+function = "^vault_match_page multivalue shim$"
+instruction = "i32\\.div_u"
+max = 1
+reason = "APPROVED: The export shim of Vault.match_page, into which wasm-opt inlined the method. The three hits are the walk over the saved addresses of an open item and the match on the result of url_match: the division is the length of the list of addresses divided by the size of one entry, the indexed load is the search of the map of open items by the handle (a counter that JavaScript holds) and the read of the address at base plus the loop counter, and the jump table is the match on the result of the comparison (none, host, domain, exact). The method reads the saved addresses of the items and the page address, which are public text; no password, key or field value is read, and the reply holds a handle and one of three words."
+
+[[allow]]
+function = "^vault_match_page multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The export shim of Vault.match_page, into which wasm-opt inlined the method. The three hits are the walk over the saved addresses of an open item and the match on the result of url_match: the division is the length of the list of addresses divided by the size of one entry, the indexed load is the search of the map of open items by the handle (a counter that JavaScript holds) and the read of the address at base plus the loop counter, and the jump table is the match on the result of the comparison (none, host, domain, exact). The method reads the saved addresses of the items and the page address, which are public text; no password, key or field value is read, and the reply holds a handle and one of three words."
 
 [[allow]]
 function = "^vault_passkey_get externref shim multivalue shim$"
