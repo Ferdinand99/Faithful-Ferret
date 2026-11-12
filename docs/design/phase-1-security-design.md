@@ -642,18 +642,21 @@ All mutating calls require the header `Ferret-Protocol: 1` (forces a CORS prefli
 
 | Method | Path | Body and response |
 |---|---|---|
-| `GET` | `/api/sync/changes?since=<seq>&limit=500` | `{changes:[{id,rev,seq,deleted,blob?,tag?,tomb?}], latest_seq, vk_epoch, restore_epoch, checkpoint?:{seq,digest,mac}, has_more}`. The response is limited to 4 MiB and 500 items. |
-| `PUT` | `/api/sync/items/{id}` | `{base_rev, blob, tag, idem, resurrect?}` or `{base_rev, deleted:true, tomb, idem, resurrect?}` gives `200 {rev,seq,replayed}`, `409 {current_rev,blob?,tag?,deleted}` or `422` (idem used with a different request). Writes to different items are independent. |
-| `POST` | `/api/sync/batch` | Up to 100 operations, processed in order, with a result per operation in the same order. Each is its own transaction, so one conflict does not stop the others. Two operations on the same `item_id` in one batch are rejected. |
-| `PUT` | `/api/sync/checkpoint` | `{seq, digest, mac, entries}` (§ 8.6) gives `200`, or `409` if `seq` is lower than the stored one (harmless). |
+| `GET` | `/api/sync/changes?since=<seq>&limit=500` | `{changes:[{id,rev,seq,deleted,blob?,tag?,tomb?}], latest_seq, vk_epoch, restore_epoch, restore_seq, checkpoint?:{seq,digest,mac}, has_more}`. The response is limited to 4 MiB and 500 items. `restore_seq` is the vault's `seq` at the last restore bump (0 if the vault was never restored). A `since` below the retention floor gives `410 {error:"gone", min_valid_since}` (§ 8.4). *(clarified 2026-11-08)* |
+| `GET` | `/api/sync/items?after=<32 hex>&limit=<1–500>` | One page of the full listing, in `item_id` order, with tombstones and the manifest row: `{items:[{id,rev,seq,deleted,blob?,tag?,tomb?}], as_of_seq, vk_epoch, restore_epoch, restore_seq, next_after?, has_more}`. It is never `410`: it is the way out of one. `as_of_seq` is the vault's `seq` in the transaction that read that page, so the pages of one listing are not promised to be one snapshot (§ 8.4). `next_after` is present exactly when `has_more` is true. *(clarified 2026-11-08)* |
+| `GET` | `/api/sync/restore-rows?after=<32 hex>&limit=<1–2000>` | One page of the list that `restore-epoch bump` froze: `{restore_epoch, restore_seq, rows:[{id,rev,seq,hash?}], next_after?, has_more}`. `hash` is SHA-256 of the envelope and is left out for a tombstone. The server has no key, so the list has no MAC. A client uses it, in the honest case, to tell a write made after a restore from one that came before it (§ 8.6). *(clarified 2026-11-08)* |
+| `PUT` | `/api/sync/items/{id}` | `{base_rev, blob, tag, idem, resurrect?, restore_epoch?}` or `{base_rev, deleted:true, tomb, idem, restore_epoch?}` gives `200 {rev,seq,replayed}`, `409 {current_rev,blob?,tag?,deleted}`, `409 {error:"restore_epoch_changed", restore_epoch}`, `422` (idem used with a different request), `429 throttled` or `503 busy`. `resurrect` is only allowed on the live form; the tombstone form with `resurrect` is `400 bad_request`. `restore_epoch` is an optional condition: if it is present and is not the vault's `restore_epoch`, nothing is stored and the answer is `409 restore_epoch_changed`. The order of the checks is the idempotency record, then the epoch condition, then quota and `base_rev`. Writes to different items are independent. *(clarified 2026-11-08)* |
+| `POST` | `/api/sync/batch` | `{ops:[…]}`, 1 to 100 operations (the fields of the single write, including the optional `restore_epoch`), body at most 6 MiB, processed in order. The answer is `200 {results:[…]}` with one result per operation in the same order: `{status:200, rev, seq, replayed}`, `{status:409, current_rev, blob?, tag?, deleted}`, `{status:409, error:"restore_epoch_changed", restore_epoch}`, `{status:4xx, error}`, or `{status:500, error:"internal"}` when the store fails unexpectedly for that one operation (the others stay committed, and sending the same `idem` again is safe). Each is its own transaction, so one conflict does not stop the others. Two operations on the same `item_id` in one batch are rejected as a whole with `400 bad_request`, and nothing is written. *(clarified 2026-11-08)* |
+| `PUT` | `/api/sync/checkpoint` | `{seq, digest, mac, entries, restore_epoch?}` (§ 8.6), body at most 4 MiB, gives `200 {seq}`; `409 {error:"checkpoint_stale", stored_seq}` if `seq` is lower than the stored one, or equal with other bytes (harmless); `409 restore_epoch_changed` if the optional `restore_epoch` is not the vault's (checked before anything about `seq`); `422 checkpoint_invalid` if the structure is wrong (the server checks the structure only, never the MAC); `413 too_large`; `429 throttled`. *(clarified 2026-11-08)* |
 | `GET` | `/api/sync/checkpoint` | `{seq, digest, mac, entries}` for the stored checkpoint. |
-| `GET` | `/api/sync/events` | SSE via `fetch` with an `Authorization` header (or a cookie in the web vault): `hello {seq}` (only after authentication), then `sync {seq}`. Only a hint; the client fetches on its own. Heartbeat comment every 25 seconds. At most 2 streams per device. Proxy buffering off. |
+| `GET` | `/api/sync/events` | SSE via `fetch` with an `Authorization` header (or a cookie in the web vault): `hello {seq}` (only after authentication), then `sync {seq}`. Only a hint; the client fetches on its own. Heartbeat comment every 25 seconds, and the session is checked again at every heartbeat and just before every frame. The call needs `Ferret-Protocol: 1`, and `Sec-Fetch-Site` must be `same-origin` or absent. At most 2 streams per device, 40 per vault and 256 on the server; a stream beyond a limit is refused with `429 throttled` and `Retry-After: 30` (an open stream is never cut to make room). A stream ends after one hour and the client opens a new one. Proxy buffering off. *(clarified 2026-11-08)* |
 
 - Draft 1 had `DELETE /api/sync/items/{id}`. It is removed. A deletion is a `PUT` with `deleted: true` and an authenticated tomb (§ 8.4).
 - Blobs are sent as raw bytes, base64 only in the JSON variant.
+- **Error codes of the sync routes** *(clarified 2026-11-08)*: `busy` is `503` with `Retry-After` (the write queue is full), `checkpoint_stale` is `409`, `checkpoint_invalid` is `422`, `restore_epoch_changed` is `409`, and `throttled` is `429` with `Retry-After`.
 - **Limits:** at most 65 536 bytes per envelope (padded body ≤ 61 440 bytes plus envelope overhead), body at most 8 MiB.
 - **Quotas per account (F-18):** 10 000 items, 256 MiB of ciphertext, 20 devices, 10 unlock methods, a limited number of tombstones. `idem` rows: the last 1 000 per device and at most 30 days.
-- **Rate limiting:** token bucket on operations (120 per minute sustained, burst 300) and on bytes (20 MiB per minute per device). A global concurrency limit and a bounded queue on the write path.
+- **Rate limiting:** token bucket on operations (120 per minute sustained, burst 300) and on bytes (20 MiB per minute per device). A global concurrency limit and a bounded queue on the write path: a write that finds the queue full gets `503 busy` and is sent again later.
 
 ### 8.3 Idempotency
 - `idem` is a UUID **per write**, created when the change is stored locally.
@@ -687,7 +690,7 @@ All mutating calls require the header `Ferret-Protocol: 1` (forces a CORS prefli
 - **Resolution:**
   - "Keep mine" gives `PUT` with `base_rev = current_rev`.
   - "Keep theirs" discards the local change.
-  - "Keep both" creates a new item.
+  - "Keep both" creates a new item. It is not in the first sync release: it comes after that release, because it needs a new binding function (a copy under a new item key) that the published web package does not have yet (§ 8.8). Until then the vault offers "Keep mine" and "Keep theirs", each after a confirmation, because the version that is not kept is gone for good. *(clarified 2026-11-08)*
 - **No automatic merging of fields** in v1.
 
 ### 8.6 Rollback protection: item tags and signed checkpoints (L4)
@@ -734,6 +737,8 @@ checkpoint = { seq: S, digest, mac }
 
 **Legitimate rollbacks:** if the administrator restores the server from an older backup, it sets `restore_epoch` higher. The client sees a lower `seq` with a higher `restore_epoch` and shows "the server has been restored from an older backup". The action **"accept older state"** is explicit, with a warning, and the client uploads local changes that the server is missing.
 
+*(clarified 2026-11-08)* The bump is a command on the server (`restore-epoch bump`, see `docs/OPERATIONS.md`) and is the only thing that raises `restore_epoch`. In the same transaction it records `restore_seq`, the vault's `seq` at that moment, and freezes one row per item the vault then had (id, `rev`, `seq`, hash of the envelope, none for a tombstone). The client pages that list from `GET /api/sync/restore-rows` and uses it when it accepts the older state: a row with a `seq` above `restore_seq` was written after the restore, so it is never overwritten silently, and every local version that the server lacks is queued for upload or becomes a conflict that the user settles (a local version that is older than the server's on the same line is skipped). Every write carries the restore epoch the client has accepted, from the first contact with the server on, so a restore that happens in the middle of a session is refused with `409 restore_epoch_changed` and read again before anything else is sent. The list has no MAC, so this protects the honest case only (§ 8.8).
+
 **Residual risk (L4), stated honestly:**
 - A rollback of the **newest writes since the last checkpoint** is not noticed.
 - A rollback of **the whole vault to an older, consistent checkpoint** is noticed only by devices that have seen a newer checkpoint.
@@ -744,6 +749,47 @@ checkpoint = { seq: S, digest, mac }
 - Changes visible on an open client within **5 seconds** via SSE (the maintainer's requirement).
 - No polling more often than every 5 minutes when SSE does not work.
 - Sync on focus and unlock.
+
+---
+
+### 8.8 Known limits of the first sync release *(clarified 2026-11-08)*
+
+These are written down on purpose. None of them loses a stored item silently. Where a limit can drop unsent changes, it says so and says what stops it.
+
+**Conflicts and deletions**
+- **"Keep both"** and uploading a hidden item again under a new id are not there yet (§ 8.5). Until then another device that holds the item at a higher revision refuses the copy with a warning.
+- **Checkpoint checks pause.** While every failing entry belongs to an item that the server hid and the device uploaded again under the same id, the device does not verify checkpoints and uploads none, and a banner says so. The pause ends when the item has moved past its old revision. An item that was uploaded again at revision 1 and is never edited keeps the pause until it is edited. Saving it once without a change, so that the revision rises, is not done yet.
+- **A tombstone that the server purged after 400 days** can make the checkpoint check fail, and so can a device's own deletion that was purged before the device read it back. The device then shows the warning that the server shows an older state than this device has seen. Sync goes on (the device still fetches and writes), but checkpoints are not uploaded while the warning stands, so rollback protection is weaker until it is fixed. Nothing is lost, and nobody should forget the server for it. The planned fix is that the server only purges tombstones at or below the stored checkpoint, and that clients leave such tombstones out of the check. It is needed before the data stops being disposable.
+- A conflict that was settled can still show, for display only, the server version from the `409` answer. A deletion that the user chose in a window of a few milliseconds while the vault re-checked an item can be dropped, and the item then stays live (nothing is lost). Closing a page at exactly the wrong moment can start one sync engine in a page that is leaving.
+
+**Rollback protection (§ 8.6)**
+- The residual risks of § 8.6 stay: the newest writes since the last checkpoint, an older consistent checkpoint for devices that have not seen a newer one, a fork, and withheld writes.
+- `top_seq` is not signed. A server that once claims a very high `seq` makes later honest answers look like a rollback until the user accepts an older state or forgets the server.
+- The sync memory is full at 50 000 item ids seen in all, including deleted ones that the server has purged. The sync then stops with an explanation, and the way out is "Forget this server".
+- Clearing site data resets the sync memory of that browser (§ 8.6, local memory).
+- When the same account id is pinned under two different server addresses in one browser, the two share one local cache. "Forget this server" then leaves the shared rows, outbox, trash and flags in place, because the other server still uses them. Pinning a second server for an account id that is already pinned should warn or refuse; that comes with the sign-in work that follows.
+
+**After a restore**
+- The frozen row list and `restore_seq` have no MAC, so accepting an older state protects the honest case only. A server that forges them can, after the user accepts, turn a conflict into an overwrite of another device's change made after the restore. The accepting device's own version is not lost, and the other device still holds its version until it accepts too. This is the same class as the residual risks of § 8.6.
+- When two devices accept the same restore, the second one gets a conflict for every item that was created or changed after the backup, even if both devices hold the same content, because each copy was sealed separately and cannot be compared without showing the secrets. No data is lost; the user picks "Keep theirs" or "Keep mine". The preview shows the number. A later fix is a binding call that compares two bodies inside the worker.
+- **A backup older than the last bump.** The bump raises the epoch by one from the value in the restored database, so restoring a backup taken before the previous bump gives an epoch that clients have already stored. The clients see the same epoch with a lower top `seq` and stop with the "looks like a rollback" notice, which offers "Try again" and "Forget this server". That fails safe, but "Forget" removes the unsent changes of that device once the user confirms (the forget page lists them first). The operator recovers by stopping the server and bumping again, so that the epoch is above the stored one (`docs/OPERATIONS.md`).
+- **A backup from before migration 0006** (every backup made before the `restore_seq` column existed) cannot be bumped before the server has migrated it. The operator starts the server once with its ports closed, stops it, bumps and starts it again (`docs/OPERATIONS.md`). While it runs in between, open tabs can show the rollback notice until the bump.
+- Re-applying the newest unlock methods after a restore needs the password change that comes later; for now the vault explains it and has its own refusal text. An unknown unlock method after a restore always keeps the text that says it can be an attack, even when the cause was a restore.
+
+**One tab per browser and account**
+- The sync engine runs in one tab per server and account in a browser. A second tab shows "the vault is open in another tab" with "Use here".
+- After "Use here" takes the lock, there is no fence for an old tab that is alive but not answering. It can still send writes for a short time; the server's checks on every write still apply.
+- A standby tab unlocks the account keys into its own worker even though it syncs nothing.
+- An edit that is not saved in the old tab is lost when the user presses "Use here". Locking or signing out while "Use here" is going on can leave no syncing tab until the page is reloaded. Standby behaviour across two accounts in one browser, which existed before this release, is not handled either.
+- The sync tests exercise handovers between tabs, not two engines writing at the very same time.
+
+**Server and operations**
+- Sessions that end by expiry, a changed `session_version` or a deactivated user close their event stream at the next heartbeat (at most 25 seconds), not at once. A sign-out and a replaced session close it at once. The session is checked again before every frame, so a stream never sends another byte for an invalid session.
+- The limit of 256 event streams is shared by all vaults. With one account it cannot be reached (at most 40); revisit it when more users can register.
+- An import that sends batches meets the 120 operations per minute of one device.
+- The calm notice about a failed checkpoint upload goes away when a later upload goes through. It does not tell a failure that keeps coming (an upload the server always refuses, for example when the entries are too large) from a passing one, so checkpoints could stay unstored while the notice comes and goes. Escalating after several failures in a row comes later.
+- A vault that keeps failing in the retention job turns the daily pass into one every ten minutes, each with a warning in the log. With one vault this is acceptable; backing off (for example doubling up to a day) comes later.
+- Outside this release: 10 000 items in the browser, one unlock page, clearing the clipboard, hiding revealed values; device tokens and DPoP; backup; a trusted proxy address on the default Docker bridge. The data on a test server stays disposable until backup exists.
 
 ---
 
@@ -818,7 +864,9 @@ This is the rule, even though the implementation is step B:
    7. An adversarial test suite in Playwright for both browsers: opacity on `html`, overlays, popover/top-layer abuse, `iframe sandbox`.
 4. **Site matching (F-22, E13):** **the default is the exact host.** The registrable domain (via PSL with private domains) is a per-item choice, or "also offer on related subdomains" with one click.
    - The fill step re-checks the current URL, not the URL from the suggestion.
-   - A stored `https://` item is **never** offered on an `http://` page (downgrade). Mixed-content frames and all insecure ancestors are rejected. Exception: `http://localhost` and loopback.
+   - A stored `https://` item is **never** offered on an `http://` page (downgrade), loopback included. Mixed-content frames and all insecure ancestors are rejected.
+   - A stored `http://` item is offered only on an `http://` page with the same host and port, whatever its match type: it is never widened to other hosts of the registrable domain. It is shown with an "Unencrypted connection" warning and needs one more click.
+   - Loopback (`http://localhost` and the loopback addresses) counts as secure: no warning and no extra click for a stored `http://` item there, and such a page does not make a frame or an ancestor insecure. This changes nothing else in the matching rules above.
    - Other ports count as a different origin.
 5. **Iframes (F-22):** the origin of the **frame** is taken from `sender.origin` for that frame. Frames with an opaque origin (sandbox without `allow-same-origin`, `about:blank`, `srcdoc`) are rejected. Fill only in frames where the origin matches the item **and** the frame is on the same site (*same-site*) as the top. Never in a cross-site frame without an explicit "allow this embedding" setting per item.
 6. **Clipboard:** reading the clipboard to compare requires permission and, in MV3, an offscreen document (`CLIPBOARD`) and a user action. If reading is not possible, the clipboard is cleared after 30 seconds only if the copy was Ferret's last action. Browser APIs cannot set the platform's "sensitive" flag (Windows history, Android `EXTRA_IS_SENSITIVE`, iOS `UIPasteboard`); native apps set them. Copying is a weaker path than autofill, and autofill is offered first.

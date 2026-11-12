@@ -21,3 +21,6 @@ node_modules/
 
 # Local deploy settings (setup token, proxy addresses); never committed
 .env
+
+# Screenshots and output of the end-to-end gate (scripts/lanbox-ferret-e2e-gate.sh m2)
+/test-results/

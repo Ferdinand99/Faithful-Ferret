@@ -1,4 +1,4 @@
-// The browser's local storage for the vault: one IndexedDB database with five
+// The browser's local storage for the vault: one IndexedDB database with seven
 // object stores.
 //
 //   pinned          the non-secret record of what this device has seen of an account
@@ -6,10 +6,18 @@
 //   outbox          writes that are waiting for the server, with their exact bytes
 //   settings        small values, such as this browser's device id
 //   device_secrets  the sealing key and the sealed secret key code of a device
+//   sync_state      the non-secret sync memory of a server and account (what the
+//                   device has seen, so a server cannot roll it back unnoticed)
+//   trash           the last live row of an item that a verified tombstone deleted,
+//                   kept as ciphertext for a while so the user can restore it
 //
 // Nothing here holds a master password, a recovery key or a vault key, and the
 // decrypted item index never comes here: it lives in memory and is dropped on
-// lock. Clearing the rows leaves the other stores alone.
+// lock. Clearing the rows (and the trash, which is a copy of rows) leaves the
+// other stores alone.
+//
+// The database is at version 2. Version 1 had the first five stores; the upgrade
+// from it adds the last two and touches no existing record.
 
 /** An error of the local store. `code` is a word for the caller to switch on. */
 export class StoreError extends Error {
@@ -25,7 +33,10 @@ export class StoreError extends Error {
   }
 }
 
-export const STORES = Object.freeze(["pinned", "rows", "outbox", "settings", "device_secrets"]);
+export const STORES = Object.freeze(["pinned", "rows", "outbox", "settings", "device_secrets", "sync_state", "trash"]);
+
+/** The version of the database that this code opens (and creates). */
+export const DB_VERSION = 2;
 
 /**
  * @typedef {object} Store
@@ -46,22 +57,31 @@ export function openStore(factory = indexedDB, name = "ferret", keyRange = globa
   return new Promise((resolve, reject) => {
     let request;
     try {
-      request = factory.open(name, 1);
+      request = factory.open(name, DB_VERSION);
     } catch (error) {
       reject(error);
       return;
     }
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
-      // Version 1.
-      const pinned = db.createObjectStore("pinned", { keyPath: ["serverUrl", "accountId"] });
-      pinned.createIndex("by_email", ["serverUrl", "email"]);
-      db.createObjectStore("rows");
-      const outbox = db.createObjectStore("outbox", { autoIncrement: true });
-      outbox.createIndex("by_scope", ["accountId", "vaultId", "vkEpoch"]);
-      outbox.createIndex("by_idem", ["accountId", "vaultId", "vkEpoch", "idem"], { unique: true });
-      db.createObjectStore("settings");
-      db.createObjectStore("device_secrets");
+      // Each step runs when the database is older than the version it makes, and
+      // creates stores only: no existing record is read, moved or changed.
+      if (event.oldVersion < 1) {
+        // Version 1.
+        const pinned = db.createObjectStore("pinned", { keyPath: ["serverUrl", "accountId"] });
+        pinned.createIndex("by_email", ["serverUrl", "email"]);
+        db.createObjectStore("rows");
+        const outbox = db.createObjectStore("outbox", { autoIncrement: true });
+        outbox.createIndex("by_scope", ["accountId", "vaultId", "vkEpoch"]);
+        outbox.createIndex("by_idem", ["accountId", "vaultId", "vkEpoch", "idem"], { unique: true });
+        db.createObjectStore("settings");
+        db.createObjectStore("device_secrets");
+      }
+      if (event.oldVersion < 2) {
+        // Version 2.
+        db.createObjectStore("sync_state", { keyPath: ["serverUrl", "accountId"] });
+        db.createObjectStore("trash", { keyPath: ["accountId", "vaultId", "vkEpoch", "itemId"] });
+      }
     };
     request.onsuccess = () => {
       const db = request.result;

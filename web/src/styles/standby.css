@@ -1,0 +1,33 @@
+/* The notice of a tab that is not the one that holds the vault. The place for the progress and the
+   error has a fixed height (two lines at 360 px), so the card keeps its size when either of them
+   comes. The buttons are as wide as the card, one above the other. */
+.vault-ui.standby {
+  max-width: 26rem;
+  margin: var(--sp-8) auto;
+}
+
+.standby > h1 {
+  overflow-wrap: anywhere;
+}
+
+.standby .standby-message {
+  box-sizing: border-box;
+  min-block-size: 3.25em;
+  margin-block: var(--sp-3);
+}
+
+.standby .standby-message > p {
+  margin: 0;
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.standby .actions {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+/* Nothing to say yet: no empty callout. The place keeps its height through the min-block-size above. */
+.standby .standby-message > p:empty {
+  display: none;
+}

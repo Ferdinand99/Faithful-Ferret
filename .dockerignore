@@ -8,6 +8,7 @@
 **/target
 **/node_modules
 web/dist
+web/test/e2e-stack/evil
 site
 assets
 docs

@@ -10,7 +10,7 @@ import { itemView } from "../../src/views/item.mjs";
 import { shellView } from "../../src/views/shell.mjs";
 import { unlockScreen } from "../../src/views/unlock.mjs";
 import { freshStore, scope as syncScope } from "./idbHelpers.mjs";
-import { counterRand, createFakeApi, createFakeClient, createFakeStore, FakeTimers, Model, until } from "./syncHelpers.mjs";
+import { counterRand, createFakeApi, createFakeClient, createFakeStore, fakeMemory, FakeTimers, Model, until } from "./syncHelpers.mjs";
 import { click, fakeClient, fakeClock, fakeEngine, fakePage, fakeSession, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
 
 /** An idle lock over a fake clock, a fake page and a counting session. */
@@ -194,7 +194,7 @@ test("lock_drops_the_decrypted_item_summary_index_and_open_handles", async () =>
   const client = createFakeClient();
   const store = await createFakeStore({ db: await freshStore() });
   const engine = createSyncEngine({
-    api: createFakeApi(model), client: { vault: client.vault }, store, scope: syncScope(), timers: new FakeTimers(), rand: counterRand(3),
+    api: createFakeApi(model), client: { vault: client.vault }, store, scope: syncScope(), timers: new FakeTimers(), rand: counterRand(3), memory: fakeMemory({ store, client }),
   });
   await engine.start();
   const id = await engine.create({ item_type: "login", name: "Bank" });

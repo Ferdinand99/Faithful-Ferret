@@ -71,6 +71,36 @@ const checkpoint = () => ({
   entries: entries.toString("base64url"),
 });
 const head = () => ({ seq: 7, digest: b64("head digest", 32), mac: b64("head mac", 32) });
+
+/**
+ * A checkpoint as it is uploaded after a sync: three entries, sorted by item
+ * id, each the item id (16), the revision as 8 bytes big endian and the hash
+ * of the envelope (32).
+ */
+const checkpointEntries = () => {
+  const rows = [
+    ["entry one", 2],
+    ["entry two", 1],
+    ["entry three", 5],
+  ].map(([label, rev]) => ({ item: bytes(label, 16), rev, hash: bytes(`${label} hash`, 32) }));
+  rows.sort((x, y) => Buffer.compare(x.item, y.item));
+  return Buffer.concat(
+    rows.map(({ item, rev, hash }) => {
+      const rev8 = Buffer.alloc(8);
+      rev8.writeBigUInt64BE(BigInt(rev));
+      return Buffer.concat([item, rev8, hash]);
+    }),
+  );
+};
+const checkpointPut = () => {
+  const all = checkpointEntries();
+  return {
+    seq: 7,
+    digest: createHash("sha256").update(all).digest("base64url"),
+    mac: b64("checkpoint put mac", 32),
+    entries: all.toString("base64url"),
+  };
+};
 const liveChange = () => ({
   id: id("item one"),
   rev: 2,
@@ -85,6 +115,44 @@ const deletedChange = () => ({
   seq: 6,
   deleted: true,
   tomb: b64("item two tomb", 40),
+});
+
+/**
+ * The frozen rows of a restore, in item id order: a live item (with the
+ * SHA-256 of its envelope) and a tombstone (no hash).
+ */
+const frozenRows = () =>
+  [
+    { id: id("item one"), rev: 2, seq: 3, hash: b64("item one hash", 32) },
+    { id: id("item two"), rev: 3, seq: 4 },
+  ].sort((x, y) => (x.id < y.id ? -1 : 1));
+
+/** Changes in item id order, as the listing writes them. */
+const listed = () => [liveChange(), deletedChange()].sort((x, y) => (x.id < y.id ? -1 : 1));
+
+/** The operations of a batch: a live row, a row that asks to bring an item back, a tombstone. */
+const batchLive = () => ({
+  id: id("item one"),
+  base_rev: 1,
+  blob: envelope("item one", 1, 200),
+  tag: b64("item one tag", 32),
+  idem: id("idem one"),
+  restore_epoch: 2,
+});
+const batchResurrect = () => ({
+  id: id("item three"),
+  base_rev: 3,
+  blob: envelope("item three", 1, 180),
+  tag: b64("item three tag", 32),
+  idem: id("idem three"),
+  resurrect: true,
+});
+const batchDeleted = () => ({
+  id: id("item two"),
+  base_rev: 2,
+  deleted: true,
+  tomb: b64("item two tomb", 40),
+  idem: id("idem two"),
 });
 
 /** Every fixture: file name -> object. The type is the name before the first dot. */
@@ -210,7 +278,8 @@ export function fixtures() {
       changes: [liveChange(), deletedChange()],
       latest_seq: 7,
       vk_epoch: 1,
-      restore_epoch: 0,
+      restore_epoch: 2,
+      restore_seq: 4,
       checkpoint: head(),
       has_more: true,
     },
@@ -219,6 +288,7 @@ export function fixtures() {
       latest_seq: 0,
       vk_epoch: 1,
       restore_epoch: 0,
+      restore_seq: 0,
       has_more: false,
     },
     "change.live.json": liveChange(),
@@ -235,12 +305,22 @@ export function fixtures() {
       tomb: b64("item two tomb", 40),
       idem: id("idem two"),
     },
+    // A live row that asks to bring a deleted item back, written against the
+    // revision of the tombstone ("put_item_req.tombstone.json" is at rev 2).
     "put_item_req.resurrect.json": {
       base_rev: 2,
-      deleted: true,
-      tomb: b64("item two tomb", 40),
+      blob: envelope("item two", 1, 200),
+      tag: b64("item two tag", 32),
       idem: id("idem three"),
       resurrect: true,
+    },
+    // A live row written on the condition that the vault is at restore epoch 2.
+    "put_item_req.restore_epoch.json": {
+      base_rev: 1,
+      blob: envelope("item one", 1, 200),
+      tag: b64("item one tag", 32),
+      idem: id("idem one"),
+      restore_epoch: 2,
     },
     "put_item_res.json": { rev: 2, seq: 5, replayed: false },
     "put_item_res.replayed.json": { rev: 2, seq: 5, replayed: true },
@@ -251,7 +331,77 @@ export function fixtures() {
       deleted: false,
     },
     "conflict_res.deleted.json": { current_rev: 5, deleted: true },
+    // A write against a row that is not there: revision 0, no blob, no tag.
+    "conflict_res.absent.json": { current_rev: 0, deleted: false },
     "error_res.json": { error: "unauthorized" },
+    "batch_req.json": { ops: [batchLive(), batchResurrect(), batchDeleted()] },
+    "batch_res.json": {
+      results: [
+        { status: 200, rev: 2, seq: 5, replayed: false },
+        { status: 200, rev: 3, seq: 6, replayed: true },
+        {
+          status: 409,
+          current_rev: 4,
+          blob: envelope("item one", 1, 200),
+          tag: b64("item one tag", 32),
+          deleted: false,
+        },
+        { status: 409, current_rev: 5, deleted: true },
+        { status: 422, error: "idem_reuse" },
+        { status: 400, error: "bad_request" },
+      ],
+    },
+    "checkpoint_put_req.json": checkpointPut(),
+    "checkpoint_put_req.restore_epoch.json": { ...checkpointPut(), restore_epoch: 2 },
+    // The answer to a write that names another restore epoch than the vault's.
+    "restore_epoch_changed_res.json": { error: "restore_epoch_changed", restore_epoch: 3 },
+    // An operation of a batch that named another restore epoch, in its own place.
+    "batch_res.restore_epoch_changed.json": {
+      results: [
+        { status: 200, rev: 2, seq: 5, replayed: false },
+        { status: 409, error: "restore_epoch_changed", restore_epoch: 3 },
+      ],
+    },
+    "restore_rows_res.json": {
+      restore_epoch: 2,
+      restore_seq: 4,
+      rows: frozenRows(),
+      next_after: frozenRows()[1].id,
+      has_more: true,
+    },
+    "restore_rows_res.last.json": {
+      restore_epoch: 2,
+      restore_seq: 4,
+      rows: [frozenRows()[1]],
+      has_more: false,
+    },
+    // A vault that was never restored.
+    "restore_rows_res.empty.json": {
+      restore_epoch: 0,
+      restore_seq: 0,
+      rows: [],
+      has_more: false,
+    },
+    "checkpoint_put_res.json": { seq: 7 },
+    "checkpoint_stale_res.json": { error: "checkpoint_stale", stored_seq: 9 },
+    "items_res.json": {
+      items: listed(),
+      as_of_seq: 7,
+      vk_epoch: 1,
+      restore_epoch: 2,
+      restore_seq: 4,
+      next_after: listed()[1].id,
+      has_more: true,
+    },
+    "items_res.last.json": {
+      items: [deletedChange()],
+      as_of_seq: 7,
+      vk_epoch: 1,
+      restore_epoch: 0,
+      restore_seq: 0,
+      has_more: false,
+    },
+    "sync_event.json": { seq: 7 },
   };
 }
 
@@ -287,6 +437,10 @@ export const ERROR_CODES = [
   "bad_request",
   "internal",
   "gone",
+  "busy",
+  "checkpoint_stale",
+  "checkpoint_invalid",
+  "restore_epoch_changed",
 ];
 
 /**
@@ -294,7 +448,7 @@ export const ERROR_CODES = [
  * ERROR_CODES). The server checks it against its status table, and the web
  * vault against what its client does with each status.
  */
-const STATUS_OF = {
+export const STATUS_OF = {
   unauthorized: 401,
   denied: 401,
   forbidden: 403,
@@ -325,6 +479,10 @@ const STATUS_OF = {
   bad_request: 400,
   internal: 500,
   gone: 410,
+  busy: 503,
+  checkpoint_stale: 409,
+  checkpoint_invalid: 422,
+  restore_epoch_changed: 409,
 };
 
 /**
@@ -512,6 +670,10 @@ export function invalidCases() {
   parse("login_start_req without ke1", "login_start_req", with_("login_start_req.json", { ke1: undefined }), "ke1 is required", "bad_request");
   parse("session_res without email", "session_res", with_("session_res.json", { email: undefined }), "email is required");
   parse("changes_res without has_more", "changes_res", with_("changes_res.json", { has_more: undefined }), "has_more is required");
+  parse("changes_res without restore_seq", "changes_res", with_("changes_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("changes_res restore_seq 2^53", "changes_res", with_("changes_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("changes_res restore_seq negative", "changes_res", with_("changes_res.json", { restore_seq: -1 }), "an integer is not negative");
+  parse("changes_res restore_seq is a string", "changes_res", with_("changes_res.json", { restore_seq: "4" }), "restore_seq is a number");
   parse("conflict_res without deleted", "conflict_res", with_("conflict_res.live.json", { deleted: undefined }), "deleted is required");
 
   // Wrong types.
@@ -583,7 +745,7 @@ export function invalidCases() {
   parse("next 513 characters", "handoff_req", with_("handoff_req.json", { next: "/".repeat(513) }), "next has 1 to 512 characters");
   parse("next is a number", "handoff_req", with_("handoff_req.json", { next: 5 }), "next is a string");
 
-  // A put request has exactly one form, and asks for no resurrection.
+  // A put request has exactly one form, and only a live row asks to bring an item back.
   const blob = b64("form blob", 20);
   const tag = b64("form tag", 32);
   const tomb = b64("form tomb", 40);
@@ -606,8 +768,7 @@ export function invalidCases() {
   ]) {
     validate(`put form: ${name}`, "put_item_req", put(fields), "a put request is a live row (blob, tag) or a tombstone (deleted true, tomb), never both");
   }
-  validate("put resurrect true on a live row", "put_item_req", put({ blob, tag, resurrect: true }), "resurrect is not supported yet");
-  validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "resurrect is not supported yet");
+  validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "only a live row asks to bring an item back");
 
   // A hand-over code is 43 characters of strict base64url that decode to 32 bytes.
   const code = all["redeem_req.json"].code;
@@ -623,6 +784,254 @@ export function invalidCases() {
   ]) {
     validate(`handoff code ${name}`, "redeem_req", with_("redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
   }
+
+  // A batch: the parts of an operation, then the number and the form of the
+  // operations. Every operation is read like a put request, with the item id in
+  // the body.
+  const batchWith = (op, fields) => {
+    const value = clone("batch_req.json");
+    const next = { ...value.ops[op] };
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete next[key];
+      else next[key] = v;
+    }
+    value.ops[op] = next;
+    return text(value);
+  };
+  parse("batch ops is not a list", "batch_req", text({ ops: {} }), "ops is a list");
+  parse("batch ops is null", "batch_req", text({ ops: null }), "ops is a list");
+  parse("batch without ops", "batch_req", "{}", "ops is required");
+  parse("batch ops holds a string", "batch_req", text({ ops: ["x"] }), "an operation is an object");
+  parse("batch op without id", "batch_req", batchWith(0, { id: undefined }), "id is required");
+  parse("batch op without idem", "batch_req", batchWith(0, { idem: undefined }), "idem is required");
+  parse("batch op without base_rev", "batch_req", batchWith(0, { base_rev: undefined }), "base_rev is required");
+  parse("batch op id upper case", "batch_req", batchWith(0, { id: id("item one").toUpperCase() }), "an id is lower case");
+  parse("batch op id short", "batch_req", batchWith(0, { id: id("item one").slice(1) }), "an id is 32 characters");
+  parse("batch op idem upper case", "batch_req", batchWith(0, { idem: id("idem one").toUpperCase() }), "an id is lower case");
+  parse("batch op blob with padding", "batch_req", batchWith(0, { blob: "AA==" }), "not strict base64url");
+  parse("batch op tag 31 bytes", "batch_req", batchWith(0, { tag: b64("short tag", 31) }), "a tag is 32 bytes");
+  parse("batch op base_rev 2^53", "batch_req", batchWith(0, { base_rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("batch op base_rev negative", "batch_req", batchWith(0, { base_rev: -1 }), "an integer is not negative");
+  parse("batch op resurrect is a string", "batch_req", batchWith(1, { resurrect: "true" }), "resurrect is a boolean");
+  parse("batch op deleted is a string", "batch_req", batchWith(2, { deleted: "true" }), "deleted is a boolean");
+  for (const [name, n] of [["one short", 39], ["one long", 41], ["empty", 0]]) {
+    parse(`batch op tomb ${name}`, "batch_req", batchWith(2, { tomb: b64(`batch tomb ${name}`, n) }), "tomb is 40 bytes", "tombstone_invalid");
+  }
+  parse(
+    "repeated base_rev in a batch op",
+    "batch_req",
+    text(all["batch_req.json"]).replace('"base_rev":1', '"base_rev":1,"base_rev":1'),
+    "a repeated field is refused inside a part",
+  );
+  const batchOf = (n) => text({ ops: Array.from({ length: n }, (_, i) => ({ ...clone("batch_req.json").ops[2], id: id(`bulk ${i}`), idem: id(`bulk idem ${i}`) })) });
+  validate("batch with no operations", "batch_req", text({ ops: [] }), "a batch has 1 to 100 operations");
+  validate("batch with 101 operations", "batch_req", batchOf(101), "a batch has 1 to 100 operations");
+  for (const [name, fields] of [
+    ["blob, tag and tomb", { blob, tag, tomb }],
+    ["blob, tag, deleted true and tomb", { blob, tag, deleted: true, tomb }],
+    ["nothing", {}],
+    ["deleted true only", { deleted: true }],
+    ["deleted false with tomb", { deleted: false, tomb }],
+    ["tomb without deleted", { tomb }],
+    ["blob without tag", { blob }],
+    ["tag without blob", { tag }],
+    ["deleted true with blob and tag", { deleted: true, blob, tag }],
+    ["resurrect true on a tombstone", { deleted: true, tomb, resurrect: true }],
+  ]) {
+    const op = { id: id("form item"), base_rev: 1, ...fields, idem };
+    validate(`batch op form: ${name}`, "batch_req", text({ ops: [batchLive(), op] }), "an operation is a live row (blob, tag) or a tombstone (deleted true, tomb), never both, and only a live row asks to bring an item back");
+  }
+
+  // The results of a batch: one form each, with the status that goes with it.
+  const results = (...list) => text({ results: list });
+  const stored = { status: 200, rev: 2, seq: 5, replayed: false };
+  const conflictLive = { status: 409, current_rev: 4, blob: envelope("item one", 1, 200), tag: b64("item one tag", 32), deleted: false };
+  const conflictDeleted = { status: 409, current_rev: 5, deleted: true };
+  const refused = { status: 422, error: "idem_reuse" };
+  parse("batch results is not a list", "batch_res", text({ results: {} }), "results is a list");
+  parse("batch without results", "batch_res", "{}", "results is required");
+  parse("batch result is a string", "batch_res", text({ results: ["x"] }), "a result is an object");
+  parse("batch result without status", "batch_res", results({ rev: 2, seq: 5, replayed: false }), "status is required");
+  parse("batch result status is a string", "batch_res", results({ ...stored, status: "200" }), "status is a number");
+  parse("batch result status 65536", "batch_res", results({ ...stored, status: 65536 }), "status fits in 16 bits");
+  parse("batch result rev 2^53", "batch_res", results({ ...stored, rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("batch result seq negative", "batch_res", results({ ...stored, seq: -1 }), "an integer is not negative");
+  parse("batch result replayed is a number", "batch_res", results({ ...stored, replayed: 0 }), "replayed is a boolean");
+  parse("batch result blob with padding", "batch_res", results({ ...conflictLive, blob: "AA==" }), "not strict base64url");
+  parse("batch result tag 31 bytes", "batch_res", results({ ...conflictLive, tag: b64("short tag", 31) }), "a tag is 32 bytes");
+  parse("batch result deleted is a string", "batch_res", results({ ...conflictDeleted, deleted: "true" }), "deleted is a boolean");
+  parse("batch result error is a number", "batch_res", results({ ...refused, error: 5 }), "error is a string");
+  parse("batch result unknown field", "batch_res", results({ ...stored, x: 1 }), "an unknown field is refused inside a part");
+  for (const [name, result] of [
+    ["status only", { status: 200 }],
+    ["stored without seq", { status: 200, rev: 2, replayed: false }],
+    ["stored without replayed", { status: 200, rev: 2, seq: 5 }],
+    ["stored with status 409", { ...stored, status: 409 }],
+    ["stored with status 201", { ...stored, status: 201 }],
+    ["stored with an error", { ...stored, error: "bad_request" }],
+    ["stored with current_rev", { ...stored, current_rev: 2 }],
+    ["conflict with status 200", { ...conflictLive, status: 200 }],
+    ["conflict with status 422", { ...conflictLive, status: 422 }],
+    ["conflict live without tag", { status: 409, current_rev: 4, blob: conflictLive.blob, deleted: false }],
+    ["conflict live without blob", { status: 409, current_rev: 4, tag: conflictLive.tag, deleted: false }],
+    ["conflict live with neither", { status: 409, current_rev: 4, deleted: false }],
+    ["conflict absent with a blob", { status: 409, current_rev: 0, blob: conflictLive.blob, deleted: false }],
+    ["conflict absent with a tag", { status: 409, current_rev: 0, tag: conflictLive.tag, deleted: false }],
+    ["conflict absent with blob and tag", { ...conflictLive, current_rev: 0 }],
+    ["conflict deleted at current_rev 0", { status: 409, current_rev: 0, deleted: true }],
+    ["conflict deleted with blob and tag", { ...conflictLive, deleted: true }],
+    ["conflict deleted with a tag", { status: 409, current_rev: 5, tag: conflictLive.tag, deleted: true }],
+    ["conflict without deleted", { status: 409, current_rev: 4, blob: conflictLive.blob, tag: conflictLive.tag }],
+    ["conflict without current_rev", { status: 409, deleted: true }],
+    ["conflict with rev", { ...conflictDeleted, rev: 2 }],
+    ["conflict with an error", { ...conflictDeleted, error: "conflict" }],
+    ["refused with status 200", { ...refused, status: 200 }],
+    ["refused with status 399", { ...refused, status: 399 }],
+    ["refused with status 600", { ...refused, status: 600 }],
+    ["refused with an empty error", { ...refused, error: "" }],
+    ["refused with rev", { ...refused, rev: 2 }],
+    ["refused with a blob", { ...refused, blob: conflictLive.blob }],
+    ["refused with deleted", { ...refused, deleted: false }],
+    ["stored with rev 0", { ...stored, rev: 0 }],
+    ["refused with the status of another code", { status: 400, error: "idem_reuse" }],
+    ["refused with 422 for a 400 code", { status: 422, error: "bad_request" }],
+    ["refused with an unknown code", { status: 400, error: "not_a_code" }],
+    ["refused with an unknown code and status 500", { status: 500, error: "not_a_code" }],
+    ["refused with status 409 and the code conflict", { status: 409, error: "conflict" }],
+    ["refused with status 409 and the code checkpoint_stale", { status: 409, error: "checkpoint_stale" }],
+    ["refused with status 409 and the code registration_closed", { status: 409, error: "registration_closed" }],
+  ]) {
+    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result is stored (200, rev, seq, replayed), a conflict (409, current_rev, deleted, and blob and tag for a live row) or refused (an error code with the status of that code, never 409), and carries no field of another form");
+  }
+  // The answer of a single write: the same rule for the row it describes.
+  const conflictRes = (fields) => text({ ...fields });
+  const liveRow = { blob: envelope("item one", 1, 200), tag: b64("item one tag", 32) };
+  const conflictWhy = "a conflict answer is a live row (blob and tag, current_rev at least 1), a deleted one (current_rev at least 1) or an absent one (current_rev 0, not deleted): neither blob nor tag";
+  validate("conflict_res: current_rev 0 with blob and tag", "conflict_res", conflictRes({ current_rev: 0, ...liveRow, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 0 with a blob", "conflict_res", conflictRes({ current_rev: 0, blob: liveRow.blob, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 4 live without blob", "conflict_res", conflictRes({ current_rev: 4, tag: liveRow.tag, deleted: false }), conflictWhy);
+  validate("conflict_res: current_rev 4 live without blob and tag", "conflict_res", conflictRes({ current_rev: 4, deleted: false }), conflictWhy);
+  validate("conflict_res: deleted at current_rev 0", "conflict_res", conflictRes({ current_rev: 0, deleted: true }), conflictWhy);
+  validate("conflict_res: deleted with blob and tag", "conflict_res", conflictRes({ current_rev: 5, ...liveRow, deleted: true }), conflictWhy);
+  const manyResults = (n) => text({ results: Array.from({ length: n }, (_, i) => ({ ...stored, rev: i + 1 })) });
+  validate("batch results: none", "batch_res", text({ results: [] }), "a batch answer has 1 to 100 results");
+  validate("batch results: 101", "batch_res", manyResults(101), "a batch answer has 1 to 100 results");
+
+  // The condition on the restore epoch: the same number rules in the three requests.
+  for (const [what, shape, file] of [
+    ["put_item_req", "put_item_req", "put_item_req.restore_epoch.json"],
+    ["batch_req operation", "batch_req", "batch_req.json"],
+    ["checkpoint_put_req", "checkpoint_put_req", "checkpoint_put_req.restore_epoch.json"],
+  ]) {
+    const withEpoch = (literal) => {
+      const raw = text(all[file]);
+      const marked = raw.replace('"restore_epoch":2', `"restore_epoch":${literal}`);
+      if (marked === raw) throw new Error(`no restore_epoch in ${what}`);
+      return marked;
+    };
+    for (const [name, literal] of [
+      ["2^53", "9007199254740992"],
+      ["negative", "-1"],
+      ["a fraction", "1.5"],
+      ["a string", '"2"'],
+      ["true", "true"],
+      ["an array", "[2]"],
+    ]) {
+      parse(`${what} restore_epoch ${name}`, shape, withEpoch(literal), "restore_epoch is a whole number from 0 to 2^53 - 1");
+    }
+  }
+
+  // A checkpoint upload, the answers, the listing and an event.
+  parse("checkpoint_put_req digest 31 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { digest: b64("short digest", 31) }), "a digest is 32 bytes");
+  parse("checkpoint_put_req mac 33 bytes", "checkpoint_put_req", with_("checkpoint_put_req.json", { mac: b64("long mac", 33) }), "a MAC is 32 bytes");
+  parse("checkpoint_put_req entries with padding", "checkpoint_put_req", with_("checkpoint_put_req.json", { entries: "AA==" }), "not strict base64url");
+  parse("checkpoint_put_req seq 2^53", "checkpoint_put_req", with_("checkpoint_put_req.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("checkpoint_put_req without entries", "checkpoint_put_req", with_("checkpoint_put_req.json", { entries: undefined }), "entries is required");
+  parse("checkpoint_put_req without seq", "checkpoint_put_req", with_("checkpoint_put_req.json", { seq: undefined }), "seq is required");
+  parse("checkpoint_put_res seq negative", "checkpoint_put_res", with_("checkpoint_put_res.json", { seq: -1 }), "an integer is not negative");
+  parse("checkpoint_put_res without seq", "checkpoint_put_res", "{}", "seq is required");
+  parse("checkpoint_stale_res with another code", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { error: "conflict" }), "the code is checkpoint_stale");
+  parse("checkpoint_stale_res with an empty code", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { error: "" }), "the code is checkpoint_stale");
+  parse("checkpoint_stale_res without stored_seq", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { stored_seq: undefined }), "stored_seq is required");
+  parse("checkpoint_stale_res stored_seq 1.5", "checkpoint_stale_res", with_("checkpoint_stale_res.json", { stored_seq: 1.5 }), "an integer is whole");
+  parse("items_res next_after upper case", "items_res", with_("items_res.json", { next_after: listed()[1].id.toUpperCase() }), "an id is lower case");
+  parse("items_res next_after short", "items_res", with_("items_res.json", { next_after: listed()[1].id.slice(1) }), "an id is 32 characters");
+  parse("items_res next_after is a number", "items_res", with_("items_res.json", { next_after: 5 }), "an id is a string");
+  parse("items_res without as_of_seq", "items_res", with_("items_res.json", { as_of_seq: undefined }), "as_of_seq is required");
+  parse("items_res without restore_epoch", "items_res", with_("items_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("items_res without restore_seq", "items_res", with_("items_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("items_res restore_seq 2^53", "items_res", with_("items_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("items_res restore_seq 1.5", "items_res", with_("items_res.json", { restore_seq: 1.5 }), "an integer is whole");
+  parse("items_res without has_more", "items_res", with_("items_res.json", { has_more: undefined }), "has_more is required");
+  parse("items_res has_more is a string", "items_res", with_("items_res.json", { has_more: "true" }), "has_more is a boolean");
+  validate("items_res: more rows without next_after", "items_res", with_("items_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
+  validate("items_res: the last page with next_after", "items_res", with_("items_res.last.json", { next_after: listed()[1].id }), "next_after is there exactly when has_more is true");
+  parse("items_res items holds a string", "items_res", with_("items_res.json", { items: ["x"] }), "an item is an object");
+  parse("items_res as_of_seq 2^53", "items_res", with_("items_res.json", { as_of_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  nested("items_res: unknown field in an item", "items_res", "items_res.json", ["items", 0], "an unknown field is refused inside a part");
+  nested("batch_req: unknown field in an operation", "batch_req", "batch_req.json", ["ops", 0], "an unknown field is refused inside a part");
+  // The answer to a write that names another restore epoch.
+  parse("restore_epoch_changed_res with another code", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { error: "conflict" }), "the code is restore_epoch_changed");
+  parse("restore_epoch_changed_res with an empty code", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { error: "" }), "the code is restore_epoch_changed");
+  parse("restore_epoch_changed_res without restore_epoch", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("restore_epoch_changed_res restore_epoch 2^53", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_epoch_changed_res restore_epoch negative", "restore_epoch_changed_res", with_("restore_epoch_changed_res.json", { restore_epoch: -1 }), "an integer is not negative");
+  // A batch result that names the epoch has its own form.
+  const epochResult = { status: 409, error: "restore_epoch_changed", restore_epoch: 3 };
+  for (const [name, result] of [
+    ["restore_epoch_changed with status 422", { ...epochResult, status: 422 }],
+    ["restore_epoch_changed with status 200", { ...epochResult, status: 200 }],
+    ["restore_epoch_changed without restore_epoch", { status: 409, error: "restore_epoch_changed" }],
+    ["restore_epoch_changed with rev", { ...epochResult, rev: 2 }],
+    ["restore_epoch_changed with current_rev", { ...epochResult, current_rev: 2 }],
+    ["restore_epoch_changed with deleted", { ...epochResult, deleted: true }],
+    ["restore_epoch on a refusal", { status: 422, error: "idem_reuse", restore_epoch: 3 }],
+    ["restore_epoch on a stored result", { ...stored, restore_epoch: 3 }],
+    ["restore_epoch on a conflict", { ...conflictDeleted, restore_epoch: 3 }],
+    ["restore_epoch alone", { status: 409, restore_epoch: 3 }],
+  ]) {
+    validate(`batch result: ${name}`, "batch_res", results(stored, result), "a result that names the restore epoch has status 409, the code restore_epoch_changed and the epoch, and no field of another form");
+  }
+  parse("batch result restore_epoch 2^53", "batch_res", results({ ...epochResult, restore_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+
+  // The frozen rows of a restore.
+  parse("restore_rows_res without restore_epoch", "restore_rows_res", with_("restore_rows_res.json", { restore_epoch: undefined }), "restore_epoch is required");
+  parse("restore_rows_res without restore_seq", "restore_rows_res", with_("restore_rows_res.json", { restore_seq: undefined }), "restore_seq is required");
+  parse("restore_rows_res without rows", "restore_rows_res", with_("restore_rows_res.json", { rows: undefined }), "rows is required");
+  parse("restore_rows_res without has_more", "restore_rows_res", with_("restore_rows_res.json", { has_more: undefined }), "has_more is required");
+  parse("restore_rows_res has_more is a string", "restore_rows_res", with_("restore_rows_res.json", { has_more: "true" }), "has_more is a boolean");
+  parse("restore_rows_res rows is an object", "restore_rows_res", with_("restore_rows_res.json", { rows: {} }), "rows is a list");
+  parse("restore_rows_res rows holds a string", "restore_rows_res", with_("restore_rows_res.json", { rows: ["x"] }), "a row is an object");
+  parse("restore_rows_res restore_seq 2^53", "restore_rows_res", with_("restore_rows_res.json", { restore_seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_rows_res next_after upper case", "restore_rows_res", with_("restore_rows_res.json", { next_after: frozenRows()[1].id.toUpperCase() }), "an id is lower case");
+  parse("restore_rows_res next_after short", "restore_rows_res", with_("restore_rows_res.json", { next_after: frozenRows()[1].id.slice(1) }), "an id is 32 characters");
+  validate("restore_rows_res: more rows without next_after", "restore_rows_res", with_("restore_rows_res.json", { next_after: undefined }), "next_after is there exactly when has_more is true");
+  validate("restore_rows_res: the last page with next_after", "restore_rows_res", with_("restore_rows_res.last.json", { next_after: frozenRows()[1].id }), "next_after is there exactly when has_more is true");
+  const rowsWith = (index, fields) => {
+    const value = clone("restore_rows_res.json");
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete value.rows[index][key];
+      else value.rows[index][key] = v;
+    }
+    return text(value);
+  };
+  const live = frozenRows().findIndex((row) => row.hash !== undefined);
+  parse("restore_rows_res row hash 31 bytes", "restore_rows_res", rowsWith(live, { hash: b64("short hash", 31) }), "a hash is 32 bytes");
+  parse("restore_rows_res row hash 33 bytes", "restore_rows_res", rowsWith(live, { hash: b64("long hash", 33) }), "a hash is 32 bytes");
+  parse("restore_rows_res row hash with padding", "restore_rows_res", rowsWith(live, { hash: `${b64("hash", 32)}=` }), "not strict base64url");
+  parse("restore_rows_res row id upper case", "restore_rows_res", rowsWith(0, { id: frozenRows()[0].id.toUpperCase() }), "an id is lower case");
+  parse("restore_rows_res row without id", "restore_rows_res", rowsWith(0, { id: undefined }), "id is required");
+  parse("restore_rows_res row without rev", "restore_rows_res", rowsWith(0, { rev: undefined }), "rev is required");
+  parse("restore_rows_res row without seq", "restore_rows_res", rowsWith(0, { seq: undefined }), "seq is required");
+  parse("restore_rows_res row rev 2^53", "restore_rows_res", rowsWith(0, { rev: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("restore_rows_res row seq negative", "restore_rows_res", rowsWith(0, { seq: -1 }), "an integer is not negative");
+  nested("restore_rows_res: unknown field in a row", "restore_rows_res", "restore_rows_res.json", ["rows", 0], "an unknown field is refused inside a part");
+
+  parse("sync_event seq is a string", "sync_event", with_("sync_event.json", { seq: "7" }), "seq is a number");
+  parse("sync_event without seq", "sync_event", "{}", "seq is required");
+  parse("sync_event seq 2^53", "sync_event", with_("sync_event.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("sync_event seq negative", "sync_event", with_("sync_event.json", { seq: -1 }), "an integer is not negative");
+  parse("sync_event with a second field", "sync_event", text({ seq: 7, vault: id("vault") }), "an event carries the sequence number and nothing else");
 
   return cases;
 }

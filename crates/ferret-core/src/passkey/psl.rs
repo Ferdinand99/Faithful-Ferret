@@ -133,17 +133,27 @@ fn suffixes(domain: &str) -> Vec<&str> {
 /// 1 for a non-empty name; equal to the number of labels when the name itself
 /// is a public suffix.
 pub(crate) fn public_suffix_labels(domain: &str) -> usize {
+    suffix_match(domain).0
+}
+
+/// The number of labels of the public suffix, and whether a rule of the list
+/// matched (`false` when only the implicit `*` rule of an unknown top-level
+/// domain did).
+fn suffix_match(domain: &str) -> (usize, bool) {
     let rules = rules();
     let sfx = suffixes(domain);
     let mut best: usize = 1;
+    let mut explicit = false;
     let mut exception: Option<usize> = None;
     for (i, s) in sfx.iter().enumerate() {
         let k = i.saturating_add(1);
         if rules.exception.contains(*s) {
             exception = Some(k);
+            explicit = true;
         }
         if rules.exact.contains(*s) {
             best = best.max(k);
+            explicit = true;
         }
         // `*.b` matches the suffix `x.b`: look `b` up (the previous entry).
         if i > 0
@@ -152,12 +162,26 @@ pub(crate) fn public_suffix_labels(domain: &str) -> usize {
                 .is_some_and(|rest| rules.wildcard.contains(*rest))
         {
             best = best.max(k);
+            explicit = true;
         }
     }
     match exception {
-        Some(k) => k.saturating_sub(1),
-        None => best,
+        Some(k) => (k.saturating_sub(1), explicit),
+        None => (best, explicit),
     }
+}
+
+/// The registrable domain of `domain` (a canonical name): its public suffix
+/// and one label more. `None` when the name is itself a public suffix, and
+/// when no rule of the list matches (an unknown top-level domain such as
+/// `lan` or `local` has no registrable domain, so two names under it are
+/// never taken for one site).
+pub(crate) fn registrable_domain(domain: &str) -> Option<&str> {
+    let (labels, explicit) = suffix_match(domain);
+    if !explicit {
+        return None;
+    }
+    suffixes(domain).get(labels).copied()
 }
 
 /// True when `domain` is itself a public suffix (a rule, or an unknown

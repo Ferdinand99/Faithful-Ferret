@@ -366,8 +366,9 @@ export const INTERNAL_FILES = [
 
 /**
  * The files of `vectors/internal/` that no WASM runner reads: the server half
- * of the login has no WebAssembly binding, and every case in them is
- * `native-only`. They are listed so that a new file cannot be forgotten, not
- * run; the Rust tests of `ferret-server-auth` and `tools/xcheck` read them.
+ * of the login and the page address operations (`url-match`) have no
+ * WebAssembly binding yet, and every case in them is `native-only`. They are
+ * listed so that a new file cannot be forgotten, not run; the Rust tests
+ * (`ferret-server-auth`, `ferret-core`) and `tools/xcheck` read them.
  */
-export const NATIVE_ONLY_FILES = ["server-opaque", "server-secrets"].map((n) => `${n}.json`);
+export const NATIVE_ONLY_FILES = ["server-opaque", "server-secrets", "url-match"].map((n) => `${n}.json`);

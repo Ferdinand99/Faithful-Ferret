@@ -118,6 +118,15 @@
 // `tombstone_invalid` otherwise (the item is then quarantined, its local copy
 // is kept). An item id that is not 16 bytes is `invalid_input`.
 //
+// Copying an item: `vault.copy_item(handle, newItemId, nowMs, device?)` seals a
+// copy of the open item under `newItemId` (16 bytes of `crypto.getRandomValues`,
+// not the item's own id and not the manifest id) and resolves
+// `{ rev: 1, envelope, tag }`: the same body, a new item key. `device` is an
+// optional public device name that the copy carries; without it the copy keeps
+// the device of the original. The secrets are copied inside WASM and none of them reaches this
+// side; the copy is not opened (call `open_item` for it). An item that holds a
+// passkey is `invalid_state`, an item of a newer schema `read_only_schema`.
+//
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
 // `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(

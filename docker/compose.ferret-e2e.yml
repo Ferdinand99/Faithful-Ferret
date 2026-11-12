@@ -13,11 +13,23 @@
 #    removes, so every run starts with a fresh, empty database; no published port:
 #    the only way in is from a container on the network ferret-e2e-net;
 #  * its own host names, vault-e2e.test and admin-e2e.test, that are aliases of
-#    the TLS terminator on that network; and its own trusted proxy, the address
-#    of that terminator and nothing else. It never goes through Pangolin and
-#    never reaches the app or the data of the other stack.
+#    the TLS terminator on that network. The terminator hands both hosts to
+#    ferret-e2e-evil, a proxy that passes everything on and, when asked, lies
+#    about the sync answers of the vault host (web/test/e2e-stack/evil). The app
+#    trusts that proxy and nothing else as its proxy: FERRET_TRUSTED_PROXIES is
+#    its address alone. It never goes through Pangolin and never reaches the app
+#    or the data of the other stack.
+#  * a second volume, ferret-e2e-snapshot, that `e2e-snapshot` makes and fills with
+#    a copy of the data. No service mounts it (compose would not make a volume
+#    that nothing uses), so the script makes it, with the label owner=ferret-e2e
+#    like the rest, and e2e-up and e2e-down remove it by that label.
 #
-# Use scripts/lanbox-ferret-test.sh e2e-up | e2e-run | e2e-clock | e2e-down.
+# The proxy ferret-e2e-evil exists in this file only. No other compose file and no
+# image of the server has it, and it publishes no port: its control port (9000)
+# is on the network of the stack.
+#
+# Use scripts/lanbox-ferret-test.sh e2e-up | e2e-run | e2e-clock | e2e-evil |
+# e2e-snapshot | e2e-restore-snapshot | e2e-down.
 name: ferret-e2e
 
 services:
@@ -60,8 +72,10 @@ services:
       FERRET_DATA_DIR: /data
       FERRET_VAULT_URL: https://vault-e2e.test
       FERRET_ADMIN_URL: https://admin-e2e.test
-      # Only the TLS terminator is believed. Never the network's gateway.
-      FERRET_TRUSTED_PROXIES: 172.30.250.2
+      # Only the proxy between the terminator and the app is believed (the
+      # terminator's forwarding headers pass through it untouched). Never the
+      # network's gateway, never the terminator itself.
+      FERRET_TRUSTED_PROXIES: 172.30.250.4
       FERRET_TRUST_PROXY: "1"
       # Made up by `e2e-up` for every start; the tests read it from the container.
       FERRET_SETUP_TOKEN: ${FERRET_E2E_SETUP_TOKEN:?start the stack with scripts/lanbox-ferret-test.sh e2e-up}
@@ -69,6 +83,42 @@ services:
       # The test clock: a number of seconds that is added to the system time.
       # `scripts/lanbox-ferret-test.sh e2e-clock <seconds>` writes it.
       FERRET_E2E_CLOCK_FILE: /tmp/e2e-clock
+
+  ferret-e2e-evil:
+    image: ferret-e2e-evil:latest
+    build:
+      context: ../web/test/e2e-stack/evil
+      dockerfile: Dockerfile
+      labels:
+        owner: ferret-e2e
+    container_name: ferret-e2e-evil
+    restart: "no"
+    mem_limit: 128m
+    labels:
+      owner: ferret-e2e
+    depends_on:
+      ferret-e2e-app:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+    networks:
+      ferret-e2e-net:
+        ipv4_address: 172.30.250.4
+    environment:
+      # The vault listener and the admin listener of the app. The ports of the
+      # proxy: 8041 (vault), 8040 (admin) and the control port 9000.
+      EVIL_UPSTREAM_VAULT: http://ferret-e2e-app:3041
+      EVIL_UPSTREAM_ADMIN: http://ferret-e2e-app:3040
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
   ferret-e2e-tls:
     image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
@@ -78,7 +128,7 @@ services:
     labels:
       owner: ferret-e2e
     depends_on:
-      ferret-e2e-app:
+      ferret-e2e-evil:
         condition: service_healthy
     cap_drop:
       - ALL
@@ -115,11 +165,11 @@ services:
         }
         https://vault-e2e.test {
           tls internal
-          reverse_proxy ferret-e2e-app:3041
+          reverse_proxy ferret-e2e-evil:8041
         }
         https://admin-e2e.test {
           tls internal
-          reverse_proxy ferret-e2e-app:3040
+          reverse_proxy ferret-e2e-evil:8040
         }
 
 volumes:

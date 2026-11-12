@@ -72,9 +72,10 @@ export function codeOf(error) {
 
 /** Codes with a text under `sync.error.`. */
 const SYNC_ERRORS = new Set([
-  "bad_feed", "bad_request", "blocked", "conflict", "damaged", "draft_unreadable", "epoch_mismatch", "forbidden",
-  "gone", "idem_reuse", "manifest_not_writable", "missing_on_server", "not_found", "quarantined", "quota_exceeded",
-  "read_only", "storage", "tombstone_invalid", "too_large", "unsupported_envelope", "upload_again_failed",
+  "bad_feed", "bad_request", "blocked", "busy", "checkpoint_upload_failed", "conflict", "conflict_changed", "conflict_unsettled", "damaged", "draft_unreadable", "epoch_mismatch",
+  "forbidden", "gone", "idem_reuse", "invalid_state", "manifest_not_writable", "missing_on_server", "not_found", "quarantined",
+  "quota_exceeded", "read_only", "restore_epoch_refused", "reupload_refused", "storage", "tombstone_invalid", "too_large", "unsupported_envelope",
+  "upload_again_failed",
 ]);
 
 /** Codes with a text under `vault.error.`. */
@@ -105,7 +106,8 @@ export function describeError(t, error) {
 /**
  * The marks that show how an item stands with the server, in the order they
  * matter. Each is a word the screen shows as text, never only a colour.
- * @param {{ pending?: boolean, damaged?: boolean, quarantined?: boolean, missingOnServer?: boolean, blocked?: boolean, readOnly?: boolean }} item
+ * A conflict is a refused change that the user can settle, so it has its own mark in place of "refused".
+ * @param {{ pending?: boolean, damaged?: boolean, quarantined?: boolean, missingOnServer?: boolean, blocked?: boolean, conflict?: boolean, readOnly?: boolean }} item
  * @returns {string[]} mark names
  */
 export function marksOf(item) {
@@ -114,7 +116,8 @@ export function marksOf(item) {
   if (item.damaged) marks.push("damaged");
   if (item.quarantined) marks.push("quarantined");
   if (item.missingOnServer) marks.push("missing");
-  if (item.blocked) marks.push("blocked");
+  if (item.conflict) marks.push("conflict");
+  else if (item.blocked) marks.push("blocked");
   if (item.readOnly) marks.push("read_only");
   if (item.pending && !item.blocked) marks.push("pending");
   return marks;
@@ -137,6 +140,24 @@ export function canChange(item) {
 export function markBadges(t, item) {
   return marksOf(item).map((mark) =>
     el("span", { class: `mark mark-${mark}`, "data-mark": mark }, t(`vault.mark.${mark}`)));
+}
+
+// -------------------------------------------------------------------- time
+
+/**
+ * A moment (milliseconds since 1970) as the reader's date and time, or null when the
+ * number is not a moment.
+ * @param {unknown} ms
+ * @param {string} [locale]
+ * @returns {string | null}
+ */
+export function formatMoment(ms, locale) {
+  if (typeof ms !== "number" || !Number.isSafeInteger(ms) || ms <= 0) return null;
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(ms));
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------ dialog

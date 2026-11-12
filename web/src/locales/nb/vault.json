@@ -61,6 +61,7 @@
   "vault.loading": "Laster",
   "vault.lock": "Lås",
   "vault.mark.blocked": "Endring avvist",
+  "vault.mark.conflict": "Konflikt",
   "vault.mark.damaged": "Kan ikke åpnes",
   "vault.mark.missing": "Mangler på tjeneren",
   "vault.mark.pending": "Venter på synkronisering",

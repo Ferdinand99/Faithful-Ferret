@@ -30,6 +30,7 @@ const MAX_LEN_OF = {
   fuzz_item_body: BIG,
   fuzz_cbor_value: BIG,
   fuzz_export_file: BIG,
+  fuzz_url_match: 16384,
 };
 const DEFAULT_MAX_LEN = 4096;
 /** The most any seed may be, for reading vector values. */
@@ -159,6 +160,19 @@ if (existsSync(psl)) {
   for (const m of readFileSync(psl, 'utf8').matchAll(/checkPublicSuffix\('([^']+)'/g)) {
     add('fuzz_origin_psl', text(`https://${m[1]}\0${m[1].replace(/^[^.]*\./, '')}`));
   }
+}
+
+// Page addresses and site matching: kind byte | saved address NUL page address.
+const urlKind = { host: 0, domain: 1, exact: 2 };
+for (const c of cases('url-match.json', 'url.match')) {
+  add('fuzz_url_match', Buffer.concat([Buffer.from([urlKind[c.input.match] ?? 3]), hex(c.input.entry_utf8), Buffer.from([0]), hex(c.input.page_utf8)]));
+}
+for (const c of cases('url-match.json', 'url.page_origin', 'url.display_host')) {
+  const page = hex(c.input.page_utf8);
+  add('fuzz_url_match', Buffer.concat([Buffer.from([0]), page, Buffer.from([0]), page]));
+}
+for (const c of cases('url-match.json', 'url.same_site')) {
+  add('fuzz_url_match', Buffer.concat([Buffer.from([1]), hex(c.input.a_utf8), Buffer.from([0]), hex(c.input.b_utf8)]));
 }
 
 // WebAuthn requests: the request fields run together (the target reads an

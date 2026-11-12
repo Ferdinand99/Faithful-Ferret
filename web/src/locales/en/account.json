@@ -47,6 +47,7 @@
   "account.error.profile_rejected": "The server does not accept the password stretching of this version.",
   "account.error.reauth_not_fresh": "The password check has run out of time. Confirm the password again.",
   "account.error.registration_closed": "A first administrator already exists on this server. Sign in instead.",
+  "account.error.restored_older_method": "The server was restored from before you last changed an unlock method (restore accepted on this device {date}). This device refuses the older method to protect you from an attack. If the restore is your own, you can use “Forget this server on this device” here and sign in as on a new device with the old password. If it is not, tell whoever runs the server.",
   "account.error.retry_in": "Try again in {seconds} seconds.",
   "account.error.session_ended": "Your vault session has ended. Sign in again.",
   "account.error.signout_incomplete": "You are signed out on this device, but the server could not be reached to end the session there.",

@@ -55,6 +55,8 @@ fn live<'a>(item_id: ItemId, base_rev: u64, blob: &'a [u8], n: u8) -> PutRequest
         body: PutBody::Live { blob, tag: [n; 32] },
         idem: id16(0xe0, n),
         request_hash: hash(n),
+        resurrect: false,
+        restore_epoch: None,
     }
 }
 
@@ -65,6 +67,8 @@ fn tomb<'a>(item_id: ItemId, base_rev: u64, tomb: &'a [u8], n: u8) -> PutRequest
         body: PutBody::Deleted { tomb },
         idem: id16(0xe0, n),
         request_hash: hash(n),
+        resurrect: false,
+        restore_epoch: None,
     }
 }
 
@@ -1286,4 +1290,15 @@ fn concurrent_writers_serialise_one_wins() {
         })
         .expect("distinct");
     assert_eq!(distinct, 21);
+}
+
+#[test]
+fn max_tombstones_is_40000() {
+    // A tombstone stays for 400 days, so someone who deletes a lot must not be
+    // stopped by a count of 10 000 before the first ones are purged.
+    assert_eq!(Limits::DEFAULT.max_tombstones, 40_000);
+    assert_eq!(Limits::default().max_tombstones, 40_000);
+    // The other limits are what they were.
+    assert_eq!(Limits::DEFAULT.max_items, 10_000);
+    assert_eq!(Limits::DEFAULT.max_bytes, 256 * 1024 * 1024);
 }
