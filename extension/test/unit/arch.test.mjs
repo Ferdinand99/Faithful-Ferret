@@ -57,7 +57,11 @@ function wasmViolations(files) {
   }
   for (const [path, bytes] of files) {
     if (insideWasmPackage(path) || path === CORE_HOST || !/\.(?:mjs|js|html)$/.test(path)) continue;
-    if (/client\.mjs|pkg-web|\.worker\.mjs|ferret_core_wasm|WebAssembly/.test(bytes.toString("utf8"))) out.push(`${path}: names the WASM package`);
+    let text = bytes.toString("utf8");
+    // shared/tt.mjs, copied from the web vault, holds the two worker paths as strings in a table. It imports
+    // and starts nothing, and the graph checks above still apply to it; only those two strings are let through.
+    if (path === "shared/tt.mjs") text = text.replaceAll('"/js/vault.worker.mjs"', "").replaceAll('"/js/job.worker.mjs"', "");
+    if (/client\.mjs|pkg-web|\.worker\.mjs|ferret_core_wasm|WebAssembly/.test(text)) out.push(`${path}: names the WASM package`);
   }
   return out;
 }

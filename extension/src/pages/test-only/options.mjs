@@ -3,7 +3,7 @@
 // router's check accept the page as a top-level extension page? The page asks the
 // test build's whoami port, which answers with the verdict of `isUiPort` and the
 // facts the browser gave about the sender, and shows the answer.
-import { el, mount } from "../el.mjs";
+import { el, mount } from "../../shared/dom.mjs";
 
 const root = document.getElementById("root");
 const port = browser.runtime.connect({ name: "ferret-test-whoami" });

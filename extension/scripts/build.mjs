@@ -11,7 +11,10 @@
 //    WASM_FILES). To move the pin, change web/wasm.lock.json.
 // 2. Copies the files listed in shared.json from ../web/src to dist/shared/ and
 //    writes dist/shared/MANIFEST.json (path -> SHA-256). An empty list writes
-//    nothing, and not even the folder.
+//    nothing, and not even the folder. The list is closed under import: a listed
+//    file imports only listed files (a dynamic import() included), and no view,
+//    route or service file is on it. The release check compares every listed
+//    file in the package with its hash in MANIFEST.json.
 // 3. Merges manifest/base.json, the overlay of the chosen manifest version and
 //    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json (its `release` section for the release variant) is a
 //    build error, and so is a key that is never allowed (content_scripts,
@@ -34,11 +37,11 @@
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
 import { CONTENT_BUNDLE, CONTENT_ENTRY, classicScript } from "./lib/classic.mjs";
-import { danglingImports } from "./lib/imports.mjs";
+import { danglingImports, importsOf } from "./lib/imports.mjs";
 import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
 
 export { sha256 };
@@ -490,6 +493,7 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
       }
     }
   }
+  problems.push(...sharedProblems(files));
   const raw = files.get("manifest.json");
   if (raw === undefined) problems.push("manifest.json is missing");
   else problems.push(...manifestProblems(raw.toString("utf8"), permissionAllow));
@@ -510,6 +514,9 @@ export function readPackage(target) {
 
 // ------------------------------------------------------------------- build
 
+/** A view, route or service file of the web vault: never shared (they build that vault's screens). */
+const NOT_SHARED = /^(?:views|routes|services)\/|\.(?:route|service)\.mjs$/;
+
 /**
  * @param {string} dir the extension folder
  * @param {{ webRoot: string, existing: Set<string> }} context
@@ -521,22 +528,61 @@ function sharedFiles(dir, { webRoot, existing }) {
   /** @type {Map<string, Buffer>} */
   const out = new Map();
   if (list.length === 0) return out;
+  const listed = new Set(list);
+  if (listed.size !== list.length) throw new Error("shared.json: a path is listed twice");
   /** @type {Record<string, string>} */
   const hashes = {};
   for (const path of [...list].sort(compareText)) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*\.mjs$/.test(path) || path.split("/").includes("..") || path.includes("//")) {
       throw new Error(`shared.json: path not allowed: ${path}`);
     }
+    if (NOT_SHARED.test(path)) throw new Error(`shared.json: ${path} is a view, route or service file`);
     const source = join(webRoot, "src", ...path.split("/"));
     if (!existsSync(source)) throw new Error(`shared.json: ${path} is not in web/src`);
     const target = `shared/${path}`;
     if (existing.has(target)) throw new Error(`shared.json: ${target} is also a source file of the extension`);
     const bytes = readFileSync(source);
+    // Closed under import: what a shared file imports is on the list too.
+    const { specifiers, hidden } = importsOf(bytes.toString("utf8"));
+    if (hidden > 0) throw new Error(`shared.json: ${path} has an import() that names no string literal`);
+    for (const specifier of specifiers) {
+      if (!/^\.\.?\//.test(specifier)) throw new Error(`shared.json: ${path} imports "${specifier}", which is not a relative path`);
+      const imported = posix.normalize(posix.join(posix.dirname(path), specifier));
+      if (!listed.has(imported)) throw new Error(`shared.json: ${path} imports ${imported}, which is not in the list`);
+    }
     out.set(target, bytes);
     hashes[path] = sha256(bytes);
   }
   out.set("shared/MANIFEST.json", Buffer.from(`${JSON.stringify(hashes, null, 2)}\n`));
   return out;
+}
+
+/**
+ * The files of dist/shared/ that no longer match shared/MANIFEST.json, the file
+ * the build wrote with the SHA-256 of every shared file it copied. A package
+ * without MANIFEST.json has no shared files to check.
+ * @param {Map<string, Buffer>} files path -> bytes
+ * @returns {string[]}
+ */
+export function sharedProblems(files) {
+  const raw = files.get("shared/MANIFEST.json");
+  if (raw === undefined) return [];
+  /** @type {unknown} */
+  let hashes;
+  try {
+    hashes = JSON.parse(raw.toString("utf8"));
+  } catch {
+    return ["shared/MANIFEST.json: not valid JSON"];
+  }
+  if (!isPlainObject(hashes)) return ["shared/MANIFEST.json: expected an object of path -> SHA-256"];
+  /** @type {string[]} */
+  const problems = [];
+  for (const [path, hash] of Object.entries(hashes)) {
+    const bytes = files.get(`shared/${path}`);
+    if (bytes === undefined) problems.push(`shared/${path}: is in shared/MANIFEST.json but not in the package`);
+    else if (sha256(bytes) !== hash) problems.push(`shared/${path}: differs from its hash in shared/MANIFEST.json (a shared file is never edited here; change web/src)`);
+  }
+  return problems;
 }
 
 /**
@@ -730,6 +776,8 @@ export async function build({
   // package is checked by its SHA-256.)
   const dangling = danglingImports(dist, (path) => WASM_FILES.includes(path));
   if (dangling.length > 0) throw new Error(`package: ${dangling.join("; ")}`);
+  const edited = sharedProblems(dist);
+  if (edited.length > 0) throw new Error(`package: ${edited.join("; ")}`);
   for (const path of manifestFiles(manifestJson)) {
     if (!dist.has(path)) throw new Error(`manifest.json: ${path} is not in the package`);
   }

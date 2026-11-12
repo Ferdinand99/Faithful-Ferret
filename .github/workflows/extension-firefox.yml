@@ -41,7 +41,7 @@ jobs:
           echo "$sha  wasm.tar.gz" | sha256sum -c -
       - name: Run the probes (no network)
         run: |
-          tar -cf in.tar --exclude='extension/node_modules' --exclude='extension/dist' extension web/wasm.lock.json
+          tar -cf in.tar --exclude='extension/node_modules' --exclude='extension/dist' extension web/wasm.lock.json web/src
           tar -rf in.tar wasm.tar.gz
           docker run --rm -i --init \
             --network none \

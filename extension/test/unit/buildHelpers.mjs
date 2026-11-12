@@ -65,6 +65,8 @@ export function makeRoot(extra = {}) {
   for (const name of ["manifest", "src", "shared.json", "package.json"]) {
     cpSync(join(extensionRoot, name), join(root, name), { recursive: true });
   }
+  // The shared files come from the real web/src (the pages import them), so the copy is byte-equal to its source.
+  cpSync(join(repoRoot, "web", "src"), join(webRoot, "src"), { recursive: true });
   // The release check needs the list of internal host names.
   mkdirSync(join(root, "test", "fixtures"), { recursive: true });
   cpSync(join(extensionRoot, "test", "fixtures", "hosts.json"), join(root, "test", "fixtures", "hosts.json"));

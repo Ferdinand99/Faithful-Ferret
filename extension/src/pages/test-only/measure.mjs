@@ -5,7 +5,7 @@
 // wait. A page that stays open can keep the background alive and give a wrong
 // answer. Later, open this page again: it reads the log straight from storage
 // (reading does not wake the background) and shows how the background page lived.
-import { el, mount } from "../el.mjs";
+import { el, mount } from "../../shared/dom.mjs";
 import { LOG_KEY, SCENARIO_KEY, summarize } from "../../shared/test-only/measureSummary.mjs";
 
 const PORT = "ferret-test-measure";
