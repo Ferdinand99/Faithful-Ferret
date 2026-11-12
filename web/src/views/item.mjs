@@ -161,6 +161,16 @@ export async function itemView({
       view = await withOpen(async ({ view: v }) => v);
     } catch (error) {
       const known = engine.list().find((/** @type {any} */ i) => i.id === id);
+      if (known?.conflict) {
+        // The server deleted the item while this device changed it: there is nothing to open, but the conflict is there to settle.
+        const open = el("a", { class: "btn btn-primary btn-sm", href: `#/items/${id}/conflict`, "data-role": "open-conflict" }, t("conflict.open"));
+        mount(root,
+          el("h1", null, String(known.name ?? "") === "" ? t("vault.item.unnamed") : String(known.name)),
+          el("div", { class: "marks" }, ...markBadges(t, known)),
+          notice("conflict", t("conflict.notice"), open),
+          el("p", { class: "aside" }, el("a", { href: "#/items", "data-role": "back" }, t("vault.item.back"))));
+        return;
+      }
       mount(root, el("p", { role: "alert", "data-role": "unavailable" },
         t(isNotFound(error) && !known ? "vault.item.not_found" : "vault.item.cannot_open")),
       el("p", null, el("a", { href: "#/items" }, t("vault.item.back"))));
@@ -170,8 +180,8 @@ export async function itemView({
     const marks = markBadges(t, entry);
     /** @type {Node[]} */
     const notices = [];
-    if (entry.damaged) notices.push(notice("damaged", t("vault.notice.damaged")));
-    if (entry.quarantined) notices.push(notice("quarantined", t("vault.notice.quarantined")));
+    if (entry.damaged) notices.push(notice("damaged", t("vault.notice.damaged"), keepMineButton("damaged")));
+    if (entry.quarantined) notices.push(notice("quarantined", t("vault.notice.quarantined"), keepMineButton("quarantined")));
     if (entry.readOnly) notices.push(notice("read_only", t("vault.notice.read_only")));
     if (entry.missingOnServer) {
       const discard = el("button", { type: "button", class: "btn btn-danger btn-sm", "data-role": "discard-missing" }, t("vault.notice.discard_missing"));
@@ -190,7 +200,11 @@ export async function itemView({
       });
       notices.push(notice("missing", t("vault.notice.missing"), discard));
     }
-    if (entry.blocked) {
+    if (entry.conflict) {
+      // Both versions are kept until the user chooses; the choice is made on the conflict screen.
+      const open = el("a", { class: "btn btn-primary btn-sm", href: `#/items/${id}/conflict`, "data-role": "open-conflict" }, t("conflict.open"));
+      notices.push(notice("conflict", t("conflict.notice"), open));
+    } else if (entry.blocked) {
       const discard = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "discard-change" }, t("vault.notice.discard_change"));
       discard.addEventListener("click", async () => {
         if (!touch()) return;
@@ -264,7 +278,32 @@ export async function itemView({
       el("p", { class: "aside" }, el("a", { href: "#/items", "data-role": "back" }, t("vault.item.back")))].filter((node) => node !== null));
   }
 
-  /** @param {string} kind @param {string} text @param {Node} [action] */
+  /**
+   * "Keep mine" for an item the server's newest version of which cannot be used: the version on this device is written
+   * to the server as the newest one, after the user has said yes.
+   * @param {"damaged" | "quarantined"} kind
+   * @returns {HTMLElement | null} null when the engine has no such action
+   */
+  function keepMineButton(kind) {
+    if (typeof engine.keepMine !== "function") return null;
+    const button = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "keep-mine" }, t(`conflict.keep_mine_${kind}`));
+    button.addEventListener("click", async () => {
+      if (!touch()) return;
+      const yes = await askConfirm({
+        t, host, title: "conflict.dialog.keep_mine_title", body: `conflict.dialog.keep_mine_${kind}_body`, confirm: "conflict.dialog.keep_mine_confirm",
+      });
+      if (!yes) return;
+      try {
+        await engine.keepMine(id);
+        await load();
+      } catch (error) {
+        say(describeError(t, error));
+      }
+    });
+    return button;
+  }
+
+  /** @param {string} kind @param {string} text @param {Node | null} [action] */
   function notice(kind, text, action) {
     return el("div", { class: `notice notice-${kind}`, role: "note", "data-role": "notice", "data-notice": kind },
       el("p", null, text), action ?? null);

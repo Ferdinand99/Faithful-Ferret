@@ -623,15 +623,10 @@ version = "0.6.1"
 criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
-[[exemptions.utf8_iter]]
-version = "1.1.0"
+[[exemptions.url]]
+version = "2.5.8"
 criteria = "safe-to-deploy"
-notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
-
-[[exemptions.utf_types]]
-version = "1.0.0"
-criteria = "safe-to-deploy"
-notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
+notes = "Exempted 2026-11-08; review by 2027-05-08. Mozilla's imported audits cover url up to 2.5.7; only the delta 2.5.7 -> 2.5.8 is not audited. The delta was read: serde and its derive become an optional feature, one fix to the percent-encoding of a control character in an opaque host, comments; no unsafe code and no build script."
 
 [[exemptions.version_check]]
 version = "0.9.5"

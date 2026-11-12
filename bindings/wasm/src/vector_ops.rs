@@ -1607,6 +1607,36 @@ impl Vault {
 
 #[wasm_bindgen]
 impl Vault {
+    /// Seals `plain_cbor` as an item body as it is, without reading the CBOR:
+    /// the way a body from a newer schema (which `encrypt_item` refuses to
+    /// write) gets into a test. Returns `{ rev, envelope, tag }`.
+    pub fn test_seal_plaintext(
+        &self,
+        item_id: Vec<u8>,
+        rev: f64,
+        plain_cbor: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        let v = &self
+            .inner
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("locked"))?
+            .vault;
+        let id = ItemId::from_bytes(item_id.try_into().unwrap());
+        let sealed = ferret_core::testing::item::seal_plaintext(
+            &mut ferret_core::OsRng,
+            v,
+            id,
+            rev as u64,
+            &plain_cbor,
+            None,
+        )
+        .map_err(|e| JsValue::from_str(e.code()))?;
+        crate::convert::to_js(&crate::convert::SealedDto::of(&sealed)).map_err(JsValue::from)
+    }
+}
+
+#[wasm_bindgen]
+impl Vault {
     /// A secret of the passkey in an open item: `"scalar"` (the private
     /// scalar), `"pkcs8"` (the private key as stored), `"seed_uv"` or
     /// `"seed_nouv"` (the PRF seeds).

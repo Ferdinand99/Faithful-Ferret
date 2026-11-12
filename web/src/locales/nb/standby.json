@@ -1,0 +1,7 @@
+{
+  "standby.body": "Synkroniseringen kjører i én fane om gangen, så ingen endring går tapt eller blandes. Ingenting fra hvelvet vises i denne fanen.",
+  "standby.error": "Hvelvet kunne ikke flyttes til denne fanen. Prøv igjen.",
+  "standby.title": "Hvelvet er åpent i en annen fane",
+  "standby.use_here": "Bruk her",
+  "standby.working": "Flytter hvelvet til denne fanen …"
+}

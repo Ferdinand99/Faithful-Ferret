@@ -8,19 +8,31 @@
 //! 1. the session;
 //! 2. the size of the body, at most 128 KiB;
 //! 3. the JSON (unknown, repeated and mistyped fields are refused), and that
-//!    the request has exactly one form: a live row or a tombstone, without
-//!    `resurrect: true`;
+//!    the request has exactly one form: a live row or a tombstone, where only
+//!    a live row may carry `resurrect: true`;
 //! 4. the item id (32 lower-case hexadecimal characters), which is not the
 //!    manifest id;
 //! 5. the content: for a live row, an envelope of at most 64 KiB whose version,
 //!    suite and kind are the ones this server stores (an item, with its key
 //!    wrap); for a tombstone, 40 bytes;
-//! 6. the write ([`store::put_item`]), with `SHA-256(item_id || raw body)` as
-//!    the request hash of the idempotency record.
+//! 6. the rate limit of the device (`429 throttled`), counting one operation
+//!    and the bytes of the body;
+//! 7. a turn at the write gate (`503 busy`);
+//! 8. the write ([`store::put_item`]), with `SHA-256(item_id || raw body)` as
+//!    the request hash of the idempotency record. In the store the order is
+//!    the idempotency record, then the `restore_epoch` the request names (if
+//!    any; another one than the vault's is `409 restore_epoch_changed`), then
+//!    `base_rev`. A write that is stored (not a replay) tells the event
+//!    streams the new `seq`.
+//!
+//! Steps 6 and 7 come after the content checks, so a request that is wrong in
+//! itself costs the device nothing from its bucket and takes no turn.
 //!
 //! The server never opens an envelope or checks a tag or a tombstone: it has no
 //! key. It stores what a signed-in client sends, under the compare-and-set of
 //! the store.
+
+use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, PathRejection};
@@ -29,17 +41,23 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::put;
 use axum::{Json, Router};
-use ferret_core::envelope::{KIND_ITEM, parse_envelope};
-use ferret_core::{Error as CoreError, ItemId};
+use ferret_core::ItemId;
 use sha2::{Digest as _, Sha256};
 
+use super::events::EventStreams;
+use super::notify::SyncEvents;
 use super::quota::Limits;
+use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, PutBody, PutOutcome, PutRequest};
+use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError, status_of};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::ids::MANIFEST_ITEM_ID;
 use crate::state::VaultDb;
-use crate::wire::{ConflictRes, PutItemForm, PutItemReq, PutItemRes, hex16, refusal_code};
+use crate::wire::{
+    ConflictRes, PutItemForm, PutItemReq, PutItemRes, RESTORE_EPOCH_CHANGED,
+    RestoreEpochChangedRes, hex16, refusal_code,
+};
 
 /// The most bytes of a request body. An envelope of 64 KiB is about 87 400
 /// characters of base64url, so a full envelope fits with room for the rest.
@@ -51,6 +69,10 @@ where
     S: Clone + Send + Sync + 'static,
     VaultDb: FromRef<S>,
     SessionAuth: FromRef<S>,
+    SyncEvents: FromRef<S>,
+    Arc<SyncLimits>: FromRef<S>,
+    WriteGate: FromRef<S>,
+    Arc<EventStreams>: FromRef<S>,
 {
     Router::new().route(
         "/api/sync/items/{id}",
@@ -100,22 +122,13 @@ fn prepare(id: &str, raw: &[u8]) -> Result<Prepared, ApiError> {
     })
 }
 
-/// An envelope of an item, in a version and suite this server stores. The
-/// structure is checked without any key; whether it opens is for the client.
-fn check_envelope(blob: &[u8]) -> Result<(), ApiError> {
-    match parse_envelope(blob) {
-        Ok(view) if view.kind == KIND_ITEM && view.ik_wrap.is_some() => Ok(()),
-        Err(CoreError::TooLarge) => Err(ApiError::coded("too_large")),
-        // A version, suite or kind that is not an item, or a structure that is
-        // no envelope: one answer, so the server tells nothing about which.
-        _ => Err(ApiError::coded("unsupported_envelope")),
-    }
-}
-
 /// Writes one item of the session vault.
 async fn put_item(
     session: VaultSession,
     State(db): State<VaultDb>,
+    State(limits): State<Arc<SyncLimits>>,
+    State(gate): State<WriteGate>,
+    State(events): State<SyncEvents>,
     id: Result<Path<String>, PathRejection>,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Response, ApiError> {
@@ -139,8 +152,36 @@ async fn put_item(
     let vault = session.vault;
     let device = session.device;
     let now = session.now;
+    let resurrect = prepared.request.resurrect_requested();
+    limits
+        .admit(
+            &vault,
+            &device,
+            1,
+            u64::try_from(raw.len()).unwrap_or(u64::MAX),
+        )
+        .map_err(throttled)
+        .inspect_err(|e| {
+            tracing::info!(
+                item_id = %item_hex,
+                status = e.status.as_u16(),
+                code = e.code,
+                "item write refused"
+            );
+        })?;
+    let permit = gate.enter().await.map_err(busy).inspect_err(|e| {
+        tracing::info!(
+            item_id = %item_hex,
+            status = e.status.as_u16(),
+            code = e.code,
+            "item write refused"
+        );
+    })?;
     let outcome = db
         .with_conn(move |conn| {
+            // The turn moves into the closure: it is held until the write has
+            // committed, even if this handler is dropped while it waits.
+            let _turn = permit;
             let Prepared {
                 item_id,
                 request,
@@ -158,6 +199,8 @@ async fn put_item(
                 body,
                 idem: request.idem,
                 request_hash,
+                resurrect,
+                restore_epoch: request.restore_epoch,
             };
             store::put_item(conn, &vault, &device, &put, &Limits::DEFAULT, now)
         })
@@ -180,11 +223,18 @@ async fn put_item(
         PutOutcome::ManifestNotWritable => {
             (status_of("manifest_not_writable"), "manifest_not_writable")
         }
+        PutOutcome::RestoreEpochChanged { .. } => {
+            (status_of(RESTORE_EPOCH_CHANGED), RESTORE_EPOCH_CHANGED)
+        }
     };
     tracing::info!(item_id = %item_hex, status = status.as_u16(), code, "item write");
 
     match outcome {
         PutOutcome::Stored { rev, seq, replayed } => {
+            // A replay changed nothing, so there is nothing to tell.
+            if !replayed {
+                events.notify(vault, seq);
+            }
             Ok(Json(PutItemRes { rev, seq, replayed }).into_response())
         }
         PutOutcome::Conflict(conflict) => Ok((
@@ -197,6 +247,9 @@ async fn put_item(
             }),
         )
             .into_response()),
+        PutOutcome::RestoreEpochChanged { current } => {
+            Ok((status, Json(RestoreEpochChangedRes::new(current))).into_response())
+        }
         PutOutcome::IdemMismatch | PutOutcome::QuotaExceeded | PutOutcome::ManifestNotWritable => {
             Err(ApiError::coded(code))
         }

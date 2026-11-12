@@ -7,6 +7,7 @@
 #   scripts/lanbox-ferret-e2e-check.sh images   the image checks only (no e2e stack)
 #   scripts/lanbox-ferret-e2e-check.sh reset    the reset check only
 #   scripts/lanbox-ferret-e2e-check.sh stack    the e2e stack checks only
+#   scripts/lanbox-ferret-e2e-check.sh snapshot the snapshot and restore check only
 #
 # What it checks:
 #  * release_image_has_no_e2e_clock: an image built without FEATURES says
@@ -23,8 +24,12 @@
 #  * the e2e stack: shares no container, network or volume with the owner's
 #    stack and leaves it running; has one network, one volume, no published
 #    port; starts fresh each time; moves its clock on request; the browsers of
-#    scripts/lanbox-ferret-test.sh e2e-run reach it over https, and the TLS
-#    terminator is the only trusted proxy.
+#    scripts/lanbox-ferret-test.sh e2e-run reach it over https, and the
+#    malicious server (the proxy between the TLS terminator and the app) is the
+#    only trusted proxy; its control port answers on the network only, and the
+#    snapshot of the data comes back with a higher restore epoch
+#    (e2e_snapshot_and_restore_raise_restore_epoch: a write, a snapshot, a write, a
+#    restore; the feed ends at the first write and shows restore_epoch + 1).
 #
 # Everything this creates is named ferret-e2e* and labelled owner=ferret-e2e (the
 # reset check also uses owner=ferret-e2e-resettest on its decoys) and is removed
@@ -208,6 +213,52 @@ quiet_up() {
   rm -f "$log"
 }
 
+# A stand-in for the helpers of the gate script: a member of the JSON a phase left.
+left() { # output, name
+  printf '%s\n' "$1" | awk -v n="$2" '$0 == n { getline; print; exit }'
+}
+
+# One browser phase of the snapshot check; the state of the phase before comes in FERRET_E2E_STATE.
+snapshot_phase() { # browser, phase, state
+  FERRET_E2E_PHASE="$2" FERRET_E2E_STATE="${3:-}" e2e_run "--project=$1" phase-snapshot
+}
+
+# e2e_snapshot_and_restore_raise_restore_epoch: an account and a write, a snapshot, a second
+# write, the snapshot put back. The browser half is web/test/e2e-stack/phase-snapshot.spec.mjs.
+check_snapshot_restore() {
+  echo "e2e snapshot and restore"
+  local browser out state rc=0
+  browser="$(printf '%s' "${FERRET_E2E_BROWSERS:-chromium}" | awk '{print $1}')"
+  quiet_up
+  rc=0
+  out="$(snapshot_phase "$browser" snapshot-first)" || rc=$?
+  expect "snapshot: the first write was made" 0 "$rc"
+  state="$(left "$out" state)"
+  [ -n "$state" ] || { fail "snapshot: the first phase left no state"; e2e_down >/dev/null; return 0; }
+  scripts/lanbox-ferret-test.sh e2e-snapshot >/dev/null
+  expect "e2e-snapshot: the snapshot volume carries the label owner=ferret-e2e" "ferret-e2e" \
+    "$(dk volume inspect -f '{{index .Labels "owner"}}' "$e2e_snapshot_volume")"
+  expect "e2e-snapshot: the snapshot holds the database and the completion marker" "yes yes" \
+    "$(dk run --rm --name ferret-e2e-check-snap --label "$e2e_label" --network none -v "$e2e_snapshot_volume:/data:ro" "$alpine_image" sh -c 'd=no; m=no; [ -s /data/ferret.sqlite ] && d=yes; [ -f /data/.snapshot-complete ] && m=yes; echo "$d $m"')"
+  expect "e2e-snapshot: the temporary volume of the swap is gone" "" "$(dk volume ls -q --filter "name=$e2e_snapshot_volume-new" | tr -d '\n')"
+  expect "e2e-snapshot: the app runs again and is healthy" "healthy" "$(dk inspect -f '{{.State.Health.Status}}' "$e2e_app")"
+  rc=0
+  out="$(snapshot_phase "$browser" snapshot-second "$state")" || rc=$?
+  expect "snapshot: the second write was made after the snapshot" 0 "$rc"
+  scripts/lanbox-ferret-test.sh e2e-restore-snapshot >/dev/null
+  expect "e2e-restore-snapshot: the app runs again and is healthy" "healthy" "$(dk inspect -f '{{.State.Health.Status}}' "$e2e_app")"
+  rc=0
+  out="$(snapshot_phase "$browser" snapshot-restored "$state")" || rc=$?
+  expect "e2e_snapshot_and_restore_raise_restore_epoch: the feed ends at the first write, restore_epoch + 1" 0 "$rc"
+  [ -n "$(left "$out" restored)" ] || fail "e2e_snapshot_and_restore_raise_restore_epoch: the phase left no marker"
+  # The bump refuses while a server runs on the data.
+  rc=0
+  dk exec "$e2e_app" ferret restore-epoch bump --yes >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then pass "restore-epoch bump refuses while the server runs"; else fail "restore-epoch bump refuses while the server runs"; fi
+  e2e_down >/dev/null
+  expect "e2e-down: the snapshot volume is gone too" "" "$(dk volume ls -q --filter "label=$e2e_label" | tr -d '\n')"
+}
+
 check_stack() {
   echo "e2e stack"
   local owner_before owner_after
@@ -224,24 +275,40 @@ check_stack() {
   if [ "$first_id" != "$(dk inspect -f '{{.Id}}' "$e2e_app")" ]; then pass "e2e-up: the container is new"; else fail "e2e-up: the container is new"; fi
 
   # Isolation.
-  expect "e2e: the containers of the project" "$e2e_app $e2e_tls" \
+  expect "e2e: the containers of the project" "$e2e_app $e2e_evil $e2e_tls" \
     "$(dk ps -a --filter "label=$e2e_label" --format '{{.Names}}' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: the app is on its own network only" "$e2e_network" \
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_app" | sed 's/ $//')"
   expect "e2e: the terminator is on its own network only" "$e2e_network" \
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_tls" | sed 's/ $//')"
+  expect "e2e: the malicious server is on its own network only" "$e2e_network" \
+    "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_evil" | sed 's/ $//')"
   expect "e2e: the data volume is the only mount (no bind mount)" "volume:ferret-e2e-data" \
-    "$(dk inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} {{end}}' "$e2e_app" "$e2e_tls" | tr -d ' \n')"
+    "$(dk inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} {{end}}' "$e2e_app" "$e2e_evil" "$e2e_tls" | tr -d ' \n')"
   expect "e2e: no published port (a port the image declares is only exposed)" "" \
-    "$(dk inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$e2e_app" "$e2e_tls" | tr -d ' \n')"
-  expect "e2e: the network has only the two containers" "$e2e_app $e2e_tls" \
+    "$(dk inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$e2e_app" "$e2e_evil" "$e2e_tls" | tr -d ' \n')"
+  expect "e2e: the network has only the three containers" "$e2e_app $e2e_evil $e2e_tls" \
     "$(dk network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$e2e_network" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: the server runs as uid 1000" "1000" "$(dk exec "$e2e_app" awk '/^Uid:/{print $2}' /proc/1/status)"
   contains "e2e: the e2e image says so" "$(dk run --rm --name "$probe" --label "$e2e_label" "$e2e_image" --build-info)" "features: e2e-clock"
   expect "e2e: the e2e binary holds the clock hook (the variable name and the feature name)" "yes yes" \
     "$(binary_has "$e2e_image" FERRET_E2E_CLOCK_FILE) $(binary_has "$e2e_image" e2e-clock)"
   contains "e2e: the server started with the test clock" "$(dk logs "$e2e_app" 2>&1)" "TEST BUILD: the clock is moved"
-  expect "e2e: the server trusts the terminator only" "172.30.250.2" "$(dk exec "$e2e_app" printenv FERRET_TRUSTED_PROXIES)"
+  expect "e2e: the server trusts the malicious server only (not the terminator)" "172.30.250.4" "$(dk exec "$e2e_app" printenv FERRET_TRUSTED_PROXIES)"
+  expect "e2e: the malicious server has that address" "172.30.250.4" "$(dk inspect -f '{{with index .NetworkSettings.Networks "ferret-e2e-net"}}{{.IPAddress}}{{end}}' "$e2e_evil")"
+  expect "e2e: the malicious server runs as uid 1000" "1000" "$(dk exec "$e2e_evil" awk '/^Uid:/{print $2}' /proc/1/status)"
+  expect "e2e: the malicious server has no capability" "0000000000000000" "$(dk exec "$e2e_evil" awk '/^CapEff:/{print $2}' /proc/1/status)"
+
+  # The malicious server: honest by default, the control port only on the network, modes switch.
+  expect "e2e-evil: honest is the mode after a start" '"mode":"honest"' \
+    "$(dk exec "$e2e_evil" wget -q -O - http://127.0.0.1:9000/mode | grep -o '"mode":"honest"' || true)"
+  scripts/lanbox-ferret-test.sh e2e-evil honest >/dev/null
+  expect "e2e-evil: a mode with parameters is switched on" 0 "$(scripts/lanbox-ferret-test.sh e2e-evil hide '{"id":"00000000000000000000000000000001"}' >/dev/null 2>&1; echo $?)"
+  expect "e2e-evil: an unknown mode is refused" 1 "$(scripts/lanbox-ferret-test.sh e2e-evil nonsense >/dev/null 2>&1; echo $?)"
+  expect "e2e-evil: a mode name with anything but lower case letters is refused" 2 "$(scripts/lanbox-ferret-test.sh e2e-evil 'a;b' >/dev/null 2>&1; echo $?)"
+  scripts/lanbox-ferret-test.sh e2e-evil honest >/dev/null
+  expect "e2e-evil: the control port is not on the vault host" "404" \
+    "$(dk run --rm --name ferret-e2e-check-probe --label "$e2e_label" --network "$e2e_network" "$alpine_image" wget -q -S -O /dev/null "http://$e2e_evil:8041/mode" 2>&1 | grep -o ' 404 ' | tr -d ' ' | head -n 1)"
 
   # The clock.
   scripts/lanbox-ferret-test.sh e2e-clock 43200 >/dev/null
@@ -271,12 +338,13 @@ check_stack() {
 
 which="${1:-all}"
 case "$which" in
-  all | images | reset | stack) ;;
+  all | images | reset | stack | snapshot) ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 if [ "$which" = all ] || [ "$which" = images ]; then check_images; fi
 if [ "$which" = all ] || [ "$which" = reset ]; then check_reset; fi
 if [ "$which" = all ] || [ "$which" = stack ]; then check_stack; fi
+if [ "$which" = all ] || [ "$which" = snapshot ]; then check_snapshot_restore; fi
 echo
 echo "$ok ok, $bad failed"
 [ "$bad" -eq 0 ]

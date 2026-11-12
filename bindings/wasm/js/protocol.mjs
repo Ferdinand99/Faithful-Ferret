@@ -134,6 +134,8 @@ export const BYTES_ARGS = {
   verify_checkpoint: [[3, false, false]],
   accept_rows: [[2, false, false]],
   verify_tombstone: [[0, false, false], [2, false, false]],
+  // The id of the copy: public, typed so that nothing but bytes reaches Rust.
+  copy_item: [[1, false, false]],
   rekey: [[2, false, false]],
   sync_memory_prune: [[0, false, false]],
 };
@@ -163,6 +165,7 @@ export const U32_ARGS = {
   reveal_totp_secret: [[0, false]],
   totp_code: [[0, false]],
   encrypt_item: [[3, true]],
+  copy_item: [[0, false]],
   passkey_create: [[8, true]],
   passkey_create_confirm: [[0, false]],
   passkey_create_abort: [[0, false]],
@@ -182,6 +185,25 @@ export function assertU32Args(method, args) {
     if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 0xffffffff) {
       throw new FerretError("invalid_input");
     }
+  }
+}
+
+/**
+ * The arguments that the Rust side takes as an optional `String` and that are
+ * public text (a device name). The second item says whether the argument may
+ * be left out (`undefined` or `null`). `wasm-bindgen` would not check the
+ * type of a value that is not a string.
+ */
+export const STRING_ARGS = {
+  copy_item: [[3, true]],
+};
+
+/** Throws `invalid_input` unless the text arguments of a call are strings (or left out where allowed). */
+export function assertStringArgs(method, args) {
+  for (const [index, optional] of argsOf(STRING_ARGS, method)) {
+    const v = args[index];
+    if (optional && (v === undefined || v === null)) continue;
+    if (typeof v !== "string") throw new FerretError("invalid_input");
   }
 }
 
@@ -212,6 +234,7 @@ const MAX_MILLIS = 4e13;
 export const F64_ARGS = {
   open_item: [[1, "u64"]],
   encrypt_item: [[1, "u64"], [4, "millis"]],
+  copy_item: [[2, "millis"]],
   make_tombstone: [[1, "u64"]],
   verify_tombstone: [[1, "u64"]],
   make_checkpoint: [[0, "u64"]],
@@ -264,6 +287,7 @@ export function assertArgTypes(method, args) {
   assertBytesArgs(method, args);
   assertU32Args(method, args);
   assertF64Args(method, args);
+  assertStringArgs(method, args);
 }
 
 /**

@@ -61,6 +61,7 @@
   "vault.loading": "Loading",
   "vault.lock": "Lock",
   "vault.mark.blocked": "Change refused",
+  "vault.mark.conflict": "Conflict",
   "vault.mark.damaged": "Cannot be opened",
   "vault.mark.missing": "Missing on the server",
   "vault.mark.pending": "Waiting to sync",

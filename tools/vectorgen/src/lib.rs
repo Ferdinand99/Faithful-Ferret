@@ -21,6 +21,7 @@ mod passkey_groups;
 mod server_groups;
 mod text_groups;
 mod totp_groups;
+mod url_match_groups;
 
 use ferret_core::testing::{hex_encode, vector::VectorFile};
 use serde_json::{Map, Value, json};
@@ -81,6 +82,7 @@ const GROUPS: &[Group] = &[
         "internal/server-secrets.json",
         server_groups::server_secrets,
     ),
+    ("internal/url-match.json", url_match_groups::url_match),
 ];
 
 /// Serializes a vector file the way every generated file is written:

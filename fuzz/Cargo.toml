@@ -80,6 +80,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_url_match"
+path = "fuzz_targets/fuzz_url_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_webauthn_options"
 path = "fuzz_targets/fuzz_webauthn_options.rs"
 test = false

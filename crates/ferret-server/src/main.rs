@@ -15,6 +15,18 @@ async fn main() {
     }
     // vole-kit needs to know which product it runs in before anything else.
     ferret_server::install();
+    // `ferret restore-epoch bump` and the like: not the server.
+    if let Some(parsed) = ferret_server::cli::parse(std::env::args_os()) {
+        let command = parsed.unwrap_or_else(|err| err.exit());
+        match ferret_server::cli::run(command) {
+            Ok(line) => println!("{line}"),
+            Err(err) => {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let config = Config::parse();
 
     // Colours only on a terminal: `docker logs` and log files get plain text.

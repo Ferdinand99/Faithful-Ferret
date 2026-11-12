@@ -82,6 +82,7 @@ function secondsOf(value) {
  * @property {(path: string, options?: CallOptions) => Promise<any>} get
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} post
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} put
+ * @property {(path: string, options?: { signal?: AbortSignal }) => Promise<ReadableStreamDefaultReader<Uint8Array>>} stream
  */
 
 /**
@@ -153,7 +154,74 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
     throw errorOf(status, text, retryAfter);
   }
 
+  /**
+   * Opens an event stream (`text/event-stream`) and gives its reader. The
+   * answer must be a 200 with that media type and a body; anything else is an
+   * `ApiError` (the server's code for an error answer, `bad_response` for a
+   * proxy page, a redirect or a wrong media type) and the body is dropped. The
+   * stream has no time limit of its own: the caller ends it with `signal`.
+   * @param {string} path
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async function stream(path, { signal } = {}) {
+    if (!isLocalPath(path)) throw new TypeError("an API path starts with a single / and has no backslash or control character");
+    /** @type {RequestInit} */
+    const init = {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      headers: { Accept: "text/event-stream", "Ferret-Protocol": "1" },
+    };
+    if (signal) init.signal = signal;
+
+    /** @type {Response} */
+    let response;
+    try {
+      response = await fetchImpl(base + path, init);
+    } catch {
+      throw new ApiError(0, signal?.aborted ? "aborted" : "network");
+    }
+
+    /** Drops what is left of the body without waiting for it. */
+    const drop = () => {
+      try {
+        void response.body?.cancel().catch(() => {});
+      } catch {
+        // Nothing to drop.
+      }
+    };
+    const status = response.status;
+    const retryAfter = secondsOf(response.headers.get("retry-after"));
+    if (response.redirected || response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
+      drop();
+      throw new ApiError(status, "bad_response", retryAfter);
+    }
+    const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (status === 200) {
+      const reader = media === "text/event-stream" ? response.body?.getReader() : undefined;
+      if (!reader) {
+        drop();
+        throw new ApiError(status, "bad_response", retryAfter);
+      }
+      return reader;
+    }
+    if ((status >= 200 && status < 300) || media !== "application/json") {
+      drop();
+      throw new ApiError(status, "bad_response", retryAfter);
+    }
+    /** @type {string} */
+    let text;
+    try {
+      text = await response.text();
+    } catch {
+      throw new ApiError(status, "bad_response", retryAfter);
+    }
+    throw errorOf(status, text, retryAfter);
+  }
+
   return {
+    stream,
     get: (path, options = {}) => call("GET", path, undefined, options),
     post: (path, body, options = {}) => call("POST", path, body, options),
     put: (path, body, options = {}) => call("PUT", path, body, options),

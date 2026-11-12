@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { createSyncEngine, MANIFEST_ID } from "../../src/sync/engine.mjs";
 import { listView, matches } from "../../src/views/list.mjs";
 import { freshStore, scope } from "./idbHelpers.mjs";
-import { createFakeApi, createFakeClient, createFakeStore, counterRand, FakeTimers, Model, until } from "./syncHelpers.mjs";
+import { createFakeApi, createFakeClient, createFakeStore, counterRand, fakeMemory, FakeTimers, Model, until } from "./syncHelpers.mjs";
 import { all, click, fakeEngine, find, fire, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
 
 const base = {
@@ -94,7 +94,7 @@ test("list_never_shows_the_manifest_row", async () => {
     const store = await createFakeStore({ db: await freshStore() });
     const api = createFakeApi(model);
     const engine = createSyncEngine({
-      api, client: { vault: client.vault }, store, scope: scope(), timers: new FakeTimers(), rand: counterRand(1),
+      api, client: { vault: client.vault }, store, scope: scope(), timers: new FakeTimers(), rand: counterRand(1), memory: fakeMemory({ store, client }),
     });
     await engine.start();
     const id = await engine.create({ item_type: "login", name: "Real item" });
@@ -113,7 +113,7 @@ test("the_index_carries_the_plain_user_name_and_never_a_hidden_value", async () 
   const client = createFakeClient();
   const store = await createFakeStore({ db: await freshStore() });
   const engine = createSyncEngine({
-    api: createFakeApi(model), client: { vault: client.vault }, store, scope: scope(), timers: new FakeTimers(), rand: counterRand(2),
+    api: createFakeApi(model), client: { vault: client.vault }, store, scope: scope(), timers: new FakeTimers(), rand: counterRand(2), memory: fakeMemory({ store, client }),
   });
   await engine.start();
   await engine.create({

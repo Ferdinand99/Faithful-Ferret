@@ -293,6 +293,68 @@ pub fn lookup(conn: &Connection, sid: &SidHash) -> rusqlite::Result<Option<Sessi
     .optional()
 }
 
+/// Whether the session `sid` is still one at `now`: the same rules as the
+/// `VaultSession` and `AdminSession` extractors, minus the cookies (a caller
+/// that holds a stream open has no cookie to look at, and the kit's cookie
+/// is sealed from it). The row exists and is not revoked, belongs to `origin`,
+/// has the scope `full` and is within the limits of its origin; its user exists
+/// and is active, and the user's `session_version` is `expected_version`; for
+/// the vault origin the user has an account with a vault. Reads only: it does
+/// not touch `last_seen`.
+///
+/// A database error is an error here, never `true`.
+///
+/// Spec: Fase 1 § 7.6.
+pub fn still_valid(
+    conn: &Connection,
+    sid: &SidHash,
+    origin: Origin,
+    expected_version: i64,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    let Some(row) = lookup(conn, sid)? else {
+        return Ok(false);
+    };
+    if row.revoked_at.is_some()
+        || row.origin != origin
+        || row.scope != SessionScope::Full
+        || !within_limits(&row, now)
+    {
+        return Ok(false);
+    }
+    let user: Option<(i64, bool)> = conn
+        .query_row(
+            "SELECT session_version, active FROM users WHERE id = ?1",
+            params![row.user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    match user {
+        Some((version, true)) if version == expected_version => {}
+        _ => return Ok(false),
+    }
+    if origin == Origin::Vault {
+        // Only that the user has an account with a vault, as the extractor
+        // reads it: a user has one account and so one vault, and the vault of
+        // a stream is the one the extractor found with this same join. A caller
+        // that needs the vault itself reads it by id (the event stream reads
+        // its sequence number from it in the same call).
+        let account: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM ferret_accounts a
+                 JOIN ferret_vaults v ON v.account_id = a.account_id
+                 WHERE a.user_id = ?1",
+                params![row.user_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if account.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn read_row(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
     let origin: String = row.get(3)?;
     let origin = Origin::parse(&origin).ok_or_else(|| {

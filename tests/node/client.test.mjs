@@ -614,6 +614,50 @@ test("client_validates_verify_tombstone_argument_types", async () => {
   assert.equal(send([id, 1, tomb]).code, "vault_locked");
 });
 
+test("client_validates_copy_item_argument_types", async () => {
+  const { client, made } = echoClient();
+  const id = fill(16, 1);
+  // The handle is a whole number from 0 to 2^32 - 1.
+  for (const v of [4294967297, 1.9, -1, "3", NaN, Infinity, null, undefined, {}]) {
+    assert.equal((await rejection(client.vault.copy_item(v, id, 1))).code, "invalid_input", `handle ${String(v)}`);
+  }
+  // The new id must be a Uint8Array.
+  const notBytes = ["a".repeat(16), Array.from(fill(16, 1)), new Uint16Array(8), fill(16, 1).buffer, { length: 16 }, undefined, null, 7];
+  for (const v of notBytes) {
+    assert.equal((await rejection(client.vault.copy_item(1, v, 1))).code, "invalid_input", `id ${String(v)}`);
+  }
+  // The time is a finite number of milliseconds, not seconds-times-a-million.
+  for (const v of [null, undefined, "5", "", false, true, NaN, Infinity, -1, {}, [], 5e13]) {
+    assert.equal((await rejection(client.vault.copy_item(1, id, v))).code, "invalid_input", `time ${String(v)}`);
+  }
+  // The device name is a string, or left out.
+  for (const v of [7, true, {}, [], fill(2, 1)]) {
+    assert.equal((await rejection(client.vault.copy_item(1, id, 1, v))).code, "invalid_input", `device ${String(v)}`);
+  }
+  assert.equal((await rejection(client.vault.copy_item(1, id, 1, "bad\uD800"))).code, "invalid_input", "lone surrogate");
+  assert.equal(made.length, 0, "nothing was sent, no worker started");
+  // The id is public and is not wiped; the call goes out as it is.
+  const copy = id.slice();
+  assert.equal(await client.vault.copy_item(4294967295, id, 4e13), null);
+  assert.equal(await client.vault.copy_item(4294967295, id, 4e13, "Firefox on Windows"), null);
+  assert.equal(await client.vault.copy_item(4294967295, id, 4e13, null), null);
+  assert.deepEqual(id, copy);
+  assert.equal(made[0].received.length, 3);
+
+  // A real client: valid types reach the vault check, and the dispatcher says the same.
+  const real = setup().client;
+  assert.equal((await rejection(real.vault.copy_item(1, id, 1))).code, "vault_locked");
+  assert.equal((await rejection(real.vault.copy_item(1, id, 1, "Firefox"))).code, "vault_locked");
+  const dispatch = createDispatcher(wasm);
+  const send = (args) => dispatch({ id: 1, target: "vault", method: "copy_item", args }).reply;
+  assert.equal(send(["x".repeat(16), 1, 1]).code, "invalid_input");
+  assert.equal(send([1, id, "1"]).code, "invalid_input");
+  assert.equal(send(["1", id, 1]).code, "invalid_input");
+  assert.equal(send([1, id, 1]).code, "vault_locked");
+  assert.equal(send([1, id, 1, 5]).code, "invalid_input");
+  assert.equal(send([1, id, 1, "name"]).code, "vault_locked");
+});
+
 test("lock_also_ends_the_job_workers", async () => {
   const jobs = [];
   const client = createClient({

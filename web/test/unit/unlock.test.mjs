@@ -67,7 +67,7 @@ test("the_screen_never_guesses_the_secret_key_answer_for_a_device_that_does_not_
   await withDom(async () => {
     // No record of the account on this device: the screen asks nothing extra, and the session says what it needs.
     const session = fakeSession({ status: { pinned: false, skBit: null, skStored: false } });
-    assert.deepEqual(await prepareUnlock(session), { signedIn: true, email: "ada@example.test", skRequired: false });
+    assert.deepEqual(await prepareUnlock(session), { signedIn: true, email: "ada@example.test", accountId: "aa".repeat(16), skRequired: false });
     const { host, moves } = await screen(session);
     assert.equal(find(host, "secret-key"), null);
     session.unlockError = coded("sk_answer_required");
