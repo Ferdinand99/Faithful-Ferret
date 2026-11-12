@@ -18,8 +18,14 @@ async function watch(page) {
     });
   });
   page.on("pageerror", (e) => seen.errors.push(String(e)));
+  const webkit = page.context().browser()?.browserType().name() === "webkit";
   page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning") seen.console.push(`${m.type()}: ${m.text()}`);
+    if (m.type() !== "error" && m.type() !== "warning") return;
+    // WebKit (Playwright 1.65) logs this note about the page's cross-origin isolation after
+    // `page.reload()`, without a source location. It is not about our code: the page sends no
+    // Cross-Origin-Embedder-Policy and uses no SharedArrayBuffer.
+    if (webkit && /^This document is not cross-origin isolated because the Cross-Origin-Embedder-Policy header is missing/.test(m.text())) return;
+    seen.console.push(`${m.type()}: ${m.text()}`);
   });
   return seen;
 }
