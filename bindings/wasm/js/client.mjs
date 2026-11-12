@@ -127,6 +127,20 @@
 // side; the copy is not opened (call `open_item` for it). An item that holds a
 // passkey is `invalid_state`, an item of a newer schema `read_only_schema`.
 //
+// Pages: `vault.match_page(pageUrl, handles)` resolves `[{ handle, how }]`, the
+// open items among `handles` whose saved addresses match the page, with the
+// best result per item (`how` is `"exact"`, `"host"` or `"domain"`). It reads the
+// saved addresses only. A handle that is not open is `invalid_handle` for the
+// whole call, and a list of more than 4096 handles is `invalid_input`. The
+// matching rule is the core's alone: open the items for a match in batches
+// (`open_item`), call `match_page`, and close each handle (`close_item`) right
+// after. `page_origin(pageUrl)` resolves the origin text (`https://host`, the
+// port only when it is not the default; `http` and IP hosts are accepted),
+// `same_site(a, b)` a boolean (an address that is no web address is on no
+// site) and `display_host(pageUrl)` `{ a_label, unicode }`: show the Unicode
+// name, and the A-label next to it when they differ. An address that is no
+// web address is `malformed_origin` for `page_origin` and `display_host`.
+//
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
 // `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(

@@ -56,6 +56,9 @@ export const STATELESS = new Set([
   "prf_salt_new",
   "sync_memory_new",
   "sync_memory_prune",
+  "page_origin",
+  "same_site",
+  "display_host",
 ]);
 
 /**
@@ -196,6 +199,11 @@ export function assertU32Args(method, args) {
  */
 export const STRING_ARGS = {
   copy_item: [[3, true]],
+  // Page addresses (public text): `wasm-bindgen` would not check the type.
+  match_page: [[0, false]],
+  page_origin: [[0, false]],
+  same_site: [[0, false], [1, false]],
+  display_host: [[0, false]],
 };
 
 /** Throws `invalid_input` unless the text arguments of a call are strings (or left out where allowed). */
@@ -204,6 +212,35 @@ export function assertStringArgs(method, args) {
     const v = args[index];
     if (optional && (v === undefined || v === null)) continue;
     if (typeof v !== "string") throw new FerretError("invalid_input");
+  }
+}
+
+/**
+ * The arguments that the Rust side takes as a list of `u32` (item handles).
+ * `wasm-bindgen` copies a list into a `Uint32Array`, which turns `4294967297`
+ * into `1` and `"3"` into `3`, so the list is checked here: an array (or a
+ * `Uint32Array`) of whole numbers from 0 to 2^32 - 1, at most `MAX_LIST` long.
+ */
+export const U32_LIST_ARGS = {
+  match_page: [1],
+};
+
+/** The most handles one call may list (the most items a vault keeps open). */
+export const MAX_LIST = 4096;
+
+/** Throws `invalid_input` unless the list arguments of a call are lists of `u32`. */
+export function assertU32ListArgs(method, args) {
+  for (const index of argsOf(U32_LIST_ARGS, method)) {
+    const v = args[index];
+    if (!(Array.isArray(v) || v instanceof Uint32Array) || v.length > MAX_LIST) {
+      throw new FerretError("invalid_input");
+    }
+    for (let i = 0; i < v.length; i++) {
+      const n = v[i];
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 0xffffffff) {
+        throw new FerretError("invalid_input");
+      }
+    }
   }
 }
 
@@ -288,6 +325,7 @@ export function assertArgTypes(method, args) {
   assertU32Args(method, args);
   assertF64Args(method, args);
   assertStringArgs(method, args);
+  assertU32ListArgs(method, args);
 }
 
 /**

@@ -44,8 +44,8 @@ test("exports_list_is_exactly_the_documented_one", () => {
   // fails this test until it is listed here on purpose (and, if it returns
   // bytes or starts with `reveal_`, in the lists of the tests below).
   const documented = [
-    "argon2_export_key", "check_code", "check_master_password", "ferret_aaguid", "import_header",
-    "prf_salt_new", "setup_qr_build", "setup_qr_parse", "sync_memory_new", "sync_memory_prune", "totp_parse",
+    "argon2_export_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "import_header",
+    "page_origin", "prf_salt_new", "same_site", "setup_qr_build", "setup_qr_parse", "sync_memory_new", "sync_memory_prune", "totp_parse",
     "UnlockJob.change_password", "UnlockJob.clear", "UnlockJob.create_account", "UnlockJob.login_finish",
     "UnlockJob.login_start", "UnlockJob.pin_unlock", "UnlockJob.reauth_grant", "UnlockJob.recover",
     "UnlockJob.recover_done", "UnlockJob.recover_sign", "UnlockJob.register_finish",
@@ -54,7 +54,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.auth_sign", "Vault.check_server_methods", "Vault.clear_setup_secrets", "Vault.close_item",
     "Vault.context", "Vault.copy_item", "Vault.encrypt_item", "Vault.export_abort", "Vault.export_begin",
     "Vault.export_finish", "Vault.import_close", "Vault.import_open", "Vault.import_seal",
-    "Vault.import_view", "Vault.is_locked", "Vault.item_view", "Vault.lock", "Vault.make_checkpoint",
+    "Vault.import_view", "Vault.is_locked", "Vault.item_view", "Vault.lock", "Vault.make_checkpoint", "Vault.match_page",
     "Vault.make_tombstone", "Vault.manifest_add_method", "Vault.manifest_remove_method", "Vault.open_item",
     "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get",
     "Vault.rekey_abort", "Vault.rekey_commit", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
@@ -66,6 +66,29 @@ test("exports_list_is_exactly_the_documented_one", () => {
   assert.deepEqual([...exportsOf.keys()].sort(), [...documented].sort());
   // The copy of an item is a method of the vault that returns the sealed row, not bytes.
   assert.match(dts, /copy_item\(handle: number, new_item_id: Uint8Array, now_ms: number, device\?: string \| null\): any;/);
+});
+
+test("the_export_list_has_the_four_new_names", () => {
+  // The page address functions of the core: one method of the vault and three
+  // functions that need no state.
+  for (const name of ["Vault.match_page", "page_origin", "same_site", "display_host"]) {
+    assert.ok(exportsOf.has(name), name);
+  }
+  // None of them is a reveal method: the allowlist stays as it is.
+  for (const name of ["match_page", "page_origin", "same_site", "display_host"]) {
+    assert.ok(!name.startsWith("reveal_"), name);
+  }
+});
+
+test("same_site_and_display_host_are_exported_and_typed", () => {
+  assert.match(dts, /export function same_site\(a: string, b: string\): boolean;/);
+  assert.match(dts, /export function display_host\(page_url: string\): any;/);
+  assert.match(dts, /export function page_origin\(page_url: string\): string;/);
+  assert.match(dts, /match_page\(page_url: string, handles: Uint32Array\): any;/);
+  // None of them returns bytes: no key, no secret.
+  for (const name of ["Vault.match_page", "page_origin", "same_site", "display_host"]) {
+    assert.ok(!/Uint8Array/.test(exportsOf.get(name)), name);
+  }
 });
 
 test("wasm_exports_have_no_test_support", () => {
@@ -217,6 +240,47 @@ test("u32_args_table_matches_the_rust_signatures", async () => {
     }
   }
   assert.deepEqual(found, U32_ARGS);
+});
+
+test("u32_list_and_string_args_tables_match_the_rust_signatures", async () => {
+  // A list of `u32` (`Vec<u32>`) and a `&str` are typed `Uint32Array` and
+  // `string` in the .d.ts, but `wasm-bindgen` coerces what it is given, so
+  // each position has its check in `protocol.mjs`.
+  const { U32_LIST_ARGS, STRING_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
+  const { readdirSync } = await import("node:fs");
+  const dir = join(root, "bindings", "wasm", "src");
+  const lists = {};
+  const strings = {};
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".rs") && f !== "vector_ops.rs")) {
+    const text = readFileSync(join(dir, file), "utf8");
+    for (const m of text.matchAll(/^\s*pub fn (\w+)\(([^)]*)\)/gm)) {
+      const params = [];
+      let depth = 0;
+      let current = "";
+      for (const ch of m[2]) {
+        if (ch === "<") depth++;
+        if (ch === ">") depth--;
+        if (ch === "," && depth === 0) {
+          params.push(current.trim());
+          current = "";
+        } else current += ch;
+      }
+      if (current.trim()) params.push(current.trim());
+      params
+        .filter((p) => !/^(&?(mut )?self\b|vault: &(mut )?Vault)/.test(p))
+        .forEach((p, index) => {
+          const type = p.split(":").slice(1).join(":").trim();
+          if (type === "Vec<u32>") (lists[m[1]] ??= []).push(index);
+          if (type === "&str" && ["match_page", "page_origin", "same_site", "display_host"].includes(m[1])) {
+            (strings[m[1]] ??= []).push([index, false]);
+          }
+        });
+    }
+  }
+  assert.deepEqual(lists, U32_LIST_ARGS);
+  for (const [method, positions] of Object.entries(strings)) {
+    assert.deepEqual(STRING_ARGS[method], positions, method);
+  }
 });
 
 test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async () => {
