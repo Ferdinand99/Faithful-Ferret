@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.2.0...v0.3.0) (2026-11-12)
+
+
+### Features
+
+* **core:** match saved addresses against a page, and read its origin, site and host ([#112](https://github.com/Ferdinand99/Faithful-Ferret/issues/112)) ([5861ef3](https://github.com/Ferdinand99/Faithful-Ferret/commit/5861ef3117b6f2e051ed9445a052fc162e881cfd))
+* safe sync (M2) ([#120](https://github.com/Ferdinand99/Faithful-Ferret/issues/120)) ([4eb49ba](https://github.com/Ferdinand99/Faithful-Ferret/commit/4eb49ba8cade6ef3403fcaf4a2a068499d25ad2e))
+* **server:** batch writes, rate limits and a bounded write queue ([#86](https://github.com/Ferdinand99/Faithful-Ferret/issues/86)) ([7aeb14a](https://github.com/Ferdinand99/Faithful-Ferret/commit/7aeb14ab2dc6065987f949fc523a7cf1a4102335))
+* **server:** event stream GET /api/sync/events ([#87](https://github.com/Ferdinand99/Faithful-Ferret/issues/87)) ([9f9d42f](https://github.com/Ferdinand99/Faithful-Ferret/commit/9f9d42fd098e7c96b2750e742bb7e17decc5b744))
+* **server:** full listing, tombstone retention and restore epoch bump ([#88](https://github.com/Ferdinand99/Faithful-Ferret/issues/88)) ([3f7e086](https://github.com/Ferdinand99/Faithful-Ferret/commit/3f7e086edae8c9c7a793899b4c019f60fef315f9))
+* **server:** restore_seq, frozen restore rows and the restore_epoch condition ([#101](https://github.com/Ferdinand99/Faithful-Ferret/issues/101)) ([a52bf68](https://github.com/Ferdinand99/Faithful-Ferret/commit/a52bf680b6f08dd61ba73766000a7db1836145fe))
+* **server:** resurrect, checkpoint endpoints and the checkpoint head ([#85](https://github.com/Ferdinand99/Faithful-Ferret/issues/85)) ([0250aee](https://github.com/Ferdinand99/Faithful-Ferret/commit/0250aee4df236f87ea43f08d61f8700f57695e67))
+* **server:** sync foundation: narrow handles, stubs, wiring and migration 0005 ([#84](https://github.com/Ferdinand99/Faithful-Ferret/issues/84)) ([45192e5](https://github.com/Ferdinand99/Faithful-Ferret/commit/45192e5423d14d7f38b65734b54224785f28c310))
+* **server:** wire contract for batch, checkpoints, listing and sync events ([#82](https://github.com/Ferdinand99/Faithful-Ferret/issues/82)) ([de315aa](https://github.com/Ferdinand99/Faithful-Ferret/commit/de315aa44d1924781c917dd5c28987c7fd75b6de))
+* **wasm:** copy_item for keeping both versions of a conflicted item ([#92](https://github.com/Ferdinand99/Faithful-Ferret/issues/92)) ([ab75920](https://github.com/Ferdinand99/Faithful-Ferret/commit/ab75920aa087728b71e8b87cf2d18459ea3ac81e))
+* **web:** accept an older server state, preview it and try again after a stop ([#94](https://github.com/Ferdinand99/Faithful-Ferret/issues/94)) ([0695639](https://github.com/Ferdinand99/Faithful-Ferret/commit/0695639a16a9d7b2d623d469030448abfad6ef78))
+* **web:** conflict view and local trash ([#97](https://github.com/Ferdinand99/Faithful-Ferret/issues/97)) ([4cd493a](https://github.com/Ferdinand99/Faithful-Ferret/commit/4cd493a0497c6452c5095f0f3e38fa00706483c2))
+* **web:** conflicts, a local trash and resurrection in the sync engine ([#96](https://github.com/Ferdinand99/Faithful-Ferret/issues/96)) ([5ad7012](https://github.com/Ferdinand99/Faithful-Ferret/commit/5ad7012d35fc1eea479d58ab59495f51a2a55157))
+* **web:** decide an older state with restore_seq and send the restore epoch with every write ([#102](https://github.com/Ferdinand99/Faithful-Ferret/issues/102)) ([a8c705e](https://github.com/Ferdinand99/Faithful-Ferret/commit/a8c705e3b8a5f615ef53590a05f24de126b76f1c))
+* **web:** full listing after a 410, checkpoint verification and upload ([#93](https://github.com/Ferdinand99/Faithful-Ferret/issues/93)) ([04b5f23](https://github.com/Ferdinand99/Faithful-Ferret/commit/04b5f23993aa7fccbeffc998f9c86bc762f6bf5e))
+* **web:** live updates over the event stream with a status field ([#89](https://github.com/Ferdinand99/Faithful-Ferret/issues/89)) ([610d893](https://github.com/Ferdinand99/Faithful-Ferret/commit/610d893a98ca17bdf16e2f4c19ad6d3c07ee3364))
+* **web:** restore text for an older unlock method after an accepted restore ([#100](https://github.com/Ferdinand99/Faithful-Ferret/issues/100)) ([389dc99](https://github.com/Ferdinand99/Faithful-Ferret/commit/389dc995e31ac0e1c8eb79a7f617cd7828f83d0d))
+* **web:** run the sync engine in one tab per account and browser ([#108](https://github.com/Ferdinand99/Faithful-Ferret/issues/108)) ([2f56d04](https://github.com/Ferdinand99/Faithful-Ferret/commit/2f56d044b6963141044d3c7fd86ca73d30592ee1))
+* **web:** sync memory under a lock, halts, device name and a five-minute poll ([#90](https://github.com/Ferdinand99/Faithful-Ferret/issues/90)) ([f3db138](https://github.com/Ferdinand99/Faithful-Ferret/commit/f3db13865a6d4ea77e4705f0b1dc300f1425e494))
+* **web:** sync state, trash and forget stores, engine seam, env passing for lanbox-web.sh ([#81](https://github.com/Ferdinand99/Faithful-Ferret/issues/81)) ([5a99ab9](https://github.com/Ferdinand99/Faithful-Ferret/commit/5a99ab97340c911a77723d19b7bb30e81efde8c4))
+* **web:** sync warning banners, restored-server page and forgetting a server ([#95](https://github.com/Ferdinand99/Faithful-Ferret/issues/95)) ([2ceb928](https://github.com/Ferdinand99/Faithful-Ferret/commit/2ceb9288acb480d157e0086c94d25d40c1c8e31a))
+* **web:** texts for restore_epoch_refused and trash_copy_skipped ([#103](https://github.com/Ferdinand99/Faithful-Ferret/issues/103)) ([e69bb2b](https://github.com/Ferdinand99/Faithful-Ferret/commit/e69bb2bce370e140e7a2286e1d04d261b95b7fbb))
+
+
+### Bug Fixes
+
+* **scripts:** accept a tunnel client outside Docker in the ferret-test deploy ([#104](https://github.com/Ferdinand99/Faithful-Ferret/issues/104)) ([f1977f7](https://github.com/Ferdinand99/Faithful-Ferret/commit/f1977f72410ad5fa9445c58d9c5fe20b7fef10f2))
+* **server:** clear htmx's history cache after an admin sign-out ([#80](https://github.com/Ferdinand99/Faithful-Ferret/issues/80)) ([8b58c8c](https://github.com/Ferdinand99/Faithful-Ferret/commit/8b58c8c10e97900c755df48f29090c57d438cc48))
+* **web:** sync engine fixes found by the sync matrix ([#107](https://github.com/Ferdinand99/Faithful-Ferret/issues/107)) ([d157c5f](https://github.com/Ferdinand99/Faithful-Ferret/commit/d157c5f9e4f67b2705f5e73c21835f4bbdd52151))
+
 ## [0.2.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.1.0...v0.2.0) (2026-11-01)
 
 
