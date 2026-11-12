@@ -2,13 +2,21 @@
 
 #[path = "../build_support/registry.rs"]
 mod registry;
+mod support;
 
 use std::path::Path;
 
-use ferret_server::db::MIGRATION_FILES;
+use ferret_server::db::{CORE_MIGRATIONS, MIGRATION_FILES};
+use ferret_server::ids::ItemId;
 use ferret_server::product;
+use ferret_server::vault::quota::Limits;
+use ferret_server::vault::store::{PutBody, PutOutcome, PutRequest, put_item};
 use rusqlite::{Connection, params};
-use vole_kit::db::migrate::{all_migration_names, apply_migrations};
+use support::accounts::{TestAccount, add_account, id16};
+use vole_kit::db::migrate::{
+    CORE, MigrationError, MigrationSet, SIGN_IN_CODES, all_migration_names, apply_migrations,
+    apply_migrations_with,
+};
 
 /// A database with every migration applied, foreign keys on as in the pool.
 fn migrated() -> Connection {
@@ -42,7 +50,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0003_sessions.sql",
             "0004_handoff_links.sql",
             "0005_sync.sql",
-            "0006_restore_seq.sql"
+            "0006_restore_seq.sql",
+            "0007_reauth.sql"
         ]
     );
     let mut sorted = names.clone();
@@ -609,4 +618,461 @@ fn an_account_has_one_user_and_one_vault_and_the_hint_is_a_flag() {
     };
     assert!(hint(2, &[4; 16], &[14; 16]).is_err(), "sk_hint 2");
     assert!(hint(1, &[4; 16], &[14; 16]).is_ok());
+}
+
+// ---------------------------------------------------------------- the M3 schema
+
+const NOW: i64 = 1_793_491_200;
+
+fn files_up_to(last: &str) -> Vec<(String, String)> {
+    MIGRATION_FILES
+        .iter()
+        .filter(|(name, _)| *name <= last)
+        .map(|(name, sql)| ((*name).to_string(), (*sql).to_string()))
+        .collect()
+}
+
+fn up_to_0006() -> Vec<(String, String)> {
+    files_up_to("0006_restore_seq.sql")
+}
+
+fn up_to_0007() -> Vec<(String, String)> {
+    files_up_to("0007_reauth.sql")
+}
+
+fn no_fixups(_: &mut Connection) -> Result<(), MigrationError> {
+    Ok(())
+}
+
+/// What the previous release ran: the kit's core set as it was, and our
+/// migrations up to 0006.
+static BUILD_AT_0006: MigrationSet = MigrationSet {
+    core: CORE,
+    adopt_core: None,
+    migrations: up_to_0006,
+    fk_off_marker: "-- ff:foreign_keys=off",
+    baseline: None,
+    after: no_fixups,
+};
+
+/// A build with 0007 and without the kit's tables of sign-in codes.
+static BUILD_AT_0007: MigrationSet = MigrationSet {
+    core: CORE,
+    adopt_core: None,
+    migrations: up_to_0007,
+    fk_off_marker: "-- ff:foreign_keys=off",
+    baseline: None,
+    after: no_fixups,
+};
+
+fn empty_database() -> Connection {
+    product::install();
+    let conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("pragma");
+    conn
+}
+
+fn put_live(conn: &mut Connection, a: &TestAccount, n: u8, base_rev: u8) {
+    let blob = format!("envelope of item {n} at revision {}", base_rev + 1).into_bytes();
+    let mut item = [0u8; 16];
+    item[0] = 0x10;
+    item[1] = n;
+    let req = PutRequest {
+        item_id: ItemId::from_bytes(item),
+        base_rev: u64::from(base_rev),
+        body: PutBody::Live {
+            blob: &blob,
+            tag: [n; 32],
+        },
+        idem: id16(0xe0, n.wrapping_mul(16).wrapping_add(base_rev)),
+        request_hash: [n; 32],
+        resurrect: false,
+        restore_epoch: None,
+    };
+    let outcome =
+        put_item(conn, &a.vault_id, &a.device, &req, &Limits::DEFAULT, NOW).expect("put_item");
+    assert!(matches!(outcome, PutOutcome::Stored { .. }), "{outcome:?}");
+}
+
+/// A database as the previous release left it: its migrations only, two
+/// accounts with items, and sessions of every scope, one of them ended.
+fn database_at_0006() -> Connection {
+    let mut conn = empty_database();
+    apply_migrations_with(&mut conn, &BUILD_AT_0006).expect("the old migrations");
+    let a = add_account(&mut conn, 1, NOW);
+    let b = add_account(&mut conn, 2, NOW);
+    put_live(&mut conn, &a, 1, 0);
+    put_live(&mut conn, &a, 2, 0);
+    put_live(&mut conn, &a, 2, 1);
+    put_live(&mut conn, &b, 1, 0);
+    for (n, user, scope, revoked) in [
+        (1u8, a.user_id, "full", None),
+        (2, a.user_id, "account_reset", None),
+        (3, b.user_id, "full", Some(NOW + 5)),
+        (4, b.user_id, "pending_2fa", None),
+    ] {
+        conn.execute(
+            "INSERT INTO ferret_sessions \
+             (sid_hash, user_id, issued_at, origin, device_id, device_name, scope, last_seen, \
+              revoked_at) \
+             VALUES (?1, ?2, ?3, 'vault', ?4, 'a browser', ?5, ?6, ?7)",
+            params![
+                [n; 32].as_slice(),
+                user,
+                NOW,
+                id16(0xd0, n).as_slice(),
+                scope,
+                NOW + 1,
+                revoked
+            ],
+        )
+        .expect("a session");
+    }
+    conn
+}
+
+/// Every row of the named tables, as text, in a fixed order.
+fn dump_rows(conn: &Connection, tables: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for table in tables {
+        let mut stmt = conn
+            .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY 1, 2"))
+            .expect("prepare");
+        let columns = stmt.column_count();
+        let rows: Vec<String> = stmt
+            .query_map([], |row| {
+                let mut cells = Vec::new();
+                for i in 0..columns {
+                    cells.push(format!("{:?}", row.get_ref(i)?));
+                }
+                Ok(cells.join("|"))
+            })
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        out.push(format!("{table}: {}", rows.join("\n")));
+    }
+    out
+}
+
+/// The tables of a database, not the bookkeeping of the migrations.
+fn tables(conn: &Connection) -> Vec<String> {
+    conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+         AND name <> 'schema_migrations' ORDER BY name",
+    )
+    .expect("prepare")
+    .query_map([], |row| row.get(0))
+    .expect("query")
+    .map(|r| r.expect("row"))
+    .collect()
+}
+
+fn recorded(conn: &Connection) -> Vec<String> {
+    conn.prepare("SELECT name FROM schema_migrations ORDER BY rowid")
+        .expect("prepare")
+        .query_map([], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect()
+}
+
+/// The statements of a migration file, comments left out, spaces collapsed.
+fn statements(file: &str) -> Vec<String> {
+    let sql = MIGRATION_FILES
+        .iter()
+        .find(|(name, _)| *name == file)
+        .map(|(_, sql)| *sql)
+        .expect("the migration");
+    sql.lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .split(';')
+        .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// The rows of the tables that were there before, compared before and after
+/// a migration. `ferret_sessions` is only compared by its row count: it has a
+/// new column.
+fn assert_rows_kept(before: &[String], after: &[String]) {
+    assert_eq!(before.len(), after.len());
+    for (was, now) in before.iter().zip(after) {
+        if was.starts_with("ferret_sessions: ") {
+            assert_eq!(was.lines().count(), now.lines().count());
+        } else {
+            assert_eq!(was, now);
+        }
+    }
+}
+
+#[test]
+fn migration_0007_adds_reauth_at_and_keeps_every_m2_row() {
+    let names: Vec<&str> = MIGRATION_FILES.iter().map(|(name, _)| *name).collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).expect(name);
+    assert_eq!(at("0007_reauth.sql"), at("0006_restore_seq.sql") + 1);
+
+    // Additive: one column, nullable, checked, nothing else.
+    assert_eq!(
+        statements("0007_reauth.sql"),
+        ["ALTER TABLE ferret_sessions ADD COLUMN reauth_at INTEGER \
+             CHECK(reauth_at IS NULL OR reauth_at >= 0)"]
+    );
+
+    let mut conn = database_at_0006();
+    let has_reauth_at = |conn: &Connection| -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('ferret_sessions') WHERE name = 'reauth_at'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("columns")
+            == 1
+    };
+    assert!(!has_reauth_at(&conn));
+    let kept_tables = tables(&conn);
+    let before = dump_rows(&conn, &kept_tables);
+    let rows_of = |table: &str| -> usize {
+        before
+            .iter()
+            .find(|t| t.starts_with(&format!("{table}: ")))
+            .map_or(0, |t| t.lines().count())
+    };
+    assert_eq!(
+        rows_of("ferret_sessions"),
+        4,
+        "the sessions are in the dump"
+    );
+    assert!(rows_of("ferret_items") >= 4, "the items are in the dump");
+
+    let applied = apply_migrations(&mut conn).expect("0007 applies over data");
+    assert!(
+        applied.iter().any(|n| n == "0007_reauth.sql"),
+        "{applied:?}"
+    );
+
+    // Every row of every table that was there is as it was, the sessions with
+    // one more column that is empty.
+    assert!(has_reauth_at(&conn));
+    assert_rows_kept(&before, &dump_rows(&conn, &kept_tables));
+    let (count, empty): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE reauth_at IS NULL) FROM ferret_sessions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("count");
+    assert_eq!((count, empty), (4, 4), "no session has a re-authentication");
+    let ended: Option<i64> = conn
+        .query_row(
+            "SELECT revoked_at FROM ferret_sessions WHERE sid_hash = ?1",
+            [[3u8; 32].as_slice()],
+            |row| row.get(0),
+        )
+        .expect("the ended session");
+    assert_eq!(ended, Some(NOW + 5), "the ended session is still ended");
+
+    // The column takes a time and refuses a negative one.
+    conn.execute(
+        "UPDATE ferret_sessions SET reauth_at = ?1 WHERE sid_hash = ?2",
+        params![NOW, [1u8; 32].as_slice()],
+    )
+    .expect("a time");
+    assert!(
+        conn.execute(
+            "UPDATE ferret_sessions SET reauth_at = -1 WHERE sid_hash = ?1",
+            [[1u8; 32].as_slice()],
+        )
+        .is_err(),
+        "a time is not negative"
+    );
+}
+
+#[test]
+fn kit_sign_in_codes_migration_runs_after_0006_and_0007_and_keeps_every_row() {
+    product::install();
+    // The kit's migration is part of the core set of this build, and the last
+    // of it, after everything the kit's own core set holds.
+    assert_eq!(
+        CORE_MIGRATIONS.last().map(|(name, _)| *name),
+        Some(SIGN_IN_CODES.0)
+    );
+    assert_eq!(
+        &CORE_MIGRATIONS[..CORE.len()],
+        CORE,
+        "all of the kit's core set is there"
+    );
+    let fresh = {
+        let mut conn = empty_database();
+        apply_migrations(&mut conn).expect("a fresh database");
+        conn
+    };
+    let fresh_schema = dump_schema(&fresh);
+    assert!(fresh_schema.contains("CREATE TABLE sign_in_codes"));
+    assert!(fresh_schema.contains("CREATE TABLE user_emails"));
+
+    // A database as the previous release left it gets the kit's tables and
+    // 0007, and keeps every row.
+    let mut direct = database_at_0006();
+    let kept_tables = tables(&direct);
+    let before = dump_rows(&direct, &kept_tables);
+    let applied = apply_migrations(&mut direct).expect("the new migrations");
+    assert!(applied.iter().any(|n| n == SIGN_IN_CODES.0), "{applied:?}");
+    assert!(
+        applied.iter().any(|n| n == "0007_reauth.sql"),
+        "{applied:?}"
+    );
+    assert_eq!(applied.len(), 2, "{applied:?}");
+    let order = recorded(&direct);
+    let position = |name: &str| order.iter().position(|n| n == name).expect(name);
+    assert!(position("0006_restore_seq.sql") < position(SIGN_IN_CODES.0));
+    // The kit runs a pending core migration before a pending migration of ours;
+    // neither touches a table of the other.
+    assert!(position(SIGN_IN_CODES.0) < position("0007_reauth.sql"));
+    assert_rows_kept(&before, &dump_rows(&direct, &kept_tables));
+    assert_eq!(
+        dump_schema(&direct),
+        fresh_schema,
+        "the same schema as a fresh database"
+    );
+
+    // A database that already has 0007 and then gets the codes (a build between
+    // the two) ends up the same, with its rows.
+    let mut stepped = database_at_0006();
+    apply_migrations_with(&mut stepped, &BUILD_AT_0007).expect("0007 first");
+    assert!(!tables(&stepped).iter().any(|t| t == "sign_in_codes"));
+    let kept_tables = tables(&stepped);
+    let before = dump_rows(&stepped, &kept_tables);
+    let applied = apply_migrations(&mut stepped).expect("then the codes");
+    assert_eq!(applied, [SIGN_IN_CODES.0], "only the codes were missing");
+    let order = recorded(&stepped);
+    let position = |name: &str| order.iter().position(|n| n == name).expect(name);
+    assert!(position("0007_reauth.sql") < position(SIGN_IN_CODES.0));
+    assert_eq!(before, dump_rows(&stepped, &kept_tables), "every row kept");
+    assert_eq!(dump_schema(&stepped), fresh_schema);
+
+    // The tables are usable: a code belongs to a user.
+    let user: i64 = stepped
+        .query_row("SELECT id FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .expect("a user");
+    stepped
+        .execute(
+            "INSERT INTO sign_in_codes (user_id, code_hash, created_by, expires_at) \
+             VALUES (?1, x'0102', ?1, datetime('now', '+24 hours'))",
+            [user],
+        )
+        .expect("a code");
+}
+
+/// The comment at the top of the frozen schema.
+const GOLDEN_HEADER: &str = "\
+-- The schema of the database after every migration of this build: Faithful
+-- Ferret's own and the ones that vole-kit runs, as SQLite stores them
+-- (`sqlite_master`, in name order). A migration changes this file in the same
+-- change; a test compares it with a database that the migrations made. To write
+-- it again after a migration was added, run the schema tests with
+-- FERRET_UPDATE_GOLDEN=1.
+";
+
+/// The tables, indexes, views and triggers of a database, in name order, as
+/// SQLite stores them.
+fn dump_schema(conn: &Connection) -> String {
+    let rows: Vec<(String, String, String)> = conn
+        .prepare(
+            "SELECT type, name, sql FROM sqlite_master \
+             WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name, type",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    rows.iter()
+        .map(|(kind, name, sql)| format!("-- {kind} {name}\n{};\n", sql.replace('\r', "")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn schema_after_m3_matches_the_frozen_schema() {
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema/m3.sql");
+    if std::env::var("FERRET_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("mkdir");
+        std::fs::write(&path, &actual).expect("write the frozen schema");
+        return;
+    }
+    let frozen = std::fs::read_to_string(&path)
+        .expect("tests/fixtures/schema/m3.sql")
+        .replace('\r', "");
+    let first_difference = frozen
+        .lines()
+        .zip(actual.lines())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| frozen.lines().count().min(actual.lines().count()))
+        + 1;
+    assert!(
+        frozen == actual,
+        "the schema is not the frozen one. A change of the schema needs a migration and a new \
+         frozen file (FERRET_UPDATE_GOLDEN=1); the first difference is at line {first_difference}"
+    );
+    // Ferret's tables and the kit's are both in it, and the new column.
+    for needle in [
+        "CREATE TABLE ferret_sessions",
+        "reauth_at INTEGER CHECK(reauth_at IS NULL OR reauth_at >= 0)",
+        "CREATE TABLE ferret_vaults",
+        "CREATE TABLE ferret_restore_rows",
+        "CREATE TABLE users",
+        "CREATE TABLE sign_in_codes",
+        "CREATE TABLE user_emails",
+        "CREATE TABLE passkeys",
+    ] {
+        assert!(frozen.contains(needle), "{needle}");
+    }
+}
+
+#[test]
+fn an_older_build_refuses_a_database_with_a_newer_migration() {
+    // A database made by this build: 0007 and the kit's tables of codes are in
+    // it.
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let before = dump_schema(&conn);
+    let recorded_before = recorded(&conn);
+
+    // The previous release (up to 0006, without the codes) says no.
+    let refused = apply_migrations_with(&mut conn, &BUILD_AT_0006).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+    // A release in between (with 0007, without the codes) says no too: the
+    // kit's migration is unknown to it.
+    let refused = apply_migrations_with(&mut conn, &BUILD_AT_0007).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+    assert_eq!(dump_schema(&conn), before, "nothing was changed");
+    assert_eq!(recorded(&conn), recorded_before, "nothing was recorded");
+
+    // This build goes on, and an old build goes on with a database that only
+    // has what it knows (a control: the refusal is about the newer migration
+    // and nothing else).
+    assert!(
+        apply_migrations(&mut conn)
+            .expect("the same build")
+            .is_empty()
+    );
+    let mut old = database_at_0006();
+    assert!(
+        apply_migrations_with(&mut old, &BUILD_AT_0006)
+            .expect("the old build")
+            .is_empty()
+    );
 }

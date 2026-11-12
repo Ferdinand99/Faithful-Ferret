@@ -13,7 +13,7 @@ use vole_kit::docs::{DocsSpec, RouteDoc};
 use vole_kit::http::assets::StaticFile;
 use vole_kit::notify::webhook::Wording;
 use vole_kit::page::{NavItem, SettingsTab, Ui};
-use vole_kit::settings::GeneralSettings;
+use vole_kit::settings::{FieldKind, GeneralSettings, SettingField, SettingsSection};
 
 /// The product's version (`CARGO_PKG_VERSION`), reported by the OpenAPI
 /// document and the MCP server.
@@ -44,14 +44,16 @@ pub static EXTERNAL: ExternalCredentials = ExternalCredentials {
     reauth_path: "/vault/reauth",
 };
 
-/// The kit's optional parts. The milestones that need invitations and sign-in
-/// codes switch them on.
+/// The kit's optional parts. One-time sign-in codes are on: the administrator
+/// who has forgotten the master password gets a code (from the Users page or
+/// `ferret sign-in-code issue`) and redeems it on the vault origin. Invitations
+/// stay off until a milestone needs them.
 pub static FEATURES: KitFeatures = KitFeatures {
     api_tokens: false,
     api_docs: false,
     credentials: CredentialMode::External(&EXTERNAL),
     invites: false,
-    sign_in_codes: false,
+    sign_in_codes: true,
 };
 
 /// Ferret's own static files for the admin pages: icons and the web app
@@ -98,6 +100,27 @@ pub static DOCS: DocsSpec = DocsSpec {
     fallback_host: Some("localhost:3040"),
     param_types: &[],
     strict_access: false,
+};
+
+/// The General page's own part. The kit shows its mail settings on the page
+/// whenever sign-in codes are on and has no switch to hide them, so the page
+/// says what they are for here: nothing. The one field has one value; it holds
+/// no setting that anything reads.
+static GENERAL: GeneralSettings = GeneralSettings {
+    sections: &[SettingsSection {
+        title: "mailnote.title",
+        fields: &[SettingField {
+            key: "mail_note",
+            label: "mailnote.label",
+            help: "mailnote.help",
+            kind: FieldKind::Select {
+                options: &[("none", "mailnote.none")],
+            },
+            default: "none",
+            error: "mailnote.error",
+        }],
+    }],
+    ..GeneralSettings::CORE_ONLY
 };
 
 pub static KIT: KitConfig = KitConfig {
@@ -157,8 +180,9 @@ pub static KIT: KitConfig = KitConfig {
         url_example: "https://example.com/hooks/ferret…",
     },
     token_scopes: &[],
-    // Site name, public URL, time zone and language.
-    general: Some(&GeneralSettings::CORE_ONLY),
+    // Site name, public URL, time zone and language, and a note that no mail
+    // is sent (see `GENERAL`).
+    general: Some(&GENERAL),
     // The signed-in footer links the running version to its release notes.
     releases_url: Some("https://github.com/Ferdinand99/Faithful-Ferret/releases/tag/v{version}"),
     features: &FEATURES,

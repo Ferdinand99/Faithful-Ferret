@@ -12,8 +12,10 @@
 #![allow(dead_code)]
 
 pub mod accounts;
+pub mod backup;
 pub mod events;
 pub mod handoff;
+pub mod m3;
 pub mod session;
 pub mod sync;
 
@@ -30,7 +32,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
 use ferret_server::config::Config;
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::server;
-use ferret_server::state::FerretState;
+use ferret_server::state::{BackupStatus, Challenges, FerretState};
 use ferret_server::vault::notify::SyncEvents;
 use ferret_server::vault::rate::{RateConfig, SyncLimits, WriteGate};
 use ferret_server_auth::{Clock, ManualClock, NoThrottle, Throttle};
@@ -230,6 +232,7 @@ pub struct Builder {
     proxies: ProxyList,
     rate: Option<RateConfig>,
     gate: Option<(usize, usize)>,
+    backup_dir: Option<PathBuf>,
 }
 
 impl Builder {
@@ -260,6 +263,12 @@ impl Builder {
     /// A write gate of this many concurrent writes and this many waiting.
     pub fn gate(mut self, concurrency: usize, queue: usize) -> Self {
         self.gate = Some((concurrency, queue));
+        self
+    }
+
+    /// The folder of the backup sets (the default is under the data directory).
+    pub fn backup_dir(mut self, dir: PathBuf) -> Self {
+        self.backup_dir = Some(dir);
         self
     }
 
@@ -309,6 +318,7 @@ impl TestApp {
             proxies: ProxyList::parse(&[]).expect("an empty proxy list"),
             rate: None,
             gate: None,
+            backup_dir: None,
         }
     }
 
@@ -328,6 +338,10 @@ impl TestApp {
             vault_url: VAULT_URL.to_string(),
             admin_url: ADMIN_URL.to_string(),
             trusted_proxies: Vec::new(),
+            backup_dir: settings.backup_dir,
+            backup_every_hours: 24,
+            backup_keep_days: 30,
+            backup_push_url: None,
         };
         // The same start-up as the binary: migrations, the secret files and the
         // check of them against the database, the login state store. Only the
@@ -411,6 +425,16 @@ impl TestApp {
     /// or to send on.
     pub fn sync_events(&self) -> SyncEvents {
         self.state.events.clone()
+    }
+
+    /// The nonces of signed requests: the state's own store.
+    pub fn challenges(&self) -> Challenges {
+        self.state.challenges.clone()
+    }
+
+    /// What the scheduled backup reports: the state's own status.
+    pub fn backup_status(&self) -> BackupStatus {
+        self.state.backup.clone()
     }
 
     /// A copy of the cookies of a listener's jar.

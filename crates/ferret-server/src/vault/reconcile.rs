@@ -249,11 +249,33 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
     })
 }
 
+/// Raises the restore epoch of every vault, with the signature that the
+/// commands and the restore use: `at_least` is the lowest epoch the caller
+/// wants and `now` the time in Unix seconds.
+///
+/// The rule is still [`bump_all_vaults`]'s (one more than the stored epoch):
+/// `now` is not used yet, and an `at_least` is refused with
+/// [`StoreError::Invalid`] instead of being ignored, so no command can say it
+/// raised the epoch to a number it did not.
+pub fn bump(conn: &mut Connection, at_least: Option<u64>, now: i64) -> Result<Bumped, StoreError> {
+    let _ = now;
+    if at_least.is_some() {
+        return Err(StoreError::Invalid(
+            "a lowest restore epoch is not supported yet",
+        ));
+    }
+    bump_all_vaults(conn)
+}
+
 /// Raises the restore epoch (the counter that tells clients the server was
-/// restored) of every vault by one in one transaction and returns the highest
-/// value now. See [`bump_all_vaults`].
-pub fn bump_restore_epoch(conn: &mut Connection) -> Result<u64, StoreError> {
-    Ok(bump_all_vaults(conn)?.restore_epoch)
+/// restored) of every vault in one transaction and returns the highest value
+/// now. See [`bump`].
+pub fn bump_restore_epoch(
+    conn: &mut Connection,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<u64, StoreError> {
+    Ok(bump(conn, at_least, now)?.restore_epoch)
 }
 
 /// Writes the frozen rows of every vault: one for each row of `ferret_items`,

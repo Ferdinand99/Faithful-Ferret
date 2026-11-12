@@ -29,3 +29,10 @@ base_url_help = "Where people reach the admin pages: used in links in messages. 
 
 [api]
 docs_subtitle = "Faithful Ferret has no public API reference yet."
+
+[mailnote]
+title = "Email"
+label = "Email from Faithful Ferret"
+none = "Not sent"
+help = "Faithful Ferret sends no email in this version. Leave the mail settings above empty. A sign-in code is handed to the person by hand (the Users page, or the command ferret sign-in-code issue), never by email."
+error = "This setting has one value."

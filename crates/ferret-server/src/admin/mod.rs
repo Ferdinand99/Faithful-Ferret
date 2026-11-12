@@ -6,6 +6,7 @@
 //! The admin listener never has a password field, never loads WASM and serves
 //! no vault route.
 
+pub mod codes;
 pub mod guard;
 pub mod handoff_page;
 pub mod panel;

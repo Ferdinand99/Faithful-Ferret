@@ -291,8 +291,11 @@ impl World {
 
     /// `ferret restore-epoch bump`: the epoch of every vault goes up by one.
     pub async fn bump_restore_epoch(&self) -> u64 {
-        self.db(|conn| ferret_server::vault::reconcile::bump_restore_epoch(conn).expect("a bump"))
-            .await
+        self.db(|conn| {
+            ferret_server::vault::reconcile::bump_restore_epoch(conn, None, 1_793_491_200)
+                .expect("a bump")
+        })
+        .await
     }
 
     /// Runs the retention pass at `now` (Unix seconds), as the daily job does,
