@@ -27,6 +27,16 @@ ignore = [
   # which does not touch crypto-bigint, so no secret data reaches the affected code.
   # Same entry as the root policy. Remove it when opaque-ke uses elliptic-curve 0.14.
   { id = "RUSTSEC-2026-0387", reason = "not reachable with secret data from the ristretto255 OPAQUE suite; remove when opaque-ke uses elliptic-curve 0.14" },
+  # SQLite before 3.54.0 (libsqlite3-sys 0.38.2) can return uninitialized memory when
+  # a database is opened together with a -wal file of another page size. The server
+  # only opens ferret.sqlite in its own data directory, never a -wal written by someone
+  # else: a restore replaces the whole directory (docs/OPERATIONS.md) and the kit's
+  # pre-migration copy is a single VACUUM INTO file. The fix needs rusqlite 0.41, but
+  # deadpool-sqlite 0.14 and vole-kit still require rusqlite 0.40, and only one copy of
+  # the native library can be linked. Tracked in
+  # https://github.com/Ferdinand99/Faithful-Ferret/issues/127. Review by 2026-12-31;
+  # remove this entry when vole-kit is on rusqlite 0.41.
+  { id = "RUSTSEC-2026-0459", reason = "the server opens only its own data directory, never a -wal written by someone else; waits for deadpool-sqlite and vole-kit on rusqlite 0.41, issue 127, review by 2026-12-31" },
 ]
 
 [licenses]
