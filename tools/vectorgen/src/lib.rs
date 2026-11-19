@@ -77,6 +77,10 @@ const GROUPS: &[Group] = &[
     ("internal/passkey.json", passkey_groups::passkey),
     ("internal/account.json", account_groups::account),
     ("internal/sheet.json", account_groups::sheet),
+    (
+        "internal/recovery_renew.json",
+        account_groups::recovery_renew,
+    ),
     ("internal/server-opaque.json", server_groups::server_opaque),
     (
         "internal/server-secrets.json",

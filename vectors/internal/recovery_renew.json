@@ -1,0 +1,929 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "recovery_renew",
+  "suite": 1,
+  "spec": "Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "see-vectors-version",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "recovery_renew/001",
+      "title": "a new recovery key: generation 1 to 2, same method id, with the proof",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "e3111a4f08a0d52db2a3c9e813a15ed005d50f6d693bf1812cafaa5c3b364d15",
+        "61fc026b0ec0d8e6f23e801ac40818386a5b3aba77bec744",
+        "b1f474a13e2d27e0724cc303057ed044a27d911af0faa670"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": {
+          "body": "7b22707574223a227265636f76657279227d",
+          "nonce": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102b1f474a13e2d27e0724cc303057ed044a27d911af0faa67053b6085eb0cf3982d6ca1a54237ccd1b870e9dbe706ed088e75fa35a377bd77668e8e69addda9f1caaf91fab967387e1cfa8ac5cb4162a257c761089f5e23e786cecf764a4ef45a35fab2b9a3ccf39c445266f8492d2c9c4d6c78ef0b8c42e63246b8c844393f44d06624e1ec8d7cca1aedcd16f1670368fe3c5cf69ceda532808dfd1c9f40aa59041bb5a2dcedf4aacdcda67065436e3bba4dcf6956572bc7f7b1f9927803749e6ba64db9202915a7fc147dfbab19482af230c9d54a1f4148feb687933233ff25b9b11a947606507acd197344f10b5241f2a90500d291c8ee35f129484af543bae18776545ae75bb25dde6f811f7269ca2b1665e76a621a07fbcb546bf1d3608bc12c2ae79d70e3835",
+          "rev": "2",
+          "tag": "26d818be6ce16269f164027c37a83249cf9cfcd1d7dd080a2c177e75c23e2b05"
+        },
+        "pk_r": "a1753fda4d5b23bd01550e9c1da818bf5a636a5d9480c3f72559d6117a3b801a",
+        "proof": "d9a32efe7716cb7ced4a1d180bb38a7d559f5c1adab8c6f69a0b8049dfdfa3c72e1056bf43ef23fc08a53a0120f68be10859e57a3a95c2e8c28445cbd8bec00a",
+        "proof_op": "unlock-method.recovery.put",
+        "recovery_key": "e3111a4f08a0d52db2a3c9e813a15ed005d50f6d693bf1812cafaa5c3b364d15",
+        "recovery_wrap": {
+          "kek_generation": "2",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "61fc026b0ec0d8e6f23e801ac40818386a5b3aba77bec744a6346ae248b3d2e9e324c0bd37475173e7267d7b1d125b71195d8344d5dd7bfdf92a970852959681ae231e7e9a176632"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/002",
+      "title": "the manifest lists generation 5, the server's wrap and the floor 1: the new wrap is 6",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "04c6efbed57717a72b904e01b40cf8b21e70b29b7242041015b25b9e590b96fa",
+        "72fa25ac404e759d5d1d75ee57284b781a7d2ffbe94566ab",
+        "fdd7981f81040cf1186afd5ab5b59f3225f77dd5a6a5e042"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010298b54b482929f65cf896c339c821251e969f41d3183fa8d01cc0aee572e664565b0fab6a980d0ff2efa9b369ba71a233f640972fb849a3ebd9f1340e752768feeddb625112830bb86dd3622fd8d9cdf9ae5813b76c3a0c1aae71759bcfc17eaed18fa7d5a6968a04aa21da25a5ecf90285f3bd6078245ce88f501743a47d5f40efbd196bdaed429fc349aaa14ef566a92ffde398e60becd82efa9f3028388cb107f82858ddfccf804b5b0022cf1d97cd30738ca3f7b85fb83f45d6ea6d969e9a9da4b07004d9cbe0456e30c6b192b9d63853f9a838b1ad93c229cb59501ae6bc7e73187e0edf79f0c958157daba1eb09c5b7ac6f7b3ae226c38ca50c0bf08a3742d74a1b38082ced3204cfd6dac16c1c8628416127627c40ff5831876fc7c9e172b67f94c27bf0a4",
+          "rev": "3",
+          "tag": "1b0e854625a3db50035d7a84b397a8dd7ca33c4effa1e2cbdd6fc0f328f0b2c8"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102fdd7981f81040cf1186afd5ab5b59f3225f77dd5a6a5e04217031d716f74fe0c63bef14d40b77711d0907a6573de6b38d79352b2a89d3b9e53162221ce65b15f92b3b9609542e14beb561e0a0e0a3017b09fbf33eb18760a6d657ecd0b8e03185a41d90784ae01bb75221cbbed8e2b51488af40453e523e44394431b2033ee77d725f530fca9018d4633f987de8f96f5b3c92f796b364b5cf1dcab532ab9abe9006511d8be57592477caa21fbc4d3ebbe7f3ea8faaccf69c3013a7a8eb3b7dd34451edc0c25870d60059789fc6f902a8109cf6b0a55a485c16d12f298c81f7351af612a4dbc7a9aa3701d82db767afbf84e3022d83a48e44ebed32574966ad3a76a7279b5d768bbae43dabbbd59e2f50cda70f4f4c155c650e9284b2f6c68c2bf37a7a8689ada415",
+          "rev": "4",
+          "tag": "a5d55e3fee51ee2b306736fcde5c0938cc3af293488e8d463c6c44ed86a3cc80"
+        },
+        "pk_r": "6133bf920bb5435e958ab8cfd3857702c21867e23a3bc25a7d8f3321c9436745",
+        "recovery_key": "04c6efbed57717a72b904e01b40cf8b21e70b29b7242041015b25b9e590b96fa",
+        "recovery_wrap": {
+          "kek_generation": "6",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "72fa25ac404e759d5d1d75ee57284b781a7d2ffbe94566ab265798ca4d29c5b20804ebf06d1343c6d19b985035085b2ff1c0737e23946a9bfef2c0b90b7c82b99309d373e19a94f9"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/003",
+      "title": "the server's wrap says 9, the manifest and the floor 1: the new wrap is 10",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "2dc78edcc5c522feb5e1264a17626421609032ee463a8bfb30a983e4d20ddbdb",
+        "1089c3c6e6eed3018f30ffabe04dba591a2c64fbb2ffb287",
+        "b30e753558689e2767b441222ce7e9c6e920ac1076cc5846"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "9",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102b30e753558689e2767b441222ce7e9c6e920ac1076cc58469bf1fc6b8adfaf949abdafe4efa4504df5f8c1ae9deeb0bb962013806d6e006279f7af394ffed91a6ac275d2cf061c97bb8a8641ee4d866ba457cbd91ffe549d078cc241f1bb074f13dd13ca06b34e9b040f35f6c4447c0f044ca6e298cb44ae2bc25b035d20e8e9da5261970cc3cc513af4fee52852ea82e63759cd9e627fc7dbe99b306025d9ebf027a9c8bd86acb5c6967fda265f1dc33395c48a720ae9b7a83a1486de41b2601418023f455b3e7e7e5a32dcac6e1f698a45af2d67ccce204b6bfc3644e1b9e38acc2338e72402565b97fef46554eb6d01e244df61c8eb945eb80c7c1eaffb3ba128ee2d93ef241d7bc2a68c4593cbfa7d01171743ae25e262ac54a366f33e018393e44a822613b7",
+          "rev": "2",
+          "tag": "d5c438197f305995cc9d694fae63bef9f00874ceb625ce8222d0e0779f13d9a8"
+        },
+        "pk_r": "12c22e799aa8f0a954bb582f67e717fe08011da310d49fb8a82324cf46c1cdaf",
+        "recovery_key": "2dc78edcc5c522feb5e1264a17626421609032ee463a8bfb30a983e4d20ddbdb",
+        "recovery_wrap": {
+          "kek_generation": "10",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "1089c3c6e6eed3018f30ffabe04dba591a2c64fbb2ffb287ee75f6a0f9a358c98b30728bb8909500a41971b263136929e0fcab37e0e844fd6f20a1aaa3f8880628f955a9613a08b6"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/004",
+      "title": "the floor, the server's wrap and the manifest all at 4: the new wrap is 5",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "fcc8d41150a2975dab74d4e093197d228af54726b159221dc14f40720268af17",
+        "2a188c8fa08ea722fca84f71fab386cba40bc4f828da9be9",
+        "d6db326123cbe5aae80a7f2bcb727f989538155f0b0daac9"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "4",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "010102dfd368fc27da783c7fb5e73110f5d6cf249bcfe16057797a93850db55723ad214f468a0255d845a0c28e432053065d033168fdb27b5ee6477a6a57fa9cb80445d1e2cfb66839d633b8f850eecb631caac9edc158074bf617d7d22087ebcfebcac8f19ae7762144edde35f0b3448f04c647bb704ececf0ad35f1b75cdc18f1681c411918e0a390c261e381dc36f7c046d96815ea463f9c84ab99447b7327a1347be7c3067478e004cb39cae2467fb76856d4e3d449f9086656a6ae7f7b1fb070232875e010698fc91d21b8eca5ada6431378e6661225c8ec0a3d164a39ae6beb13b874c91e401a4a8797a384cd2b88004d79c44a4de08bca4f9fd0578b4fc868ecfa0cecc921bf4840389fc387de5ea25d2697c782d2db1bf9ef14e9be186500d173985c84b2f7fe1",
+          "rev": "3",
+          "tag": "0cba680c8a4d436eee652f383a603f958c1764df01d1b178bca666e66a1e85fe"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "4",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102d6db326123cbe5aae80a7f2bcb727f989538155f0b0daac99b07644b13d511e542c85f59cc5ac2d152ebb9776b5442e1ea52cc7f68fb99667ca72c89ae327c7601bcfae08ddc897f71861ab8463b10accc821dfe816829136cf6f5ad61ba0bd0a56f5c22d3f071cf0001599ebba53878a9df98a795e17753bd15b6ef9da731e3fe9282dfda18e82c095e5832157449d9b7ab5f4610bf4b10d3e064820d93bc5e770623735a6b399e0aeb3aab71c16ab5e5f8f5c4271d0525aa26272862f71bf11ac1818e84a7737bd5d809a12f442a90ef0940fb5bc64855da8eedc2d5e13088c61e7c0918b350547d6b70d8a2af115ad6f1d50558e9555f4e49aa5b44442b171d8e4d2e1ec23992ec067ab90ed9b105fac903eef4bb33c0e0f89869071e1216e53c1c918a800f94",
+          "rev": "4",
+          "tag": "a1d1a11196c58ad7f38174e0fc438f01200e72017a1c2742add5c33392ac77b3"
+        },
+        "pk_r": "6540365ccb63163a39861b16194becb37860f23712c9fd9154d4ff5141204178",
+        "recovery_key": "fcc8d41150a2975dab74d4e093197d228af54726b159221dc14f40720268af17",
+        "recovery_wrap": {
+          "kek_generation": "5",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "2a188c8fa08ea722fca84f71fab386cba40bc4f828da9be9f4a465e8e850c75a71a5f0862532d85c359cb52b4177d1f21ef5f02ffc5d599f5217f103a06a6150512f2f2c2ec7cafc"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/005",
+      "title": "no password floor is needed, only the recovery floor",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "e571ea3648fafb227c4c7d78bd9242212e41b0eb426ab528414c22dddc4f3723",
+        "600689c87d43e6971b7a3204d386e846d0fe7217cdb93c2f",
+        "2762508e70cc022d5a46c8b9271b502775fde8933b0d4618"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": null,
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "0101022762508e70cc022d5a46c8b9271b502775fde8933b0d4618205c2dd79f48633f4ff05d5f59f7bca49054404073e47a0f76f17305d294402b9a81752b5b8dbcf1a74cb4b148c391a334094c3326072039fa37bcd969b1a91efcf6b1d9120d43f3e67bd4ec8d1615c11685a2bbdcaef11274b6a25816388e03e450894af813ea3f5b1f73ee7e5e17bee525b69d2703c7bd9ff434a5e448812fd97a17d4c8f2a6fe02ff6b0337b5afe418e6d2684f073289c7dfb4e1e6b709e1978c0aaf3f609756b0dff306663078af6887e4bc4ef5c49cba0967d36ffd5b2bd0d6e86bc3918cd086e727630b9d6c30b6e23066f709439af602aabc0d8a1fef1398477e5b48565241327748e11320863c6fd06980d51475c2729d664f6802d273be048cef30aaf3a67b25e0e6654f8d",
+          "rev": "2",
+          "tag": "db7dd81549af98dc580de51d29b86eb450b7ccaf8f57ef1dd358eba1fc57c4a2"
+        },
+        "pk_r": "424f145479a8d2340286d28891555803b4c957a82d9d7f7cef16e7d41f3bb479",
+        "recovery_key": "e571ea3648fafb227c4c7d78bd9242212e41b0eb426ab528414c22dddc4f3723",
+        "recovery_wrap": {
+          "kek_generation": "2",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "600689c87d43e6971b7a3204d386e846d0fe7217cdb93c2fba53bcf98bb7c1729ab3aa78676733aee7031088a582d18e218fbd810959977572963230397cce21cfa627946eb03da0"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/006",
+      "title": "a passkey entry and unknown keys at both levels are kept; only the recovery generation changes",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a8b4ad104010653afc77fcb6255aae2f5d6b572a1f9684908cb47b59f1bf86b7",
+        "28ccdb867751ff89592442021971cc675fd4eab7f87adb0a",
+        "69a0a4706ecdc1650b4711fa1929a9dac86aee104f2b88e7"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "010102cbb8c7069ebaeda26c1711e73fdde31ff09e3e9b2fd08c7748937fc0830471ce934a810173d158b1ffa8aaf9bd2915dda84548080d542a1ed73d637f183e833e42f420fb600bbbdec0462aca2d927c5c5bded0eba1749e6bf7f3df304b8210fe5aa2b79d5624454f90555bc2ccf8d1983680e02663645538b18fbb10b91ea8b2bfeabd7c502e948b5b1a742635b7eddd1a90aad1c9df6ee082dfc60c1751bf70e2ccc6165a57f65fdef2824f6e456658952f98cec7a3fe8f60dc8203a2b872e33fac4a5c77eca5e552e31ccb894b3dd9a265583e48a3d83050981a0e5b7f5330bf19dfe600a89450d9afecbcfbe3b1fee365b46e388b08fd4ee593a8006b8dc676d05c1becda303f9e8e1f72b2fcd6dc0d29b752bf6f338d8064b01fc98761b8948d6f3c92dba3b8",
+          "rev": "4",
+          "tag": "d5f7cc91dca52a1efa219e236c602d7addbb58b7ce6aeb2337176f1850d31196"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "01010269a0a4706ecdc1650b4711fa1929a9dac86aee104f2b88e7080aa5949a43c80d680164ab1737dda0445b141f6b5a02e862c6dd99ccc2dec5c925c9a77fe4e7a5d807c8598de204d83f53b15399c8c55e352f1e290d804e1456b7489603269a4fa9d26724c231296fffd6d47cf60d6ca5163c96924983eb2d63e4948c89bca11651eb913e520fe8d31ad1489dc83dc01c4390911ce46af6128a08bab9db844ef304912e7e520aacb7f66b6fc96f275687a1e7c7f288ae649e8a6dbefeaf7a967700d283b67e120f48a66118d86e6cfddbe98b7fc441e86c64701788f74484e29d6ba6497f1c0a2f8c9514411adebdbd6b9e9cc3e997aab7cafc3a460d25d3466851791eb2e99aded5747047815129e6b90c31526a5c2dae4c80de562b12feb89fb817260df2f38d91",
+          "rev": "5",
+          "tag": "3ba8309d173aaaa7e783b9da391254626c8875033a712b8b5e5f305958d66a37"
+        },
+        "pk_r": "881f980fb6307c4bee0cc88fb0c521d458cc6e066b5f1876f6491961ecfc9217",
+        "recovery_key": "a8b4ad104010653afc77fcb6255aae2f5d6b572a1f9684908cb47b59f1bf86b7",
+        "recovery_wrap": {
+          "kek_generation": "2",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "28ccdb867751ff89592442021971cc675fd4eab7f87adb0a53e704a0dcde91fc4b3475c74e842500097fa5f017ddd6f18257a1f3cf0cc1601eee31a658bf83f15617320a8da20d6b"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/007",
+      "title": "the server's recovery wrap is below the pinned floor: a rollback",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_kek_generation"
+    },
+    {
+      "id": "recovery_renew/008",
+      "title": "the record has no recovery floor: seed it from the manifest first",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": null,
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "recovery_renew/009",
+      "title": "a recovery floor at the largest generation cannot be raised",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "4294967295",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "4294967295",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_pinned_record"
+    },
+    {
+      "id": "recovery_renew/010",
+      "title": "the current wrap is the password wrap",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "ksf_profile": 1,
+          "method_id": "70707070707070707070707070707070",
+          "type": "password",
+          "wrap": "502b86a99b563ef967913ceec3c24e9148f1d361367872b3d6dd9f826eb5bc6621562b97a8f739878ae6d64ba64a423748899d4d6cfde3320734ce62eecf3c1445e394a6cd5445ad53838108cd7353f954d3e767ded0fe92cc18688287d73cc172a8b3d320abf0f8"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "recovery_renew/011",
+      "title": "the manifest does not list the server's recovery wrap",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "72727272727272727272727272727272",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
+    },
+    {
+      "id": "recovery_renew/012",
+      "title": "a changed byte in the manifest row",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491230e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "recovery_renew/013",
+      "title": "the record is for another vault key",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "0909090909090909090909090909090909090909090909090909090909090909",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_auth_key"
+    },
+    {
+      "id": "recovery_renew/014",
+      "title": "the record has seen a later epoch than the vault's",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "2"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_vk_epoch"
+    },
+    {
+      "id": "recovery_renew/015",
+      "title": "the server's wrap is at the floor but its manifest lists a lower generation: a rollback",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "3",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_kek_generation"
+    },
+    {
+      "id": "recovery_renew/016",
+      "title": "after an accepted restore, a wrap and manifest at 1 below the floor 3: the new wrap is 4",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "0d291702f303baf99bf30fe816321cfe596774e4bbc9537357d20fdfc0835daa",
+        "626b6c898f755bc73a2a8d8da7410e7fbc2098b6fa766f34",
+        "e9c46fcee64ddacd62f25923bd14ec7cc0e9da4af3445bcf"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102e9c46fcee64ddacd62f25923bd14ec7cc0e9da4af3445bcf75ca24e4776a0fbd7ffc864b4fb6675032d07658023cb48398949ec1a38ce9f5dae6a7671842a281d2a7c2fc924d6f6c785c7d8275799effa9377def11fe456845fe857f2de2280b05bf06343d262148cf3c5341a93c0673ece6886b7ad39477e5fad52a511eeed6bc9e83523366efcaf2287cac79bce6fe810429436a2ffe10fee75687137bc8152a92338e7bb48b925d8c299f3a954ac5c1bb2ab5260de7a636197e7170d024d43883253762d1767606abd1870b6350451fae940c2d48ba9de84a337124071c927e8ce511637f3566058df0eb145300767dc208886b5551708d0c88d4981518bffcd45c5e4f582a8c4c29024897f3da4eb3285689b5d6ccb9bd9d30039214af36c887c564f48323d4",
+          "rev": "2",
+          "tag": "b7f8bde22af9d5e2c3023ff8b80e361010dcbd8ebc4a7f0e0dff901547b34baf"
+        },
+        "pk_r": "b13d2af93a4ccd188e079393bc4be6aab105cbefe70d628cc613445a12603579",
+        "recovery_key": "0d291702f303baf99bf30fe816321cfe596774e4bbc9537357d20fdfc0835daa",
+        "recovery_wrap": {
+          "kek_generation": "4",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "626b6c898f755bc73a2a8d8da7410e7fbc2098b6fa766f34f09a66f956d9082a7d7801b4093eed5cb343bd56763ed3df6ef71b734959645fc66f1efdaaa59fcda07802231d1637fb"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/017",
+      "title": "after an accepted restore with the floor strictly the highest (7): the new wrap is 8",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "e7d54be8701b7ba4c26751ffe25f8f1313f9866a172c65dc7b6aa5b35821637c",
+        "5c5ed854839138fa10fe0fa8b50381df3a06b71a613f062d",
+        "d1ac569cfa4604368939e8b4248e5be952e44341b869568a"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "2",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "7",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102d1ac569cfa4604368939e8b4248e5be952e44341b869568a95b7d276eb89d188a21f3d7f770854b150a5123def19126247c0e70acd950506aa0bc5044e9004af04c4214d08939de2d30774fd0e61d4bf24ed971c7ae17c5c8ad4d3c3fa2e34c8becb177e2616584dbca0b153555b6f9dd4df72fbc3c9ad8c9928d041a1b5cf24f89844813242fbb7fd39b475bc7f350eb7b891938930a3226d40bb4fe43907722264c400639c4e11020437f84e5cf86367626e76a2e2e6023464509cf9a9bd72e8ccfce16b70a6e841040938261a35e7c8347eecae62baae3efa0200e67e57065452de5ade91eaebb47327fab82a2a534384418f43afeb0066621c4dc776b17b47ae9ac4ae172f3c20a820b4824e1fb8cc604dab088b5d4a5c71d42ba6ed17d36e90ad8788f917d4",
+          "rev": "2",
+          "tag": "970933260676db5fce43a7eb2a3a03e90fc18298d28c79fa471823868747d4b0"
+        },
+        "pk_r": "93c51266f2b4fae5a21f7550a634ac8a4ec15650e73d64daebeb6f7d56cc8482",
+        "recovery_key": "e7d54be8701b7ba4c26751ffe25f8f1313f9866a172c65dc7b6aa5b35821637c",
+        "recovery_wrap": {
+          "kek_generation": "8",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "5c5ed854839138fa10fe0fa8b50381df3a06b71a613f062da3825c6a6b3fa04d08fa41870ea217c2a8e8124a43a13754ee7d3226d68e6f597e6ce594e4d27d2e6a3d117654d0b642"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/018",
+      "title": "after an accepted restore the other checks still apply: a record for another vault key",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "0909090909090909090909090909090909090909090909090909090909090909",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_auth_key"
+    },
+    {
+      "id": "recovery_renew/019",
+      "title": "after an accepted restore the other checks still apply: the manifest does not list the wrap",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "72727272727272727272727272727272",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
+    },
+    {
+      "id": "recovery_renew/020",
+      "title": "the server's wrap is at the largest generation: no later one exists",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "4294967295",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "generation_exhausted"
+    }
+  ]
+}

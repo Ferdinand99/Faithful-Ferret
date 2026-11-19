@@ -9,16 +9,14 @@
 //! core.
 //!
 //! Ops (see `vectors/OPS.md`): `url.match`, `url.page_origin`, `url.same_site`
-//! and `url.display_host`. No binding exposes them yet, so every case is
-//! `native-only`.
+//! and `url.display_host`. The WebAssembly binding runs all of them
+//! (`Vault.match_page` for `url.match`), so no case is `native-only`.
 
 use crate::groups::generator;
 use crate::{Error, render};
 use ferret_core::testing::hex_encode;
-use ferret_core::testing::vector::{Case, Status, Tag, VectorFile};
+use ferret_core::testing::vector::{Case, Status, VectorFile};
 use serde_json::{Value, json};
-
-const NATIVE_ONLY: &str = "No WebAssembly binding exposes the page address operations yet.";
 
 /// `(saved address, match kind, page address, result)`. The kind is the text
 /// of the entry; a text that is none of `host`, `domain` and `exact` is a kind
@@ -1054,9 +1052,9 @@ fn case(id: &str, title: &str, op: &str, input: Value, expect: Result<Value, &st
         title: title.into(),
         op: op.into(),
         status,
-        tags: vec![Tag::NativeOnly],
+        tags: vec![],
         synthetic: true,
-        skip_reason: Some(NATIVE_ONLY.into()),
+        skip_reason: None,
         rng: vec![],
         input,
         intermediate: None,

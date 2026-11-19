@@ -508,3 +508,12 @@ test("sign_out_always_asks_the_server_and_wipes_the_device_even_when_a_step_fail
   assert.equal(offline.session.current(), null);
   assert.ok(offline.client.locked >= 1);
 });
+
+test("sign_in_without_a_sheet_text_makes_no_sheet_call_and_asks_about_the_pin_after_login_finish", async () => {
+  const world = await scenario();
+  await signIn(world);
+  assert.equal(world.client.called("setup_qr_parse").length, 0);
+  // The one pin the sign-in adds is the answer of the user: first use with the bit the user gave.
+  assert.deepEqual(world.client.called("login_finish")[0].snapshot[2], { kind: "first_use", sk_bit: true });
+  assert.equal((await loadPinnedByAccount(world.db.store, SERVER, ACCOUNT)).server_url, SERVER);
+});

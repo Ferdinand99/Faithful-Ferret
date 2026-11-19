@@ -289,6 +289,15 @@ const EXPECTED_BYTE_PATHS = [
   "rekey:sync_memory",
   "rekey:wraps[].method_id",
   "rekey:wraps[].wrap",
+  "renew_recovery:manifest.envelope",
+  "renew_recovery:manifest.tag",
+  "renew_recovery:pinned.account_id",
+  "renew_recovery:pinned.pk_a",
+  "renew_recovery:pinned.server_public_key",
+  "renew_recovery:pinned.vault_id",
+  "renew_recovery:pk_r",
+  "renew_recovery:wrap.method_id",
+  "renew_recovery:wrap.wrap",
   "seed_pinned:account_id",
   "seed_pinned:pk_a",
   "seed_pinned:server_public_key",
@@ -407,6 +416,18 @@ test("no_reply_holds_key_material", () => {
   call("register_finish (change)", () => change.register_finish(server.register_response(IDS.account_id, changeRequest), 1));
   addSecret("export key (change)", change.test_export_key());
   call("change_password", () => change.change_password(vault, created.pinned, created.wraps[0], created.manifest));
+
+  // ---- a new recovery key (it stays in the vault until it is revealed);
+  // the setup secrets of the account are discarded first, on purpose
+  vault.clear_setup_secrets();
+  const renewed = call("renew_recovery", () => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest));
+  const renewedCode = vault.reveal_recovery_code();
+  addText("recovery key code (renewed)", renewedCode);
+  const renewedRk = fromHex(op("recovery_key_decode", "code.rk.decode", { code: renewedCode }).key);
+  addSecret("RK (renewed)", renewedRk);
+  addSecret("KEK_rk (renewed)", fromHex(op("kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk: hex(renewedRk) }).kek));
+  assert.equal(renewed.wrap.kek_generation, 2);
+  call("verify_recovery_setup", () => vault.verify_recovery_setup(renewedCode, renewed.wrap));
 
   // ---- recover
   const recovery = new wasm.UnlockJob();

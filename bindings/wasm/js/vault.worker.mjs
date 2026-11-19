@@ -12,10 +12,13 @@ self.onmessage = async (event) => {
   try {
     dispatch = await ready;
   } catch {
-    // The module did not load: every call gets an answer instead of waiting.
+    // The module did not load: every call gets an answer instead of waiting,
+    // and a port that came with it is closed.
+    for (const port of event.ports ?? []) port.close();
     self.postMessage({ id: event.data?.id, ok: false, code: "worker_failed" });
     return;
   }
-  const { reply, transfer } = dispatch(event.data);
+  // `event.ports`: the import port of `client.importPort()`, if this is that message.
+  const { reply, transfer } = dispatch(event.data, event.ports);
   self.postMessage(reply, transfer);
 };
