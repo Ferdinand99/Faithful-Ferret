@@ -16,11 +16,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -39,11 +36,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com/login?next=/a#top\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -62,11 +56,8 @@
       "title": "\"https://example.com/a/b\" (host) against \"https://example.com/c\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a/b",
@@ -85,11 +76,8 @@
       "title": "\"https://example.com\" (host) against \"https://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -108,11 +96,8 @@
       "title": "\"https://www.example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://www.example.com",
@@ -131,11 +116,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.org\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -154,11 +136,8 @@
       "title": "\"https://a.example.com\" (host) against \"https://login.a.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.example.com",
@@ -177,11 +156,8 @@
       "title": "\"HTTPS://EXAMPLE.COM\" (host) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "HTTPS://EXAMPLE.COM",
@@ -200,11 +176,8 @@
       "title": "\"https://example.com.\" (host) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com.",
@@ -223,11 +196,8 @@
       "title": "\"https://example.com\" (host) against \"https://EXAMPLE.com./\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -246,11 +216,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com..\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -269,11 +236,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com:443\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -292,11 +256,8 @@
       "title": "\"https://example.com:0443\" (host) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com:0443",
@@ -315,11 +276,8 @@
       "title": "\"https://example.com:8443\" (host) against \"https://example.com:8443/x\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com:8443",
@@ -338,11 +296,8 @@
       "title": "\"https://example.com:8443\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com:8443",
@@ -361,11 +316,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com:8443\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -384,11 +336,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com:80\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -407,11 +356,8 @@
       "title": "\"https://example.com\" (host) against \"http://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -430,11 +376,8 @@
       "title": "\"https://example.com/login\" (exact) against \"http://example.com/login\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -453,11 +396,8 @@
       "title": "\"https://example.com\" (domain) against \"http://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -476,11 +416,8 @@
       "title": "\"http://example.com\" (host) against \"http://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -499,11 +436,8 @@
       "title": "\"http://example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -522,11 +456,8 @@
       "title": "\"http://example.com:80\" (host) against \"http://example.com/x\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com:80",
@@ -545,11 +476,8 @@
       "title": "\"http://example.com\" (host) against \"http://example.com:8080\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -568,11 +496,8 @@
       "title": "\"http://example.com\" (domain) against \"http://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -591,11 +516,8 @@
       "title": "\"http://www.example.com\" (domain) against \"http://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://www.example.com",
@@ -614,11 +536,8 @@
       "title": "\"http://example.com\" (domain) against \"http://example.com/login\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -637,11 +556,8 @@
       "title": "\"http://example.co.uk\" (domain) against \"http://shop.example.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.co.uk",
@@ -660,11 +576,8 @@
       "title": "\"http://example.com/a\" (exact) against \"http://www.example.com/a\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com/a",
@@ -683,11 +596,8 @@
       "title": "\"http://example.com\" (domain) against \"https://www.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://example.com",
@@ -706,11 +616,8 @@
       "title": "\"http://localhost:3000\" (host) against \"http://localhost:3000/\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://localhost:3000",
@@ -729,11 +636,8 @@
       "title": "\"http://localhost:3000\" (host) against \"http://localhost\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://localhost:3000",
@@ -752,11 +656,8 @@
       "title": "\"https://localhost\" (host) against \"http://localhost\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://localhost",
@@ -775,11 +676,8 @@
       "title": "\"https://example.com\" (host) against \"https://examp1e.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -798,11 +696,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -821,11 +716,8 @@
       "title": "\"https://example.com\" (domain) against \"https://sub.example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -844,11 +736,8 @@
       "title": "\"https://example.com\" (host) against \"https://evil.net/example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -867,11 +756,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com@evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -890,11 +776,8 @@
       "title": "\"https://example.com\" (host) against \"https://evil.net#@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -913,11 +796,8 @@
       "title": "\"https://example.com\" (host) against \"https://evil.net\\\\@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -936,11 +816,8 @@
       "title": "\"https://example.com\" (host) against \"https://example-com.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -959,11 +836,8 @@
       "title": "\"https://example.com\" (host) against \"https://examplecom\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -982,11 +856,8 @@
       "title": "\"https://example.com\" (host) against \"https://exаmple.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1005,11 +876,8 @@
       "title": "\"https://example.com\" (domain) against \"https://www.exаmple.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1028,11 +896,8 @@
       "title": "\"https://exаmple.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://exаmple.com",
@@ -1051,11 +916,8 @@
       "title": "\"https://exаmple.com\" (host) against \"https://exаmple.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://exаmple.com",
@@ -1074,11 +936,8 @@
       "title": "\"https://exаmple.com\" (host) against \"https://xn--exmple-4nf.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://exаmple.com",
@@ -1097,11 +956,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com\\\\login\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1120,11 +976,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com\\\\@evil.net\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1143,11 +996,8 @@
       "title": "\"https://example.com\" (host) against \"https://exam\\tple.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1166,11 +1016,8 @@
       "title": "\"https://example.com\" (host) against \"ht\\ntps://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1189,11 +1036,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com\\r\\n/x\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1212,11 +1056,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com\\t.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1235,11 +1076,8 @@
       "title": "\"https://example.com\" (host) against \"  https://example.com  \" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1258,11 +1096,8 @@
       "title": "\"https://example.com\" (host) against \"https://%65xample.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1281,11 +1116,8 @@
       "title": "\"https://example.com\" (host) against \"https://example%2Ecom\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1304,11 +1136,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com%2F.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1327,11 +1156,8 @@
       "title": "\"https://example.com\" (host) against \"https://ｅｘａｍｐｌｅ。ｃｏｍ\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1350,11 +1176,8 @@
       "title": "\"https://example.com\" (host) against \"https:example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1373,11 +1196,8 @@
       "title": "\"https://example.com\" (host) against \"https:///example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1396,11 +1216,8 @@
       "title": "\"https://example.com\" (host) against \"https://exa mple.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1419,11 +1236,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com:99999\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1442,11 +1256,8 @@
       "title": "\"https://example.com\" (host) against \"https://example.com:abc\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1465,11 +1276,8 @@
       "title": "\"https://example.com\" (host) against \"https://\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1488,11 +1296,8 @@
       "title": "\"https://example.com\" (host) against \"https://[::1\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1511,11 +1316,8 @@
       "title": "\"https://example.com\" (host) against \"\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1534,11 +1336,8 @@
       "title": "\"\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "",
@@ -1557,11 +1356,8 @@
       "title": "\"https://a..b\" (host) against \"https://a..b\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a..b",
@@ -1580,11 +1376,8 @@
       "title": "\"https://example.com\" (host) against \"https://user@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1603,11 +1396,8 @@
       "title": "\"https://example.com\" (host) against \"https://user:pw@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1626,11 +1416,8 @@
       "title": "\"https://example.com\" (domain) against \"https://:pw@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1649,11 +1436,8 @@
       "title": "\"https://user@example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://user@example.com",
@@ -1672,11 +1456,8 @@
       "title": "\"https://user@example.com\" (host) against \"https://user@example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://user@example.com",
@@ -1695,11 +1476,8 @@
       "title": "\"https://example.com\" (host) against \"data:text/html,<h1>x</h1>\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1718,11 +1496,8 @@
       "title": "\"https://example.com\" (host) against \"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1741,11 +1516,8 @@
       "title": "\"https://example.com\" (host) against \"file:///etc/passwd\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1764,11 +1536,8 @@
       "title": "\"https://example.com\" (host) against \"about:blank\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1787,11 +1556,8 @@
       "title": "\"https://example.com\" (host) against \"javascript:alert(1)\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1810,11 +1576,8 @@
       "title": "\"https://example.com\" (host) against \"ftp://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1833,11 +1596,8 @@
       "title": "\"https://example.com\" (host) against \"moz-extension://abc/page.html\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -1856,11 +1616,8 @@
       "title": "\"about:blank\" (host) against \"about:blank\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "about:blank",
@@ -1879,11 +1636,8 @@
       "title": "\"example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "example.com",
@@ -1902,11 +1656,8 @@
       "title": "\"example.com\" (domain) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "example.com",
@@ -1925,11 +1676,8 @@
       "title": "\"www.example.com/login\" (host) against \"https://www.example.com/login\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "www.example.com/login",
@@ -1948,11 +1696,8 @@
       "title": "\"//example.com\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "//example.com",
@@ -1971,11 +1716,8 @@
       "title": "\"example.com:8080\" (host) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "example.com:8080",
@@ -1994,11 +1736,8 @@
       "title": "\"example.com\" (exact) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "example.com",
@@ -2017,11 +1756,8 @@
       "title": "\"https://example.com\" (regex) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2040,11 +1776,8 @@
       "title": "\"https://example.com\" () against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2063,11 +1796,8 @@
       "title": "\"https://example.com\" (HOST) against \"https://example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2086,11 +1816,8 @@
       "title": "\"https://login.example.co.uk\" (domain) against \"https://www.example.co.uk\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://login.example.co.uk",
@@ -2109,11 +1836,8 @@
       "title": "\"https://example.co.uk\" (domain) against \"https://a.b.example.co.uk\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.co.uk",
@@ -2132,11 +1856,8 @@
       "title": "\"https://example.com\" (domain) against \"https://login.example.com\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2155,11 +1876,8 @@
       "title": "\"https://example.com\" (domain) against \"https://example.com\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2178,11 +1896,8 @@
       "title": "\"https://example.com.\" (domain) against \"https://login.example.com\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com.",
@@ -2201,11 +1916,8 @@
       "title": "\"https://login.example.co.uk\" (host) against \"https://www.example.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://login.example.co.uk",
@@ -2224,11 +1936,8 @@
       "title": "\"https://example.co.uk\" (domain) against \"https://other.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.co.uk",
@@ -2247,11 +1956,8 @@
       "title": "\"https://example.com\" (domain) against \"https://example.co.uk\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2270,11 +1976,8 @@
       "title": "\"https://example.com\" (domain) against \"https://www.example.com:8443\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2293,11 +1996,8 @@
       "title": "\"https://a.example.com\" (domain) against \"https://example.com.evil.net\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.example.com",
@@ -2316,11 +2016,8 @@
       "title": "\"https://bücher.de\" (domain) against \"https://shop.xn--bcher-kva.de\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://bücher.de",
@@ -2339,11 +2036,8 @@
       "title": "\"https://a.github.io\" (domain) against \"https://b.github.io\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.github.io",
@@ -2362,11 +2056,8 @@
       "title": "\"https://a.github.io\" (domain) against \"https://x.a.github.io\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.github.io",
@@ -2385,11 +2076,8 @@
       "title": "\"https://x.y.vercel.app\" (domain) against \"https://z.y.vercel.app\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://x.y.vercel.app",
@@ -2408,11 +2096,8 @@
       "title": "\"https://x.vercel.app\" (domain) against \"https://y.vercel.app\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://x.vercel.app",
@@ -2431,11 +2116,8 @@
       "title": "\"https://github.io\" (domain) against \"https://github.io\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://github.io",
@@ -2454,11 +2136,8 @@
       "title": "\"https://github.io\" (domain) against \"https://a.github.io\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://github.io",
@@ -2477,11 +2156,8 @@
       "title": "\"https://a.foo.ck\" (domain) against \"https://b.foo.ck\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.foo.ck",
@@ -2500,11 +2176,8 @@
       "title": "\"https://www.ck\" (domain) against \"https://x.www.ck\" is domain",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://www.ck",
@@ -2523,11 +2196,8 @@
       "title": "\"https://fritz.box\" (domain) against \"https://fritz.box\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://fritz.box",
@@ -2546,11 +2216,8 @@
       "title": "\"https://a.fritz.box\" (domain) against \"https://b.fritz.box\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.fritz.box",
@@ -2569,11 +2236,8 @@
       "title": "\"https://fritz.box\" (domain) against \"https://x.fritz.box\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://fritz.box",
@@ -2592,11 +2256,8 @@
       "title": "\"https://router.lan\" (domain) against \"https://router.lan\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://router.lan",
@@ -2615,11 +2276,8 @@
       "title": "\"https://a.router.lan\" (domain) against \"https://b.router.lan\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.router.lan",
@@ -2638,11 +2296,8 @@
       "title": "\"https://nas.home.arpa\" (domain) against \"https://nas.home.arpa\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://nas.home.arpa",
@@ -2661,11 +2316,8 @@
       "title": "\"https://nas.home.arpa\" (domain) against \"https://x.nas.home.arpa\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://nas.home.arpa",
@@ -2684,11 +2336,8 @@
       "title": "\"https://intranet\" (domain) against \"https://intranet/login\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://intranet",
@@ -2707,11 +2356,8 @@
       "title": "\"https://intranet\" (domain) against \"https://other\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://intranet",
@@ -2730,11 +2376,8 @@
       "title": "\"https://a.example.zzzunknown\" (domain) against \"https://b.example.zzzunknown\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.example.zzzunknown",
@@ -2753,11 +2396,8 @@
       "title": "\"https://a.example\" (domain) against \"https://b.example\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://a.example",
@@ -2776,11 +2416,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -2799,11 +2436,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login#top\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -2822,11 +2456,8 @@
       "title": "\"https://example.com/login#a\" (exact) against \"https://example.com/login#b\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login#a",
@@ -2845,11 +2476,8 @@
       "title": "\"https://example.com\" (exact) against \"https://example.com/\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com",
@@ -2868,11 +2496,8 @@
       "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=1#f\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a?x=1",
@@ -2891,11 +2516,8 @@
       "title": "\"https://example.com./a\" (exact) against \"https://EXAMPLE.com/a\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com./a",
@@ -2914,11 +2536,8 @@
       "title": "\"https://example.com/a/b\" (exact) against \"https://example.com\\\\a\\\\b\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a/b",
@@ -2937,11 +2556,8 @@
       "title": "\"https://example.com/a/./b/../c\" (exact) against \"https://example.com/a/c\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a/./b/../c",
@@ -2960,11 +2576,8 @@
       "title": "\"https://example.com/a b\" (exact) against \"https://example.com/a%20b\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a b",
@@ -2983,11 +2596,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login/\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3006,11 +2616,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/Login\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3029,11 +2636,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/login?x=1\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3052,11 +2656,8 @@
       "title": "\"https://example.com/a?x=1\" (exact) against \"https://example.com/a?x=2\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/a?x=1",
@@ -3075,11 +2676,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com/other\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3098,11 +2696,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://example.com:8443/login\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3121,11 +2716,8 @@
       "title": "\"https://example.com/login\" (exact) against \"https://www.example.com/login\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "https://example.com/login",
@@ -3144,11 +2736,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1/admin\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3167,11 +2756,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.2\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3190,11 +2776,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.10\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3213,11 +2796,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3236,11 +2816,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"https://192.168.1.1\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3259,11 +2836,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1:8080\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3282,11 +2856,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://3232235777\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3305,11 +2876,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://0xc0a80101\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3328,11 +2896,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://0300.0250.01.01\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3351,11 +2916,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.257\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3374,11 +2936,8 @@
       "title": "\"http://3232235777\" (host) against \"http://192.168.1.1\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://3232235777",
@@ -3397,11 +2956,8 @@
       "title": "\"http://192.168.1.1\" (host) against \"http://192.168.1.1.example.com\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3420,11 +2976,8 @@
       "title": "\"http://192.168.1.1\" (domain) against \"http://192.168.1.1\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1",
@@ -3443,11 +2996,8 @@
       "title": "\"http://10.0.0.1\" (domain) against \"http://10.0.0.2\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://10.0.0.1",
@@ -3466,11 +3016,8 @@
       "title": "\"http://192.168.1.1/a\" (exact) against \"http://3232235777/a#f\" is exact",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://192.168.1.1/a",
@@ -3489,11 +3036,8 @@
       "title": "\"http://[::1]:3000\" (host) against \"http://[::1]:3000/x\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://[::1]:3000",
@@ -3512,11 +3056,8 @@
       "title": "\"http://[::1]\" (host) against \"http://[0:0:0:0:0:0:0:1]\" is host",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://[::1]",
@@ -3535,11 +3076,8 @@
       "title": "\"http://[::1]\" (host) against \"http://[::2]\" is none",
       "op": "url.match",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "entry": "http://[::1]",
@@ -3558,11 +3096,8 @@
       "title": "origin of \"https://example.com\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com",
@@ -3581,11 +3116,8 @@
       "title": "origin of \"https://Example.COM/login?x=1#top\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://Example.COM/login?x=1#top",
@@ -3604,11 +3136,8 @@
       "title": "origin of \"http://example.com\" is http://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://example.com",
@@ -3627,11 +3156,8 @@
       "title": "origin of \"http://example.com:8080/x\" is http://example.com:8080",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://example.com:8080/x",
@@ -3650,11 +3176,8 @@
       "title": "origin of \"https://example.com:443/\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com:443/",
@@ -3673,11 +3196,8 @@
       "title": "origin of \"https://example.com:8443\" is https://example.com:8443",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com:8443",
@@ -3696,11 +3216,8 @@
       "title": "origin of \"https://a.example:80\" is https://a.example:80",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://a.example:80",
@@ -3719,11 +3236,8 @@
       "title": "origin of \"http://a.example:443\" is http://a.example:443",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://a.example:443",
@@ -3742,11 +3256,8 @@
       "title": "origin of \"https://sub.example.co.uk:8443/a\" is https://sub.example.co.uk:8443",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://sub.example.co.uk:8443/a",
@@ -3765,11 +3276,8 @@
       "title": "origin of \"http://localhost:3000/x\" is http://localhost:3000",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://localhost:3000/x",
@@ -3788,11 +3296,8 @@
       "title": "origin of \"http://192.168.1.1:8080/admin\" is http://192.168.1.1:8080",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://192.168.1.1:8080/admin",
@@ -3811,11 +3316,8 @@
       "title": "origin of \"http://3232235777/\" is http://192.168.1.1",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://3232235777/",
@@ -3834,11 +3336,8 @@
       "title": "origin of \"http://0x7f.1/\" is http://127.0.0.1",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://0x7f.1/",
@@ -3857,11 +3356,8 @@
       "title": "origin of \"https://[2001:DB8::1]:8443/x\" is https://[2001:db8::1]:8443",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://[2001:DB8::1]:8443/x",
@@ -3880,11 +3376,8 @@
       "title": "origin of \"http://[::1]\" is http://[::1]",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://[::1]",
@@ -3903,11 +3396,8 @@
       "title": "origin of \"https://EXAMPLE.com./\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://EXAMPLE.com./",
@@ -3926,11 +3416,8 @@
       "title": "origin of \"https://Bücher.example/\" is https://xn--bcher-kva.example",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://Bücher.example/",
@@ -3949,11 +3436,8 @@
       "title": "origin of \"https://пример.рф/\" is https://xn--e1afmkfd.xn--p1ai",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://пример.рф/",
@@ -3972,11 +3456,8 @@
       "title": "origin of \"https://exаmple.com\" is https://xn--exmple-4nf.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exаmple.com",
@@ -3995,11 +3476,8 @@
       "title": "origin of \"https://ｅｘａｍｐｌｅ.com\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://ｅｘａｍｐｌｅ.com",
@@ -4018,11 +3496,8 @@
       "title": "origin of \"https://exa%6Dple.com\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exa%6Dple.com",
@@ -4041,11 +3516,8 @@
       "title": "origin of \"https://exam\\tple.com\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exam\tple.com",
@@ -4064,11 +3536,8 @@
       "title": "origin of \"https://example.com\\\\login\" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com\\login",
@@ -4087,11 +3556,8 @@
       "title": "origin of \"  https://example.com/x  \" is https://example.com",
       "op": "url.page_origin",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "  https://example.com/x  ",
@@ -4110,11 +3576,8 @@
       "title": "\"https://user@example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://user@example.com",
@@ -4127,11 +3590,8 @@
       "title": "\"https://user:pw@example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://user:pw@example.com",
@@ -4144,11 +3604,8 @@
       "title": "\"ftp://example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "ftp://example.com",
@@ -4161,11 +3618,8 @@
       "title": "\"ws://example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "ws://example.com",
@@ -4178,11 +3632,8 @@
       "title": "\"about:blank\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "about:blank",
@@ -4195,11 +3646,8 @@
       "title": "\"data:text/html,<h1>x</h1>\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "data:text/html,<h1>x</h1>",
@@ -4212,11 +3660,8 @@
       "title": "\"javascript:alert(1)\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "javascript:alert(1)",
@@ -4229,11 +3674,8 @@
       "title": "\"file:///etc/passwd\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "file:///etc/passwd",
@@ -4246,11 +3688,8 @@
       "title": "\"blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "blob:https://example.com/2f6c1f0e-6a52-4f55-9d6e-0c1b3b3f9a10",
@@ -4263,11 +3702,8 @@
       "title": "\"example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "example.com",
@@ -4280,11 +3716,8 @@
       "title": "\"//example.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "//example.com",
@@ -4297,11 +3730,8 @@
       "title": "\"\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "",
@@ -4314,11 +3744,8 @@
       "title": "\"https://\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://",
@@ -4331,11 +3758,8 @@
       "title": "\"https://example.com:0\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com:0",
@@ -4348,11 +3772,8 @@
       "title": "\"https://example.com:65536\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com:65536",
@@ -4365,11 +3786,8 @@
       "title": "\"https://a..b\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://a..b",
@@ -4382,11 +3800,8 @@
       "title": "\"https://exa mple.com\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exa mple.com",
@@ -4399,11 +3814,8 @@
       "title": "\"https://[::1\" has no origin",
       "op": "url.page_origin",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://[::1",
@@ -4416,11 +3828,8 @@
       "title": "\"https://a.example.com\" and \"https://b.example.com\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.example.com",
@@ -4438,11 +3847,8 @@
       "title": "\"https://example.com\" and \"https://www.example.com/x?y#z\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://example.com",
@@ -4460,11 +3866,8 @@
       "title": "\"https://a.example.com\" and \"https://a.example.com\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.example.com",
@@ -4482,11 +3885,8 @@
       "title": "\"https://a.example.com:8443\" and \"https://b.example.com\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.example.com:8443",
@@ -4504,11 +3904,8 @@
       "title": "\"https://a.example.co.uk\" and \"https://b.example.co.uk\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.example.co.uk",
@@ -4526,11 +3923,8 @@
       "title": "\"https://a.example.co.uk\" and \"https://b.other.co.uk\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.example.co.uk",
@@ -4548,11 +3942,8 @@
       "title": "\"http://a.example.com\" and \"https://a.example.com\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://a.example.com",
@@ -4570,11 +3961,8 @@
       "title": "\"http://a.example.com\" and \"https://b.example.com\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://a.example.com",
@@ -4592,11 +3980,8 @@
       "title": "\"http://a.example.com\" and \"http://b.example.com\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://a.example.com",
@@ -4614,11 +3999,8 @@
       "title": "\"https://a.github.io\" and \"https://b.github.io\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.github.io",
@@ -4636,11 +4018,8 @@
       "title": "\"https://a.github.io\" and \"https://x.a.github.io\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.github.io",
@@ -4658,11 +4037,8 @@
       "title": "\"https://github.io\" and \"https://github.io\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://github.io",
@@ -4680,11 +4056,8 @@
       "title": "\"https://github.io\" and \"https://a.github.io\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://github.io",
@@ -4702,11 +4075,8 @@
       "title": "\"https://example.com\" and \"https://example.org\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://example.com",
@@ -4724,11 +4094,8 @@
       "title": "\"https://example.com\" and \"https://example.com.evil.net\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://example.com",
@@ -4746,11 +4113,8 @@
       "title": "\"https://EXAMPLE.com.\" and \"https://www.example.com\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://EXAMPLE.com.",
@@ -4768,11 +4132,8 @@
       "title": "\"https://exаmple.com\" and \"https://example.com\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://exаmple.com",
@@ -4790,11 +4151,8 @@
       "title": "\"https://bücher.de\" and \"https://shop.xn--bcher-kva.de\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://bücher.de",
@@ -4812,11 +4170,8 @@
       "title": "\"http://192.168.1.1\" and \"http://192.168.1.1/x\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://192.168.1.1",
@@ -4834,11 +4189,8 @@
       "title": "\"http://192.168.1.1:80\" and \"http://3232235777:8080\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://192.168.1.1:80",
@@ -4856,11 +4208,8 @@
       "title": "\"http://192.168.1.1\" and \"http://192.168.1.2\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://192.168.1.1",
@@ -4878,11 +4227,8 @@
       "title": "\"https://192.168.1.1\" and \"http://192.168.1.1\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://192.168.1.1",
@@ -4900,11 +4246,8 @@
       "title": "\"http://[::1]\" and \"http://[0::1]:81\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://[::1]",
@@ -4922,11 +4265,8 @@
       "title": "\"http://[::1]\" and \"http://[::2]\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://[::1]",
@@ -4944,11 +4284,8 @@
       "title": "\"https://fritz.box\" and \"https://fritz.box\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://fritz.box",
@@ -4966,11 +4303,8 @@
       "title": "\"https://a.fritz.box\" and \"https://b.fritz.box\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.fritz.box",
@@ -4988,11 +4322,8 @@
       "title": "\"https://intranet\" and \"https://intranet/x\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://intranet",
@@ -5010,11 +4341,8 @@
       "title": "\"https://intranet\" and \"https://other\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://intranet",
@@ -5032,11 +4360,8 @@
       "title": "\"https://a.router.lan\" and \"https://b.router.lan\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://a.router.lan",
@@ -5054,11 +4379,8 @@
       "title": "\"https://nas.home.arpa\" and \"https://x.nas.home.arpa\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://nas.home.arpa",
@@ -5076,11 +4398,8 @@
       "title": "\"http://localhost:3000\" and \"http://localhost:4000\" are on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "http://localhost:3000",
@@ -5098,11 +4417,8 @@
       "title": "\"https://example.com\" and \"data:text/html,x\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://example.com",
@@ -5120,11 +4436,8 @@
       "title": "\"about:blank\" and \"about:blank\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "about:blank",
@@ -5142,11 +4455,8 @@
       "title": "\"\" and \"\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "",
@@ -5164,11 +4474,8 @@
       "title": "\"https://u@example.com\" and \"https://example.com\" are not on the same site",
       "op": "url.same_site",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "a": "https://u@example.com",
@@ -5186,11 +4493,8 @@
       "title": "host to show for \"https://example.com/x\" is example.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://example.com/x",
@@ -5207,11 +4511,8 @@
       "title": "host to show for \"https://Bücher.example\" is bücher.example",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://Bücher.example",
@@ -5228,11 +4529,8 @@
       "title": "host to show for \"https://xn--bcher-kva.example/\" is bücher.example",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://xn--bcher-kva.example/",
@@ -5249,11 +4547,8 @@
       "title": "host to show for \"https://пример.рф\" is пример.рф",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://пример.рф",
@@ -5270,11 +4565,8 @@
       "title": "host to show for \"https://exаmple.com\" is xn--exmple-4nf.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exаmple.com",
@@ -5291,11 +4583,8 @@
       "title": "host to show for \"https://exαmple.com\" is xn--exmple-qxe.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://exαmple.com",
@@ -5312,11 +4601,8 @@
       "title": "host to show for \"https://gօogle.com\" is xn--gogle-lkg.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://gօogle.com",
@@ -5333,11 +4619,8 @@
       "title": "host to show for \"https://абвa.com\" is xn--a-7sbde.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://абвa.com",
@@ -5354,11 +4637,8 @@
       "title": "host to show for \"https://日本abc.jp\" is xn--abc-s08fl0d.jp",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://日本abc.jp",
@@ -5375,11 +4655,8 @@
       "title": "host to show for \"https://shop.exаmple.com\" is shop.xn--exmple-4nf.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://shop.exаmple.com",
@@ -5396,11 +4673,8 @@
       "title": "host to show for \"https://пример.exаmple.рф\" is пример.xn--exmple-4nf.рф",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://пример.exаmple.рф",
@@ -5417,11 +4691,8 @@
       "title": "host to show for \"https://пример-1.рф\" is пример-1.рф",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://пример-1.рф",
@@ -5438,11 +4709,8 @@
       "title": "host to show for \"https://αβγ.gr\" is αβγ.gr",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://αβγ.gr",
@@ -5459,11 +4727,8 @@
       "title": "host to show for \"https://café.com\" is café.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://café.com",
@@ -5480,11 +4745,8 @@
       "title": "host to show for \"https://日本語ひらがな.jp\" is 日本語ひらがな.jp",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://日本語ひらがな.jp",
@@ -5501,11 +4763,8 @@
       "title": "host to show for \"https://한漢字.kr\" is 한漢字.kr",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://한漢字.kr",
@@ -5522,11 +4781,8 @@
       "title": "host to show for \"https://faceb००k.com\" is xn--facebk-09ma.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://faceb००k.com",
@@ -5543,11 +4799,8 @@
       "title": "host to show for \"https://g૦૦gle.com\" is xn--ggle-l4ka.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://g૦૦gle.com",
@@ -5564,11 +4817,8 @@
       "title": "host to show for \"https://भारत१.in\" is भारत१.in",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://भारत१.in",
@@ -5585,11 +4835,8 @@
       "title": "host to show for \"https://ไทย๑.th\" is ไทย๑.th",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://ไทย๑.th",
@@ -5606,11 +4853,8 @@
       "title": "host to show for \"https://コーヒー.jp\" is コーヒー.jp",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://コーヒー.jp",
@@ -5627,11 +4871,8 @@
       "title": "host to show for \"https://گچپ.ir\" is گچپ.ir",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://گچپ.ir",
@@ -5648,11 +4889,8 @@
       "title": "host to show for \"https://پارسی.ir\" is پارسی.ir",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://پارسی.ir",
@@ -5669,11 +4907,8 @@
       "title": "host to show for \"https://аррӏе.com\" is аррӏе.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://аррӏе.com",
@@ -5690,11 +4925,8 @@
       "title": "host to show for \"https://日本語.jp\" is 日本語.jp",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://日本語.jp",
@@ -5711,11 +4943,8 @@
       "title": "host to show for \"https://EXAMPLE.com./\" is example.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://EXAMPLE.com./",
@@ -5732,11 +4961,8 @@
       "title": "host to show for \"https://ｅｘａｍｐｌｅ.com\" is example.com",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://ｅｘａｍｐｌｅ.com",
@@ -5753,11 +4979,8 @@
       "title": "host to show for \"http://3232235777/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://3232235777/",
@@ -5774,11 +4997,8 @@
       "title": "host to show for \"http://192.168.1.1:8080/\" is 192.168.1.1",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://192.168.1.1:8080/",
@@ -5795,11 +5015,8 @@
       "title": "host to show for \"http://[2001:DB8::1]:8080/\" is [2001:db8::1]",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://[2001:DB8::1]:8080/",
@@ -5816,11 +5033,8 @@
       "title": "host to show for \"http://localhost:3000\" is localhost",
       "op": "url.display_host",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "http://localhost:3000",
@@ -5837,11 +5051,8 @@
       "title": "\"ftp://example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "ftp://example.com",
@@ -5854,11 +5065,8 @@
       "title": "\"about:blank\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "about:blank",
@@ -5871,11 +5079,8 @@
       "title": "\"data:text/html,x\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "data:text/html,x",
@@ -5888,11 +5093,8 @@
       "title": "\"https://user@example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://user@example.com",
@@ -5905,11 +5107,8 @@
       "title": "\"example.com\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "example.com",
@@ -5922,11 +5121,8 @@
       "title": "\"\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "",
@@ -5939,11 +5135,8 @@
       "title": "\"https://a..b\" has no host to show",
       "op": "url.display_host",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "No WebAssembly binding exposes the page address operations yet.",
       "rng": [],
       "input": {
         "page": "https://a..b",
