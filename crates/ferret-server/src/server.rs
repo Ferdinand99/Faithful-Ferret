@@ -153,7 +153,12 @@ pub async fn run(config: Config) -> Result<(), StartError> {
         config.backup_config()?,
         state.backup.clone(),
         state.clock.clone(),
-        state.core.http.clone(),
+        crate::backup::push::client()?,
+        crate::backup::set::Loaded::new(
+            state.secrets.keys.fingerprint().0,
+            state.secrets.prelogin.payload(),
+            state.core.session_key.master(),
+        ),
     );
 
     let vault_listener = bind(config.vault_addr()).await?;

@@ -428,7 +428,11 @@ async fn retention_keeps_30_days_and_always_the_three_newest_good_sets() {
     let mut bytes = std::fs::read(&bad_db).expect("a database");
     bytes[100] ^= 0xff;
     std::fs::write(&bad_db, bytes).expect("a write");
-    let listing = set::list(&cfg).expect("a listing");
+    // The cheap listing reads no file content, so a flipped byte passes it; the
+    // listing that hashes does not.
+    let cheap = set::list(&cfg).expect("a listing");
+    assert!(cheap.iter().all(|s| s.verified));
+    let listing = set::list_verified(&cfg).expect("a listing");
     assert_eq!(listing.len(), 7);
     assert!(
         !listing
@@ -720,7 +724,7 @@ async fn a_push_that_never_answers_gives_up_after_ten_seconds() {
     let monitor = StandIn::start(Reply::Hang).await;
     let address = SecretUrl::new(&format!("http://{}/api/push/tok", monitor.addr));
     let started = tokio::time::Instant::now();
-    let result = push::send(&reqwest::Client::new(), &address).await;
+    let result = push::send(&push::client().expect("a client"), &address).await;
     assert_eq!(result, Err(push::PushError::Timeout));
     let waited = started.elapsed();
     assert!(
@@ -878,11 +882,7 @@ async fn cli_backup_create_needs_the_server_stopped() {
     })
     .expect_err("refused while the server runs");
     assert!(refused.to_string().contains("stop"), "{refused}");
-    assert!(
-        !data_dir.join("backups/auto").exists()
-            || cfg(&app).dir.read_dir().expect("a folder").count() == 0,
-        "no set was made"
-    );
+    assert!(listed(&cfg(&app)).is_empty(), "no set was made");
     drop(lock);
 
     // Stopped: the set is made, and checked.
@@ -968,4 +968,155 @@ async fn cli_backup_list_and_verify_print_no_secret() {
     assert_no_secret(&error.to_string(), &[CANARY, &key_hex]);
     let list = cli::run(Command::BackupList { data_dir }).expect("a listing");
     assert!(list.contains("NOT CHECKED"), "{list}");
+}
+
+// ---------------------------------------------------------------------------
+// The client, the loaded secrets, the status and the check of a foreign set
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_redirect_from_the_monitor_is_not_followed_and_counts_as_a_failure() {
+    let app = app_with_vault().await;
+    let elsewhere = StandIn::start(Reply::Ok).await;
+    let monitor = StandIn::start(Reply::Redirect(format!(
+        "http://{}/landing",
+        elsewhere.addr
+    )))
+    .await;
+    let cfg = cfg_with_push(
+        &app,
+        &format!("http://{}/api/push/tokenabc123", monitor.addr),
+    );
+    let mut job = job(&app, cfg.clone(), Arc::new(set::RealPlatform));
+    app.clock.advance(FIRST_RUN_AFTER as u64);
+    let info = job.poll().await.expect("a run").expect("a good set");
+
+    assert_eq!(monitor.requests().len(), 1);
+    assert!(
+        elsewhere.requests().is_empty(),
+        "the redirect was not followed: {:?}",
+        elsewhere.requests()
+    );
+    // No Referer goes anywhere either.
+    assert!(!monitor.requests()[0].to_lowercase().contains("referer"));
+    let snap = app.backup_status().snapshot();
+    let push = snap.last_push.clone().expect("a push");
+    assert_eq!((push.ok, push.code.as_deref()), (false, Some("status")));
+    assert_eq!(snap.state(), State::Ok, "the set is still good");
+    assert_eq!(listed(&cfg), vec![info.name]);
+}
+
+#[tokio::test]
+async fn a_secret_file_that_differs_from_the_loaded_one_is_not_backed_up() {
+    use ferret_server::backup::set::Loaded;
+    let app = app_with_vault().await;
+    let cfg = cfg(&app);
+    let state = &app.state;
+    let loaded = |session_key: &[u8]| {
+        Arc::new(Loaded::new(
+            state.secrets.keys.fingerprint().0,
+            state.secrets.prelogin.payload(),
+            session_key,
+        ))
+    };
+    let right = loaded(state.core.session_key.master());
+    let mut job = job(&app, cfg.clone(), Arc::new(set::RealPlatform)).with_loaded(right);
+    app.clock.advance(FIRST_RUN_AFTER as u64);
+    job.poll()
+        .await
+        .expect("a run")
+        .expect("a set made from the loaded files");
+
+    // The cookie key in memory is not the one on disk.
+    let mut other = state.core.session_key.master().to_vec();
+    other[0] ^= 0xff;
+    let mut job =
+        self::job(&app, cfg.clone(), Arc::new(set::RealPlatform)).with_loaded(loaded(&other));
+    app.clock.advance(FIRST_RUN_AFTER as u64);
+    let refused = job.poll().await.expect("a run");
+    assert!(
+        matches!(refused, Err(BackupError::Verify(why)) if why.contains("differs")),
+        "{refused:?}"
+    );
+    assert_eq!(listed(&cfg).len(), 1, "no second set");
+    assert!(!entries(&cfg.dir).iter().any(|n| n.starts_with(".tmp-")));
+}
+
+#[tokio::test]
+async fn the_status_leaves_running_when_a_run_panics() {
+    let app = app_with_vault().await;
+    let cfg = cfg(&app);
+    let spy = SpyPlatform::new();
+    let platform: Arc<dyn set::Platform> = spy.clone();
+    let mut job = job(&app, cfg.clone(), platform);
+    spy.panic_rename.store(true, Ordering::SeqCst);
+    app.clock.advance(FIRST_RUN_AFTER as u64);
+    let result = job.poll().await.expect("a run");
+    assert!(result.is_err(), "{result:?}");
+    let snap = app.backup_status().snapshot();
+    assert!(!snap.running, "the run is over");
+    assert_eq!(snap.state(), State::Failed);
+    assert!(listed(&cfg).is_empty());
+    assert!(
+        !entries(&cfg.dir).iter().any(|n| n.starts_with(".tmp-")),
+        "the half-written folder is gone"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_sync_of_the_backup_folder_after_the_rename_still_counts_as_a_set() {
+    let app = app_with_vault().await;
+    let cfg = cfg(&app);
+    let spy = SpyPlatform::new();
+    *spy.parent.lock().expect("parent") = Some(cfg.dir.clone());
+    spy.fail_parent_sync.store(true, Ordering::SeqCst);
+    let platform: Arc<dyn set::Platform> = spy.clone();
+    let mut job = job(&app, cfg.clone(), platform);
+    app.clock.advance(FIRST_RUN_AFTER as u64);
+    let info = job.poll().await.expect("a run").expect("a set");
+    assert_eq!(listed(&cfg), vec![info.name]);
+    assert_eq!(app.backup_status().snapshot().state(), State::Ok);
+}
+
+#[tokio::test]
+async fn a_set_whose_schema_has_a_view_in_place_of_a_table_is_refused() {
+    let app = app_with_vault().await;
+    let cfg = cfg(&app);
+    let info = make(&app, &cfg, NOW).await.expect("a set");
+    let case = app.dir.join("scratch-view");
+    copy_set(&cfg.dir.join(&info.name), &case);
+    // Make a copy whose manifest agrees with a changed database, so that only the
+    // schema is wrong.
+    {
+        let db = Connection::open(case.join("ferret.sqlite")).expect("a copy");
+        db.execute_batch(
+            "DROP TABLE ferret_meta; CREATE VIEW ferret_meta AS SELECT 'k' AS key, x'00' AS value;",
+        )
+        .expect("a view");
+    }
+    let mut manifest = read_manifest(&case);
+    {
+        use sha2::{Digest as _, Sha256};
+        let bytes = std::fs::read(case.join("ferret.sqlite")).expect("a database");
+        let entry = manifest
+            .files
+            .iter_mut()
+            .find(|f| f.name == "ferret.sqlite")
+            .expect("an entry");
+        entry.bytes = bytes.len() as u64;
+        entry.sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+    }
+    std::fs::write(
+        case.join("MANIFEST.json"),
+        serde_json::to_vec_pretty(&manifest).expect("json"),
+    )
+    .expect("a write");
+    assert!(
+        verify_error(&case).contains("lacks a table"),
+        "{}",
+        verify_error(&case)
+    );
 }

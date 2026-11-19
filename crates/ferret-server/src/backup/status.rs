@@ -115,6 +115,9 @@ struct Inner {
 
 struct Shared {
     state: Mutex<Inner>,
+    /// Held while `status.json` is written, so two writers cannot put an older
+    /// snapshot last: the one that writes reads the newest state under it.
+    write: Mutex<()>,
     wake: Notify,
     /// Where `status.json` goes; none for a status that is kept in memory only.
     file: Option<PathBuf>,
@@ -162,6 +165,7 @@ impl BackupStatus {
                     saved,
                     ..Inner::default()
                 }),
+                write: Mutex::new(()),
                 wake: Notify::new(),
                 file,
             }),
@@ -232,58 +236,59 @@ impl BackupStatus {
     /// A run made a good set at `now`; the folder now holds `sets`. Clears the
     /// last failure.
     pub fn record_success(&self, now: i64, sets: u32) {
-        let saved = {
+        {
             let mut inner = self.lock();
             inner.saved.last_good_at = Some(now);
             inner.saved.last_failure = None;
             inner.saved.sets = sets;
-            inner.saved.clone()
-        };
-        self.persist(&saved);
+        }
+        self.persist();
     }
 
     /// A run failed at `now` with a fixed `code`. The last good time stays.
     pub fn record_failure(&self, now: i64, code: &str) {
-        let saved = {
+        {
             let mut inner = self.lock();
             inner.saved.last_failure = Some(Failure {
                 at: now,
                 code: code.to_string(),
             });
-            inner.saved.clone()
-        };
-        self.persist(&saved);
+        }
+        self.persist();
     }
 
     /// The message to the monitor was tried at `now`: `Ok` or a fixed code.
     pub fn record_push(&self, now: i64, result: Result<(), &str>) {
-        let saved = {
+        {
             let mut inner = self.lock();
             inner.saved.last_push = Some(PushReport {
                 at: now,
                 ok: result.is_ok(),
                 code: result.err().map(str::to_string),
             });
-            inner.saved.clone()
-        };
-        self.persist(&saved);
+        }
+        self.persist();
     }
 
     /// How many sets the folder holds (after a prune).
     pub fn set_sets(&self, sets: u32) {
-        let saved = {
-            let mut inner = self.lock();
-            inner.saved.sets = sets;
-            inner.saved.clone()
-        };
-        self.persist(&saved);
+        self.lock().saved.sets = sets;
+        self.persist();
     }
 
-    fn persist(&self, saved: &Saved) {
+    /// Writes the newest state to `status.json`. This is blocking file I/O: a
+    /// caller on the async runtime calls the `record_*` methods from a blocking
+    /// task (the job does).
+    fn persist(&self) {
         let Some(file) = &self.shared.file else {
             return;
         };
-        let mut saved = saved.clone();
+        let _writer = self
+            .shared
+            .write
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut saved = self.lock().saved.clone();
         saved.v = 1;
         if let Err(error) = write_saved(file, &saved) {
             // The status is a convenience: a run that made a good set is good.

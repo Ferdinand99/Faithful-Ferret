@@ -23,8 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ferret_server_auth::Clock;
+use futures_util::FutureExt as _;
 
-use super::set::{self, Platform};
+use super::set::{self, Loaded, Pending, Platform};
 use super::{BackupConfig, BackupError, SetInfo, push};
 use crate::secret::SecretUrl;
 use crate::state::{BackupStatus, VaultDb};
@@ -59,6 +60,7 @@ pub struct Job {
     clock: Arc<dyn Clock>,
     http: reqwest::Client,
     platform: Arc<dyn Platform>,
+    loaded: Option<Arc<Loaded>>,
     started_at: Option<i64>,
     next_scheduled: Option<i64>,
     request_due: Option<i64>,
@@ -83,6 +85,7 @@ impl Job {
             clock,
             http,
             platform: set::real_platform(),
+            loaded: None,
             started_at,
             next_scheduled: started_at.map(|at| at.saturating_add(FIRST_RUN_AFTER)),
             request_due: None,
@@ -95,6 +98,22 @@ impl Job {
     pub fn with_platform(mut self, platform: Arc<dyn Platform>) -> Self {
         self.platform = platform;
         self
+    }
+
+    /// The secrets the server has loaded: a set is made only from files on disk
+    /// that are the same.
+    #[must_use]
+    pub fn with_loaded(mut self, loaded: Arc<Loaded>) -> Self {
+        self.loaded = Some(loaded);
+        self
+    }
+
+    /// After a panic in a run: waits before the next try, so that a run that
+    /// panics every time does not run every few seconds.
+    pub fn after_panic(&mut self) {
+        let now = seconds(self.clock.as_ref()).unwrap_or(0);
+        self.request_due = None;
+        self.next_scheduled = Some(now.saturating_add(RETRY_AFTER));
     }
 
     /// Looks at the clock and the requests and makes a set if one is due.
@@ -132,42 +151,64 @@ impl Job {
 
     /// One run: the set, then (if it is good) the prune and the message.
     async fn run(&self, now: i64) -> Result<SetInfo, BackupError> {
-        self.status.set_running(true);
+        // The guard clears `running` however this function ends, a panic or a
+        // dropped future included.
+        let _running = Running::start(&self.status);
         let result = self.make_set(now).await;
         match &result {
             Ok(info) => {
                 let sets = self.prune_and_count(now).await;
-                self.status.record_success(now, sets);
+                self.record(move |status| status.record_success(now, sets))
+                    .await;
                 tracing::info!(set = %info.name, sets, "backup set made");
                 self.tell_monitor(now).await;
             }
             Err(error) => {
-                self.status.record_failure(now, error.code());
-                tracing::warn!(code = error.code(), "backup failed");
+                let code = error.code();
+                self.record(move |status| status.record_failure(now, code))
+                    .await;
+                tracing::warn!(code, "backup failed");
             }
         }
-        self.status.set_running(false);
         result
     }
 
+    /// Writes into the status from a blocking thread: the status file is
+    /// written and synced there.
+    async fn record(&self, change: impl FnOnce(&BackupStatus) + Send + 'static) {
+        let status = self.status.clone();
+        let _ = tokio::task::spawn_blocking(move || change(&status)).await;
+    }
+
+    /// The set in three steps (see [`Pending`]): the checks and the files on a
+    /// blocking thread, the copy of the database on a pooled connection that is
+    /// let go at once, the rest on a blocking thread again.
     async fn make_set(&self, now: i64) -> Result<SetInfo, BackupError> {
-        let (data_dir, cfg, platform) = (
+        const STOPPED: BackupError = BackupError::Io("a backup task stopped");
+        let (data_dir, cfg, platform, loaded) = (
             self.data_dir.clone(),
             self.cfg.clone(),
             self.platform.clone(),
+            self.loaded.clone(),
         );
-        self.db
+        let pending = tokio::task::spawn_blocking(move || {
+            Pending::begin(&data_dir, &cfg, now, platform.as_ref(), loaded.as_deref())
+        })
+        .await
+        .map_err(|_| STOPPED)??;
+        let (pending, copied) = self
+            .db
             .with_conn(move |conn| {
-                Ok(set::create_with(
-                    &data_dir,
-                    conn,
-                    &cfg,
-                    now,
-                    platform.as_ref(),
-                ))
+                let copied = pending.copy_database(conn);
+                Ok((pending, copied))
             })
             .await
-            .map_err(|_| BackupError::Io("could not use the database"))?
+            .map_err(|_| BackupError::Io("could not use the database"))?;
+        copied?;
+        let platform = self.platform.clone();
+        tokio::task::spawn_blocking(move || pending.finish(platform.as_ref()))
+            .await
+            .map_err(|_| STOPPED)?
     }
 
     /// Removes the old sets and returns how many sets are left. A failure here
@@ -194,7 +235,24 @@ impl Job {
         if let Err(code) = result {
             tracing::warn!(code, "the backup message to the monitor failed");
         }
-        self.status.record_push(now, result);
+        self.record(move |status| status.record_push(now, result))
+            .await;
+    }
+}
+
+/// Sets the status to running for as long as it lives.
+struct Running<'a>(&'a BackupStatus);
+
+impl<'a> Running<'a> {
+    fn start(status: &'a BackupStatus) -> Self {
+        status.set_running(true);
+        Self(status)
+    }
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0.set_running(false);
     }
 }
 
@@ -207,7 +265,8 @@ async fn send_message(http: &reqwest::Client, address: &SecretUrl) -> Result<(),
 /// Starts the backup job: a set every `cfg.every` (the first one 15 minutes
 /// after start), one soon after a change of unlock methods is asked for through
 /// `status`, and the report of each run into `status`. `http` is the client for
-/// the message to the monitor.
+/// the message to the monitor ([`push::client`]), `loaded` the secrets the
+/// server runs with.
 pub fn spawn(
     db: VaultDb,
     data_dir: PathBuf,
@@ -215,11 +274,21 @@ pub fn spawn(
     status: BackupStatus,
     clock: Arc<dyn Clock>,
     http: reqwest::Client,
+    loaded: Loaded,
 ) {
-    let mut job = Job::new(db, data_dir, cfg, status.clone(), clock, http);
+    let mut job =
+        Job::new(db, data_dir, cfg, status.clone(), clock, http).with_loaded(Arc::new(loaded));
     tokio::spawn(async move {
         loop {
-            job.poll().await;
+            // A panic in a run (a release build aborts instead) is logged and
+            // the job waits and goes on.
+            let polled = std::panic::AssertUnwindSafe(job.poll())
+                .catch_unwind()
+                .await;
+            if polled.is_err() {
+                tracing::error!("the backup job panicked; it tries again later");
+                job.after_panic();
+            }
             tokio::select! {
                 () = tokio::time::sleep(POLL) => {}
                 () = status.requested() => {}

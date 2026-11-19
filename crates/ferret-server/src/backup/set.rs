@@ -354,6 +354,59 @@ fn free_name(dir: &Path, now: i64) -> Result<String, BackupError> {
 // Making a set
 // ---------------------------------------------------------------------------
 
+/// What the server has loaded in memory, to check the files on disk against
+/// before they are copied: a file that changed on disk while the server runs
+/// (and so is not what the server uses) is not backed up as if it were.
+/// A command that has nothing loaded passes `None` and the disk is the truth.
+pub struct Loaded {
+    setup_fingerprint: [u8; 32],
+    prelogin_payload: Zeroizing<Vec<u8>>,
+    session_key: Zeroizing<Vec<u8>>,
+}
+
+impl Loaded {
+    /// The fingerprint of the loaded OPAQUE set-up, the payload of the loaded
+    /// pre-login secret and the master bytes of the loaded session key.
+    pub fn new(
+        setup_fingerprint: [u8; 32],
+        prelogin_payload: Zeroizing<Vec<u8>>,
+        session_key: &[u8],
+    ) -> Self {
+        Self {
+            setup_fingerprint,
+            prelogin_payload,
+            session_key: Zeroizing::new(session_key.to_vec()),
+        }
+    }
+
+    /// Spec: Fase 1 § 11: the set holds the files the server runs with.
+    fn check(&self, secrets: &[(&'static str, Zeroizing<Vec<u8>>)]) -> Result<(), BackupError> {
+        const DIFFERS: BackupError =
+            BackupError::Verify("a secret file on disk differs from the one the server loaded");
+        let file = |wanted: &str| {
+            secrets
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .map(|(_, bytes)| bytes)
+                .ok_or(DIFFERS)
+        };
+        if setup_fingerprint(file(OPAQUE_SETUP_FILE)?)? != self.setup_fingerprint {
+            return Err(DIFFERS);
+        }
+        let prelogin = decode_secret_file(FileKind::PreloginSecret, file(PRELOGIN_SECRET_FILE)?)
+            .map_err(|_| DIFFERS)?;
+        if prelogin.as_slice() != self.prelogin_payload.as_slice() {
+            return Err(DIFFERS);
+        }
+        // The cookie key is the first 64 bytes of the file.
+        let key = file(SESSION_KEY_FILE)?;
+        if key.get(..self.session_key.len()) != Some(self.session_key.as_slice()) {
+            return Err(DIFFERS);
+        }
+        Ok(())
+    }
+}
+
 /// Makes a new set from the database behind `conn` and the secret files in
 /// `data_dir`, in the folder of `cfg`, stamped `now` (Unix seconds). The set is
 /// checked before it gets its name; one that does not pass is removed and the
@@ -364,101 +417,155 @@ pub fn create(
     cfg: &BackupConfig,
     now: i64,
 ) -> Result<SetInfo, BackupError> {
-    create_with(data_dir, conn, cfg, now, &RealPlatform)
+    create_with(data_dir, conn, cfg, now, &RealPlatform, None)
 }
 
-/// [`create`] with the machine behind `platform`.
+/// [`create`] with the machine behind `platform` and, when the server has its
+/// secrets loaded, the files checked against them.
 pub fn create_with(
     data_dir: &Path,
     conn: &Connection,
     cfg: &BackupConfig,
     now: i64,
     platform: &dyn Platform,
+    loaded: Option<&Loaded>,
 ) -> Result<SetInfo, BackupError> {
-    super::restore::refuse_if_in_progress(data_dir).map_err(|_| BackupError::RestoreInProgress)?;
-    check_backup_dir(data_dir, &cfg.dir)?;
-
-    // Spec: Fase 1 § 11: too little space (under twice the database) skips the run
-    // and touches no set.
-    let db_bytes = std::fs::metadata(data_dir.join(DB_FILE))
-        .map_err(io_err("could not read the database file"))?
-        .len();
-    if let Some(free) = platform.free_bytes(&cfg.dir)
-        && free < db_bytes.saturating_mul(SPACE_FACTOR)
-    {
-        return Err(BackupError::NoSpace);
-    }
-
-    // The secret files are read first: a missing one ends the run before a
-    // folder exists.
-    let mut secrets = Vec::with_capacity(SECRET_FILES.len());
-    for name in SECRET_FILES {
-        secrets.push((name, read_secret_raw(&data_dir.join(name))?));
-    }
-
-    // A set that was left half written a day ago is cleaned up now.
-    clean_stale_temp(&cfg.dir, now);
-
-    let name = free_name(&cfg.dir, now)?;
-    let temp = cfg.dir.join(format!("{TEMP_PREFIX}{name}"));
-    let bytes = match write_temp_set(&temp, conn, &secrets, now, platform) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(&temp);
-            return Err(error);
-        }
-    };
-    if let Err(error) = platform.rename(&temp, &cfg.dir.join(&name)) {
-        let _ = std::fs::remove_dir_all(&temp);
-        return Err(io_err("could not move the set into place")(error));
-    }
-    platform
-        .sync_dir(&cfg.dir)
-        .map_err(io_err("could not sync the backup folder"))?;
-    Ok(SetInfo {
-        name,
-        created_at: now,
-        bytes,
-        verified: true,
-    })
+    let pending = Pending::begin(data_dir, cfg, now, platform, loaded)?;
+    pending.copy_database(conn)?;
+    pending.finish(platform)
 }
 
-/// Everything inside the temporary folder, up to and including the check.
-/// Returns the size of the files.
+/// A set that is being made, in three steps so that only the copy of the
+/// database needs a connection to it: [`Pending::begin`] (checks, the secret
+/// files read, the temporary folder made), [`Pending::copy_database`] (the one
+/// step that uses the live database) and [`Pending::finish`] (files, manifest,
+/// syncs, the check, the rename). A set that is dropped before `finish` has
+/// returned removes its temporary folder.
+pub struct Pending {
+    backup_dir: PathBuf,
+    temp: PathBuf,
+    name: String,
+    now: i64,
+    secrets: Vec<(&'static str, Zeroizing<Vec<u8>>)>,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        // After a good `finish` the folder has been renamed and this finds
+        // nothing; after a failure or a panic it removes what was written.
+        let _ = std::fs::remove_dir_all(&self.temp);
+    }
+}
+
+impl Pending {
+    /// Checks the folders and the free space, reads the secret files and makes
+    /// the temporary folder.
+    pub fn begin(
+        data_dir: &Path,
+        cfg: &BackupConfig,
+        now: i64,
+        platform: &dyn Platform,
+        loaded: Option<&Loaded>,
+    ) -> Result<Self, BackupError> {
+        super::restore::refuse_if_in_progress(data_dir)
+            .map_err(|_| BackupError::RestoreInProgress)?;
+        check_backup_dir(data_dir, &cfg.dir)?;
+
+        // Spec: Fase 1 § 11: too little space (under twice the database) skips
+        // the run and touches no set.
+        let db_bytes = std::fs::metadata(data_dir.join(DB_FILE))
+            .map_err(io_err("could not read the database file"))?
+            .len();
+        if let Some(free) = platform.free_bytes(&cfg.dir)
+            && free < db_bytes.saturating_mul(SPACE_FACTOR)
+        {
+            return Err(BackupError::NoSpace);
+        }
+
+        // The secret files are read first: a missing one ends the run before a
+        // folder exists.
+        let mut secrets = Vec::with_capacity(SECRET_FILES.len());
+        for name in SECRET_FILES {
+            secrets.push((name, read_secret_raw(&data_dir.join(name))?));
+        }
+        if let Some(loaded) = loaded {
+            loaded.check(&secrets)?;
+        }
+
+        // A set that was left half written a day ago is cleaned up now.
+        clean_stale_temp(&cfg.dir, now);
+
+        let name = free_name(&cfg.dir, now)?;
+        let temp = cfg.dir.join(format!("{TEMP_PREFIX}{name}"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&temp)
+                .map_err(io_err("could not make the set folder"))?;
+        }
+        #[cfg(not(unix))]
+        std::fs::create_dir(&temp).map_err(io_err("could not make the set folder"))?;
+        Ok(Self {
+            backup_dir: cfg.dir.clone(),
+            temp,
+            name,
+            now,
+            secrets,
+        })
+    }
+
+    /// The database: one read transaction, so the copy is consistent while
+    /// writes go on (Spec: Fase 1 § 11).
+    pub fn copy_database(&self, conn: &Connection) -> Result<(), BackupError> {
+        let db_copy = self.temp.join(DB_FILE);
+        let target = db_copy
+            .to_str()
+            .ok_or(BackupError::Io("the backup folder name is not UTF-8"))?;
+        conn.execute("VACUUM INTO ?1", [target]).map_err(|error| {
+            tracing::warn!(code = ?error.sqlite_error_code(), "the database copy failed");
+            BackupError::Io("could not copy the database")
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&db_copy, std::fs::Permissions::from_mode(0o600))
+                .map_err(io_err("could not set the database copy private"))?;
+        }
+        Ok(())
+    }
+
+    /// Writes the rest of the set, syncs, checks and renames it into place.
+    pub fn finish(self, platform: &dyn Platform) -> Result<SetInfo, BackupError> {
+        let bytes = write_temp_set(&self.temp, &self.secrets, self.now, platform)?;
+        platform
+            .rename(&self.temp, &self.backup_dir.join(&self.name))
+            .map_err(io_err("could not move the set into place"))?;
+        // The set is in place and has passed its check: a folder that cannot be
+        // synced is logged and the run still counts, so that the set is pruned
+        // against, announced and not made a second time.
+        if let Err(error) = platform.sync_dir(&self.backup_dir) {
+            tracing::warn!(kind = ?error.kind(), "could not sync the backup folder");
+        }
+        Ok(SetInfo {
+            name: self.name.clone(),
+            created_at: self.now,
+            bytes,
+            verified: true,
+        })
+    }
+}
+
+/// Everything inside the temporary folder that comes after the database copy,
+/// up to and including the check. Returns the size of the files.
 fn write_temp_set(
     temp: &Path,
-    conn: &Connection,
     secrets: &[(&'static str, Zeroizing<Vec<u8>>)],
     now: i64,
     platform: &dyn Platform,
 ) -> Result<u64, BackupError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(temp)
-            .map_err(io_err("could not make the set folder"))?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir(temp).map_err(io_err("could not make the set folder"))?;
-
-    // The database: one read transaction, so the copy is consistent while
-    // writes go on (Spec: Fase 1 § 11).
     let db_copy = temp.join(DB_FILE);
-    let target = db_copy
-        .to_str()
-        .ok_or(BackupError::Io("the backup folder name is not UTF-8"))?;
-    conn.execute("VACUUM INTO ?1", [target]).map_err(|error| {
-        tracing::warn!(code = ?error.sqlite_error_code(), "the database copy failed");
-        BackupError::Io("could not copy the database")
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&db_copy, std::fs::Permissions::from_mode(0o600))
-            .map_err(io_err("could not set the database copy private"))?;
-    }
 
     // The secret files, byte for byte.
     for (name, bytes) in secrets {
@@ -518,7 +625,7 @@ fn write_temp_set(
 
     // Spec: Fase 1 § 11: the set is checked after it is written and before it is
     // a set.
-    verify_dir(temp, Some(&build_migrations()))?;
+    verify_dir(temp, Some(&build_migrations()), true)?;
     Ok(total)
 }
 
@@ -614,6 +721,17 @@ fn inspect_db(path: &Path) -> Result<DbFacts, BackupError> {
     )
     .map_err(bad)?;
 
+    // A set may come from elsewhere (a restore, `backup verify`): the schema in
+    // it is not trusted. No function or view of the schema runs, a malformed
+    // cell is an error, nothing can be written, and extensions cannot be loaded
+    // (rusqlite is built without that feature).
+    conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
+        .map_err(bad)?;
+    conn.execute_batch(
+        "PRAGMA query_only = ON; PRAGMA trusted_schema = OFF; PRAGMA cell_size_check = ON;",
+    )
+    .map_err(bad)?;
+
     // Spec: Fase 1 § 11 (the check of the set): `integrity_check` says "ok".
     let verdict: Vec<String> = conn
         .prepare("PRAGMA integrity_check")
@@ -621,6 +739,18 @@ fn inspect_db(path: &Path) -> Result<DbFacts, BackupError> {
         .map_err(bad)?;
     if verdict.as_slice() != ["ok"] {
         return Err(BackupError::Verify("the database copy failed its check"));
+    }
+
+    // The three tables the check reads are tables, not views that run SQL.
+    let tables: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE type = 'table'              AND name IN ('schema_migrations', 'ferret_vaults', 'ferret_meta', 'ferret_accounts')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(bad)?;
+    if tables != 4 {
+        return Err(BackupError::Verify("the database copy lacks a table"));
     }
 
     let migrations: Vec<String> = conn
@@ -687,11 +817,15 @@ fn inspect_db(path: &Path) -> Result<DbFacts, BackupError> {
 /// `build_migrations` (the names this build knows): a set made by a newer build
 /// is refused.
 pub fn verify(set_dir: &Path, build_migrations: &[&str]) -> Result<Manifest, BackupError> {
-    verify_dir(set_dir, Some(build_migrations))
+    verify_dir(set_dir, Some(build_migrations), true)
 }
 
-fn verify_dir(set_dir: &Path, build_migrations: Option<&[&str]>) -> Result<Manifest, BackupError> {
-    let manifest = check_structure(set_dir)?;
+fn verify_dir(
+    set_dir: &Path,
+    build_migrations: Option<&[&str]>,
+    hash: bool,
+) -> Result<Manifest, BackupError> {
+    let manifest = check_structure(set_dir, hash)?;
 
     // Only now is the database opened: the folder holds exactly the expected
     // files, so no stray -wal or -shm sits beside it.
@@ -753,7 +887,7 @@ fn verify_dir(set_dir: &Path, build_migrations: Option<&[&str]>) -> Result<Manif
 /// The cheap part of the check, with no database opened: the folder holds
 /// exactly the six expected files (all plain files), the manifest parses and
 /// names the four data files once, and every length and SHA-256 matches.
-fn check_structure(set_dir: &Path) -> Result<Manifest, BackupError> {
+fn check_structure(set_dir: &Path, hash: bool) -> Result<Manifest, BackupError> {
     let meta = std::fs::symlink_metadata(set_dir).map_err(io_err("the set is not readable"))?;
     if !meta.is_dir() {
         return Err(BackupError::Verify("the set is not a folder"));
@@ -809,10 +943,17 @@ fn check_structure(set_dir: &Path) -> Result<Manifest, BackupError> {
         ));
     }
     for file in &manifest.files {
-        let (bytes, sha256) =
-            hash_file(&set_dir.join(&file.name)).map_err(io_err("could not read a set file"))?;
-        if bytes != file.bytes || sha256 != file.sha256 {
-            return Err(BackupError::Verify("a file does not match the manifest"));
+        let path = set_dir.join(&file.name);
+        if hash {
+            let (bytes, sha256) = hash_file(&path).map_err(io_err("could not read a set file"))?;
+            if bytes != file.bytes || sha256 != file.sha256 {
+                return Err(BackupError::Verify("a file does not match the manifest"));
+            }
+        } else {
+            let meta = std::fs::metadata(&path).map_err(io_err("could not read a set file"))?;
+            if meta.len() != file.bytes {
+                return Err(BackupError::Verify("a file does not match the manifest"));
+            }
         }
     }
     Ok(manifest)
@@ -825,8 +966,20 @@ fn check_structure(set_dir: &Path) -> Result<Manifest, BackupError> {
 /// The finished sets in the folder of `cfg`, oldest first. A set that is still
 /// being written (a `.tmp-` folder) and anything that is not a folder with a
 /// set's name and a `.complete` file is never listed. A listed set that does not
-/// pass the cheap check (files against the manifest) shows `verified: false`.
+/// pass the cheap check (the six files, the manifest, every length) shows
+/// `verified: false`. The cheap check reads no file content, so a folder of many
+/// sets is listed without reading them; [`list_verified`] also compares every
+/// SHA-256.
 pub fn list(cfg: &BackupConfig) -> Result<Vec<SetInfo>, BackupError> {
+    list_with(cfg, false)
+}
+
+/// [`list`] with every file hashed against the manifest.
+pub fn list_verified(cfg: &BackupConfig) -> Result<Vec<SetInfo>, BackupError> {
+    list_with(cfg, true)
+}
+
+fn list_with(cfg: &BackupConfig, hash: bool) -> Result<Vec<SetInfo>, BackupError> {
     let entries = match std::fs::read_dir(&cfg.dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -847,7 +1000,7 @@ pub fn list(cfg: &BackupConfig) -> Result<Vec<SetInfo>, BackupError> {
         if !is_set {
             continue;
         }
-        sets.push(match check_structure(&path) {
+        sets.push(match check_structure(&path, hash) {
             Ok(manifest) => SetInfo {
                 name,
                 created_at: manifest.created_at,
@@ -888,13 +1041,19 @@ pub fn prune(cfg: &BackupConfig, now: i64) -> Result<u32, BackupError> {
 
     let sets = list(cfg)?;
     let keep_since = now.saturating_sub(i64::from(cfg.keep_days).saturating_mul(SECS_PER_DAY));
-    let mut newest_good: Vec<&SetInfo> = sets.iter().filter(|s| s.verified).collect();
-    newest_good.sort_by(|a, b| (b.created_at, &b.name).cmp(&(a.created_at, &a.name)));
-    let always: BTreeSet<&str> = newest_good
-        .iter()
-        .take(ALWAYS_KEEP_GOOD)
-        .map(|s| s.name.as_str())
-        .collect();
+    // The newest good sets are found newest first and hashed one by one until
+    // there are enough: a day's prune reads a few sets, not every set.
+    let mut newest: Vec<&SetInfo> = sets.iter().filter(|s| s.verified).collect();
+    newest.sort_by(|a, b| (b.created_at, &b.name).cmp(&(a.created_at, &a.name)));
+    let mut always: BTreeSet<&str> = BTreeSet::new();
+    for set in newest {
+        if always.len() >= ALWAYS_KEEP_GOOD {
+            break;
+        }
+        if check_structure(&cfg.dir.join(&set.name), true).is_ok() {
+            always.insert(set.name.as_str());
+        }
+    }
 
     let mut removed = 0u32;
     for set in &sets {

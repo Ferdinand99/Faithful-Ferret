@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use ferret_server::backup::push;
 use ferret_server::backup::schedule::Job;
 use ferret_server::backup::set::{self, Platform, RealPlatform};
 use ferret_server::backup::{BackupConfig, BackupError, SetInfo};
@@ -41,6 +42,10 @@ pub struct SpyPlatform {
     pub events: Mutex<Vec<Event>>,
     pub free: Mutex<Option<u64>>,
     pub fail_rename: AtomicBool,
+    pub panic_rename: AtomicBool,
+    pub fail_parent_sync: AtomicBool,
+    /// The backup folder, for telling its sync from the temp folder's.
+    pub parent: Mutex<Option<PathBuf>>,
 }
 
 impl SpyPlatform {
@@ -49,6 +54,9 @@ impl SpyPlatform {
             events: Mutex::new(Vec::new()),
             free: Mutex::new(Some(u64::MAX)),
             fail_rename: AtomicBool::new(false),
+            panic_rename: AtomicBool::new(false),
+            fail_parent_sync: AtomicBool::new(false),
+            parent: Mutex::new(None),
         })
     }
 
@@ -77,6 +85,11 @@ impl Platform for SpyPlatform {
 
     fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
         self.push(Event::SyncDir(path.to_path_buf()));
+        if self.fail_parent_sync.load(Ordering::SeqCst)
+            && self.parent.lock().expect("parent").as_deref() == Some(path)
+        {
+            return Err(std::io::Error::other("the sync was made to fail"));
+        }
         RealPlatform.sync_dir(path)
     }
 
@@ -87,6 +100,10 @@ impl Platform for SpyPlatform {
             complete_inside: from.join(set::COMPLETE_FILE).is_file(),
             target_existed: to.exists(),
         });
+        assert!(
+            !self.panic_rename.load(Ordering::SeqCst),
+            "the rename was made to panic"
+        );
         if self.fail_rename.load(Ordering::SeqCst) {
             return Err(std::io::Error::other("the rename was made to fail"));
         }
@@ -128,7 +145,7 @@ pub fn job(app: &TestApp, cfg: BackupConfig, platform: Arc<dyn Platform>) -> Job
         cfg,
         app.backup_status(),
         app.state.clock.clone(),
-        reqwest::Client::new(),
+        push::client().expect("a client"),
     )
     .with_platform(platform)
 }
@@ -213,12 +230,14 @@ pub fn capture_log() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
 }
 
 /// How the stand-in for the monitor answers.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Reply {
     /// `200 OK`.
     Ok,
     /// A status line with this code.
     Status(u16),
+    /// `302` to this address.
+    Redirect(String),
     /// Takes the request and never answers.
     Hang,
 }
@@ -253,15 +272,16 @@ impl StandIn {
                 seen.lock()
                     .expect("requests")
                     .push(String::from_utf8_lossy(&raw).into_owned());
-                match reply {
+                match &reply {
                     Reply::Hang => held.push(stream),
-                    Reply::Ok | Reply::Status(_) => {
-                        let code = match reply {
-                            Reply::Status(code) => code,
-                            _ => 200,
+                    Reply::Ok | Reply::Status(_) | Reply::Redirect(_) => {
+                        let (code, location) = match &reply {
+                            Reply::Status(code) => (*code, String::new()),
+                            Reply::Redirect(to) => (302, format!("location: {to}\r\n")),
+                            _ => (200, String::new()),
                         };
                         let head = format!(
-                            "HTTP/1.1 {code} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+                            "HTTP/1.1 {code} X\r\n{location}content-length: 2\r\nconnection: close\r\n\r\nok"
                         );
                         let _ = stream.write_all(head.as_bytes()).await;
                         let _ = stream.shutdown().await;

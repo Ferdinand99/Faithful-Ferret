@@ -459,7 +459,7 @@ fn backup_create(data_dir: &Path) -> Result<String, StartError> {
 /// `ferret backup list`.
 fn backup_list(data_dir: &Path) -> Result<String, StartError> {
     let cfg = BackupConfig::from_env(data_dir)?;
-    let sets = set::list(&cfg)?;
+    let sets = set::list_verified(&cfg)?;
     if sets.is_empty() {
         return Ok(format!("no backup sets in {}", cfg.dir.display()));
     }

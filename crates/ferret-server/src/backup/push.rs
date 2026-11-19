@@ -51,6 +51,19 @@ impl PushError {
     }
 }
 
+/// The client for the message: redirects are never followed and no `Referer`
+/// is sent, so the secret path of the address goes to the monitor's own host and
+/// nowhere else; a `3xx` is a failure, not a success on another host's page.
+/// (The kit's shared client follows redirects and would send the path in
+/// `Referer`.) It trusts the same roots as the kit's own clients.
+pub fn client() -> Result<reqwest::Client, reqwest::Error> {
+    vole_kit::tls_roots::http_client()
+        .user_agent(crate::product::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .referer(false)
+        .build()
+}
+
 /// The address with `status=up` and the fixed `msg` set; the other query values
 /// of the address stay. `None` when the address does not parse.
 fn message_url(address: &SecretUrl) -> Option<url::Url> {
@@ -73,6 +86,7 @@ fn message_url(address: &SecretUrl) -> Option<url::Url> {
 }
 
 /// Tells the monitor that a set passed its check. One GET, [`TIMEOUT`] long.
+/// Only a direct `2xx` counts: with [`client`] a redirect is a failure.
 ///
 /// The reqwest error is classified and dropped: its text names the address.
 pub async fn send(http: &reqwest::Client, address: &SecretUrl) -> Result<(), PushError> {
