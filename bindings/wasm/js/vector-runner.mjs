@@ -361,7 +361,7 @@ export const EXTERNAL_FILES = [
 export const INTERNAL_FILES = [
   "tlv", "unicode", "codes", "kdf", "wrap", "unlock", "item", "padding", "cbor-limits",
   "tomb-tag", "checkpoint", "proofs", "rekey", "export", "opaque", "account", "totp",
-  "passkey", "origin", "sheet", "methods", "sync", "url-match",
+  "passkey", "origin", "sheet", "methods", "sync", "url-match", "recovery_renew",
 ].map((n) => `${n}.json`);
 
 /**

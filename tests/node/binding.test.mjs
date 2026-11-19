@@ -1410,3 +1410,116 @@ test("copy_on_a_locked_vault_is_vault_locked", () => {
   vault.lock();
   assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "vault_locked");
 });
+
+// ------------------------------------------------------- new recovery key
+
+test("renew_recovery_returns_the_request_and_the_new_pinned_record", () => {
+  const { created, vault } = newAccount("renew");
+  const oldCode = vault.reveal_recovery_code();
+  const renewed = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  assert.deepEqual(Object.keys(renewed).sort(), ["manifest", "pinned", "pk_r", "wrap"]);
+  // Same method id, the next generation, the manifest one revision up.
+  assert.deepEqual(renewed.wrap.method_id, created.wraps[1].method_id);
+  assert.equal(renewed.wrap.kek_generation, 2);
+  assert.equal(renewed.wrap.method.type, "recovery");
+  assert.equal(renewed.manifest.rev, created.manifest.rev + 1);
+  assert.equal(renewed.pk_r.length, 32);
+  assert.notDeepEqual(renewed.pk_r, created.pk_r);
+  // The record to store: the recovery floor is the new generation.
+  const floor = (p, type) => p.kek_generation_max.find((f) => f.type === type).generation;
+  assert.equal(floor(renewed.pinned, "recovery"), 2);
+  assert.equal(floor(renewed.pinned, "password"), 1);
+  // The new key opens the new wrap under the new record; the old wrap is a
+  // rollback for it, and the old key does not open the new wrap.
+  const newCode = vault.reveal_recovery_code();
+  assert.notEqual(newCode, oldCode);
+  const unlock = (rkText, wrap, record) =>
+    new wasm.UnlockJob().unlock_recovery(URL_, CTX, rkText, wrap, pinned(record, { server_public_key: record.server_public_key }));
+  const opened = unlock(newCode, renewed.wrap, renewed.pinned);
+  assert.deepEqual(opened.vault.auth_public_key(), created.pk_a);
+  assert.equal(code(() => unlock(oldCode, created.wraps[1], renewed.pinned)), "pinned_kek_generation");
+  assert.equal(code(() => unlock(oldCode, renewed.wrap, renewed.pinned)), "decrypt");
+  // A current wrap below the pinned floor is refused, before anything is made.
+  assert.equal(
+    code(() => vault.renew_recovery(renewed.pinned, created.wraps[1], created.manifest)),
+    "pinned_kek_generation",
+  );
+  // The password wrap is not a recovery wrap; a record without a server key
+  // cannot make the sheet of the new key.
+  assert.equal(code(() => vault.renew_recovery(created.pinned, created.wraps[0], created.manifest)), "unsupported");
+  assert.equal(
+    code(() => vault.renew_recovery({ ...created.pinned, server_public_key: null }, created.wraps[1], created.manifest)),
+    "pinned_server_key",
+  );
+});
+
+test("auth_sign_accepts_unlock_method_recovery_put", () => {
+  const { created, vault } = newAccount("renew-sign");
+  vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  const nonce = fill(32, 5);
+  const body = enc.encode('{"wrap":"..."}');
+  const sig = vault.auth_sign("unlock-method.recovery.put", nonce, body);
+  assert.equal(sig.length, 64);
+  // The proof is over the operation: another op name gives another signature.
+  assert.notDeepEqual(vault.auth_sign("unlock-method.password.put", nonce, body), sig);
+  // It checks against pk_a for that operation (the check the server makes),
+  // and not for another one.
+  const hex = (b) => Buffer.from(b).toString("hex");
+  const verifyAs = (op) =>
+    JSON.parse(
+      wasm.test_run_case(
+        "proof_verify",
+        JSON.stringify({
+          op: "proof.verify",
+          input: {
+            pk: hex(created.pk_a), op, account_id: hex(IDS.account_id), nonce: hex(nonce),
+            vk_epoch: "1", body: hex(body), proof: hex(sig),
+          },
+          rng: [],
+        }),
+      ),
+    );
+  assert.deepEqual(verifyAs("unlock-method.recovery.put").output, { ok: true });
+  assert.equal(verifyAs("unlock-method.password.put").code, "decrypt");
+});
+
+test("the_new_key_is_shown_until_typed_back_and_then_cleared", () => {
+  const { created, vault } = newAccount("renew-show");
+  // The setup of the new account is confirmed first, so nothing else is held.
+  vault.verify_recovery_setup(vault.reveal_recovery_code(), created.wraps[1]);
+  vault.verify_secret_key_entry(vault.reveal_secret_key_code());
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+
+  const renewed = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  const rk = vault.reveal_recovery_code();
+  assert.match(rk, /^FFR1-/);
+  assert.equal(vault.reveal_recovery_code(), rk, "shown again until it is typed back");
+  // The old wrap does not confirm the new key, and a typo is a checksum.
+  assert.equal(code(() => vault.verify_recovery_setup(rk, created.wraps[1])), "decrypt");
+  const typo = rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0");
+  assert.equal(code(() => vault.verify_recovery_setup(typo, renewed.wrap)), "checksum");
+  assert.equal(vault.reveal_recovery_code(), rk);
+  // Typed back against the new wrap: the key is gone.
+  vault.verify_recovery_setup(rk, renewed.wrap);
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+
+  // Not typed back: clear_setup_secrets drops it.
+  const again = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  assert.match(vault.reveal_recovery_code(), /^FFR1-/);
+  vault.clear_setup_secrets();
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  assert.equal(again.wrap.kek_generation, 2);
+  // And the lock drops it as well.
+  vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  vault.lock();
+  assert.equal(code(() => vault.reveal_recovery_code()), "vault_locked");
+});
+
+test("renew_on_a_locked_vault_is_vault_locked", () => {
+  const { created, vault } = newAccount("renew-locked");
+  vault.lock();
+  assert.equal(
+    code(() => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest)),
+    "vault_locked",
+  );
+});

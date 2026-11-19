@@ -5,23 +5,30 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { createClient } from "../../bindings/wasm/js/client.mjs";
-import { createDispatcher, createJobDispatcher } from "../../bindings/wasm/js/protocol.mjs";
+import { IMPORT_PORT, NO_EXISTING, createDispatcher, createJobDispatcher } from "../../bindings/wasm/js/protocol.mjs";
 import { IDS, PASSWORD, URL_, enc, fill, wasm } from "./helpers.mjs";
 
-/** A worker in this thread: structured clone both ways, one tick of delay. */
+/**
+ * A worker in this thread: structured clone both ways, one tick of delay. A
+ * `MessagePort` in the transfer list arrives as `event.ports` does in a worker,
+ * and ending the worker closes the ports it was given, as the browser does.
+ */
 class FakeWorker {
   constructor(dispatch) {
     this.dispatch = dispatch;
     this.terminated = false;
     this.received = [];
+    this.ports = [];
   }
 
   postMessage(message, transfer = []) {
-    const copy = structuredClone(message, { transfer });
+    const ports = transfer.filter((t) => t instanceof MessagePort);
+    const copy = structuredClone(message, { transfer: transfer.filter((t) => !(t instanceof MessagePort)) });
     this.received.push(copy);
+    this.ports.push(...ports);
     queueMicrotask(() => {
       if (this.terminated) return;
-      const { reply, transfer: out } = this.dispatch(copy);
+      const { reply, transfer: out } = this.dispatch(copy, ports);
       const cloned = structuredClone(reply, { transfer: out });
       this.onmessage?.({ data: cloned });
     });
@@ -29,6 +36,7 @@ class FakeWorker {
 
   terminate() {
     this.terminated = true;
+    for (const port of this.ports) port.close();
   }
 }
 
@@ -702,4 +710,158 @@ test("wrap_prf_needs_the_marker_for_no_stored_passkeys", async () => {
   assert.equal(NO_STORED_PASSKEYS, "no_stored_passkeys");
   await client.vault.wrap_prf(fill(24, 1), fill(32, 5), fill(32, 9), fill(16, 2), 1, fill(16, 3), NO_STORED_PASSKEYS);
   assert.equal(made[0].received.length, 1);
+});
+
+// ------------------------------------------------------------ import port
+
+/** Sends one request over a port and resolves the reply with the same id. */
+function portCall(port, request) {
+  return new Promise((resolve) => {
+    const on = (event) => {
+      if (event.data?.id !== request.id) return;
+      port.removeEventListener("message", on);
+      resolve(event.data);
+    };
+    port.addEventListener("message", on);
+    port.start();
+    port.postMessage(request);
+  });
+}
+
+/** Every message a port gets until it is closed. */
+function untilClosed(port) {
+  const seen = [];
+  return new Promise((resolve) => {
+    port.addEventListener("message", (event) => seen.push(event.data));
+    port.addEventListener("close", () => resolve(seen), { once: true });
+    port.start();
+  });
+}
+
+/** A client with a new account open in its (fake) vault worker. */
+async function clientWithVault(seed) {
+  const { client, made } = setup();
+  const server = new wasm.TestServer(enc.encode(seed));
+  const request = await client.vault.register_start(enc.encode(PASSWORD), { kind: "generate" });
+  await client.vault.register_finish(server.register_response(IDS.account_id, request), 1);
+  const created = await client.vault.create_account(URL_, IDS);
+  return { client, made, created };
+}
+
+const IMPORTED = {
+  item_type: "login",
+  name: "Imported",
+  fields: [{ id: "pass", label: "Password", kind: "password", value: "imported-secret-value" }],
+  urls: [{ url: "https://imported.example" }],
+};
+
+test("import_port_only_allows_encrypt_item_with_no_existing_at_rev_1", async () => {
+  const { client, made } = await clientWithVault("import-port");
+  const port = client.importPort();
+  assert.ok(port instanceof MessagePort);
+  const id = fill(16, 0x61);
+  const at = 1_700_000_000_000;
+  const ok = await portCall(port, { id: 1, method: "encrypt_item", args: [id, 1, IMPORTED, NO_EXISTING, at] });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.value.rev, 1);
+  assert.deepEqual(Object.keys(ok.value).sort(), ["envelope", "rev", "tag"]);
+  // What it sealed is a new item of this vault, at revision 1.
+  const handle = await client.vault.open_item(id, 1, ok.value.envelope, ok.value.tag);
+  assert.equal((await client.vault.item_view(handle)).name, "Imported");
+
+  // Everything else is refused with invalid_input, and nothing changes.
+  const refused = [
+    { method: "open_item", args: [id, 1, ok.value.envelope, ok.value.tag] },
+    { method: "reveal_recovery_code", args: [] },
+    { method: "reveal_item_field", args: [handle, 0] },
+    { method: "lock", args: [] },
+    { method: "encrypt_item", args: [id, 2, IMPORTED, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 0, IMPORTED, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, handle, at] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, undefined, at] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, null, at] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, NO_EXISTING] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, NO_EXISTING, at, "extra"] },
+    { method: "encrypt_item", args: [fill(15, 1), 1, IMPORTED, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [new Uint8Array(16), 1, IMPORTED, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [Array.from(id), 1, IMPORTED, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, null, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, [IMPORTED], NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, { ...IMPORTED, passkey: { rp_id: "example.com" } }, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, { ...IMPORTED, name: "x\uD800" }, NO_EXISTING, at] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, NO_EXISTING, -1] },
+    { method: "encrypt_item", args: [id, 1, IMPORTED, NO_EXISTING, "1700000000000"] },
+    { method: "encrypt_item" },
+    { args: [id, 1, IMPORTED, NO_EXISTING, at] },
+  ];
+  let next = 100;
+  for (const request of refused) {
+    const requestId = next++;
+    const reply = await portCall(port, { ...request, id: requestId });
+    assert.deepEqual(reply, { id: requestId, ok: false, code: "invalid_input" }, String(request.method));
+  }
+  // The vault is still open: the port could not lock it, and the item is as it was.
+  assert.equal((await client.vault.item_view(handle)).name, "Imported");
+  assert.match(await client.vault.reveal_recovery_code(), /^FFR1-/);
+  // The draft never went through the channel of the page to the worker: the
+  // page sent only the port.
+  const sent = made.vault[0].received;
+  assert.ok(sent.some((m) => m.method === IMPORT_PORT && m.args.length === 0));
+  assert.ok(!sent.some((m) => m.method === "encrypt_item"));
+  assert.ok(!JSON.stringify(sent).includes("imported-secret-value"));
+  port.close();
+  await client.lock();
+});
+
+test("import_port_closes_on_lock", async () => {
+  // client.lock() ends the vault worker, and with it the port.
+  {
+    const { client } = await clientWithVault("import-lock");
+    const port = client.importPort();
+    const closed = untilClosed(port);
+    const ok = await portCall(port, { id: 1, method: "encrypt_item", args: [fill(16, 0x62), 1, IMPORTED, NO_EXISTING, 1] });
+    assert.equal(ok.ok, true);
+    await client.lock();
+    await closed;
+  }
+
+  // In the worker: locking the vault closes the ports of that vault after a
+  // last message, and a port for no vault is closed at once.
+  const dispatch = createDispatcher(wasm);
+  const server = new wasm.TestServer(enc.encode("import-lock-2"));
+  let id = 1;
+  const call = (method, args, ports) => dispatch({ id: id++, target: "vault", method, args }, ports).reply;
+  {
+    const { port1, port2 } = new MessageChannel();
+    const closed = untilClosed(port1);
+    const reply = call(IMPORT_PORT, [], [port2]);
+    assert.deepEqual([reply.ok, reply.code], [false, "vault_locked"]);
+    await closed;
+  }
+  const request = call("register_start", [enc.encode(PASSWORD), { kind: "generate" }]).value;
+  call("register_finish", [server.register_response(IDS.account_id, request), 1]);
+  assert.equal(call("create_account", [URL_, IDS]).ok, true);
+  {
+    // A port message without a port, or with two, is refused, and the ports are closed.
+    assert.equal(call(IMPORT_PORT, [], []).code, "invalid_input");
+    const a = new MessageChannel();
+    const b = new MessageChannel();
+    const closedA = untilClosed(a.port1);
+    const closedB = untilClosed(b.port1);
+    assert.equal(call(IMPORT_PORT, [], [a.port2, b.port2]).code, "invalid_input");
+    await Promise.all([closedA, closedB]);
+    // A port sent with any other request is closed too.
+    const c = new MessageChannel();
+    const closedC = untilClosed(c.port1);
+    assert.equal(call("context", [], [c.port2]).ok, true);
+    await closedC;
+  }
+  const { port1, port2 } = new MessageChannel();
+  assert.equal(call(IMPORT_PORT, [], [port2]).ok, true);
+  const ok = await portCall(port1, { id: 7, method: "encrypt_item", args: [fill(16, 0x63), 1, IMPORTED, NO_EXISTING, 1] });
+  assert.equal(ok.ok, true);
+  const closed = untilClosed(port1);
+  assert.equal(call("lock", []).ok, true);
+  const seen = await closed;
+  assert.deepEqual(seen.at(-1), { closed: true }, "the last message says the port is closed");
 });

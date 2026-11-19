@@ -1,5 +1,6 @@
 //! The `account.*` and `sheet.*` vector operations: the table-driven runner
-//! behind `vectors/internal/account.json` and `sheet.json` (see
+//! behind `vectors/internal/account.json`, `recovery_renew.json` and
+//! `sheet.json` (see
 //! `vectors/OPS.md` for the shape of each op). Behind `test-support`; never
 //! part of a release.
 //!
@@ -11,7 +12,7 @@ use super::keys::unlocked_vault_keys;
 use super::{hex_decode, hex_encode};
 use crate::account::{
     ManifestRow, NewAccountIds, NewPassword, RecoveryInput, change_password, create_account,
-    recover, verify_recovery_setup, verify_secret_key_entry,
+    recover, renew_recovery, verify_recovery_setup, verify_secret_key_entry,
 };
 use crate::envelope::SealedItem;
 use crate::error::Error;
@@ -168,7 +169,7 @@ fn sign_input(v: &Value) -> Option<([u8; 32], Vec<u8>)> {
         .map(|s| (array(s, "nonce"), bytes(s, "body")))
 }
 
-/// Runs one op of `account.json` or `sheet.json`.
+/// Runs one op of `account.json`, `recovery_renew.json` or `sheet.json`.
 pub fn run_case<R: SecureRng>(op: &str, i: &Value, rng: &mut R) -> Result<Value, Error> {
     match op {
         "account.create" => {
@@ -292,6 +293,34 @@ pub fn run_case<R: SecureRng>(op: &str, i: &Value, rng: &mut R) -> Result<Value,
             if let Some((nonce, body)) = sign_input(i) {
                 out["proof"] = json!(hex_encode(&recovered.sign(&nonce, &body)?));
                 out["proof_op"] = json!(MutationOp::Recover.name());
+            }
+            Ok(out)
+        }
+        "account.renew_recovery" => {
+            let vault = vault_of(i);
+            let current = wrap_record(&i["current"])?;
+            let (rev, envelope, tag) = manifest_row(&i["manifest"]);
+            let pinned = pinned(&i["pinned"], vault.context());
+            let renewed = renew_recovery(
+                rng,
+                &vault,
+                &pinned,
+                &current,
+                &ManifestRow {
+                    rev,
+                    envelope: &envelope,
+                    tag: &tag,
+                },
+            )?;
+            let mut out = json!({
+                "recovery_key": hex_encode(&super::integrity::recovery_key_bytes(&renewed.recovery_key)),
+                "pk_r": hex_encode(&renewed.pk_r),
+                "recovery_wrap": wrap_json(&renewed.recovery_wrap),
+                "manifest": sealed_json(&renewed.manifest),
+            });
+            if let Some((nonce, body)) = sign_input(i) {
+                out["proof"] = json!(hex_encode(&renewed.sign(&vault, &nonce, &body)?));
+                out["proof_op"] = json!(MutationOp::UnlockMethodRecoveryPut.name());
             }
             Ok(out)
         }

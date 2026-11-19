@@ -15,17 +15,17 @@
 
 use crate::convert::{
     ANY, ByteBuf, CheckpointDto, PinnedDto, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16,
-    bytes, core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
+    b32, bytes, core, from_js, from_js_list, js_time, js_u64, opt_b32, to_js,
 };
 use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PrfOutput, RecoveryKey, RollbackMemory,
-    SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item, decrypt_manifest,
-    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
-    make_tombstone, parse_otpauth, totp_code, totp_seconds_left, verify_checkpoint,
-    verify_recovery_setup, verify_secret_key_entry, verify_tombstone,
+    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PinnedField, PrfOutput, RecoveryKey,
+    RollbackMemory, SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item,
+    decrypt_manifest, emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item,
+    make_checkpoint, make_tombstone, parse_otpauth, renew_recovery, totp_code, totp_seconds_left,
+    verify_checkpoint, verify_recovery_setup, verify_secret_key_entry, verify_tombstone,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -285,6 +285,15 @@ struct SheetDto {
     recovery_key_code: String,
 }
 
+#[derive(Serialize)]
+struct RenewedDto {
+    wrap: WrapDto,
+    #[serde(with = "b32")]
+    pk_r: [u8; 32],
+    manifest: SealedDto,
+    pinned: PinnedDto,
+}
+
 /// The core's checkpoint from the one the client sends.
 fn checkpoint_of(cp: CheckpointDto) -> Checkpoint {
     Checkpoint {
@@ -376,7 +385,8 @@ impl Vault {
 
     /// Signs the body of a request: `unlock-method.add`,
     /// `unlock-method.remove`, `unlock-method.password.put`,
-    /// `unlock-method.recovery.put` or `rekey`. `nonce` is 32 bytes. The
+    /// `unlock-method.recovery.put` (a new recovery key, `renew_recovery`)
+    /// or `rekey`. `nonce` is 32 bytes. The
     /// signature (64 bytes) is public.
     pub fn auth_sign(&self, op: &str, nonce: Vec<u8>, body: Vec<u8>) -> Result<Vec<u8>, JsValue> {
         run(|| {
@@ -863,10 +873,63 @@ impl Vault {
         })
     }
 
+    /// Makes a new recovery key for this vault: a new recovery wrap under the
+    /// same method id with `kek_generation = max(pinned floor, the
+    /// manifest's, current's) + 1`, `pk_r` of the new key and the manifest
+    /// with the new generation. `pinned` is the record of this device with
+    /// its floors seeded (`seed_pinned`) and the OPAQUE server key pinned
+    /// (`pinned_server_key` without one: the new sheet needs it);
+    /// `current` the recovery wrap the server holds (a lower generation
+    /// than the pinned floor is `pinned_kek_generation`) and `manifest` the
+    /// current manifest row. Nothing is drawn before every check has passed.
+    ///
+    /// Returns `{ wrap, pk_r, manifest, pinned }`, where `pinned` is the
+    /// record to store once the server has accepted the request. Sign it
+    /// with `auth_sign("unlock-method.recovery.put", nonce, body)`. The new
+    /// key never leaves WASM here: it takes the place of any setup secrets
+    /// this vault held and is shown with `reveal_recovery_code()` until it
+    /// has been typed back (`verify_recovery_setup` with the new wrap; do
+    /// that before the request is sent), `clear_setup_secrets()` or `lock()`.
+    ///
+    /// Spec: Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1.
+    pub fn renew_recovery(
+        &mut self,
+        pinned: JsValue,
+        current: JsValue,
+        manifest: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        run(|| {
+            self.inner()?;
+            let record = from_js::<PinnedDto>(pinned)?.core()?;
+            let current = from_js::<WrapDto>(current)?.core()?;
+            let row: RowDto = from_js(manifest)?;
+            let server_public_key = record
+                .server_public_key
+                .ok_or(Error::Pinned(PinnedField::ServerKey))?;
+            let ksf_profile = KsfProfile::from_wire(u32::from(record.ksf_profile))?;
+            let inner = self.inner_mut()?;
+            let renewed = renew_recovery(&mut OsRng, &inner.vault, &record, &current, &row.core())?;
+            let new_record = renewed.pinned(&record)?;
+            let out = to_js(&RenewedDto {
+                wrap: WrapDto::of(&renewed.recovery_wrap),
+                pk_r: renewed.pk_r,
+                manifest: SealedDto::of(&renewed.manifest),
+                pinned: PinnedDto::of(&new_record),
+            })?;
+            inner.setup = Some(Setup::new(
+                Some(renewed.recovery_key),
+                None,
+                server_public_key,
+                ksf_profile,
+            ));
+            Ok(out)
+        })
+    }
+
     // ------------------------------------------------ setup and secrets
 
     /// The recovery key as `FFR1-...`, to be shown once after the setup, a
-    /// recovery or a rekey. Available until the key has been typed back
+    /// recovery, a rekey or `renew_recovery`. Available until the key has been typed back
     /// (`verify_recovery_setup`), `clear_setup_secrets` or `lock`.
     pub fn reveal_recovery_code(&self) -> Result<String, JsValue> {
         run(|| {

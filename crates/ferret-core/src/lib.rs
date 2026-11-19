@@ -64,8 +64,9 @@ pub mod wrap;
 
 pub use account::{
     FIRST_EPOCH, FIRST_GENERATION, FIRST_MANIFEST_REV, FIRST_SEQ, ManifestRow, NewAccount,
-    NewAccountIds, NewPassword, PasswordChange, Recovered, RecoveryInput, change_password,
-    create_account, recover, verify_recovery_setup, verify_secret_key_entry,
+    NewAccountIds, NewPassword, PasswordChange, Recovered, RecoveryInput, RenewedRecovery,
+    change_password, create_account, recover, renew_recovery, verify_recovery_setup,
+    verify_secret_key_entry,
 };
 pub use codes::{decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key};
 pub use envelope::{
