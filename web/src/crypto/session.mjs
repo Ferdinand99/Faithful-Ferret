@@ -11,6 +11,7 @@
 // throws, never stops a sign-in.
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
 import { register } from "../flows/register.mjs";
+import { readSetupQr } from "../flows/setupQr.mjs";
 import { deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
 import { serverKey } from "../store/idb.mjs";
 import { AccountError } from "./errors.mjs";
@@ -134,6 +135,13 @@ export function createCryptoSession({
 
     /** What this device knows about an e-mail (no request): `{ pinned, skBit, skStored }`. */
     deviceStatus: (/** @type {string} */ email) => deviceStatus(env, email),
+
+    /**
+     * Reads the text of the sheet's QR code (no request): the host and port to show before the sign-in, and the
+     * rest of what the sheet states. The sign-in reads the text again itself.
+     * @param {string} text
+     */
+    readSetupQr: (text) => readSetupQr(client, text),
 
     /**
      * Whether a re-authentication just succeeded, so that a hand-over for it
