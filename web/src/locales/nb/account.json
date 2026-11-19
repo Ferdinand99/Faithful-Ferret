@@ -87,7 +87,7 @@
   "account.password.title": "Hovedpassord",
   "account.qr.confirm": "Dette er adressen til tjeneren min.",
   "account.qr.help": "Linjen under QR-koden på side 1 av nødarket. Den navngir tjeneren, så denne siden kan kontrollere den.",
-  "account.qr.label": "Tekst fra arkets QR-kode (valgfri)",
+  "account.qr.label": "Tekst fra arkets QR-kode (kan utelates)",
   "account.qr.read": "Les arkteksten",
   "account.qr.shown": "Arket gjelder {host}. Hemmelig nøkkel på kontoen: {sk}.",
   "account.qr.sk_no": "nei",
