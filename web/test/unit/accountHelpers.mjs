@@ -64,7 +64,7 @@ export function fakeClient({ log, skBit = true, handlers = {}, skCode = SK_CODE 
         account_id: ACCOUNT,
         ksf_profile: 1,
         secret_key_code: skBit ? skCode : null,
-        qr_payload: "ferret-setup:v1?u=x",
+        qr_payload: `ferret-setup:v1?u=x&s=${skBit ? 1 : 0}`,
       },
       recovery_key_code: RK_CODE,
     }),
