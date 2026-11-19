@@ -20,7 +20,7 @@ use ferret_server::cli::{self, Command};
 use ferret_server::config::Config;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::product;
-use ferret_server::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
+use ferret_server::state::{BackupStatus, Challenges, ImportWindows, Proofs, VaultDb};
 use ferret_server::vault::events::EventStreams;
 use ferret_server::vault::notify::SyncEvents;
 use ferret_server::vault::rate::{SyncLimits, WriteGate};
@@ -83,7 +83,7 @@ struct Handles {
     limits: Arc<SyncLimits>,
     gate: WriteGate,
     streams: Arc<EventStreams>,
-    challenges: Challenges,
+    proofs: Proofs,
     import_windows: ImportWindows,
     backup: BackupStatus,
     clock: Arc<dyn Clock>,
@@ -104,7 +104,7 @@ handle!(events, SyncEvents);
 handle!(limits, Arc<SyncLimits>);
 handle!(gate, WriteGate);
 handle!(streams, Arc<EventStreams>);
-handle!(challenges, Challenges);
+handle!(proofs, Proofs);
 handle!(import_windows, ImportWindows);
 handle!(backup, BackupStatus);
 handle!(clock, Arc<dyn Clock>);
@@ -129,6 +129,9 @@ async fn state_hands_out_challenges_import_windows_and_backup_status_through_fro
     status.request_run("unlock_methods");
     app.backup_status().request_run("unlock_methods");
     assert!(!format!("{challenges:?}").contains("InMemory"));
+    // The vault routes check proofs through a handle that prints nothing.
+    let proofs = Proofs::from_ref(state);
+    assert_eq!(format!("{proofs:?}"), "Proofs([redacted])");
 
     // The routes build over a state of just these handles, and answer.
     let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(1));
@@ -139,7 +142,7 @@ async fn state_hands_out_challenges_import_windows_and_backup_status_through_fro
         limits: Arc::<SyncLimits>::from_ref(state),
         gate: WriteGate::from_ref(state),
         streams: Arc::<EventStreams>::from_ref(state),
-        challenges,
+        proofs,
         import_windows: ImportWindows::from_ref(state),
         backup: status,
         clock,
@@ -476,12 +479,12 @@ fn restore_bump_restore_abort_and_sign_in_code_change_nothing_without_yes() {
     );
 
     // Make, list and check change nothing that exists, so they do not ask for
-    // `--yes`: whatever they say, it is not that.
+    // `--yes`: whatever they say, it is not that. Here there is no database and
+    // no set, so make and check fail and list finds nothing.
     for command in [
         Command::BackupCreate {
             data_dir: data_dir.clone(),
         },
-        Command::BackupList { data_dir },
         Command::BackupVerify {
             set: dir.path().join("set1"),
         },
@@ -490,6 +493,8 @@ fn restore_bump_restore_abort_and_sign_in_code_change_nothing_without_yes() {
         let err = cli::run(command).expect_err(&name);
         assert!(!err.to_string().contains("--yes"), "{name}: {err}");
     }
+    let listed = cli::run(Command::BackupList { data_dir }).expect("an empty listing");
+    assert!(listed.starts_with("no backup sets"), "{listed}");
     assert!(
         dir.names().is_empty(),
         "nothing was made: {:?}",

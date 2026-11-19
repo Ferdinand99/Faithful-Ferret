@@ -17,14 +17,28 @@
 //! relative paths that climb (`super::super::state`) are all refused.
 //! `SessionAuth` is the handle that holds the cookie key. Its name may appear
 //! in one place only: the bound `SessionAuth: FromRef<S>` that a route needs to
-//! take a `VaultSession` (and in the `use` that names it). Taking it as state
-//! or calling anything on it is refused, as is every item of
-//! `crate::http::extract` other than `VaultSession`.
+//! take a session extractor (and in the `use` that names it). Taking it as state
+//! or calling anything on it is refused. Of `crate::http::extract` the vault
+//! modules may name only the extractors `VaultSession`, `ScopedSession`,
+//! `FreshReauth` and `SignedBody`, and the markers in `caps`. Everything else
+//! there is refused: `Cap` (a vault module must not invent a capability),
+//! `ProvenBody` (it must not stand in for a permit of the library),
+//! `session_binding`, `SessionClock`, `AdminSession` and the header names.
+//!
+//! The proof of a signed request is checked only through the handle
+//! `crate::state::Proofs`, which `auth::proofs` builds. The vault modules may
+//! not name the OPAQUE library's context, its proof checks, its sign-in and
+//! registration calls, or its store of nonces, and may not build by hand one
+//! of the library's permits or requests, a `SignedBody`, a `FreshReauth` or a
+//! `Proofs`: no struct literal (also inside a macro), no `impl` for one of
+//! them, no type alias of one and no `use` that renames one.
 //!
 //! What a syntactic deny-list cannot see, and this one does not claim to:
 //! strings built at compile time (`concat!`), macros defined outside `vault/`,
 //! type aliases defined outside `vault/`, and a type that wraps bytes in a
-//! foreign type or a `String`.
+//! foreign type or a `String`. A `macro_rules!` in `vault/` is refused, so a
+//! name cannot be put together there from a macro's arguments. Raw identifiers
+//! (`r#Name`) are read as the name they stand for.
 
 use std::path::{Path, PathBuf};
 
@@ -44,12 +58,56 @@ const FORBIDDEN_IDENTS: &[&str] = &[
     "ServerKeys",
     "StateSealKey",
     "SessionAuth",
+    // The items of `http::extract` that only the extractors and the handle
+    // use: a capability marker, the permit trait and the session binding.
+    "Cap",
+    "ProvenBody",
+    "session_binding",
+    // The OPAQUE library's context, proof checks, sign-in, registration and
+    // store of nonces: a vault module checks a proof through `Proofs` only.
+    "AuthContext",
+    "authorize_signed",
+    "authorize_replacement",
+    "issue_challenge",
+    "ChallengeStore",
+    "InMemoryChallengeStore",
+    "ChallengeKey",
+    "login_start",
+    "login_finish",
+    "register_start",
+    "register_finish",
+    "verify_auth_proof",
+    "verify_recovery_proof",
 ];
 
 /// The only items of `crate::state` that the vault modules may name: the narrow
-/// handles. The database, the nonces of signed requests, the import windows and
-/// the backup status; none of them holds a key of the server.
-const NARROW_STATE: &[&str] = &["VaultDb", "Challenges", "ImportWindows", "BackupStatus"];
+/// handles. The database, the proof checks of signed requests, the import
+/// windows and the backup status; none of them hands out a key of the server.
+const NARROW_STATE: &[&str] = &["VaultDb", "Proofs", "ImportWindows", "BackupStatus"];
+
+/// The only items of `crate::http::extract` that the vault modules may name:
+/// the extractors of a route and the capability markers (`caps::*`).
+const EXTRACT_ALLOWED: &[&str] = &[
+    "VaultSession",
+    "ScopedSession",
+    "FreshReauth",
+    "SignedBody",
+    "caps",
+];
+
+/// Types that only the library, the extractors or `auth::proofs` may build. A
+/// vault module that wrote one by hand could forge a permit, a proof request,
+/// a fresh re-authentication or the handle itself.
+const BUILT_ELSEWHERE: &[&str] = &[
+    "SignedPermit",
+    "ReplacePermit",
+    "WriteBasis",
+    "SignedRequest",
+    "ReplaceRequest",
+    "SignedBody",
+    "FreshReauth",
+    "Proofs",
+];
 
 /// Macros that pull in a file the scan does not read.
 const INCLUDE_MACROS: &[&str] = &["include", "include_str", "include_bytes"];
@@ -64,6 +122,15 @@ const DERIVED_DEBUG_ALLOWED: &[&str] = &["DeviceId", "SidHash"];
 /// Types that must not derive `Debug` besides those the wire module lists in
 /// `redacted_debug!`.
 const ALSO_REDACTED: &[&str] = &["SessionSecret", "Secrets"];
+
+/// The name an identifier stands for: `r#Name` is `Name`.
+fn ident_name(ident: &syn::Ident) -> String {
+    let text = ident.to_string();
+    match text.strip_prefix("r#") {
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
+}
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -100,6 +167,9 @@ fn parse(path: &Path) -> Result<syn::File, String> {
 struct Names {
     file: String,
     found: Vec<String>,
+    /// Inside a `type` alias: every path there is looked at for the types of
+    /// [`BUILT_ELSEWHERE`].
+    in_alias: bool,
 }
 
 impl Names {
@@ -133,14 +203,22 @@ impl Names {
                     "names `{joined}` (only the narrow handles {NARROW_STATE:?} of `crate::state` are allowed)"
                 ));
             }
-            (Some("crate"), Some("auth")) if at(2) == Some("secrets") => {
-                self.hit(format!("names `{joined}`"));
+            (Some("crate"), Some("auth")) if matches!(at(2), Some("secrets" | "proofs")) => {
+                self.hit(format!(
+                    "names `{joined}` (the proof checks come as `crate::state::Proofs`)"
+                ));
+            }
+            (Some("crate"), Some("http")) if at(2).is_none() => {
+                self.hit(format!(
+                    "names `{joined}` without an item (a later `http::extract::..` would not be rooted)"
+                ));
             }
             (Some("crate"), Some("http"))
-                if at(2) == Some("extract") && at(3) != Some("VaultSession") =>
+                if at(2) == Some("extract")
+                    && !at(3).is_some_and(|n| EXTRACT_ALLOWED.contains(&n)) =>
             {
                 self.hit(format!(
-                    "names `{joined}` (only `crate::http::extract::VaultSession` is allowed)"
+                    "names `{joined}` (only {EXTRACT_ALLOWED:?} of `crate::http::extract` are allowed)"
                 ));
             }
             _ => {}
@@ -167,6 +245,9 @@ impl Names {
             if last == Some("SessionAuth") {
                 self.hit("renames `SessionAuth`".to_string());
             }
+            if let Some(name) = last.filter(|n| BUILT_ELSEWHERE.contains(n)) {
+                self.hit(format!("renames `{name}`"));
+            }
         } else if is_root_alone {
             self.hit(format!("`use {joined}` gives the root a name of its own"));
         }
@@ -192,8 +273,10 @@ impl Names {
             "vole_kit::crypto",
             "vole_kit::state",
             "crate::auth::secrets",
+            "crate::auth::proofs",
             "super::state",
             "super::auth::secrets",
+            "super::auth::proofs",
             "super::http::extract",
         ] {
             if compact.contains(path) {
@@ -205,7 +288,11 @@ impl Names {
             "crate::state",
             state_handles.iter().map(String::as_str).collect(),
         )];
-        allowed_after.push(("crate::http::extract", vec!["::VaultSession"]));
+        let extract_items: Vec<String> = EXTRACT_ALLOWED.iter().map(|n| format!("::{n}")).collect();
+        allowed_after.push((
+            "crate::http::extract",
+            extract_items.iter().map(String::as_str).collect(),
+        ));
         for (path, allowed) in &allowed_after {
             let mut rest = compact.as_str();
             while let Some(at) = rest.find(path) {
@@ -233,6 +320,24 @@ impl Names {
                 ));
             }
         }
+        // A struct literal of a type that is built elsewhere: `Name{` that is
+        // not the end of a longer name.
+        for name in BUILT_ELSEWHERE {
+            let literal = format!("{name}{{");
+            let mut from = 0;
+            while let Some(at) = compact[from..].find(&literal) {
+                let start = from + at;
+                let longer = compact[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+                if !longer {
+                    self.hit(format!("builds a `{name}` by hand (in a macro)"));
+                    break;
+                }
+                from = start + literal.len();
+            }
+        }
     }
 }
 
@@ -245,14 +350,14 @@ struct UsePath {
 fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UsePath>) {
     match tree {
         UseTree::Path(p) => {
-            prefix.push(p.ident.to_string());
+            prefix.push(ident_name(&p.ident));
             flatten(&p.tree, prefix, out);
             prefix.pop();
         }
         UseTree::Name(n) => {
             let mut segments = prefix.clone();
             if n.ident != "self" {
-                segments.push(n.ident.to_string());
+                segments.push(ident_name(&n.ident));
             }
             out.push(UsePath {
                 segments,
@@ -262,11 +367,11 @@ fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UsePath>) {
         UseTree::Rename(r) => {
             let mut segments = prefix.clone();
             if r.ident != "self" {
-                segments.push(r.ident.to_string());
+                segments.push(ident_name(&r.ident));
             }
             out.push(UsePath {
                 segments,
-                alias: Some(r.rename.to_string()),
+                alias: Some(ident_name(&r.rename)),
             });
         }
         UseTree::Glob(_) => {
@@ -303,7 +408,7 @@ fn is_session_auth_from_ref(predicate: &WherePredicate) -> bool {
         .path
         .segments
         .iter()
-        .map(|s| s.ident.to_string())
+        .map(|s| ident_name(&s.ident))
         .collect();
     let session_auth =
         names == ["SessionAuth"] || names == ["crate", "http", "extract", "SessionAuth"];
@@ -318,16 +423,80 @@ fn is_session_auth_from_ref(predicate: &WherePredicate) -> bool {
 
 impl<'ast> Visit<'ast> for Names {
     fn visit_ident(&mut self, ident: &'ast syn::Ident) {
-        let name = ident.to_string();
+        let name = ident_name(ident);
         if FORBIDDEN_IDENTS.contains(&name.as_str()) {
             self.hit(format!("names `{name}`"));
         }
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let segments: Vec<String> = path.segments.iter().map(|s| ident_name(&s.ident)).collect();
         self.check_path(&segments);
+        if self.in_alias
+            && let Some(name) = segments
+                .last()
+                .filter(|n| BUILT_ELSEWHERE.contains(&n.as_str()))
+        {
+            self.hit(format!("gives `{name}` another name with a type alias"));
+        }
         visit::visit_path(self, path);
+    }
+
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        if let Some(last) = expr.path.segments.last() {
+            let name = ident_name(&last.ident);
+            if BUILT_ELSEWHERE.contains(&name.as_str()) {
+                self.hit(format!("builds a `{name}` by hand"));
+            }
+        }
+        visit::visit_expr_struct(self, expr);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        // An `impl` for one of them could build it with `Self { .. }`.
+        if let Type::Path(ty) = &*item.self_ty
+            && let Some(last) = ty.path.segments.last()
+        {
+            let name = ident_name(&last.ident);
+            if BUILT_ELSEWHERE.contains(&name.as_str()) {
+                self.hit(format!("implements something for `{name}`"));
+            }
+        }
+        visit::visit_item_impl(self, item);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        let outer = self.in_alias;
+        self.in_alias = true;
+        visit::visit_item_type(self, item);
+        self.in_alias = outer;
+    }
+
+    fn visit_impl_item_type(&mut self, item: &'ast syn::ImplItemType) {
+        let outer = self.in_alias;
+        self.in_alias = true;
+        visit::visit_impl_item_type(self, item);
+        self.in_alias = outer;
+    }
+
+    fn visit_trait_item_type(&mut self, item: &'ast syn::TraitItemType) {
+        let outer = self.in_alias;
+        self.in_alias = true;
+        visit::visit_trait_item_type(self, item);
+        self.in_alias = outer;
+    }
+
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        if item
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| ident_name(&s.ident) == "macro_rules")
+        {
+            self.hit("`macro_rules!` may put a name together that the scan cannot see".to_string());
+        }
+        visit::visit_item_macro(self, item);
     }
 
     fn visit_where_predicate(&mut self, predicate: &'ast WherePredicate) {
@@ -376,7 +545,7 @@ impl<'ast> Visit<'ast> for Names {
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         if let Some(last) = mac.path.segments.last()
-            && INCLUDE_MACROS.contains(&last.ident.to_string().as_str())
+            && INCLUDE_MACROS.contains(&ident_name(&last.ident).as_str())
         {
             self.hit(format!(
                 "`{}!` pulls in a file the scan does not read",
@@ -425,6 +594,7 @@ fn scan_names(file: &str, source: &str) -> Vec<String> {
             let mut names = Names {
                 file: file.to_string(),
                 found: Vec::new(),
+                in_alias: false,
             };
             names.visit_file(&syntax);
             names.found
@@ -832,6 +1002,86 @@ fn arch_test_detects_a_planted_violation() {
         "fn f() { let _ = super::super::super::auth::secrets::Other; }",
         "fn f() { let _ = super::super::http::extract::AdminSession; }",
         "use crate::state::VaultDb as Core;",
+        // Of `http::extract`, only the extractors and `caps`.
+        "use crate::http::extract::Cap;",
+        "use crate::http::extract::ProvenBody;",
+        "impl crate::http::extract::ProvenBody for X {}",
+        "use crate::http::extract::session_binding;",
+        "use crate::http::extract::ScopedSessionX;",
+        "use crate::http::extract::{caps, SessionClock};",
+        "use crate::http::extract::{NONCE_HEADER, PROOF_HEADER};",
+        "use crate::http::extract::SessionFacts;",
+        "fn f<C: Cap>() {}",
+        "struct M; impl Cap for M { const CAP: u8 = 0; }",
+        "fn f(s: &S) { let _ = session_binding(&s.sid); }",
+        "fn f() { let _ = crate::http::extract::session_binding; }",
+        "fn f() { println!(\"{}\", crate::http::extract::ProvenBody::x); }",
+        "fn f() { println!(\"{}\", crate::http::extract::ScopedSessionX); }",
+        "fn f() { let _ = super::super::http::extract::Cap; }",
+        // The library's proof checks, sign-in and nonces, and the nonces'
+        // handle.
+        "use ferret_server_auth::AuthContext;",
+        "use ferret_server_auth::{authorize_signed, SignedPermit};",
+        "fn f() { let _ = ferret_server_auth::authorize_replacement(a, b, c, d, e); }",
+        "fn f() { let _ = issue_challenge(a, b, c, d, e, f, g); }",
+        "fn f<S: ChallengeStore>(_: &S) {}",
+        "fn f(_: &InMemoryChallengeStore) {}",
+        "fn f() { let _ = ChallengeKey::new(a, b); }",
+        "fn f() { let _ = login_start(a); }",
+        "fn f() { let _ = login_finish(b); }",
+        "fn f() { let _ = register_start(a); }",
+        "fn f() { let _ = register_finish(b); }",
+        "fn f() { let _ = ferret_core::verify_auth_proof(a); }",
+        "fn f() { let _ = verify_recovery_proof(a); }",
+        "fn f() { println!(\"{:?}\", AuthContext::new); }",
+        "use crate::state::Challenges;",
+        "fn f(_: crate::state::Challenges) {}",
+        "use crate::auth::proofs::Proofs;",
+        "fn f() { let _ = crate::auth::proofs::Proofs::from_ref; }",
+        "fn f() { println!(\"{:?}\", crate::auth::proofs::Proofs::from_ref); }",
+        // Permits, requests, the signed body, a fresh re-authentication and
+        // the handle, built by hand.
+        "fn f() { let _ = SignedPermit { a: 1 }; }",
+        "fn f() { let _ = ferret_server_auth::ReplacePermit { a: 1 }; }",
+        "fn f(b: WriteBasis) { let _ = WriteBasis { row_version: 9, ..b }; }",
+        "fn f() { let _ = SignedRequest { a: 1 }; }",
+        "fn f() { let _ = ReplaceRequest { a: 1 }; }",
+        "fn f() { let _ = SignedBody { nonce, proof, bytes }; }",
+        "fn f() { let _ = crate::http::extract::FreshReauth { reauth_at: 0 }; }",
+        "fn f() { let _ = FreshReauth { reauth_at: i64::MAX }; }",
+        "fn f() { let _ = crate::state::Proofs {}; }",
+        "fn f() { let _ = vec![SignedPermit { a: 1 }]; }",
+        "fn f() { println!(\"{:?}\", FreshReauth { reauth_at: 0 }); }",
+        "fn f() { assert!(matches!(x, y if y == FreshReauth{reauth_at: 0})); }",
+        "impl Default for FreshReauth { fn default() -> Self { Self { reauth_at: 0 } } }",
+        "impl crate::state::Proofs { fn new() -> Self { Self {} } }",
+        "type P = SignedPermit;",
+        "type P = Option<ferret_server_auth::ReplacePermit>;",
+        "use ferret_server_auth::SignedPermit as P;",
+        "use crate::http::extract::FreshReauth as Fresh;",
+        // Raw identifiers stand for the same names.
+        "fn f() { let _ = ferret_server_auth::r#SignedPermit { a: 1 }; }",
+        "use ferret_server_auth::r#AuthContext;",
+        "fn f() { let _ = crate::state::r#FerretState::new(); }",
+        "fn f(_: r#Cap) {}",
+        "impl X for r#FreshReauth {}",
+        "type P = r#ReplacePermit;",
+        "use crate::http::r#extract::r#AdminSession;",
+        "use ferret_server_auth::SignedPermit as r#P;\nuse crate::state::VaultDb as r#Core;",
+        // An associated type that names a type built elsewhere.
+        "impl T for X { type A = FreshReauth; }",
+        "trait T { type A = SignedPermit; }",
+        // `crate::http` without an item, which a later path could climb from.
+        "use crate::http;",
+        "use crate::http as h;",
+        "use crate::http::{self as h};",
+        "use crate::http::{self};",
+        "use super::super::http;",
+        "fn f() { let _ = super::http::extract::AdminSession; }",
+        "fn f() { let _ = super::http::extract::SessionClock::now; }",
+        // A macro defined in `vault/`.
+        "macro_rules! m { ($t:ident) => { $t { reauth_at: 0 } }; }",
+        "macro_rules! m { () => {}; }",
     ];
     for source in violations {
         assert!(
@@ -859,6 +1109,29 @@ fn arch_test_detects_a_planted_violation() {
         "#[cfg(test)] mod tests { use super::*; }",
         "#[derive(Clone)] struct S;\n#[allow(clippy::too_many_arguments)] fn f() {}",
         "fn f() { let _ = super::helper(); }",
+        // The extractors of the sensitive routes and the capability markers.
+        "use crate::http::extract::{ScopedSession, FreshReauth, SignedBody, caps};",
+        "use crate::http::extract::{SessionAuth, caps::PasswordPut};",
+        "fn f(_: ScopedSession<caps::PasswordPut>, _: FreshReauth, _: SignedBody) {}",
+        "fn f(_: crate::http::extract::ScopedSession<crate::http::extract::caps::Recover>) {}",
+        "fn f() { println!(\"{:?}\", crate::http::extract::caps::Recover); }",
+        "fn f() { tracing::info!(\"{}\", crate::http::extract::ScopedSession::<crate::http::extract::caps::PasswordPut>::from_request_parts); }",
+        "fn f() { println!(\"{:?} {:?}\", crate::http::extract::FreshReauth::from_request_parts, crate::http::extract::SignedBody::parse); }",
+        // The handle, used; and what a permit carries, read.
+        "use crate::state::{Proofs, VaultDb};",
+        "fn f(p: &crate::state::Proofs) -> R { p.signed(&s, &fresh, &body, caller, op, &account) }",
+        "fn f(p: &Proofs) -> R { p.password_put(&s, &fresh, &body, caller, &state, |b| parse(b)) }",
+        "fn f(permit: SignedPermit) -> u64 { let SignedPermit { basis, .. } = permit; basis.row_version }",
+        "fn f(permit: &ReplacePermit) -> bool { permit.new_pk_r.is_some() }",
+        "fn f(fresh: FreshReauth) -> i64 { fresh.reauth_at }",
+        "fn f() { println!(\"{}\", MyFreshReauth { a: 1 }.a); }",
+        "struct MySignedBody { a: u8 }\nfn f() -> MySignedBody { MySignedBody { a: 1 } }",
+        // Raw identifiers of allowed names, and other `http` modules.
+        "use crate::state::r#VaultDb;",
+        "fn f(_: crate::http::extract::r#ScopedSession<crate::http::extract::caps::r#Recover>) {}",
+        "use crate::http::headers::NO_STORE;",
+        "fn f() { let _ = r#match_this(); }",
+        "impl T for X { type A = u8; }",
     ];
     for source in clean {
         let found = scan_names("clean.rs", source);
@@ -1011,29 +1284,241 @@ fn arch_test_keeps_secrets_out_of_the_new_vault_modules() {
 
     // The narrow handles of the state may be named, and nothing else of it.
     for clean in [
-        "use crate::state::{BackupStatus, Challenges, ImportWindows, VaultDb};",
-        "fn f(_: crate::state::Challenges, _: crate::state::BackupStatus) {}",
+        "use crate::state::{BackupStatus, ImportWindows, Proofs, VaultDb};",
+        "fn f(_: crate::state::Proofs, _: crate::state::BackupStatus) {}",
         "fn f() { println!(\"{}\", crate::state::ImportWindows::new); }",
     ] {
         assert!(scan_names("clean.rs", clean).is_empty(), "{clean}");
     }
     for planted in [
-        "use crate::state::{Challenges, FerretState};",
-        "use crate::state::ChallengesAndMore;",
+        "use crate::state::{Proofs, FerretState};",
+        "use crate::state::ProofsAndMore;",
         "use crate::state::*;",
+        "use crate::state::Challenges;",
         "fn f() { println!(\"{}\", crate::state::FerretState::new); }",
-        "fn f() { println!(\"{}\", crate::state::ChallengesX::new); }",
+        "fn f() { println!(\"{}\", crate::state::ProofsX::new); }",
+        "fn f() { println!(\"{}\", crate::state::Challenges::new); }",
     ] {
         assert!(!scan_names("planted.rs", planted).is_empty(), "{planted}");
     }
 
-    // The handles the new routes take (nonces, import windows, backup status)
-    // come out of the state through `FromRef`, like the others.
+    // The handles the new routes take (proof checks, import windows, backup
+    // status) come out of the state through `FromRef`, like the others. The
+    // proof checks are built in `auth::proofs`, and `crate::state` only
+    // re-exports them.
     let state = std::fs::read_to_string(manifest_dir().join("src/state.rs")).expect("state.rs");
-    for handle in ["Challenges", "ImportWindows", "BackupStatus"] {
+    for handle in ["ImportWindows", "BackupStatus"] {
         assert!(
             state.contains(&format!("impl FromRef<FerretState> for {handle}")),
             "{handle}"
         );
     }
+    let proofs =
+        std::fs::read_to_string(manifest_dir().join("src/auth/proofs.rs")).expect("proofs.rs");
+    assert!(proofs.contains("impl FromRef<FerretState> for Proofs"));
+    assert!(state.contains("pub use crate::auth::proofs::Proofs;"));
+}
+
+// ---------------------------------------------------------------------------
+// The proof checks: built in one place, three methods, nothing handed out
+// ---------------------------------------------------------------------------
+
+/// The last segment of a type path, through one reference: `&FreshReauth` is
+/// `FreshReauth`.
+fn type_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Reference(r) => type_name(&r.elem),
+        Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    }
+}
+
+/// Every struct literal and every `impl` of `Proofs`, file by file.
+struct ProofsBuilt {
+    file: String,
+    found: Vec<String>,
+    /// Inside an `impl` of `Proofs`, where `Self { .. }` would make one.
+    in_impl: bool,
+}
+
+impl<'ast> Visit<'ast> for ProofsBuilt {
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        if expr
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "Proofs" || (self.in_impl && s.ident == "Self"))
+        {
+            self.found.push(format!(
+                "{}: builds `{}`",
+                self.file,
+                quote_path(&expr.path)
+            ));
+        }
+        visit::visit_expr_struct(self, expr);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if type_name(&item.self_ty).as_deref() == Some("Proofs") {
+            let what = item
+                .trait_
+                .as_ref()
+                .map_or_else(|| "inherent".to_string(), |(path, _)| quote_path(path));
+            self.found
+                .push(format!("{}: impl {what} for Proofs", self.file));
+            let outer = self.in_impl;
+            self.in_impl = true;
+            visit::visit_item_impl(self, item);
+            self.in_impl = outer;
+            return;
+        }
+        let outer = self.in_impl;
+        self.in_impl = false;
+        visit::visit_item_impl(self, item);
+        self.in_impl = outer;
+    }
+}
+
+fn quote_path(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+#[test]
+fn proofs_is_built_only_in_auth_proofs_and_hands_out_nothing() {
+    let path = manifest_dir().join("src/auth/proofs.rs");
+    let syntax = parse(&path).unwrap_or_else(|e| panic!("{e}"));
+
+    // The struct: private fields only, and no derive that could make one
+    // (`Default`, `Deserialize`) or print one.
+    let item = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(s) if s.ident == "Proofs" => Some(s),
+            _ => None,
+        })
+        .expect("struct Proofs in auth/proofs.rs");
+    assert!(!item.fields.is_empty(), "Proofs holds its parts");
+    for field in &item.fields {
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "a field of Proofs is not private: {:?}",
+            field.ident
+        );
+    }
+    let mut derives = Vec::new();
+    for attr in &item.attrs {
+        if attr.path().is_ident("derive") {
+            let _ = attr.parse_nested_meta(|meta| {
+                derives.push(quote_path(&meta.path));
+                Ok(())
+            });
+        }
+    }
+    assert_eq!(derives, ["Clone"], "the derives of Proofs");
+
+    // The methods: exactly three are public, none of them or of the private
+    // ones makes a `Proofs`, and the two that act for a full session take a
+    // `&FreshReauth` while the recovery does not.
+    let mut public = Vec::new();
+    for item in &syntax.items {
+        let syn::Item::Impl(block) = item else {
+            continue;
+        };
+        if block.trait_.is_some() || type_name(&block.self_ty).as_deref() != Some("Proofs") {
+            continue;
+        }
+        for item in &block.items {
+            let syn::ImplItem::Fn(method) = item else {
+                assert!(
+                    !matches!(item, syn::ImplItem::Const(_) | syn::ImplItem::Type(_)),
+                    "Proofs has only methods"
+                );
+                continue;
+            };
+            let name = method.sig.ident.to_string();
+            if let ReturnType::Type(_, ty) = &method.sig.output {
+                let returned = type_name(ty);
+                assert!(
+                    !matches!(returned.as_deref(), Some("Self" | "Proofs")),
+                    "Proofs::{name} makes a Proofs"
+                );
+            }
+            if matches!(method.vis, syn::Visibility::Inherited) {
+                continue;
+            }
+            let takes_fresh = method.sig.inputs.iter().any(|arg| {
+                matches!(arg, syn::FnArg::Typed(t)
+                    if matches!(&*t.ty, Type::Reference(_))
+                        && type_name(&t.ty).as_deref() == Some("FreshReauth"))
+            });
+            public.push((name, takes_fresh));
+        }
+    }
+    public.sort();
+    assert_eq!(
+        public,
+        [
+            ("password_put".to_string(), true),
+            ("recover".to_string(), false),
+            ("signed".to_string(), true),
+        ],
+        "the public methods of Proofs, and whether each needs a fresh re-authentication"
+    );
+
+    // Where a `Proofs` is made or given an `impl`: its own module only, and
+    // there only `FromRef` (the one way to get one) and a `Debug` by hand.
+    let mut found = Vec::new();
+    for file in rust_files(&manifest_dir().join("src")) {
+        let syntax = parse(&file).unwrap_or_else(|e| panic!("{e}"));
+        let mut built = ProofsBuilt {
+            file: file
+                .strip_prefix(manifest_dir())
+                .unwrap_or(&file)
+                .display()
+                .to_string()
+                .replace('\\', "/"),
+            found: Vec::new(),
+            in_impl: false,
+        };
+        built.visit_file(&syntax);
+        found.extend(built.found);
+    }
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "src/auth/proofs.rs: builds `Proofs`",
+            "src/auth/proofs.rs: impl FromRef for Proofs",
+            "src/auth/proofs.rs: impl fmt::Debug for Proofs",
+            "src/auth/proofs.rs: impl inherent for Proofs",
+        ],
+        "a Proofs is made only by its FromRef"
+    );
+
+    // A vault module that tried to make one is caught by the name scan, in a
+    // directory laid out like `src/vault`.
+    let copy = std::env::temp_dir().join(format!("ferret-test-arch-proofs-{}", std::process::id()));
+    std::fs::create_dir_all(copy.join("vault")).expect("a temporary directory");
+    let source =
+        std::fs::read_to_string(manifest_dir().join("src/vault/password.rs")).expect("password.rs");
+    for planted in [
+        "fn forged() -> Proofs { Proofs {} }",
+        "fn forged() -> crate::auth::proofs::Proofs { todo!() }",
+        "fn forged() -> crate::state::Proofs { crate::state::Proofs::from_ref(&state()) }\nfn state() -> crate::state::FerretState { todo!() }",
+    ] {
+        let path = copy.join("vault/password.rs");
+        std::fs::write(&path, format!("{source}\n{planted}\n")).expect("a planted copy");
+        let found = scan_dir_names(&copy.join("vault"));
+        std::fs::remove_file(&path).expect("remove the copy");
+        assert!(
+            found.iter().any(|f| f.contains("password.rs")),
+            "not detected: {planted}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&copy);
 }

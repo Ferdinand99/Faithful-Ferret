@@ -3,8 +3,8 @@
 //! library, and the body parsed only after the permit. Spec: Fase 1 § 4.6.
 //!
 //! The route is `support::session::signed_probe`: the extractors of
-//! `http::extract`, then `authorize_signed`, then `SignedBody::parse`, behind
-//! the vault listener's layers.
+//! `http::extract`, then `Proofs::signed` (the library's `authorize_signed`),
+//! then `SignedBody::parse`, behind the vault listener's layers.
 
 mod support;
 
@@ -17,16 +17,21 @@ use ferret_core::AuthOp;
 use ferret_server::auth::session::Origin;
 use ferret_server::wire::{MAX_SIGNED_BODY, b64url};
 use ferret_server_auth::SessionScope;
-use support::session::{Issued, call_probe, issue, nonce_for, seed_signer, sign, signed_probe};
+use support::session::{
+    Issued, call_probe, issue, make_fresh, nonce_for, seed_signer, sign, signed_probe,
+};
 use support::{Jar, Res, TestApp};
 use tracing_subscriber::fmt::MakeWriter;
 
 const BODY: &[u8] = br#"{"n":7}"#;
 const OP: AuthOp = AuthOp::UnlockMethodRecoveryPut;
 
+/// A full session of the signer that has just re-authenticated.
 async fn full_session(app: &TestApp) -> Issued {
     let user = seed_signer(app).await.user_id;
-    issue(app, user, Origin::Vault, SessionScope::Full, 1).await
+    let issued = issue(app, user, Origin::Vault, SessionScope::Full, 1).await;
+    make_fresh(app, issued.sid).await;
+    issued
 }
 
 fn enc(bytes: &[u8]) -> String {

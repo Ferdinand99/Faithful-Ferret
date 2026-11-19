@@ -9,6 +9,7 @@
 //! * [`set`]: making, checking, listing and pruning sets.
 //! * [`schedule`]: the job that makes a set on a timer and when asked.
 //! * [`push`]: the message to the monitor after a good set.
+//! * [`status`]: what the job reports, and the requests for a run.
 //! * [`restore`]: putting a set back, and the marker that stops the server from
 //!   starting on a half-restored directory.
 //!
@@ -21,14 +22,16 @@
 //! files `0600`, never served over HTTP, never logged with their contents, and
 //! out of the machine only encrypted.
 //!
-//! Most of this module is a signature that returns [`BackupError::NotImplemented`]
-//! until it is built; the marker check in [`restore`] and the configuration here
-//! are complete.
+//! The restore itself ([`restore::restore`] and [`restore::abort`]) is not built
+//! yet; everything else here is.
 
 pub mod push;
 pub mod restore;
 pub mod schedule;
 pub mod set;
+pub mod status;
+
+pub use status::BackupStatus;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -108,6 +111,14 @@ impl BackupConfig {
             Some(dir) => dir.to_path_buf(),
             None => data_dir.join(DEFAULT_DIR),
         };
+        // A prune in the data directory itself, or in a folder that holds it,
+        // would walk the live data: refused here by spelling, and again by
+        // `set::create` after links are resolved.
+        if set::backup_dir_holds_data(data_dir, &dir) {
+            return Err(ConfigError(
+                "FERRET_BACKUP_DIR must not be the data directory or a folder that holds it".into(),
+            ));
+        }
         let push_url = match push_url.filter(|url| !url.is_empty()) {
             Some(url) => {
                 url.check()
@@ -223,6 +234,21 @@ pub enum BackupError {
     NoSpace,
     /// A restore is under way (the marker is there).
     RestoreInProgress,
+}
+
+impl BackupError {
+    /// A fixed word for the status and the panel: it never holds a path or any
+    /// content.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            BackupError::NotImplemented => "not_implemented",
+            BackupError::Io(_) => "io",
+            BackupError::Verify(_) => "verify",
+            BackupError::Refused(_) => "refused",
+            BackupError::NoSpace => "no_space",
+            BackupError::RestoreInProgress => "restore_in_progress",
+        }
+    }
 }
 
 impl fmt::Display for BackupError {

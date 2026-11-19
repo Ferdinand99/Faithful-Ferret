@@ -14,6 +14,7 @@ pub mod email_change;
 pub mod handoff;
 pub mod login;
 pub mod notify;
+pub mod proofs;
 pub mod redeem;
 pub mod register;
 pub mod second_factor;

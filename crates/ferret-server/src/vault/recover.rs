@@ -12,7 +12,7 @@ use ferret_server_auth::Clock;
 
 use super::notify::SyncEvents;
 use crate::http::extract::SessionAuth;
-use crate::state::{BackupStatus, Challenges, VaultDb};
+use crate::state::{BackupStatus, Proofs, VaultDb};
 
 /// The routes of the recovery. None are served yet.
 pub fn routes<S>() -> Router<S>
@@ -20,7 +20,7 @@ where
     S: Clone + Send + Sync + 'static,
     VaultDb: FromRef<S>,
     SessionAuth: FromRef<S>,
-    Challenges: FromRef<S>,
+    Proofs: FromRef<S>,
     Arc<dyn Clock>: FromRef<S>,
     SyncEvents: FromRef<S>,
     BackupStatus: FromRef<S>,

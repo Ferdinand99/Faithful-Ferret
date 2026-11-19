@@ -47,7 +47,7 @@ use self::events::EventStreams;
 use self::notify::SyncEvents;
 use self::rate::{SyncLimits, WriteGate};
 use crate::http::extract::SessionAuth;
-use crate::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
+use crate::state::{BackupStatus, ImportWindows, Proofs, VaultDb};
 
 /// Marks every answer of the vault API `Cache-Control: no-store`: ciphertext
 /// and wraps are not for a browser or proxy cache, and neither are the errors.
@@ -70,8 +70,8 @@ async fn no_store(mut response: Response) -> Response {
 /// route needs to take that extractor; nothing here calls it), and the handles
 /// of the sync routes: the change notifications, the rate limits, the write
 /// gate and the event stream slots; and the handles of the routes that change
-/// the unlock methods and import: the nonces of signed requests, the clock, the
-/// import windows and the backup status.
+/// the unlock methods and import: the proof checks of signed requests, the
+/// clock, the import windows and the backup status.
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -81,7 +81,7 @@ where
     Arc<SyncLimits>: FromRef<S>,
     WriteGate: FromRef<S>,
     Arc<EventStreams>: FromRef<S>,
-    Challenges: FromRef<S>,
+    Proofs: FromRef<S>,
     ImportWindows: FromRef<S>,
     BackupStatus: FromRef<S>,
     Arc<dyn Clock>: FromRef<S>,

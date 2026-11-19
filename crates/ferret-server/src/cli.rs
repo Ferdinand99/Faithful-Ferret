@@ -6,7 +6,9 @@
 //!   restored (Spec: Fase 1 § 8.6).
 //! * `ferret backup create|list [--data-dir <dir>]` and `ferret backup verify
 //!   <set>`: make, list and check backup sets. They change nothing that exists,
-//!   so they need no `--yes`.
+//!   so they need no `--yes`. `backup create` needs the server to be stopped
+//!   (it takes the lock of the data directory); the server makes its own sets
+//!   while it runs.
 //! * `ferret backup restore --from <set> --yes [--at-least <n>]` and `ferret
 //!   backup restore --abort --yes`: put a set back, or undo a restore that did
 //!   not finish.
@@ -46,7 +48,6 @@ use rusqlite::{Connection, OpenFlags};
 use crate::admin::codes;
 use crate::backup::{BackupConfig, restore, set};
 use crate::data_lock;
-use crate::db::{CORE_MIGRATIONS, MIGRATION_FILES};
 use crate::error::StartError;
 use crate::product::DB_FILE;
 use crate::vault::reconcile;
@@ -423,10 +424,22 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
     ))
 }
 
-/// `ferret backup create`: refuses while a restore is in progress. It does not
-/// take the lock of the data directory: a set is made from a consistent copy
-/// while the server runs.
+/// `ferret backup create`: refuses while a restore is in progress and while a
+/// server uses the data directory (the same lock as `restore-epoch bump`), so a
+/// set made by hand is made from a database that no one writes to. The marker is
+/// checked again once the lock is held.
 fn backup_create(data_dir: &Path) -> Result<String, StartError> {
+    restore::refuse_if_in_progress(data_dir)?;
+    // Before the lock: the lock file is made if it is missing, and a directory
+    // with no database is left as it was.
+    if !data_dir.join(DB_FILE).is_file() {
+        return Err(format!(
+            "there is no database ({DB_FILE}) in {}: check --data-dir or FERRET_DATA_DIR",
+            data_dir.display()
+        )
+        .into());
+    }
+    let _lock = data_lock::acquire_existing(data_dir)?;
     restore::refuse_if_in_progress(data_dir)?;
     let cfg = BackupConfig::from_env(data_dir)?;
     let conn = open_migrated(data_dir)?;
@@ -446,7 +459,7 @@ fn backup_create(data_dir: &Path) -> Result<String, StartError> {
 /// `ferret backup list`.
 fn backup_list(data_dir: &Path) -> Result<String, StartError> {
     let cfg = BackupConfig::from_env(data_dir)?;
-    let sets = set::list(&cfg)?;
+    let sets = set::list_verified(&cfg)?;
     if sets.is_empty() {
         return Ok(format!("no backup sets in {}", cfg.dir.display()));
     }
@@ -466,11 +479,7 @@ fn backup_list(data_dir: &Path) -> Result<String, StartError> {
 
 /// The migration names this build knows: the kit's core set and ours.
 fn build_migrations() -> Vec<&'static str> {
-    CORE_MIGRATIONS
-        .iter()
-        .map(|(name, _)| *name)
-        .chain(MIGRATION_FILES.iter().map(|(name, _)| *name))
-        .collect()
+    set::build_migrations()
 }
 
 /// `ferret backup verify`.

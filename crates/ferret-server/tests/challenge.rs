@@ -14,19 +14,22 @@ use ferret_server::auth::session::Origin;
 use ferret_server::wire::b64url;
 use ferret_server_auth::SessionScope;
 use support::session::{
-    Issued, call_probe, challenge_with, issue, nonce_for, reset_session, seed_signer, sign,
-    signed_probe,
+    Issued, call_probe, challenge_with, issue, make_fresh, nonce_for, reset_session, seed_signer,
+    sign, signed_probe,
 };
 use support::{Req, TestApp, Which};
 
 const BODY: &[u8] = br#"{"n":7}"#;
 
-/// The signer and `n` full vault sessions of it, on devices 1 to `n`.
+/// The signer and `n` full vault sessions of it, on devices 1 to `n`, each
+/// just re-authenticated (the signed route asks for it).
 async fn full_sessions(app: &TestApp, n: u8) -> Vec<Issued> {
     let user = seed_signer(app).await.user_id;
     let mut sessions = Vec::new();
     for device in 1..=n {
-        sessions.push(issue(app, user, Origin::Vault, SessionScope::Full, device).await);
+        let issued = issue(app, user, Origin::Vault, SessionScope::Full, device).await;
+        make_fresh(app, issued.sid).await;
+        sessions.push(issued);
     }
     sessions
 }
@@ -152,6 +155,8 @@ async fn an_expired_nonce_is_refused() {
 
     let nonce = nonce_for(&app, &session.jar).await;
     app.clock.advance(300);
+    // A new re-authentication, so the nonce is what is too old.
+    make_fresh(&app, session.sid).await;
     let res = use_nonce(&app, &session.jar, &nonce).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "300 seconds");
     assert_eq!(res.json()["error"], "denied");
