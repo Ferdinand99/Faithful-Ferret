@@ -39,9 +39,10 @@
 //!    (64 bytes), base64url without padding, and the body as raw bytes of at
 //!    most [`MAX_SIGNED_BODY`]. A missing header or a wrong length is `400
 //!    malformed_nonce` or `400 malformed_proof`, a larger body is `413
-//!    too_large`; none of them touches the nonce, which only the OPAQUE library
-//!    consumes. The body is not parsed here: [`SignedBody::parse`] reads it
-//!    only for a permit of the library that covers exactly these bytes.
+//!    too_large`, a body that breaks off is `400 bad_request`; none of them
+//!    touches the nonce, which only the OPAQUE library consumes. The body is
+//!    not parsed here: [`SignedBody::parse`] reads it only for a permit of the
+//!    library that covers exactly these bytes.
 //!
 //! Spec: Fase 1 § 4.6 and § 7.6.
 
@@ -49,7 +50,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{FromRef, FromRequest, FromRequestParts, Request};
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
@@ -59,6 +60,7 @@ use ferret_server_auth::{
     Caller, Capability, Clock, ReplaceKind, ReplacePermit, ReplaceRequest, SessionBinding,
     SessionScope, SignedPermit, SignedRequest, authorize,
 };
+use futures_util::StreamExt as _;
 use rusqlite::{OptionalExtension as _, params};
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
@@ -379,6 +381,42 @@ pub mod caps {
     }
 }
 
+/// The facts of a vault session of any scope, as a [`ScopedSession`] carries
+/// them. Unlike a [`VaultSession`] it is no proof of a `full` session: it has
+/// no extractor, and it cannot be passed where a `VaultSession` is expected.
+#[derive(Debug, Clone)]
+pub struct SessionFacts {
+    pub sid: SidHash,
+    pub user_id: i64,
+    pub issued_at: i64,
+    /// The time the request was checked at (Unix seconds).
+    pub now: i64,
+    pub device: DeviceId,
+    pub account: AccountId,
+    pub vault: VaultId,
+    pub vk_epoch: u64,
+    /// The kit's `session_version` of the user, as checked against its cookie.
+    pub session_version: i64,
+}
+
+impl SessionFacts {
+    /// The facts of a verified request; 401 when it has no account.
+    fn of(verified: &Verified) -> Result<Self, ApiError> {
+        let (account, vault, vk_epoch) = verified.account.ok_or_else(ApiError::unauthorized)?;
+        Ok(SessionFacts {
+            sid: verified.row.sid,
+            user_id: verified.row.user_id,
+            issued_at: verified.row.issued_at,
+            now: verified.now,
+            device: verified.row.device,
+            account,
+            vault,
+            vk_epoch,
+            session_version: verified.session_version,
+        })
+    }
+}
+
 /// A vault session whose scope allows the capability `C::CAP`.
 ///
 /// The session is checked as for [`VaultSession`], but any scope passes that
@@ -387,10 +425,14 @@ pub mod caps {
 /// `403 forbidden`. An `account_reset` session reaches only the capabilities of
 /// its scope (`ferret_server_auth::scope`).
 ///
+/// The facts are a [`SessionFacts`], not a [`VaultSession`]: a `VaultSession`
+/// always stands for a `full` session, and this one may be a reset session.
+///
 /// Spec: Fase 1 § 4.6 (partial session) and § 6.3 (reset account).
 pub struct ScopedSession<C: Cap> {
-    /// The session, its account and its vault.
-    pub session: VaultSession,
+    /// The session, its account and its vault. The scope may be other than
+    /// `full`.
+    pub session: SessionFacts,
     /// The scope of the session, read from its row.
     pub scope: SessionScope,
     _cap: PhantomData<C>,
@@ -425,7 +467,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, ApiError> {
         let auth = SessionAuth::from_ref(state);
         let verified = auth.verify_vault_any(parts).await?;
-        let session = auth.vault_session(&verified)?;
+        let session = SessionFacts::of(&verified)?;
         let scope = verified.row.scope;
         if authorize(scope, C::CAP).is_err() {
             return Err(ApiError::coded("forbidden"));
@@ -468,6 +510,16 @@ pub fn session_binding(sid: &SidHash) -> SessionBinding {
 ///
 /// The time is read from the session's own row, so it belongs to the session
 /// that proved the password and to no other. Using it does not use it up.
+///
+/// Where this differs from the spec text, on purpose: § 4.6 (b) asks for a
+/// fresh second factor; this server cannot ask for one yet, so an account with
+/// a second factor is refused every sensitive operation instead (stricter).
+///
+/// The second factor checked is the kit's TOTP, whose recovery codes it covers
+/// (`users.totp_enabled`). That is the kit's only second factor. The kit's
+/// passkey sign-in counts as both factors and its routes are blocked in this
+/// server (`admin::guard`). A kit upgrade that adds another second factor must
+/// be added to this check.
 ///
 /// Spec: Fase 1 § 4.6 (a) and (b).
 #[derive(Debug, Clone, Copy)]
@@ -529,9 +581,20 @@ impl fmt::Debug for SignedBody {
 
 /// A permit of the OPAQUE library: the right to act on a body whose SHA-256 the
 /// library has checked the proof over.
-pub trait ProvenBody {
+///
+/// The trait is sealed: only the library's two permits implement it, so no
+/// other value can make [`SignedBody::parse`] read unproven bytes.
+pub trait ProvenBody: sealed::Sealed {
     /// `SHA-256` of the body the proof covers.
     fn body_sha256(&self) -> &[u8; 32];
+}
+
+mod sealed {
+    /// Implemented for the library's permits and nothing else.
+    pub trait Sealed {}
+
+    impl Sealed for ferret_server_auth::SignedPermit {}
+    impl Sealed for ferret_server_auth::ReplacePermit {}
 }
 
 impl ProvenBody for SignedPermit {
@@ -627,9 +690,7 @@ where
             .ok_or_else(|| ApiError::coded("malformed_nonce"))?;
         let proof = proof_header::<PROOF_LEN>(request.headers(), PROOF_HEADER)
             .ok_or_else(|| ApiError::coded("malformed_proof"))?;
-        let bytes = axum::body::to_bytes(request.into_body(), MAX_SIGNED_BODY)
-            .await
-            .map_err(|_| ApiError::coded("too_large"))?;
+        let bytes = read_limited(request.into_body(), MAX_SIGNED_BODY).await?;
         Ok(SignedBody {
             nonce,
             proof,
@@ -638,10 +699,58 @@ where
     }
 }
 
+/// Reads a body of at most `limit` bytes. One byte more is `413 too_large`,
+/// and the rest is not read; a body that breaks off or fails to arrive is
+/// `400 bad_request`.
+async fn read_limited(body: Body, limit: usize) -> Result<Bytes, ApiError> {
+    let mut frames = body.into_data_stream();
+    let mut out: Vec<u8> = Vec::new();
+    while let Some(frame) = frames.next().await {
+        let chunk = frame.map_err(|_| ApiError::coded("bad_request"))?;
+        if out.len().saturating_add(chunk.len()) > limit {
+            return Err(ApiError::coded("too_large"));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    fn chunks(parts: Vec<Result<&'static [u8], std::io::Error>>) -> Body {
+        Body::from_stream(futures_util::stream::iter(
+            parts.into_iter().map(|p| p.map(Bytes::from_static)),
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_body_is_413_only_when_it_passes_the_limit() {
+        // In pieces, up to the limit exactly: read whole.
+        let body = chunks(vec![Ok(b"abc"), Ok(b"de")]);
+        assert_eq!(read_limited(body, 5).await.expect("5 bytes"), "abcde");
+        // One byte more: 413.
+        let body = chunks(vec![Ok(b"abc"), Ok(b"def")]);
+        let refused = read_limited(body, 5).await.expect_err("6 bytes");
+        assert_eq!((refused.status.as_u16(), refused.code), (413, "too_large"));
+        // A body that breaks off is not "too large".
+        let broken = std::io::Error::other("the client went away");
+        let body = chunks(vec![Ok(b"ab"), Err(broken)]);
+        let refused = read_limited(body, 5).await.expect_err("broken");
+        assert_eq!(
+            (refused.status.as_u16(), refused.code),
+            (400, "bad_request")
+        );
+        // An empty body is an empty body.
+        assert!(
+            read_limited(Body::empty(), 5)
+                .await
+                .expect("empty")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn every_cap_names_its_own_capability() {

@@ -179,6 +179,9 @@ async fn m2_sync_routes_still_refuse_an_account_reset_session() {
     let (_, reset) = reset_session(&app).await;
     let id = "00".repeat(16);
     let item = format!("/api/sync/items/{id}");
+    // The vault and sync routes only. The session answer
+    // (`GET /api/auth/session`) is not one of them: `auth::login` decides what
+    // a reset session reads there.
     let cases: Vec<(&str, &str)> = vec![
         ("GET", "/api/sync/changes?since=0"),
         ("GET", "/api/sync/items"),
@@ -186,7 +189,6 @@ async fn m2_sync_routes_still_refuse_an_account_reset_session() {
         ("GET", "/api/sync/checkpoint"),
         ("GET", "/api/sync/events"),
         ("GET", "/api/vault/unlock-methods"),
-        ("GET", "/api/auth/session"),
         ("PUT", &item),
         ("POST", "/api/sync/batch"),
         ("PUT", "/api/sync/checkpoint"),

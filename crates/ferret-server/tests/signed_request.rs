@@ -141,6 +141,56 @@ async fn a_body_over_the_limit_is_413() {
 }
 
 #[tokio::test]
+async fn a_body_that_breaks_off_is_400_not_413_and_burns_nothing() {
+    let app = TestApp::new().await;
+    let session = full_session(&app).await;
+    let nonce = nonce_for(&app, &session.jar).await;
+    let proof = sign(OP, &nonce, BODY);
+    let broken = axum::body::Body::from_stream(futures_util::stream::iter(vec![
+        Ok(Bytes::from_static(b"{\"n\":")),
+        Err(io::Error::other("the client went away")),
+    ]));
+    let probe = signed_probe(&app);
+    let res = call_probe(
+        &probe,
+        &session.jar,
+        Some(&enc(&nonce)),
+        Some(&enc(&proof)),
+        broken,
+    )
+    .await;
+    assert_code(&res, StatusCode::BAD_REQUEST, "bad_request");
+    assert_eq!(
+        app.challenges().store().len(),
+        1,
+        "the nonce is still there"
+    );
+
+    // Over the limit in pieces is 413, and burns nothing either.
+    let pieces = axum::body::Body::from_stream(futures_util::stream::iter(
+        (0..=MAX_SIGNED_BODY / 1024).map(|_| Ok::<_, io::Error>(Bytes::from(vec![b' '; 1024]))),
+    ));
+    let res = call_probe(
+        &probe,
+        &session.jar,
+        Some(&enc(&nonce)),
+        Some(&enc(&proof)),
+        pieces,
+    )
+    .await;
+    assert_code(&res, StatusCode::PAYLOAD_TOO_LARGE, "too_large");
+    let res = call_probe(
+        &probe,
+        &session.jar,
+        Some(&enc(&nonce)),
+        Some(&enc(&proof)),
+        BODY.to_vec(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+#[tokio::test]
 async fn a_valid_proof_over_other_bytes_is_401_denied() {
     let app = TestApp::new().await;
     let session = full_session(&app).await;

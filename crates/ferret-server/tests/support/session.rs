@@ -386,7 +386,7 @@ pub async fn call_probe(
     jar: &Jar,
     nonce: Option<&str>,
     proof: Option<&str>,
-    body: Vec<u8>,
+    body: impl Into<Body>,
 ) -> Res {
     let mut builder = Request::builder()
         .method("POST")
@@ -404,7 +404,7 @@ pub async fn call_probe(
     if let Some(proof) = proof {
         builder = builder.header("ferret-proof", proof);
     }
-    let mut request = builder.body(Body::from(body)).expect("a request");
+    let mut request = builder.body(body.into()).expect("a request");
     let peer: std::net::SocketAddr = super::PEER.parse().expect("a peer");
     request
         .extensions_mut()

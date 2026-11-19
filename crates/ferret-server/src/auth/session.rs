@@ -93,6 +93,11 @@ pub fn within_limits(row: &SessionRow, now: i64) -> bool {
 /// before `reauth_at` is not fresh, and a session that never re-authenticated
 /// is never fresh. An operation does not use the freshness up.
 ///
+/// Where this reads more into the spec text than it says: § 4.6 (a) asks for
+/// the master password again within 5 minutes. Here only a sign-in with
+/// `purpose: "reauth"` in this session counts (an ordinary sign-in does not),
+/// and the freshness lasts the whole 5 minutes, for any number of operations.
+///
 /// Spec: Fase 1 § 4.6 (a).
 pub fn reauth_fresh(row: &SessionRow, now: i64) -> bool {
     row.reauth_at
