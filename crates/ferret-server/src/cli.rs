@@ -400,9 +400,18 @@ fn bump_restore_epoch(
         )
         .into());
     }
+    bump_under_lock(data_dir, at_least)
+}
+
+/// The part of `restore-epoch bump` that runs under the lock of the data
+/// directory. The marker is checked again once the lock is held: a restore that
+/// took the lock and wrote the marker after the first check, and then died,
+/// leaves a half-restored directory that must not be bumped.
+fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, StartError> {
     // Held until the function returns. Taken before the database is opened, so
     // a live server is never touched.
     let _lock = data_lock::acquire_existing(data_dir)?;
+    restore::refuse_if_in_progress(data_dir)?;
 
     let mut conn = open_migrated(data_dir)?;
     let bumped = reconcile::bump(&mut conn, at_least, now_unix()?)?;
@@ -499,4 +508,28 @@ fn require_migrated(conn: &Connection) -> Result<(), StartError> {
         missing.join(", ")
     )
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A restore that wrote its marker between the first check and the lock is
+    /// still caught: the part under the lock refuses on its own, before the
+    /// database is opened.
+    #[test]
+    fn bump_under_lock_refuses_when_the_marker_appeared_after_the_first_check() {
+        let dir = std::env::temp_dir().join(format!("ferret-cli-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory");
+        std::fs::write(dir.join(crate::backup::RESTORE_MARKER), "{}").expect("the marker");
+
+        let err = bump_under_lock(&dir, None).expect_err("refused under the lock");
+        assert!(
+            err.to_string().contains(crate::backup::RESTORE_MARKER),
+            "{err}"
+        );
+        assert!(!dir.join(DB_FILE).exists(), "no database was opened");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -620,7 +620,7 @@ fn an_account_has_one_user_and_one_vault_and_the_hint_is_a_flag() {
     assert!(hint(1, &[4; 16], &[14; 16]).is_ok());
 }
 
-// ---------------------------------------------------------------- the M3 schema
+// ---------------------------------------------------------------- the schema with re-authentication and sign-in codes
 
 const NOW: i64 = 1_793_491_200;
 

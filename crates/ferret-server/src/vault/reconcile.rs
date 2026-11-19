@@ -253,6 +253,9 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
 /// commands and the restore use: `at_least` is the lowest epoch the caller
 /// wants and `now` the time in Unix seconds.
 ///
+/// Spec: Fase 1 § 8.6, "Legitimate rollbacks": the restore epoch goes up when
+/// the server is restored from a backup.
+///
 /// The rule is still [`bump_all_vaults`]'s (one more than the stored epoch):
 /// `now` is not used yet, and an `at_least` is refused with
 /// [`StoreError::Invalid`] instead of being ignored, so no command can say it

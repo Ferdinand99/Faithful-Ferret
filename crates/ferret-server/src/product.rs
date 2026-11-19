@@ -44,7 +44,9 @@ pub static EXTERNAL: ExternalCredentials = ExternalCredentials {
     reauth_path: "/vault/reauth",
 };
 
-/// The kit's optional parts. One-time sign-in codes are on: the administrator
+/// The kit's optional parts. Spec: Fase 1 § 6.3, step 1 (the sign-in code that
+/// starts a reset) and § 11 (the kit's sign-in codes are an included feature).
+/// One-time sign-in codes are on: the administrator
 /// who has forgotten the master password gets a code (from the Users page or
 /// `ferret sign-in-code issue`) and redeems it on the vault origin. Invitations
 /// stay off until a milestone needs them.

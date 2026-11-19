@@ -161,7 +161,7 @@ mod tests {
     /// takes them. Turning either feature on needs a strict policy for its page
     /// first: add the path to `admin_referrer_policy` and make it `no-referrer`
     /// or `strict-origin` (no referrer at all, or the origin only and nothing to
-    /// a less safe one), then this test passes again. The features are off now.
+    /// a less safe one), then this test passes again. Sign-in codes are on (`/sign-in-code` is `strict-origin`); invitations are off.
     #[test]
     fn a_feature_with_a_secret_in_its_path_needs_a_strict_referrer_policy() {
         let strict =

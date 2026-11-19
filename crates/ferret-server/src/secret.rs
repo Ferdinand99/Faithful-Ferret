@@ -1,7 +1,8 @@
 //! Secret-holding helper types.
 //!
-//! Types that hold a secret never derive `Debug` or `Clone`, wipe on drop and
-//! show `[redacted]` when printed.
+//! Types that hold a secret never derive `Debug`, wipe on drop and show
+//! `[redacted]` when printed. A clone, where clap needs one, shares the one wiped
+//! copy.
 
 use std::convert::Infallible;
 use std::fmt;

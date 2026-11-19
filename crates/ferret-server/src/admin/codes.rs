@@ -3,6 +3,11 @@
 //! master password and so cannot reach the Users page that makes one (a later
 //! milestone). The code has the kit's life: 24 hours, one use, and a newer code
 //! revokes the older one.
+//!
+//! Spec: Fase 1 § 6.3, step 1: the administrator resets a user through the
+//! kit's one-time sign-in code. The command is an addition to the spec: the
+//! administrator who has lost the master password cannot reach the page that
+//! makes a code, so the code is made on the machine that holds the data.
 
 use std::fmt;
 use std::path::Path;

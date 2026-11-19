@@ -12,6 +12,11 @@
 //! * [`restore`]: putting a set back, and the marker that stops the server from
 //!   starting on a half-restored directory.
 //!
+//! Spec: Fase 1 § 11, "Backup": the 30 days of sets and what a set holds. The
+//! spec names the kit's automatic backup; this module goes further and adds
+//! `prelogin_secret` and `session.key` to the set, because without them a
+//! restored database cannot log anybody in.
+//!
 //! A set is as sensitive as the database plus `opaque_setup`: folders `0700`,
 //! files `0600`, never served over HTTP, never logged with their contents, and
 //! out of the machine only encrypted.
