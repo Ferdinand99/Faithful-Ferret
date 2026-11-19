@@ -19,7 +19,7 @@ use vole_kit::state::Core;
 
 use crate::auth::secrets::{Secrets, load_secrets};
 use crate::auth::state_store::SqliteLoginStateStore;
-use crate::auth::throttle::KitThrottle;
+use crate::auth::throttle::{ChallengeLimit, KitThrottle};
 use crate::auth::{handoff, login, state_store};
 use crate::config::{Config, Origins};
 use crate::error::{StartError, StoreError};
@@ -58,19 +58,32 @@ impl VaultDb {
 /// The nonces of signed requests (Spec: Fase 1 § 4.6), kept in memory: at most
 /// 20 000, and the oldest goes first when the store is full. A restart forgets
 /// them, so a nonce that was issued before it is refused afterwards. One store
-/// for the process, shared by every handle (`Clone` shares it).
+/// for the process, shared by every handle (`Clone` shares it). With them, the
+/// limit on how many nonces a session may ask for.
 #[derive(Clone)]
-pub struct Challenges(Arc<InMemoryChallengeStore>);
+pub struct Challenges {
+    store: Arc<InMemoryChallengeStore>,
+    limit: Arc<ChallengeLimit>,
+}
 
 impl Challenges {
-    /// An empty store with the library's limit of 20 000 nonces.
+    /// An empty store with the library's limit of 20 000 nonces, and the limit
+    /// of 30 nonces per session per minute.
     pub fn new() -> Self {
-        Self(Arc::new(InMemoryChallengeStore::new()))
+        Self {
+            store: Arc::new(InMemoryChallengeStore::new()),
+            limit: Arc::new(ChallengeLimit::new()),
+        }
     }
 
     /// The store, as the OPAQUE library's functions take it.
     pub fn store(&self) -> &InMemoryChallengeStore {
-        &self.0
+        &self.store
+    }
+
+    /// The limit on the nonces of one session.
+    pub fn limit(&self) -> &ChallengeLimit {
+        &self.limit
     }
 }
 

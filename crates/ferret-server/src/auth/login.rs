@@ -79,7 +79,6 @@ use ferret_server_auth::{
 };
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::de::DeserializeOwned;
-use sha2::{Digest as _, Sha256};
 use vole_kit::auth::reauth;
 use vole_kit::db::users;
 
@@ -89,7 +88,7 @@ use crate::auth::session::{
 };
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{AdminSession, VaultSession};
+use crate::http::extract::{AdminSession, VaultSession, session_binding};
 use crate::http::proxy_guard::request_is_https;
 use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, VaultId};
 use crate::product;
@@ -708,18 +707,6 @@ fn auth_refusal(error: AuthError) -> ApiError {
     // The reason is for this log only; the answer carries the public code.
     tracing::info!(reason = ?error, "sign-in step refused");
     ApiError::from(error)
-}
-
-/// What the library binds a re-authentication to: a domain-separated hash of
-/// the session's id hash. It cannot be turned back into the session id.
-fn session_binding(sid: &SidHash) -> SessionBinding {
-    let mut hasher = Sha256::new();
-    hasher.update(b"ferret/v1/session-binding");
-    hasher.update(sid.0);
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    SessionBinding(out)
 }
 
 fn read_policy(state: &FerretState) -> PreloginPolicy {

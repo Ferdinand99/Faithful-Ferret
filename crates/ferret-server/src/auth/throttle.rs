@@ -15,6 +15,9 @@
 //!
 //! Every other stage is not limited yet; the full set comes in a later release.
 //!
+//! The nonces of signed requests have a limit of their own, by session, which
+//! the library cannot key on: [`ChallengeLimit`], 30 per session per minute.
+//!
 //! An attempt counts when it is admitted, not when it ends, so requests that
 //! arrive together cannot all slip under the limit. A refused attempt is not
 //! counted: hammering a blocked address does not extend the block. The window
@@ -36,11 +39,14 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use axum::http::{HeaderMap, HeaderValue};
 use ferret_server_auth::{Caller, Clock, Outcome, RetryAfter, Stage, Throttle, ThrottleKey};
+
+use crate::ids::SidHash;
 
 /// Length of the sliding window in seconds.
 const WINDOW_SECS: u64 = 60;
@@ -81,19 +87,27 @@ fn expire(attempts: &mut Attempts, now: u64) {
 /// The counters of one stage: the attempts of each key, and the keys in the
 /// order they were added. Every key in the map has exactly one entry in the
 /// queue and the other way round.
-#[derive(Default)]
-struct Table {
-    attempts: HashMap<ThrottleKey, Attempts>,
-    queue: VecDeque<(ThrottleKey, u64)>,
+struct Table<K = ThrottleKey> {
+    attempts: HashMap<K, Attempts>,
+    queue: VecDeque<(K, u64)>,
 }
 
-impl Table {
+impl<K> Default for Table<K> {
+    fn default() -> Self {
+        Self {
+            attempts: HashMap::new(),
+            queue: VecDeque::new(),
+        }
+    }
+}
+
+impl<K: Copy + Eq + Hash> Table<K> {
     fn len(&self) -> usize {
         self.attempts.len()
     }
 
     /// Counts an attempt for `key`, adding the key if it is new.
-    fn count(&mut self, key: ThrottleKey, now: u64) {
+    fn count(&mut self, key: K, now: u64) {
         match self.attempts.get_mut(&key) {
             Some(attempts) => attempts.push_back(now),
             None => {
@@ -272,6 +286,89 @@ impl Throttle for KitThrottle {
     fn record(&self, _stage: Stage, _keys: &[ThrottleKey], _outcome: Outcome, _now: u64) {}
 }
 
+/// Nonces for signed requests one session may ask for per window.
+///
+/// Spec: Fase 1 § 4.6 (the nonce of a signed request).
+pub const CHALLENGES_PER_SESSION: usize = 30;
+
+/// The limit on `POST /api/auth/challenge`: [`CHALLENGES_PER_SESSION`] nonces
+/// per session in a sliding minute, keyed by the hash of the session id.
+///
+/// The OPAQUE library asks its own throttle by address and account; it never
+/// sees the session. This limit is asked first, before the library, and
+/// counts the same way as [`KitThrottle`]: an attempt counts when it is
+/// admitted, a refused one does not, and a full table drops the session that
+/// was added first ([`ChallengeLimit::DEFAULT_MAX_KEYS`] sessions at most).
+/// A dropped session starts again from zero, which costs an attacker a fresh
+/// session per [`ChallengeLimit::DEFAULT_MAX_KEYS`] others: each one is a
+/// sign-in, which has limits of its own.
+pub struct ChallengeLimit {
+    max_keys: usize,
+    table: Mutex<Table<[u8; 32]>>,
+}
+
+impl ChallengeLimit {
+    /// The most sessions the limit keeps counters for.
+    pub const DEFAULT_MAX_KEYS: usize = 100_000;
+
+    /// A limit with room for [`ChallengeLimit::DEFAULT_MAX_KEYS`] sessions.
+    pub fn new() -> Self {
+        Self::with_max_keys(Self::DEFAULT_MAX_KEYS)
+    }
+
+    /// A limit that keeps counters for at most `max_keys` sessions.
+    pub fn with_max_keys(max_keys: usize) -> Self {
+        Self {
+            max_keys,
+            table: Mutex::new(Table::default()),
+        }
+    }
+
+    /// Counts a request for a nonce by the session `sid` at `now` (Unix
+    /// seconds), or says how long the session must wait.
+    pub fn admit(&self, sid: &SidHash, now: u64) -> Result<(), RetryAfter> {
+        // The same reasoning as `KitThrottle::lock`: a poisoned lock holds at
+        // worst one count too many or too few.
+        let mut table = self.table.lock().unwrap_or_else(PoisonError::into_inner);
+        table.sweep(now, KitThrottle::SWEEP_BUDGET);
+        let key = sid.0;
+        if let Some(attempts) = table.attempts.get_mut(&key) {
+            expire(attempts, now);
+            if attempts.len() >= CHALLENGES_PER_SESSION {
+                let free_at = attempts
+                    .front()
+                    .map_or(now, |&t| t.saturating_add(WINDOW_SECS));
+                let wait = free_at.saturating_sub(now).max(1);
+                return Err(RetryAfter::new(u32::try_from(wait).unwrap_or(u32::MAX)));
+            }
+        } else {
+            while table.len() >= self.max_keys && table.evict_oldest() {}
+        }
+        table.count(key, now);
+        Ok(())
+    }
+
+    /// How many sessions the limit holds counters for.
+    pub fn tracked_sessions(&self) -> usize {
+        self.table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+}
+
+impl Default for ChallengeLimit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for ChallengeLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ChallengeLimit([redacted])")
+    }
+}
+
 /// Who is calling: the address the proxy layer left in the request, else the
 /// peer's. Call it after `proxy_guard` has run, which removes the forwarding
 /// headers of every peer that is not a trusted proxy; the kit then reads the
@@ -301,4 +398,44 @@ pub fn last_forwarded_line(headers: &HeaderMap) -> Cow<'_, HeaderMap> {
         only_last.insert("x-forwarded-for", HeaderValue::clone(last));
     }
     Cow::Owned(only_last)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sid(n: u8) -> SidHash {
+        SidHash([n; 32])
+    }
+
+    #[test]
+    fn a_session_gets_30_nonces_a_minute_and_a_wait_for_the_31st() {
+        let limit = ChallengeLimit::new();
+        for i in 0..30 {
+            assert!(
+                limit.admit(&sid(1), 1_000_u64.saturating_add(i)).is_ok(),
+                "{i}"
+            );
+        }
+        let wait = limit.admit(&sid(1), 1_030).expect_err("the 31st");
+        assert_eq!(wait.secs(), 30);
+        // A refusal is not counted, and another session has its own count.
+        assert!(limit.admit(&sid(1), 1_030).is_err());
+        assert!(limit.admit(&sid(2), 1_030).is_ok());
+        // The first attempt leaves the window after 60 seconds.
+        assert!(limit.admit(&sid(1), 1_060).is_ok());
+        assert!(limit.admit(&sid(1), 1_060).is_err());
+    }
+
+    #[test]
+    fn a_full_table_drops_the_oldest_session() {
+        let limit = ChallengeLimit::with_max_keys(2);
+        for n in 1..=3 {
+            assert!(limit.admit(&sid(n), 5).is_ok());
+        }
+        assert_eq!(limit.tracked_sessions(), 2);
+        // Expired sessions are swept as the clock moves on.
+        assert!(limit.admit(&sid(9), WINDOW_SECS.saturating_add(5)).is_ok());
+        assert_eq!(limit.tracked_sessions(), 1);
+    }
 }
