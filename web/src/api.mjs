@@ -6,6 +6,7 @@
 // Writes: pass the body of a retried write as the same string (or bytes) you
 // sent the first time, under the same `idem`. The server hashes the raw body,
 // so a re-serialized retry is 422 `idem_reuse` instead of a replay.
+import { b64u } from "./b64.mjs";
 import { checkStep, readJson, readWire, SHAPES } from "./wire.mjs";
 
 /** Statuses the server answers for a request that retrying cannot fix. */
@@ -83,6 +84,9 @@ function secondsOf(value) {
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} post
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} put
  * @property {(path: string, options?: { signal?: AbortSignal }) => Promise<ReadableStreamDefaultReader<Uint8Array>>} stream
+ * @property {(method: "PUT" | "POST", path: string, bodyBytes: Uint8Array, proof: { nonce: Uint8Array, proof: Uint8Array }, options?: CallOptions) => Promise<any>} sendSigned
+ *   a write that carries a proof (spec Fase 1 § 4.6): the exact bytes of `bodyBytes` are the body, the nonce and the proof go in
+ *   `Ferret-Nonce` (32 bytes) and `Ferret-Proof` (64 bytes) as base64url without padding, and a redirect is never followed
  */
 
 /**
@@ -95,8 +99,9 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
    * @param {string} path
    * @param {unknown} body a string or bytes are sent as they are; anything else as JSON
    * @param {CallOptions} options
+   * @param {{ "Ferret-Nonce": string, "Ferret-Proof": string } | null} [proof] the two headers of a signed write
    */
-  async function call(method, path, body, options) {
+  async function call(method, path, body, options, proof = null) {
     if (!isLocalPath(path)) throw new TypeError("an API path starts with a single / and has no backslash or control character");
     const kind = options.shape;
     if (kind !== undefined && !(kind in SHAPES)) throw new TypeError(`no wire shape named ${kind}`);
@@ -107,6 +112,10 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
     if (method !== "GET") {
       headers["Ferret-Protocol"] = "1";
       headers["Content-Type"] = "application/json";
+      if (proof !== null) {
+        headers["Ferret-Nonce"] = proof["Ferret-Nonce"];
+        headers["Ferret-Proof"] = proof["Ferret-Proof"];
+      }
       if (typeof body === "string" || body instanceof Uint8Array) {
         init.body = /** @type {BodyInit} */ (body);
       } else if (body !== undefined) {
@@ -220,8 +229,29 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
     throw errorOf(status, text, retryAfter);
   }
 
+  /**
+   * A write with a proof. The body is sent as the bytes it is: the proof is over those bytes, so the call never builds the
+   * body from a value, and a retry sends the same array. A wrong length of the nonce or the proof is refused before anything
+   * is sent (the server answers 400 and burns no nonce for it, but a request that cannot be right is not worth a trip).
+   * @param {"PUT" | "POST"} method
+   * @param {string} path
+   * @param {Uint8Array} bodyBytes
+   * @param {{ nonce: Uint8Array, proof: Uint8Array }} proof
+   * @param {CallOptions} [options]
+   */
+  async function sendSigned(method, path, bodyBytes, proof, options = {}) {
+    if (method !== "PUT" && method !== "POST") throw new TypeError("a signed call is a PUT or a POST");
+    if (!(bodyBytes instanceof Uint8Array)) throw new TypeError("a signed call sends bytes");
+    if (proof === null || typeof proof !== "object") throw new TypeError("a signed call has a nonce and a proof");
+    const { nonce, proof: signature } = proof;
+    if (!(nonce instanceof Uint8Array) || nonce.length !== 32) throw new TypeError("the nonce is 32 bytes");
+    if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new TypeError("the proof is 64 bytes");
+    return call(method, path, bodyBytes, options, { "Ferret-Nonce": b64u.encode(nonce), "Ferret-Proof": b64u.encode(signature) });
+  }
+
   return {
     stream,
+    sendSigned,
     get: (path, options = {}) => call("GET", path, undefined, options),
     post: (path, body, options = {}) => call("POST", path, body, options),
     put: (path, body, options = {}) => call("PUT", path, body, options),

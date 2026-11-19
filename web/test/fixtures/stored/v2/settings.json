@@ -1,0 +1,24 @@
+{
+  "format": "ferret-stored-golden/1",
+  "dbVersion": 2,
+  "store": "settings",
+  "comment": "Small values, out-of-line keys: the device id, the restore note of an account on a server, and the device name.",
+  "records": [
+    {
+      "key": "device_id",
+      "value": "7e3a9c1f5b2d48a6b0c4d8e2f6a1b3c5"
+    },
+    {
+      "key": "restore.note.https://vault.example.0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "value": {
+        "acceptedAt": 1767225600000,
+        "restoreEpoch": 1767225000,
+        "manifestOlder": true
+      }
+    },
+    {
+      "key": "device.name",
+      "value": "Firefox on Linux"
+    }
+  ]
+}

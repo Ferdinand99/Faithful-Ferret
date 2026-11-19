@@ -7,7 +7,8 @@
 #   scripts/lanbox-web.sh e2e [--project=x]   build, then Playwright (any Playwright option)
 #   scripts/lanbox-web.sh --lock              refresh web/package-lock.json (npm install --package-lock-only)
 #
-# The web/ tree and, when it exists, the server's wire fixtures are streamed
+# The web/ tree, the licence notices that the web tests read (THIRD-PARTY-NOTICES,
+# notices-extra.json) and, when it exists, the server's wire fixtures are streamed
 # into the container as a tar archive (no bind mounts from the PC), the locked
 # packages are installed with `npm ci --ignore-scripts`, and the build fetches
 # the published WASM package named in web/wasm.lock.json and checks its SHA-256.
@@ -117,7 +118,7 @@ run=(docker "${docker_args[@]}" run --rm -i --init
 
 pack() {
   local fixtures=crates/ferret-server/tests/fixtures/wire
-  local extra=()
+  local extra=(THIRD-PARTY-NOTICES notices-extra.json)
   [ -d "$fixtures" ] && extra+=("$fixtures")
   tar -c \
     --exclude='web/node_modules' \

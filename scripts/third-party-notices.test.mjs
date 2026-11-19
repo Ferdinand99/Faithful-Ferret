@@ -12,6 +12,7 @@ import {
   npmEntries,
   render,
   rustEntries,
+  vendoredEntries,
 } from "./third-party-notices.mjs";
 
 const accepted = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause"];
@@ -275,3 +276,39 @@ describe("notices.sh", () => {
     for (const c of commands) expect(c.split("\n")[0] + c.split("\n")[1]).toContain("--fail");
   });
 });
+
+describe("vendoredEntries", () => {
+  const licence = "Copyright (c) Project Nayuki\n\nPermission is hereby granted";
+  const entry = {
+    name: "qrcodegen", version: "1.8.0", origin: "https://example.test/q", license: "MIT", copyright: "Copyright (c) Project Nayuki",
+    file: "web/vendor/q/q.mjs", licenseFile: "web/vendor/q/LICENSE", note: "Modified by Faithful Ferret: compiled.",
+  };
+  const listed = { name: "qrcodegen", version: "1.8.0", origin: "https://example.test/q", license: "MIT", copyright: "Copyright (c) Project Nayuki", file: "q/q.mjs", licenseFile: "q/LICENSE" };
+  const read = () => licence;
+  it("gives the entry with the licence text when the two lists agree", () => {
+    const [v] = vendoredEntries({ vendored: [entry] }, { files: [listed] }, read);
+    expect(v.licenseId).toBe("MIT");
+    expect(v.text).toBe(licence);
+    expect(v.packages[0].label).toBe("qrcodegen 1.8.0");
+  });
+  it("fails for a file that has no entry, an entry that has no file, and values that differ", () => {
+    expect(() => vendoredEntries({ vendored: [] }, { files: [listed] }, read)).toThrow(/no entry/);
+    expect(() => vendoredEntries({ vendored: [entry] }, { files: [] }, read)).toThrow(/does not/);
+    expect(() => vendoredEntries({ vendored: [{ ...entry, version: "1.9.0" }] }, { files: [listed] }, read)).toThrow(/differ/);
+    expect(() => vendoredEntries({ vendored: [{ ...entry, license: "GPL-3.0-only" }] }, { files: [listed] }, read)).toThrow(/differ/);
+  });
+  it("fails without the note on what was changed, and without the copyright line in the licence text", () => {
+    expect(() => vendoredEntries({ vendored: [{ ...entry, note: "compiled" }] }, { files: [listed] }, read)).toThrow(/Modified by Faithful Ferret/);
+    expect(() => vendoredEntries({ vendored: [entry] }, { files: [listed] }, () => "Permission is hereby granted")).toThrow(/copyright line/);
+  });
+  it("is listed in the real notices", () => {
+    const extra = JSON.parse(read2("notices-extra.json"));
+    const manifest = JSON.parse(read2("web/vendor/MANIFEST.json"));
+    const entries = vendoredEntries(extra, manifest, read2);
+    expect(entries.map((e) => e.packages[0].label)).toContain("qrcodegen 1.8.0");
+  });
+});
+
+function read2(file) {
+  return readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+}
