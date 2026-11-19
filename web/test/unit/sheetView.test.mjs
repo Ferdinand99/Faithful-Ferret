@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createI18n } from "../../src/i18n.mjs";
+import { qrFits } from "../../src/flows/emergencySheet.mjs";
 import { sheetView } from "../../src/views/sheet.mjs";
 import { accountDocument, byRole, fire, settle, textOf, until, walk } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
@@ -131,6 +132,11 @@ test("print_css_hides_everything_but_the_sheet_and_puts_page_2_on_its_own_page",
   // Page 2 starts a sheet of paper of its own, and the colours are the light ones in any theme.
   assert.match(print, /\.sheet-page-two\s*\{[^}]*break-before:\s*page/);
   assert.match(print, /color-scheme:\s*light/);
+  // Inside the vault shell too: everything in #app that is not the sheet or what holds it stays off the paper.
+  assert.match(print, /#app:has\(\.sheet\) :not\(\.sheet, \.sheet \*, :has\(\.sheet\)\)\s*\{[^}]*display:\s*none/);
+  // The sentence for page 2 is on paper only.
+  assert.match(css.slice(0, css.indexOf("@media print")), /\.print-only\s*\{[^}]*display:\s*none/);
+  assert.match(print, /\.print-only\s*\{[^}]*display:\s*block/);
   // The view carries the classes the styles hang on.
   await withDom(async () => {
     const { view } = make();
@@ -138,6 +144,11 @@ test("print_css_hides_everything_but_the_sheet_and_puts_page_2_on_its_own_page",
     const two = all.find((n) => n.tagName === "h2" && n.getAttribute("class") === "sheet-page-two");
     assert.ok(two, "page 2 has its own heading with the break");
     assert.ok(textOf(two).includes("Page 2"));
+    // Page 2 on paper says that a new browser needs both pages (on screen the sentence is at the top).
+    const printed = byRole(view.root, "new-browser-print");
+    assert.ok(printed && printed.getAttribute("class") === "print-only");
+    assert.equal(textOf(printed).trim(), i18n().t("sheet.new_browser"));
+    assert.ok(all.indexOf(printed) > all.indexOf(two) && all.indexOf(printed) < all.indexOf(byRole(view.root, "sheet-recovery")));
     const noPrint = all.filter((n) => (n.getAttribute?.("class") ?? "").split(" ").includes("no-print"));
     // The buttons and the part where the keys are typed back stay off the paper.
     assert.ok(noPrint.length >= 3);
@@ -215,15 +226,57 @@ test("a_sheet_without_a_usable_page_1_shows_page_2_only_and_never_a_qr_without_t
       assert.equal(byRole(view.root, "sheet-qr"), null, name);
       assert.equal(byRole(view.root, "sheet-qr-image"), null, name);
       assert.ok(byRole(view.root, "page-one-missing"), name);
+      // A setup does not go on without page 1: no form to type the keys back, so nothing can be confirmed.
+      assert.equal(byRole(view.root, "confirm-form"), null, name);
+      assert.equal(byRole(view.root, "rk-typed"), null, name);
       assert.ok(byRole(view.root, "sheet-recovery-key"), name);
       assert.ok(!textOf(view.root).includes("ferret-setup"), name);
       await fire(byRole(view.root, "download"), "click");
       await fire(byRole(view.root, "download-continue"), "click");
       assert.equal(pages(log.snapshots[0]).length, 1, name);
     }
-    // A sheet that is whole has no such notice.
+    // A sheet that is whole has no such notice, and has its form.
     assert.equal(byRole(make().view.root, "page-one-missing"), null);
+    assert.ok(byRole(make().view.root, "confirm-form"));
   });
+});
+
+test("a_setup_text_too_long_for_one_qr_code_is_said_on_the_screen_and_in_the_pdf", async () => {
+  const head = "ferret-setup:v1?u=";
+  const tail = "&s=1";
+  const at = (bytes) => head + "a".repeat(bytes - head.length - tail.length) + tail;
+  assert.ok(qrFits(at(512)) && !qrFits(at(513)));
+  await withDom(async () => {
+    const { t } = i18n();
+    // At 512 bytes: the code is drawn and nothing is said.
+    const fits = make({ sheet: sheet({ qr: at(512) }) });
+    assert.equal(byRole(fits.view.root, "qr-too-long"), null);
+    assert.ok(byRole(fits.view.root, "sheet-qr-image"));
+    // At 513: a notice stands where the code would be, the setup text stays, and the form stays too.
+    const long = make({ sheet: sheet({ qr: at(513) }) });
+    assert.equal(textOf(byRole(long.view.root, "qr-too-long")).trim(), t("sheet.qr_too_long"));
+    assert.equal(byRole(long.view.root, "sheet-qr-image"), null);
+    assert.ok(textOf(byRole(long.view.root, "sheet-qr")).includes(at(513)));
+    assert.ok(byRole(long.view.root, "confirm-form"));
+    // The file is refused with the same words, and nothing is handed over.
+    await fire(byRole(long.view.root, "download"), "click");
+    await fire(byRole(long.view.root, "download-continue"), "click");
+    assert.equal(long.log.downloads.length, 0);
+    assert.equal(textOf(byRole(long.view.root, "error")).trim(), t("sheet.qr_too_long"));
+  });
+});
+
+test("the_texts_keep_older_backups_and_accounts_without_a_secret_key_in_mind", () => {
+  const en = catalog("en");
+  const nb = catalog("nb");
+  // A new recovery key replaces the old page 2 only once a new backup has been made.
+  assert.match(en["sheet.page_one_unchanged"], /once a new backup/);
+  assert.match(en["sheet.page_one_unchanged"], /keep the old page 2/);
+  assert.match(nb["sheet.page_one_unchanged"], /ny backup/);
+  assert.match(nb["sheet.page_one_unchanged"], /behold den gamle side 2/);
+  // The secret key is named only for an account that has one.
+  assert.match(en["sheet.new_browser"], /if the account has one/);
+  assert.match(nb["sheet.new_browser"], /om kontoen har en/);
 });
 
 test("the_sheet_leaves_the_page_after_confirmation", async () => {

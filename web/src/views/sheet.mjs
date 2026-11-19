@@ -9,9 +9,11 @@
 // recovery key only (page 2) and ask for that key alone; page 1 does not change then. A sheet
 // whose page 1 cannot be made (no page 1 given, or a secret key that the QR text promises and
 // the sheet lacks) is shown as page 2 only, with a notice: a QR code is never made for an
-// account with a secret key and no secret key.
+// account with a secret key and no secret key. A setup does not go on from such a sheet (no form to
+// type the keys back); the account is not created. A setup text that is too long for one QR code is
+// said so on the screen and in the PDF, and is never left out quietly.
 import { clear, el, mount } from "../dom.mjs";
-import { checkAccessPage, httpWarning, sheetPdf } from "../flows/emergencySheet.mjs";
+import { checkAccessPage, httpWarning, qrFits, sheetPdf } from "../flows/emergencySheet.mjs";
 import { downloadBlob } from "../download.mjs";
 import { qrModules } from "../qr.mjs";
 import { wipe as wipeBytes } from "../pdf.mjs";
@@ -79,21 +81,26 @@ export function sheetView({ t, sheet, useSecretKey = false, mode = "setup", onCo
   /** @param {string} label @param {string} role @param {string} value */
   const row = (label, role, value) => [el("dt", null, t(label)), el("dd", { class: "secret", "data-role": role }, value)];
 
+  const qrTooLong = access !== null && !qrFits(access.qr_payload);
+
   /** @type {HTMLElement[]} */
   const pageOne = [];
   if (access !== null) {
-    const code = (() => {
-      try {
-        return qrModules(String(access.qr_payload));
-      } catch {
-        return null;
-      }
-    })();
+    const code = qrTooLong
+      ? null
+      : (() => {
+          try {
+            return qrModules(String(access.qr_payload));
+          } catch {
+            return null;
+          }
+        })();
     const canvas = code === null ? null : el("canvas", { class: "sheet-qr", role: "img", "aria-label": t("sheet.qr_alt"), "data-role": "sheet-qr-image" });
     if (canvas !== null && code !== null) drawQr(canvas, code);
     pageOne.push(
       el("h2", null, t("sheet.page_access")),
       ...(httpWarning(access.server_url) ? [el("p", { class: "notice notice-warning", role: "note", "data-role": "http-warning" }, t("sheet.http_warning"))] : []),
+      ...(qrTooLong ? [el("p", { class: "notice notice-warning", role: "note", "data-role": "qr-too-long" }, t("sheet.qr_too_long"))] : []),
       ...(canvas === null ? [] : [canvas]),
       el(
         "dl",
@@ -171,9 +178,9 @@ export function sheetView({ t, sheet, useSecretKey = false, mode = "setup", onCo
       bytes = sheetPdf({ sheet: /** @type {any} */ (held), t });
       download(bytes, FILE_NAME, "application/pdf");
       setText(status, t("sheet.download_done"));
-    } catch {
-      // A fixed text: the reason can name what was on the sheet.
-      setText(errorBox, t("sheet.download_failed"));
+    } catch (error) {
+      // A fixed text: the reason can name what was on the sheet. A text too long for the QR code has its own.
+      setText(errorBox, t(error instanceof RangeError && error.message === "qr_too_long" ? "sheet.qr_too_long" : "sheet.download_failed"));
       errorBox.hidden = false;
     } finally {
       // The bytes are zeroed after the hand-over (the download made its own copy).
@@ -192,12 +199,19 @@ export function sheetView({ t, sheet, useSecretKey = false, mode = "setup", onCo
     ...pageOne,
     el("h2", { class: "sheet-page-two" }, t("sheet.page_recovery")),
     el("p", { "data-role": "recovery-note" }, t("sheet.recovery_note")),
+    // On paper page 2 says it too: it is the page that is kept apart.
+    el("p", { class: "print-only", "data-role": "new-browser-print" }, t("sheet.new_browser")),
     recovery,
     el("div", { class: "actions no-print" }, downloadButton, printButton),
     saveSlot,
-    el("h2", { class: "no-print" }, t(setup ? "sheet.confirm_heading" : "sheet.confirm_heading_new")),
-    el("p", { class: "no-print" }, t(setup ? "sheet.confirm_note" : "sheet.confirm_note_new")),
-    form,
+    // A setup whose page 1 cannot be made has no form: nothing is uploaded and the account is not created.
+    ...(setup && pageOneMissing
+      ? []
+      : [
+          el("h2", { class: "no-print" }, t(setup ? "sheet.confirm_heading" : "sheet.confirm_heading_new")),
+          el("p", { class: "no-print" }, t(setup ? "sheet.confirm_note" : "sheet.confirm_note_new")),
+          form,
+        ]),
     status,
     errorBox,
   );

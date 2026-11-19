@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { accessPdf, checkAccessPage, httpWarning, pageTwoOnly, sheetPdf } from "../../src/flows/emergencySheet.mjs";
+import { accessPdf, checkAccessPage, httpWarning, pageTwoOnly, qrFits, sheetPdf } from "../../src/flows/emergencySheet.mjs";
 import { createI18n } from "../../src/i18n.mjs";
 import { web } from "./helpers.mjs";
 import { ACCOUNT_ID, EMAIL, QR_TEXT, RK, SERVER_URL, SK, decodeQr, pages, rects, sheet, streams } from "./sheetHelpers.mjs";
@@ -131,4 +131,32 @@ test("http_warning_is_true_for_anything_but_https", () => {
   assert.equal(httpWarning(undefined), true);
   assert.equal(httpWarning("https://vault.example.net"), false);
   assert.equal(httpWarning("HTTPS://vault.example.net"), false);
+});
+
+test("a_setup_text_of_another_shape_or_without_the_secret_key_bit_gets_no_page_1", () => {
+  const { t } = i18n();
+  for (const qr of ["ferret-setup:v1?u=x&a=1", "ferret-setup:v2?u=x&s=1", "https://x.example?s=1", "ferret://setup?s=1", "x"]) {
+    // Without the frozen bit nothing says whether the account has a secret key, so no page 1 is made, with or without one.
+    for (const secretKey of [null, SK]) {
+      assert.throws(() => sheetPdf({ sheet: sheet({ secretKey, qr }), t }), /sheet_qr_malformed/, qr);
+      assert.throws(() => accessPdf({ access: sheet({ secretKey, qr }).access, t }), /sheet_qr_malformed/, qr);
+    }
+  }
+});
+
+test("a_setup_text_over_512_bytes_fails_with_a_clear_error_and_no_qr_is_dropped_quietly", () => {
+  const { t } = i18n();
+  const head = "ferret-setup:v1?u=";
+  const tail = "&s=1";
+  const at = (bytes) => head + "a".repeat(bytes - head.length - tail.length) + tail;
+  assert.equal(at(512).length, 512);
+  assert.equal(qrFits(at(512)), true);
+  assert.equal(qrFits(at(513)), false);
+  assert.equal(qrFits(undefined), false);
+  // At the limit the code is drawn and decodes; one byte more is refused as a whole, never a page 1 without its QR code.
+  assert.equal(decodeQr(streams(sheetPdf({ sheet: sheet({ qr: at(512) }), t }))[0]), at(512));
+  const long = sheet({ qr: at(513) });
+  const clear = (e) => e instanceof RangeError && e.message === "qr_too_long";
+  assert.throws(() => sheetPdf({ sheet: long, t }), clear);
+  assert.throws(() => accessPdf({ access: long.access, t }), clear);
 });

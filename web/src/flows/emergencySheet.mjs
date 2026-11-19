@@ -12,7 +12,7 @@
 // returned; the bytes themselves are the caller's to wipe (`wipe()` of pdf.mjs). A JavaScript
 // string cannot be zeroed, and neither can the copy a download makes (see pdf.mjs).
 import { createPdf, PAGE_HEIGHT, PAGE_WIDTH } from "../pdf.mjs";
-import { qrModules } from "../qr.mjs";
+import { MAX_QR_BYTES, qrModules } from "../qr.mjs";
 
 /** @typedef {(key: string, vars?: Record<string, string | number>) => string} Translate */
 /**
@@ -52,13 +52,25 @@ export function httpWarning(serverUrl) {
 }
 
 /**
- * Whether the QR text says that the account has a secret key (`s=1`), is silent (no `s=`), or says no.
+ * Whether the QR text says that the account has a secret key (`s=1`) or not (`s=0`); null when it is not a
+ * setup text of the frozen format or has no such bit.
  * @param {string | undefined} payload
  * @returns {boolean | null}
  */
 function qrSecretKeyBit(payload) {
-  const found = typeof payload === "string" ? /[?&]s=([01])(?:&|$)/.exec(payload) : null;
+  const found = typeof payload === "string" && payload.startsWith("ferret-setup:v1?") ? /[?&]s=([01])(?:&|$)/.exec(payload) : null;
   return found === null ? null : found[1] === "1";
+}
+
+const encoder = new TextEncoder();
+
+/**
+ * Whether the setup text fits in one QR code (at most 512 bytes). A core address can be long enough that
+ * its text does not; that is shown, never left out quietly.
+ * @param {unknown} payload
+ */
+export function qrFits(payload) {
+  return typeof payload === "string" && encoder.encode(payload).length <= MAX_QR_BYTES;
 }
 
 /**
@@ -68,10 +80,12 @@ function qrSecretKeyBit(payload) {
  * @param {boolean | null} [expected] what the caller knows: whether the account uses a secret key
  */
 export function checkAccessPage(access, expected = null) {
+  if (typeof access.qr_payload !== "string" || access.qr_payload === "") throw new Error("sheet_qr_missing");
   const has = typeof access.secret_key_code === "string" && access.secret_key_code !== "";
   const bit = qrSecretKeyBit(access.qr_payload);
-  if ((bit !== null && bit !== has) || (expected !== null && expected !== has)) throw new Error("sheet_secret_key_mismatch");
-  if (typeof access.qr_payload !== "string" || access.qr_payload === "") throw new Error("sheet_qr_missing");
+  // The frozen `s=` bit has to be there: the guard does not rest on a text of another shape.
+  if (bit === null) throw new Error("sheet_qr_malformed");
+  if (bit !== has || (expected !== null && expected !== has)) throw new Error("sheet_secret_key_mismatch");
 }
 
 /**
@@ -236,6 +250,7 @@ function pageOne(pdf, access, t) {
   if (typeof access.secret_key_code === "string" && access.secret_key_code !== "") field(t("sheet.secret_key"), codeLines(ascii(access.secret_key_code), 14), 14);
 
   const payload = ascii(/** @type {string} */ (access.qr_payload));
+  if (!qrFits(payload)) throw new RangeError("qr_too_long");
   const code = qrModules(payload);
   const unit = Math.min(QR_MODULE, QR_SIDE / (code.size + 2 * QUIET));
   w.lines([t("sheet.pdf.qr")], 9, 12);

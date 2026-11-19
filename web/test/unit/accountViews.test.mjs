@@ -471,7 +471,7 @@ test("sheet_text_is_removed_from_the_dom_after_confirmation", async () => {
     await until(() => byRole(root, "open-vault") !== null);
     // Once both keys checked out the sheet is gone from the page.
     const after = textOf(root);
-    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "account.sheet"]) assert.ok(!after.includes(secret), secret);
+    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "sheet."]) assert.ok(!after.includes(secret), secret);
     assert.ok(byRole(root, "open-vault"));
     assert.equal(world.requests.filter((r) => r.url.endsWith("/register/finish")).length, 1);
     assert.deepEqual(went, ["spent"]);

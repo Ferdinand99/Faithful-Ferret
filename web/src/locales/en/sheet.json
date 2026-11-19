@@ -3,12 +3,12 @@
   "sheet.heading_new": "Your new recovery key",
   "sheet.warning": "Write this down or print it now. It is shown only once, and without it a forgotten master password cannot be recovered.",
   "sheet.warning_new": "Write this down or print it now. It is shown only once. The new key replaces the old one when you have typed it back.",
-  "sheet.new_browser": "To recover the vault in a new browser you need both pages: the setup text (the QR code) and the secret key from page 1, and the recovery key from page 2.",
+  "sheet.new_browser": "To recover the vault in a new browser you need both pages: the setup text (the QR code) and, if the account has one, the secret key from page 1, and the recovery key from page 2.",
   "sheet.page_access": "Page 1: access",
   "sheet.page_recovery": "Page 2: recovery key",
   "sheet.recovery_note": "The recovery key opens the vault on its own, together with access to the server. Keep this page apart from page 1, in a different place.",
-  "sheet.page_one_unchanged": "Page 1 does not change. Keep the page 1 you already have; this page replaces your old page 2.",
-  "sheet.page_one_missing": "Page 1 cannot be made here, because this device does not hold the secret key. Only page 2 is shown. Print page 1 again from the access sheet on a device that holds the secret key.",
+  "sheet.page_one_unchanged": "Page 1 does not change. Keep the page 1 you already have. This page replaces your old page 2 once a new backup of the server has been made; keep the old page 2 until then.",
+  "sheet.page_one_missing": "Page 1 of the sheet could not be made, so the account is not created. Reload the page and start again.",
   "sheet.http_warning": "This server is reached over plain http. What you send to it, and the address on this sheet, is not protected on the network. Use https for real data.",
   "sheet.server": "Server",
   "sheet.email": "E-mail",
@@ -39,5 +39,6 @@
   "sheet.pdf.title_access": "Emergency sheet, page 1: access",
   "sheet.pdf.title_recovery": "Emergency sheet, page 2: recovery key",
   "sheet.pdf.qr": "Setup QR code",
-  "sheet.pdf.qr_text": "Setup text (what the QR code holds)"
+  "sheet.pdf.qr_text": "Setup text (what the QR code holds)",
+  "sheet.qr_too_long": "This address is too long for one QR code, so the sheet has no QR code. Use the setup text on page 1 instead."
 }

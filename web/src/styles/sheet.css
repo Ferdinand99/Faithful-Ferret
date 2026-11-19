@@ -59,6 +59,11 @@
   margin-block: var(--sp-3);
 }
 
+/* Said on paper only (page 2 repeats that a new browser needs both pages). */
+.print-only {
+  display: none;
+}
+
 .sheet-download {
   margin-block: var(--sp-3);
 }
@@ -111,6 +116,15 @@
     padding: 0;
     border: 0;
     box-shadow: none;
+  }
+
+  /* Inside the vault shell too: of everything in #app, only the sheet (and what holds it) prints. */
+  #app:has(.sheet) :not(.sheet, .sheet *, :has(.sheet)) {
+    display: none;
+  }
+
+  .print-only {
+    display: block;
   }
 
   /* Page 2 holds the recovery key alone and starts a sheet of paper of its own. */

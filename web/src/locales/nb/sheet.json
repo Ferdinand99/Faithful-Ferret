@@ -3,12 +3,12 @@
   "sheet.heading_new": "Din nye gjenopprettingsnøkkel",
   "sheet.warning": "Skriv dette ned eller skriv det ut nå. Det vises bare én gang, og uten det kan et glemt hovedpassord ikke gjenopprettes.",
   "sheet.warning_new": "Skriv dette ned eller skriv det ut nå. Det vises bare én gang. Den nye nøkkelen erstatter den gamle når du har skrevet den inn igjen.",
-  "sheet.new_browser": "For å gjenopprette hvelvet i en ny nettleser trenger du begge sidene: oppsettsteksten (QR-koden) og den hemmelige nøkkelen fra side 1, og gjenopprettingsnøkkelen fra side 2.",
+  "sheet.new_browser": "For å gjenopprette hvelvet i en ny nettleser trenger du begge sidene: oppsettsteksten (QR-koden) og, om kontoen har en, den hemmelige nøkkelen fra side 1, og gjenopprettingsnøkkelen fra side 2.",
   "sheet.page_access": "Side 1: tilgang",
   "sheet.page_recovery": "Side 2: gjenopprettingsnøkkel",
   "sheet.recovery_note": "Gjenopprettingsnøkkelen åpner hvelvet alene, sammen med tilgang til tjeneren. Oppbevar denne siden adskilt fra side 1, på et annet sted.",
-  "sheet.page_one_unchanged": "Side 1 endres ikke. Behold den side 1 du allerede har; denne siden erstatter din gamle side 2.",
-  "sheet.page_one_missing": "Side 1 kan ikke lages her, fordi denne enheten ikke har den hemmelige nøkkelen. Bare side 2 vises. Skriv ut side 1 på nytt fra tilgangsarket på en enhet som har den hemmelige nøkkelen.",
+  "sheet.page_one_unchanged": "Side 1 endres ikke. Behold den side 1 du allerede har. Denne siden erstatter din gamle side 2 når det er tatt en ny backup av tjeneren; behold den gamle side 2 til da.",
+  "sheet.page_one_missing": "Side 1 av arket kunne ikke lages, så kontoen opprettes ikke. Last siden på nytt og start igjen.",
   "sheet.http_warning": "Denne tjeneren nås over vanlig http. Det du sender dit, og adressen på dette arket, er ikke beskyttet på nettet. Bruk https for ekte data.",
   "sheet.server": "Tjener",
   "sheet.email": "E-post",
@@ -39,5 +39,6 @@
   "sheet.pdf.title_access": "Nødark, side 1: tilgang",
   "sheet.pdf.title_recovery": "Nødark, side 2: gjenopprettingsnøkkel",
   "sheet.pdf.qr": "QR-kode for oppsett",
-  "sheet.pdf.qr_text": "Oppsettstekst (det QR-koden inneholder)"
+  "sheet.pdf.qr_text": "Oppsettstekst (det QR-koden inneholder)",
+  "sheet.qr_too_long": "Denne adressen er for lang for én QR-kode, så arket har ingen QR-kode. Bruk oppsettsteksten på side 1 i stedet."
 }
