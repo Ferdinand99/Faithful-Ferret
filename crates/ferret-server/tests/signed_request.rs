@@ -13,11 +13,10 @@ use std::sync::{Arc, Mutex, Once};
 
 use axum::body::Bytes;
 use axum::http::StatusCode;
-use ferret_core::{AccountId, AuthOp, AuthPublicKey, MutationOp, RecoveryPublicKey};
+use ferret_core::AuthOp;
 use ferret_server::auth::session::Origin;
-use ferret_server::http::extract::SignedBody;
 use ferret_server::wire::{MAX_SIGNED_BODY, b64url};
-use ferret_server_auth::{ScopeEffect, SessionScope, SignedPermit, WriteBasis};
+use ferret_server_auth::SessionScope;
 use support::session::{Issued, call_probe, issue, nonce_for, seed_signer, sign, signed_probe};
 use support::{Jar, Res, TestApp};
 use tracing_subscriber::fmt::MakeWriter;
@@ -249,35 +248,8 @@ async fn the_body_is_parsed_only_after_the_permit() {
     let res = send(&app, &session.jar, &nonce, OP, extra, extra).await;
     assert_code(&res, StatusCode::BAD_REQUEST, "bad_request");
 
-    // `parse` takes only a permit for exactly these bytes.
-    let signed = SignedBody {
-        nonce: [1; 32],
-        proof: [2; 64],
-        bytes: Bytes::from_static(BODY),
-    };
-    let permit_for = |body: &[u8]| {
-        use sha2::Digest as _;
-        let account_id = AccountId::from_bytes([3; 16]);
-        SignedPermit {
-            account_id,
-            op: MutationOp::UnlockMethodRecoveryPut,
-            body_sha256: sha2::Sha256::digest(body).into(),
-            session_effect: ScopeEffect::Keep,
-            basis: WriteBasis {
-                account_id,
-                vk_epoch: 1,
-                pk_a: AuthPublicKey::new([0; 32]),
-                pk_r: RecoveryPublicKey::new([0; 32]),
-                row_version: 0,
-            },
-        }
-    };
-    let other = signed
-        .parse::<serde_json::Value>(&permit_for(br#"{"n":8}"#))
-        .expect_err("a permit for other bytes");
-    assert_eq!(other.status, StatusCode::INTERNAL_SERVER_ERROR);
-    let parsed: serde_json::Value = signed.parse(&permit_for(BODY)).expect("its own permit");
-    assert_eq!(parsed["n"], 7);
+    // That `parse` takes only a permit for exactly these bytes is a unit
+    // test of `http::extract`: only the extractor can make a `SignedBody`.
 }
 
 #[tokio::test]

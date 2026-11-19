@@ -41,13 +41,13 @@ const RESET_ALLOWS: [Capability; 5] = [
 
 async fn scoped<C: Cap>(session: ScopedSession<C>) -> Json<Value> {
     Json(json!({
-        "scope": session.scope.as_str(),
-        "user_id": session.session.user_id,
+        "scope": session.scope().as_str(),
+        "user_id": session.session().user_id(),
     }))
 }
 
 async fn fresh(fresh: FreshReauth) -> Json<Value> {
-    Json(json!({ "reauth_at": fresh.reauth_at }))
+    Json(json!({ "reauth_at": fresh.reauth_at() }))
 }
 
 fn router(app: &TestApp) -> Router {

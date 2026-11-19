@@ -71,7 +71,7 @@ async fn challenge(
     state
         .challenges
         .limit()
-        .admit(&scoped.session.sid, now)
+        .admit(&scoped.session().sid(), now)
         .map_err(|wait| ApiError::throttled(wait.secs()))?;
 
     let caller = caller_from(&parts.headers, Some(peer));
@@ -95,9 +95,9 @@ async fn challenge(
         state.challenges.store(),
         &mut OsRng,
         &caller,
-        scoped.scope,
+        scoped.scope(),
         &binding,
-        &scoped.session.account,
+        &scoped.session().account(),
     )
     .map_err(|error| {
         // The reason is for this log only; the answer carries the public code.
