@@ -79,7 +79,8 @@ export function loginView(deps) {
       /** @type {any} */ (button).disabled = true;
       try {
         const outcome = await (deps.forget ?? forgetServer)({
-          api, session, store: deps.store, serverUrl: other.server, accountId: other.accountId,
+          // The other server's records go; the secret key sealed for THIS server is not part of that.
+          api, session: { ...session, forgetSecretKey: async () => undefined }, store: deps.store, serverUrl: other.server, accountId: other.accountId,
           confirm: ({ pending }) => askConfirm({
             t, host: root, title: "account.other.dialog_title",
             body: pending > 0 ? "account.other.dialog_body_pending" : "account.other.dialog_body",

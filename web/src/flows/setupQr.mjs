@@ -17,7 +17,7 @@ import { hex16 } from "../b64.mjs";
 
 /**
  * A refusal of the sheet's text. `code` is a short stable word the pages translate; it never carries the text.
- * `qr_server_url`, `qr_server_key`, `qr_profile` and `qr_account` are the hard errors of a mismatch;
+ * `qr_server_url`, `qr_server_key`, `qr_profile`, `qr_account` and `qr_sk_bit` are the hard errors of a mismatch;
  * `malformed_setup_qr`, `qr_unsupported`, `qr_too_large` and `kdf_profile_unknown` are the reader's.
  */
 export class SetupQrError extends Error {
@@ -85,6 +85,21 @@ function assertQr(qr) {
 }
 
 /**
+ * The origin of an address (scheme, lower-case host, port), or null when it is not an http(s) address.
+ * @param {unknown} address
+ * @returns {string | null}
+ */
+function originOf(address) {
+  if (typeof address !== "string") return null;
+  try {
+    const url = new URL(address);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Reads the text of the sheet's QR code with the core and checks the form of
  * the answer. Nothing is sent anywhere. Show `host` and `port` to the user and
  * have them confirm before the sign-in goes on.
@@ -143,9 +158,10 @@ export async function readSetupQr(client, text) {
  * The checks that run before KE3 is posted (and, the first two of them, before
  * the password is stretched):
  *
- *   - the address on the sheet is exactly the address of this page's server
- *     (`serverUrl`, as one canonical origin): a sheet for another server is no
- *     reason to talk to this one;
+ *   - the address on the sheet is the address of this page's server (`serverUrl`):
+ *     the two are compared as origins (scheme, host in lower case, port), so a
+ *     valid address with a path or capital letters is the same server, and a
+ *     sheet for another server is no reason to talk to this one;
  *   - the KSF profile the server states is not lower than the sheet's
  *     (`serverProfile`): a lower one would make the password cheaper to guess;
  *   - the OPAQUE key the server proved (`serverPublicKey`) is the sheet's.
@@ -159,7 +175,7 @@ export async function readSetupQr(client, text) {
  */
 export function checkQrBeforeKe3(qr, { serverUrl, serverPublicKey, serverProfile }) {
   assertQr(qr);
-  if (typeof serverUrl !== "string" || qr.serverUrl !== serverUrl) throw new SetupQrError("qr_server_url");
+  if (originOf(qr.serverUrl) === null || originOf(qr.serverUrl) !== originOf(serverUrl)) throw new SetupQrError("qr_server_url");
   if (serverProfile !== undefined && (!Number.isInteger(serverProfile) || serverProfile < qr.ksfProfile)) {
     throw new SetupQrError("qr_profile");
   }

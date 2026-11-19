@@ -31,8 +31,11 @@
 // about the secret key, and everything else is checked against what the server
 // says; a difference ends the sign-in with a hard error and nothing is pinned.
 // An account id is pinned under one server address only: `pinnedElsewhere` runs
-// right after `login/finish`, and a sign-in that would pin a second address is
-// refused (`pinned_elsewhere`) and its new session is ended.
+// right after `login/finish`, for a sign-in and for any re-authentication that
+// would make a new pin (this server holds no record of the account yet). Such a
+// pin is refused (`pinned_elsewhere`). A refused sign-in locks the vault and asks
+// the server to end the new session (best effort); a refused re-authentication
+// keeps the session it was made for, because nothing was pinned.
 import { ApiError } from "../api.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { rowToCore, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
@@ -104,10 +107,10 @@ export async function deviceStatus(env, email) {
  * @returns {Promise<{ skBit: boolean, skCode: string | null }>}
  */
 async function decideSecretKey(env, db, record, args, qr = null) {
-  // The sheet answers the question. An answer or a record that differs from it is no wrong password: it is the
-  // same refusal as any other disagreement about the bit.
+  // The sheet answers the question. An answer or a record that differs from it is no wrong password: nothing is
+  // sent, and the refusal says that the sheet and the device disagree.
   if (qr !== null && ((typeof args.skBit === "boolean" && args.skBit !== qr.skBit) || (record && (record.sk_bit === true) !== qr.skBit))) {
-    throw new AccountError("pinned_sk_bit");
+    throw new SetupQrError("qr_sk_bit");
   }
   const bit = qr !== null ? qr.skBit : typeof args.skBit === "boolean" ? args.skBit : record ? record.sk_bit === true : undefined;
   if (bit === undefined) throw new AccountError("sk_answer_required");
@@ -201,11 +204,12 @@ async function open(env, p) {
     // The server has named the account. It is the sheet's account, and no other address has it pinned: both
     // are asked before anything is pinned.
     if (qr !== null) checkQrAfterLogin(qr, { accountId: done.account_id });
-    if (p.purpose === "login") {
+    const record = await store.pinnedForSignIn(db, server, p.email, done.account_id);
+    // A re-authentication in a session that is already pinned here makes no new pin; every other path does.
+    if (p.purpose === "login" || !record) {
       const other = await store.pinnedElsewhere(db, server, done.account_id);
       if (other !== null) throw new AccountError("pinned_elsewhere", { server: other, accountId: done.account_id });
     }
-    const record = await store.pinnedForSignIn(db, server, p.email, done.account_id);
     const methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
     if (methods.vk_epoch !== done.vk_epoch) throw new AccountError("epoch_mismatch");
     const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);

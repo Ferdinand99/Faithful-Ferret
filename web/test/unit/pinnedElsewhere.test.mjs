@@ -2,12 +2,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { forgetServer } from "../../src/store/forget.mjs";
+import { hasSecretKey, saveSecretKey } from "../../src/flows/deviceSecret.mjs";
 import { loadPinnedByAccount, pinnedElsewhere, savePinned } from "../../src/store/pinned.mjs";
 import { loginView } from "../../src/views/login.mjs";
 import { createI18n } from "../../src/i18n.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACCOUNT, EMAIL, PASSWORD, SERVER, accountDocument, byRole, fire, pinnedRecord, scenario, settle, textOf } from "./accountHelpers.mjs";
+import { ACCOUNT, EMAIL, PASSWORD, SERVER, SK_CODE, accountDocument, byRole, fire, pinnedRecord, scenario, settle, textOf } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
 
 const OTHER = "https://other.example";
@@ -82,6 +83,62 @@ test("a_re_authentication_is_not_refused_for_a_record_elsewhere", async () => {
   const unlocked = await world.session.unlock({ password: PASSWORD });
   assert.equal(unlocked.purpose, "reauth");
   assert.equal(world.server.state.signedIn, true);
+});
+
+test("a_re_authentication_that_would_pin_a_second_address_is_refused", async () => {
+  // The server still reports a session (a refused sign-in's logout can fail), but this server holds no record of the account.
+  const world = await scenario({ skBit: false });
+  await pinOther(world);
+  world.server.state.signedIn = true;
+  const error = await world.session.unlock({ password: PASSWORD, skBit: false }).catch((e) => e);
+  assert.equal(error.code, "pinned_elsewhere");
+  assert.deepEqual(error.details, { server: OTHER, accountId: ACCOUNT });
+  // Nothing was pinned for this server, nothing was opened, and the session the re-authentication was made for is left alone.
+  assert.equal(await loadPinnedByAccount(world.db.store, SERVER, ACCOUNT), null);
+  assert.ok(!world.log.includes("GET /api/vault/unlock-methods"));
+  assert.ok(!world.log.includes("vault.unlock_password"));
+  assert.equal(world.session.current(), null);
+  assert.equal(world.server.state.signedIn, true);
+  assert.ok(world.client.locked >= 1);
+});
+
+test("forgetting_the_other_server_from_the_page_keeps_the_secret_key_sealed_for_this_server", async () => {
+  const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
+  const t = createI18n({ en: catalog("en"), nb: catalog("nb") }, "en").t;
+  const saved = globalThis.document;
+  globalThis.document = accountDocument();
+  try {
+    const world = await scenario({ skBit: true });
+    const db = world.db.store;
+    await pinOther(world);
+    assert.equal(await saveSecretKey(db, SERVER, ACCOUNT, SK_CODE), "saved");
+    assert.equal(await saveSecretKey(db, OTHER, ACCOUNT, SK_CODE), "saved");
+    const root = loginView({
+      t, session: world.session, entry: { page: "login", handoff: null, brokenHandoff: false, setupToken: null }, adminUrl: null,
+      api: world.api, store: world.store, go() {}, handoff: {}, info: null,
+    });
+    await settle();
+    byRole(root, "email").value = EMAIL;
+    byRole(root, "password").value = PASSWORD;
+    byRole(root, "sk-no").checked = true;
+    await fire(byRole(root, "sk-no"), "change");
+    await fire(byRole(root, "credentials"), "submit");
+    await settle();
+    assert.match(textOf(byRole(root, "error")), /another server address/);
+    await fire(byRole(root, "forget-other"), "click");
+    await settle();
+    await fire(byRole(root, "dialog-confirm"), "click");
+    await settle(60);
+    // The other server is gone from this device, and so is its sealed key; this server's key stays.
+    assert.equal(await pinnedElsewhere(db, SERVER, ACCOUNT), null);
+    assert.equal(await loadPinnedByAccount(db, OTHER, ACCOUNT), null);
+    assert.equal(await hasSecretKey(db, OTHER, ACCOUNT), false);
+    assert.equal(await hasSecretKey(db, SERVER, ACCOUNT), true);
+    assert.match(textOf(byRole(root, "done")), /forgotten https://other.example/);
+  } finally {
+    if (saved === undefined) delete globalThis.document;
+    else globalThis.document = saved;
+  }
 });
 
 test("the_page_offers_to_forget_the_other_server_first", async () => {

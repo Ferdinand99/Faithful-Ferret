@@ -105,13 +105,20 @@ test("the_checks_before_ke3_name_the_address_the_profile_and_the_key", async () 
   assert.doesNotThrow(() => checkQrBeforeKe3(qr, { ...seen, serverProfile: 3 }));
   const refused = (change, code) => assert.throws(() => checkQrBeforeKe3(qr, { ...seen, ...change }), { code, name: "SetupQrError" });
   refused({ serverUrl: "https://other.example" }, "qr_server_url");
-  refused({ serverUrl: `${SERVER}/` }, "qr_server_url");
   refused({ serverUrl: "http://vault.example" }, "qr_server_url");
   refused({ serverProfile: 1 }, "qr_profile");
   refused({ serverProfile: 1.5 }, "qr_profile");
   refused({ serverPublicKey: new Uint8Array(32).fill(8) }, "qr_server_key");
   refused({ serverPublicKey: new Uint8Array(31).fill(9) }, "qr_server_key");
   refused({ serverPublicKey: new Uint8Array(32) }, "qr_server_key");
+  // The same server written another way is the same server: a path, capital letters in the host, the default port.
+  for (const url of [`${SERVER}/`, `${SERVER}/some/path?x=1`, "https://Vault.EXAMPLE", "https://vault.example:443/"]) {
+    const other = await readSetupQr(client(), qrText({ url, profile: 2 }));
+    assert.doesNotThrow(() => checkQrBeforeKe3(other, seen), url);
+  }
+  // A page address that is no address is never "the same".
+  assert.throws(() => checkQrBeforeKe3(qr, { ...seen, serverUrl: "not a url" }), { code: "qr_server_url" });
+  assert.throws(() => checkQrBeforeKe3(qr, { ...seen, serverUrl: "ftp://vault.example" }), { code: "qr_server_url" });
   // A value that is not known yet is not checked; the address always is.
   assert.doesNotThrow(() => checkQrBeforeKe3(qr, { serverUrl: SERVER }));
   assert.doesNotThrow(() => checkQrBeforeKe3(qr, { serverUrl: SERVER, serverProfile: 2 }));

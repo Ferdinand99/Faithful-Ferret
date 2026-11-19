@@ -40,8 +40,18 @@ test("a_matching_sheet_signs_in_and_the_checks_run_in_order", async () => {
   assert.ok(await loadPinned(w.db.store, SERVER, EMAIL));
 });
 
+test("a_valid_sheet_address_with_a_path_or_capital_letters_is_this_server", async () => {
+  for (const url of [`${SERVER}/`, "https://Vault.Example/some/path"]) {
+    const w = await world();
+    const unlocked = await signIn(w, qrText({ url }), { skCode: SK_CODE });
+    assert.equal(unlocked.accountId, ACCOUNT, url);
+    // What is pinned is the page's own origin, not the text of the sheet.
+    assert.equal((await loadPinned(w.db.store, SERVER, EMAIL)).server_url, SERVER);
+  }
+});
+
 test("a_server_url_other_than_this_origin_is_refused", async () => {
-  for (const url of ["https://other.example", "http://vault.example", "https://vault.example:8443", `${SERVER}/vault`]) {
+  for (const url of ["https://other.example", "http://vault.example", "https://vault.example:8443", "https://vault.example.evil.test/"]) {
     const w = await world();
     await assert.rejects(signIn(w, qrText({ url }), { skCode: SK_CODE }), { code: "qr_server_url" }, url);
     // Nothing went to any server, the password was never handed to the core, and nothing was saved.
@@ -125,12 +135,12 @@ test("the_sheet_sk_bit_answers_the_secret_key_question", async () => {
 
   // An answer that differs from the sheet is not a wrong password and is not sent.
   const clash = await world();
-  await assert.rejects(signIn(clash, qrText({ sk: true }), { skBit: false }), { code: "pinned_sk_bit" });
+  await assert.rejects(signIn(clash, qrText({ sk: true }), { skBit: false }), { code: "qr_sk_bit" });
   assert.equal(clash.requests.length, 0);
   // Neither is a record on this device that differs from it.
   const record = await world({ skBit: false });
   await savePinned(record.db.store, SERVER, ACCOUNT, EMAIL, pinnedRecord({ skBit: false }));
-  await assert.rejects(signIn(record, qrText({ sk: true }), { skCode: SK_CODE }), { code: "pinned_sk_bit" });
+  await assert.rejects(signIn(record, qrText({ sk: true }), { skCode: SK_CODE }), { code: "qr_sk_bit" });
   assert.equal(record.requests.length, 0);
 });
 
@@ -389,7 +399,7 @@ test("the_page_without_a_sheet_signs_in_as_before", async () => {
 });
 
 test("the_error_texts_of_the_sheet_checks_are_in_both_languages", () => {
-  for (const code of ["qr_server_url", "qr_server_key", "qr_profile", "qr_account", "qr_not_confirmed", "malformed_setup_qr", "qr_unsupported", "qr_too_large", "pinned_elsewhere"]) {
+  for (const code of ["qr_server_url", "qr_server_key", "qr_profile", "qr_account", "qr_not_confirmed", "malformed_setup_qr", "qr_unsupported", "qr_too_large", "pinned_elsewhere", "qr_sk_bit"]) {
     for (const lang of ["en", "nb"]) {
       const texts = catalog(lang);
       assert.ok(texts[`account.error.${code}`], `${lang}: ${code}`);
@@ -397,5 +407,11 @@ test("the_error_texts_of_the_sheet_checks_are_in_both_languages", () => {
   }
   assert.match(catalog("en")["account.error.qr_server_key"], /can be an attack/);
   assert.match(catalog("nb")["account.error.qr_server_key"], /kan være et angrep/);
+  // No text says that nothing of the password was sent, or that the server was signed out.
+  for (const lang of ["en", "nb"]) {
+    for (const key of ["account.error.qr_server_key", "account.qr.tofu", "account.error.pinned_elsewhere"]) {
+      assert.ok(!/anything of the password|noe av passordet|signed out again|logget ut igjen/.test(catalog(lang)[key]), `${lang}: ${key}`);
+    }
+  }
   assert.equal(coded("x").code, "x");
 });
