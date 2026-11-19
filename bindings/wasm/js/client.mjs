@@ -127,6 +127,39 @@
 // side; the copy is not opened (call `open_item` for it). An item that holds a
 // passkey is `invalid_state`, an item of a newer schema `read_only_schema`.
 //
+// Pages: `vault.match_page(pageUrl, handles)` resolves `[{ handle, how }]`, the
+// open items among `handles` whose saved addresses match the page, with the
+// best result per item (`how` is `"exact"`, `"host"` or `"domain"`). It reads the
+// saved addresses only. A handle listed twice appears twice in the answer. A
+// handle that is not open is `invalid_handle` for the whole call, and a list of
+// more than 4096 handles is `invalid_input`. The
+// matching rule is the core's alone: open the items for a match in batches
+// (`open_item`), call `match_page`, and close each handle (`close_item`) right
+// after. `page_origin(pageUrl)` resolves the origin text (`https://host`, the
+// port only when it is not the default; `http` and IP hosts are accepted),
+// `same_site(a, b)` a boolean (an address that is no web address is on no
+// site) and `display_host(pageUrl)` `{ a_label, unicode }`: show the Unicode
+// name, and the A-label next to it when they differ. An address that is no
+// web address is `malformed_origin` for `page_origin` and `display_host`.
+//
+// A new recovery key: `vault.renew_recovery(pinned, currentRecoveryWrap,
+// manifestRow)` resolves `{ wrap, pk_r, manifest, pinned }`. The new key stays
+// in the worker: show it with `vault.reveal_recovery_code()`, have it typed back
+// with `vault.verify_recovery_setup(typed, wrap)` **before** the request is
+// sent, sign the body with `vault.auth_sign("unlock-method.recovery.put", nonce,
+// body)`, and store `pinned` once the server has accepted it. If the request is
+// not sent, `vault.clear_setup_secrets()` drops the key.
+//
+// Import: `importPort()` returns a `MessagePort` to the vault worker for an
+// import worker (transfer it there). It answers only
+// `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
+// with `{ id, ok: true, value: { rev, envelope, tag } }` or `{ id, ok: false,
+// code }`: it seals new items and does nothing else, so the drafts of an import
+// never pass through the page. It is closed (a last message `{ closed: true }`
+// where the worker is still there to send it) when the vault is locked or
+// another vault is opened, and with `lock()`. A port asked for while no vault
+// is open is closed at once.
+//
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
 // `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(
@@ -137,6 +170,7 @@
 
 import {
   FerretError,
+  IMPORT_PORT,
   SECRET_ARGS,
   TEXT_ARGS,
   argsOf,
@@ -219,6 +253,22 @@ class WorkerChannel {
     this.pending.clear();
     this.end();
     for (const w of waiting) w.reject(new FerretError(code));
+  }
+
+  /**
+   * Hands the worker one end of a new channel as an import port and returns
+   * the other end. No answer is awaited: a port the worker refuses is closed.
+   */
+  importPort() {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      this.start().postMessage({ id: this.nextId++, target: this.target, method: IMPORT_PORT, args: [] }, [port2]);
+    } catch {
+      port1.close();
+      port2.close();
+      throw new FerretError("worker_failed");
+    }
+    return port1;
   }
 
   end() {
@@ -304,7 +354,24 @@ export function createClient(options = {}) {
   // to the browser; it does not overwrite it, which the browser and the
   // operating system do when they hand the pages to someone else. The calls
   // that were waiting are rejected with `locked`.
+  // The import ports handed out and not yet consumed. Ending the vault worker
+  // closes their far end; a port that has not been transferred yet is closed
+  // here as well (closing one that has been transferred does nothing). The
+  // client holds them weakly, so a port the page has transferred and let go
+  // of is not kept alive here; a port that closes leaves the set at once, and
+  // `lock()` empties it.
+  const importPorts = new Set();
+  const dropPort = (ref) => importPorts.delete(ref);
+
   const lock = () => {
+    for (const ref of [...importPorts]) {
+      try {
+        ref.deref()?.close();
+      } catch {
+        // Already closed or transferred.
+      }
+    }
+    importPorts.clear();
     vault.fail("locked");
     for (const channel of [...jobChannels]) channel.fail("locked");
     jobChannels.clear();
@@ -346,6 +413,25 @@ export function createClient(options = {}) {
             : undefined,
       },
     ),
+
+    /**
+     * A port to the vault worker that seals new items and nothing else, for an
+     * import worker. See "Import" above.
+     */
+    importPort() {
+      // Ports that have been collected are consumed: forget them.
+      for (const ref of [...importPorts]) if (!ref.deref()) dropPort(ref);
+      const port = vault.importPort();
+      const ref = new WeakRef(port);
+      importPorts.add(ref);
+      port.addEventListener?.("close", () => dropPort(ref), { once: true });
+      return port;
+    },
+
+    /** How many import ports the client still holds (for tests). */
+    get openImportPorts() {
+      return [...importPorts].filter((ref) => ref.deref()).length;
+    },
 
     /**
      * Locks: the vault is wiped, the vault worker is ended (which frees its

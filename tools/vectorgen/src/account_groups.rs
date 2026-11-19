@@ -767,6 +767,454 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
     })
 }
 
+// ------------------------------------------------------- recovery renew
+
+/// A manifest sealed under the vault key `vk` (hex) at epoch 1, as the
+/// `manifest` row of a case.
+fn sealed_manifest_json(
+    vk: &str,
+    rev: u64,
+    methods: Vec<ferret_core::ManifestEntry>,
+    extra: Vec<(String, ferret_core::cbor::Value)>,
+    seed: &str,
+) -> Result<Value, Error> {
+    let vault = ferret_core::UnlockedVault::from_vault_key(
+        ferret_core::VaultContext {
+            account_id: ferret_core::AccountId::from_bytes(ACCOUNT),
+            vault_id: ferret_core::VaultId::from_bytes(VAULT),
+            vk_epoch: 1,
+        },
+        ferret_core::VaultKey::from_test_bytes(
+            ferret_core::testing::hex_decode(vk)
+                .map_err(|_| "vk is not hex")?
+                .try_into()
+                .map_err(|_| "vk is not 32 bytes")?,
+        ),
+    )
+    .map_err(|e| e.code())?;
+    let mut manifest = ferret_core::Manifest::new(1, methods);
+    manifest.extra = extra;
+    let sealed = ferret_core::encrypt_manifest(
+        &mut TestRng::new(format!("recovery-renew/{seed}/manifest").as_bytes()),
+        &vault,
+        rev,
+        &manifest,
+    )
+    .map_err(|e| e.code())?;
+    Ok(json!({
+        "rev": sealed.rev.to_string(),
+        "envelope": h(&sealed.envelope),
+        "tag": h(&sealed.tag),
+    }))
+}
+
+/// `recovery_renew.json`: a new recovery key for an open vault.
+pub(crate) fn recovery_renew() -> Result<Vec<u8>, Error> {
+    use ferret_core::cbor::Value as Cbor;
+    use ferret_core::{ManifestEntry, MethodId};
+
+    let mut m = Maker { cases: vec![] };
+    let server = Server::new(&mut TestRng::new(b"recovery-renew/server"));
+    let server_key = h(&server.public_key());
+    let sk = sk_bytes();
+    let reg = registration(&server, PASSWORD, Some(sk), "recovery-renew")?;
+
+    // The account the cases start from (made, not listed: account.json has
+    // the creation cases).
+    let create = json!({
+        "account_id": h(&ACCOUNT),
+        "vault_id": h(&VAULT),
+        "password_method_id": h(&[0x70; 16]),
+        "recovery_method_id": h(&[0x71; 16]),
+        "ksf_profile": 1,
+        "password": PASSWORD,
+        "policy": "with_secret_key",
+        "input_secret_key": h(&sk),
+        "secret_key": h(&sk),
+        "registration": reg,
+    });
+    let (created, _) = Maker::run("account.create", &create, "recovery-renew/create");
+    let created = created.map_err(|e| format!("create: {}", e.code()))?;
+    let vk_hex = created["vk"].as_str().ok_or("vk")?.to_owned();
+    let pk_a = created["pk_a"].as_str().ok_or("pk_a")?.to_owned();
+    let wraps = created["wraps"].as_array().ok_or("wraps")?.clone();
+    let manifest = created["manifest"].clone();
+    let vault = vault_fields(&vk_hex, 1);
+    let rk_wrap = |w: &Value, generation: Option<u64>| -> Value {
+        let mut w = merge(w.clone(), json!({ "type": "recovery" }));
+        if let Some(g) = generation {
+            w["kek_generation"] = json!(g.to_string());
+        }
+        w
+    };
+    let pin =
+        |floors: (Option<u64>, Option<u64>)| pinned_json(1, true, Some(&server_key), &pk_a, floors);
+    let input = |current: Value, manifest: &Value, pinned: Value, sign: bool| {
+        merge(
+            vault.clone(),
+            json!({
+                "current": current,
+                "manifest": manifest,
+                "pinned": pinned,
+                "sign": sign.then(|| json!({ "nonce": h(&[0x55; 32]), "body": h(b"{\"put\":\"recovery\"}") })),
+            }),
+        )
+    };
+    let op = "account.renew_recovery";
+
+    // ---- renewals
+    let (renewed, draws) = m.ok(
+        "recovery_renew/001",
+        "a new recovery key: generation 1 to 2, same method id, with the proof",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((Some(1), Some(1))),
+            true,
+        ),
+    )?;
+    // Written apart from the core: the draws, the new key, the nonce of the
+    // wrap, the method id and `pk_r` of the new key.
+    check(draws.len() == 3, "three draws")?;
+    check(
+        renewed["recovery_key"] == json!(draws[0]),
+        "the new recovery key is the first draw",
+    )?;
+    check(
+        renewed["recovery_key"] != created["rk"],
+        "the recovery key is new",
+    )?;
+    check(
+        renewed["recovery_wrap"]["wrap"]
+            .as_str()
+            .is_some_and(|w| w.starts_with(draws[1].as_str())),
+        "the wrap starts with its nonce",
+    )?;
+    check(
+        renewed["recovery_wrap"]["method_id"] == wraps[1]["method_id"],
+        "the method id is kept",
+    )?;
+    check(
+        renewed["recovery_wrap"]["kek_generation"] == json!("2"),
+        "generation 2",
+    )?;
+    check(renewed["manifest"]["rev"] == json!("2"), "manifest rev 2")?;
+    let new_rk = RecoveryKey::from_test_bytes(
+        ferret_core::testing::hex_decode(renewed["recovery_key"].as_str().ok_or("rk")?)
+            .map_err(|_| "rk is not hex")?
+            .try_into()
+            .map_err(|_| "rk is not 32 bytes")?,
+    );
+    let pk_r =
+        ferret_core::recovery_public_key(&new_rk, &ferret_core::AccountId::from_bytes(ACCOUNT))
+            .map_err(|e| e.code())?;
+    check(renewed["pk_r"] == json!(h(&pk_r)), "pk_r is of the new key")?;
+    check(created["pk_r"] != renewed["pk_r"], "pk_r is new")?;
+
+    let entries = |recovery_generation: u64| {
+        vec![
+            ManifestEntry::new(1, MethodId::from_bytes([0x70; 16]), 1),
+            ManifestEntry::new(2, MethodId::from_bytes([0x71; 16]), recovery_generation),
+        ]
+    };
+    let manifest_5 = sealed_manifest_json(&vk_hex, 3, entries(5), vec![], "m5")?;
+    let manifest_4 = sealed_manifest_json(&vk_hex, 3, entries(4), vec![], "m4")?;
+    let (out, _) = m.ok(
+        "recovery_renew/002",
+        "the manifest lists generation 5, the server's wrap and the floor 1: the new wrap is 6",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest_5,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("6"),
+        "generation 6",
+    )?;
+    check(out["manifest"]["rev"] == json!("4"), "manifest rev 4")?;
+    let (out, _) = m.ok(
+        "recovery_renew/003",
+        "the server's wrap says 9, the manifest and the floor 1: the new wrap is 10",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(9)),
+            &manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("10"),
+        "generation 10",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/004",
+        "the floor, the server's wrap and the manifest all at 4: the new wrap is 5",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(4)),
+            &manifest_4,
+            pin((Some(1), Some(4))),
+            false,
+        ),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("5"),
+        "generation 5",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/005",
+        "no password floor is needed, only the recovery floor",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((None, Some(1))),
+            false,
+        ),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("2"),
+        "generation 2",
+    )?;
+    let mut passkey = ManifestEntry::passkey(MethodId::from_bytes([0x75; 16]), 4, vec![9, 8, 7]);
+    passkey.extra = vec![("aaguid".into(), Cbor::text("abc"))];
+    let mut recovery_entry = ManifestEntry::new(2, MethodId::from_bytes([0x71; 16]), 1);
+    recovery_entry.extra = vec![("created".into(), Cbor::uint(77))];
+    let rich = sealed_manifest_json(
+        &vk_hex,
+        4,
+        vec![
+            ManifestEntry::new(1, MethodId::from_bytes([0x70; 16]), 1),
+            passkey,
+            recovery_entry,
+        ],
+        vec![("future".into(), Cbor::uint(7))],
+        "rich",
+    )?;
+    m.ok(
+        "recovery_renew/006",
+        "a passkey entry and unknown keys at both levels are kept; only the recovery generation changes",
+        op,
+        input(rk_wrap(&wraps[1], None), &rich, pin((Some(1), Some(1))), false),
+    )?;
+
+    // ---- refusals, before anything is drawn
+    m.err(
+        "recovery_renew/007",
+        "the server's recovery wrap is below the pinned floor: a rollback",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        ),
+        "pinned_kek_generation",
+    )?;
+    m.err(
+        "recovery_renew/008",
+        "the record has no recovery floor: seed it from the manifest first",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((Some(1), None)),
+            false,
+        ),
+        "malformed_pinned_record",
+    )?;
+    let top = u64::from(u32::MAX);
+    m.err(
+        "recovery_renew/009",
+        "a recovery floor at the largest generation cannot be raised",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(top)),
+            &manifest,
+            pin((Some(1), Some(top))),
+            false,
+        ),
+        "malformed_pinned_record",
+    )?;
+    m.err(
+        "recovery_renew/010",
+        "the current wrap is the password wrap",
+        op,
+        input(
+            merge(
+                wraps[0].clone(),
+                json!({ "type": "password", "ksf_profile": 1 }),
+            ),
+            &manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+        "unsupported",
+    )?;
+    m.err(
+        "recovery_renew/011",
+        "the manifest does not list the server's recovery wrap",
+        op,
+        input(
+            merge(
+                rk_wrap(&wraps[1], None),
+                json!({ "method_id": h(&[0x72; 16]) }),
+            ),
+            &manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+        "malformed_entries",
+    )?;
+    let mut bad_manifest = manifest.clone();
+    let env = bad_manifest["envelope"]
+        .as_str()
+        .ok_or("envelope")?
+        .to_owned();
+    let flip = if &env[80..81] == "0" { "1" } else { "0" };
+    bad_manifest["envelope"] = json!(format!("{}{}{}", &env[..80], flip, &env[81..]));
+    m.err(
+        "recovery_renew/012",
+        "a changed byte in the manifest row",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &bad_manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+        "decrypt",
+    )?;
+    m.err(
+        "recovery_renew/013",
+        "the record is for another vault key",
+        op,
+        input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pinned_json(
+                1,
+                true,
+                Some(&server_key),
+                &h(&[0x09; 32]),
+                (Some(1), Some(1)),
+            ),
+            false,
+        ),
+        "pinned_auth_key",
+    )?;
+    let mut later = pin((Some(1), Some(1)));
+    later["vk_epoch_max"] = json!("2");
+    m.err(
+        "recovery_renew/014",
+        "the record has seen a later epoch than the vault's",
+        op,
+        input(rk_wrap(&wraps[1], None), &manifest, later, false),
+        "pinned_vk_epoch",
+    )?;
+
+    // ---- the server's values below the floor, and after an accepted restore
+    let restore = |input: Value| merge(input, json!({ "after_restore": true }));
+    m.err(
+        "recovery_renew/015",
+        "the server's wrap is at the floor but its manifest lists a lower generation: a rollback",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(3)),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        ),
+        "pinned_kek_generation",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/016",
+        "after an accepted restore, a wrap and manifest at 1 below the floor 3: the new wrap is 4",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        )),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("4"),
+        "generation 4, above the floor",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/017",
+        "after an accepted restore with the floor strictly the highest (7): the new wrap is 8",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], Some(2)),
+            &manifest,
+            pin((Some(1), Some(7))),
+            false,
+        )),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("8"),
+        "generation 8",
+    )?;
+    m.err(
+        "recovery_renew/018",
+        "after an accepted restore the other checks still apply: a record for another vault key",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pinned_json(
+                1,
+                true,
+                Some(&server_key),
+                &h(&[0x09; 32]),
+                (Some(1), Some(3)),
+            ),
+            false,
+        )),
+        "pinned_auth_key",
+    )?;
+    m.err(
+        "recovery_renew/019",
+        "after an accepted restore the other checks still apply: the manifest does not list the wrap",
+        op,
+        restore(input(
+            merge(rk_wrap(&wraps[1], None), json!({ "method_id": h(&[0x72; 16]) })),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        )),
+        "malformed_entries",
+    )?;
+    m.err(
+        "recovery_renew/020",
+        "the server's wrap is at the largest generation: no later one exists",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(top)),
+            &manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+        "generation_exhausted",
+    )?;
+
+    render(&VectorFile {
+        format: FORMAT.into(),
+        group: "recovery_renew".into(),
+        suite: 1,
+        spec: "Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1".into(),
+        generator: generator(),
+        cases: m.cases,
+    })
+}
+
 // ---------------------------------------------------------------- sheet
 
 pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
