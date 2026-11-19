@@ -13,7 +13,10 @@
 </p>
 
 > **Status: in development.** The cryptographic core, the OPAQUE server library, the server and the web vault work
-> end to end in testing (v0.2.0). It is not for real passwords yet. There is no external audit, and none is planned.
+> end to end in testing (v0.3.0), now with safe sync between devices and browser tabs: conflicts keep both versions
+> side by side and never overwrite silently. The recovery key, encrypted export and import, and automatic backups are
+> in progress, and the browser extension has started (Firefox first) but is not usable yet. It is not for real
+> passwords yet. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -103,8 +106,8 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 1. Design, throwaway prototypes and the security design (done).
 2. The server and the shared Rust cryptographic core (first version done).
 3. The web vault (first version done, work continues).
-4. Safe sync, recovery and daily use (next).
-5. The browser extension and the iOS and Android apps (later).
+4. Safe sync, recovery and daily use (safe sync done in v0.3.0; the recovery key, encrypted export and import, automatic backups and an emergency sheet are in progress).
+5. The browser extension and the iOS and Android apps (the extension has started, Firefox first, and is not usable yet; the apps are later).
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).
