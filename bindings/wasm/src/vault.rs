@@ -21,11 +21,13 @@ use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, MethodId, OsRng, Pin, PinnedField, PrfOutput, RecoveryKey,
-    RollbackMemory, SecretKey, ServerRow, SyncMemory, UnlockedVault, auth_sign, decrypt_item,
-    decrypt_manifest, emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item,
-    make_checkpoint, make_tombstone, parse_otpauth, renew_recovery, totp_code, totp_seconds_left,
-    verify_checkpoint, verify_recovery_setup, verify_secret_key_entry, verify_tombstone,
+    KekDevPin, KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, Pinned, PinnedField,
+    PrfOutput, RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow, SyncMemory,
+    UnlockedVault, WrapRecord, auth_sign, decode_recovery_key, decrypt_item, decrypt_manifest,
+    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
+    make_tombstone, parse_otpauth, renew_recovery, renew_recovery_after_restore, totp_code,
+    totp_seconds_left, verify_checkpoint, verify_recovery_setup, verify_secret_key_entry,
+    verify_tombstone,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,6 +54,9 @@ pub(crate) struct OpenItem {
 pub(crate) struct Setup {
     pub(crate) recovery_key: Option<RecoveryKey>,
     pub(crate) secret_key: Option<SecretKey>,
+    /// Whether the account has a secret key, whether or not this setup holds
+    /// it. Page 1 of the sheet states it, so a full sheet needs the key.
+    pub(crate) sk_bit: bool,
     pub(crate) server_public_key: [u8; 32],
     pub(crate) ksf_profile: KsfProfile,
     rk_confirmed: bool,
@@ -62,12 +67,14 @@ impl Setup {
     pub(crate) fn new(
         recovery_key: Option<RecoveryKey>,
         secret_key: Option<SecretKey>,
+        sk_bit: bool,
         server_public_key: [u8; 32],
         ksf_profile: KsfProfile,
     ) -> Self {
         Self {
             recovery_key,
             secret_key,
+            sk_bit,
             server_public_key,
             ksf_profile,
             rk_confirmed: false,
@@ -216,7 +223,57 @@ impl Vault {
     pub(crate) fn unlocked(&self) -> Res<&UnlockedVault> {
         Ok(&self.inner()?.vault)
     }
+
+    /// The body of `renew_recovery` and `renew_recovery_after_restore`:
+    /// `flow` is the core entry. Every check of the binding (an open vault,
+    /// no pending setup secrets, the arguments, a pinned server key, a known
+    /// profile) comes before it, and the new key goes into the setup only
+    /// once the reply has been made.
+    fn renew(
+        &mut self,
+        pinned: JsValue,
+        current: JsValue,
+        manifest: JsValue,
+        flow: RenewFlow,
+    ) -> Res<JsValue> {
+        if self.inner()?.setup.is_some() {
+            return Err(Error::InvalidState.into());
+        }
+        let record = from_js::<PinnedDto>(pinned)?.core()?;
+        let current = from_js::<WrapDto>(current)?.core()?;
+        let row: RowDto = from_js(manifest)?;
+        let server_public_key = record
+            .server_public_key
+            .ok_or(Error::Pinned(PinnedField::ServerKey))?;
+        let ksf_profile = KsfProfile::from_wire(u32::from(record.ksf_profile))?;
+        let inner = self.inner_mut()?;
+        let renewed = flow(&mut OsRng, &inner.vault, &record, &current, &row.core())?;
+        let new_record = renewed.pinned(&record)?;
+        let out = to_js(&RenewedDto {
+            wrap: WrapDto::of(&renewed.recovery_wrap),
+            pk_r: renewed.pk_r,
+            manifest: SealedDto::of(&renewed.manifest),
+            pinned: PinnedDto::of(&new_record),
+        })?;
+        inner.setup = Some(Setup::new(
+            Some(renewed.recovery_key),
+            None,
+            record.sk_bit,
+            server_public_key,
+            ksf_profile,
+        ));
+        Ok(out)
+    }
 }
+
+/// A core entry that makes a new recovery key.
+type RenewFlow = fn(
+    &mut OsRng,
+    &UnlockedVault,
+    &Pinned,
+    &WrapRecord,
+    &ManifestRow<'_>,
+) -> Result<RenewedRecovery, Error>;
 
 // ------------------------------------------------------------ DTOs here
 
@@ -879,17 +936,26 @@ impl Vault {
     /// with the new generation. `pinned` is the record of this device with
     /// its floors seeded (`seed_pinned`) and the OPAQUE server key pinned
     /// (`pinned_server_key` without one: the new sheet needs it);
-    /// `current` the recovery wrap the server holds (a lower generation
-    /// than the pinned floor is `pinned_kek_generation`) and `manifest` the
-    /// current manifest row. Nothing is drawn before every check has passed.
+    /// `current` the recovery wrap the server holds and `manifest` the
+    /// current manifest row. A wrap or manifest entry below the pinned
+    /// recovery floor is a rollback and is `pinned_kek_generation` (see
+    /// `renew_recovery_after_restore`). Nothing is drawn before every check
+    /// has passed.
     ///
     /// Returns `{ wrap, pk_r, manifest, pinned }`, where `pinned` is the
     /// record to store once the server has accepted the request. Sign it
     /// with `auth_sign("unlock-method.recovery.put", nonce, body)`. The new
-    /// key never leaves WASM here: it takes the place of any setup secrets
-    /// this vault held and is shown with `reveal_recovery_code()` until it
-    /// has been typed back (`verify_recovery_setup` with the new wrap; do
-    /// that before the request is sent), `clear_setup_secrets()` or `lock()`.
+    /// key never leaves WASM here: it is shown with `reveal_recovery_code()`
+    /// until it has been typed back (`verify_recovery_setup` with the new
+    /// key and the new wrap; do that before the request is sent),
+    /// `clear_setup_secrets()` or `lock()`. The full sheet of an account with
+    /// a secret key is `secret_key_not_held` from then on: print page 2 from
+    /// `reveal_recovery_code()`.
+    ///
+    /// While this vault still holds setup secrets that were not typed back
+    /// (a new account, a recovery, an earlier renewal), the call is refused
+    /// with `invalid_state` and nothing is made: discard them first with
+    /// `clear_setup_secrets()` if that is what the user wants.
     ///
     /// Spec: Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1.
     pub fn renew_recovery(
@@ -898,39 +964,35 @@ impl Vault {
         current: JsValue,
         manifest: JsValue,
     ) -> Result<JsValue, JsValue> {
-        run(|| {
-            self.inner()?;
-            let record = from_js::<PinnedDto>(pinned)?.core()?;
-            let current = from_js::<WrapDto>(current)?.core()?;
-            let row: RowDto = from_js(manifest)?;
-            let server_public_key = record
-                .server_public_key
-                .ok_or(Error::Pinned(PinnedField::ServerKey))?;
-            let ksf_profile = KsfProfile::from_wire(u32::from(record.ksf_profile))?;
-            let inner = self.inner_mut()?;
-            let renewed = renew_recovery(&mut OsRng, &inner.vault, &record, &current, &row.core())?;
-            let new_record = renewed.pinned(&record)?;
-            let out = to_js(&RenewedDto {
-                wrap: WrapDto::of(&renewed.recovery_wrap),
-                pk_r: renewed.pk_r,
-                manifest: SealedDto::of(&renewed.manifest),
-                pinned: PinnedDto::of(&new_record),
-            })?;
-            inner.setup = Some(Setup::new(
-                Some(renewed.recovery_key),
-                None,
-                server_public_key,
-                ksf_profile,
-            ));
-            Ok(out)
-        })
+        run(|| self.renew(pinned, current, manifest, renew_recovery))
+    }
+
+    /// `renew_recovery` after the user has accepted an older server state in
+    /// which the unlock methods went back (a restore note with an older
+    /// manifest, for the server's current restore epoch). The only
+    /// difference: a recovery wrap or manifest entry of the server below the
+    /// pinned recovery floor is renewed over instead of refused with
+    /// `pinned_kek_generation`. Every other check applies, the old wrap is
+    /// never opened, the new generation is still above the floor and the
+    /// returned record only raises it. Call it for that case only; anywhere
+    /// else a wrap below the floor is a rollback.
+    ///
+    /// Spec: Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1.
+    pub fn renew_recovery_after_restore(
+        &mut self,
+        pinned: JsValue,
+        current: JsValue,
+        manifest: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        run(|| self.renew(pinned, current, manifest, renew_recovery_after_restore))
     }
 
     // ------------------------------------------------ setup and secrets
 
     /// The recovery key as `FFR1-...`, to be shown once after the setup, a
-    /// recovery, a rekey or `renew_recovery`. Available until the key has been typed back
-    /// (`verify_recovery_setup`), `clear_setup_secrets` or `lock`.
+    /// recovery, a rekey or `renew_recovery`. Available until the key has
+    /// been typed back (`verify_recovery_setup`), `clear_setup_secrets` or
+    /// `lock`.
     pub fn reveal_recovery_code(&self) -> Result<String, JsValue> {
         run(|| {
             let setup = self.inner()?.setup.as_ref().ok_or(Fail::Input)?;
@@ -950,6 +1012,12 @@ impl Vault {
 
     /// The text of the emergency sheet: page 1 (address, e-mail, account id,
     /// secret key, QR payload) and the recovery key of page 2.
+    ///
+    /// Page 1 states whether the account has a secret key. For an account
+    /// that has one, the full sheet needs the key itself: after a recovery
+    /// or a new recovery key the setup does not hold it, and the call is
+    /// `secret_key_not_held` instead of a page 1 that says "no secret key".
+    /// The recovery key alone (page 2) is `reveal_recovery_code()`.
     pub fn reveal_emergency_sheet(
         &self,
         server_url: &str,
@@ -959,6 +1027,9 @@ impl Vault {
             let inner = self.inner()?;
             let setup = inner.setup.as_ref().ok_or(Fail::Input)?;
             let rk = setup.recovery_key.as_ref().ok_or(Fail::Input)?;
+            if setup.sk_bit && setup.secret_key.is_none() {
+                return Err(Fail::SecretKeyNotHeld);
+            }
             let sheet = emergency_sheet(
                 server_url,
                 email,
@@ -984,7 +1055,10 @@ impl Vault {
 
     /// The confirmation of the recovery key at setup: reads what the user
     /// typed, **opens the recovery wrap with it** and compares the vault key
-    /// it holds with this vault's. A typo is `checksum`, a wrong key
+    /// it holds with this vault's. While the setup holds a recovery key (a
+    /// new account, a recovery, a rekey or a renewal), the typed key must
+    /// also be that key, compared in constant time: the old key with the old
+    /// wrap does not confirm a new one. A typo is `checksum`, a wrong key
     /// `decrypt`.
     pub fn verify_recovery_setup(
         &mut self,
@@ -993,7 +1067,14 @@ impl Vault {
     ) -> Result<(), JsValue> {
         run(|| {
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
-            core(verify_recovery_setup(entered, &rec, self.unlocked()?))?;
+            let inner = self.inner()?;
+            core(verify_recovery_setup(entered, &rec, &inner.vault))?;
+            if let Some(held) = inner.setup.as_ref().and_then(|s| s.recovery_key.as_ref()) {
+                let typed = decode_recovery_key(entered)?;
+                if !bool::from(subtle::ConstantTimeEq::ct_eq(&typed, held)) {
+                    return Err(Error::Decrypt.into());
+                }
+            }
             self.setup_confirmed(true);
             Ok(())
         })

@@ -919,6 +919,7 @@ pub(crate) fn recovery_renew() -> Result<Vec<u8>, Error> {
         ]
     };
     let manifest_5 = sealed_manifest_json(&vk_hex, 3, entries(5), vec![], "m5")?;
+    let manifest_4 = sealed_manifest_json(&vk_hex, 3, entries(4), vec![], "m4")?;
     let (out, _) = m.ok(
         "recovery_renew/002",
         "the manifest lists generation 5, the server's wrap and the floor 1: the new wrap is 6",
@@ -952,11 +953,11 @@ pub(crate) fn recovery_renew() -> Result<Vec<u8>, Error> {
     )?;
     let (out, _) = m.ok(
         "recovery_renew/004",
-        "the floor is 4 and the server's wrap 4, the manifest 1: the new wrap is 5",
+        "the floor, the server's wrap and the manifest all at 4: the new wrap is 5",
         op,
         input(
             rk_wrap(&wraps[1], Some(4)),
-            &manifest,
+            &manifest_4,
             pin((Some(1), Some(4))),
             false,
         ),
@@ -1115,6 +1116,93 @@ pub(crate) fn recovery_renew() -> Result<Vec<u8>, Error> {
         op,
         input(rk_wrap(&wraps[1], None), &manifest, later, false),
         "pinned_vk_epoch",
+    )?;
+
+    // ---- the server's values below the floor, and after an accepted restore
+    let restore = |input: Value| merge(input, json!({ "after_restore": true }));
+    m.err(
+        "recovery_renew/015",
+        "the server's wrap is at the floor but its manifest lists a lower generation: a rollback",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(3)),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        ),
+        "pinned_kek_generation",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/016",
+        "after an accepted restore, a wrap and manifest at 1 below the floor 3: the new wrap is 4",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        )),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("4"),
+        "generation 4, above the floor",
+    )?;
+    let (out, _) = m.ok(
+        "recovery_renew/017",
+        "after an accepted restore with the floor strictly the highest (7): the new wrap is 8",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], Some(2)),
+            &manifest,
+            pin((Some(1), Some(7))),
+            false,
+        )),
+    )?;
+    check(
+        out["recovery_wrap"]["kek_generation"] == json!("8"),
+        "generation 8",
+    )?;
+    m.err(
+        "recovery_renew/018",
+        "after an accepted restore the other checks still apply: a record for another vault key",
+        op,
+        restore(input(
+            rk_wrap(&wraps[1], None),
+            &manifest,
+            pinned_json(
+                1,
+                true,
+                Some(&server_key),
+                &h(&[0x09; 32]),
+                (Some(1), Some(3)),
+            ),
+            false,
+        )),
+        "pinned_auth_key",
+    )?;
+    m.err(
+        "recovery_renew/019",
+        "after an accepted restore the other checks still apply: the manifest does not list the wrap",
+        op,
+        restore(input(
+            merge(rk_wrap(&wraps[1], None), json!({ "method_id": h(&[0x72; 16]) })),
+            &manifest,
+            pin((Some(1), Some(3))),
+            false,
+        )),
+        "malformed_entries",
+    )?;
+    m.err(
+        "recovery_renew/020",
+        "the server's wrap is at the largest generation: no later one exists",
+        op,
+        input(
+            rk_wrap(&wraps[1], Some(top)),
+            &manifest,
+            pin((Some(1), Some(1))),
+            false,
+        ),
+        "generation_exhausted",
     )?;
 
     render(&VectorFile {

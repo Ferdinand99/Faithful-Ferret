@@ -354,15 +354,19 @@ export function createClient(options = {}) {
   // to the browser; it does not overwrite it, which the browser and the
   // operating system do when they hand the pages to someone else. The calls
   // that were waiting are rejected with `locked`.
-  // The import ports handed out. Ending the vault worker closes the far end;
-  // a port that has not been transferred yet is closed here as well (closing
-  // one that has been transferred does nothing).
+  // The import ports handed out and not yet consumed. Ending the vault worker
+  // closes their far end; a port that has not been transferred yet is closed
+  // here as well (closing one that has been transferred does nothing). The
+  // client holds them weakly, so a port the page has transferred and let go
+  // of is not kept alive here; a port that closes leaves the set at once, and
+  // `lock()` empties it.
   const importPorts = new Set();
+  const dropPort = (ref) => importPorts.delete(ref);
 
   const lock = () => {
-    for (const port of importPorts) {
+    for (const ref of [...importPorts]) {
       try {
-        port.close();
+        ref.deref()?.close();
       } catch {
         // Already closed or transferred.
       }
@@ -415,9 +419,18 @@ export function createClient(options = {}) {
      * import worker. See "Import" above.
      */
     importPort() {
+      // Ports that have been collected are consumed: forget them.
+      for (const ref of [...importPorts]) if (!ref.deref()) dropPort(ref);
       const port = vault.importPort();
-      importPorts.add(port);
+      const ref = new WeakRef(port);
+      importPorts.add(ref);
+      port.addEventListener?.("close", () => dropPort(ref), { once: true });
       return port;
+    },
+
+    /** How many import ports the client still holds (for tests). */
+    get openImportPorts() {
+      return [...importPorts].filter((ref) => ref.deref()).length;
     },
 
     /**

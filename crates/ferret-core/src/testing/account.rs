@@ -12,7 +12,8 @@ use super::keys::unlocked_vault_keys;
 use super::{hex_decode, hex_encode};
 use crate::account::{
     ManifestRow, NewAccountIds, NewPassword, RecoveryInput, change_password, create_account,
-    recover, renew_recovery, verify_recovery_setup, verify_secret_key_entry,
+    recover, renew_recovery, renew_recovery_after_restore, verify_recovery_setup,
+    verify_secret_key_entry,
 };
 use crate::envelope::SealedItem;
 use crate::error::Error;
@@ -301,7 +302,12 @@ pub fn run_case<R: SecureRng>(op: &str, i: &Value, rng: &mut R) -> Result<Value,
             let current = wrap_record(&i["current"])?;
             let (rev, envelope, tag) = manifest_row(&i["manifest"]);
             let pinned = pinned(&i["pinned"], vault.context());
-            let renewed = renew_recovery(
+            let renew = if i["after_restore"].as_bool() == Some(true) {
+                renew_recovery_after_restore
+            } else {
+                renew_recovery
+            };
+            let renewed = renew(
                 rng,
                 &vault,
                 &pinned,

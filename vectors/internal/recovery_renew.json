@@ -186,7 +186,7 @@
     },
     {
       "id": "recovery_renew/004",
-      "title": "the floor is 4 and the server's wrap 4, the manifest 1: the new wrap is 5",
+      "title": "the floor, the server's wrap and the manifest all at 4: the new wrap is 5",
       "op": "account.renew_recovery",
       "status": "valid",
       "tags": [],
@@ -205,9 +205,9 @@
           "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
         },
         "manifest": {
-          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
-          "rev": "1",
-          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+          "envelope": "010102dfd368fc27da783c7fb5e73110f5d6cf249bcfe16057797a93850db55723ad214f468a0255d845a0c28e432053065d033168fdb27b5ee6477a6a57fa9cb80445d1e2cfb66839d633b8f850eecb631caac9edc158074bf617d7d22087ebcfebcac8f19ae7762144edde35f0b3448f04c647bb704ececf0ad35f1b75cdc18f1681c411918e0a390c261e381dc36f7c046d96815ea463f9c84ab99447b7327a1347be7c3067478e004cb39cae2467fb76856d4e3d449f9086656a6ae7f7b1fb070232875e010698fc91d21b8eca5ada6431378e6661225c8ec0a3d164a39ae6beb13b874c91e401a4a8797a384cd2b88004d79c44a4de08bca4f9fd0578b4fc868ecfa0cecc921bf4840389fc387de5ea25d2697c782d2db1bf9ef14e9be186500d173985c84b2f7fe1",
+          "rev": "3",
+          "tag": "0cba680c8a4d436eee652f383a603f958c1764df01d1b178bca666e66a1e85fe"
         },
         "pinned": {
           "ksf_profile": 1,
@@ -226,9 +226,9 @@
       },
       "expect": {
         "manifest": {
-          "envelope": "010102d6db326123cbe5aae80a7f2bcb727f989538155f0b0daac99b07644b13d511e542c85f59cc5ac2d152ebb9776b5442e1ea52cc7f68fb99667ca72c89ae327c7601bcfae08ddc897f71861ab8463b10accc821dfe816829136cf6f5ad61ba0bd0a56f5c22d3f071cf0001599ebba53878a9df98a795e17753bd15b6ef9da731e3fe9282dfda18e82c095e5832157449d9b7ab5f4610bf4b10d3e064820d93bc5e770623735a6b399e0aeb3aab71c16ab5e5f8f5c4271d0525aa26272862f71bf11ac1818e84a7737bd5d809a12f442a90ef0940fb5bc64855da8eedc2d5e13088c61e7c0918b350547d6b70d8a2af115ad6f1d50558e9555f4e49aa5b44442b171d8e4d2e1ec23992ec067ab90ed9b105fac903eef4bb33c0097c9e9640a96cbb4c282480df797954",
-          "rev": "2",
-          "tag": "84e9f661b1432d6480425cf64e37a0a75e47d9994c310e4adae646cc537e522c"
+          "envelope": "010102d6db326123cbe5aae80a7f2bcb727f989538155f0b0daac99b07644b13d511e542c85f59cc5ac2d152ebb9776b5442e1ea52cc7f68fb99667ca72c89ae327c7601bcfae08ddc897f71861ab8463b10accc821dfe816829136cf6f5ad61ba0bd0a56f5c22d3f071cf0001599ebba53878a9df98a795e17753bd15b6ef9da731e3fe9282dfda18e82c095e5832157449d9b7ab5f4610bf4b10d3e064820d93bc5e770623735a6b399e0aeb3aab71c16ab5e5f8f5c4271d0525aa26272862f71bf11ac1818e84a7737bd5d809a12f442a90ef0940fb5bc64855da8eedc2d5e13088c61e7c0918b350547d6b70d8a2af115ad6f1d50558e9555f4e49aa5b44442b171d8e4d2e1ec23992ec067ab90ed9b105fac903eef4bb33c0e0f89869071e1216e53c1c918a800f94",
+          "rev": "4",
+          "tag": "a1d1a11196c58ad7f38174e0fc438f01200e72017a1c2742add5c33392ac77b3"
         },
         "pk_r": "6540365ccb63163a39861b16194becb37860f23712c9fd9154d4ff5141204178",
         "recovery_key": "fcc8d41150a2975dab74d4e093197d228af54726b159221dc14f40720268af17",
@@ -656,6 +656,274 @@
         "vk_epoch": "1"
       },
       "expect_error": "pinned_vk_epoch"
+    },
+    {
+      "id": "recovery_renew/015",
+      "title": "the server's wrap is at the floor but its manifest lists a lower generation: a rollback",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "3",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_kek_generation"
+    },
+    {
+      "id": "recovery_renew/016",
+      "title": "after an accepted restore, a wrap and manifest at 1 below the floor 3: the new wrap is 4",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "0d291702f303baf99bf30fe816321cfe596774e4bbc9537357d20fdfc0835daa",
+        "626b6c898f755bc73a2a8d8da7410e7fbc2098b6fa766f34",
+        "e9c46fcee64ddacd62f25923bd14ec7cc0e9da4af3445bcf"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102e9c46fcee64ddacd62f25923bd14ec7cc0e9da4af3445bcf75ca24e4776a0fbd7ffc864b4fb6675032d07658023cb48398949ec1a38ce9f5dae6a7671842a281d2a7c2fc924d6f6c785c7d8275799effa9377def11fe456845fe857f2de2280b05bf06343d262148cf3c5341a93c0673ece6886b7ad39477e5fad52a511eeed6bc9e83523366efcaf2287cac79bce6fe810429436a2ffe10fee75687137bc8152a92338e7bb48b925d8c299f3a954ac5c1bb2ab5260de7a636197e7170d024d43883253762d1767606abd1870b6350451fae940c2d48ba9de84a337124071c927e8ce511637f3566058df0eb145300767dc208886b5551708d0c88d4981518bffcd45c5e4f582a8c4c29024897f3da4eb3285689b5d6ccb9bd9d30039214af36c887c564f48323d4",
+          "rev": "2",
+          "tag": "b7f8bde22af9d5e2c3023ff8b80e361010dcbd8ebc4a7f0e0dff901547b34baf"
+        },
+        "pk_r": "b13d2af93a4ccd188e079393bc4be6aab105cbefe70d628cc613445a12603579",
+        "recovery_key": "0d291702f303baf99bf30fe816321cfe596774e4bbc9537357d20fdfc0835daa",
+        "recovery_wrap": {
+          "kek_generation": "4",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "626b6c898f755bc73a2a8d8da7410e7fbc2098b6fa766f34f09a66f956d9082a7d7801b4093eed5cb343bd56763ed3df6ef71b734959645fc66f1efdaaa59fcda07802231d1637fb"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/017",
+      "title": "after an accepted restore with the floor strictly the highest (7): the new wrap is 8",
+      "op": "account.renew_recovery",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "e7d54be8701b7ba4c26751ffe25f8f1313f9866a172c65dc7b6aa5b35821637c",
+        "5c5ed854839138fa10fe0fa8b50381df3a06b71a613f062d",
+        "d1ac569cfa4604368939e8b4248e5be952e44341b869568a"
+      ],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "2",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "7",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect": {
+        "manifest": {
+          "envelope": "010102d1ac569cfa4604368939e8b4248e5be952e44341b869568a95b7d276eb89d188a21f3d7f770854b150a5123def19126247c0e70acd950506aa0bc5044e9004af04c4214d08939de2d30774fd0e61d4bf24ed971c7ae17c5c8ad4d3c3fa2e34c8becb177e2616584dbca0b153555b6f9dd4df72fbc3c9ad8c9928d041a1b5cf24f89844813242fbb7fd39b475bc7f350eb7b891938930a3226d40bb4fe43907722264c400639c4e11020437f84e5cf86367626e76a2e2e6023464509cf9a9bd72e8ccfce16b70a6e841040938261a35e7c8347eecae62baae3efa0200e67e57065452de5ade91eaebb47327fab82a2a534384418f43afeb0066621c4dc776b17b47ae9ac4ae172f3c20a820b4824e1fb8cc604dab088b5d4a5c71d42ba6ed17d36e90ad8788f917d4",
+          "rev": "2",
+          "tag": "970933260676db5fce43a7eb2a3a03e90fc18298d28c79fa471823868747d4b0"
+        },
+        "pk_r": "93c51266f2b4fae5a21f7550a634ac8a4ec15650e73d64daebeb6f7d56cc8482",
+        "recovery_key": "e7d54be8701b7ba4c26751ffe25f8f1313f9866a172c65dc7b6aa5b35821637c",
+        "recovery_wrap": {
+          "kek_generation": "8",
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "5c5ed854839138fa10fe0fa8b50381df3a06b71a613f062da3825c6a6b3fa04d08fa41870ea217c2a8e8124a43a13754ee7d3226d68e6f597e6ce594e4d27d2e6a3d117654d0b642"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "recovery_renew/018",
+      "title": "after an accepted restore the other checks still apply: a record for another vault key",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "0909090909090909090909090909090909090909090909090909090909090909",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "pinned_auth_key"
+    },
+    {
+      "id": "recovery_renew/019",
+      "title": "after an accepted restore the other checks still apply: the manifest does not list the wrap",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "after_restore": true,
+        "current": {
+          "kek_generation": "1",
+          "method_id": "72727272727272727272727272727272",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "3",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "malformed_entries"
+    },
+    {
+      "id": "recovery_renew/020",
+      "title": "the server's wrap is at the largest generation: no later one exists",
+      "op": "account.renew_recovery",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "current": {
+          "kek_generation": "4294967295",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "f06485058babcbc781b7e99891cb5b486b88b7260d01f3f4488f1ae267f872e6436c35468d79a76cbf7f7ecbe0ed39ac16e93b6500305aef213d8e1205cf7635b98abd00bdfb4505"
+        },
+        "manifest": {
+          "envelope": "01010285a6b6bccad024741edadb13fc5320bb5cb9246c0fa08f76c4e25b239d2380abc35f3491235e6733c65d7c7677d3df78855f978dd7c2b349ee6bfb63e41e7caced375d0123eddd55cb4db27a79822a552773679a299634ee18be9d605addcda592a17b1f020e0f8cd18fe304aac58e2c0346ed6b51ded8bda7bfb3b9b5e173b615fc9f534b9325a20ce58b77d6f5cbe856b5918237fdb28732516d4c22d9e804d2e66d4f438deb9af523574e5feaf98fdc6d311a5d2b4a42012e75749eeec37d80c92768a9489e2609892671b1d7170fbaf14e72e4ff753c9d2fcbff42f5bc5ee6cca386fdc4a7c215e6d6362c36bcbc983d2e85d5c974db32098000c8b9a7a69730a8db4473e6545b368837b03cec3ad6a559ca2124ee25600ea354088c20c3aafd59c1236c3bc1",
+          "rev": "1",
+          "tag": "e09505e7d402d29efb086c862fa6663ece02c26f24845776da96483b56b9c511"
+        },
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "d38eddbe135a1946fd0dee9cf512ed0ff4164a3f2ff243e2293061ccfd06582a",
+          "recovery_floor": "1",
+          "server_public_key": "f066a2b77a531f1148ae00b201f96ebb7e4c111ff2b6b59793768244cc02dd1a",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "96a1fdcc08c5493dc4e00ad68ded7fbb3d60e1cbaed2c030735c565615e1b7cf",
+        "vk_epoch": "1"
+      },
+      "expect_error": "generation_exhausted"
     }
   ]
 }

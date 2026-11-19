@@ -2117,13 +2117,35 @@ fn generation_is_one_above_the_highest_of_floor_manifest_and_server() {
     high.kek_generation = 9;
     let renewed = renew(&s, &base, &high, &row(a), "rn3/c").unwrap();
     assert_eq!(renewed.recovery_wrap.kek_generation, 10);
-    // The floor is the highest, level with the server's wrap (a floor above
-    // the server's wrap is refused, see below).
+    // The floor is the highest, level with the server's wrap and manifest (a
+    // floor above them is refused, see below, except after an accepted
+    // restore).
     let mut pinned = base.clone();
     pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 7)];
     let mut at_floor = a.wraps[1].clone();
     at_floor.kek_generation = 7;
-    let renewed = renew(&s, &pinned, &at_floor, &row(a), "rn3/d").unwrap();
+    let manifest7 = sealed_manifest(
+        &s,
+        3,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x71), 7),
+        ],
+        vec![],
+    );
+    let renewed = renew(&s, &pinned, &at_floor, &sealed_row(&manifest7), "rn3/d").unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 8);
+    // The floor strictly the highest: only after an accepted restore.
+    let mut low = a.wraps[1].clone();
+    low.kek_generation = 2;
+    let renewed = ferret_core::renew_recovery_after_restore(
+        &mut rng("rn3/f"),
+        &a.vault,
+        &pinned,
+        &low,
+        &row(a),
+    )
+    .unwrap();
     assert_eq!(renewed.recovery_wrap.kek_generation, 8);
     // A floor at the largest generation cannot be raised.
     let top = ferret_core::pinning::MAX_GENERATION;
@@ -2234,14 +2256,29 @@ fn a_current_wrap_below_the_pinned_floor_is_refused() {
         ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &a.wraps[1], &row(a)).err(),
         Some(Error::Pinned(PinnedField::KekGeneration))
     );
-    // A real wrap at the floor is accepted.
+    // A real wrap at the floor, listed at the floor, is accepted.
     let at_floor = recovery_wrap_at(&s, 3);
+    let manifest3 = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x71), 3),
+        ],
+        vec![],
+    );
     assert_eq!(
-        renew(&s, &pinned, &at_floor, &row(a), "rn6")
+        renew(&s, &pinned, &at_floor, &sealed_row(&manifest3), "rn6")
             .unwrap()
             .recovery_wrap
             .kek_generation,
         4
+    );
+    // A wrap at the floor whose manifest entry is below it is a rolled-back
+    // manifest, and is refused as well.
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &at_floor, &row(a)).err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
     );
 }
 
@@ -2531,5 +2568,220 @@ fn recovery_renew_vectors_match_in_rust_and_js() {
         })
     });
     assert!(report.failures.is_empty(), "{:#?}", report.failures);
-    assert_eq!(report.passed, 14, "{} cases", report.passed);
+    assert_eq!(report.passed, 20, "{} cases", report.passed);
+}
+
+#[test]
+fn after_an_accepted_restore_a_wrap_below_the_floor_is_renewed_above_it() {
+    let s = create("rr1", true);
+    let a = &s.account;
+    // The device has seen recovery generation 3; the restored server holds
+    // the wrap and the manifest at 1.
+    let mut pinned = pinned_of(&s);
+    pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 3)];
+    // The default entry refuses it, before anything is drawn.
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &a.wraps[1], &row(a)).err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    // The after-restore entry renews it above the floor.
+    let renewed = ferret_core::renew_recovery_after_restore(
+        &mut rng("rr1/renew"),
+        &a.vault,
+        &pinned,
+        &a.wraps[1],
+        &row(a),
+    )
+    .unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 4);
+    assert_eq!(renewed.recovery_wrap.method_id, method_id(0x71));
+    let opened = unwrap_vk(
+        &ctx1(),
+        &kek_rk(&renewed.recovery_key),
+        &renewed.recovery_wrap,
+    )
+    .unwrap();
+    assert!(opened.same_vault_key(&a.vault));
+    // The manifest lists the new generation.
+    let after = decrypt_manifest(
+        &a.vault,
+        renewed.manifest.rev,
+        &renewed.manifest.envelope,
+        &renewed.manifest.tag,
+    )
+    .unwrap();
+    assert_eq!(after.methods[1].kek_generation, 4);
+    // The record only goes up: floor 4, and the old wrap stays a rollback.
+    let mut stored = renewed.pinned(&pinned).unwrap();
+    assert_eq!(floor_of(&stored, MethodKey::Recovery), Some(4));
+    let seen = view(&stored);
+    assert_eq!(
+        stored
+            .unlock_server(&seen, &a.wraps[1], &kek_rk(&a.recovery_key))
+            .err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    // It draws exactly as the default entry does: the key and two nonces.
+    let mut r = rng("rr1/draws");
+    let draws: Vec<Vec<u8>> = [32usize, 24, 24]
+        .iter()
+        .map(|n| {
+            let mut d = vec![0u8; *n];
+            ferret_core::SecureRng::fill(&mut r, &mut d);
+            d
+        })
+        .collect();
+    let mut replay = ReplayRng::new(draws);
+    ferret_core::renew_recovery_after_restore(&mut replay, &a.vault, &pinned, &a.wraps[1], &row(a))
+        .unwrap();
+    replay.finish().unwrap();
+}
+
+#[test]
+fn the_after_restore_entry_keeps_every_other_check() {
+    let s = create("rr2", true);
+    let a = &s.account;
+    let mut good = pinned_of(&s);
+    good.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 3)];
+    let refused = |pinned: &Pinned, current: &ferret_core::WrapRecord, m: &ManifestRow<'_>| {
+        ferret_core::renew_recovery_after_restore(&mut no_draws(), &a.vault, pinned, current, m)
+            .err()
+    };
+    let mut unseeded = good.clone();
+    unseeded.kek_generation_max = vec![(MethodKey::Password, 1)];
+    assert_eq!(
+        refused(&unseeded, &a.wraps[1], &row(a)),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    let mut top = good.clone();
+    top.kek_generation_max = vec![
+        (MethodKey::Password, 1),
+        (MethodKey::Recovery, ferret_core::pinning::MAX_GENERATION),
+    ];
+    assert_eq!(
+        refused(&top, &a.wraps[1], &row(a)),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    let mut other = good.clone();
+    other.account_id = account(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+    let mut other = good.clone();
+    other.vault_id = vault(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VaultId))
+    );
+    let mut other = good.clone();
+    other.vk_epoch_max = 2;
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VkEpoch))
+    );
+    let mut other = good.clone();
+    other.pk_a = [9; 32];
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+    assert_eq!(
+        refused(&good, &a.wraps[0], &row(a)),
+        Some(Error::Unsupported)
+    );
+    let mut unlisted = a.wraps[1].clone();
+    unlisted.method_id = method_id(0x72);
+    assert_eq!(
+        refused(&good, &unlisted, &row(a)),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    let mut envelope = a.manifest.envelope.clone();
+    envelope[40] ^= 1;
+    let broken = ManifestRow {
+        rev: a.manifest.rev,
+        envelope: &envelope,
+        tag: &a.manifest.tag,
+    };
+    assert_eq!(refused(&good, &a.wraps[1], &broken), Some(Error::Decrypt));
+    let mut exhausted = a.wraps[1].clone();
+    exhausted.kek_generation = ferret_core::pinning::MAX_GENERATION;
+    assert_eq!(
+        refused(&good, &exhausted, &row(a)),
+        Some(Error::GenerationExhausted)
+    );
+}
+
+#[test]
+fn a_server_value_at_the_largest_generation_is_generation_exhausted() {
+    let s = create("gx", true);
+    let a = &s.account;
+    let top = ferret_core::pinning::MAX_GENERATION;
+    let pinned = pinned_of(&s);
+    // The renewal: the server's recovery wrap, or its manifest entry.
+    let mut wrap = a.wraps[1].clone();
+    wrap.kek_generation = top;
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &wrap, &row(a)).err(),
+        Some(Error::GenerationExhausted)
+    );
+    let manifest_top = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), top),
+            ManifestEntry::new(2, method_id(0x71), top),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        ferret_core::renew_recovery(
+            &mut no_draws(),
+            &a.vault,
+            &pinned,
+            &a.wraps[1],
+            &sealed_row(&manifest_top)
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
+    );
+    assert_eq!(Error::GenerationExhausted.code(), "generation_exhausted");
+    // A password change: the server's password wrap at the top.
+    let key = sk(0x5a);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let reg = register(&s.server, &input, "gx/c");
+    let mut pw = a.wraps[0].clone();
+    pw.kek_generation = top;
+    assert_eq!(
+        change_password(
+            &mut no_draws(),
+            &a.vault,
+            password(&input, reg, KsfProfile::P1),
+            &pinned,
+            &pw,
+            &row(a),
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
+    );
+    // A recovery: the manifest lists both methods at the top.
+    let code = rk_code(&s);
+    let c = ctx1();
+    let reg = register(&s.server, &input, "gx/r");
+    assert_eq!(
+        recover(
+            &mut no_draws(),
+            &RecoveryInput {
+                ctx: &c,
+                rk_code: &code,
+                rk_wrap: &a.wraps[1],
+                manifest: sealed_row(&manifest_top),
+                new_recovery_method_id: method_id(0x73),
+            },
+            password(&input, reg, KsfProfile::P1),
+            PinState::FirstUse,
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
+    );
 }

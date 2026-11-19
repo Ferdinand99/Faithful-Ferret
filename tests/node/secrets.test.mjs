@@ -417,7 +417,9 @@ test("no_reply_holds_key_material", () => {
   addSecret("export key (change)", change.test_export_key());
   call("change_password", () => change.change_password(vault, created.pinned, created.wraps[0], created.manifest));
 
-  // ---- a new recovery key (it stays in the vault until it is revealed)
+  // ---- a new recovery key (it stays in the vault until it is revealed);
+  // the setup secrets of the account are discarded first, on purpose
+  vault.clear_setup_secrets();
   const renewed = call("renew_recovery", () => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest));
   const renewedCode = vault.reveal_recovery_code();
   addText("recovery key code (renewed)", renewedCode);

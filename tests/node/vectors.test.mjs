@@ -59,7 +59,8 @@ test("recovery_renew_vectors_match_in_rust_and_js", () => {
   const r = runVectorFile(wasm, file, ops);
   assert.deepEqual(r.failures, []);
   assert.equal(r.passed, file.cases.length);
-  assert.equal(r.passed, 14);
+  assert.equal(r.passed, 20);
+  assert.ok(file.cases.some((c) => c.input.after_restore === true), "the after-restore entry has cases");
   assert.ok(file.cases.every((c) => c.op === "account.renew_recovery"));
 });
 

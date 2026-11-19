@@ -821,8 +821,24 @@ test("import_port_closes_on_lock", async () => {
     const closed = untilClosed(port);
     const ok = await portCall(port, { id: 1, method: "encrypt_item", args: [fill(16, 0x62), 1, IMPORTED, NO_EXISTING, 1] });
     assert.equal(ok.ok, true);
+    assert.equal(client.openImportPorts, 1);
     await client.lock();
     await closed;
+    assert.equal(client.openImportPorts, 0, "the lock empties the set");
+  }
+  // A port that is closed (consumed) leaves the set without a lock.
+  {
+    const { client } = await clientWithVault("import-consumed");
+    const first = client.importPort();
+    const second = client.importPort();
+    assert.equal(client.openImportPorts, 2);
+    const gone = new Promise((resolve) => first.addEventListener("close", resolve, { once: true }));
+    first.close();
+    await gone;
+    assert.equal(client.openImportPorts, 1);
+    second.close();
+    await client.lock();
+    assert.equal(client.openImportPorts, 0);
   }
 
   // In the worker: locking the vault closes the ports of that vault after a
