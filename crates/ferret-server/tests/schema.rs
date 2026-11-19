@@ -1027,7 +1027,7 @@ fn schema_after_m3_matches_the_frozen_schema() {
         "reauth_at INTEGER CHECK(reauth_at IS NULL OR reauth_at >= 0)",
         "CREATE TABLE ferret_vaults",
         "CREATE TABLE ferret_restore_rows",
-        "CREATE TABLE users",
+        "CREATE TABLE \"users\"",
         "CREATE TABLE sign_in_codes",
         "CREATE TABLE user_emails",
         "CREATE TABLE passkeys",
