@@ -362,14 +362,14 @@ test("a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row", (
 
 const M3_SHAPES = [
   "batch_req_import", "challenge_res", "reregister_start_req", "reregister_start_res", "password_put_req",
-  "password_put_res", "recovery_put_req", "recovery_res", "recover_req", "recover_res", "redeem_req", "redeem_res",
+  "password_put_res", "recovery_put_req", "recovery_put_res", "recovery_res", "recover_req", "recover_res", "redeem_req", "redeem_res",
   "import_window_req", "import_window_res",
 ];
 /** The fixtures that came with the third milestone (the shapes above and the session answer that grew a field). */
 const M3_FIXTURES = [
   "batch_req_import.json", "challenge_res.json", "import_window_req.json", "import_window_res.json",
   "password_put_req.json", "password_put_res.json", "recover_req.json", "recover_res.json",
-  "recovery_put_req.json", "recovery_res.json", "redeem_req.json", "redeem_res.json",
+  "recovery_put_req.json", "recovery_put_res.json", "recovery_res.json", "redeem_req.json", "redeem_res.json",
   "reregister_start_req.json", "reregister_start_res.json", "session_res.json",
 ];
 
@@ -824,7 +824,8 @@ test("m3_fixtures_decode_and_reencode_identically", () => {
     "registration_record", "ksf_profile", "wrap", "kek_generation", "manifest",
   ]);
   assert.deepEqual(Object.keys(parseFile("recover_req.json")), [
-    "registration_record", "ksf_profile", "pw_wrap", "rk_wrap", "pk_r_new", "manifest",
+    "registration_record", "ksf_profile", "pw_wrap", "rk_wrap", "pw_kek_generation", "rk_kek_generation",
+    "pk_r_new", "manifest",
   ]);
   assert.deepEqual(Object.keys(parseFile("recovery_put_req.json")), ["wrap", "kek_generation", "pk_r", "manifest"]);
 });
@@ -850,7 +851,10 @@ test("m3_lengths_match_the_spec", () => {
   const read_back = parseFile("recovery_res.json");
   assert.equal(read_back.wrap.method_type, 2);
   assert.equal(len(read_back.wrap.wrap), RECOVERY_WRAP_LEN);
+  // The client sends the generations of both new wraps: the AAD binds them.
+  assert.deepEqual([recover.pw_kek_generation, recover.rk_kek_generation], [2, 2]);
   assert.deepEqual({ ...parseFile("password_put_res.json") }, { kek_generation: 2, seq: 9 });
+  assert.deepEqual({ ...readWire("recovery_put_res", read("recovery_put_res.json")) }, { kek_generation: 3, seq: 10 });
   assert.deepEqual({ ...parseFile("recover_res.json") }, { session_ended: true, seq: 9 });
   const window = parseFile("import_window_res.json");
   assert.deepEqual([window.ops, window.expires_in], [250, 1800]);
@@ -905,6 +909,12 @@ test("recovery_put_req_refuses_a_password_sized_wrap", () => {
   // The answer of the recovery read: the wrap is the recovery method, 72 bytes.
   const answer = readWire("recovery_res", read("recovery_res.json"));
   checkStep("recovery_res", answer);
+  // A recovery wrap has no passkey field.
+  for (const field of ["credential_id", "prf_salt"]) {
+    const passkey = { ...answer, wrap: { ...answer.wrap, [field]: b64u.encode(new Uint8Array(32)) } };
+    shape(SHAPES.recovery_res, passkey); // it reads
+    assert.equal(refusalOf(() => checkStep("recovery_res", passkey)), "bad_request", field);
+  }
   for (const [methodType, wrapLen] of [[1, 72], [3, 72], [2, 104], [2, 71], [2, 0]]) {
     const changed = { ...answer, wrap: { ...answer.wrap, method_type: methodType, wrap: b64u.encode(new Uint8Array(wrapLen)) } };
     shape(SHAPES.recovery_res, changed); // it reads
@@ -915,7 +925,9 @@ test("recovery_put_req_refuses_a_password_sized_wrap", () => {
 test("recover_req_needs_every_field", () => {
   const base = parseFile("recover_req.json");
   const refused = (value) => refusalOf(() => shape(SHAPES.recover_req, value));
-  assert.deepEqual(Object.keys(base).sort(), ["ksf_profile", "manifest", "pk_r_new", "pw_wrap", "registration_record", "rk_wrap"]);
+  assert.deepEqual(Object.keys(base).sort(), [
+    "ksf_profile", "manifest", "pk_r_new", "pw_kek_generation", "pw_wrap", "registration_record", "rk_kek_generation", "rk_wrap",
+  ]);
   assert.equal(refused(base), null);
   for (const field of Object.keys(base)) {
     assert.equal(refused(without(base, field)), "bad_request", field);
@@ -931,6 +943,11 @@ test("recover_req_needs_every_field", () => {
     }
   }
   assert.equal(refused({ ...base, ksf_profile: 256 }), "bad_request");
+  // The two generations are 32-bit whole numbers.
+  for (const field of ["pw_kek_generation", "rk_kek_generation"]) {
+    for (const bad of [2 ** 32, -1, "2", 1.5]) assert.equal(refused({ ...base, [field]: bad }), "bad_request", `${field} ${bad}`);
+    assert.equal(refused({ ...base, [field]: 2 ** 32 - 1 }), null, field);
+  }
   const answer = parseFile("recover_res.json");
   for (const bad of ['{"session_ended":true}', '{"session_ended":"yes","seq":1}', '{"session_ended":true,"seq":1,"x":1}']) {
     assert.equal(refusalOf(() => readWire("recover_res", bad)), "bad_request", bad);

@@ -232,6 +232,9 @@ const batchResult = [
 /** One operation of a batch, and the window of an import it counts against (left out: not an import). @type {Spec} */
 const batchReq = [["ops", list(batchOp)], ["import_window", id, true]];
 
+/** The answer to a write of the password or the recovery key. @type {Spec} */
+const putRes = [["kek_generation", int(U32)], ["seq", int()]];
+
 /** @type {Readonly<Record<string, Spec>>} */
 export const SHAPES = Object.freeze({
   sealed_row: sealedRow,
@@ -306,7 +309,8 @@ export const SHAPES = Object.freeze({
     ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
     ["wrap", bytes(PASSWORD_WRAP_LEN)], ["kek_generation", int(U32)], ["manifest", nested(sealedRow)],
   ],
-  password_put_res: [["kek_generation", int(U32)], ["seq", int()]],
+  password_put_res: putRes,
+  recovery_put_res: putRes, // the answer to the recovery write has the same shape
   recovery_put_req: [
     ["wrap", bytes(RECOVERY_WRAP_LEN)], ["kek_generation", int(U32)], ["pk_r", b32],
     ["manifest", nested(sealedRow)],
@@ -317,7 +321,8 @@ export const SHAPES = Object.freeze({
   ],
   recover_req: [
     ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
-    ["pw_wrap", bytes(PASSWORD_WRAP_LEN)], ["rk_wrap", bytes(RECOVERY_WRAP_LEN)], ["pk_r_new", b32],
+    ["pw_wrap", bytes(PASSWORD_WRAP_LEN)], ["rk_wrap", bytes(RECOVERY_WRAP_LEN)],
+    ["pw_kek_generation", int(U32)], ["rk_kek_generation", int(U32)], ["pk_r_new", b32],
     ["manifest", nested(sealedRow)],
   ],
   recover_res: [["session_ended", bool], ["seq", int()]],
@@ -476,9 +481,12 @@ function conflictRowIsValid(value) {
 export function checkStep(kind, value) {
   if (kind === "handoff_redeem_req") handoffCode(value.code);
   if (kind === "recovery_res") {
-    // The wrap that comes back is the recovery method, with a recovery-sized wrap.
-    if (value.wrap.method_type !== 2 || b64u.decode(value.wrap.wrap).length !== RECOVERY_WRAP_LEN) {
-      refuse("the wrap of a recovery answer is the recovery method with 72 bytes");
+    // The wrap that comes back is the recovery method, with a recovery-sized wrap and no passkey field.
+    if (
+      value.wrap.method_type !== 2 || b64u.decode(value.wrap.wrap).length !== RECOVERY_WRAP_LEN
+      || present(value.wrap, "credential_id") || present(value.wrap, "prf_salt")
+    ) {
+      refuse("the wrap of a recovery answer is the recovery method with 72 bytes and no passkey field");
     }
   }
   if (kind === "batch_req" || kind === "batch_req_import") {

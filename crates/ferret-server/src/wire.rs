@@ -1869,6 +1869,10 @@ pub struct PasswordPutRes {
     pub seq: u64,
 }
 
+/// The `200` answer to [`RecoveryPutReq`]: the same two numbers as
+/// [`PasswordPutRes`].
+pub type RecoveryPutRes = PasswordPutRes;
+
 /// `PUT /api/vault/unlock-methods/recovery`: a new recovery key (a new wrap, a
 /// new public key and a new manifest). A sensitive operation, signed like
 /// [`PasswordPutReq`].
@@ -1915,12 +1919,18 @@ pub struct RecoveryRes {
 }
 
 impl RecoveryRes {
-    /// Checks that the wrap is the recovery method (type 2) and has the size of
-    /// a recovery wrap. Every failure is `bad_request`.
+    /// Checks that the wrap is the recovery method (type 2), has the size of a
+    /// recovery wrap and carries no passkey fields. Every failure is
+    /// `bad_request`.
     ///
-    /// Spec: Fase 1 § 4.3 (a recovery wrap is 72 bytes).
+    /// Spec: Fase 1 § 4.3 (a recovery wrap is 72 bytes; `credential_id` and
+    /// `prf_salt` belong to a passkey).
     pub fn validate(&self) -> Result<(), WireError> {
-        if self.wrap.method_type != 2 || self.wrap.wrap.len() != RECOVERY_WRAP_LEN {
+        if self.wrap.method_type != 2
+            || self.wrap.wrap.len() != RECOVERY_WRAP_LEN
+            || self.wrap.credential_id.is_some()
+            || self.wrap.prf_salt.is_some()
+        {
             return Err(WireError::Field("wrap"));
         }
         Ok(())
@@ -1932,7 +1942,14 @@ impl RecoveryRes {
 /// bytes, and every field is needed.
 ///
 /// Spec: Fase 1 § 6.3 step 4 (`{ registration_record, ksf_profile, pw_wrap,
-/// rk_wrap, pk_r_new, manifest }`).
+/// rk_wrap, pk_r_new, manifest }`), with the two generations of the new wraps
+/// added: the wrap AAD binds `kek_generation` (§ 4.3), the client picks it
+/// (the manifest is sealed and the floor lives on the device), and the server
+/// can neither derive it nor check that it is higher than the stored one
+/// without it.
+///
+/// The new recovery wrap is made under the `method_id` of the stored recovery
+/// method, which the server keeps (the AAD binds the id too).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecoverReq {
@@ -1947,6 +1964,10 @@ pub struct RecoverReq {
     /// The wrap of the vault key under the new recovery key (72 bytes).
     #[serde(with = "serde_recovery_wrap")]
     pub rk_wrap: Vec<u8>,
+    /// The generation of the key-encryption key of `pw_wrap`.
+    pub pw_kek_generation: u32,
+    /// The generation of the key-encryption key of `rk_wrap`.
+    pub rk_kek_generation: u32,
     /// The public key that checks the proofs of the new recovery key.
     #[serde(with = "serde_b32")]
     pub pk_r_new: [u8; 32],
@@ -1967,7 +1988,8 @@ pub struct RecoverRes {
 }
 
 /// `POST /api/auth/redeem`: a sign-in code from the administrator, with the
-/// e-mail it was made for. Its `Debug` shows neither.
+/// e-mail it was made for. Its `Debug` shows neither. Any text reads: the
+/// redeem route checks length and form, and every failure is the same `401`.
 ///
 /// Spec: Fase 1 § 6.3 step 1.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1990,7 +2012,8 @@ pub struct RedeemRes {
 }
 
 /// `POST /api/sync/import`: asks for an import window for `ops` operations.
-/// Needs a fresh re-authentication.
+/// Needs a fresh re-authentication. Any `ops` reads; the import route refuses
+/// 0 and too many (`quota_exceeded`).
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImportWindowReq {

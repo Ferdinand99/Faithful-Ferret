@@ -421,6 +421,8 @@ export function fixtures() {
       manifest: manifestNext(),
     },
     "password_put_res.json": { kek_generation: 2, seq: 9 },
+    // The answer to the recovery write has the shape of the password one.
+    "recovery_put_res.json": { kek_generation: 3, seq: 10 },
     "recovery_put_req.json": {
       wrap: b64("new wrap recovery", 72),
       kek_generation: 2,
@@ -440,6 +442,8 @@ export function fixtures() {
       ksf_profile: 1,
       pw_wrap: b64("new wrap password", 104),
       rk_wrap: b64("new wrap recovery", 72),
+      pw_kek_generation: 2,
+      rk_kek_generation: 2,
       pk_r_new: b64("pk r new", 32),
       manifest: manifestNext(),
     },
@@ -1096,7 +1100,7 @@ export function invalidCases() {
   // A missing field of a request or an answer is refused, one case for each field.
   for (const file of [
     "password_put_req.json", "recovery_put_req.json", "recover_req.json", "recovery_res.json",
-    "challenge_res.json", "password_put_res.json", "recover_res.json", "redeem_req.json",
+    "challenge_res.json", "password_put_res.json", "recovery_put_res.json", "recover_res.json", "redeem_req.json",
     "import_window_res.json", "reregister_start_req.json", "reregister_start_res.json",
   ]) {
     for (const field of Object.keys(all[file])) {
@@ -1142,13 +1146,20 @@ export function invalidCases() {
     }
   }
   parse("recovery_res ksf_profile 256", "recovery_res", with_("recovery_res.json", { ksf_profile: 256 }), "ksf_profile is a byte");
-  for (const file of ["password_put_req.json", "recovery_put_req.json", "password_put_res.json"]) {
+  for (const file of ["password_put_req.json", "recovery_put_req.json", "password_put_res.json", "recovery_put_res.json"]) {
     const shape = file.split(".")[0];
     for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5]]) {
       parse(`${shape} kek_generation ${name}`, shape, with_(file, { kek_generation: value }), "kek_generation is a whole number of 32 bits");
     }
   }
+  // The two generations of a recover request are 32-bit whole numbers.
+  for (const field of ["pw_kek_generation", "rk_kek_generation"]) {
+    for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5], ["null", null]]) {
+      parse(`recover_req ${field} ${name}`, "recover_req", with_("recover_req.json", { [field]: value }), `${field} is a whole number of 32 bits`);
+    }
+  }
   for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "9"]]) {
+    parse(`recovery_put_res seq ${name}`, "recovery_put_res", with_("recovery_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
     parse(`password_put_res seq ${name}`, "password_put_res", with_("password_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
     parse(`recover_res seq ${name}`, "recover_res", with_("recover_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
   }
@@ -1167,12 +1178,14 @@ export function invalidCases() {
 
   // The recovery wrap that comes back must be the recovery method with a recovery-sized wrap.
   const recoveryWith = (wrapFields) => with_("recovery_res.json", { wrap: { ...all["recovery_res.json"].wrap, ...wrapFields } });
-  const recoveryWhy = "the wrap of a recovery answer is the recovery method (type 2) with 72 bytes";
+  const recoveryWhy = "the wrap of a recovery answer is the recovery method (type 2) with 72 bytes and no passkey field";
   validate("recovery_res: a password method", "recovery_res", recoveryWith({ method_type: 1 }), recoveryWhy);
   validate("recovery_res: a passkey method", "recovery_res", recoveryWith({ method_type: 3 }), recoveryWhy);
   validate("recovery_res: a password-sized wrap", "recovery_res", recoveryWith({ wrap: b64("wrap password", 104) }), recoveryWhy);
   validate("recovery_res: a short wrap", "recovery_res", recoveryWith({ wrap: b64("wrap short", 71) }), recoveryWhy);
   validate("recovery_res: an empty wrap", "recovery_res", recoveryWith({ wrap: "" }), recoveryWhy);
+  validate("recovery_res: a credential_id on the recovery wrap", "recovery_res", recoveryWith({ credential_id: b64("credential", 32) }), recoveryWhy);
+  validate("recovery_res: a prf_salt on the recovery wrap", "recovery_res", recoveryWith({ prf_salt: b64("prf salt", 32) }), recoveryWhy);
 
   // A sign-in code.
   parse("redeem_req email is a number", "redeem_req", with_("redeem_req.json", { email: 5 }), "email is a string");

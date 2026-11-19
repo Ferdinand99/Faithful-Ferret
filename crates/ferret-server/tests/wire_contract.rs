@@ -15,13 +15,13 @@ use ferret_server::wire::{
     LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes,
     MAX_BATCH_BYTES, MAX_BATCH_OPS, MAX_CHECKPOINT_ENTRIES, MAX_SIGNED_BODY, MethodsRes, NONCE_LEN,
     PASSWORD_WRAP_LEN, PROOF_LEN, PasswordPutReq, PasswordPutRes, PutItemForm, PutItemReq,
-    PutItemRes, RECOVERY_WRAP_LEN, RecoverReq, RecoverRes, RecoveryPutReq, RecoveryRes, RedeemReq,
-    RedeemRes, RegisterFinishReq, RegisterFinishRes, RegisterStartReq, RegisterStartRes,
-    ReregisterStartReq, ReregisterStartRes, RestoreEpochChangedRes, RestoreRowsRes, SESSION_SCOPES,
-    SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson, b64url, hex16,
-    parse_handoff_code, refusal_code,
+    PutItemRes, RECOVERY_WRAP_LEN, RecoverReq, RecoverRes, RecoveryPutReq, RecoveryPutRes,
+    RecoveryRes, RedeemReq, RedeemRes, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
+    RegisterStartRes, ReregisterStartReq, ReregisterStartRes, RestoreEpochChangedRes,
+    RestoreRowsRes, SESSION_SCOPES, SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson,
+    b64url, hex16, parse_handoff_code, refusal_code,
 };
-use ferret_server_auth::{AuthError, DenyReason, Malformed};
+use ferret_server_auth::{AuthError, DenyReason, Malformed, SessionScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -114,6 +114,7 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "reregister_start_res" => through::<ReregisterStartRes>(text),
         "password_put_req" => through::<PasswordPutReq>(text),
         "password_put_res" => through::<PasswordPutRes>(text),
+        "recovery_put_res" => through::<RecoveryPutRes>(text),
         "recovery_put_req" => through::<RecoveryPutReq>(text),
         "recovery_res" => through::<RecoveryRes>(text),
         "recover_req" => through::<RecoverReq>(text),
@@ -167,6 +168,7 @@ const SHAPES: &[&str] = &[
     "password_put_req",
     "password_put_res",
     "recovery_put_req",
+    "recovery_put_res",
     "recovery_res",
     "recover_req",
     "recover_res",
@@ -185,6 +187,7 @@ const M3_SHAPES: &[&str] = &[
     "password_put_req",
     "password_put_res",
     "recovery_put_req",
+    "recovery_put_res",
     "recovery_res",
     "recover_req",
     "recover_res",
@@ -206,6 +209,7 @@ const M3_FIXTURES: &[&str] = &[
     "recover_req.json",
     "recover_res.json",
     "recovery_put_req.json",
+    "recovery_put_res.json",
     "recovery_res.json",
     "redeem_req.json",
     "redeem_res.json",
@@ -1949,6 +1953,11 @@ fn m3_lengths_match_the_spec() {
     let recover: RecoverReq = parse("recover_req.json");
     assert_eq!(recover.registration_record.len(), 192);
     assert_eq!((recover.pw_wrap.len(), recover.rk_wrap.len()), (104, 72));
+    // The client sends the generations of both new wraps: the AAD binds them.
+    assert_eq!(
+        (recover.pw_kek_generation, recover.rk_kek_generation),
+        (2, 2)
+    );
     assert_eq!(recover.pk_r_new.len(), 32);
     assert_eq!(recover.manifest.rev, 2);
     let reregister: ReregisterStartReq = parse("reregister_start_req.json");
@@ -1968,6 +1977,14 @@ fn m3_lengths_match_the_spec() {
         PasswordPutRes {
             kek_generation: 2,
             seq: 9
+        }
+    );
+    // The answer to the recovery write is the same shape.
+    assert_eq!(
+        parse::<RecoveryPutRes>("recovery_put_res.json"),
+        PasswordPutRes {
+            kek_generation: 3,
+            seq: 10
         }
     );
     assert_eq!(
@@ -2101,6 +2118,17 @@ fn recovery_put_req_refuses_a_password_sized_wrap() {
             .validate(),
         Ok(())
     );
+    // A recovery wrap has no passkey field.
+    for field in ["credential_id", "prf_salt"] {
+        let mut passkey = answer.clone();
+        passkey["wrap"][field] = json!(b64url::encode(&[5u8; 32]));
+        let read_back: RecoveryRes = serde_json::from_value(passkey).unwrap();
+        assert_eq!(
+            read_back.validate(),
+            Err(WireError::Field("wrap")),
+            "{field}"
+        );
+    }
     for (method_type, wrap_len) in [(1, 72), (3, 72), (2, 104), (2, 71), (2, 0)] {
         answer["wrap"]["method_type"] = json!(method_type);
         answer["wrap"]["wrap"] = json!(b64url::encode(&vec![5u8; wrap_len]));
@@ -2125,6 +2153,8 @@ fn recover_req_needs_every_field() {
             "ksf_profile",
             "pw_wrap",
             "rk_wrap",
+            "pw_kek_generation",
+            "rk_kek_generation",
             "pk_r_new",
             "manifest"
         ])
@@ -2164,6 +2194,13 @@ fn recover_req_needs_every_field() {
         assert!(with(field, json!(b64url::encode(&vec![5u8; size + 1]))).is_err());
     }
     assert!(with("ksf_profile", json!(256)).is_err());
+    // The two generations are 32-bit whole numbers.
+    for field in ["pw_kek_generation", "rk_kek_generation"] {
+        for bad in [json!(4_294_967_296_u64), json!(-1), json!("2"), json!(1.5)] {
+            assert!(with(field, bad.clone()).is_err(), "{field} {bad}");
+        }
+        assert!(with(field, json!(4_294_967_295_u64)).is_ok(), "{field}");
+    }
     let answer = json_of("recover_res.json");
     assert!(serde_json::from_str::<RecoverRes>(&with_unknown(&answer)).is_err());
     assert!(serde_json::from_str::<RecoverRes>(r#"{"session_ended":true}"#).is_err());
@@ -2232,6 +2269,25 @@ fn session_res_scope_is_one_of_the_four_scopes() {
         SESSION_SCOPES,
         ["full", "pending_2fa", "account_reset", "unverified"]
     );
+    // The list is the words of `SessionScope`. The match has no catch-all, so a
+    // new scope stops this test from compiling until the list and the web
+    // reader know it.
+    let words = |scope: SessionScope| match scope {
+        SessionScope::Full
+        | SessionScope::Pending2fa
+        | SessionScope::AccountReset
+        | SessionScope::Unverified => scope.as_str(),
+    };
+    let from_auth = [
+        words(SessionScope::Full),
+        words(SessionScope::Pending2fa),
+        words(SessionScope::AccountReset),
+        words(SessionScope::Unverified),
+    ];
+    assert_eq!(from_auth.len(), SESSION_SCOPES.len());
+    for word in from_auth {
+        assert!(SESSION_SCOPES.contains(&word), "{word}");
+    }
     let base = json_of("session_res.json");
     for scope in SESSION_SCOPES {
         let mut changed = base.clone();
