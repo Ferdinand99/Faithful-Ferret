@@ -32,9 +32,9 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 cd "$(dirname "$0")/.."
 
-# Playwright 1.64.1 on Ubuntu 24.04. Keep the tag and the digest in step with
+# Playwright 1.65.1 on Ubuntu 24.04. Keep the tag and the digest in step with
 # web/package.json and .github/workflows/web.yml.
-image="mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f"
+image="mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579"
 
 cpus="${FERRET_CPUS:-4}"
 memory="${FERRET_MEMORY:-12g}"

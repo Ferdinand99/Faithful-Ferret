@@ -10,6 +10,18 @@
 // worker is short-lived and answers one call: `argon2_export_key`, the slow
 // step of an export or an import file. A reply never carries anything but
 // values and a code: no message text of an error ever leaves the worker.
+//
+// Import port: a `MessagePort` that the page hands the vault worker with the
+// message `{ id, target: "vault", method: IMPORT_PORT, args: [] }` and the port
+// in the transfer list (`client.importPort()` does this). The page passes the
+// other end on to an import worker, which sends
+// `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
+// and gets `{ id, ok: true, value: { rev, envelope, tag } }` or
+// `{ id, ok: false, code }`. Nothing else goes through it: no other method, no
+// other revision, no existing item, no passkey, so the port can seal new items
+// and do nothing more. It belongs to the vault that was open when it came: when
+// that vault is locked or replaced, the port is closed, after a last message
+// `{ closed: true }`. Ending the vault worker (`client.lock()`) closes it too.
 
 /** Methods of the UnlockJob (sign in, registration, account flows). */
 export const JOB_METHODS = new Set([
@@ -56,6 +68,9 @@ export const STATELESS = new Set([
   "prf_salt_new",
   "sync_memory_new",
   "sync_memory_prune",
+  "page_origin",
+  "same_site",
+  "display_host",
 ]);
 
 /**
@@ -79,6 +94,37 @@ export const NO_EXISTING = "no_existing";
  * no passkey items". An empty array is refused instead, as for `existing`.
  */
 export const NO_STORED_PASSKEYS = "no_stored_passkeys";
+
+/** The method name of the message that hands the vault worker an import port. */
+export const IMPORT_PORT = "import_port";
+
+/** The length of an item id. */
+const ITEM_ID_LENGTH = 16;
+
+/**
+ * The arguments of `encrypt_item` for one request that came over an import
+ * port, or `invalid_input`. The request must be exactly
+ * `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`:
+ * a new item (16 bytes, not the manifest id of zeros) at revision 1, a draft
+ * object without a passkey, and `NO_EXISTING` where an existing item would be
+ * named. The time is checked with the other arguments of `encrypt_item`.
+ */
+export function importArgs(request) {
+  const bad = () => new FerretError("invalid_input");
+  if (request === null || typeof request !== "object") throw bad();
+  if (request.method !== "encrypt_item" || !Array.isArray(request.args) || request.args.length !== 5) throw bad();
+  const [itemId, rev, draft, existing, nowMs] = request.args;
+  if (!(itemId instanceof Uint8Array) || itemId.length !== ITEM_ID_LENGTH || itemId.every((b) => b === 0)) {
+    throw bad();
+  }
+  if (rev !== 1 || existing !== NO_EXISTING) throw bad();
+  if (draft === null || typeof draft !== "object" || Array.isArray(draft) || ArrayBuffer.isView(draft)) throw bad();
+  if (Object.hasOwn(draft, "passkey") && draft.passkey !== undefined && draft.passkey !== null) throw bad();
+  assertWellFormed(draft);
+  const args = [itemId, 1, draft, undefined, nowMs];
+  assertArgTypes("encrypt_item", args);
+  return args;
+}
 
 /** The only function of the job worker. */
 export const JOB_WORKER_FUNCTIONS = new Set(["argon2_export_key"]);
@@ -189,13 +235,18 @@ export function assertU32Args(method, args) {
 }
 
 /**
- * The arguments that the Rust side takes as an optional `String` and that are
- * public text (a device name). The second item says whether the argument may
- * be left out (`undefined` or `null`). `wasm-bindgen` would not check the
- * type of a value that is not a string.
+ * The arguments that the Rust side takes as a `String` and that are public
+ * text (a device name, page addresses). The second item says whether the
+ * argument may be left out (`undefined` or `null`). `wasm-bindgen` would not
+ * check the type of a value that is not a string.
  */
 export const STRING_ARGS = {
   copy_item: [[3, true]],
+  // Page addresses (public text): `wasm-bindgen` would not check the type.
+  match_page: [[0, false]],
+  page_origin: [[0, false]],
+  same_site: [[0, false], [1, false]],
+  display_host: [[0, false]],
 };
 
 /** Throws `invalid_input` unless the text arguments of a call are strings (or left out where allowed). */
@@ -204,6 +255,35 @@ export function assertStringArgs(method, args) {
     const v = args[index];
     if (optional && (v === undefined || v === null)) continue;
     if (typeof v !== "string") throw new FerretError("invalid_input");
+  }
+}
+
+/**
+ * The arguments that the Rust side takes as a list of `u32` (item handles).
+ * `wasm-bindgen` copies a list into a `Uint32Array`, which turns `4294967297`
+ * into `1` and `"3"` into `3`, so the list is checked here: an array (or a
+ * `Uint32Array`) of whole numbers from 0 to 2^32 - 1, at most `MAX_LIST` long.
+ */
+export const U32_LIST_ARGS = {
+  match_page: [1],
+};
+
+/** The most handles one call may list (the most items a vault keeps open). */
+export const MAX_LIST = 4096;
+
+/** Throws `invalid_input` unless the list arguments of a call are lists of `u32`. */
+export function assertU32ListArgs(method, args) {
+  for (const index of argsOf(U32_LIST_ARGS, method)) {
+    const v = args[index];
+    if (!(Array.isArray(v) || v instanceof Uint32Array) || v.length > MAX_LIST) {
+      throw new FerretError("invalid_input");
+    }
+    for (let i = 0; i < v.length; i++) {
+      const n = v[i];
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 0xffffffff) {
+        throw new FerretError("invalid_input");
+      }
+    }
   }
 }
 
@@ -288,6 +368,7 @@ export function assertArgTypes(method, args) {
   assertU32Args(method, args);
   assertF64Args(method, args);
   assertStringArgs(method, args);
+  assertU32ListArgs(method, args);
 }
 
 /**
@@ -395,6 +476,8 @@ function requireVault(vault) {
 export function createDispatcher(wasm) {
   let vault = null;
   const job = new wasm.UnlockJob();
+  // The import ports of the vault that is open now.
+  const importPorts = new Set();
   const vaultMethods = new Set(
     Object.getOwnPropertyNames(wasm.Vault.prototype).filter(
       (n) =>
@@ -405,13 +488,43 @@ export function createDispatcher(wasm) {
     ),
   );
 
+  const closeImportPorts = () => {
+    for (const port of importPorts) closePort(port);
+    importPorts.clear();
+  };
+
   const dropVault = () => {
+    closeImportPorts();
     if (vault) {
       vault.lock();
       vault.free();
       vault = null;
     }
   };
+
+  // One request over an import port: `encrypt_item` of a new item, nothing else.
+  function importDispatch(request) {
+    const id = request?.id;
+    try {
+      const args = importArgs(request);
+      const value = requireVault(vault).encrypt_item(...args);
+      return { reply: { id, ok: true, value }, transfer: transferables(value) };
+    } catch (e) {
+      return { reply: { id, ok: false, code: codeOf(e) }, transfer: [] };
+    }
+  }
+
+  function attachImportPort(port) {
+    importPorts.add(port);
+    port.onmessage = (event) => {
+      if (!importPorts.has(port)) return;
+      const { reply, transfer } = importDispatch(event.data);
+      port.postMessage(reply, transfer);
+    };
+    // The other side closed it (where the platform says so).
+    port.addEventListener?.("close", () => importPorts.delete(port));
+    port.start?.();
+  }
 
   function call(method, args) {
     if (method === "lock") {
@@ -436,12 +549,25 @@ export function createDispatcher(wasm) {
     throw new FerretError("invalid_input");
   }
 
-  return function dispatch(request) {
+  /**
+   * Answers one request of the page. `ports` are the ports that came with it
+   * (`event.ports` in the worker): only the import port message takes one, and
+   * any other port is closed at once.
+   */
+  return function dispatch(request, ports = []) {
     const id = request?.id;
     const args = Array.isArray(request?.args) ? request.args : [];
+    const given = Array.isArray(ports) ? [...ports] : [];
     try {
       if (request?.target !== "vault" || typeof request.method !== "string") {
         throw new FerretError("invalid_input");
+      }
+      if (request.method === IMPORT_PORT) {
+        if (given.length !== 1 || args.length !== 0) throw new FerretError("invalid_input");
+        // A port for no vault is refused (and closed below).
+        requireVault(vault);
+        attachImportPort(given.pop());
+        return { reply: { id, ok: true, value: null }, transfer: [] };
       }
       assertArgTypes(request.method, args);
       const value = call(request.method, args);
@@ -449,9 +575,25 @@ export function createDispatcher(wasm) {
     } catch (e) {
       return { reply: { id, ok: false, code: codeOf(e) }, transfer: [] };
     } finally {
+      for (const port of given) closePort(port);
       wipeSecretArgs(request?.method, args);
     }
   };
+}
+
+/** Closes a port of the vault worker, after a last message that says so. */
+function closePort(port) {
+  try {
+    port.onmessage = null;
+    port.postMessage({ closed: true });
+  } catch {
+    // A port that cannot take the message is closed all the same.
+  }
+  try {
+    port.close();
+  } catch {
+    // Already closed.
+  }
 }
 
 /** The dispatcher of the job worker: `argon2_export_key` and nothing else. */

@@ -217,6 +217,9 @@ pub enum Error {
     /// A value pinned on this device was contradicted. A hard error with a
     /// loud warning, never reported as a wrong password (Fase 1 § 4.2).
     Pinned(PinnedField),
+    /// A wrap or manifest entry the server holds is at the largest
+    /// `kek_generation`, so no later generation exists for a new wrap.
+    GenerationExhausted,
 }
 
 impl Error {
@@ -291,6 +294,7 @@ impl Error {
         Error::Pinned(PinnedField::SkBit),
         Error::Pinned(PinnedField::ServerKey),
         Error::Pinned(PinnedField::AuthKey),
+        Error::GenerationExhausted,
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -374,6 +378,7 @@ impl Error {
                 PinnedField::ServerKey => "pinned_server_key",
                 PinnedField::AuthKey => "pinned_auth_key",
             },
+            Error::GenerationExhausted => "generation_exhausted",
         }
     }
 }

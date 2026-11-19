@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "e481d7a91a10d810ebabd10713f347702ece34965bee57f19de4739376016e23",
-    "OPS.md": "b0e9d56e27790155d340a8db5727476a4cdc2bd4060bef8a453bb1067a38eaca",
-    "VERSION": "64aeb9975f234becd55bb4635e6e2f2da7a6b7bf0a896f0c07763bdfbfb31420",
+    "ERRORS.md": "7758deaa9488fc076dfc73633b717f12f029bd4894e0357b837a19abaca43156",
+    "OPS.md": "5fae3ffb7a74f328d00e813dd25619bd23705fe692e68d99bf83561bb99d3b15",
+    "VERSION": "932ab0a0e4191d32c0af7b3f565b7b180dbe9869378abc5816f9add54b806e7f",
     "external/SOURCE.md": "afe26b63233f4360c3c04c47d5e508fc1324e0313394f015bde26bc0ee91ee6d",
     "external/publicsuffix-test_psl.txt": "8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d",
     "external/rfc4226-hotp.json": "11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198",
@@ -33,6 +33,7 @@
     "internal/padding.json": "1a639195fca149b2b747e51ca8d1c386a4cf68768916c2b9da0a07c802e8028f",
     "internal/passkey.json": "c91e467bf12dabe14d0e28717f230a8668417e3b8e7647601faac28d6fa11b6e",
     "internal/proofs.json": "4c3ed8fa1529090da97203ae9db440ccf64473e9ee34b9e4fdc7ae34134276ea",
+    "internal/recovery_renew.json": "fca02ad704a52b499ff0764127dde4f36e2303ec10a00c22f14cd550684cd8da",
     "internal/rekey.json": "956026a04ea9f7f7662f2210966ef229b5897555b0b23d94538edf9aa28bce3e",
     "internal/server-opaque.json": "c0290a49cd66d467851cffac102b5b1881d78855107f0a17d00a85b7001fb9a8",
     "internal/server-secrets.json": "00ab0038727cccf417568c63faa0fe138d990e5833afe780b8316fa2ad10c2f1",
@@ -43,10 +44,10 @@
     "internal/totp.json": "0ba383fb99cfc91eee446c29de24146ad7cdc17a52848e3acef0b3f8bbda4c7d",
     "internal/unicode.json": "46b9dca7efaaedb4b2ff710924ec43be5907c04b20814c8b7996c2773211411d",
     "internal/unlock.json": "8792c895e78a72da66a30b68e9fe8960c6967f27af76769ea4d2397d5ea2eed5",
-    "internal/url-match.json": "5bd6a518a4281c4a8688169c66dbb467c5ae47faada98ad5c71bcc135b0de6ed",
+    "internal/url-match.json": "58c3329d1e289ae44277898fe9b6b9296bbb0316e31a75830d6d831f833ba1ee",
     "internal/wrap.json": "4599a5671d40c227fe8fdba409b0be783abac806bc1646f31c22f3e84d916f28",
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 25
+  "version": 27
 }

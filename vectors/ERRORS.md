@@ -78,6 +78,7 @@ share the single code `decrypt`, with no cause.
 | `pinned_sk_bit` | The secret key (SK) bit differs from the one pinned on this device. |
 | `pinned_server_key` | The OPAQUE server public key differs from the pinned one, or is missing. |
 | `pinned_auth_key` | The vault's `pk_a` differs from the pinned one within the same `vk_epoch`. |
+| `generation_exhausted` | A wrap or a manifest entry that the server holds is at the largest `kek_generation` (2^32 - 1), so a new wrap has no later generation to take. The value comes from the server; a pinned floor at the largest generation is `malformed_pinned_record`. |
 
 ## Server codes
 
