@@ -102,7 +102,7 @@ test("a_re_authentication_that_would_pin_a_second_address_is_refused", async () 
   assert.ok(world.client.locked >= 1);
 });
 
-test("forgetting_the_other_server_from_the_page_keeps_the_secret_key_sealed_for_this_server", async () => {
+test("forgetting_the_other_server_from_the_page_keeps_the_secret_key_sealed_for_this_server", { timeout: 60_000 }, async () => {
   const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
   const t = createI18n({ en: catalog("en"), nb: catalog("nb") }, "en").t;
   const saved = globalThis.document;
@@ -125,9 +125,11 @@ test("forgetting_the_other_server_from_the_page_keeps_the_secret_key_sealed_for_
     await fire(byRole(root, "credentials"), "submit");
     await settle();
     assert.match(textOf(byRole(root, "error")), /another server address/);
-    await fire(byRole(root, "forget-other"), "click");
+    // The click handler waits for the dialog, so the click is not awaited until the dialog has been answered.
+    const clicking = fire(byRole(root, "forget-other"), "click");
     await settle();
     await fire(byRole(root, "dialog-confirm"), "click");
+    await clicking;
     await settle(60);
     // The other server is gone from this device, and so is its sealed key; this server's key stays.
     assert.equal(await pinnedElsewhere(db, SERVER, ACCOUNT), null);
