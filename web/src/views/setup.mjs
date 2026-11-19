@@ -68,7 +68,7 @@ export function setupView(deps) {
    * @param {any} flow
    */
   async function finishUp(flow) {
-    mount(root, el("p", { role: "status", "data-role": "creating" }, t("account.sheet.creating")));
+    mount(root, el("p", { role: "status", "data-role": "creating" }, t("sheet.creating")));
     try {
       await flow.finish();
     } catch (error) {
@@ -96,7 +96,8 @@ export function setupView(deps) {
       t,
       sheet: flow.sheet,
       useSecretKey: usedSecretKey,
-      onPrint: deps.print,
+      mode: "setup",
+      print: deps.print,
       onConfirm: async (rkTyped, skTyped) => {
         await flow.confirm(rkTyped, skTyped);
         // Both keys check out: the sheet's text leaves the page before the upload.

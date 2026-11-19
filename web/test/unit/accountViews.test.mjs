@@ -16,7 +16,9 @@ import { ACCOUNT, EMAIL, PASSWORD, RK_CODE, SERVER, SK_CODE, accountDocument, by
 import { web } from "./helpers.mjs";
 
 const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
-const i18n = (lang = "en") => createI18n({ en: catalog("en"), nb: catalog("nb") }, lang);
+// The setup page also shows the emergency sheet, whose texts live in their own catalog.
+const sheetCatalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "sheet.json"), "utf8"));
+const i18n = (lang = "en") => createI18n({ en: { ...catalog("en"), ...sheetCatalog("en") }, nb: { ...catalog("nb"), ...sheetCatalog("nb") } }, lang);
 const CHALLENGE = "C".repeat(43);
 const ADMIN = "https://admin.ferret.test";
 
@@ -469,7 +471,7 @@ test("sheet_text_is_removed_from_the_dom_after_confirmation", async () => {
     await until(() => byRole(root, "open-vault") !== null);
     // Once both keys checked out the sheet is gone from the page.
     const after = textOf(root);
-    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "account.sheet"]) assert.ok(!after.includes(secret), secret);
+    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "sheet."]) assert.ok(!after.includes(secret), secret);
     assert.ok(byRole(root, "open-vault"));
     assert.equal(world.requests.filter((r) => r.url.endsWith("/register/finish")).length, 1);
     assert.deepEqual(went, ["spent"]);

@@ -66,7 +66,7 @@ async function scene(page, which) {
     const flow = {
       sheet: {
         recoveryKeyCode: "R1-7QK2M-9DXPT-4WHVA-C8N3E-JY6LB",
-        access: { server_url: "https://vault.example.com", email: "ada@example.com", account_id: "0f6c9b1e2a7d4c58b3e1a9d047c25f66", ksf_profile: "argon2id-m64-t3-p1", secret_key_code: "A3-QZ7K4M-8PXD2T-V9HW5C-N6EJ3Y-B2LRA4", qr_payload: "ferret://setup?s=vault.example.com&a=0f6c9b1e" },
+        access: { server_url: "https://vault.example.com", email: "ada@example.com", account_id: "0f6c9b1e2a7d4c58b3e1a9d047c25f66", ksf_profile: "argon2id-m64-t3-p1", secret_key_code: "A3-QZ7K4M-8PXD2T-V9HW5C-N6EJ3Y-B2LRA4", qr_payload: "ferret-setup:v1?u=https%3A%2F%2Fvault.example.com&a=0f6c9b1e2a7d4c58b3e1a9d047c25f66&k=1&s=1&o=00" },
       },
       confirm: async () => {}, finish: async () => {}, abort: async () => {},
     };
