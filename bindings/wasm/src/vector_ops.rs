@@ -1211,6 +1211,44 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
     }))
 }
 
+/// The page address operations (`url.*`). `url_match` is the core function
+/// that `Vault.match_page` calls for each saved address of an open item.
+fn url_ops(method: &str, i: &Value) -> Result<Value, Error> {
+    let text = |key: &str| String::from_utf8(hx(&i[key])).unwrap();
+    Ok(match method {
+        "url_match" => {
+            let entry = ferret_core::UrlEntry {
+                url: text("entry_utf8"),
+                matching: ferret_core::UrlMatch::from_text(i["match"].as_str().unwrap().to_owned()),
+                extra: Vec::new(),
+            };
+            let result = match ferret_core::url_match(&entry, &text("page_utf8")) {
+                ferret_core::UrlMatchResult::None => "none",
+                ferret_core::UrlMatchResult::Host => "host",
+                ferret_core::UrlMatchResult::Domain => "domain",
+                ferret_core::UrlMatchResult::Exact => "exact",
+            };
+            json!({ "result": result })
+        }
+        "page_origin" => {
+            let o = ferret_core::page_origin(&text("page_utf8"))?;
+            json!({
+                "origin": o.as_str(),
+                "scheme": o.scheme(),
+                "host": o.host(),
+                "port": o.port(),
+            })
+        }
+        "same_site" => {
+            json!({ "same_site": ferret_core::same_site(&text("a_utf8"), &text("b_utf8")) })
+        }
+        _ => {
+            let h = ferret_core::display_host(&text("page_utf8"))?;
+            json!({ "a_label": h.a_label, "unicode": h.unicode })
+        }
+    })
+}
+
 fn dispatch(
     method: &str,
     op: &str,
@@ -1266,6 +1304,7 @@ fn dispatch(
                 validate_rp_id(&o, &String::from_utf8(hx(&i["rp_id_utf8"])).unwrap())
                     .map(|rp| json!({ "rp_id": rp.as_str() }))
             }),
+        "url_match" | "page_origin" | "same_site" | "display_host" => url_ops(method, i),
         "passkey_create" | "passkey_get" | "passkey_prf" => passkey_ops(method, i, rng),
         _ => return Err(None),
     };

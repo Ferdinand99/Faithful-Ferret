@@ -12,6 +12,9 @@
 //! * `job`: sign-in, registration and the account flows. They run in the same
 //!   worker as the vault and return a `Vault` object.
 //! * `export::argon2_export_key`: the one call of the short-lived job worker.
+//! * `matching`: which open items belong to a page (`Vault.match_page`, which
+//!   reads the saved addresses only) and the page address functions
+//!   `page_origin`, `same_site` and `display_host`.
 //! * The functions in this file need no state.
 //!
 //! Failures are JavaScript `Error`s whose `message` and `code` are a stable
@@ -31,6 +34,7 @@ mod error;
 mod export;
 mod item;
 mod job;
+mod matching;
 mod methods;
 mod passkey;
 mod vault;
@@ -40,6 +44,7 @@ mod vector_ops;
 
 pub use export::{argon2_export_key, import_header};
 pub use job::UnlockJob;
+pub use matching::{display_host, page_origin, same_site};
 pub use vault::Vault;
 
 use crate::convert::{ByteBuf, arr, b16, b32, bytes, from_js_list, to_js};
