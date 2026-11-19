@@ -1,7 +1,7 @@
 // The code that the extension shares with the web vault: the list in
 // shared.json, the copy the build makes and the checks around it.
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -31,6 +31,49 @@ function runCheck(target) {
   const result = spawnSync("bash", [CHECK, target], { encoding: "utf8" });
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
+
+/** The list as it stands. A change to it is made on purpose, here and in shared.json together. */
+const EXPECTED_LIST = [
+  "api.mjs",
+  "b64.mjs",
+  "crypto/convert.mjs",
+  "crypto/env.mjs",
+  "crypto/errors.mjs",
+  "dom.mjs",
+  "flows/deviceSecret.mjs",
+  "flows/forgetServer.mjs",
+  "i18n.mjs",
+  "store/cache.mjs",
+  "store/forget.mjs",
+  "store/idb.mjs",
+  "store/outbox.mjs",
+  "store/pinned.mjs",
+  "store/restoreNote.mjs",
+  "store/settings.mjs",
+  "store/syncState.mjs",
+  "store/trash.mjs",
+  "sync/checkpoint.mjs",
+  "sync/conflict.mjs",
+  "sync/deviceName.mjs",
+  "sync/engine.mjs",
+  "sync/errors.mjs",
+  "sync/events.mjs",
+  "sync/memory.mjs",
+  "sync/outbox.mjs",
+  "sync/owner.mjs",
+  "sync/restore.mjs",
+  "tabId.mjs",
+  "tt.mjs",
+  "wire.mjs",
+];
+
+test("the_shared_list_is_exactly_the_agreed_one", () => {
+  const list = realList();
+  assert.deepEqual(list, EXPECTED_LIST);
+  // The sign-in flow, the session and the auth modules wait for the device-mode change in the web vault.
+  for (const later of ["flows/signin.mjs", "crypto/session.mjs"]) assert.ok(!list.includes(later), `${later} is not shared yet`);
+  assert.ok(!list.some((path) => path.startsWith("auth/")), "no auth/ module is shared yet");
+});
 
 test("every_shared_file_is_byte_equal_to_its_source_in_web", async () => {
   const list = realList();
@@ -79,6 +122,40 @@ test("a_shared_file_edited_in_dist_fails_the_build", async () => {
       writeFileSync(file, original);
     }
     assert.equal(runCheck(release.dir).status, 0, "restored, the release is clean again");
+
+    // A copy edited together with its entry in MANIFEST.json passes the check against the MANIFEST
+    // alone, but not the check against the sources in web/src (what the release check runs).
+    {
+      const path = "b64.mjs";
+      const file = join(release.dir, "shared", path);
+      const manifestFile = join(release.dir, "shared", "MANIFEST.json");
+      const originalFile = readFileSync(file);
+      const originalManifest = readFileSync(manifestFile);
+      const edited = Buffer.from(`${originalFile.toString("utf8")}
+// edited
+`);
+      /** @type {Record<string, string>} */
+      const hashes = JSON.parse(originalManifest.toString("utf8"));
+      hashes[path] = sha256(edited);
+      writeFileSync(file, edited);
+      writeFileSync(manifestFile, `${JSON.stringify(hashes, null, 2)}
+`);
+      const files = new Map(release.files);
+      files.set(`shared/${path}`, edited);
+      files.set("shared/MANIFEST.json", Buffer.from(`${JSON.stringify(hashes, null, 2)}
+`));
+      assert.deepEqual(sharedProblems(files), [], "the MANIFEST alone cannot see it");
+      assert.deepEqual(sharedProblems(files, join(repoRoot, "web")), [`shared/${path}: differs from its source in web/src`]);
+      const checked = runCheck(release.dir);
+      assert.notEqual(checked.status, 0, "the release check compares with web/src");
+      assert.match(checked.output, /shared\/b64\.mjs: differs from its source in web\/src/);
+      const xpi = join(env.dir, "edited-both.xpi");
+      packXpi(release.dir, xpi);
+      assert.notEqual(runCheck(xpi).status, 0, "the .xpi too");
+      writeFileSync(file, originalFile);
+      writeFileSync(manifestFile, originalManifest);
+    }
+    assert.equal(runCheck(release.dir).status, 0, "restored again, the release is clean");
 
     // A copy that is missing is named too, and a build from the map refuses an edited copy.
     const files = new Map(release.files);
@@ -146,14 +223,31 @@ test("shared_imports_resolve_inside_the_list", async () => {
   }
 });
 
+test("a_shared_file_that_a_page_imports_has_a_type_stub", () => {
+  // The type check finds "../shared/<name>.mjs" (a file that exists only in the package)
+  // through extension/types/shared/<name>.d.mts, so each shared file that the sources import needs one.
+  const list = new Set(realList());
+  /** @param {string} dir @returns {string[]} */
+  const walkSources = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walkSources(join(dir, entry.name)) : entry.name.endsWith(".mjs") ? [join(dir, entry.name)] : []));
+  const missing = [];
+  for (const file of walkSources(join(extensionRoot, "src"))) {
+    for (const match of readFileSync(file, "utf8").matchAll(/(?:from|import\()\s*["'](?:\.\.?\/)+shared\/([^"']+\.mjs)["']/g)) {
+      const shared = match[1];
+      if (list.has(shared) && !existsSync(join(extensionRoot, "types", "shared", `${shared.slice(0, -4)}.d.mts`))) missing.push(`${file}: types/shared/${shared.slice(0, -4)}.d.mts`);
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
 test("the_shared_list_names_no_view_route_or_service_file", async () => {
   for (const path of realList()) {
-    assert.doesNotMatch(path, /^(?:views|routes|services)\//, path);
+    assert.doesNotMatch(path, /(?:^|\/)(?:views|routes|services)\//, path);
     assert.doesNotMatch(path, /\.(?:route|service)\.mjs$/, path);
   }
   // Nothing on the list may reach a view, route or service file either: the closure above
   // is inside the list, so it holds none. The build refuses such a name outright.
-  for (const bad of ["views/shell.mjs", "routes/home.route.mjs", "services/sync.service.mjs", "sync/x.service.mjs", "a/b.route.mjs"]) {
+  for (const bad of ["views/shell.mjs", "routes/home.route.mjs", "services/sync.service.mjs", "sync/x.service.mjs", "a/b.route.mjs", "sync/views/x.mjs", "a/routes/b.mjs", "store/services/c.mjs"]) {
     const env = makeRoot({ "shared.json": `["${bad}"]\n` });
     try {
       await assert.rejects(buildRealIn(env), /is a view, route or service file/, bad);

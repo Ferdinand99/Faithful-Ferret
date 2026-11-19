@@ -470,9 +470,10 @@ function manifestProblems(text, allow) {
  * @param {Map<string, Buffer>} files path -> bytes
  * @param {string[]} internalHosts host names of the fixture server and the end-to-end stack
  * @param {Record<string, string[]>} [permissionAllow] permissions.allow.json (the repository's own by default)
+ * @param {string} [webRoot] the web vault folder: the shared copies are compared with its sources
  * @returns {string[]}
  */
-export function releaseProblems(files, internalHosts, permissionAllow = readPermissionAllow()) {
+export function releaseProblems(files, internalHosts, permissionAllow = readPermissionAllow(), webRoot = undefined) {
   if (!Array.isArray(internalHosts)) throw new Error("releaseProblems needs the list of internal host names");
   /** @type {string[]} */
   const problems = [];
@@ -493,7 +494,7 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
       }
     }
   }
-  problems.push(...sharedProblems(files));
+  problems.push(...sharedProblems(files, webRoot));
   const raw = files.get("manifest.json");
   if (raw === undefined) problems.push("manifest.json is missing");
   else problems.push(...manifestProblems(raw.toString("utf8"), permissionAllow));
@@ -515,7 +516,7 @@ export function readPackage(target) {
 // ------------------------------------------------------------------- build
 
 /** A view, route or service file of the web vault: never shared (they build that vault's screens). */
-const NOT_SHARED = /^(?:views|routes|services)\/|\.(?:route|service)\.mjs$/;
+const NOT_SHARED = /(?:^|\/)(?:views|routes|services)\/|\.(?:route|service)\.mjs$/;
 
 /**
  * @param {string} dir the extension folder
@@ -561,10 +562,14 @@ function sharedFiles(dir, { webRoot, existing }) {
  * The files of dist/shared/ that no longer match shared/MANIFEST.json, the file
  * the build wrote with the SHA-256 of every shared file it copied. A package
  * without MANIFEST.json has no shared files to check.
+ * With `webRoot` (and a `src` folder in it) every copy and every hash in
+ * MANIFEST.json is also compared with the source in web/src, so an edited copy
+ * together with an edited MANIFEST.json is named too.
  * @param {Map<string, Buffer>} files path -> bytes
+ * @param {string} [webRoot] the web vault folder to compare with
  * @returns {string[]}
  */
-export function sharedProblems(files) {
+export function sharedProblems(files, webRoot) {
   const raw = files.get("shared/MANIFEST.json");
   if (raw === undefined) return [];
   /** @type {unknown} */
@@ -581,6 +586,19 @@ export function sharedProblems(files) {
     const bytes = files.get(`shared/${path}`);
     if (bytes === undefined) problems.push(`shared/${path}: is in shared/MANIFEST.json but not in the package`);
     else if (sha256(bytes) !== hash) problems.push(`shared/${path}: differs from its hash in shared/MANIFEST.json (a shared file is never edited here; change web/src)`);
+  }
+  if (webRoot !== undefined && existsSync(join(webRoot, "src"))) {
+    for (const [path, hash] of Object.entries(hashes)) {
+      if (typeof path !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]*\.mjs$/.test(path) || path.split("/").includes("..") || path.includes("//")) {
+        problems.push(`shared/MANIFEST.json: path not allowed: ${path}`);
+        continue;
+      }
+      const source = join(webRoot, "src", ...path.split("/"));
+      if (!existsSync(source)) problems.push(`shared/${path}: is not in web/src`);
+      else if (sha256(readFileSync(source)) !== hash || sha256(files.get(`shared/${path}`) ?? Buffer.alloc(0)) !== hash) {
+        problems.push(`shared/${path}: differs from its source in web/src`);
+      }
+    }
   }
   return problems;
 }
@@ -776,13 +794,13 @@ export async function build({
   // package is checked by its SHA-256.)
   const dangling = danglingImports(dist, (path) => WASM_FILES.includes(path));
   if (dangling.length > 0) throw new Error(`package: ${dangling.join("; ")}`);
-  const edited = sharedProblems(dist);
+  const edited = sharedProblems(dist, webRoot);
   if (edited.length > 0) throw new Error(`package: ${edited.join("; ")}`);
   for (const path of manifestFiles(manifestJson)) {
     if (!dist.has(path)) throw new Error(`manifest.json: ${path} is not in the package`);
   }
   if (variant === "release") {
-    const problems = releaseProblems(dist, readInternalHosts(root), readPermissionAllow(root));
+    const problems = releaseProblems(dist, readInternalHosts(root), readPermissionAllow(root), webRoot);
     if (problems.length > 0) throw new Error(`release: ${problems.join("; ")}`);
   }
 
@@ -826,7 +844,7 @@ async function main(args) {
     const permissionAllow = readPermissionAllow();
     let failed = false;
     for (const target of targets) {
-      const problems = releaseProblems(readPackage(target), internalHosts, permissionAllow);
+      const problems = releaseProblems(readPackage(target), internalHosts, permissionAllow, resolve(defaultRoot, "..", "web"));
       for (const problem of problems) console.error(`check-release: ${target}: ${problem}`);
       if (problems.length > 0) failed = true;
       else console.log(`check-release: ${target}: clean`);
