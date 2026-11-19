@@ -35,9 +35,10 @@
 //!
 //! What a syntactic deny-list cannot see, and this one does not claim to:
 //! strings built at compile time (`concat!`), macros defined outside `vault/`,
-//! a `macro_rules!` in `vault/` that puts a name together from its arguments,
 //! type aliases defined outside `vault/`, and a type that wraps bytes in a
-//! foreign type or a `String`.
+//! foreign type or a `String`. A `macro_rules!` in `vault/` is refused, so a
+//! name cannot be put together there from a macro's arguments. Raw identifiers
+//! (`r#Name`) are read as the name they stand for.
 
 use std::path::{Path, PathBuf};
 
@@ -122,6 +123,15 @@ const DERIVED_DEBUG_ALLOWED: &[&str] = &["DeviceId", "SidHash"];
 /// `redacted_debug!`.
 const ALSO_REDACTED: &[&str] = &["SessionSecret", "Secrets"];
 
+/// The name an identifier stands for: `r#Name` is `Name`.
+fn ident_name(ident: &syn::Ident) -> String {
+    let text = ident.to_string();
+    match text.strip_prefix("r#") {
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
+}
+
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -196,6 +206,11 @@ impl Names {
             (Some("crate"), Some("auth")) if matches!(at(2), Some("secrets" | "proofs")) => {
                 self.hit(format!(
                     "names `{joined}` (the proof checks come as `crate::state::Proofs`)"
+                ));
+            }
+            (Some("crate"), Some("http")) if at(2).is_none() => {
+                self.hit(format!(
+                    "names `{joined}` without an item (a later `http::extract::..` would not be rooted)"
                 ));
             }
             (Some("crate"), Some("http"))
@@ -335,14 +350,14 @@ struct UsePath {
 fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UsePath>) {
     match tree {
         UseTree::Path(p) => {
-            prefix.push(p.ident.to_string());
+            prefix.push(ident_name(&p.ident));
             flatten(&p.tree, prefix, out);
             prefix.pop();
         }
         UseTree::Name(n) => {
             let mut segments = prefix.clone();
             if n.ident != "self" {
-                segments.push(n.ident.to_string());
+                segments.push(ident_name(&n.ident));
             }
             out.push(UsePath {
                 segments,
@@ -352,11 +367,11 @@ fn flatten(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UsePath>) {
         UseTree::Rename(r) => {
             let mut segments = prefix.clone();
             if r.ident != "self" {
-                segments.push(r.ident.to_string());
+                segments.push(ident_name(&r.ident));
             }
             out.push(UsePath {
                 segments,
-                alias: Some(r.rename.to_string()),
+                alias: Some(ident_name(&r.rename)),
             });
         }
         UseTree::Glob(_) => {
@@ -393,7 +408,7 @@ fn is_session_auth_from_ref(predicate: &WherePredicate) -> bool {
         .path
         .segments
         .iter()
-        .map(|s| s.ident.to_string())
+        .map(|s| ident_name(&s.ident))
         .collect();
     let session_auth =
         names == ["SessionAuth"] || names == ["crate", "http", "extract", "SessionAuth"];
@@ -408,14 +423,14 @@ fn is_session_auth_from_ref(predicate: &WherePredicate) -> bool {
 
 impl<'ast> Visit<'ast> for Names {
     fn visit_ident(&mut self, ident: &'ast syn::Ident) {
-        let name = ident.to_string();
+        let name = ident_name(ident);
         if FORBIDDEN_IDENTS.contains(&name.as_str()) {
             self.hit(format!("names `{name}`"));
         }
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let segments: Vec<String> = path.segments.iter().map(|s| ident_name(&s.ident)).collect();
         self.check_path(&segments);
         if self.in_alias
             && let Some(name) = segments
@@ -429,7 +444,7 @@ impl<'ast> Visit<'ast> for Names {
 
     fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
         if let Some(last) = expr.path.segments.last() {
-            let name = last.ident.to_string();
+            let name = ident_name(&last.ident);
             if BUILT_ELSEWHERE.contains(&name.as_str()) {
                 self.hit(format!("builds a `{name}` by hand"));
             }
@@ -442,7 +457,7 @@ impl<'ast> Visit<'ast> for Names {
         if let Type::Path(ty) = &*item.self_ty
             && let Some(last) = ty.path.segments.last()
         {
-            let name = last.ident.to_string();
+            let name = ident_name(&last.ident);
             if BUILT_ELSEWHERE.contains(&name.as_str()) {
                 self.hit(format!("implements something for `{name}`"));
             }
@@ -455,6 +470,33 @@ impl<'ast> Visit<'ast> for Names {
         self.in_alias = true;
         visit::visit_item_type(self, item);
         self.in_alias = outer;
+    }
+
+    fn visit_impl_item_type(&mut self, item: &'ast syn::ImplItemType) {
+        let outer = self.in_alias;
+        self.in_alias = true;
+        visit::visit_impl_item_type(self, item);
+        self.in_alias = outer;
+    }
+
+    fn visit_trait_item_type(&mut self, item: &'ast syn::TraitItemType) {
+        let outer = self.in_alias;
+        self.in_alias = true;
+        visit::visit_trait_item_type(self, item);
+        self.in_alias = outer;
+    }
+
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        if item
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| ident_name(&s.ident) == "macro_rules")
+        {
+            self.hit("`macro_rules!` may put a name together that the scan cannot see".to_string());
+        }
+        visit::visit_item_macro(self, item);
     }
 
     fn visit_where_predicate(&mut self, predicate: &'ast WherePredicate) {
@@ -503,7 +545,7 @@ impl<'ast> Visit<'ast> for Names {
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         if let Some(last) = mac.path.segments.last()
-            && INCLUDE_MACROS.contains(&last.ident.to_string().as_str())
+            && INCLUDE_MACROS.contains(&ident_name(&last.ident).as_str())
         {
             self.hit(format!(
                 "`{}!` pulls in a file the scan does not read",
@@ -1017,6 +1059,29 @@ fn arch_test_detects_a_planted_violation() {
         "type P = Option<ferret_server_auth::ReplacePermit>;",
         "use ferret_server_auth::SignedPermit as P;",
         "use crate::http::extract::FreshReauth as Fresh;",
+        // Raw identifiers stand for the same names.
+        "fn f() { let _ = ferret_server_auth::r#SignedPermit { a: 1 }; }",
+        "use ferret_server_auth::r#AuthContext;",
+        "fn f() { let _ = crate::state::r#FerretState::new(); }",
+        "fn f(_: r#Cap) {}",
+        "impl X for r#FreshReauth {}",
+        "type P = r#ReplacePermit;",
+        "use crate::http::r#extract::r#AdminSession;",
+        "use ferret_server_auth::SignedPermit as r#P;\nuse crate::state::VaultDb as r#Core;",
+        // An associated type that names a type built elsewhere.
+        "impl T for X { type A = FreshReauth; }",
+        "trait T { type A = SignedPermit; }",
+        // `crate::http` without an item, which a later path could climb from.
+        "use crate::http;",
+        "use crate::http as h;",
+        "use crate::http::{self as h};",
+        "use crate::http::{self};",
+        "use super::super::http;",
+        "fn f() { let _ = super::http::extract::AdminSession; }",
+        "fn f() { let _ = super::http::extract::SessionClock::now; }",
+        // A macro defined in `vault/`.
+        "macro_rules! m { ($t:ident) => { $t { reauth_at: 0 } }; }",
+        "macro_rules! m { () => {}; }",
     ];
     for source in violations {
         assert!(
@@ -1061,6 +1126,12 @@ fn arch_test_detects_a_planted_violation() {
         "fn f(fresh: FreshReauth) -> i64 { fresh.reauth_at }",
         "fn f() { println!(\"{}\", MyFreshReauth { a: 1 }.a); }",
         "struct MySignedBody { a: u8 }\nfn f() -> MySignedBody { MySignedBody { a: 1 } }",
+        // Raw identifiers of allowed names, and other `http` modules.
+        "use crate::state::r#VaultDb;",
+        "fn f(_: crate::http::extract::r#ScopedSession<crate::http::extract::caps::r#Recover>) {}",
+        "use crate::http::headers::NO_STORE;",
+        "fn f() { let _ = r#match_this(); }",
+        "impl T for X { type A = u8; }",
     ];
     for source in clean {
         let found = scan_names("clean.rs", source);
