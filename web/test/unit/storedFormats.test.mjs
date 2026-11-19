@@ -5,6 +5,7 @@
 // these files. The outbox entries have no import mark: the field does not exist in version 2, and an entry
 // without it is an ordinary write.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -24,6 +25,20 @@ import { trash, TRASH_FIELDS } from "../../src/store/trash.mjs";
 import { web } from "./helpers.mjs";
 
 const GOLDEN = join(web, "test", "fixtures", "stored", "v2");
+
+/**
+ * The SHA-256 of each golden file. These files are frozen: a stored shape that changes gets a reader for the old one and a
+ * new golden directory for the new version, and never an edit of these files. Changing one needs a reason in review.
+ */
+const GOLDEN_SHA256 = Object.freeze({
+  "device_secrets.json": "e55b153ce47b04e7c1da23fd6e106c574f640b3787ca979ed54ecfbd1042daa1",
+  "outbox.json": "55c454d52875a4bc7be14e7ec15f8f964131d535bbc408c749dc1c04cc2abd70",
+  "pinned.json": "b1fb260c4db127ef02a443170c8b8248d0a6cc55c6ee60e5c316a4bb1c8168fe",
+  "rows.json": "6ea447b42bf3fb099c603a1b7e32f45854d0f0511bce72cb76f65282bee36448",
+  "settings.json": "b22bff49c58473bc532c00a55b232e43dfd1f28030023c3677faaf58445bd3be",
+  "sync_state.json": "91d5ef73785d3c3595fb50533bd2cc486bb0fe1c890dd70d7ac91c8a7c99e2a7",
+  "trash.json": "c078b08f16fd35d97071b8f3e7846352c2a02ecac5a8bfacba0c6203e9070e8b",
+});
 const ACCOUNT = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
 const OTHER = "f0e1d2c3b4a5968778695a4b3c2d1e0f";
 const VAULT = "f9e8d7c6b5a4938271605f4e3d2c1b0a";
@@ -67,7 +82,9 @@ async function decode(x) {
 }
 
 async function golden(store) {
-  const file = JSON.parse(readFileSync(join(GOLDEN, `${store}.json`), "utf8"));
+  const text = readFileSync(join(GOLDEN, `${store}.json`), "utf8");
+  assert.equal(createHash("sha256").update(text.replaceAll("\r\n", "\n")).digest("hex"), GOLDEN_SHA256[`${store}.json`], `${store}.json is a frozen golden file`);
+  const file = JSON.parse(text);
   assert.equal(file.format, "ferret-stored-golden/1");
   assert.equal(file.dbVersion, 2);
   assert.equal(file.store, store);

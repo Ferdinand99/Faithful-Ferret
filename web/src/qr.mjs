@@ -36,9 +36,17 @@ const encoder = new TextEncoder();
 export function qrModules(text, { ecc = "M" } = {}) {
   if (typeof text !== "string") throw new TypeError("qr: the text is a string");
   if (!Object.hasOwn(LEVELS, ecc)) throw new TypeError("qr: the level is L, M, Q or H");
+  // The copy of the text as bytes is zeroed when the code is made. The generator's own arrays
+  // (and the caller's string) cannot be zeroed; the code that comes out is as secret as the text.
   const bytes = encoder.encode(text);
-  if (bytes.length > MAX_QR_BYTES) throw new RangeError("qr_too_long");
-  const code = qrcodegen.QrCode.encodeBinary(bytes, LEVELS[ecc]);
+  /** @type {ReturnType<typeof qrcodegen.QrCode.encodeBinary>} */
+  let code;
+  try {
+    if (bytes.length > MAX_QR_BYTES) throw new RangeError("qr_too_long");
+    code = qrcodegen.QrCode.encodeBinary(bytes, LEVELS[ecc]);
+  } finally {
+    bytes.fill(0);
+  }
   const size = code.size;
   return {
     size,

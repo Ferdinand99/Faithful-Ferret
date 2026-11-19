@@ -483,11 +483,17 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
   dist.set("assets/app.css", Buffer.from(css));
   for (const [path, bytes] of font) dist.set(path, bytes);
   for (const path of walk(join(root, "admin"))) dist.set(`admin/${path}`, readFileSync(join(root, "admin", path)));
-  for (const [path, bytes] of generateWorkerEntries(root)) dist.set(path, bytes);
+  // A worker entry or a vendored file never replaces a file of the WASM package (or of each other).
+  /** @param {string} path @param {Buffer} bytes */
+  const addOnce = (path, bytes) => {
+    if (dist.has(path)) throw new Error(`${path}: written twice (a worker entry, a vendored file and the WASM package must not share a path)`);
+    dist.set(path, bytes);
+  };
+  for (const [path, bytes] of generateWorkerEntries(root)) addOnce(path, bytes);
   const vendor = readVendor(root);
   for (const [path, bytes] of vendor) {
     // The type declarations are for the type check, not for the page.
-    if (!path.endsWith(".d.mts")) dist.set(path, bytes);
+    if (!path.endsWith(".d.mts")) addOnce(path, bytes);
   }
   /** @type {Map<string, Buffer>} */
   const staged = new Map();
@@ -495,7 +501,7 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
     if (path.endsWith(".map")) throw new Error(`wasm package: ${path}: source maps are not allowed`);
     // Only the listed files are shipped; anything else in the package is left out.
     if (!WASM_FILES.includes(path)) continue;
-    dist.set(path, bytes);
+    addOnce(path, bytes);
     if (path.startsWith("js/")) staged.set(path, bytes);
   }
 

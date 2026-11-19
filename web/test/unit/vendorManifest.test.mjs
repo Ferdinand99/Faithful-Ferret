@@ -9,6 +9,8 @@ import { test } from "node:test";
 import { build } from "../../scripts/build.mjs";
 import { makeRoot, web } from "./helpers.mjs";
 
+/** The vendored file, pinned here as well as in the manifest, so that an edit of both together shows in review. */
+const QRCODEGEN_SHA256 = "431935a3148eeffc57534e859ee2d3826c89c89228e92b7827d8d3c736d3c8b1";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const repo = join(web, "..");
 const manifest = () => JSON.parse(readFileSync(join(web, "vendor", "MANIFEST.json"), "utf8"));
@@ -28,6 +30,7 @@ test("vendor_manifest_matches_the_file_hash_and_the_license", () => {
   for (const entry of m.files) {
     const file = readFileSync(join(web, "vendor", entry.file));
     assert.equal(sha256(file), entry.sha256, `${entry.file} is not the file in the manifest`);
+    if (entry.name === "qrcodegen") assert.equal(sha256(file), QRCODEGEN_SHA256, "the vendored file is not the one pinned in this test");
     const licence = readFileSync(join(web, "vendor", entry.licenseFile), "utf8");
     assert.equal(sha256(licence), entry.licenseSha256, `${entry.licenseFile} is not the file in the manifest`);
     listed.add(entry.file);

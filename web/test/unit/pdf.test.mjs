@@ -3,7 +3,7 @@
 // WinAnsi does not have.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPdf, PAGE_HEIGHT, PAGE_WIDTH, wipe } from "../../src/pdf.mjs";
+import { createPdf, PAGE_HEIGHT, PAGE_WIDTH, Sink, wipe } from "../../src/pdf.mjs";
 
 const latin1 = (bytes) => Buffer.from(bytes).toString("latin1");
 
@@ -162,12 +162,10 @@ test("pdf_escapes_parentheses_and_backslashes", () => {
   // A string cannot end early: remove the escaped pairs and the marks that are left are the string's own.
   for (const line of stream.split("\n").filter((l) => l.includes(" Tj"))) {
     const literal = /\((.*)\) Tj ET$/.exec(line)[1];
-    let depth = 0;
     for (let i = 0; i < literal.length; i += 1) {
       if (literal[i] === "\\") i += 1;
       else assert.ok(literal[i] !== "(" && literal[i] !== ")", `an unescaped mark in ${line}`);
     }
-    assert.equal(depth, 0);
   }
 });
 
@@ -184,6 +182,32 @@ test("pdf_refuses_numbers_that_are_not_numbers", () => {
   const text = latin1(pdf.bytes());
   assert.ok(text.includes("0 -2.5 0 100.123 re f"));
   assert.ok(!/e[+-]?\d/.test(/stream\n([\s\S]*)\nendstream/.exec(text)[1]));
+});
+
+test("pdf_dispose_zeroes_every_buffer_of_the_writer_and_bytes_leaves_none_behind", () => {
+  const sinks = [];
+  const pdf = createPdf({ makeSink: () => { const sink = new Sink(); sinks.push(sink); return sink; } });
+  const page = pdf.page();
+  page.text(72, 700, 12, "FFR1-SECRET-RECOVERY-KEY-FOR-THE-TEST");
+  page.rect(10, 10, 5, 5);
+  const pageSink = sinks[0];
+  assert.ok(pageSink.buf.some((b) => b !== 0), "the page holds the text before dispose");
+  // bytes() builds in a buffer of its own and zeroes it before it returns.
+  const bytes = pdf.bytes();
+  assert.equal(sinks.length, 2);
+  assert.ok(sinks[1].buf.every((b) => b === 0) && sinks[1].length === 0, "the buffer that bytes() built in is zeroed");
+  assert.ok(bytes.some((b) => b !== 0));
+  assert.ok(latin1(bytes).includes("FFR1-SECRET-RECOVERY-KEY-FOR-THE-TEST"), "the copy that is returned is the caller's to wipe");
+  // A page that grew past its first buffer leaves no copy of the text behind either way: dispose zeroes the current buffer.
+  const big = pdf.page();
+  for (let i = 0; i < 400; i += 1) big.text(10, 10, 12, "SECRET-LINE-" + i);
+  assert.ok(sinks[2].length > 512);
+  pdf.dispose();
+  for (const sink of sinks) {
+    assert.ok(sink.buf.every((b) => b === 0), "every byte of the buffer is zero");
+    assert.equal(sink.length, 0);
+  }
+  assert.ok(bytes.some((b) => b !== 0), "dispose does not touch the bytes that were handed out");
 });
 
 test("pdf_bytes_can_be_wiped_and_the_writer_can_be_disposed", () => {

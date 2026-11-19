@@ -78,6 +78,10 @@ test("import_worker_entry_is_built_where_the_policy_points_and_loads_the_workers
   // The module is the source file, byte for byte.
   assert.equal(readFileSync(join(out, "app", "workers", "import.worker.mjs"), "utf8"), readFileSync(join(web, "src", "workers", "import.worker.mjs"), "utf8"));
 
+  // A worker entry that would replace a file of the WASM package stops the build.
+  const clash = makeRoot({ "src/workers/vault.worker.mjs": "export const x = 1;\n" });
+  await assert.rejects(build({ root: clash.root, out: clash.out, wasmTar: clash.tarPath }), /js\/vault\.worker\.mjs: written twice/);
+
   // A file in src/workers that is not <name>.worker.mjs has no entry and stops the build.
   const odd = makeRoot({ "src/workers/helper.mjs": "export const x = 1;\n" });
   await assert.rejects(build({ root: odd.root, out: odd.out, wasmTar: odd.tarPath }), /expected <name>\.worker\.mjs/);

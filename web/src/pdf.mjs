@@ -33,7 +33,7 @@ function winAnsi(code) {
 }
 
 /** A growing byte buffer that can be zeroed. */
-class Sink {
+export class Sink {
   constructor() {
     /** @type {Uint8Array} */
     this.buf = new Uint8Array(512);
@@ -139,8 +139,11 @@ function literal(sink, bytes) {
  * @property {() => void} dispose zeroes the writer's own buffers; the document is not used afterwards
  */
 
-/** @returns {PdfDocument} */
-export function createPdf() {
+/**
+ * @param {{ makeSink?: () => Sink }} [options] makeSink makes every buffer of the writer; the tests pass one that keeps them, to see that they are zeroed
+ * @returns {PdfDocument}
+ */
+export function createPdf({ makeSink = () => new Sink() } = {}) {
   /** @type {Sink[]} */
   const pages = [];
   let disposed = false;
@@ -152,7 +155,7 @@ export function createPdf() {
   return {
     page() {
       alive();
-      const sink = new Sink();
+      const sink = makeSink();
       pages.push(sink);
       return {
         text(x, y, size, str) {
@@ -176,7 +179,7 @@ export function createPdf() {
     bytes() {
       alive();
       if (pages.length === 0) throw new Error("pdf_no_pages");
-      const out = new Sink();
+      const out = makeSink();
       /** @type {number[]} */
       const offsets = [];
       /** @param {number} id @param {(sink: Sink) => void} body */

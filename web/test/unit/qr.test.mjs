@@ -36,8 +36,9 @@ function decode(text, options) {
 
 /** A deterministic text of `bytes` bytes of the characters a setup text has. */
 function setupText(bytes) {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_:/.";
-  let out = "FFSETUP1:https://vault.example.net:8443/";
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_:/.%&=?";
+  // The form of the setup text: a scheme, a version, and percent-encoded values after ? and &.
+  let out = "ferret-setup:v1?u=https%3A%2F%2Fvault.example.net%3A8443&a=";
   let state = 12345;
   while (out.length < bytes) {
     state = (state * 1103515245 + 12345) & 0x7fffffff;
