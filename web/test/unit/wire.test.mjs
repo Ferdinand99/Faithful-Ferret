@@ -13,7 +13,10 @@ import { test } from "node:test";
 import { SERVER_HEADERS_JSON } from "../serve.mjs";
 import { files, STATUS_OF } from "../../../crates/ferret-server/tests/fixtures/wire/generate.mjs";
 import { b64u, hex16, WireError } from "../../src/b64.mjs";
-import { checkStep, encodeWire, encodeWireBytes, ERROR_STATUS, handoffCode, MAX_BATCH_OPS, readJson, readWire, SHAPES, shape } from "../../src/wire.mjs";
+import {
+  checkStep, encodeWire, encodeWireBytes, ERROR_STATUS, handoffCode, MAX_BATCH_OPS, MAX_SIGNED_BODY, NONCE_LEN,
+  PASSWORD_WRAP_LEN, PROOF_LEN, readJson, readWire, RECOVERY_WRAP_LEN, REDEEM_SCOPE, SESSION_SCOPES, SHAPES, shape,
+} from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
 const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json"];
@@ -294,7 +297,7 @@ test("handoff_code_is_43_chars_base64url", () => {
   const { code } = parseFile("handoff_res.json");
   assert.equal(code.length, 43);
   assert.equal(decode(code).length, 32);
-  assert.equal(parseFile("redeem_req.json").code, code);
+  assert.equal(parseFile("handoff_redeem_req.json").code, code);
   handoffCode(code);
   for (const bad of [code.slice(0, 42), `${code}A`, `${code.slice(0, 42)}=`, `${code.slice(0, 42)}B`, ""]) {
     assert.equal(refusalOf(() => handoffCode(bad)), "handoff_invalid", bad);
@@ -356,6 +359,19 @@ test("a_conflict_against_a_row_that_is_not_there_is_valid_and_carries_no_row", (
 });
 
 // ------------------------------------------------------- the sync shapes
+
+const M3_SHAPES = [
+  "batch_req_import", "challenge_res", "reregister_start_req", "reregister_start_res", "password_put_req",
+  "password_put_res", "recovery_put_req", "recovery_put_res", "recovery_res", "recover_req", "recover_res", "redeem_req", "redeem_res",
+  "import_window_req", "import_window_res",
+];
+/** The fixtures that came with the third milestone (the shapes above and the session answer that grew a field). */
+const M3_FIXTURES = [
+  "batch_req_import.json", "challenge_res.json", "import_window_req.json", "import_window_res.json",
+  "password_put_req.json", "password_put_res.json", "recover_req.json", "recover_res.json",
+  "recovery_put_req.json", "recovery_put_res.json", "recovery_res.json", "redeem_req.json", "redeem_res.json",
+  "reregister_start_req.json", "reregister_start_res.json", "session_res.json",
+];
 
 const M2_SHAPES = [
   "batch_req", "batch_res", "checkpoint_put_req", "checkpoint_put_res", "checkpoint_stale_res", "items_res", "sync_event",
@@ -581,13 +597,23 @@ test("checkpoint_answers_are_the_seq_and_the_stale_code", () => {
 test("new_codes_have_their_status", () => {
   const statuses = parseFile("error_statuses.json");
   const codes = errorCodes();
-  for (const [code, status] of [["busy", 503], ["checkpoint_stale", 409], ["checkpoint_invalid", 422]]) {
+  for (const [code, status] of [
+    ["busy", 503], ["checkpoint_stale", 409], ["checkpoint_invalid", 422], ["restore_epoch_changed", 409],
+    ["reauth_required", 403], ["second_factor_required", 403], ["write_conflict", 409], ["import_window_open", 409],
+    ["import_window_invalid", 409],
+  ]) {
     assert.ok(codes.includes(code), code);
     assert.equal(statuses[code], status, code);
     assert.equal(STATUS_OF[code], status, code);
   }
   // They come after the codes of the first version, so that list is unchanged.
-  assert.deepEqual(codes.slice(-4), ["busy", "checkpoint_stale", "checkpoint_invalid", "restore_epoch_changed"]);
+  assert.ok(codes.indexOf("busy") + 1 === codes.indexOf("checkpoint_stale"));
+  assert.ok(codes.indexOf("checkpoint_invalid") < codes.indexOf("restore_epoch_changed"));
+  // The codes of the third milestone close the list, in this order.
+  assert.deepEqual(codes.slice(-5), [
+    "reauth_required", "second_factor_required", "write_conflict", "import_window_open", "import_window_invalid",
+  ]);
+  assert.ok(codes.indexOf("restore_epoch_changed") < codes.indexOf("reauth_required"));
 });
 
 test("restore_epoch_changed_has_status_409_on_both_sides", () => {
@@ -744,4 +770,256 @@ test("invalid_cases_are_refused_the_same_way_in_rust_and_js", () => {
     assert.ok(cases.some((c) => c.shape === kind && c.layer === "validate"), kind);
   }
   assert.ok(cases.some((c) => c.error === "tombstone_invalid"));
+
+  // The shapes of the third milestone, the same way.
+  const m3 = parseFile("invalid.json").filter((c) => M3_SHAPES.includes(c.shape));
+  assert.ok(m3.length >= 150, `found only ${m3.length} cases`);
+  for (const c of m3) {
+    const label = `${c.name} (${c.why})`;
+    assert.ok(codes.includes(c.error), label);
+    if (c.layer === "parse") {
+      assert.equal(refusalOf(() => readWire(c.shape, c.json)), c.error, label);
+    } else {
+      assert.equal(c.layer, "validate", label);
+      const value = readWire(c.shape, c.json); // reads without error
+      assert.equal(refusalOf(() => checkStep(c.shape, value)), c.error, label);
+    }
+  }
+  for (const kind of M3_SHAPES) assert.ok(m3.some((c) => c.shape === kind), kind);
+  for (const kind of ["recovery_res", "batch_req_import"]) {
+    assert.ok(m3.some((c) => c.shape === kind && c.layer === "validate"), kind);
+  }
+  for (const code of ["malformed_registration_request", "malformed_registration_record"]) {
+    assert.ok(m3.some((c) => c.error === code), code);
+  }
+});
+
+// ---------------------------------------------------- the third milestone
+
+/** `value` without `field`. */
+const without = (value, field) => {
+  const { [field]: dropped, ...rest } = value;
+  assert.ok(dropped !== undefined, field);
+  return rest;
+};
+
+test("m3_fixtures_decode_and_reencode_identically", () => {
+  const all = fixtures();
+  for (const name of M3_FIXTURES) assert.ok(all.includes(name), `${name} is missing`);
+  for (const name of M3_FIXTURES) {
+    const kind = kindOf(name);
+    const text = read(name);
+    const value = readWire(kind, text);
+    assert.equal(`${JSON.stringify(value)}\n`, text, name);
+    assert.equal(`${encodeWire(kind, value)}\n`, text, name);
+    checkStep(kind, value);
+    assert.ok(!hasNull(value), name);
+  }
+  for (const kind of M3_SHAPES) {
+    assert.ok(kind in SHAPES, kind);
+    assert.ok(all.some((name) => kindOf(name) === kind), `no fixture for ${kind}`);
+  }
+  // The first field of each request is the one the server writes first.
+  assert.deepEqual(Object.keys(parseFile("password_put_req.json")), [
+    "registration_record", "ksf_profile", "wrap", "kek_generation", "manifest",
+  ]);
+  assert.deepEqual(Object.keys(parseFile("recover_req.json")), [
+    "registration_record", "ksf_profile", "pw_wrap", "rk_wrap", "pw_kek_generation", "rk_kek_generation",
+    "pk_r_new", "manifest",
+  ]);
+  assert.deepEqual(Object.keys(parseFile("recovery_put_req.json")), ["wrap", "kek_generation", "pk_r", "manifest"]);
+});
+
+test("m3_lengths_match_the_spec", () => {
+  // Spec: Fase 1 § 4.6 (the signed bodies) and § 4.3 (the wraps).
+  assert.deepEqual([MAX_SIGNED_BODY, NONCE_LEN, PROOF_LEN], [256 * 1024, 32, 64]);
+  assert.deepEqual([PASSWORD_WRAP_LEN, RECOVERY_WRAP_LEN], [104, 72]);
+  const len = (text) => decode(text).length;
+  const challenge = parseFile("challenge_res.json");
+  assert.equal(len(challenge.nonce), NONCE_LEN);
+  assert.equal(challenge.expires_in, 300);
+  const password = parseFile("password_put_req.json");
+  assert.deepEqual([len(password.registration_record), len(password.wrap)], [192, 104]);
+  assert.equal(password.kek_generation, 2);
+  assert.equal(password.manifest.rev, 2);
+  const recovery = parseFile("recovery_put_req.json");
+  assert.deepEqual([len(recovery.wrap), len(recovery.pk_r)], [72, 32]);
+  const recover = parseFile("recover_req.json");
+  assert.deepEqual([len(recover.registration_record), len(recover.pw_wrap), len(recover.rk_wrap), len(recover.pk_r_new)], [192, 104, 72, 32]);
+  assert.equal(len(parseFile("reregister_start_req.json").registration_request), 32);
+  assert.equal(len(parseFile("reregister_start_res.json").registration_response), 64);
+  const read_back = parseFile("recovery_res.json");
+  assert.equal(read_back.wrap.method_type, 2);
+  assert.equal(len(read_back.wrap.wrap), RECOVERY_WRAP_LEN);
+  // The client sends the generations of both new wraps: the AAD binds them.
+  assert.deepEqual([recover.pw_kek_generation, recover.rk_kek_generation], [2, 2]);
+  assert.deepEqual({ ...parseFile("password_put_res.json") }, { kek_generation: 2, seq: 9 });
+  assert.deepEqual({ ...readWire("recovery_put_res", read("recovery_put_res.json")) }, { kek_generation: 3, seq: 10 });
+  assert.deepEqual({ ...parseFile("recover_res.json") }, { session_ended: true, seq: 9 });
+  const window = parseFile("import_window_res.json");
+  assert.deepEqual([window.ops, window.expires_in], [250, 1800]);
+  assert.equal(parseFile("import_window_req.json").ops, 250);
+  assert.equal(parseFile("batch_req_import.json").import_window, window.window_id);
+  assert.ok(errorCodes().includes("import_window_invalid"));
+});
+
+test("password_put_req_refuses_wrong_lengths_and_unknown_fields", () => {
+  const base = parseFile("password_put_req.json");
+  const refused = (value) => refusalOf(() => shape(SHAPES.password_put_req, value));
+  assert.equal(refused(base), null);
+  for (const [field, size, code] of [
+    ["registration_record", 192, "malformed_registration_record"],
+    ["wrap", 104, "bad_request"],
+  ]) {
+    for (const wrong of [0, size - 1, size + 1, 2 * size]) {
+      assert.equal(refused({ ...base, [field]: b64u.encode(new Uint8Array(wrong)) }), code, `${field} with ${wrong} bytes`);
+    }
+    assert.equal(refused({ ...base, [field]: `${b64u.encode(new Uint8Array(size))}=` }), code, `${field} with padding`);
+    assert.equal(refused({ ...base, [field]: 5 }), "bad_request");
+  }
+  // The wrap of a recovery key is not a wrap of a password.
+  assert.equal(refused({ ...base, wrap: b64u.encode(new Uint8Array(72)) }), "bad_request");
+  for (const bad of [256, -1, "1", 1.5]) assert.equal(refused({ ...base, ksf_profile: bad }), "bad_request", String(bad));
+  assert.equal(refused({ ...base, ksf_profile: 255 }), null);
+  for (const bad of [2 ** 32, -1, "2", 1.5]) assert.equal(refused({ ...base, kek_generation: bad }), "bad_request", String(bad));
+  assert.equal(refused({ ...base, kek_generation: 2 ** 32 - 1 }), null);
+  assert.equal(refused({ ...base, x: 1 }), "bad_request");
+  assert.equal(refused({ ...base, manifest: { ...base.manifest, x: 1 } }), "bad_request");
+  for (const field of Object.keys(base)) assert.equal(refused(without(base, field)), "bad_request", field);
+  // The answer has the same two integers.
+  const answer = parseFile("password_put_res.json");
+  for (const bad of [{ ...answer, kek_generation: 2 ** 32 }, { ...answer, seq: 2 ** 53 }, { ...answer, x: 1 }, without(answer, "seq")]) {
+    assert.equal(refusalOf(() => shape(SHAPES.password_put_res, bad)), "bad_request", JSON.stringify(bad));
+  }
+});
+
+test("recovery_put_req_refuses_a_password_sized_wrap", () => {
+  const base = parseFile("recovery_put_req.json");
+  const refused = (value) => refusalOf(() => shape(SHAPES.recovery_put_req, value));
+  assert.equal(refused(base), null);
+  for (const wrong of [0, 71, 73, 104]) {
+    assert.equal(refused({ ...base, wrap: b64u.encode(new Uint8Array(wrong)) }), "bad_request", `a wrap of ${wrong} bytes`);
+  }
+  for (const wrong of [0, 31, 33, 64]) {
+    assert.equal(refused({ ...base, pk_r: b64u.encode(new Uint8Array(wrong)) }), "bad_request", `a key of ${wrong} bytes`);
+  }
+  assert.equal(refused({ ...base, kek_generation: 2 ** 32 }), "bad_request");
+  assert.equal(refused({ ...base, x: 1 }), "bad_request");
+  for (const field of Object.keys(base)) assert.equal(refused(without(base, field)), "bad_request", field);
+  // The answer of the recovery read: the wrap is the recovery method, 72 bytes.
+  const answer = readWire("recovery_res", read("recovery_res.json"));
+  checkStep("recovery_res", answer);
+  // A recovery wrap has no passkey field.
+  for (const field of ["credential_id", "prf_salt"]) {
+    const passkey = { ...answer, wrap: { ...answer.wrap, [field]: b64u.encode(new Uint8Array(32)) } };
+    shape(SHAPES.recovery_res, passkey); // it reads
+    assert.equal(refusalOf(() => checkStep("recovery_res", passkey)), "bad_request", field);
+  }
+  for (const [methodType, wrapLen] of [[1, 72], [3, 72], [2, 104], [2, 71], [2, 0]]) {
+    const changed = { ...answer, wrap: { ...answer.wrap, method_type: methodType, wrap: b64u.encode(new Uint8Array(wrapLen)) } };
+    shape(SHAPES.recovery_res, changed); // it reads
+    assert.equal(refusalOf(() => checkStep("recovery_res", changed)), "bad_request", `type ${methodType}, ${wrapLen} bytes`);
+  }
+});
+
+test("recover_req_needs_every_field", () => {
+  const base = parseFile("recover_req.json");
+  const refused = (value) => refusalOf(() => shape(SHAPES.recover_req, value));
+  assert.deepEqual(Object.keys(base).sort(), [
+    "ksf_profile", "manifest", "pk_r_new", "pw_kek_generation", "pw_wrap", "registration_record", "rk_kek_generation", "rk_wrap",
+  ]);
+  assert.equal(refused(base), null);
+  for (const field of Object.keys(base)) {
+    assert.equal(refused(without(base, field)), "bad_request", field);
+    assert.equal(refused({ ...base, [field]: null }), "bad_request", `${field} null`);
+  }
+  assert.equal(refused({ ...base, x: 1 }), "bad_request");
+  // The two wraps are not interchangeable.
+  assert.equal(refused({ ...base, pw_wrap: b64u.encode(new Uint8Array(72)) }), "bad_request");
+  assert.equal(refused({ ...base, rk_wrap: b64u.encode(new Uint8Array(104)) }), "bad_request");
+  for (const [field, size] of [["registration_record", 192], ["pw_wrap", 104], ["rk_wrap", 72], ["pk_r_new", 32]]) {
+    for (const wrong of [size - 1, size + 1]) {
+      assert.notEqual(refused({ ...base, [field]: b64u.encode(new Uint8Array(wrong)) }), null, `${field} ${wrong}`);
+    }
+  }
+  assert.equal(refused({ ...base, ksf_profile: 256 }), "bad_request");
+  // The two generations are 32-bit whole numbers.
+  for (const field of ["pw_kek_generation", "rk_kek_generation"]) {
+    for (const bad of [2 ** 32, -1, "2", 1.5]) assert.equal(refused({ ...base, [field]: bad }), "bad_request", `${field} ${bad}`);
+    assert.equal(refused({ ...base, [field]: 2 ** 32 - 1 }), null, field);
+  }
+  const answer = parseFile("recover_res.json");
+  for (const bad of ['{"session_ended":true}', '{"session_ended":"yes","seq":1}', '{"session_ended":true,"seq":1,"x":1}']) {
+    assert.equal(refusalOf(() => readWire("recover_res", bad)), "bad_request", bad);
+  }
+  assert.equal(refusalOf(() => shape(SHAPES.recover_res, answer)), null);
+});
+
+test("batch_req_without_import_window_is_the_m2_shape", () => {
+  const plain = readWire("batch_req", read("batch_req.json"));
+  assert.equal("import_window" in plain, false);
+  assert.equal(encodeWire("batch_req", plain), read("batch_req.json").trimEnd());
+  // `null` is a field that is left out.
+  checkStep("batch_req", { ...plain, import_window: null });
+  const imported = readWire("batch_req_import", read("batch_req_import.json"));
+  const window = parseFile("import_window_res.json");
+  assert.equal(imported.import_window, window.window_id);
+  assert.deepEqual(Object.keys(imported), ["ops", "import_window"]);
+  checkStep("batch_req_import", imported);
+  // The count and the form of the operations are the same rules.
+  assert.equal(refusalOf(() => checkStep("batch_req_import", { ...imported, ops: [] })), "bad_request");
+  assert.equal(refusalOf(() => checkStep("batch_req_import", { ...imported, ops: Array.from({ length: 101 }, () => imported.ops[0]) })), "bad_request");
+  // The window is an id: lower-case hexadecimal, 32 characters.
+  for (const bad of [window.window_id.toUpperCase(), "00", 5, ""]) {
+    assert.equal(refusalOf(() => shape(SHAPES.batch_req_import, { ...imported, import_window: bad })), "bad_request", String(bad));
+    assert.equal(refusalOf(() => shape(SHAPES.batch_req, { ...plain, import_window: bad })), "bad_request", String(bad));
+  }
+  assert.equal(refusalOf(() => shape(SHAPES.batch_req_import, { ...imported, x: 1 })), "bad_request");
+});
+
+test("session_res_scope_is_one_of_the_four_scopes", () => {
+  assert.deepEqual([...SESSION_SCOPES], ["full", "pending_2fa", "account_reset", "unverified"]);
+  const base = parseFile("session_res.json");
+  for (const scope of SESSION_SCOPES) {
+    assert.equal(refusalOf(() => shape(SHAPES.session_res, { ...base, scope })), null, scope);
+  }
+  for (const bad of ["", "Full", "FULL", "admin", "reset", "full ", 1, null]) {
+    assert.equal(refusalOf(() => shape(SHAPES.session_res, { ...base, scope: bad })), "bad_request", JSON.stringify(bad));
+  }
+  // The time of the fresh check is an optional whole number.
+  assert.equal(base.reauth_until, 1800000300);
+  assert.equal("reauth_until" in parseFile("session_res.admin.json"), false);
+  shape(SHAPES.session_res, { ...base, reauth_until: null });
+  for (const bad of [-1, 1.5, "1800000300", 2 ** 53]) {
+    assert.equal(refusalOf(() => shape(SHAPES.session_res, { ...base, reauth_until: bad })), "bad_request", String(bad));
+  }
+  // The scope of a redeemed code is the one reset scope.
+  assert.equal(REDEEM_SCOPE, "account_reset");
+  assert.ok(SESSION_SCOPES.includes(REDEEM_SCOPE));
+  assert.equal(readWire("redeem_res", read("redeem_res.json")).scope, "account_reset");
+  for (const bad of ["full", "pending_2fa", "unverified", "", "Account_reset"]) {
+    assert.equal(refusalOf(() => shape(SHAPES.redeem_res, { scope: bad })), "bad_request", bad);
+  }
+});
+
+test("sign_in_code_and_import_window_bodies_have_the_fields_of_the_plan", () => {
+  const redeem = readWire("redeem_req", read("redeem_req.json"));
+  assert.deepEqual(Object.keys(redeem), ["email", "code"]);
+  for (const bad of [
+    '{"email":"a@b.c"}', '{"code":"x"}', '{"email":"a@b.c","code":5}', '{"email":"a@b.c","code":"x","x":1}',
+    '{"code":"x","next":"/"}',
+  ]) {
+    assert.equal(refusalOf(() => readWire("redeem_req", bad)), "bad_request", bad);
+  }
+  for (const bad of ["{}", '{"ops":-1}', '{"ops":4294967296}', '{"ops":"250"}', '{"ops":1.5}', '{"ops":1,"x":1}']) {
+    assert.equal(refusalOf(() => readWire("import_window_req", bad)), "bad_request", bad);
+  }
+  assert.equal(readWire("import_window_req", '{"ops":4294967295}').ops, 4294967295);
+  const window = parseFile("import_window_res.json");
+  for (const field of Object.keys(window)) {
+    assert.equal(refusalOf(() => shape(SHAPES.import_window_res, without(window, field))), "bad_request", field);
+  }
+  const answer = parseFile("recovery_res.json");
+  assert.equal(answer.account_id, parseFile("login_finish_res.json").account_id);
+  assert.equal(answer.vault_id, parseFile("login_finish_res.json").vault_id);
 });

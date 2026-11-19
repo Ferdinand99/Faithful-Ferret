@@ -519,12 +519,13 @@ body     [24 nonce ‖ ciphertext ‖ 16 tag]
 4. `POST /api/vault/recover`:
 
    ```
-   body  = { registration_record, ksf_profile, pw_wrap, rk_wrap, pk_r_new, manifest }
+   body  = { registration_record, ksf_profile, pw_wrap, rk_wrap,
+             pw_kek_generation, rk_kek_generation, pk_r_new, manifest }
    proof = Ed25519.Sign(sk_r,
              TLV[ label="ferret/v1/recovery-req", op="recover", account_id,
                   nonce, vk_epoch, hash = SHA-256(body) ])
    ```
-   The server checks against the stored `pk_r`, a single-use nonce (from `/api/auth/challenge`) and a 5-minute expiry. No Argon2id, no bearer secret, and the proof is bound to the new wrap.
+   The server checks against the stored `pk_r`, a single-use nonce (from `/api/auth/challenge`) and a 5-minute expiry. No Argon2id, no bearer secret, and the proof is bound to the new wrap. The client sends both new KEK generations with the request, because the wrap AAD binds them and the server cannot derive them (the manifest is sealed and the floor lives on the device); the new recovery wrap keeps the stored recovery `method_id`.
 5. After recovery: all other sessions and device tokens are revoked, the new RK is shown, and the user is notified by e-mail. The user is offered a full rekey if compromise is suspected.
 6. Without RK there is **no way into the vault**. That is L3, and it is explained clearly at setup.
 
