@@ -57,7 +57,7 @@ futures-util = "0.3.34"
 # Trusted proxy addresses and networks (FERRET_TRUSTED_PROXIES).
 ipnet = "2.11.0"
 rand = "0.10.3"
-# The kit's Core holds an HTTP client; the server makes no requests of its own.
+# The kit's Core holds an HTTP client; the server uses it for one call: the message to the backup monitor.
 reqwest = { version = "0.13.5", default-features = false }
 rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 rust-embed = "8.12.0"
@@ -84,8 +84,8 @@ dev-no-web = []
 e2e-clock = []
 
 [target.'cfg(unix)'.dependencies]
-# RLIMIT_CORE = 0 at start-up: a safe setrlimit.
-rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
+# RLIMIT_CORE = 0 at start-up: a safe setrlimit; free disk space (statvfs) before a backup.
+rustix = { version = "1.1.5", default-features = false, features = ["fs", "process", "std"] }
 
 [dev-dependencies]
 # `/setup` without a setup token in the in-process tests, and the software

@@ -145,6 +145,16 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     // Notifications and other work outside a request use the site language.
     vole_kit::i18n::site_language(&state.core).await;
     spawn_background(&state);
+    // The scheduled backup: a set 15 minutes after start, then every
+    // FERRET_BACKUP_EVERY_HOURS, and one soon after a change of unlock methods.
+    crate::backup::schedule::spawn(
+        state.vault_db.clone(),
+        config.data_dir.clone(),
+        config.backup_config()?,
+        state.backup.clone(),
+        state.clock.clone(),
+        state.core.http.clone(),
+    );
 
     let vault_listener = bind(config.vault_addr()).await?;
     let admin_listener = bind(config.admin_addr()).await?;
