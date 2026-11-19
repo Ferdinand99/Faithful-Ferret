@@ -34,6 +34,10 @@ pub const VAULT_ABSOLUTE_SECS: i64 = 7 * 24 * 60 * 60;
 pub const ADMIN_IDLE_SECS: i64 = 60 * 60;
 /// Seconds after sign-in after which an admin session ends: 12 hours.
 pub const ADMIN_ABSOLUTE_SECS: i64 = 12 * 60 * 60;
+/// Seconds for which proving the master password again (a sign-in with
+/// `purpose: "reauth"`) makes the session fresh for a sensitive operation:
+/// 5 minutes. Spec: Fase 1 § 4.6 (a).
+pub const REAUTH_SECS: i64 = 300;
 
 /// The two listeners a session can belong to. A session of one is never valid
 /// on the other.
@@ -82,6 +86,25 @@ pub fn within_limits(row: &SessionRow, now: i64) -> bool {
         && now.saturating_sub(row.issued_at).max(0) <= absolute
 }
 
+/// Whether the session of `row` proved the master password again recently
+/// enough for a sensitive operation at `now`: `0 <= now - reauth_at <= 300`.
+/// Both ends are inclusive: 300 seconds after the re-authentication the
+/// session is still fresh, 301 seconds after it is not. A clock that reads
+/// before `reauth_at` is not fresh, and a session that never re-authenticated
+/// is never fresh. An operation does not use the freshness up.
+///
+/// Where this reads more into the spec text than it says: § 4.6 (a) asks for
+/// the master password again within 5 minutes. Here only a sign-in with
+/// `purpose: "reauth"` in this session counts (an ordinary sign-in does not),
+/// and the freshness lasts the whole 5 minutes, for any number of operations.
+///
+/// Spec: Fase 1 § 4.6 (a).
+pub fn reauth_fresh(row: &SessionRow, now: i64) -> bool {
+    row.reauth_at
+        .and_then(|at| now.checked_sub(at))
+        .is_some_and(|age| (0..=REAUTH_SECS).contains(&age))
+}
+
 /// A session to insert.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSession {
@@ -123,6 +146,11 @@ pub struct SessionRow {
     pub last_seen: i64,
     /// When the session was ended, if it was.
     pub revoked_at: Option<i64>,
+    /// When this session last proved the master password again (a sign-in
+    /// with `purpose: "reauth"`), if it ever did. The value lives in this
+    /// session's own row, so the freshness belongs to this session and to no
+    /// other one of the same user.
+    pub reauth_at: Option<i64>,
 }
 
 /// Makes a new session: a random session id from `rng`, `issued_at` = `now`,
@@ -285,7 +313,7 @@ pub fn revoke_all_for_user(
 pub fn lookup(conn: &Connection, sid: &SidHash) -> rusqlite::Result<Option<SessionRow>> {
     conn.query_row(
         "SELECT sid_hash, user_id, issued_at, origin, device_id, device_name, scope,
-                last_seen, revoked_at
+                last_seen, revoked_at, reauth_at
          FROM ferret_sessions WHERE sid_hash = ?1",
         params![sid.0.as_slice()],
         read_row,
@@ -371,6 +399,7 @@ fn read_row(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         scope: SessionScope::parse_stored(Some(scope.as_str())),
         last_seen: row.get(7)?,
         revoked_at: row.get(8)?,
+        reauth_at: row.get(9)?,
     })
 }
 

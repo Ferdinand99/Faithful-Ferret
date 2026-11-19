@@ -4,24 +4,39 @@
 //!
 //! The rows are written with plain SQL, so these helpers depend on the schema
 //! and on the session code only.
+//!
+//! For signed requests: [`seed_signer`] adds an account whose `pk_a` is a real
+//! key, [`sign`] makes its proofs, and [`reset_session`] gives it a session of
+//! the scope `account_reset`.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::extract::FromRef;
-use axum::http::{Request, header};
+use axum::extract::{FromRef, State};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::response::IntoResponse as _;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, response::Response};
 use axum_extra::extract::cookie::{Cookie, SignedCookieJar};
-use ferret_core::OsRng;
+use ferret_core::{
+    AuthOp, AuthPublicKey, MutationOp, OsRng, RecoveryPublicKey, TestRng, UnlockedVault,
+    VaultContext, VaultKey, auth_sign,
+};
 use ferret_server::auth::session::{Origin, insert_session, new_session, session_cookies};
-use ferret_server::http::extract::{AdminSession, SessionAuth, VaultSession};
+use ferret_server::auth::throttle::caller_from;
+use ferret_server::error::ApiError;
+use ferret_server::http::extract::{
+    AdminSession, ScopedSession, SessionAuth, SignedBody, VaultSession, caps,
+};
 use ferret_server::ids::{AccountId, DeviceId, SidHash, VaultId};
-use ferret_server_auth::{Clock as _, SessionScope};
+use ferret_server::state::FerretState;
+use ferret_server::wire::b64url;
+use ferret_server_auth::{
+    AuthContext, Clock as _, ProfileRules, SessionScope, SignedAccount, authorize_signed,
+};
 use serde_json::json;
 use tower::ServiceExt as _;
 
-use super::{Jar, Res, TestApp};
+use super::{Jar, Req, Res, TestApp, Which};
 
 /// A kit user with an account and a vault, as registration leaves them.
 #[derive(Clone, Copy, Debug)]
@@ -220,4 +235,221 @@ pub async fn get_with(router: &Router, jar: &Jar, uri: &str) -> Res {
 /// Lower-case hex.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ------------------------------------------------------- signed requests
+
+/// The number of the account whose `pk_a` is a real key: [`sign`] signs for
+/// it.
+pub const SIGNER: u8 = 0x5a;
+
+/// The vault key epoch [`seed`] stores for every account, which [`sign`]
+/// signs for.
+pub const SIGNER_EPOCH: u64 = 3;
+
+/// The unlocked vault of the signer: a fixed vault key, so every call gives
+/// the same `sk_a`.
+fn signer_vault() -> UnlockedVault {
+    let ctx = VaultContext {
+        account_id: AccountId::from_bytes(id16(0xa0, SIGNER)),
+        vault_id: VaultId::from_bytes(id16(0xb0, SIGNER)),
+        vk_epoch: SIGNER_EPOCH,
+    };
+    UnlockedVault::from_vault_key(ctx, VaultKey::generate(&mut TestRng::new(b"signer vault")))
+        .expect("the signer's vault")
+}
+
+/// Adds the signer ([`SIGNER`]) as [`seed`] does, with the real `pk_a` of its
+/// vault key, so [`sign`] makes proofs the server accepts.
+pub async fn seed_signer(app: &TestApp) -> Seeded {
+    let seeded = seed(app, SIGNER).await;
+    let pk_a = signer_vault().auth_public_key();
+    let account = seeded.account;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "UPDATE ferret_accounts SET pk_a = ?1 WHERE account_id = ?2",
+                rusqlite::params![pk_a.as_slice(), account.as_bytes().as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("store the signer's pk_a");
+    seeded
+}
+
+/// The proof of `op` over `nonce` and `body`, signed with the signer's `sk_a`
+/// for its account and epoch.
+pub fn sign(op: AuthOp, nonce: &[u8; 32], body: &[u8]) -> [u8; 64] {
+    auth_sign(&signer_vault(), op, nonce, body).expect("a proof")
+}
+
+/// The signer ([`seed_signer`]) with a session of the scope `account_reset` on
+/// the vault listener, as a redeemed sign-in code leaves it. Its cookies become
+/// the vault jar of `app`. Call it once per app.
+pub async fn reset_session(app: &TestApp) -> (Seeded, Issued) {
+    let seeded = seed_signer(app).await;
+    let issued = issue(
+        app,
+        seeded.user_id,
+        Origin::Vault,
+        SessionScope::AccountReset,
+        1,
+    )
+    .await;
+    app.set_jar(Which::Vault, issued.jar.clone());
+    (seeded, issued)
+}
+
+/// The path of the route of [`signed_probe`].
+pub const PROBE: &str = "/api/test/signed";
+
+/// The body the probe parses after the permit.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeBody {
+    n: u32,
+}
+
+/// A vault router with one signed route, built the way the routes of signed
+/// requests are: `ScopedSession<UnlockMethodsWrite>`, then `SignedBody`, then
+/// the library's `authorize_signed` for `unlock-method.recovery.put` with the
+/// account as stored, and only then `SignedBody::parse`. The answer is
+/// `{"n": n}` of a body `{"n": n}`. The vault listener's layers are around it.
+pub fn signed_probe(app: &TestApp) -> Router {
+    async fn probe(
+        State(state): State<FerretState>,
+        headers: HeaderMap,
+        scoped: ScopedSession<caps::UnlockMethodsWrite>,
+        signed: SignedBody,
+    ) -> Result<Response, ApiError> {
+        let account_id = scoped.session.account;
+        let (pk_a, pk_r, vk_epoch) = state
+            .vault_db
+            .with_conn(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT pk_a, pk_r, vk_epoch FROM ferret_accounts WHERE account_id = ?1",
+                    [account_id.as_bytes().as_slice()],
+                    |r| {
+                        Ok((
+                            r.get::<_, Vec<u8>>(0)?,
+                            r.get::<_, Vec<u8>>(1)?,
+                            r.get::<_, i64>(2)?,
+                        ))
+                    },
+                )?)
+            })
+            .await?;
+        let account = SignedAccount {
+            account_id,
+            pk_a: AuthPublicKey::new(pk_a.try_into().expect("32 bytes")),
+            pk_r: RecoveryPublicKey::new(pk_r.try_into().expect("32 bytes")),
+            vk_epoch: u64::try_from(vk_epoch).expect("an epoch"),
+            row_version: 0,
+        };
+        let policy = state.prelogin.read().expect("the policy").clone();
+        let rules = ProfileRules::ferret_v1();
+        let cx = AuthContext::new(
+            &state.secrets.keys,
+            &state.secrets.prelogin,
+            &state.secrets.seal,
+            state.clock.as_ref(),
+            state.throttle.as_ref(),
+            &policy,
+            &rules,
+        );
+        let request = signed.signed_request(
+            &scoped,
+            caller_from(&headers, None),
+            MutationOp::UnlockMethodRecoveryPut,
+        );
+        let permit = authorize_signed(&cx, state.challenges.store(), &account, &request).map_err(
+            |error| {
+                tracing::info!(reason = ?error, "signed request refused");
+                ApiError::from(error)
+            },
+        )?;
+        let body: ProbeBody = signed.parse(&permit)?;
+        Ok(Json(json!({ "n": body.n })).into_response())
+    }
+    let router = Router::new()
+        .route(PROBE, post(probe))
+        .with_state(app.state.clone());
+    ferret_server::http::vault_layers(router, &app.state)
+}
+
+/// A `POST` to the probe with the cookies of `jar`, the headers of a page of
+/// the vault, and the two proof headers as given (`None` leaves one out).
+pub async fn call_probe(
+    router: &Router,
+    jar: &Jar,
+    nonce: Option<&str>,
+    proof: Option<&str>,
+    body: impl Into<Body>,
+) -> Res {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(PROBE)
+        .header(header::HOST, Which::Vault.host())
+        .header("origin", Which::Vault.url())
+        .header("ferret-protocol", "1")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = jar.header() {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    if let Some(nonce) = nonce {
+        builder = builder.header("ferret-nonce", nonce);
+    }
+    if let Some(proof) = proof {
+        builder = builder.header("ferret-proof", proof);
+    }
+    let mut request = builder.body(body.into()).expect("a request");
+    let peer: std::net::SocketAddr = super::PEER.parse().expect("a peer");
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    let response = router.clone().oneshot(request).await.expect("a response");
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, 1024 * 1024).await.expect("a body");
+    Res {
+        status: parts.status,
+        headers: parts.headers,
+        body: body.to_vec(),
+    }
+}
+
+/// `POST /api/auth/challenge` with the cookies of `jar`.
+pub async fn challenge_with(app: &TestApp, jar: &Jar) -> Res {
+    let mut req = Req::post("/api/auth/challenge").page_fetch(Which::Vault);
+    if let Some(cookie) = jar.header() {
+        req = req.header("cookie", &cookie);
+    }
+    app.call_raw(Which::Vault, req.build()).await
+}
+
+/// A nonce for the session of `jar`; panics unless the server gives one.
+pub async fn nonce_for(app: &TestApp, jar: &Jar) -> [u8; 32] {
+    let res = challenge_with(app, jar).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let text = res.json()["nonce"].as_str().expect("a nonce").to_string();
+    b64url::decode(&text)
+        .expect("base64url")
+        .try_into()
+        .expect("32 bytes")
+}
+
+/// Sets `reauth_at` of the session `sid`, as a re-authentication would.
+pub async fn set_reauth_at(app: &TestApp, sid: SidHash, reauth_at: Option<i64>) {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "UPDATE ferret_sessions SET reauth_at = ?1 WHERE sid_hash = ?2",
+                rusqlite::params![reauth_at, sid.0.as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("set reauth_at");
 }
