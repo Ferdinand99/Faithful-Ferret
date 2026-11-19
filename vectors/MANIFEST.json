@@ -1,8 +1,8 @@
 {
   "files": {
-    "ERRORS.md": "e481d7a91a10d810ebabd10713f347702ece34965bee57f19de4739376016e23",
-    "OPS.md": "ce7d7e347f62fd653fdd1906ee55f55a698414824b32ecf86f78c19d8631a2a6",
-    "VERSION": "20d2add851bf39edcc6b5e830930f962db7e19dffa2cab8610eed551eda6c302",
+    "ERRORS.md": "7758deaa9488fc076dfc73633b717f12f029bd4894e0357b837a19abaca43156",
+    "OPS.md": "5fae3ffb7a74f328d00e813dd25619bd23705fe692e68d99bf83561bb99d3b15",
+    "VERSION": "932ab0a0e4191d32c0af7b3f565b7b180dbe9869378abc5816f9add54b806e7f",
     "external/SOURCE.md": "afe26b63233f4360c3c04c47d5e508fc1324e0313394f015bde26bc0ee91ee6d",
     "external/publicsuffix-test_psl.txt": "8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d",
     "external/rfc4226-hotp.json": "11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198",
@@ -33,6 +33,7 @@
     "internal/padding.json": "1a639195fca149b2b747e51ca8d1c386a4cf68768916c2b9da0a07c802e8028f",
     "internal/passkey.json": "c91e467bf12dabe14d0e28717f230a8668417e3b8e7647601faac28d6fa11b6e",
     "internal/proofs.json": "4c3ed8fa1529090da97203ae9db440ccf64473e9ee34b9e4fdc7ae34134276ea",
+    "internal/recovery_renew.json": "fca02ad704a52b499ff0764127dde4f36e2303ec10a00c22f14cd550684cd8da",
     "internal/rekey.json": "956026a04ea9f7f7662f2210966ef229b5897555b0b23d94538edf9aa28bce3e",
     "internal/server-opaque.json": "c0290a49cd66d467851cffac102b5b1881d78855107f0a17d00a85b7001fb9a8",
     "internal/server-secrets.json": "00ab0038727cccf417568c63faa0fe138d990e5833afe780b8316fa2ad10c2f1",
@@ -48,5 +49,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 26
+  "version": 27
 }

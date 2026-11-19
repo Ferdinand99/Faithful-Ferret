@@ -153,8 +153,8 @@ ops['account.change_password'] = ({ input, rng }) => {
   const listed = row.parsed.methods.find((m) => m.t === 1 && equal(m.id, currentId));
   if (!listed) fail('malformed_entries');
 
+  if (listed.g >= GENERATION_LIMIT || BigInt(input.current.kek_generation) >= GENERATION_LIMIT) fail('generation_exhausted');
   const gen = max(floors.pw, listed.g, BigInt(input.current.kek_generation)) + 1n;
-  if (gen > GENERATION_LIMIT) fail('malformed_pinned_record');
   const wrap = wrapSeal('password', { accountId, vaultId, methodId: currentId, vkEpoch: epoch, kekGeneration: gen, ksfProfile: input.ksf_profile }, kekPassword(accountId, unhex(input.registration.export_key)), vk, rng.draw(24));
   const plain = rewriteManifest(row.parsed, (m) => {
     const e = entryOf(m);
@@ -202,9 +202,9 @@ ops['account.recover'] = ({ input, rng }) => {
   // the new id may not be the password wrap's, nor that of any entry but the old recovery entry
   if (row.parsed.methods.some((m) => equal(m.id, newRkId) && m !== rkEntry)) fail('malformed_entries');
 
+  if (pwEntry.g >= GENERATION_LIMIT || rkEntry.g >= GENERATION_LIMIT || BigInt(w.kek_generation) >= GENERATION_LIMIT) fail('generation_exhausted');
   const genPw = max(floors.pw, pwEntry.g) + 1n;
   const genRk = max(floors.rk, rkEntry.g, BigInt(w.kek_generation)) + 1n;
-  if (genPw > GENERATION_LIMIT || genRk > GENERATION_LIMIT) fail('malformed_pinned_record');
 
   const pw = wrapSeal('password', { accountId, vaultId, methodId: pwEntry.id, vkEpoch: epoch, kekGeneration: genPw, ksfProfile: input.ksf_profile }, kekPassword(accountId, unhex(input.registration.export_key)), vk, rng.draw(24));
   const newRk = rng.draw(32);
@@ -234,6 +234,55 @@ ops['account.recover'] = ({ input, rng }) => {
     const msg = proofMessage('ferret/v1/recovery-req', 'recover', accountId, unhex(input.sign.nonce), epoch, unhex(input.sign.body));
     out.proof = hex(ed25519Sign(msg, recoveryKeypair(accountId, oldRk).sk));
     out.proof_op = 'recover';
+  }
+  return { expect: out };
+};
+
+// A new recovery key for an open vault (Fase 1 sections 4.3, 4.5, 4.6, 6.1; vectors/OPS.md).
+ops['account.renew_recovery'] = ({ input, rng }) => {
+  const accountId = unhex(input.account_id);
+  const vaultId = unhex(input.vault_id);
+  const epoch = BigInt(input.vk_epoch);
+  const vk = unhex(input.vk);
+  const keys = vkDerive(accountId, vaultId, epoch, vk);
+  const pinned = input.pinned;
+  checkPinnedVault(pinned, epoch, keys.pkA);
+  const current = input.current;
+  if (current.type !== 'recovery') fail('unsupported');
+  // the recovery floor must be there, and one more must still be a generation
+  if (pinned.recovery_floor === null || pinned.recovery_floor === undefined) fail('malformed_pinned_record');
+  const floor = BigInt(pinned.recovery_floor);
+  if (floor >= GENERATION_LIMIT) fail('malformed_pinned_record');
+  const currentGen = BigInt(current.kek_generation);
+  // the client rejects a generation below the one it has seen (section 4.3), except after an accepted restore
+  const refuseBelow = input.after_restore !== true;
+  if (refuseBelow && currentGen < floor) fail('pinned_kek_generation');
+  const row = openManifestRow(keys, accountId, vaultId, epoch, vk, input.manifest);
+  const currentId = unhex(current.method_id);
+  const recoveryEntries = row.parsed.methods.filter((m) => m.t === 2);
+  if (recoveryEntries.length !== 1 || !equal(recoveryEntries[0].id, currentId)) fail('malformed_entries');
+  if (refuseBelow && recoveryEntries[0].g < floor) fail('pinned_kek_generation');
+  // a value of the server at the largest generation has no next one
+  if (recoveryEntries[0].g >= GENERATION_LIMIT || currentGen >= GENERATION_LIMIT) fail('generation_exhausted');
+
+  const gen = max(floor, recoveryEntries[0].g, currentGen) + 1n;
+  const newRk = rng.draw(32);
+  const rkw = wrapSeal('recovery', { accountId, vaultId, methodId: currentId, vkEpoch: epoch, kekGeneration: gen }, kekRecovery(accountId, newRk), vk, rng.draw(24));
+  const plain = rewriteManifest(row.parsed, (m) => {
+    const e = entryOf(m);
+    if (e.t === 2 && equal(e.id, currentId)) setKey(m, 'g', C.uint(gen));
+  });
+  const manifest = sealNewManifest(keys, vk, vaultId, epoch, row.rev + 1n, plain, rng.draw(24));
+  const out = {
+    recovery_key: hex(newRk),
+    pk_r: hex(recoveryKeypair(accountId, newRk).pk),
+    recovery_wrap: { method_id: hex(currentId), kek_generation: String(gen), wrap: hex(rkw.wrap) },
+    manifest,
+  };
+  if (input.sign) {
+    const msg = proofMessage('ferret/v1/mutation', 'unlock-method.recovery.put', accountId, unhex(input.sign.nonce), epoch, unhex(input.sign.body));
+    out.proof = hex(ed25519Sign(msg, keys.skA));
+    out.proof_op = 'unlock-method.recovery.put';
   }
   return { expect: out };
 };

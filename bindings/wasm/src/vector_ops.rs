@@ -1292,6 +1292,7 @@ fn dispatch(
         "account_create"
         | "account_change_password"
         | "account_recover"
+        | "account_renew_recovery"
         | "account_verify_recovery"
         | "account_verify_secret_key"
         | "setup_qr_build"

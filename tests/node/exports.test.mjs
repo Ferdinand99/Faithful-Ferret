@@ -58,13 +58,16 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.make_tombstone", "Vault.manifest_add_method", "Vault.manifest_remove_method", "Vault.match_page",
     "Vault.open_item",
     "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get",
-    "Vault.rekey_abort", "Vault.rekey_commit", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
+    "Vault.rekey_abort", "Vault.rekey_commit", "Vault.renew_recovery", "Vault.renew_recovery_after_restore", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
     "Vault.reveal_item_notes", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
     "Vault.reveal_secret_key_code", "Vault.reveal_totp_secret", "Vault.seed_pinned", "Vault.totp_code",
     "Vault.verify_checkpoint", "Vault.verify_recovery_setup", "Vault.verify_secret_key_entry",
     "Vault.verify_tombstone", "Vault.wrap_pin", "Vault.wrap_prf",
   ];
   assert.deepEqual([...exportsOf.keys()].sort(), [...documented].sort());
+  // A new recovery key returns the public request values, never the key itself.
+  assert.match(dts, /renew_recovery\(pinned: any, current: any, manifest: any\): any;/);
+  assert.match(dts, /renew_recovery_after_restore\(pinned: any, current: any, manifest: any\): any;/);
   // The copy of an item is a method of the vault that returns the sealed row, not bytes.
   assert.match(dts, /copy_item\(handle: number, new_item_id: Uint8Array, now_ms: number, device\?: string \| null\): any;/);
 });
