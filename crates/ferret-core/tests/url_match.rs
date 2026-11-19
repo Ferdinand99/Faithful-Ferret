@@ -1029,8 +1029,7 @@ fn vectors_manifest_lists_the_new_file() {
         listed,
         ferret_core::testing::hex_encode(&Sha256::digest(&bytes))
     );
-    // The runner for bindings knows the file: it is native only until a
-    // binding exposes the operations.
+    // The runner for bindings runs the file: the binding exposes the operations.
     let runner = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bindings/wasm/js/vector-runner.mjs"),
     )
