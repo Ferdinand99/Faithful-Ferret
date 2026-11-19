@@ -134,7 +134,7 @@ test("forgetting_the_other_server_from_the_page_keeps_the_secret_key_sealed_for_
     assert.equal(await loadPinnedByAccount(db, OTHER, ACCOUNT), null);
     assert.equal(await hasSecretKey(db, OTHER, ACCOUNT), false);
     assert.equal(await hasSecretKey(db, SERVER, ACCOUNT), true);
-    assert.match(textOf(byRole(root, "done")), /forgotten https://other.example/);
+    assert.ok(textOf(byRole(root, "done")).includes("forgotten https://other.example"));
   } finally {
     if (saved === undefined) delete globalThis.document;
     else globalThis.document = saved;
