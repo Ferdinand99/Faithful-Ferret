@@ -3140,11 +3140,11 @@ DEALINGS IN THE SOFTWARE.
 --- MIT ---
 
 Used by:
-  email-encoding 0.4.2 (https://github.com/lettre/email-encoding)
+  email-encoding 0.4.3 (https://github.com/lettre/email-encoding)
 
 MIT License
 
-Copyright (c) 2021-2024 Paolo Barbolini <paolo@paolo565.org>
+Copyright (c) 2021-2026 Paolo Barbolini <paolo@paolobarbolini.it>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -4201,7 +4201,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 --- MIT ---
 
 Used by:
-  lettre 0.11.23 (https://github.com/lettre/lettre)
+  lettre 0.11.24 (https://github.com/lettre/lettre)
 
 Copyright (c) 2014-2024 Alexis Mousset <contact@amousset.me>
 Copyright (c) 2019-2025 Paolo Barbolini <paolo@paolo565.org>
@@ -4267,8 +4267,8 @@ DEALINGS IN THE SOFTWARE.
 --- MIT ---
 
 Used by:
-  libsqlite3-sys 0.38.2 (https://github.com/rusqlite/rusqlite)
-  rusqlite 0.40.2 (https://github.com/rusqlite/rusqlite)
+  libsqlite3-sys 0.39.1 (https://github.com/rusqlite/rusqlite)
+  rusqlite 0.41.1 (https://github.com/rusqlite/rusqlite)
 
 Copyright (c) 2014 The rusqlite developers
 

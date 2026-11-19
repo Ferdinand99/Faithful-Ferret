@@ -67,8 +67,13 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# vole-kit, at a tag, from the repository of the same owner.
-allow-git = ["https://github.com/Ferdinand99/Vigilant-Vole"]
-# A git dependency must name a tag: a branch or a revision of the allowed
+# vole-kit, at a tag, from its own repository, and deadpool-sqlite,
+# a fork (pinned to a commit) that supports rusqlite 0.41, which vole-kit uses too.
+# Remove the fork when the crates.io release supports rusqlite 0.41 or newer.
+allow-git = [
+  "https://github.com/Ferdinand99/Vigilant-Vole",
+  "https://github.com/Ferdinand99/deadpool",
+]
+# A git dependency must name a tag or a commit: a branch of an allowed
 # repository is refused.
 required-git-spec = "tag"
