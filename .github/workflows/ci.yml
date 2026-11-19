@@ -165,6 +165,11 @@ jobs:
       - name: Tests of the notices scripts
         run: node --test "scripts/*.test.mjs"
 
+      # Third-party GPL or AGPL code is taken into web/, extension/, the server crates and test
+      # fixtures only, never into the core or the mobile sources (they ship to the app stores).
+      - name: No notice of another project in the core or the mobile sources
+        run: node scripts/check-core-headers.mjs
+
       # --fail is what makes an unreadable licence stop the check; this test proves it.
       - name: cargo-about stops on a crate with an unreadable licence
         run: scripts/test-notices-fail.sh

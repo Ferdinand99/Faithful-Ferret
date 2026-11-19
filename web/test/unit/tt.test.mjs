@@ -79,7 +79,7 @@ test("trusted_types_without_support_returns_a_plain_string", () => {
   assert.throws(() => odd.workerUrl("vault"), TypeError);
 });
 
-test("trusted_types_table_lists_exactly_the_two_workers_of_this_milestone", () => {
-  assert.deepEqual(DEFAULT_WORKERS, { vault: "/js/vault.worker.mjs", job: "/js/job.worker.mjs" });
+test("trusted_types_table_lists_exactly_the_three_workers_of_this_milestone", () => {
+  assert.deepEqual(DEFAULT_WORKERS, { vault: "/js/vault.worker.mjs", job: "/js/job.worker.mjs", import: "/js/import.worker.mjs" });
   assert.ok(Object.isFrozen(DEFAULT_WORKERS));
 });

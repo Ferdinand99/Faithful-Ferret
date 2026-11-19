@@ -12,6 +12,12 @@
 // The npm packages are the production dependencies in web/package-lock.json (there are none today:
 // the web vault has dev dependencies only); their licence files are read from web/node_modules, so run
 // `npm ci` in web/ first.
+//
+// The vendored web files are the third-party files in web/vendor (listed in web/vendor/MANIFEST.json,
+// which the web build checks hash by hash). Each needs an entry under `vendored` in notices-extra.json,
+// and the two lists must agree; the licence text is read from the file the entry names. A file that is
+// taken from another project keeps its header, and the entry says what was changed ("Modified by
+// Faithful Ferret").
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -81,6 +87,50 @@ function splitTopLevel(text, operator) {
 }
 
 const clean = (text) => text.replace(/\r\n/g, "\n").trim();
+
+/**
+ * The vendored web files of `extra.vendored`, checked against web/vendor/MANIFEST.json (`manifest`) and read
+ * through `readText` (the licence files, relative to the repository). Throws when the two lists differ, when
+ * an entry does not say what was changed, or when a licence text lacks the copyright line or still has a
+ * placeholder.
+ * @param {{ vendored?: any[] }} extra
+ * @param {{ files?: any[] }} manifest
+ * @param {(path: string) => string} readText
+ */
+export function vendoredEntries(extra, manifest, readText) {
+  const problems = [];
+  const entries = [];
+  const listed = new Map((manifest.files ?? []).map((f) => [f.name, f]));
+  const seen = new Set();
+  for (const v of extra.vendored ?? []) {
+    const label = `${v.name} ${v.version}`;
+    const m = listed.get(v.name);
+    seen.add(v.name);
+    if (!m) {
+      problems.push(`${label}: notices-extra.json lists a vendored file that web/vendor/MANIFEST.json does not`);
+      continue;
+    }
+    if (m.version !== v.version || m.license !== v.license || m.copyright !== v.copyright || `web/vendor/${m.file}` !== v.file || `web/vendor/${m.licenseFile}` !== v.licenseFile || m.origin !== v.origin) {
+      problems.push(`${label}: version, licence, copyright, origin or files differ from web/vendor/MANIFEST.json`);
+      continue;
+    }
+    if (typeof v.note !== "string" || !v.note.includes("Modified by Faithful Ferret")) {
+      problems.push(`${label}: the note must say what was changed, starting from "Modified by Faithful Ferret"`);
+      continue;
+    }
+    const text = clean(readText(v.licenseFile));
+    if (!text.includes(v.copyright) || hasPlaceholder(text)) {
+      problems.push(`${label}: ${v.licenseFile} must hold the copyright line "${v.copyright}" and no licence template placeholder`);
+      continue;
+    }
+    entries.push({ licenseId: v.license, text, packages: [{ label, url: v.origin }], file: v.file, note: v.note });
+  }
+  for (const name of listed.keys()) {
+    if (!seen.has(name)) problems.push(`${name}: web/vendor/MANIFEST.json lists a file that notices-extra.json has no entry for`);
+  }
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  return entries;
+}
 
 /**
  * A licence template that was never filled in. cargo-about writes the bare SPDX template when it
@@ -250,7 +300,7 @@ function section(title, groups) {
 const block = (title, lines, text) => [RULE, title, RULE, "", ...lines, "", text, "", ""].join("\n");
 
 /** The whole file. Same input, same text: no dates, no paths. */
-export function render({ product, intro = [], rust, npm = [], fontLicense }) {
+export function render({ product, intro = [], rust, npm = [], vendored = [], fontLicense }) {
   const head = [
     "THIRD-PARTY NOTICES",
     "",
@@ -265,6 +315,13 @@ export function render({ product, intro = [], rust, npm = [], fontLicense }) {
   ].join("\n");
   const parts = [head, section("Rust crates", group(rust))];
   if (npm.length > 0) parts.push(section("npm packages", group(npm)));
+  if (vendored.length > 0) {
+    const lines = [RULE, `Web vault files from other projects (${vendored.length} ${vendored.length === 1 ? "file" : "files"})`, RULE, ""];
+    for (const v of vendored) {
+      lines.push(`--- ${v.licenseId} ---`, "", "Used by:", `  ${v.packages[0].label} (${v.packages[0].url})`, `  file: ${v.file}`, `  ${v.note}`, "", v.text, "", "");
+    }
+    parts.push(lines.join("\n"));
+  }
   if (fontLicense) {
     parts.push(
       block(
@@ -310,6 +367,7 @@ function main() {
     intro: extra.intro,
     rust: rustEntries(reports, extra),
     npm: lockText ? npmEntries(JSON.parse(lockText), accepted, join(root, "web")) : [],
+    vendored: vendoredEntries(extra, JSON.parse(optional("web/vendor/MANIFEST.json") ?? '{"files":[]}'), (path) => readFileSync(join(root, path), "utf8")),
     fontLicense,
   });
   const target = join(root, options.out ?? "THIRD-PARTY-NOTICES");
