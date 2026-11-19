@@ -151,7 +151,7 @@ test("match_page_gives_the_best_result_per_item_in_the_order_of_the_handles", ()
   assert.deepEqual(vault.match_page("http://www.example.com", [host, domainOnly]), []);
 });
 
-test("a_closed_handle_is_invalid_state", () => {
+test("a_closed_handle_is_an_invalid_handle", () => {
   // The binding's code for a handle that is not open is `invalid_handle`
   // (the same as `item_view`, `reveal_*` and `close_item`).
   const { vault } = newAccount("match-closed");
@@ -168,6 +168,18 @@ test("a_closed_handle_is_invalid_state", () => {
   // A locked vault.
   vault.lock();
   assert.equal(code(() => vault.match_page("https://example.com", [b])), "vault_locked");
+});
+
+test("a_handle_listed_twice_is_answered_twice", () => {
+  const { vault } = newAccount("match-twice");
+  const a = openItem(vault, loginWith([{ url: "https://example.com", matching: "host" }]));
+  const b = openItem(vault, loginWith([{ url: "https://example.com", matching: "exact" }]));
+  // The list is the caller's: nothing is merged, and the order is kept.
+  assert.deepEqual(vault.match_page("https://example.com", [a, b, a]), [
+    { handle: a, how: "host" },
+    { handle: b, how: "exact" },
+    { handle: a, how: "host" },
+  ]);
 });
 
 test("page_functions_need_no_vault_and_fail_with_codes_only", () => {

@@ -192,10 +192,10 @@ export function assertU32Args(method, args) {
 }
 
 /**
- * The arguments that the Rust side takes as an optional `String` and that are
- * public text (a device name). The second item says whether the argument may
- * be left out (`undefined` or `null`). `wasm-bindgen` would not check the
- * type of a value that is not a string.
+ * The arguments that the Rust side takes as a `String` and that are public
+ * text (a device name, page addresses). The second item says whether the
+ * argument may be left out (`undefined` or `null`). `wasm-bindgen` would not
+ * check the type of a value that is not a string.
  */
 export const STRING_ARGS = {
   copy_item: [[3, true]],

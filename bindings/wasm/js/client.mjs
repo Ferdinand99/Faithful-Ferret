@@ -130,8 +130,9 @@
 // Pages: `vault.match_page(pageUrl, handles)` resolves `[{ handle, how }]`, the
 // open items among `handles` whose saved addresses match the page, with the
 // best result per item (`how` is `"exact"`, `"host"` or `"domain"`). It reads the
-// saved addresses only. A handle that is not open is `invalid_handle` for the
-// whole call, and a list of more than 4096 handles is `invalid_input`. The
+// saved addresses only. A handle listed twice appears twice in the answer. A
+// handle that is not open is `invalid_handle` for the whole call, and a list of
+// more than 4096 handles is `invalid_input`. The
 // matching rule is the core's alone: open the items for a match in batches
 // (`open_item`), call `match_page`, and close each handle (`close_item`) right
 // after. `page_origin(pageUrl)` resolves the origin text (`https://host`, the

@@ -62,7 +62,8 @@ impl Vault {
     /// The open items whose saved addresses match the page, with the best
     /// result per item: `[{ handle, how }]` in the order of `handles`, where
     /// `how` is `"exact"`, `"host"` or `"domain"`. An item with no match is
-    /// left out. It reads the saved addresses only.
+    /// left out. It reads the saved addresses only. A handle listed twice is
+    /// answered twice: the list is the caller's, and nothing is merged.
     ///
     /// A handle that is not open is `invalid_handle` and nothing is returned:
     /// a caller that has closed an item must not be told about it. More than
