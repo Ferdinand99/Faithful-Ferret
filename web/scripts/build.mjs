@@ -455,6 +455,15 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
     if (!tar.has(name)) throw new Error(`wasm package: ${name} is missing`);
   }
 
+  // The vendored files are in js/ before the routes are imported below: a view that reaches the
+  // QR code module (the emergency sheet) imports it from "../js/vendor/..." while the build reads the routes.
+  const vendor = readVendor(root);
+  for (const [path, bytes] of vendor) {
+    if (path.endsWith(".d.mts")) continue;
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), bytes);
+  }
+
   // 2. Generated files from the feature files.
   const generated = {
     "routes.gen.mjs": await generateRoutes(root),
@@ -490,7 +499,6 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
     dist.set(path, bytes);
   };
   for (const [path, bytes] of generateWorkerEntries(root)) addOnce(path, bytes);
-  const vendor = readVendor(root);
   for (const [path, bytes] of vendor) {
     // The type declarations are for the type check, not for the page.
     if (!path.endsWith(".d.mts")) addOnce(path, bytes);

@@ -16,7 +16,9 @@ import { ACCOUNT, EMAIL, PASSWORD, RK_CODE, SERVER, SK_CODE, accountDocument, by
 import { web } from "./helpers.mjs";
 
 const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
-const i18n = (lang = "en") => createI18n({ en: catalog("en"), nb: catalog("nb") }, lang);
+// The setup page also shows the emergency sheet, whose texts live in their own catalog.
+const sheetCatalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "sheet.json"), "utf8"));
+const i18n = (lang = "en") => createI18n({ en: { ...catalog("en"), ...sheetCatalog("en") }, nb: { ...catalog("nb"), ...sheetCatalog("nb") } }, lang);
 const CHALLENGE = "C".repeat(43);
 const ADMIN = "https://admin.ferret.test";
 
