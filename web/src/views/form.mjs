@@ -94,6 +94,8 @@ export const KNOWN_ERRORS = Object.freeze([
   "pinned_auth_key", "pinned_epoch_downgrade", "pinned_floor_downgrade", "pinned_floor_missing", "pinned_identity_changed",
   "pinned_kek_generation", "pinned_profile_downgrade", "pinned_server_key", "pinned_server_key_changed",
   "pinned_server_url", "pinned_sk_bit", "pinned_vault_id", "pinned_vk_epoch", "profile_rejected",
+  "malformed_setup_qr", "pinned_elsewhere", "qr_account", "qr_not_confirmed", "qr_profile", "qr_server_key", "qr_server_url",
+  "qr_too_large", "qr_unsupported",
   "registration_closed", "reauth_not_fresh", "session_ended", "signout_incomplete", "sk_answer_required", "sk_required",
   "throttled", "two_factor_unsupported", "unauthorized", "unknown", "worker_failed",
 ]);
@@ -155,10 +157,14 @@ function dayOf(ms, locale) {
  */
 export function describeError(t, error, { restoreNote = null, locale } = {}) {
   const key = errorKey(error, { restoreNote });
+  const code = codeOf(error);
+  // The address the account is pinned under is the device's own record, not text from the server.
+  const other = /** @type {any} */ (error)?.details?.server;
   let text = key === "account.error.restored_older_method" && restoreNote
     ? t(key, { date: dayOf(restoreNote.acceptedAt, locale) })
-    : t(key);
-  const code = codeOf(error);
+    : code === "pinned_elsewhere" && typeof other === "string"
+      ? t(key, { server: other })
+      : t(key);
   if (key === "account.error.unknown" && code !== "unknown") text = `${text} (${code})`;
   const retry = /** @type {any} */ (error)?.retryAfter;
   if (typeof retry === "number" && retry > 0) text = `${text} ${t("account.error.retry_in", { seconds: retry })}`;
