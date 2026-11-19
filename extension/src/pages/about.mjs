@@ -1,6 +1,6 @@
 // The page the toolbar button opens until the real popup exists: the name, the
 // version and a line saying what the extension is.
-import { el, mount } from "./el.mjs";
+import { el, mount } from "../shared/dom.mjs";
 
 /** @param {string} lang @returns {Promise<Record<string, string>>} */
 async function catalog(lang) {

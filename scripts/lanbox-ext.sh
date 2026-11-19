@@ -32,7 +32,7 @@
 #                                 test-results/out/ext-measure/. It ends when the last
 #                                 cell is done.
 #
-# unit and lint: the extension/ tree, the WASM pin (web/wasm.lock.json), the
+# unit and lint: the extension/ tree, the shared source files (web/src), the WASM pin (web/wasm.lock.json), the
 # design document the CSP test reads and the release check are streamed into the
 # container as a tar archive (no bind mounts from the PC). The locked packages are
 # installed with `npm ci --ignore-scripts`, and the build fetches the published
@@ -183,7 +183,7 @@ fi'
     tar -c \
       --exclude='extension/node_modules' \
       --exclude='extension/dist' \
-      extension web/wasm.lock.json scripts/check-ext-release.sh scripts/lanbox-ext.sh \
+      extension web/wasm.lock.json web/src scripts/check-ext-release.sh scripts/lanbox-ext.sh \
       scripts/check-lanbox-ext-labels.sh docker/ext-runner.Dockerfile \
       .github/workflows \
       docs/design/phase-1-security-design.md
@@ -258,7 +258,7 @@ fi
 tar -cf "$work/in.tar" \
   --exclude='extension/node_modules' \
   --exclude='extension/dist' \
-  extension web/wasm.lock.json
+  extension web/wasm.lock.json web/src
 tar -rf "$work/in.tar" -C "$work" wasm.tar.gz
 
 # The tests container for the channels in $1 (a comma list). $2 goes into the name

@@ -108,6 +108,12 @@ Firefox has no extension API for passkey providers (Chrome's `webAuthenticationP
 - Without a `locked` state: the deadline, lock, sign-out and browser restart lock the vault (see above).
 - A frame the browser does not refuse (MV2, `about:` frames): the fill engine refuses it by what it can see itself.
 
+## Code shared with the web vault
+
+`extension/shared.json` lists the modules of `web/src` that the build copies, byte for byte, into `dist/shared/`. The list is closed under import (every file on it imports only files on it, `import()` included), it never names a view, route or service file, and the build refuses anything else. The copies are never edited: change the file in `web/src`. The build writes `shared/MANIFEST.json` with the SHA-256 of every copy, and the release check (`scripts/check-ext-release.sh`) compares each copy with its source in `web/src` as well as with that file.
+
+A page of the extension imports a shared file as `../shared/<name>.mjs`. That file exists only in the package, so the type check needs a stub for it: `extension/types/shared/<name>.d.mts`, which re-exports the real source (see `dom.d.mts`; `rootDirs` in `jsconfig.json` makes the two folders one). A page that imports a shared file without a stub fails `tsc` with "cannot find module"; the unit test `a_shared_file_that_a_page_imports_has_a_type_stub` names the missing stub.
+
 ## How to run it
 
 ```

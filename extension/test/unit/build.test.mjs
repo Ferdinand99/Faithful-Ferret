@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readZip } from "../../scripts/lib/archive.mjs";
 import { build, MAX_FILE_BYTES, sha256, WASM_FILES } from "../../scripts/build.mjs";
-import { extensionRoot, makeRoot, makeTar, wasmFiles } from "./buildHelpers.mjs";
+import { makeRoot, makeTar, repoRoot, wasmFiles } from "./buildHelpers.mjs";
 
 /** @param {Record<string, string | null>} [extra] @param {Record<string, unknown>} [options] */
 async function buildIn(extra, options = {}) {
@@ -212,9 +212,8 @@ test("mv3_build_has_no_background_page_and_mv2_build_has_it", async () => {
   }
 });
 
-test("shared_manifest_is_empty_in_u0", async () => {
-  assert.deepEqual(JSON.parse(readFileSync(join(extensionRoot, "shared.json"), "utf8")), []);
-  const { env, result } = await buildIn({});
+test("an_empty_shared_list_writes_no_shared_manifest", async () => {
+  const { env, result } = await buildIn({ "shared.json": "[]\n", "src/pages/about.mjs": "export {};\n" });
   try {
     assert.equal(result.files.has("shared/MANIFEST.json"), false);
     assert.equal(existsSync(join(result.dir, "shared", "MANIFEST.json")), false);
@@ -225,7 +224,7 @@ test("shared_manifest_is_empty_in_u0", async () => {
 });
 
 test("shared_files_are_copied_from_web_with_their_hashes_and_never_over_a_source_file", async () => {
-  const env = makeRoot({ "shared.json": '["b.mjs", "dir/a.mjs"]\n' });
+  const env = makeRoot({ "shared.json": '["b.mjs", "dir/a.mjs", "dom.mjs"]\n' });
   try {
     mkdirSync(join(env.webRoot, "src", "dir"), { recursive: true });
     writeFileSync(join(env.webRoot, "src", "b.mjs"), "export const b = 1;\n");
@@ -235,6 +234,7 @@ test("shared_files_are_copied_from_web_with_their_hashes_and_never_over_a_source
     assert.deepEqual(JSON.parse(readFileSync(join(result.dir, "shared", "MANIFEST.json"), "utf8")), {
       "b.mjs": sha256("export const b = 1;\n"),
       "dir/a.mjs": sha256("export const a = 1;\n"),
+      "dom.mjs": sha256(readFileSync(join(repoRoot, "web", "src", "dom.mjs"))),
     });
 
     for (const bad of ['["../x.mjs"]', '["/etc/passwd"]', '["a.js"]', '["missing.mjs"]', '{"a": 1}']) {
