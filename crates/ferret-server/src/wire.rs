@@ -92,6 +92,43 @@ pub const MAX_BATCH_OPS: usize = 100;
 /// The largest body of a batch, in bytes.
 pub const MAX_BATCH_BYTES: usize = 6 * 1024 * 1024;
 
+/// The largest body of a request that carries a proof (`Ferret-Proof`), in
+/// bytes. The body is read as raw bytes up to this size and only parsed once
+/// the proof has been checked.
+///
+/// Spec: Fase 1 § 4.6 (the proof is bound to the exact body).
+pub const MAX_SIGNED_BODY: usize = 256 * 1024;
+
+/// The length of a challenge nonce (`Ferret-Nonce`) in bytes.
+///
+/// Spec: Fase 1 § 4.6 (`nonce (32 bytes)`).
+pub const NONCE_LEN: usize = 32;
+
+/// The length of a proof (`Ferret-Proof`, an Ed25519 signature) in bytes.
+///
+/// Spec: Fase 1 § 4.6.
+pub const PROOF_LEN: usize = 64;
+
+/// The length of the wrap of a password in bytes: nonce 24, vault key 32, tag
+/// 16 and the key commitment 32.
+///
+/// Spec: Fase 1 § 4.3 (key commitment, F-25).
+pub const PASSWORD_WRAP_LEN: usize = 104;
+
+/// The length of the wrap of a recovery key in bytes: nonce 24, vault key 32
+/// and tag 16.
+///
+/// Spec: Fase 1 § 4.3.
+pub const RECOVERY_WRAP_LEN: usize = 72;
+
+/// The words a session scope has on the wire.
+///
+/// Spec: Fase 1 § 6.3 (the reset session) and § 4.6 (a session before 2FA).
+pub const SESSION_SCOPES: &[&str] = &["full", "pending_2fa", "account_reset", "unverified"];
+
+/// The scope a redeemed sign-in code gives.
+pub const REDEEM_SCOPE: &str = "account_reset";
+
 /// The most entries in a checkpoint.
 pub const MAX_CHECKPOINT_ENTRIES: usize = 50_000;
 
@@ -286,6 +323,36 @@ fixed_len_b64!(
     /// The OPAQUE registration record: 192 bytes, `malformed_registration_record`.
     serde_reg_record, 192, "malformed_registration_record"
 );
+fixed_len_b64!(
+    /// The wrap of a password: 104 bytes, `bad_request`.
+    serde_password_wrap, 104, "bad_request"
+);
+fixed_len_b64!(
+    /// The wrap of a recovery key: 72 bytes, `bad_request`.
+    serde_recovery_wrap, 72, "bad_request"
+);
+
+/// `#[serde(with = "serde_reg_request_b32")]` for `[u8; 32]`: the OPAQUE
+/// registration request as a fixed array, `malformed_registration_request` for
+/// any other size.
+pub mod serde_reg_request_b32 {
+    use super::{Deserialize, Deserializer, Serializer, b64url, de, decode_len};
+
+    /// Writes 32 bytes as base64url.
+    pub fn serialize<S: Serializer>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&b64url::encode(bytes))
+    }
+
+    /// Reads strict base64url of exactly 32 bytes; another size is refused
+    /// with the code of the field.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let bytes =
+            decode_len(&text, 32, "malformed_registration_request").map_err(de::Error::custom)?;
+        <[u8; 32]>::try_from(bytes)
+            .map_err(|_| de::Error::custom("malformed_registration_request: expected 32 bytes"))
+    }
+}
 
 /// `#[serde(with = "serde_tomb_opt")]` for `Option<Vec<u8>>`: a tombstone is
 /// 40 bytes, else `tombstone_invalid`. Pair it with `default` and
@@ -529,6 +596,36 @@ pub mod next_path {
             return Err(de::Error::custom("next is empty or too long"));
         }
         Ok(next)
+    }
+}
+
+/// `deserialize_with = "session_scope::deserialize"`: one of
+/// [`SESSION_SCOPES`].
+pub mod session_scope {
+    use super::{Deserialize, Deserializer, SESSION_SCOPES, de};
+
+    /// Reads a scope and refuses any word that is not one of the four.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let scope = String::deserialize(deserializer)?;
+        if !SESSION_SCOPES.contains(&scope.as_str()) {
+            return Err(de::Error::custom("scope is not one of the four scopes"));
+        }
+        Ok(scope)
+    }
+}
+
+/// `deserialize_with = "redeem_scope::deserialize"`: the `scope` of a redeemed
+/// code is `account_reset` and nothing else.
+pub mod redeem_scope {
+    use super::{Deserialize, Deserializer, REDEEM_SCOPE, de};
+
+    /// Reads the scope and refuses any other word.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let scope = String::deserialize(deserializer)?;
+        if scope != REDEEM_SCOPE {
+            return Err(de::Error::custom("scope is not account_reset"));
+        }
+        Ok(scope)
     }
 }
 
@@ -826,12 +923,12 @@ pub struct HandoffRes {
 /// `POST /api/auth/handoff/redeem`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RedeemReq {
+pub struct HandoffRedeemReq {
     /// The code from [`HandoffRes`].
     pub code: String,
 }
 
-/// The answer to [`RedeemReq`].
+/// The answer to [`HandoffRedeemReq`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandoffRedeemRes {
@@ -864,10 +961,21 @@ pub struct SessionRes {
     pub account_id: Option<[u8; 16]>,
     /// The login name.
     pub email: String,
-    /// The scope of the session.
+    /// The scope of the session: one of [`SESSION_SCOPES`].
+    #[serde(deserialize_with = "session_scope::deserialize")]
     pub scope: String,
     /// The origin the session belongs to.
     pub origin: OriginJson,
+    /// Unix seconds until which the last fresh re-authentication counts (five
+    /// minutes after it). Left out when the session has none, or it ran out.
+    ///
+    /// Spec: Fase 1 § 4.6 a.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub reauth_until: Option<u64>,
 }
 
 /// The origin a session belongs to.
@@ -1258,6 +1366,15 @@ impl BatchOpJson {
 pub struct BatchReq {
     /// The operations.
     pub ops: Vec<BatchOpJson>,
+    /// The import window the operations are counted against, from
+    /// `POST /api/sync/import` ([`ImportWindowRes`]). Left out for a batch that
+    /// is not an import: that is the shape of the second milestone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub import_window: Option<[u8; 16]>,
 }
 
 impl BatchReq {
@@ -1682,6 +1799,219 @@ pub struct SyncEventJson {
     pub seq: u64,
 }
 
+/// The `200` answer to `POST /api/auth/challenge`: a nonce that can be used
+/// once, bound to the session, and the seconds it lives.
+///
+/// Spec: Fase 1 § 4.6 (`{nonce (32 bytes), expires_in: 300}`).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChallengeRes {
+    /// The nonce (32 bytes); it goes back in `Ferret-Nonce`.
+    #[serde(with = "serde_b32")]
+    pub nonce: [u8; 32],
+    /// Seconds until the nonce expires.
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/opaque/reregister/start`: the first step of a new OPAQUE
+/// registration inside a session (a password change, or a recovery).
+///
+/// Spec: Fase 1 § 4.3 (changing MP) and § 6.3 step 1.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReregisterStartReq {
+    /// The OPAQUE registration request (32 bytes).
+    #[serde(with = "serde_reg_request_b32")]
+    pub registration_request: [u8; 32],
+}
+
+/// The answer to [`ReregisterStartReq`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReregisterStartRes {
+    /// The OPAQUE registration response (64 bytes).
+    #[serde(with = "serde_reg_response")]
+    pub registration_response: Vec<u8>,
+}
+
+/// `PUT /api/vault/unlock-methods/password`: a new password (a new OPAQUE
+/// record, a new wrap and a new manifest). A sensitive operation: the body
+/// comes with `Ferret-Nonce` and `Ferret-Proof` (at most [`MAX_SIGNED_BODY`]
+/// bytes), and `kek_generation` is higher than the stored one.
+///
+/// Spec: Fase 1 § 4.6 (the endpoint table), § 4.3 (changing MP; the wrap is
+/// [`PASSWORD_WRAP_LEN`] bytes).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordPutReq {
+    /// The OPAQUE registration record (192 bytes).
+    #[serde(with = "serde_reg_record")]
+    pub registration_record: Vec<u8>,
+    /// The key-stretching profile the client used.
+    pub ksf_profile: u8,
+    /// The wrap of the vault key under the new password (104 bytes).
+    #[serde(with = "serde_password_wrap")]
+    pub wrap: Vec<u8>,
+    /// The generation of the new key-encryption key.
+    pub kek_generation: u32,
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to [`PasswordPutReq`].
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordPutRes {
+    /// The generation now stored.
+    pub kek_generation: u32,
+    /// The sequence number of the vault after the manifest was written.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// `PUT /api/vault/unlock-methods/recovery`: a new recovery key (a new wrap, a
+/// new public key and a new manifest). A sensitive operation, signed like
+/// [`PasswordPutReq`].
+///
+/// Spec: Fase 1 § 4.6 (the endpoint table; the wrap is [`RECOVERY_WRAP_LEN`]
+/// bytes, and a wrap of a password has more).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryPutReq {
+    /// The wrap of the vault key under the new recovery key (72 bytes).
+    #[serde(with = "serde_recovery_wrap")]
+    pub wrap: Vec<u8>,
+    /// The generation of the new key-encryption key.
+    pub kek_generation: u32,
+    /// The public key that checks the recovery proofs.
+    #[serde(with = "serde_b32")]
+    pub pk_r: [u8; 32],
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to `GET /api/vault/recovery`: what a client needs to open
+/// the vault with the recovery key. Call [`RecoveryRes::validate`].
+///
+/// Spec: Fase 1 § 6.3 step 2.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRes {
+    /// The account.
+    #[serde(with = "serde_hex16")]
+    pub account_id: [u8; 16],
+    /// The vault.
+    #[serde(with = "serde_hex16")]
+    pub vault_id: [u8; 16],
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// The key-stretching profile of the account.
+    pub ksf_profile: u8,
+    /// The recovery wrap.
+    pub wrap: WrapJson,
+    /// The manifest row.
+    pub manifest: SealedRowJson,
+}
+
+impl RecoveryRes {
+    /// Checks that the wrap is the recovery method (type 2) and has the size of
+    /// a recovery wrap. Every failure is `bad_request`.
+    ///
+    /// Spec: Fase 1 § 4.3 (a recovery wrap is 72 bytes).
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.wrap.method_type != 2 || self.wrap.wrap.len() != RECOVERY_WRAP_LEN {
+            return Err(WireError::Field("wrap"));
+        }
+        Ok(())
+    }
+}
+
+/// `POST /api/vault/recover`: a new password and a new recovery key, signed
+/// with the recovery key (`sk_r`). The body is at most [`MAX_SIGNED_BODY`]
+/// bytes, and every field is needed.
+///
+/// Spec: Fase 1 § 6.3 step 4 (`{ registration_record, ksf_profile, pw_wrap,
+/// rk_wrap, pk_r_new, manifest }`).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverReq {
+    /// The OPAQUE registration record of the new password (192 bytes).
+    #[serde(with = "serde_reg_record")]
+    pub registration_record: Vec<u8>,
+    /// The key-stretching profile the client used.
+    pub ksf_profile: u8,
+    /// The wrap of the vault key under the new password (104 bytes).
+    #[serde(with = "serde_password_wrap")]
+    pub pw_wrap: Vec<u8>,
+    /// The wrap of the vault key under the new recovery key (72 bytes).
+    #[serde(with = "serde_recovery_wrap")]
+    pub rk_wrap: Vec<u8>,
+    /// The public key that checks the proofs of the new recovery key.
+    #[serde(with = "serde_b32")]
+    pub pk_r_new: [u8; 32],
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to [`RecoverReq`].
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverRes {
+    /// Whether the session that made the call ended with it (a reset session
+    /// does; a full session does not).
+    pub session_ended: bool,
+    /// The sequence number of the vault after the manifest was written.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// `POST /api/auth/redeem`: a sign-in code from the administrator, with the
+/// e-mail it was made for. Its `Debug` shows neither.
+///
+/// Spec: Fase 1 § 6.3 step 1.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedeemReq {
+    /// The login name.
+    pub email: String,
+    /// The code.
+    pub code: String,
+}
+
+/// The `200` answer to [`RedeemReq`]; the session cookies come with it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedeemRes {
+    /// Always [`REDEEM_SCOPE`]: the session may do the things of § 6.3 step 1
+    /// and nothing else.
+    #[serde(deserialize_with = "redeem_scope::deserialize")]
+    pub scope: String,
+}
+
+/// `POST /api/sync/import`: asks for an import window for `ops` operations.
+/// Needs a fresh re-authentication.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportWindowReq {
+    /// How many operations the import will send.
+    pub ops: u32,
+}
+
+/// The `200` answer to [`ImportWindowReq`]; `window_id` goes in the
+/// `import_window` of each [`BatchReq`] of the import.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportWindowRes {
+    /// Names the window.
+    #[serde(with = "serde_hex16")]
+    pub window_id: [u8; 16],
+    /// How many operations the window holds.
+    pub ops: u32,
+    /// Seconds until the window ends.
+    pub expires_in: u32,
+}
+
 /// The body of every error: `{"error":"<code>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1705,7 +2035,7 @@ redacted_debug!(
     LoginFinishRes,
     HandoffReq,
     HandoffRes,
-    RedeemReq,
+    HandoffRedeemReq,
     HandoffRedeemRes,
     SessionRes,
     MethodsRes,
@@ -1726,6 +2056,19 @@ redacted_debug!(
     RestoreRowsRes,
     ItemsRes,
     SyncEventJson,
+    ChallengeRes,
+    ReregisterStartReq,
+    ReregisterStartRes,
+    PasswordPutReq,
+    PasswordPutRes,
+    RecoveryPutReq,
+    RecoveryRes,
+    RecoverReq,
+    RecoverRes,
+    RedeemReq,
+    RedeemRes,
+    ImportWindowReq,
+    ImportWindowRes,
 );
 
 /// Every code an error body can carry. The list is stable: the web vault
@@ -1766,4 +2109,9 @@ pub const ERROR_CODES: &[&str] = &[
     "checkpoint_stale",
     "checkpoint_invalid",
     "restore_epoch_changed",
+    "reauth_required",
+    "second_factor_required",
+    "write_conflict",
+    "import_window_open",
+    "import_window_invalid",
 ];

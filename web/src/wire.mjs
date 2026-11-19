@@ -24,6 +24,7 @@ const refuse = (message, code = "bad_request") => {
 // ----------------------------------------------------------- JSON reader
 
 const MAX_INT = Number.MAX_SAFE_INTEGER; // 2^53 - 1
+const U32 = 2 ** 32 - 1;
 const WHITE = new Set([" ", "\t", "\n", "\r"]);
 
 /**
@@ -122,6 +123,7 @@ const b = (text) => void b64u.decode(text);
  * @returns {Check}
  */
 const bytes = (n, code = "bad_request") => (text) => {
+  str(text); // a value that is not text is a plain bad request, as on the server
   const got = b64u.decode(text, code).length;
   if (got !== n) refuse(`expected ${n} bytes, got ${got}`, code);
 };
@@ -199,6 +201,21 @@ const restoreRow = [["id", id], ["rev", int()], ["seq", int()], ["hash", b32, tr
 /** The most operations in one batch. */
 export const MAX_BATCH_OPS = 100;
 
+/** The largest body of a request that carries a proof, in bytes (Spec: Fase 1 § 4.6). */
+export const MAX_SIGNED_BODY = 256 * 1024;
+/** The length of a challenge nonce (`Ferret-Nonce`) in bytes. */
+export const NONCE_LEN = 32;
+/** The length of a proof (`Ferret-Proof`, an Ed25519 signature) in bytes. */
+export const PROOF_LEN = 64;
+/** The length of the wrap of a password: nonce 24, key 32, tag 16, commitment 32. */
+export const PASSWORD_WRAP_LEN = 104;
+/** The length of the wrap of a recovery key: nonce 24, key 32, tag 16. */
+export const RECOVERY_WRAP_LEN = 72;
+/** The words a session scope has on the wire. */
+export const SESSION_SCOPES = Object.freeze(["full", "pending_2fa", "account_reset", "unverified"]);
+/** The scope a redeemed sign-in code gives. */
+export const REDEEM_SCOPE = "account_reset";
+
 /** One operation of a batch: a put request with the item id in the body. @type {Spec} */
 const batchOp = [
   ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
@@ -211,6 +228,9 @@ const batchResult = [
   ["current_rev", int(), true], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
   ["error", str, true], ["restore_epoch", int(), true],
 ];
+
+/** One operation of a batch, and the window of an import it counts against (left out: not an import). @type {Spec} */
+const batchReq = [["ops", list(batchOp)], ["import_window", id, true]];
 
 /** @type {Readonly<Record<string, Spec>>} */
 export const SHAPES = Object.freeze({
@@ -243,10 +263,11 @@ export const SHAPES = Object.freeze({
   login_finish_res: [["account_id", id], ["vault_id", id], ["vk_epoch", int()]],
   handoff_req: [["purpose", oneOf("login", "reauth")], ["next", next], ["challenge", b32]],
   handoff_res: [["code", bytes(32)], ["expires_in", int()]],
-  redeem_req: [["code", str]],
+  handoff_redeem_req: [["code", str]],
   handoff_redeem_res: [["next", str]],
   session_res: [
-    ["account_id", id, true], ["email", str], ["scope", str], ["origin", oneOf("vault", "admin")],
+    ["account_id", id, true], ["email", str], ["scope", oneOf(...SESSION_SCOPES)],
+    ["origin", oneOf("vault", "admin")], ["reauth_until", int(), true],
   ],
   methods_res: [["methods", list(wrap)], ["pk_a", b32], ["vk_epoch", int()], ["manifest", nested(sealedRow)]],
   change,
@@ -262,7 +283,8 @@ export const SHAPES = Object.freeze({
   put_item_res: [["rev", int()], ["seq", int()], ["replayed", bool]],
   conflict_res: [["current_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool]],
   error_res: [["error", str]],
-  batch_req: [["ops", list(batchOp)]],
+  batch_req: batchReq,
+  batch_req_import: batchReq,
   batch_res: [["results", list(batchResult)]],
   checkpoint_put_req: checkpointPut,
   checkpoint_put_res: [["seq", int()]],
@@ -277,6 +299,32 @@ export const SHAPES = Object.freeze({
     ["next_after", id, true], ["has_more", bool],
   ],
   sync_event: [["seq", int()]],
+  challenge_res: [["nonce", bytes(NONCE_LEN)], ["expires_in", int(U32)]],
+  reregister_start_req: [["registration_request", bytes(32, "malformed_registration_request")]],
+  reregister_start_res: [["registration_response", bytes(64)]],
+  password_put_req: [
+    ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
+    ["wrap", bytes(PASSWORD_WRAP_LEN)], ["kek_generation", int(U32)], ["manifest", nested(sealedRow)],
+  ],
+  password_put_res: [["kek_generation", int(U32)], ["seq", int()]],
+  recovery_put_req: [
+    ["wrap", bytes(RECOVERY_WRAP_LEN)], ["kek_generation", int(U32)], ["pk_r", b32],
+    ["manifest", nested(sealedRow)],
+  ],
+  recovery_res: [
+    ["account_id", id], ["vault_id", id], ["vk_epoch", int()], ["ksf_profile", int(255)],
+    ["wrap", nested(wrap)], ["manifest", nested(sealedRow)],
+  ],
+  recover_req: [
+    ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
+    ["pw_wrap", bytes(PASSWORD_WRAP_LEN)], ["rk_wrap", bytes(RECOVERY_WRAP_LEN)], ["pk_r_new", b32],
+    ["manifest", nested(sealedRow)],
+  ],
+  recover_res: [["session_ended", bool], ["seq", int()]],
+  redeem_req: [["email", str], ["code", str]],
+  redeem_res: [["scope", oneOf(REDEEM_SCOPE)]],
+  import_window_req: [["ops", int(U32)]],
+  import_window_res: [["window_id", id], ["ops", int(U32)], ["expires_in", int(U32)]],
 });
 
 /**
@@ -365,7 +413,8 @@ export const ERROR_STATUS = Object.freeze({
   profile_rejected: 422, unsupported_envelope: 422, tombstone_invalid: 422, too_large: 413, quota_exceeded: 413,
   idem_reuse: 422, conflict: 409, protocol_header_missing: 400, forbidden_origin: 403, not_found: 404,
   bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
-  restore_epoch_changed: 409,
+  restore_epoch_changed: 409, reauth_required: 403, second_factor_required: 403, write_conflict: 409,
+  import_window_open: 409, import_window_invalid: 409,
 });
 
 /**
@@ -419,14 +468,20 @@ function conflictRowIsValid(value) {
 /**
  * The checks that come with a shape once it is read: a hand-over code, the two
  * forms of an item write (a live row, or a tombstone, never both), the two
- * forms of a conflict answer, and for a batch the number of operations and the
- * form of each operation and result.
+ * forms of a conflict answer, the recovery wrap of a recovery answer, and for a
+ * batch the number of operations and the form of each operation and result.
  * @param {string} kind
  * @param {any} value
  */
 export function checkStep(kind, value) {
-  if (kind === "redeem_req") handoffCode(value.code);
-  if (kind === "batch_req") {
+  if (kind === "handoff_redeem_req") handoffCode(value.code);
+  if (kind === "recovery_res") {
+    // The wrap that comes back is the recovery method, with a recovery-sized wrap.
+    if (value.wrap.method_type !== 2 || b64u.decode(value.wrap.wrap).length !== RECOVERY_WRAP_LEN) {
+      refuse("the wrap of a recovery answer is the recovery method with 72 bytes");
+    }
+  }
+  if (kind === "batch_req" || kind === "batch_req_import") {
     if (value.ops.length < 1 || value.ops.length > MAX_BATCH_OPS) refuse("a batch has 1 to 100 operations");
     for (const op of value.ops) checkBatchOp(op);
   }

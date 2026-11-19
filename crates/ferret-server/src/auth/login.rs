@@ -1165,6 +1165,7 @@ async fn session_vault(
             email,
             scope: SessionScope::Full.as_str().to_string(),
             origin: OriginJson::Vault,
+            reauth_until: None,
         })
         .into_response(),
     ))
@@ -1196,6 +1197,7 @@ async fn session_admin(
             email,
             scope: SessionScope::Full.as_str().to_string(),
             origin: OriginJson::Admin,
+            reauth_until: None,
         })
         .into_response(),
     ))

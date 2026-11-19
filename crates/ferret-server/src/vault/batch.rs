@@ -257,7 +257,10 @@ fn prepare_op(op: &BatchOpJson) -> Result<PreparedOp, &'static str> {
 /// the `422` of an operation with a tombstone of the wrong size in its place.
 fn prepare_body(raw: &[u8]) -> Result<Vec<Result<PreparedOp, &'static str>>, ApiError> {
     let Parsed { ops, bad_tomb } = parse_body(raw)?;
-    let mut prepared = prepare_ops(&BatchReq { ops })?;
+    let mut prepared = prepare_ops(&BatchReq {
+        ops,
+        import_window: None,
+    })?;
     for (slot, bad) in prepared.iter_mut().zip(bad_tomb) {
         // A blank is refused as `bad_request` (or as the manifest, which comes
         // first): that is the place of the tombstone's own code.
