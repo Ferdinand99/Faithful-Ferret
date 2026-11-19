@@ -131,7 +131,7 @@ progress_cargo() {
 
 # progress_cargo_test <cargo args, with `test` in them>: see the header.
 progress_cargo_test() {
-  local pre=() post=() after=0 a no_run=0 rc=0 listing total=0 k
+  local pre=() post=() after=0 a no_run=0 rc=0 listing total=0
   for a in "$@"; do
     if [ "$after" = 0 ] && [ "$a" = -- ]; then
       after=1

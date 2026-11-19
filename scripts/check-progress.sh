@@ -4,6 +4,8 @@
 # cargo test flow with a stand-in `cargo` (no compiler needed; the output of the
 # tests must come through unchanged and the exit status must be the tests') and
 # the `node --test` flow with the reporter scripts/progress-node-reporter.mjs.
+# The status of the last run is kept in rc, set inside helper functions on purpose.
+# shellcheck disable=SC2030,SC2031
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
