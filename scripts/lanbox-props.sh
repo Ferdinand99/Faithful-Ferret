@@ -9,13 +9,17 @@
 # seed is written to a proptest-regressions folder inside the container; the
 # log shows the input. The nightly workflow uploads those files, and a
 # regression that is committed is replayed first on every run.
+# Progress markers (see scripts/progress.sh): the phases build and test.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cases="${1:-20000}"
 case "$cases" in '' | *[!0-9]*) echo "lanbox-props.sh: cases must be a number" >&2; exit 2 ;; esac
 
-exec scripts/lanbox.sh --exec sh -c '
-  PROPTEST_CASES="$1" cargo test -p ferret-core \
+exec scripts/lanbox.sh --exec bash -c '
+  . scripts/progress.sh
+  progress_begin 2
+  export PROPTEST_CASES="$1"
+  progress_cargo_test test -p ferret-core \
     --test "props_*" --test sheet --test opaque_client
-' sh "$cases"
+' bash "$cases"

@@ -10,6 +10,8 @@
 # make the script fail. The JSON report comes back as target-cov/cov.json
 # (ignored by git), for the markdown table of a report:
 #   node scripts/coverage-check.mjs target-cov/cov.json --markdown
+#
+# Progress markers (see scripts/progress.sh): the phases coverage and thresholds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,13 +20,15 @@ report_only=""
 
 mkdir -p target-cov
 rc=0
-FERRET_EXPORT="target-cov" scripts/lanbox.sh --exec sh -c '
+FERRET_EXPORT="target-cov" scripts/lanbox.sh --exec bash -c '
   set -e
+  . scripts/progress.sh
+  progress_begin 2
   export RUSTUP_TOOLCHAIN="$(tr -d "[:space:]" < fuzz/NIGHTLY)"
   mkdir -p target-cov
-  cargo llvm-cov --branch -p ferret-core -p ferret-server-auth --features test-support \
+  progress_run coverage cargo llvm-cov --branch -p ferret-core -p ferret-server-auth --features test-support \
     --json --summary-only --output-path target-cov/cov.json
-  node scripts/coverage-check.mjs target-cov/cov.json || echo 1 > target-cov/miss
+  progress_run thresholds node scripts/coverage-check.mjs target-cov/cov.json || echo 1 > target-cov/miss
 ' || rc=$?
 [ "$rc" -eq 0 ] || exit "$rc"
 

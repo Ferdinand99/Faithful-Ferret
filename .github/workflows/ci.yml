@@ -116,6 +116,17 @@ jobs:
       - run: shellcheck scripts/check-lanbox-labels.sh
       - run: scripts/check-lanbox-labels.sh
 
+  progress-markers:
+    name: Progress markers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - run: shellcheck scripts/progress.sh scripts/check-progress.sh
+      - run: scripts/check-progress.sh
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-24.04

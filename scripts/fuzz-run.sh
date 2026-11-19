@@ -23,8 +23,13 @@
 #   FUZZ_TARGET_DIR          cargo target dir (default /src/target/fuzz if
 #                            /src/target exists, else fuzz/target)
 #   FUZZ_EXTRA               extra libFuzzer arguments, e.g. "-max_len=8192"
+#
+# Progress markers (see scripts/progress.sh): the phases build and <mode>; the
+# second one has one unit per target.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. scripts/progress.sh
+progress_begin 2
 
 mode="${1:-}"
 target="${2:-}"
@@ -66,12 +71,18 @@ fi
 echo "fuzz-run.sh: building ${#targets[@]} target(s) with $nightly" >&2
 build_args=()
 [ "$target" = all ] || build_args=("$target")
+progress_phase build
 if ! cargo fuzz build "${fuzz_args[@]}" "${build_args[@]}"; then
+  progress_done
   echo "fuzz-run.sh: build failed" >&2
   exit 1
 fi
+progress_done
 
 worst=0
+finished=0
+progress_phase "$mode"
+progress_total "${#targets[@]}"
 for t in "${targets[@]}"; do
   log="fuzz/.out/$t.log"
   mkdir -p "fuzz/corpus/$t" "fuzz/regression/$t"
@@ -119,6 +130,8 @@ for t in "${targets[@]}"; do
       tail -n 25 "fuzz/.out/$t.merge.log" >&2
       rm -rf "$merged"
     fi
+    finished=$((finished + 1))
+    progress_step "$finished" "${#targets[@]}"
     continue
   fi
   # shellcheck disable=SC2086
@@ -141,7 +154,10 @@ for t in "${targets[@]}"; do
     echo "fuzz-run.sh: $t FAILED (exit $rc); last lines of the log:" >&2
     tail -n 25 "$log" >&2
   fi
+  finished=$((finished + 1))
+  progress_step "$finished" "${#targets[@]}"
 done
+progress_done
 
 if [ "${FUZZ_ALWAYS_EXIT_ZERO:-}" = 1 ]; then
   exit 0

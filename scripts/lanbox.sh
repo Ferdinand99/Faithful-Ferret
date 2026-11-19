@@ -11,6 +11,13 @@
 #   scripts/lanbox.sh --build-image            build the builder image only
 #   scripts/lanbox.sh --rm-image               remove this tag's builder image
 #
+# Progress markers: the container prints `::progress:: ...` lines at column 0 (see
+# scripts/progress.sh for the protocol) for tools that follow the output of a
+# run. `cargo test` has the phases build (cargo's own `Building k/N` bar) and test (a total from
+# `-- --list`, then k/N as tests finish); other cargo subcommands have one phase.
+# Normal output and exit codes are unchanged. cargo's bar is switched on with
+# CARGO_TERM_PROGRESS_WHEN=always, 80 columns wide.
+#
 # Env overrides:
 #   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
 #                       (e.g. "-H ssh://root@10.0.3.26" if the credential helper fails)
@@ -50,6 +57,8 @@ for name in ${FERRET_PASS_ENV:-}; do
   fi
   pass_env+=(-e "$name")
 done
+# Set by a script that runs only a part of a longer job (see scripts/progress.sh).
+pass_env+=(-e FERRET_PROGRESS_PHASE_BASE -e FERRET_PROGRESS_PHASES)
 
 dev_args=()
 if [ -n "${DEV_RUN:-}" ]; then
@@ -107,10 +116,19 @@ fi
 
 # Inside the container: unpack the repo, run the command with its output on
 # stderr (stdout is reserved for the export tar), then export on success.
+# A cargo run prints progress markers (scripts/progress.sh): `cargo test` has the
+# phases build and test, any other subcommand one phase. A program run with
+# --exec prints its own markers or none.
 inner='set -e
 tar -x -C /src
 set +e
-if [ "$FERRET_MODE" = exec ]; then "$@" >&2; else cargo "$@" >&2; fi
+if [ "$FERRET_MODE" = exec ]; then
+  "$@" >&2
+else
+  . /src/scripts/progress.sh
+  progress_begin "$(progress_cargo_phases "$@")"
+  progress_cargo "$@" >&2
+fi
 rc=$?
 if { [ "$rc" -eq 0 ] || [ "$FERRET_EXPORT_ALWAYS" = 1 ]; } && [ -n "$FERRET_EXPORT" ]; then
   # shellcheck disable=SC2086
@@ -125,6 +143,8 @@ run=(docker "${docker_args[@]}" run --rm -i
   --memory "$memory"
   -e CARGO_BUILD_JOBS="$cpus"
   -e CARGO_TERM_COLOR=never
+  -e CARGO_TERM_PROGRESS_WHEN=always
+  -e CARGO_TERM_PROGRESS_WIDTH=80
   -e FERRET_MODE="$mode"
   -e FERRET_EXPORT="$export_paths"
   -e FERRET_EXPORT_ALWAYS="${FERRET_EXPORT_ALWAYS:-}"
@@ -133,7 +153,7 @@ run=(docker "${docker_args[@]}" run --rm -i
   "${pass_env[@]}"
   -w /src
   "$image"
-  sh -c "$inner" sh "$@")
+  bash -c "$inner" bash "$@")
 
 # Tracked and untracked-but-not-ignored files (so .gitignore and .git/info/exclude
 # keep local-only folders out), without the website and brand assets.

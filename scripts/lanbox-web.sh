@@ -11,6 +11,10 @@
 # into the container as a tar archive (no bind mounts from the PC), the locked
 # packages are installed with `npm ci --ignore-scripts`, and the build fetches
 # the published WASM package named in web/wasm.lock.json and checks its SHA-256.
+# The container prints progress markers (`::progress:: ...` lines, see
+# scripts/progress.sh) for tools that follow the output of a run. The phases are
+# install, build, typecheck, unit and e2e (all: 5, unit: 4, e2e: 3, --lock: 1);
+# unit counts test files, Playwright prints its own totals.
 # Everything created is labelled owner=ferret-core and removed on exit (--rm);
 # the work directory, npm's cache and /tmp are tmpfs.
 #
@@ -84,19 +88,26 @@ esac
 inner='set -e
 tar -x -C /work
 cd /work/web
+. /work/scripts/progress.sh
 if [ "$FERRET_WEB_MODE" = lock ]; then
-  npm install --package-lock-only --ignore-scripts --no-audit --no-fund >&2
+  progress_begin 1
+  progress_run lock npm install --package-lock-only --ignore-scripts --no-audit --no-fund >&2
   tar -c package-lock.json
   exit 0
 fi
-npm ci --no-audit --no-fund --ignore-scripts >&2
-node scripts/build.mjs >&2
+case "$FERRET_WEB_MODE" in
+  unit) progress_begin 4 ;;
+  e2e) progress_begin 3 ;;
+  *) progress_begin 5 ;;
+esac
+progress_run install npm ci --no-audit --no-fund --ignore-scripts >&2
+progress_run build node scripts/build.mjs >&2
 if [ "$FERRET_WEB_MODE" != e2e ]; then
-  npx tsc -p jsconfig.json --noEmit >&2
-  node --test "test/unit/*.test.mjs" >&2
+  progress_run typecheck npx tsc -p jsconfig.json --noEmit >&2
+  progress_node_test unit "test/unit/*.test.mjs"
 fi
 if [ "$FERRET_WEB_MODE" != unit ]; then
-  npx playwright test "$@" >&2
+  progress_run e2e npx playwright test "$@" >&2
 fi'
 
 run=(docker "${docker_args[@]}" run --rm -i --init
@@ -107,13 +118,15 @@ run=(docker "${docker_args[@]}" run --rm -i --init
   --shm-size 2g
   -e CI=1
   -e FERRET_WEB_MODE="$mode"
+  -e FERRET_PROGRESS_PHASE_BASE
+  -e FERRET_PROGRESS_PHASES
   "${pass_env[@]}"
   --tmpfs /work:exec,size=2g
   --tmpfs /root/.npm:size=512m
   --tmpfs /tmp:exec,size=2g
   -w /work
   "$image"
-  sh -c "$inner" sh "$@")
+  bash -c "$inner" bash "$@")
 
 pack() {
   local fixtures=crates/ferret-server/tests/fixtures/wire
@@ -124,6 +137,7 @@ pack() {
     --exclude='web/dist' \
     --exclude='web/test-results' \
     --exclude='web/src/*.gen.mjs' \
+    scripts/progress.sh scripts/progress-node-reporter.mjs \
     web "${extra[@]}"
 }
 

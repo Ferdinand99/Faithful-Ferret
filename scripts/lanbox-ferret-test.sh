@@ -670,7 +670,9 @@ e2e_runner_image() {
 # The tests find the stack in FERRET_E2E_VAULT_URL, FERRET_E2E_ADMIN_URL and
 # FERRET_E2E_SETUP_TOKEN, and FERRET_E2E_STATE when the host script has the state of an
 # earlier phase. Output of the tests on stderr; what a phase leaves in /work/out/*.json
-# (name, then the JSON) on stdout; the exit code is the tests' one.
+# (name, then the JSON) on stdout; the exit code is the tests' one. The container prints
+# progress markers (see scripts/progress.sh): the phases install and e2e. A script that
+# calls this several times sets FERRET_PROGRESS_PHASE_BASE and FERRET_PROGRESS_PHASES.
 e2e_run() {
   e2e_require_running
   local inner pem token
@@ -692,12 +694,14 @@ export NODE_EXTRA_CA_CERTS=/work/e2e-ca.crt
 mkdir -p /work/out
 export FERRET_E2E_OUT=/work/out
 cd /work/web
-npm ci --no-audit --no-fund --ignore-scripts >&2
+. /work/scripts/progress.sh
+progress_begin 2
+progress_run install npm ci --no-audit --no-fund --ignore-scripts >&2
 set +e
 if [ "$#" -eq 0 ] || ! printf "%s\n" "$@" | grep -q "^--config"; then
   set -- --config playwright.e2e.config.mjs "$@"
 fi
-npx playwright test "$@" >&2
+progress_run e2e npx playwright test "$@" >&2
 status=$?
 # After a failure, what the page looked like (the container is gone afterwards).
 if [ "$status" -ne 0 ]; then
@@ -716,7 +720,7 @@ for f in /work/out/*.json; do
   echo
 done
 exit $status'
-  tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web \
+  tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' scripts/progress.sh web \
     | dk run --rm -i --init \
         --name ferret-e2e-playwright \
         --label "$e2e_label" \
@@ -730,12 +734,14 @@ exit $status'
         -e FERRET_E2E_CA_PEM="$pem" \
         -e FERRET_E2E_STATE="${FERRET_E2E_STATE:-}" \
         -e FERRET_E2E_PHASE="${FERRET_E2E_PHASE:-}" \
+        -e FERRET_PROGRESS_PHASE_BASE \
+        -e FERRET_PROGRESS_PHASES \
         --tmpfs /work:exec,size=2g \
         --tmpfs /root/.npm:size=512m \
         --tmpfs /tmp:exec,size=2g \
         -w /work \
         "$runner_image" \
-        sh -c "$inner" sh "$@"
+        bash -c "$inner" bash "$@"
 }
 
 # --- Snapshot and restore of the stack behind Pangolin ---------------------------

@@ -14,26 +14,41 @@
 # rustc 1.99 switches on for wasm32 (bulk memory, sign extension, saturating
 # float conversion, multivalue, reference types, mutable globals). The raw
 # size of the .wasm file is printed; the budget is 2 MiB.
+#
+# Progress markers (see scripts/progress.sh): the phases web, node and optimize
+# for the release build (optimize counts the two files), one phase for the test
+# builds. FERRET_PROGRESS_PHASE_BASE and FERRET_PROGRESS_PHASES number the phases
+# when this script is a part of a longer job.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/progress.sh
 
 if [ "${1:-}" = "--test" ]; then
-  wasm-pack build bindings/wasm --release --no-opt --target nodejs --out-dir pkg-node-test -- --features test-support
+  progress_begin 1
+  progress_run build-test wasm-pack build bindings/wasm --release --no-opt --target nodejs --out-dir pkg-node-test -- --features test-support
   echo "wasm size (test-support build, never released): $(wc -c < bindings/wasm/pkg-node-test/ferret_core_wasm_bg.wasm) bytes" >&2
   exit 0
 fi
 
 if [ "${1:-}" = "--test-web" ]; then
-  wasm-pack build bindings/wasm --release --no-opt --target web --out-dir pkg-web-test -- --features test-support
+  progress_begin 1
+  progress_run build-test-web wasm-pack build bindings/wasm --release --no-opt --target web --out-dir pkg-web-test -- --features test-support
   echo "wasm size (web, test-support build, never released): $(wc -c < bindings/wasm/pkg-web-test/ferret_core_wasm_bg.wasm) bytes" >&2
   exit 0
 fi
 
-wasm-pack build bindings/wasm --release --no-opt --target web --out-dir pkg-web
-wasm-pack build bindings/wasm --release --no-opt --target nodejs --out-dir pkg-node
+progress_begin 3
+progress_run web wasm-pack build bindings/wasm --release --no-opt --target web --out-dir pkg-web
+progress_run node wasm-pack build bindings/wasm --release --no-opt --target nodejs --out-dir pkg-node
+progress_phase optimize
+progress_total 2
+optimized=0
 for f in bindings/wasm/pkg-web/ferret_core_wasm_bg.wasm bindings/wasm/pkg-node/ferret_core_wasm_bg.wasm; do
   raw=$(wc -c < "$f")
   wasm-opt -Oz --enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int \
     --enable-reference-types --enable-multivalue --enable-mutable-globals "$f" -o "$f"
   echo "wasm size: $f $raw bytes before wasm-opt, $(wc -c < "$f") bytes after" >&2
+  optimized=$((optimized + 1))
+  progress_step "$optimized" 2
 done
+progress_done
