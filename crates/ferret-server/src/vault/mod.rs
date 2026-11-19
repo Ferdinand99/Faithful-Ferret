@@ -18,6 +18,7 @@ pub mod changes;
 pub mod checkpoint;
 pub mod events;
 pub mod idem;
+pub mod import;
 pub mod items;
 pub mod methods;
 pub mod notify;
@@ -30,6 +31,7 @@ pub mod recovery;
 pub mod rekey;
 pub mod retention;
 pub mod store;
+pub mod unlock_write;
 pub mod validate;
 
 use std::sync::Arc;
@@ -39,12 +41,13 @@ use axum::extract::FromRef;
 use axum::http::{HeaderValue, header};
 use axum::middleware::map_response;
 use axum::response::Response;
+use ferret_server_auth::Clock;
 
 use self::events::EventStreams;
 use self::notify::SyncEvents;
 use self::rate::{SyncLimits, WriteGate};
 use crate::http::extract::SessionAuth;
-use crate::state::VaultDb;
+use crate::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
 
 /// Marks every answer of the vault API `Cache-Control: no-store`: ciphertext
 /// and wraps are not for a browser or proxy cache, and neither are the errors.
@@ -66,7 +69,9 @@ async fn no_store(mut response: Response) -> Response {
 /// `VaultSession` extractor reads (`SessionAuth: FromRef<S>` is the bound a
 /// route needs to take that extractor; nothing here calls it), and the handles
 /// of the sync routes: the change notifications, the rate limits, the write
-/// gate and the event stream slots.
+/// gate and the event stream slots; and the handles of the routes that change
+/// the unlock methods and import: the nonces of signed requests, the clock, the
+/// import windows and the backup status.
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -76,9 +81,17 @@ where
     Arc<SyncLimits>: FromRef<S>,
     WriteGate: FromRef<S>,
     Arc<EventStreams>: FromRef<S>,
+    Challenges: FromRef<S>,
+    ImportWindows: FromRef<S>,
+    BackupStatus: FromRef<S>,
+    Arc<dyn Clock>: FromRef<S>,
 {
     Router::new()
         .merge(methods::routes())
+        .merge(password::routes())
+        .merge(recovery::routes())
+        .merge(recover::routes())
+        .merge(import::routes())
         .merge(changes::routes())
         .merge(items::routes())
         .merge(batch::routes())

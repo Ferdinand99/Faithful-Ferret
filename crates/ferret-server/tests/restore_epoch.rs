@@ -80,7 +80,7 @@ fn bump_raises_every_vault_by_one_in_one_transaction() {
     assert_eq!(bumped.vaults, 3);
     assert_eq!(bumped.restore_epoch, 5, "the highest epoch now");
     assert_eq!(epochs(&conn), [1, 5, 1]);
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 6);
+    assert_eq!(bump_restore_epoch(&mut conn, None, NOW).expect("a bump"), 6);
     assert_eq!(epochs(&conn), [2, 6, 2]);
 
     // One transaction: a failure on the last vault leaves every vault as it
@@ -95,7 +95,7 @@ fn bump_raises_every_vault_by_one_in_one_transaction() {
     assert!(bump_all_vaults(&mut conn).is_err());
     assert_eq!(epochs(&conn), before, "nothing was raised");
     conn.execute_batch("DROP TRIGGER fail_one;").expect("drop");
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 7);
+    assert_eq!(bump_restore_epoch(&mut conn, None, NOW).expect("a bump"), 7);
     assert_eq!(epochs(&conn), [3, 7, 3]);
 }
 
@@ -155,7 +155,7 @@ async fn changes_and_listing_show_the_new_restore_epoch() {
     let bumped = app
         .state
         .vault_db
-        .with_conn(bump_restore_epoch)
+        .with_conn(|conn| bump_restore_epoch(conn, None, NOW))
         .await
         .expect("a bump");
     assert_eq!(bumped, 1);
@@ -378,6 +378,7 @@ async fn cli_refuses_without_the_confirmation_flag() {
     let err = cli::run(Cmd::RestoreEpochBump {
         data_dir: copy.path().join("nowhere"),
         confirmed: false,
+        at_least: None,
     })
     .expect_err("needs --yes");
     assert!(err.to_string().contains("--yes"), "{err}");
@@ -500,6 +501,7 @@ async fn cli_refuses_while_another_process_holds_the_data_directory() {
     let err = cli::run(Cmd::RestoreEpochBump {
         data_dir: copy.path().to_path_buf(),
         confirmed: true,
+        at_least: None,
     })
     .expect_err("in use");
     assert!(err.to_string().contains("another ferret process"), "{err}");
@@ -538,6 +540,10 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
         vault_url: VAULT_URL.to_string(),
         admin_url: ADMIN_URL.to_string(),
         trusted_proxies: Vec::new(),
+        backup_dir: None,
+        backup_every_hours: 24,
+        backup_keep_days: 30,
+        backup_push_url: None,
     };
     let server = tokio::spawn(ferret_server::server::run(config.clone()));
     // Up when the vault port takes a connection.
@@ -762,7 +768,7 @@ async fn read(app: &TestApp, u: &User, uri: &str) -> Value {
 async fn bump(app: &TestApp) -> u64 {
     app.state
         .vault_db
-        .with_conn(bump_restore_epoch)
+        .with_conn(|conn| bump_restore_epoch(conn, None, NOW))
         .await
         .expect("a bump")
 }

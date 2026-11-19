@@ -264,7 +264,7 @@ fn migration_0006_keeps_every_m1_and_m2_row_and_starts_restore_seq_at_0() {
     // A database with data in it, as it was before 0006 existed: take the new
     // column and the new table out and forget the migration.
     let (mut conn, a, b) = seeded();
-    bump_restore_epoch(&mut conn).expect("a bump");
+    bump_restore_epoch(&mut conn, None, NOW).expect("a bump");
     conn.execute_batch(
         "DROP TABLE ferret_restore_rows; \
          ALTER TABLE ferret_vaults DROP COLUMN restore_seq; \
@@ -312,7 +312,7 @@ fn migration_0006_keeps_every_m1_and_m2_row_and_starts_restore_seq_at_0() {
     assert!(bad_hash.is_err(), "a hash is 32 bytes");
 
     // And a bump works on the migrated database.
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 2);
+    assert_eq!(bump_restore_epoch(&mut conn, None, NOW).expect("a bump"), 2);
     let (seq, epoch, restore_seq) = vault_numbers(&conn, &a.vault_id);
     assert_eq!((seq, epoch, restore_seq), (6, 2, 6));
 }
@@ -327,7 +327,7 @@ fn bump_records_restore_seq_and_freezes_one_row_per_item_with_rev_seq_and_blob_h
     assert_eq!(vault_numbers(&conn, &b.vault_id), (2, 0, 0));
     assert!(frozen(&conn, &a.vault_id).is_empty());
 
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 1);
+    assert_eq!(bump_restore_epoch(&mut conn, None, NOW).expect("a bump"), 1);
 
     // `restore_seq` is the `seq` of each vault at the bump.
     assert_eq!(vault_numbers(&conn, &a.vault_id), (6, 1, 6));
@@ -373,7 +373,7 @@ fn bump_records_restore_seq_and_freezes_one_row_per_item_with_rev_seq_and_blob_h
 #[test]
 fn tombstones_are_frozen_with_a_null_hash() {
     let (mut conn, a, _) = seeded();
-    bump_restore_epoch(&mut conn).expect("a bump");
+    bump_restore_epoch(&mut conn, None, NOW).expect("a bump");
     let list = frozen(&conn, &a.vault_id);
     let gone = list
         .iter()
@@ -395,7 +395,7 @@ fn tombstones_are_frozen_with_a_null_hash() {
 #[test]
 fn a_second_bump_raises_restore_seq_and_replaces_the_frozen_rows() {
     let (mut conn, a, b) = seeded();
-    bump_restore_epoch(&mut conn).expect("the first bump");
+    bump_restore_epoch(&mut conn, None, NOW).expect("the first bump");
     let first = frozen(&conn, &a.vault_id);
     assert_eq!(vault_numbers(&conn, &a.vault_id).2, 6);
 
@@ -403,7 +403,10 @@ fn a_second_bump_raises_restore_seq_and_replaces_the_frozen_rows() {
     // tombstone stays), item 4 is new. Vault 2 changes nothing.
     live(&mut conn, &a, 1, 1, 7);
     live(&mut conn, &a, 4, 0, 8);
-    assert_eq!(bump_restore_epoch(&mut conn).expect("the second bump"), 2);
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, NOW).expect("the second bump"),
+        2
+    );
 
     // `restore_seq` is the new `seq`, for both vaults.
     assert_eq!(vault_numbers(&conn, &a.vault_id), (8, 2, 8));
@@ -442,7 +445,7 @@ fn a_second_bump_raises_restore_seq_and_replaces_the_frozen_rows() {
 #[test]
 fn writes_after_the_bump_do_not_change_the_frozen_rows() {
     let (mut conn, a, _) = seeded();
-    bump_restore_epoch(&mut conn).expect("a bump");
+    bump_restore_epoch(&mut conn, None, NOW).expect("a bump");
     let list = frozen(&conn, &a.vault_id);
     let numbers = vault_numbers(&conn, &a.vault_id);
 
@@ -465,7 +468,7 @@ fn writes_after_the_bump_do_not_change_the_frozen_rows() {
 #[test]
 fn a_failure_while_freezing_leaves_the_epochs_restore_seq_and_rows_as_they_were() {
     let (mut conn, a, _) = seeded();
-    bump_restore_epoch(&mut conn).expect("a bump");
+    bump_restore_epoch(&mut conn, None, NOW).expect("a bump");
     live(&mut conn, &a, 1, 1, 10);
     let before = (
         vault_numbers(&conn, &a.vault_id),
@@ -476,7 +479,7 @@ fn a_failure_while_freezing_leaves_the_epochs_restore_seq_and_rows_as_they_were(
          BEGIN SELECT RAISE(ABORT, 'no'); END;",
     )
     .expect("a trigger");
-    assert!(bump_restore_epoch(&mut conn).is_err());
+    assert!(bump_restore_epoch(&mut conn, None, NOW).is_err());
     assert_eq!(
         (
             vault_numbers(&conn, &a.vault_id),
@@ -545,7 +548,7 @@ async fn write(app: &TestApp, u: &User, n: u8, base_rev: u64, key: u8) {
 }
 
 async fn bump(app: &TestApp) -> u64 {
-    db(app, bump_restore_epoch).await
+    db(app, |conn| bump_restore_epoch(conn, None, NOW)).await
 }
 
 async fn changes(app: &TestApp, u: &User, query: &str) -> ChangesRes {

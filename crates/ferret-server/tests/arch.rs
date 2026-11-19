@@ -46,6 +46,11 @@ const FORBIDDEN_IDENTS: &[&str] = &[
     "SessionAuth",
 ];
 
+/// The only items of `crate::state` that the vault modules may name: the narrow
+/// handles. The database, the nonces of signed requests, the import windows and
+/// the backup status; none of them holds a key of the server.
+const NARROW_STATE: &[&str] = &["VaultDb", "Challenges", "ImportWindows", "BackupStatus"];
+
 /// Macros that pull in a file the scan does not read.
 const INCLUDE_MACROS: &[&str] = &["include", "include_str", "include_bytes"];
 
@@ -123,9 +128,9 @@ impl Names {
             (Some("vole_kit"), Some("crypto" | "state")) => {
                 self.hit(format!("names `{joined}`"));
             }
-            (Some("crate"), Some("state")) if at(2) != Some("VaultDb") => {
+            (Some("crate"), Some("state")) if !at(2).is_some_and(|n| NARROW_STATE.contains(&n)) => {
                 self.hit(format!(
-                    "names `{joined}` (only `crate::state::VaultDb` is allowed)"
+                    "names `{joined}` (only the narrow handles {NARROW_STATE:?} of `crate::state` are allowed)"
                 ));
             }
             (Some("crate"), Some("auth")) if at(2) == Some("secrets") => {
@@ -195,17 +200,28 @@ impl Names {
                 self.hit(format!("names `{path}` (in a macro or attribute)"));
             }
         }
-        for (path, allowed) in [
-            ("crate::state", "::VaultDb"),
-            ("crate::http::extract", "::VaultSession"),
-        ] {
+        let state_handles: Vec<String> = NARROW_STATE.iter().map(|n| format!("::{n}")).collect();
+        let mut allowed_after: Vec<(&str, Vec<&str>)> = vec![(
+            "crate::state",
+            state_handles.iter().map(String::as_str).collect(),
+        )];
+        allowed_after.push(("crate::http::extract", vec!["::VaultSession"]));
+        for (path, allowed) in &allowed_after {
             let mut rest = compact.as_str();
             while let Some(at) = rest.find(path) {
                 rest = &rest[at + path.len()..];
-                if !rest.starts_with(allowed) {
+                if !allowed.iter().any(|a| {
+                    rest.strip_prefix(a).is_some_and(|after| {
+                        !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                    })
+                }) {
                     self.hit(format!(
-                        "names `{path}` other than `{}` (in a macro)",
-                        allowed.trim_start_matches(':')
+                        "names `{path}` other than {} (in a macro)",
+                        allowed
+                            .iter()
+                            .map(|a| format!("`{}`", a.trim_start_matches(':')))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
             }
@@ -924,4 +940,100 @@ fn arch_test_covers_the_new_vault_modules() {
             .any(|f| f.contains("rate.rs") && f.contains("FerretState")),
         "{found:?}"
     );
+}
+
+#[test]
+fn arch_test_keeps_secrets_out_of_the_new_vault_modules() {
+    let dir = manifest_dir().join("src/vault");
+    let scanned: Vec<String> = rust_files(&dir)
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .expect("a file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let new_modules = [
+        "unlock_write.rs",
+        "password.rs",
+        "recover.rs",
+        "recovery.rs",
+        "import.rs",
+    ];
+    for module in new_modules {
+        assert!(
+            scanned.iter().any(|name| name == module),
+            "{module} is under the scan"
+        );
+        // Each one passes the scan as it is, and the route functions among
+        // them are generic over the state.
+        let source = std::fs::read_to_string(dir.join(module)).expect("a source file");
+        assert!(
+            scan_names(module, &source).is_empty(),
+            "{module}: {:?}",
+            scan_names(module, &source)
+        );
+        let (found, _) = scan_shapes(module, &source);
+        assert!(found.is_empty(), "{module}: {found:?}");
+    }
+
+    // The same stubs with the application state, the kit's core state, the
+    // server's secrets or the cookie key named in them are caught by the same
+    // scan, in a directory laid out like `src/vault`.
+    let copy = std::env::temp_dir().join(format!("ferret-test-arch-m3-{}", std::process::id()));
+    std::fs::create_dir_all(copy.join("vault")).expect("a temporary directory");
+    for (module, planted) in [
+        ("password.rs", "use crate::state::FerretState;"),
+        ("recover.rs", "use crate::auth::secrets::Secrets;"),
+        ("recovery.rs", "use vole_kit::state::Core;"),
+        ("import.rs", "use axum_extra::extract::cookie::Key;"),
+        ("unlock_write.rs", "const FILE: &str = \"session.key\";"),
+    ] {
+        let source = std::fs::read_to_string(dir.join(module)).expect("a source file");
+        // The line goes below the module documentation, which must come first.
+        let at = source
+            .lines()
+            .take_while(|line| line.starts_with("//!"))
+            .count();
+        let mut lines: Vec<&str> = source.lines().collect();
+        lines.insert(at, planted);
+        let path = copy.join("vault").join(module);
+        std::fs::write(&path, lines.join("\n")).expect("a planted copy");
+        let found = scan_dir_names(&copy.join("vault"));
+        std::fs::remove_file(&path).expect("remove the copy");
+        assert!(
+            found.iter().any(|f| f.contains(module)),
+            "not detected in {module}: {found:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&copy);
+
+    // The narrow handles of the state may be named, and nothing else of it.
+    for clean in [
+        "use crate::state::{BackupStatus, Challenges, ImportWindows, VaultDb};",
+        "fn f(_: crate::state::Challenges, _: crate::state::BackupStatus) {}",
+        "fn f() { println!(\"{}\", crate::state::ImportWindows::new); }",
+    ] {
+        assert!(scan_names("clean.rs", clean).is_empty(), "{clean}");
+    }
+    for planted in [
+        "use crate::state::{Challenges, FerretState};",
+        "use crate::state::ChallengesAndMore;",
+        "use crate::state::*;",
+        "fn f() { println!(\"{}\", crate::state::FerretState::new); }",
+        "fn f() { println!(\"{}\", crate::state::ChallengesX::new); }",
+    ] {
+        assert!(!scan_names("planted.rs", planted).is_empty(), "{planted}");
+    }
+
+    // The handles the new routes take (nonces, import windows, backup status)
+    // come out of the state through `FromRef`, like the others.
+    let state = std::fs::read_to_string(manifest_dir().join("src/state.rs")).expect("state.rs");
+    for handle in ["Challenges", "ImportWindows", "BackupStatus"] {
+        assert!(
+            state.contains(&format!("impl FromRef<FerretState> for {handle}")),
+            "{handle}"
+        );
+    }
 }

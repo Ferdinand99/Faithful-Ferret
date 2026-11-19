@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use deadpool_sqlite::Pool;
-use ferret_server_auth::{Clock, PreloginPolicy, Throttle};
+use ferret_server_auth::{Clock, InMemoryChallengeStore, PreloginPolicy, Throttle};
 use rusqlite::Connection;
 use vole_kit::state::Core;
 
@@ -55,6 +55,75 @@ impl VaultDb {
     }
 }
 
+/// The nonces of signed requests (Spec: Fase 1 § 4.6), kept in memory: at most
+/// 20 000, and the oldest goes first when the store is full. A restart forgets
+/// them, so a nonce that was issued before it is refused afterwards. One store
+/// for the process, shared by every handle (`Clone` shares it).
+#[derive(Clone)]
+pub struct Challenges(Arc<InMemoryChallengeStore>);
+
+impl Challenges {
+    /// An empty store with the library's limit of 20 000 nonces.
+    pub fn new() -> Self {
+        Self(Arc::new(InMemoryChallengeStore::new()))
+    }
+
+    /// The store, as the OPAQUE library's functions take it.
+    pub fn store(&self) -> &InMemoryChallengeStore {
+        &self.0
+    }
+}
+
+impl Default for Challenges {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for Challenges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Challenges([redacted])")
+    }
+}
+
+/// The open import windows, one per vault at most (a later part fills it in:
+/// the windows are made, counted and ended there). One set for the process,
+/// shared by every handle.
+#[derive(Clone, Debug, Default)]
+pub struct ImportWindows {
+    _windows: Arc<()>,
+}
+
+impl ImportWindows {
+    /// No window open.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// What the scheduled backup reports and is asked for (a later part fills it
+/// in: the last good time, the last failure, the next run, and the request for
+/// a run right after a change of unlock methods). One status for the process,
+/// shared by every handle.
+#[derive(Clone, Debug, Default)]
+pub struct BackupStatus {
+    _status: Arc<()>,
+}
+
+impl BackupStatus {
+    /// A status that has seen no run.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asks for a backup soon, for `reason` (a fixed word, never a value that a
+    /// client chose). The scheduler is not built yet: nothing is scheduled by
+    /// this call.
+    pub fn request_run(&self, reason: &'static str) {
+        let _ = reason;
+    }
+}
+
 /// Everything the two routers share.
 #[derive(Clone)]
 pub struct FerretState {
@@ -86,6 +155,12 @@ pub struct FerretState {
     pub write_gate: WriteGate,
     /// The open event streams, counted.
     pub streams: Arc<EventStreams>,
+    /// The nonces of signed requests.
+    pub challenges: Challenges,
+    /// The open import windows.
+    pub import_windows: ImportWindows,
+    /// What the scheduled backup reports.
+    pub backup: BackupStatus,
 }
 
 impl FromRef<FerretState> for Core {
@@ -158,6 +233,24 @@ impl FromRef<FerretState> for Arc<EventStreams> {
     }
 }
 
+impl FromRef<FerretState> for Challenges {
+    fn from_ref(state: &FerretState) -> Challenges {
+        state.challenges.clone()
+    }
+}
+
+impl FromRef<FerretState> for ImportWindows {
+    fn from_ref(state: &FerretState) -> ImportWindows {
+        state.import_windows.clone()
+    }
+}
+
+impl FromRef<FerretState> for BackupStatus {
+    fn from_ref(state: &FerretState) -> BackupStatus {
+        state.backup.clone()
+    }
+}
+
 /// Starts the background jobs: purging login states, renewing the pre-login
 /// policy, purging hand-over codes and the retention of old rows. Call it once,
 /// inside the runtime.
@@ -219,5 +312,8 @@ pub async fn build_state(
         limits,
         write_gate: WriteGate::new(8, 64),
         streams: Arc::new(EventStreams::new(2, 40, 256)),
+        challenges: Challenges::new(),
+        import_windows: ImportWindows::new(),
+        backup: BackupStatus::new(),
     })
 }

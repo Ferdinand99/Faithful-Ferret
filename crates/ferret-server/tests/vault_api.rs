@@ -23,14 +23,14 @@ use ferret_core::{
 use ferret_server::auth::session::Origin;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::ids::ItemId;
-use ferret_server::state::VaultDb;
+use ferret_server::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
 use ferret_server::vault::events::EventStreams;
 use ferret_server::vault::notify::SyncEvents;
 use ferret_server::vault::quota::Limits;
 use ferret_server::vault::rate::{SyncLimits, WriteGate};
 use ferret_server::vault::store::{PutBody, PutRequest, put_item};
 use ferret_server::wire::{b64url, hex16};
-use ferret_server_auth::SessionScope;
+use ferret_server_auth::{Clock, SessionScope};
 use serde_json::{Value, json};
 use support::accounts::{TestAccount, add_account_to_app};
 use support::session::issue;
@@ -218,8 +218,8 @@ fn b64(value: &Value) -> Vec<u8> {
 // The narrow state.
 
 /// What the vault routes may see: the database handle, the session handle
-/// the `VaultSession` extractor reads, and the handles of the sync routes. No
-/// kit state, no `FerretState`. The database of the handlers is separate from
+/// the `VaultSession` extractor reads, the handles of the sync routes and those
+/// of the unlock-method and import routes. No kit state, no `FerretState`. The database of the handlers is separate from
 /// that of the sessions, so a test can make one of them unusable.
 #[derive(Clone)]
 struct Narrow {
@@ -229,6 +229,10 @@ struct Narrow {
     limits: Arc<SyncLimits>,
     gate: WriteGate,
     streams: Arc<EventStreams>,
+    challenges: Challenges,
+    import_windows: ImportWindows,
+    backup: BackupStatus,
+    clock: Arc<dyn Clock>,
 }
 
 impl Narrow {
@@ -241,6 +245,10 @@ impl Narrow {
             limits: Arc::<SyncLimits>::from_ref(&app.state),
             gate: WriteGate::from_ref(&app.state),
             streams: Arc::<EventStreams>::from_ref(&app.state),
+            challenges: Challenges::from_ref(&app.state),
+            import_windows: ImportWindows::from_ref(&app.state),
+            backup: BackupStatus::from_ref(&app.state),
+            clock: Arc::<dyn Clock>::from_ref(&app.state),
         }
     }
 }
@@ -278,6 +286,30 @@ impl FromRef<Narrow> for SessionAuth {
 impl FromRef<Narrow> for VaultDb {
     fn from_ref(state: &Narrow) -> VaultDb {
         state.db.clone()
+    }
+}
+
+impl FromRef<Narrow> for Challenges {
+    fn from_ref(state: &Narrow) -> Challenges {
+        state.challenges.clone()
+    }
+}
+
+impl FromRef<Narrow> for ImportWindows {
+    fn from_ref(state: &Narrow) -> ImportWindows {
+        state.import_windows.clone()
+    }
+}
+
+impl FromRef<Narrow> for BackupStatus {
+    fn from_ref(state: &Narrow) -> BackupStatus {
+        state.backup.clone()
+    }
+}
+
+impl FromRef<Narrow> for Arc<dyn Clock> {
+    fn from_ref(state: &Narrow) -> Arc<dyn Clock> {
+        state.clock.clone()
     }
 }
 

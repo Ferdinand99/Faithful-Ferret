@@ -29,3 +29,10 @@ base_url_help = "Der folk når administrasjonssidene: brukes i lenker i meldinge
 
 [api]
 docs_subtitle = "Faithful Ferret har ingen offentlig API-referanse ennå."
+
+[mailnote]
+title = "E-post"
+label = "E-post fra Faithful Ferret"
+none = "Sendes ikke"
+help = "Faithful Ferret sender ingen e-post i denne versjonen. La e-postinnstillingene over stå tomme: hvis de er fylt ut, kan brukersiden også sende en innloggingskode på e-post, og da blir den liggende i en postkasse i opptil 24 timer. Gi koden videre selv (brukersiden for en annen person, eller kommandoen ferret sign-in-code issue)."
+error = "Denne innstillingen har én verdi."

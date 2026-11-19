@@ -72,7 +72,11 @@ async fn vault_headers(
 ///
 /// The hand-over pages, the API, the redirect stubs and `/setup` (whose query
 /// carries the setup token) send no referrer at all.
-/// The kit's pages send one to their own origin only (`same-origin`, the kit's
+/// The kit's one-time sign-in code page (`/sign-in-code`) sends the origin and
+/// nothing more, and nothing at all to a less safe one (`strict-origin`): the
+/// code may travel in its address, and the kit's form there is posted with
+/// `Origin` and `Referer` like the rest of its pages.
+/// The kit's other pages send one to their own origin only (`same-origin`, the kit's
 /// policy): the kit's forms are posted with `Origin` and `Referer` as proof that
 /// they come from its own pages (a plain form post is sent with `Origin: null`
 /// under `no-referrer`, and the kit, like `origin_guard`, refuses that). No
@@ -84,6 +88,8 @@ fn admin_referrer_policy(path: &str) -> &'static str {
             .any(|prefix| path.starts_with(prefix))
     {
         "no-referrer"
+    } else if path == "/sign-in-code" {
+        "strict-origin"
     } else {
         "same-origin"
     }
@@ -146,13 +152,16 @@ mod tests {
         for path in ["/settings/general", "/login", "/setup/other", "/setups"] {
             assert_eq!(admin_referrer_policy(path), "same-origin", "{path}");
         }
+        // The page that takes a one-time sign-in code leaks no more than its
+        // origin, and nothing to a less safe one.
+        assert_eq!(admin_referrer_policy("/sign-in-code"), "strict-origin");
     }
 
     /// An invitation link and a sign-in code travel in the path of the page that
     /// takes them. Turning either feature on needs a strict policy for its page
     /// first: add the path to `admin_referrer_policy` and make it `no-referrer`
     /// or `strict-origin` (no referrer at all, or the origin only and nothing to
-    /// a less safe one), then this test passes again. The features are off now.
+    /// a less safe one), then this test passes again. Sign-in codes are on (`/sign-in-code` is `strict-origin`); invitations are off.
     #[test]
     fn a_feature_with_a_secret_in_its_path_needs_a_strict_referrer_policy() {
         let strict =
