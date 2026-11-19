@@ -20,7 +20,7 @@ use ferret_server::db::MIGRATION_FILES;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::ids::{AccountId, ItemId, SidHash, VaultId};
 use ferret_server::product;
-use ferret_server::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
+use ferret_server::state::{BackupStatus, ImportWindows, Proofs, VaultDb};
 use ferret_server::vault::events::EventStreams;
 use ferret_server::vault::notify::{SyncEvents, VaultChange};
 use ferret_server::vault::rate::{SyncLimits, WriteGate};
@@ -165,7 +165,7 @@ struct Handles {
     limits: Arc<SyncLimits>,
     gate: WriteGate,
     streams: Arc<EventStreams>,
-    challenges: Challenges,
+    proofs: Proofs,
     import_windows: ImportWindows,
     backup: BackupStatus,
     clock: Arc<dyn Clock>,
@@ -186,7 +186,7 @@ handle!(events, SyncEvents);
 handle!(limits, Arc<SyncLimits>);
 handle!(gate, WriteGate);
 handle!(streams, Arc<EventStreams>);
-handle!(challenges, Challenges);
+handle!(proofs, Proofs);
 handle!(import_windows, ImportWindows);
 handle!(backup, BackupStatus);
 handle!(clock, Arc<dyn Clock>);
@@ -207,7 +207,7 @@ async fn state_hands_out_the_new_handles_through_from_ref() {
         limits: Arc::<SyncLimits>::from_ref(&app.state),
         gate: WriteGate::from_ref(&app.state),
         streams: Arc::<EventStreams>::from_ref(&app.state),
-        challenges: Challenges::from_ref(&app.state),
+        proofs: Proofs::from_ref(&app.state),
         import_windows: ImportWindows::from_ref(&app.state),
         backup: BackupStatus::from_ref(&app.state),
         clock: Arc::<dyn Clock>::from_ref(&app.state),

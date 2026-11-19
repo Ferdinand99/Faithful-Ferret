@@ -23,7 +23,7 @@ use ferret_core::{
 use ferret_server::auth::session::Origin;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::ids::ItemId;
-use ferret_server::state::{BackupStatus, Challenges, ImportWindows, VaultDb};
+use ferret_server::state::{BackupStatus, ImportWindows, Proofs, VaultDb};
 use ferret_server::vault::events::EventStreams;
 use ferret_server::vault::notify::SyncEvents;
 use ferret_server::vault::quota::Limits;
@@ -229,7 +229,7 @@ struct Narrow {
     limits: Arc<SyncLimits>,
     gate: WriteGate,
     streams: Arc<EventStreams>,
-    challenges: Challenges,
+    proofs: Proofs,
     import_windows: ImportWindows,
     backup: BackupStatus,
     clock: Arc<dyn Clock>,
@@ -245,7 +245,7 @@ impl Narrow {
             limits: Arc::<SyncLimits>::from_ref(&app.state),
             gate: WriteGate::from_ref(&app.state),
             streams: Arc::<EventStreams>::from_ref(&app.state),
-            challenges: Challenges::from_ref(&app.state),
+            proofs: Proofs::from_ref(&app.state),
             import_windows: ImportWindows::from_ref(&app.state),
             backup: BackupStatus::from_ref(&app.state),
             clock: Arc::<dyn Clock>::from_ref(&app.state),
@@ -289,9 +289,9 @@ impl FromRef<Narrow> for VaultDb {
     }
 }
 
-impl FromRef<Narrow> for Challenges {
-    fn from_ref(state: &Narrow) -> Challenges {
-        state.challenges.clone()
+impl FromRef<Narrow> for Proofs {
+    fn from_ref(state: &Narrow) -> Proofs {
+        state.proofs.clone()
     }
 }
 

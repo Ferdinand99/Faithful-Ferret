@@ -25,14 +25,12 @@ use ferret_server::auth::session::{Origin, insert_session, new_session, session_
 use ferret_server::auth::throttle::caller_from;
 use ferret_server::error::ApiError;
 use ferret_server::http::extract::{
-    AdminSession, ScopedSession, SessionAuth, SignedBody, VaultSession, caps,
+    AdminSession, FreshReauth, ScopedSession, SessionAuth, SignedBody, VaultSession, caps,
 };
 use ferret_server::ids::{AccountId, DeviceId, SidHash, VaultId};
-use ferret_server::state::FerretState;
+use ferret_server::state::{Proofs, VaultDb};
 use ferret_server::wire::b64url;
-use ferret_server_auth::{
-    AuthContext, Clock as _, ProfileRules, SessionScope, SignedAccount, authorize_signed,
-};
+use ferret_server_auth::{Clock as _, SessionScope, SignedAccount};
 use serde_json::json;
 use tower::ServiceExt as _;
 
@@ -312,63 +310,59 @@ struct ProbeBody {
     n: u32,
 }
 
+/// What the server holds for the signer of a request in the session of
+/// `account`: its keys and epoch as stored, and the row version 0.
+pub async fn signed_account(
+    db: &VaultDb,
+    account_id: AccountId,
+) -> Result<SignedAccount, ApiError> {
+    let (pk_a, pk_r, vk_epoch) = db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT pk_a, pk_r, vk_epoch FROM ferret_accounts WHERE account_id = ?1",
+                [account_id.as_bytes().as_slice()],
+                |r| {
+                    Ok((
+                        r.get::<_, Vec<u8>>(0)?,
+                        r.get::<_, Vec<u8>>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )?)
+        })
+        .await?;
+    Ok(SignedAccount {
+        account_id,
+        pk_a: AuthPublicKey::new(pk_a.try_into().expect("32 bytes")),
+        pk_r: RecoveryPublicKey::new(pk_r.try_into().expect("32 bytes")),
+        vk_epoch: u64::try_from(vk_epoch).expect("an epoch"),
+        row_version: 0,
+    })
+}
+
 /// A vault router with one signed route, built the way the routes of signed
-/// requests are: `ScopedSession<UnlockMethodsWrite>`, then `SignedBody`, then
-/// the library's `authorize_signed` for `unlock-method.recovery.put` with the
-/// account as stored, and only then `SignedBody::parse`. The answer is
+/// requests are: `ScopedSession<UnlockMethodsWrite>`, then `FreshReauth`, then
+/// `SignedBody`, then `Proofs::signed` for `unlock-method.recovery.put` with
+/// the account as stored, and only then `SignedBody::parse`. The answer is
 /// `{"n": n}` of a body `{"n": n}`. The vault listener's layers are around it.
+/// The session must have re-authenticated ([`make_fresh`]).
 pub fn signed_probe(app: &TestApp) -> Router {
     async fn probe(
-        State(state): State<FerretState>,
+        State(proofs): State<Proofs>,
+        State(db): State<VaultDb>,
         headers: HeaderMap,
         scoped: ScopedSession<caps::UnlockMethodsWrite>,
+        fresh: FreshReauth,
         signed: SignedBody,
     ) -> Result<Response, ApiError> {
-        let account_id = scoped.session.account;
-        let (pk_a, pk_r, vk_epoch) = state
-            .vault_db
-            .with_conn(move |conn| {
-                Ok(conn.query_row(
-                    "SELECT pk_a, pk_r, vk_epoch FROM ferret_accounts WHERE account_id = ?1",
-                    [account_id.as_bytes().as_slice()],
-                    |r| {
-                        Ok((
-                            r.get::<_, Vec<u8>>(0)?,
-                            r.get::<_, Vec<u8>>(1)?,
-                            r.get::<_, i64>(2)?,
-                        ))
-                    },
-                )?)
-            })
-            .await?;
-        let account = SignedAccount {
-            account_id,
-            pk_a: AuthPublicKey::new(pk_a.try_into().expect("32 bytes")),
-            pk_r: RecoveryPublicKey::new(pk_r.try_into().expect("32 bytes")),
-            vk_epoch: u64::try_from(vk_epoch).expect("an epoch"),
-            row_version: 0,
-        };
-        let policy = state.prelogin.read().expect("the policy").clone();
-        let rules = ProfileRules::ferret_v1();
-        let cx = AuthContext::new(
-            &state.secrets.keys,
-            &state.secrets.prelogin,
-            &state.secrets.seal,
-            state.clock.as_ref(),
-            state.throttle.as_ref(),
-            &policy,
-            &rules,
-        );
-        let request = signed.signed_request(
+        let account = signed_account(&db, scoped.session.account).await?;
+        let permit = proofs.signed(
             &scoped,
+            &fresh,
+            &signed,
             caller_from(&headers, None),
             MutationOp::UnlockMethodRecoveryPut,
-        );
-        let permit = authorize_signed(&cx, state.challenges.store(), &account, &request).map_err(
-            |error| {
-                tracing::info!(reason = ?error, "signed request refused");
-                ApiError::from(error)
-            },
+            &account,
         )?;
         let body: ProbeBody = signed.parse(&permit)?;
         Ok(Json(json!({ "n": body.n })).into_response())
@@ -452,4 +446,10 @@ pub async fn set_reauth_at(app: &TestApp, sid: SidHash, reauth_at: Option<i64>) 
         })
         .await
         .expect("set reauth_at");
+}
+
+/// Marks the session `sid` as re-authenticated at the clock's time.
+pub async fn make_fresh(app: &TestApp, sid: SidHash) {
+    let now = i64::try_from(app.clock.now_unix()).expect("a time");
+    set_reauth_at(app, sid, Some(now)).await;
 }

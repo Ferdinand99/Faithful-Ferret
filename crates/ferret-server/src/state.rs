@@ -31,6 +31,11 @@ use crate::vault::notify::{CAPACITY, SyncEvents};
 use crate::vault::rate::{RateConfig, SyncLimits, WriteGate};
 use crate::vault::retention;
 
+/// The proof checks of signed requests, the one way a vault route reaches the
+/// OPAQUE library's `authorize_signed` and `authorize_replacement`. It is
+/// built only in `auth::proofs`, from this state, through `FromRef`.
+pub use crate::auth::proofs::Proofs;
+
 /// The database, as the vault modules see it: a pool and one way to use it.
 #[derive(Clone)]
 pub struct VaultDb {
