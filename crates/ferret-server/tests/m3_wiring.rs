@@ -476,12 +476,12 @@ fn restore_bump_restore_abort_and_sign_in_code_change_nothing_without_yes() {
     );
 
     // Make, list and check change nothing that exists, so they do not ask for
-    // `--yes`: whatever they say, it is not that.
+    // `--yes`: whatever they say, it is not that. Here there is no database and
+    // no set, so make and check fail and list finds nothing.
     for command in [
         Command::BackupCreate {
             data_dir: data_dir.clone(),
         },
-        Command::BackupList { data_dir },
         Command::BackupVerify {
             set: dir.path().join("set1"),
         },
@@ -490,6 +490,8 @@ fn restore_bump_restore_abort_and_sign_in_code_change_nothing_without_yes() {
         let err = cli::run(command).expect_err(&name);
         assert!(!err.to_string().contains("--yes"), "{name}: {err}");
     }
+    let listed = cli::run(Command::BackupList { data_dir }).expect("an empty listing");
+    assert!(listed.starts_with("no backup sets"), "{listed}");
     assert!(
         dir.names().is_empty(),
         "nothing was made: {:?}",

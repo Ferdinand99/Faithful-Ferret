@@ -114,28 +114,7 @@ impl ImportWindows {
     }
 }
 
-/// What the scheduled backup reports and is asked for (a later part fills it
-/// in: the last good time, the last failure, the next run, and the request for
-/// a run right after a change of unlock methods). One status for the process,
-/// shared by every handle.
-#[derive(Clone, Debug, Default)]
-pub struct BackupStatus {
-    _status: Arc<()>,
-}
-
-impl BackupStatus {
-    /// A status that has seen no run.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Asks for a backup soon, for `reason` (a fixed word, never a value that a
-    /// client chose). The scheduler is not built yet: nothing is scheduled by
-    /// this call.
-    pub fn request_run(&self, reason: &'static str) {
-        let _ = reason;
-    }
-}
+pub use crate::backup::status::BackupStatus;
 
 /// Everything the two routers share.
 #[derive(Clone)]
@@ -327,6 +306,6 @@ pub async fn build_state(
         streams: Arc::new(EventStreams::new(2, 40, 256)),
         challenges: Challenges::new(),
         import_windows: ImportWindows::new(),
-        backup: BackupStatus::new(),
+        backup: BackupStatus::persistent(&cfg.backup_config()?.dir),
     })
 }
