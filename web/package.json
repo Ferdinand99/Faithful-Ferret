@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
-    "fake-indexeddb": "6.2.7",
+    "fake-indexeddb": "6.2.8",
     "typescript": "7.0.2"
   }
 }
