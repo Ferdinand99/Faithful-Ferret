@@ -73,8 +73,10 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   // A write made there is not lost and is not sent: the page says that the user has to sign in again, and the write waits.
   const offline = `Written-after-signout-${Date.now()}`;
   await createItem(b.page, { name: offline, username: "after-the-change" });
-  await expect(b.page.locator('[data-role="banner"][data-banner="unauthorized"]')).toBeVisible({ timeout: 60_000 });
-  expect((await readStores(b.page)).outbox.count, "the write waits in the browser").toBeGreaterThan(0);
+  // The server answered the write with 401. Soft checks: the rest of the scenario (the new password everywhere) is still looked at when
+  // a browser does not say so.
+  await expect.soft(b.page.locator('[data-role="banner"][data-banner="unauthorized"]'), "the page says to sign in again").toBeVisible({ timeout: 20_000 });
+  expect.soft((await readStores(b.page)).outbox.count, "the write waits in the browser").toBeGreaterThan(0);
 
   // ---- The old password opens nothing: a new browser is refused with one plain message.
   const old = await freshContext(browser);
