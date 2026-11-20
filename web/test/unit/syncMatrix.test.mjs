@@ -6,13 +6,11 @@
 // `FERRET_MATRIX_RUNS` sets how many seeded runs the randomised tests make (500 by default, 5000 at the gate); a failing run names its
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
-// What the model does not assert, because it is reported (the todo tests below). `FERRET_MATRIX_STRICT=1` takes every one of these tolerances
-// away (`KNOWN_GAPS` in `syncModel.mjs`), and the random runs then fail on them; `FERRET_MATRIX_TOLERATE=purge` names the ones that are still
-// let through in a strict run:
-//   known gap, purged tombstone  a checkpoint can list the item of a purged tombstone live, and a device that still holds a purged tombstone is
-//            at odds with a checkpoint that lacks it (todo tests `a_purged_tombstone_that_the_checkpoint_still_lists_live_is_no_alarm` and
-//            `a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it`); the model purges only what the checkpoint
-//            lists and no device holds
+// What the model does not assert, because it is reported: nothing. `KNOWN_GAPS` in `syncModel.mjs` is empty, so every run is strict. The one
+// gap there was, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does the
+// same, `purgeTombstones`), and the engine holds a tombstone the server has purged and counts a deletion of its own that was purged before it was
+// read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`). `FERRET_MATRIX_STRICT=1`
+// and `FERRET_MATRIX_TOLERATE=<gap>` stay for the next gap.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
@@ -24,7 +22,7 @@ import { saveSyncState } from "../../src/store/syncState.mjs";
 import { ACCOUNT, scope, SERVER } from "./idbHelpers.mjs";
 import { fakePageEvents, fakeStreamApi } from "./liveHelpers.mjs";
 import { currentRev, memoryBytes, settle, until } from "./syncHelpers.mjs";
-import { ACTIONS, CALM_ACTIONS, POLL_MS, rngOf, Sim } from "./syncModel.mjs";
+import { ACTIONS, CALM_ACTIONS, KNOWN_GAPS, POLL_MS, rngOf, Sim } from "./syncModel.mjs";
 
 const RUNS = Number(process.env.FERRET_MATRIX_RUNS ?? 500);
 const ONLY = process.env.FERRET_MATRIX_SEED ? process.env.FERRET_MATRIX_SEED.split(",").map(Number) : null;
@@ -774,6 +772,7 @@ test("a_chain_that_restores_and_deletes_again_is_kept_when_another_device_brough
   const { sim, a, b, id } = await sharedItem();
   await a.engine.remove(id);
   await untilServerRev(sim, id, 2);
+  await pump(a); // A has read its own tombstone back, so its trash holds the item
   await pump(b); // B holds the tombstone
   offline(b);
   await b.engine.restoreFromTrash(id);
@@ -1284,7 +1283,7 @@ test("a_listing_that_is_cut_short_does_not_hide_the_rows_it_did_not_reach", asyn
   const gone = "ee".repeat(16);
   sim.server.set(gone, { rev: 2, deleted: true, tomb: sim.client.wireTomb(gone, 2) }); // seq 2, purged: the feed floor goes above the device's cursor
   sim.server.pinCheckpoint();
-  sim.server.purgeTombstones(() => false, false);
+  sim.server.purgeTombstones();
   sim.server.set(middle, sealed(middle, "written second")); // seq 3
   sim.server.set(low, sealed(low, "written third")); // seq 4, the lowest id: the first row of the listing
   // The second page of the listing is never read: the page is closed after the first.
@@ -1320,7 +1319,7 @@ test("a_start_after_a_listing_that_was_cut_short_lists_the_vault_again_from_the_
   const gone = "ee".repeat(16);
   sim.server.set(gone, { rev: 2, deleted: true, tomb: sim.client.wireTomb(gone, 2) });
   sim.server.pinCheckpoint();
-  sim.server.purgeTombstones(() => false, false); // the floor is above the cursor of the device
+  sim.server.purgeTombstones(); // the floor is above the cursor of the device
   ids.slice(0, 2).forEach((id, at) => sim.server.set(id, { rev: 1, ...sim.client.wireRow(id, 1, { item_type: "login", name: `row ${at}` }) }));
   const get = a.d.api.get;
   let pages = 0;
@@ -1441,9 +1440,10 @@ test("a_pass_of_the_old_owner_that_is_let_go_after_the_vault_moved_does_nothing"
   }
 });
 
-test("a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it", { todo: "a purged tombstone can look like a rollback" }, async () => {
+test("a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_that_lacks_it", async () => {
   // Device A deleted an item and holds the tombstone. The tombstone is purged on the server (400 days), and a checkpoint that a device
-  // stored after that, one that never saw the item, does not list it. At the top of that checkpoint A holds a row it does not list.
+  // stored after that, one that never saw the item, does not list it. At the top of that checkpoint A holds a row it does not list: the
+  // server's floor says that the tombstone has been purged, so A holds it (it stays in A's cache) and the check leaves it out.
   const sim = new Sim(1, { layout: [1] });
   await sim.start();
   const [a] = sim.devices;
@@ -1460,18 +1460,51 @@ test("a_device_that_still_holds_a_purged_tombstone_is_no_alarm_for_a_checkpoint_
   await sim.stopAll();
 });
 
-test("a_purged_tombstone_that_the_checkpoint_still_lists_live_is_no_alarm", { todo: "a purged tombstone can look like a rollback" }, async () => {
-  // The last checkpoint was stored when the item was live; the item was deleted and the tombstone has been purged after 400 days, and
-  // no device has stored a newer checkpoint since. A device that starts now lists the vault, finds no row, and the checkpoint lists the item.
-  const sim = new Sim(1, { layout: [1] });
+test("the_retention_follows_the_checkpoint_so_a_purged_tombstone_is_never_one_the_checkpoint_lists_live", async () => {
+  // The server purges a tombstone only when the checkpoint it holds covers its `seq`. A checkpoint that was stored when the item was live
+  // (seq 1) does not cover the deletion (seq 2): the tombstone stays, and no device sees the item as hidden. Once a checkpoint at or above the
+  // deletion is stored it lists the item as a tombstone, and the purge that follows leaves a checkpoint that lists a tombstone without a row,
+  // which every device accepts.
+  const sim = new Sim(1, { layout: [1, 1] });
   const id = "ab".repeat(16);
   sim.server.set(id, { rev: 1, ...sim.client.wireRow(id, 1, { item_type: "login", name: "gone" }) });
-  sim.server.pinCheckpoint();
-  sim.server.items.delete(id); // deleted at seq 2 and purged: the row is gone
-  sim.server.seq = 2;
-  sim.server.minValidSince = 2;
+  sim.server.pinCheckpoint(); // seq 1: the item is live
+  sim.server.set(id, { rev: 2, deleted: true, tomb: sim.client.wireTomb(id, 2) }); // seq 2
+  assert.equal(sim.server.purgeTombstones(), 0, "the checkpoint does not cover the deletion: the tombstone stays");
+  assert.equal(sim.server.minValidSince, 0);
   await sim.start();
-  await sim.devices[0].engine.syncNow();
-  assert.deepEqual(sim.devices[0].engine.health().warnings, [], "an honest server that has purged a tombstone is no reason for an alarm");
+  for (const dev of sim.devices) {
+    await dev.engine.syncNow();
+    assert.deepEqual(dev.engine.health().warnings, [], "nothing looks like a rollback");
+  }
+  sim.server.pinCheckpoint(); // seq 2: lists the item as a tombstone
+  assert.equal(sim.server.purgeTombstones(), 1, "now it is covered");
+  assert.equal(sim.server.minValidSince, 2);
+  for (const dev of sim.devices) assert.equal(await dev.engine.verifyNow(), "ok", "a checkpoint that lists a tombstone without a row is accepted");
   await sim.stopAll();
+  assert.deepEqual(sim.problems, []);
+});
+
+test("matrix_passes_strict_without_tolerating_purge", async () => {
+  // Nothing is tolerated: no gap is named, and the runs purge tombstones that a device holds, that a device wrote and has not read back, and
+  // that no device has seen, with a floor above the cursor of the devices that are behind. Every invariant of the matrix holds all the same.
+  const was = { strict: process.env.FERRET_MATRIX_STRICT, tolerate: process.env.FERRET_MATRIX_TOLERATE };
+  process.env.FERRET_MATRIX_STRICT = "1";
+  delete process.env.FERRET_MATRIX_TOLERATE;
+  try {
+    assert.deepEqual([...KNOWN_GAPS], [], "no gap is tolerated");
+    // `FERRET_MATRIX_PURGE_HEAVY=1`: more deletions and purges than the usual mix (it finds shapes that the usual mix meets rarely).
+    const actions = process.env.FERRET_MATRIX_PURGE_HEAVY === "1"
+      ? ACTIONS.map(([name, weight]) => [name, name === "purge" ? 6 : name === "remove" ? 12 : weight])
+      : ACTIONS;
+    const total = await runSeeds(seedsOf(fewer()), (seed) => randomRun(seed, { actions }));
+    if (ONLY === null) {
+      assert.ok((total.tombstones_purged ?? 0) > 0, "the runs purged tombstones");
+      assert.ok((total.listings ?? 0) > 0, "and devices that were behind the purge listed the vault");
+    }
+  } finally {
+    if (was.strict === undefined) delete process.env.FERRET_MATRIX_STRICT;
+    else process.env.FERRET_MATRIX_STRICT = was.strict;
+    if (was.tolerate !== undefined) process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
+  }
 });
