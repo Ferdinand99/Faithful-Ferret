@@ -2,12 +2,19 @@
 //! with every request a device client makes with a token, and with its sign-in
 //! and every renewal. Spec: Fase 1 § 7.6, § 8.2.
 //!
-//! This module holds the types and the limits. The check itself, the strict
-//! reading of the proof and the cache of used `jti` values come later; until
-//! then [`verify`] refuses every proof with [`DpopError::NotImplemented`],
-//! which answers `500 internal` and never looks like a real refusal.
+//! The check has two halves:
 //!
-//! The rules, for the check that comes later:
+//! * [`verify`] needs no state. It takes the one `DPoP` header, reads it
+//!   strictly ([`proof`]), has the JOSE library check the ES256 signature with
+//!   the key the proof carries, and checks the claims against the request.
+//!   It records nothing.
+//! * [`JtiCache::record`] remembers the proof's `jti` for its key. It is
+//!   called only once the proof's key is bound to the token or the sign-in:
+//!   inside the write transaction, after that check and before the commit, or,
+//!   for a request that writes nothing, before the route runs. So nobody can
+//!   fill the cache with proofs of a key that is bound to nothing.
+//!
+//! The rules:
 //!
 //! * a compact JWS of at most [`MAX_PROOF_LEN`] bytes, `typ` `dpop+jwt`, `alg`
 //!   `ES256` only, a public P-256 `jwk` with `kty`, `crv`, `x` and `y` and
@@ -22,19 +29,30 @@
 //!   of that token ([`crate::ids::TokenSecret::ath`]).
 //!
 //! Every refusal of a proof is the one answer `401 dpop_invalid`, with no
-//! reason (Spec: Fase 1 § 7.6). Proofs and keys never go into a log.
+//! reason (Spec: Fase 1 § 7.6). Proofs and keys never go into a log. There is
+//! no server nonce and no `WWW-Authenticate` challenge: the clock window, the
+//! `jti` cache and `ath` bound a captured proof instead. A restart empties the
+//! cache, so a proof captured just before it could be used again within its
+//! clock window.
 
+pub mod proof;
+
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::{Mutex, PoisonError};
 
 use axum::http::{HeaderMap, Method, StatusCode};
+use jsonwebtoken::{Algorithm, DecodingKey};
 
 use crate::error::ApiError;
 use crate::ids::TokenSecret;
 
-/// How far `iat` may be from the server's clock, either way, in seconds.
+pub use proof::{IAT_WINDOW_SECS, MAX_PROOF_LEN, ProofError};
+
+/// The name of the header that carries the proof.
 ///
-/// RFC 9449 § 4.3 (`iat` within an acceptable window).
-pub const IAT_WINDOW_SECS: i64 = 60;
+/// RFC 9449 § 4.1.
+pub const DPOP_HEADER: &str = "dpop";
 
 /// How long a used `jti` is remembered, in seconds: longer than a proof's
 /// `iat` counts on either side, so a proof is refused for as long as it could
@@ -55,9 +73,6 @@ pub const JTI_PER_KEY: usize = 1_024;
 /// (`429 throttled` beyond it), so a few accounts cannot fill the cache for
 /// everyone.
 pub const JTI_PER_USER: usize = 4_096;
-
-/// The longest `DPoP` header, in bytes.
-pub const MAX_PROOF_LEN: usize = 4_096;
 
 /// The `Retry-After` of a key or an account with too many proofs, in seconds.
 const BUSY_RETRY_SECS: u32 = 60;
@@ -140,15 +155,26 @@ pub enum DpopError {
     UserBusy,
     /// The cache of used `jti` values is full.
     Full,
-    /// The check is not built yet.
-    NotImplemented,
+}
+
+impl From<ProofError> for DpopError {
+    fn from(e: ProofError) -> Self {
+        match e {
+            ProofError::TooLong
+            | ProofError::Segments
+            | ProofError::Encoding
+            | ProofError::Header
+            | ProofError::Key => DpopError::Malformed,
+            ProofError::Claims => DpopError::Claims,
+            ProofError::Clock => DpopError::Clock,
+        }
+    }
 }
 
 impl From<DpopError> for ApiError {
     /// `KeyBusy` and `UserBusy` are `429 throttled` (`Retry-After: 60`),
-    /// `Full` is `503 busy` (`Retry-After: 30`), `NotImplemented` is `500
-    /// internal` and never a refusal of the proof; every other reason is the
-    /// one answer `401 dpop_invalid`.
+    /// `Full` is `503 busy` (`Retry-After: 30`); every other reason is the one
+    /// answer `401 dpop_invalid`.
     fn from(e: DpopError) -> Self {
         match e {
             DpopError::KeyBusy | DpopError::UserBusy => ApiError::throttled(BUSY_RETRY_SECS),
@@ -157,10 +183,6 @@ impl From<DpopError> for ApiError {
                 code: "busy",
                 retry_after: Some(FULL_RETRY_SECS),
             },
-            DpopError::NotImplemented => {
-                tracing::error!("the DPoP check was called before it is built");
-                ApiError::internal()
-            }
             DpopError::Missing
             | DpopError::Malformed
             | DpopError::Signature
@@ -171,32 +193,190 @@ impl From<DpopError> for ApiError {
     }
 }
 
-/// The `jti` values used in the last [`JTI_TTL_SECS`], keyed by the key's
-/// thumbprint and the `jti`, with a limit per key, per account and in all.
-/// One cache for the process, shared through an `Arc`. Filled in later.
-pub struct JtiCache {
-    /// The most values in all.
-    #[expect(dead_code, reason = "read by the DPoP check, which comes later")]
-    capacity: usize,
-    /// The most values for one key.
-    #[expect(dead_code, reason = "read by the DPoP check, which comes later")]
-    per_key: usize,
+/// One remembered `jti`, in the order it was recorded.
+struct Entry {
+    jkt: [u8; 32],
+    jti: String,
+    user_id: i64,
+    expires_at: i64,
 }
 
-impl JtiCache {
-    /// An empty cache that holds at most `capacity` values, and at most
-    /// `per_key` for one key.
-    pub fn new(capacity: usize, per_key: usize) -> Self {
-        Self { capacity, per_key }
+/// The cache behind the lock.
+#[derive(Default)]
+struct Seen {
+    /// `(jkt, jti)` → when it may be forgotten (Unix seconds).
+    live: HashMap<([u8; 32], String), i64>,
+    /// The same values, oldest first, for forgetting them.
+    order: VecDeque<Entry>,
+    /// How many values each key has.
+    per_key: HashMap<[u8; 32], usize>,
+    /// How many values each account has.
+    per_user: HashMap<i64, usize>,
+}
+
+/// Lowers a count by one, and drops it at zero.
+fn release<K: std::hash::Hash + Eq>(counts: &mut HashMap<K, usize>, key: &K) {
+    if let Some(count) = counts.get_mut(key) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            counts.remove(key);
+        }
     }
 }
 
-/// Checks the `DPoP` header of a request against what it must say, at `now`
-/// (Unix seconds). It records nothing: the `jti` is recorded only once the
-/// proof's key is bound to the token or the sign-in, inside the write
-/// transaction and before it commits.
+impl Seen {
+    /// Forgets the values whose time is out at `now`. Values are recorded in
+    /// the order of the clock, so the oldest are in front; should the clock
+    /// step back, a value waits behind an older one a little longer, which
+    /// only refuses more.
+    fn forget_expired(&mut self, now: i64) {
+        while self.order.front().is_some_and(|e| e.expires_at <= now) {
+            let Some(entry) = self.order.pop_front() else {
+                break;
+            };
+            self.live.remove(&(entry.jkt, entry.jti));
+            release(&mut self.per_key, &entry.jkt);
+            release(&mut self.per_user, &entry.user_id);
+        }
+    }
+}
+
+/// The `jti` values used in the last [`JTI_TTL_SECS`], keyed by the key's
+/// thumbprint and the `jti`, with a limit per key, per account and in all.
+/// One cache for the process, shared through an `Arc`.
 ///
-/// Not built yet: refuses every proof with [`DpopError::NotImplemented`].
+/// RFC 9449 § 11.1.
+pub struct JtiCache {
+    /// The most values in all.
+    capacity: usize,
+    /// The most values for one key.
+    per_key: usize,
+    /// The most values for one account.
+    per_user: usize,
+    /// The values.
+    seen: Mutex<Seen>,
+}
+
+impl JtiCache {
+    /// An empty cache that holds at most `capacity` values, at most `per_key`
+    /// for one key and at most `per_user` for one account.
+    pub fn new(capacity: usize, per_key: usize, per_user: usize) -> Self {
+        Self {
+            capacity,
+            per_key,
+            per_user,
+            seen: Mutex::new(Seen::default()),
+        }
+    }
+
+    /// Records the `jti` of `proof`, whose key belongs to the account
+    /// `user_id`, at `now` (Unix seconds).
+    ///
+    /// Call it inside the write transaction, after the proof's key was found
+    /// to be the one the token or the sign-in is bound to and before the
+    /// commit; a refusal rolls the transaction back. For a request that writes
+    /// nothing, call it after that check and before the route runs.
+    ///
+    /// Values whose time is out are forgotten first. Then: a `(jkt, jti)` seen
+    /// before is [`DpopError::Replay`]; a key with its limit of live values is
+    /// [`DpopError::KeyBusy`]; an account with its limit is
+    /// [`DpopError::UserBusy`]; a cache at its capacity is
+    /// [`DpopError::Full`]. A live value is never dropped to make room.
+    ///
+    /// RFC 9449 § 11.1.
+    pub fn record(&self, proof: &VerifiedProof, user_id: i64, now: i64) -> Result<(), DpopError> {
+        let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
+        seen.forget_expired(now);
+
+        let key = (proof.jkt, proof.jti.clone());
+        if seen.live.contains_key(&key) {
+            return Err(DpopError::Replay);
+        }
+        if seen.per_key.get(&proof.jkt).copied().unwrap_or(0) >= self.per_key {
+            return Err(DpopError::KeyBusy);
+        }
+        if seen.per_user.get(&user_id).copied().unwrap_or(0) >= self.per_user {
+            return Err(DpopError::UserBusy);
+        }
+        if seen.live.len() >= self.capacity {
+            return Err(DpopError::Full);
+        }
+
+        let expires_at = now.saturating_add(JTI_TTL_SECS);
+        seen.live.insert(key, expires_at);
+        seen.order.push_back(Entry {
+            jkt: proof.jkt,
+            jti: proof.jti.clone(),
+            user_id,
+            expires_at,
+        });
+        let for_key = seen.per_key.entry(proof.jkt).or_default();
+        *for_key = for_key.saturating_add(1);
+        let for_user = seen.per_user.entry(user_id).or_default();
+        *for_user = for_user.saturating_add(1);
+        Ok(())
+    }
+
+    /// How many values the cache holds now, counting those whose time ran out
+    /// since the last [`JtiCache::record`].
+    pub fn len(&self) -> usize {
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .live
+            .len()
+    }
+
+    /// Whether the cache holds no value.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl fmt::Debug for JtiCache {
+    /// The size only: the keys and the `jti` values stay out of a log.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JtiCache")
+            .field("len", &self.len())
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether `signature_b64` is a valid ES256 signature over `signing_input` by
+/// the P-256 key with the coordinates `x` and `y` (base64url). The JOSE library
+/// does the work (its aws-lc-rs backend, the one rustls uses); only `Ok(true)`
+/// counts, and every error of the library is a `false`.
+///
+/// This is the signature alone, never a proof check: [`verify`] is that.
+///
+/// RFC 7518 § 3.4.
+pub fn signature_holds(signature_b64: &str, signing_input: &[u8], x: &str, y: &str) -> bool {
+    let Ok(key) = DecodingKey::from_ec_components(x, y) else {
+        return false;
+    };
+    matches!(
+        jsonwebtoken::crypto::verify(signature_b64, signing_input, &key, Algorithm::ES256),
+        Ok(true)
+    )
+}
+
+/// Whether the JOSE library has its one crypto backend. Without one, its
+/// checks would panic, so the server refuses to start instead (`build_state`).
+pub fn backend_ready() -> bool {
+    jsonwebtoken::crypto::CryptoProvider::try_get_default().is_some()
+}
+
+/// Checks the `DPoP` header of a request against what it must say, at `now`
+/// (Unix seconds): exactly one header; read strictly ([`proof::split`]); the
+/// ES256 signature over the exact signing input, with the key the header
+/// carries ([`signature_holds`]); then the claims ([`proof::claims`],
+/// [`proof::check_claims`]). The claims are read only once the signature
+/// holds. The library never reads the header or the claims, so there is one
+/// reader of a proof.
+///
+/// It records nothing: the `jti` is recorded by [`JtiCache::record`] once the
+/// proof's key is bound to the token or the sign-in.
 ///
 /// RFC 9449 § 4.3.
 pub fn verify(
@@ -204,6 +384,39 @@ pub fn verify(
     expect: &Expect<'_>,
     now: i64,
 ) -> Result<VerifiedProof, DpopError> {
-    let _ = (headers, expect, now);
-    Err(DpopError::NotImplemented)
+    let mut values = headers.get_all(DPOP_HEADER).iter();
+    let (Some(value), None) = (values.next(), values.next()) else {
+        return Err(DpopError::Missing);
+    };
+    if value.len() > MAX_PROOF_LEN {
+        return Err(DpopError::Malformed);
+    }
+    let text = value.to_str().map_err(|_| DpopError::Malformed)?;
+    let parts = proof::split(text)?;
+
+    let jwk = &parts.header.jwk;
+    let input = proof::signing_input(&parts);
+    if !signature_holds(
+        proof::signature_b64(&parts),
+        input.as_bytes(),
+        &jwk.x,
+        &jwk.y,
+    ) {
+        return Err(DpopError::Signature);
+    }
+
+    let claims = proof::claims(&parts)?;
+    let ath = expect.access.map(TokenSecret::ath);
+    proof::check_claims(
+        &claims,
+        expect.method.as_str(),
+        expect.htu,
+        ath.as_ref(),
+        now,
+    )?;
+    Ok(VerifiedProof {
+        jkt: proof::jkt(jwk),
+        jti: claims.jti,
+        iat: claims.iat,
+    })
 }

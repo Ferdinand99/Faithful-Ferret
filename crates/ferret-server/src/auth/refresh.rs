@@ -10,13 +10,22 @@
 //! that signed in more than [`ABSOLUTE_SECS`] ago, signs in again.
 //!
 //! The routes and the bodies come later; [`routes`] serves nothing yet and
-//! [`purge_expired`] purges nothing.
+//! [`purge_expired`] purges nothing. The job that runs the purge
+//! ([`spawn_purge`]) is in place already.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::FromRef;
-use rusqlite::Transaction;
+use ferret_server_auth::Clock;
+use rusqlite::{Transaction, TransactionBehavior};
 
-use crate::state::FerretState;
+use crate::error::StoreError;
+use crate::state::{FerretState, VaultDb};
+
+/// How often the old token rows and devices are purged.
+pub const PURGE_EVERY: Duration = Duration::from_secs(10 * 60);
 
 /// How long a used refresh token still gets its successor, with a proof of
 /// the same key, in seconds.
@@ -84,4 +93,39 @@ pub struct Purged {
 pub fn purge_expired(tx: &Transaction<'_>, now: i64) -> rusqlite::Result<Purged> {
     let _ = (tx, now);
     Ok(Purged::default())
+}
+
+/// Runs [`purge_expired`] once at the clock's now, in one `BEGIN IMMEDIATE`
+/// transaction, and returns what it removed.
+pub async fn purge_once(db: &VaultDb, clock: &dyn Clock) -> Result<Purged, StoreError> {
+    let now = i64::try_from(clock.now_unix()).map_err(|_| StoreError::Invalid("the clock"))?;
+    db.with_conn(move |conn| {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let purged = purge_expired(&tx, now)?;
+        tx.commit()?;
+        Ok(purged)
+    })
+    .await
+}
+
+/// Purges the old token rows and devices every [`PURGE_EVERY`]. Call it once,
+/// inside the runtime.
+pub fn spawn_purge(db: VaultDb, clock: Arc<dyn Clock>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(PURGE_EVERY);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            match purge_once(&db, clock.as_ref()).await {
+                Ok(purged) if purged == Purged::default() => {}
+                Ok(purged) => tracing::debug!(
+                    access = purged.access,
+                    refresh = purged.refresh,
+                    devices = purged.devices,
+                    "old device tokens and devices removed"
+                ),
+                Err(error) => tracing::warn!(%error, "old device tokens were not removed"),
+            }
+        }
+    });
 }

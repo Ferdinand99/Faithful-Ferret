@@ -47,13 +47,13 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::{Instant, MissedTickBehavior};
 use vole_kit::http::live::Changes;
 
-use super::notify::{SyncEvents, VaultChange};
+use super::notify::{Revoked, SyncEvents, VaultChange};
 use super::rate::{SyncLimits, WriteGate};
 use crate::auth::session::{Origin, still_valid};
 use crate::error::{ApiError, StoreError};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::http::origin_guard::{PROTOCOL_HEADER, PROTOCOL_VERSION};
-use crate::ids::{DeviceId, SidHash, VaultId};
+use crate::ids::{DeviceId, VaultId};
 use crate::state::VaultDb;
 use crate::wire::SyncEventJson;
 
@@ -376,7 +376,7 @@ impl Open {
 async fn run(
     open: Open,
     mut changes: Changes<VaultChange, Wanted>,
-    mut revocations: broadcast::Receiver<SidHash>,
+    mut revocations: broadcast::Receiver<Revoked>,
 ) {
     let first = Instant::now()
         .checked_add(HEARTBEAT)
@@ -396,7 +396,7 @@ async fn run(
                 () = stopped(&mut stop) => return,
                 () = open.tx.closed() => return,
                 revoked = revocations.recv() => match revoked {
-                    Ok(sid) if sid == open.session.sid => return,
+                    Ok(Revoked::Session(sid)) if sid == open.session.sid => return,
                     Ok(_) => {}
                     // Some were missed: the database knows if this one ended.
                     Err(broadcast::error::RecvError::Lagged(_)) => {

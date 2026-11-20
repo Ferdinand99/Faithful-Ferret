@@ -18,7 +18,8 @@ use ferret_server::auth::dpop::{
     JTI_TTL_SECS, MAX_PROOF_LEN,
 };
 use ferret_server::auth::refresh::{
-    ABSOLUTE_SECS, GRACE_CAPACITY, GRACE_SECS, IDLE_SECS, Purged, USED_KEEP_SECS, purge_expired,
+    ABSOLUTE_SECS, GRACE_CAPACITY, GRACE_SECS, IDLE_SECS, PURGE_EVERY, Purged, USED_KEEP_SECS,
+    purge_expired, purge_once,
 };
 use ferret_server::auth::tokens::{AccessLookup, AccessRow, DeviceAuth, IssuedTokens};
 use ferret_server::error::ApiError;
@@ -62,13 +63,7 @@ async fn token_and_device_paths_are_404_on_the_admin_listener() {
 }
 
 #[test]
-fn dpop_error_not_implemented_is_500_not_dpop_invalid() {
-    let api = ApiError::from(DpopError::NotImplemented);
-    assert_eq!(api.status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(api.code, "internal");
-    assert_ne!(api.code, "dpop_invalid");
-    assert_eq!(api.retry_after, None);
-
+fn every_refusal_of_a_proof_is_one_answer_and_a_busy_cache_asks_to_wait() {
     // Every refusal of the proof itself is the one answer, with no reason.
     for reason in [
         DpopError::Missing,
@@ -124,7 +119,7 @@ fn the_limits_are_the_ones_of_the_design() {
 }
 
 #[test]
-fn the_dpop_check_and_the_purge_refuse_and_purge_nothing_until_they_are_built() {
+fn a_bare_or_broken_proof_is_refused_and_the_purge_purges_nothing_yet() {
     let token = TokenSecret::random(&mut TestRng::new(b"m5a wiring token"));
     let method = Method::GET;
     let expect = Expect {
@@ -136,11 +131,11 @@ fn the_dpop_check_and_the_purge_refuse_and_purge_nothing_until_they_are_built() 
     headers.insert("dpop", "a.b.c".parse().expect("a header value"));
     assert_eq!(
         dpop::verify(&headers, &expect, NOW).unwrap_err(),
-        DpopError::NotImplemented
+        DpopError::Malformed
     );
     assert_eq!(
         dpop::verify(&HeaderMap::new(), &expect, NOW).unwrap_err(),
-        DpopError::NotImplemented
+        DpopError::Missing
     );
 
     ferret_server::product::install();
@@ -178,6 +173,30 @@ async fn device_auth_names_the_vault_origin_in_htu_and_prints_nothing() {
     // A clone shares the caches.
     let _shared = auth.clone();
     assert_eq!(format!("{auth:?}"), "DeviceAuth([redacted])");
+}
+
+#[tokio::test]
+async fn state_hands_out_device_auth() {
+    let app = TestApp::new().await;
+    // One handle in the state, built at start-up from the configured vault
+    // origin, with an empty cache that every clone shares.
+    let auth = DeviceAuth::from_ref(&app.state);
+    assert_eq!(
+        auth.htu("/api/auth/token/refresh"),
+        format!("{VAULT_URL}/api/auth/token/refresh")
+    );
+    assert!(auth.replay().is_empty());
+    assert!(std::ptr::eq(
+        DeviceAuth::from_ref(&app.state).replay(),
+        auth.replay()
+    ));
+    assert!(std::ptr::eq(app.state.device_auth.grace(), auth.grace()));
+    // The purge job has a pass to run, and it removes nothing yet.
+    let purged = purge_once(&VaultDb::from_ref(&app.state), app.clock.as_ref())
+        .await
+        .expect("a purge");
+    assert_eq!(purged, Purged::default());
+    assert_eq!(PURGE_EVERY, std::time::Duration::from_secs(600));
 }
 
 #[test]
