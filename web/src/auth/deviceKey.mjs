@@ -249,35 +249,68 @@ export async function loadDeviceKey(store, serverUrl) {
 }
 
 /**
+ * Whether two public JWKs are the same P-256 key.
+ * @param {PublicJwk} a
+ * @param {PublicJwk} b
+ */
+export function sameKey(a, b) {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
+}
+
+/**
  * Removes the device key of a server (signing out of the device, or forgetting
- * the server). Removing a key that is not there is not an error.
+ * the server). Removing a key that is not there is not an error. With
+ * `publicJwk`, the stored record is removed only when it is that key's, so a
+ * client that has been replaced by a newer sign-in on the same server never
+ * removes the newer device's record.
  * @param {import("../store/idb.mjs").Store} store
  * @param {string} serverUrl
+ * @param {{ publicJwk?: PublicJwk }} [options]
  * @returns {Promise<void>}
  */
-export async function deleteDeviceKey(store, serverUrl) {
+export async function deleteDeviceKey(store, serverUrl, { publicJwk } = {}) {
   const server = serverKey(serverUrl);
   await run(store, ["device_keys"], "readwrite", async ([table]) => {
+    if (publicJwk !== undefined) {
+      const row = await req(table.get(server));
+      if (row === undefined || !isRecordOf(row, publicJwk)) return;
+    }
     await req(table.delete(server));
   });
+}
+
+/**
+ * Whether a stored row holds the key `publicJwk` (the row is not checked any
+ * further here).
+ * @param {any} row
+ * @param {PublicJwk} publicJwk
+ */
+function isRecordOf(row, publicJwk) {
+  const jwk = row !== null && typeof row === "object" ? row.publicJwk : null;
+  return jwk !== null && typeof jwk === "object" && sameKey(jwk, publicJwk);
 }
 
 /**
  * Replaces the refresh token of the stored device key of a server, in one
  * transaction. A renewal writes the new refresh token here before the new
  * access token is used. Refused (`StoreError`) when there is no stored key or
- * the token has the wrong form; then nothing changes.
+ * the token has the wrong form; then nothing changes. With `publicJwk`, the
+ * stored record must be that key's (`device_key_missing` otherwise), so a
+ * renewal of a replaced device never writes into the newer device's record.
  * @param {import("../store/idb.mjs").Store} store
  * @param {string} serverUrl
  * @param {string} refreshToken
+ * @param {{ publicJwk?: PublicJwk }} [options]
  * @returns {Promise<void>}
  */
-export async function saveRefreshToken(store, serverUrl, refreshToken) {
+export async function saveRefreshToken(store, serverUrl, refreshToken, { publicJwk } = {}) {
   const server = serverKey(serverUrl);
   if (!isToken(refreshToken)) throw new StoreError("device_key_malformed", "refreshToken is a token");
   await run(store, ["device_keys"], "readwrite", async ([table]) => {
     const row = await req(table.get(server));
-    if (row === undefined) throw new StoreError("device_key_missing", "there is no device key for this server");
+    if (row === undefined || (publicJwk !== undefined && !isRecordOf(row, publicJwk))) {
+      throw new StoreError("device_key_missing", "there is no device key of this key for this server");
+    }
     const record = checkRecord(row);
     await req(table.put({ ...record, refreshToken }));
   });
