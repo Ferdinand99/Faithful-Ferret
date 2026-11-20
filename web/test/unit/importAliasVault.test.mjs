@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AVUX_MANIFEST_ENTRY, fromAliasVaultCsv, fromAvuxManifest, isAliasVaultCsvHeader, totpAddress } from "../../src/import/aliasvault.mjs";
 import { parseCsv } from "../../src/import/csv.mjs";
-import { ImportError, MAX_ITEMS } from "../../src/import/limits.mjs";
+import { ImportError, MAX_AVUX_ENTRIES, MAX_AVUX_FILE_BYTES, MAX_FILE_BYTES, MAX_ITEMS } from "../../src/import/limits.mjs";
 import { safeJsonParse } from "../../src/import/prescan.mjs";
 import { readZipEntry } from "../../src/import/zip.mjs";
 import { createHandler } from "../../src/workers/import.worker.mjs";
@@ -81,6 +81,8 @@ test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
     { id: "custom-3", label: "Email field", kind: "email", value: "carol@example.test" },
     { id: "custom-4", label: "Phone field", kind: "phone", value: "+4700000000" },
     { id: "custom-5", label: "Link field", kind: "text", value: "https://link.example.test" },
+    // A value of a system field that this reader does not know is the user's data: kept, hidden, under its key.
+    { id: "custom-6", label: "login.future_key", kind: "hidden", value: "a key this reader does not know" },
   ]);
 
   // Two codes: the first is the item's code, the second is kept as a hidden field with its address.
@@ -95,12 +97,12 @@ test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
 
   assert.deepEqual(report.counts, {
     items: 8, login: 6, note: 1, card: 1, identity: 0,
-    urls: 4, totp: 2, customFields: 5, matchNull: 4, http: 1, textAddresses: 2, sealed: 0,
+    urls: 4, totp: 2, customFields: 6, matchNull: 4, http: 1, textAddresses: 2, sealed: 0,
   });
   // Left out, and said so: the passkey, the attachment, the earlier value, the folder, the tag, the item of a kind from the future,
   // an orphaned custom value and a key that the reader does not know.
   assert.deepEqual(report.skipped, {
-    passkeys: 1, folders: 1, collections: 0, linked: 0, unknownKeys: 2, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+    passkeys: 1, folders: 1, collections: 0, linked: 0, unknownKeys: 1, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
     attachments: 1, fieldHistory: 1, tags: 1,
   });
   assert.deepEqual(warnings(report, "passkey_skipped"), [7]);
@@ -110,6 +112,7 @@ test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
   assert.deepEqual(warnings(report, "totp_extra"), [5]);
   assert.deepEqual(warnings(report, "totp_invalid"), [6]);
   assert.deepEqual(warnings(report, "uri_https_added"), [1]);
+  assert.deepEqual(warnings(report, "field_type_unknown"), [4]);
 
   // Nothing that was left out is in a draft.
   const everything = JSON.stringify(drafts);
@@ -437,4 +440,55 @@ test("an_otpauth_address_the_core_refuses_in_an_aliasvault_item_is_kept_as_a_hid
   assert.deepEqual(retried.fields.find((f) => f.id === "totp"), { id: "totp", label: "One-time password", kind: "hidden", value: "GEZDGNBVGY3TQOJQ" });
   assert.deepEqual(port.sent[8].args[0], port.sent[0].args[0]);
   assert.equal(reply.report.counts.totp, 1);
+});
+
+test("a_custom_field_of_an_unknown_type_is_kept_hidden_with_a_warning_and_known_types_keep_their_kind", () => {
+  const types = ["Text", "TextArea", "Date", "Number", "URL", "Email", "Phone", "Password", "Hidden", "FromTheFuture"];
+  const { drafts, report } = fromAvuxManifest(safeJsonParse(JSON.stringify({
+    version: "1.0.0",
+    fieldDefinitions: types.map((fieldType, i) => ({ id: `d${i}`, fieldType, label: fieldType, isHidden: false })),
+    items: [{ name: "Types", itemType: "Login", fieldValues: types.map((_, i) => ({ fieldKey: null, fieldDefinitionId: `d${i}`, value: `v${i}`, weight: i })) }],
+  })));
+  const kinds = Object.fromEntries(drafts[0].fields.map((f) => [f.label, f.kind]));
+  assert.deepEqual(kinds, {
+    Text: "text", TextArea: "text", Date: "text", Number: "text", URL: "text", Email: "email", Phone: "phone", Password: "password", Hidden: "hidden",
+    FromTheFuture: "hidden",
+  });
+  assert.deepEqual(warnings(report, "field_type_unknown"), [0]);
+  // The value of an empty unknown system field is nothing to keep.
+  const empty = fromAvuxManifest(safeJsonParse(JSON.stringify({ version: "1.0.0", items: [{ name: "x", itemType: "Login", fieldValues: [{ fieldKey: "login.later", value: "" }] }] })));
+  assert.equal(empty.drafts[0].fields, undefined);
+  assert.equal(empty.report.warnings.length, 0);
+});
+
+test("a_real_avux_with_many_entries_and_a_large_attachment_is_read_and_each_limit_says_what_was_exceeded", async () => {
+  const good = Buffer.from(JSON.stringify({ version: "1.0.0", items: [{ name: "x", itemType: "Login", fieldValues: [{ fieldKey: "login.username", value: "u" }] }] }));
+  const ask = async (file) => createHandler()({ id: 3, kind: "aliasvault_avux", file, port: vaultPort() });
+
+  // Logos and attachments: one entry each, far more than 1 000 for a big vault.
+  const many = [{ name: "manifest.json", data: good }, ...Array.from({ length: 2_000 }, (_, i) => ({ name: `logos/site${i}.example.test_${i}.png`, data: "x", method: 0 }))];
+  const reply = await ask(zip(many));
+  assert.equal(reply.ok, true);
+  assert.equal(reply.report.counts.items, 1);
+
+  // An archive over 50 MiB because of an attachment that is never read.
+  const large = zip([{ name: "attachments/big.bin", data: Buffer.alloc(MAX_FILE_BYTES + 1024 * 1024), method: 0 }, { name: "manifest.json", data: good }]);
+  assert.ok(large.size > MAX_FILE_BYTES);
+  const read = await ask(large);
+  assert.equal(read.ok, true);
+  assert.equal(read.report.counts.items, 1);
+
+  // The limits that do hold, each with its own code.
+  const huge = new File(["x"], "huge.avux");
+  Object.defineProperty(huge, "size", { value: MAX_AVUX_FILE_BYTES + 1 });
+  huge.slice = () => {
+    throw new Error("read");
+  };
+  assert.deepEqual(await ask(huge), { id: 3, ok: false, error: "import_archive_too_large" });
+  assert.deepEqual(await ask(zip([{ name: "manifest.json", data: "x", size: MAX_FILE_BYTES + 1 }])), { id: 3, ok: false, error: "import_manifest_too_large" });
+  assert.equal(MAX_AVUX_ENTRIES, 65_534);
+  // A file that is not an archive is still held to 50 MiB by the other kinds.
+  const bigCsv = new File(["x"], "big.csv");
+  Object.defineProperty(bigCsv, "size", { value: MAX_FILE_BYTES + 1 });
+  assert.deepEqual(await createHandler()({ id: 4, kind: "csv", file: bigCsv, port: vaultPort() }), { id: 4, ok: false, error: "import_too_large" });
 });

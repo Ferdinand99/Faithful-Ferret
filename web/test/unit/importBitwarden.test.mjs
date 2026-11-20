@@ -328,6 +328,18 @@ test("old_passwords_and_the_reprompt_flag_are_counted_as_not_imported", () => {
   assert.equal(rows.report.skipped.passwordHistory, 0);
 });
 
+test("the_kind_of_a_bitwarden_custom_field_is_its_type_and_nothing_else_in_the_file", () => {
+  const fields = [
+    { name: "PIN", value: "1234", type: 1, kind: "text" },
+    { name: "Plain", value: "x", type: 0, kind: "hidden" },
+    { name: "Future", value: "y", type: 9, kind: "text" },
+  ];
+  const { drafts, report } = fromBitwardenJson(safeJsonParse(JSON.stringify({ encrypted: false, items: [{ type: 2, name: "n", fields }] })));
+  assert.deepEqual(drafts[0].fields.map((f) => [f.label, f.kind]), [["PIN", "hidden"], ["Plain", "text"], ["Future", "hidden"]]);
+  // The extra key is still counted as one the reader does not know.
+  assert.equal(report.skipped.unknownKeys, 3);
+});
+
 test("the_unknown_keys_of_an_item_that_is_skipped_as_a_whole_are_not_counted", () => {
   const items = [
     { type: 5, name: "ssh", sshKey: {}, extraA: 1 },

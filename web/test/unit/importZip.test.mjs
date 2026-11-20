@@ -105,6 +105,15 @@ test("zip_refuses_a_file_that_is_not_one_it_reads", async () => {
   const many = zip(Array.from({ length: MAX_ZIP_ENTRIES + 1 }, (_, i) => ({ name: `f${i}`, data: "", method: 0 })));
   await assert.rejects(readZipEntry(many, "f1"), refusal("import_too_many"));
   assert.equal((await readZipEntry(zip(Array.from({ length: MAX_ZIP_ENTRIES }, (_, i) => ({ name: `f${i}`, data: "x", method: 0 }))), "f9")).length, 1);
+  // A caller that reads a manifest out of an archive full of pictures may allow more entries, and says what is exceeded.
+  const options = { maxEntries: MAX_ZIP_ENTRIES + 1000, maxFileBytes: MAX_FILE_BYTES * 4 };
+  assert.equal((await readZipEntry(many, "f1", options)).length, 0);
+  const codes = { file: "import_archive_too_large", entries: "import_archive_too_many", entry: "import_manifest_too_large" };
+  await assert.rejects(readZipEntry(many, "f1", { maxEntries: 10, codes }), refusal("import_archive_too_many"));
+  await assert.rejects(readZipEntry(zip([{ name: "manifest.json", data: manifest }]), "manifest.json", { maxBytes: 3, codes }), refusal("import_manifest_too_large"));
+  const wide = new File(["x"], "wide.zip");
+  Object.defineProperty(wide, "size", { value: MAX_FILE_BYTES * 2 });
+  await assert.rejects(readZipEntry(wide, "manifest.json", { codes }), refusal("import_archive_too_large"));
   // A file over the bound is refused for its size alone.
   const big = new File(["x"], "big.zip");
   Object.defineProperty(big, "size", { value: MAX_FILE_BYTES + 1 });

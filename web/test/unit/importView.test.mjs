@@ -768,6 +768,23 @@ test("an_import_that_is_running_keeps_its_preview_when_another_page_is_opened", 
     await settle();
     assert.equal(running.calls.runs.length, 1);
 
+    // The page was left and the import that was running then fails: nobody sees the error, and the sealed items are let go of.
+    let release2 = () => {};
+    const gateB = new Promise((resolve) => {
+      release2 = resolve;
+    });
+    const failed = page({ runGate: gateB, runError: coded("quota_exceeded") });
+    await choose(failed.root);
+    type(failed.root, { "master-password": MASTER });
+    const failing = submit(failed.root);
+    await settle();
+    failed.scope.run();
+    assert.equal(failed.calls.discards.length, 0);
+    release2();
+    await failing;
+    await settle();
+    assert.equal(failed.calls.discards.length, 1, "a failed import whose page is gone drops its preview");
+
     // A preview that no import is using is let go of, as before.
     const idle = page();
     await choose(idle.root);

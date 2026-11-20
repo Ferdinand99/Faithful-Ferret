@@ -27,7 +27,7 @@
 // an import is logged, stored outside the vault, or put in an address. An error carries a code, never a text of the file.
 import { hex16 } from "../b64.mjs";
 import { AccountError } from "../crypto/errors.mjs";
-import { IMPORT_ERROR_TEXT, MAX_FILE_BYTES } from "../import/limits.mjs";
+import { IMPORT_ERROR_TEXT, MAX_AVUX_FILE_BYTES, MAX_FILE_BYTES } from "../import/limits.mjs";
 import { encodeWire } from "../wire.mjs";
 import { reauthenticate } from "./reauth.mjs";
 
@@ -308,7 +308,10 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     return preview;
   }
 
-  if (file.size > MAX_FILE_BYTES) throw new AccountError("import_too_large");
+  // An `.avux` archive may be large (attachments and logos); only its manifest is read.
+  if (kind === "aliasvault_avux" ? file.size > MAX_AVUX_FILE_BYTES : file.size > MAX_FILE_BYTES) {
+    throw new AccountError(kind === "aliasvault_avux" ? "import_archive_too_large" : "import_too_large");
+  }
   const answer = await runWorker(env, { kind, file, labels }, { signal, timeoutMs });
   if (answer === null || typeof answer !== "object" || answer.id !== 1 || typeof answer.ok !== "boolean") throw new AccountError("import_bad_answer");
   if (answer.ok !== true) throw workerRefusal(answer);

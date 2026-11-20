@@ -122,6 +122,23 @@ test("an_aliasvault_file_is_previewed_by_what_the_worker_read_it_as", async () =
   await assert.rejects(w.session.importPreview(avFile("encrypted.avex", "vault.avux"), { engine }), (e) => e.code === "import_encrypted_export");
 });
 
+test("an_avux_archive_is_held_to_its_own_size_limit_and_says_which", async () => {
+  const w = await importWorld();
+  const engine = fakeImportEngine();
+  const sized = (name, size) => {
+    const file = new File(["x"], name);
+    Object.defineProperty(file, "size", { value: size });
+    return file;
+  };
+  await assert.rejects(w.session.importPreview(sized("a.avux", 2 * 1024 * 1024 * 1024 + 1), { engine }), (e) => e.code === "import_archive_too_large");
+  await assert.rejects(w.session.importPreview(sized("a.json", 51 * 1024 * 1024), { engine }), (e) => e.code === "import_too_large");
+  await assert.rejects(w.session.importPreview(sized("a.csv", 51 * 1024 * 1024), { engine }), (e) => e.code === "import_too_large");
+  assert.equal(w.workers.made.length, 0, "no worker was started for any of these");
+  // Over 50 MiB is not too large for an archive: the file goes to the worker (which refuses this one as no archive).
+  await assert.rejects(w.session.importPreview(sized("a.avux", 60 * 1024 * 1024), { engine }), (e) => e.code !== "import_too_large" && e.code !== "import_archive_too_large");
+  assert.equal(w.workers.made.length, 1);
+});
+
 test("an_answer_that_names_a_kind_the_name_did_not_allow_is_refused", async () => {
   const sealed = [{ id: new Uint8Array(16).fill(1), rev: 1, envelope: new Uint8Array([1]), tag: new Uint8Array(32) }];
   for (const [name, kind] of [["x.csv", "bitwarden_json"], ["x.csv", "ferretexport"], ["x.json", "aliasvault_csv"], ["x.avux", "bitwarden_csv"], ["x.json", undefined], ["x.csv", {}]]) {

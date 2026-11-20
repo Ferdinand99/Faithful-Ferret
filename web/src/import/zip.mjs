@@ -14,7 +14,7 @@
 // wrong. An entry whose name is not UTF-8 is left out (it cannot be read) and the others are read as
 // usual. Nothing about the file is put in an error but its code.
 
-import { ImportError, MAX_FILE_BYTES, MAX_ZIP_ENTRIES, MAX_ZIP_RATIO } from "./limits.mjs";
+import { IMPORT_ERROR_TEXT, ImportError, MAX_FILE_BYTES, MAX_ZIP_ENTRIES, MAX_ZIP_RATIO } from "./limits.mjs";
 
 const EOCD = 0x06054b50;
 const EOCD64_LOCATOR = 0x07064b50;
@@ -69,9 +69,11 @@ function safeName(name) {
 /**
  * Reads the central directory of a ZIP file.
  * @param {Blob} blob
+ * @param {number} maxEntries
+ * @param {keyof typeof IMPORT_ERROR_TEXT} entriesCode the code of the refusal for more entries than that
  * @returns {Promise<{ entries: ZipEntry[], directoryStart: number }>}
  */
-async function readDirectory(blob) {
+async function readDirectory(blob, maxEntries, entriesCode) {
   const size = blob.size;
   if (size < EOCD_SIZE) throw bad();
   const tailStart = Math.max(0, size - (EOCD_SIZE + MAX_COMMENT));
@@ -94,7 +96,7 @@ async function readDirectory(blob) {
   const directoryStart = tail.getUint32(at + 16, true);
   if (disk !== 0 || directoryDisk !== 0 || onThisDisk !== total) throw bad();
   if (total === 0xffff || directorySize === 0xffffffff || directoryStart === 0xffffffff) throw bad();
-  if (total > MAX_ZIP_ENTRIES) throw new ImportError("import_too_many");
+  if (total > maxEntries) throw new ImportError(entriesCode);
   if (directorySize > MAX_DIRECTORY_BYTES) throw bad();
   const endOfDirectory = tailStart + at;
   if (directoryStart + directorySize !== endOfDirectory) throw bad();
@@ -173,17 +175,24 @@ async function inflate(packed, size) {
  * The bytes of one entry of a ZIP file.
  * @param {Blob} blob the ZIP file (a `File`)
  * @param {string} entryName the exact name of the entry (for example `manifest.json`)
- * @param {{ maxBytes?: number, maxRatio?: number }} [options]
+ * @param {{
+ *   maxBytes?: number, maxRatio?: number, maxEntries?: number, maxFileBytes?: number,
+ *   codes?: { file?: keyof typeof IMPORT_ERROR_TEXT, entries?: keyof typeof IMPORT_ERROR_TEXT, entry?: keyof typeof IMPORT_ERROR_TEXT },
+ * }} [options] `maxBytes`: the most the one entry may unpack to; `maxFileBytes` and `maxEntries`: the most the whole file and its
+ *   directory may be. Only the directory (at most 8 MiB) and the one entry are ever read, whatever the size of the rest, so a caller
+ *   that reads a manifest out of an archive full of pictures and attachments may allow a large file and many entries. `codes` name the
+ *   refusals for a file, a directory and an entry that is too large, so that the text says what was exceeded.
  * @returns {Promise<Uint8Array>}
- * @throws {ImportError} `import_too_large`, `import_too_many`, `import_bad_zip`, `import_zip_encrypted`, `import_zip_entry_missing`
+ * @throws {ImportError} `import_too_large` (or the code asked for), `import_too_many` (likewise), `import_bad_zip`, `import_zip_encrypted`, `import_zip_entry_missing`
  */
-export async function readZipEntry(blob, entryName, { maxBytes = MAX_FILE_BYTES, maxRatio = MAX_ZIP_RATIO } = {}) {
-  if (blob.size > MAX_FILE_BYTES) throw new ImportError("import_too_large");
-  const { entries, directoryStart } = await readDirectory(blob);
+export async function readZipEntry(blob, entryName, options = {}) {
+  const { maxBytes = MAX_FILE_BYTES, maxRatio = MAX_ZIP_RATIO, maxEntries = MAX_ZIP_ENTRIES, maxFileBytes = MAX_FILE_BYTES, codes = {} } = options;
+  if (blob.size > maxFileBytes) throw new ImportError(codes.file ?? "import_too_large");
+  const { entries, directoryStart } = await readDirectory(blob, maxEntries, codes.entries ?? "import_too_many");
   const entry = entries.find((e) => e.name === entryName);
   if (!entry) throw new ImportError("import_zip_entry_missing");
   if (entry.method !== 0 && entry.method !== 8) throw bad();
-  if (entry.size > maxBytes) throw new ImportError("import_too_large");
+  if (entry.size > maxBytes) throw new ImportError(codes.entry ?? "import_too_large");
   if (entry.method === 0 && entry.compressed !== entry.size) throw bad();
   if (entry.method === 8 && entry.size > RATIO_FLOOR && entry.size > entry.compressed * maxRatio) throw bad();
 

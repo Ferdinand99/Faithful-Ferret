@@ -57,6 +57,9 @@ const SYSTEM_KEYS = Object.freeze({
   "card.pin": "pin",
 });
 
+/** The types of a custom field that AliasVault has (in lower case); a type that is not one of them is kept hidden. */
+const KNOWN_FIELD_TYPES = new Set(["text", "password", "hidden", "email", "url", "date", "number", "phone", "textarea", "section"]);
+
 const KNOWN_TOP = new Set(["version", "exportedat", "exportedby", "items", "folders", "tags", "itemtags", "fielddefinitions", "logos"]);
 const KNOWN_ITEM = new Set([
   "id", "name", "itemtype", "createdat", "updatedat", "folderid", "logoid", "archivedat",
@@ -269,18 +272,20 @@ export function fromAvuxManifest(data, options = {}) {
   report.skipped.folders += objects(root, "folders").length;
   report.skipped.tags += objects(root, "tags").length;
 
-  /** The definitions of custom fields by id. @type {Map<string, { label: string, kind: string, hidden: boolean, section: boolean }>} */
+  /** The definitions of custom fields by id. `unknown`: a type that this reader does not know (it is kept hidden, with a warning). @type {Map<string, { label: string, kind: string, section: boolean, unknown: boolean }>} */
   const definitions = new Map();
   for (const definition of objects(root, "fielddefinitions")) {
     const id = text(definition, "id") ?? "";
     const type = (text(definition, "fieldtype") ?? "Text").toLowerCase();
-    const hidden = definition.ishidden === true || type === "hidden" || type === "password";
+    const unknown = !KNOWN_FIELD_TYPES.has(type);
+    // A kind that is not known is a secret until shown otherwise, as in the Bitwarden reader.
+    const hidden = unknown || definition.ishidden === true || type === "hidden" || type === "password";
     /** @type {string} */
     let kind = "text";
     if (hidden) kind = type === "password" ? "password" : "hidden";
     else if (type === "email") kind = "email";
     else if (type === "phone") kind = "phone";
-    definitions.set(id, { label: text(definition, "label") ?? "", kind, hidden, section: type === "section" });
+    definitions.set(id, { label: text(definition, "label") ?? "", kind, section: type === "section", unknown });
   }
 
   /** @type {ItemDraft[]} */
@@ -314,12 +319,17 @@ export function fromAvuxManifest(data, options = {}) {
           continue;
         }
         if (known.section || value === "") continue;
+        if (known.unknown) warn(report, "field_type_unknown", index);
         v.custom.push({ name: known.label, value, kind: known.kind });
         continue;
       }
       const slot = Object.hasOwn(SYSTEM_KEYS, key) ? SYSTEM_KEYS[/** @type {keyof typeof SYSTEM_KEYS} */ (key)] : null;
       if (slot === null) {
-        report.skipped.unknownKeys++;
+        // A value of a field that a newer AliasVault adds is the user's data, and may be a secret: it is kept, hidden, under its key.
+        if (value !== "") {
+          warn(report, "field_type_unknown", index);
+          v.custom.push({ name: key, value, kind: "hidden" });
+        }
         continue;
       }
       if (value !== "") /** @type {string[]} */ (v[slot]).push(scalar(value));

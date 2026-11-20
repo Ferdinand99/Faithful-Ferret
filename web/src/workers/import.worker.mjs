@@ -25,7 +25,7 @@
 import { parseCsv } from "../import/csv.mjs";
 import { AVUX_MANIFEST_ENTRY, fromAliasVaultCsv, fromAvuxManifest, isAliasVaultCsvHeader } from "../import/aliasvault.mjs";
 import { fromBitwardenCsv, fromBitwardenJson } from "../import/bitwarden.mjs";
-import { ImportError, MAX_FILE_BYTES } from "../import/limits.mjs";
+import { ImportError, MAX_AVUX_ENTRIES, MAX_AVUX_FILE_BYTES, MAX_FILE_BYTES } from "../import/limits.mjs";
 import { resolveLabels, warn, withTotpAsHidden } from "../import/map.mjs";
 import { safeJsonParse } from "../import/prescan.mjs";
 import { readZipEntry } from "../import/zip.mjs";
@@ -84,8 +84,10 @@ function isRequest(message) {
  * @returns {Promise<{ drafts: import("../import/map.mjs").ItemDraft[], report: import("../import/map.mjs").ImportReport, kind: string }>}
  */
 async function readDrafts(kind, file, labels) {
-  // The size is the file's own, known before a byte is read.
-  if (file.size > MAX_FILE_BYTES) throw new ImportError("import_too_large");
+  // The size is the file's own, known before a byte is read. An archive may be large: only its directory and its manifest are read.
+  if (file.size > (kind === "aliasvault_avux" ? MAX_AVUX_FILE_BYTES : MAX_FILE_BYTES)) {
+    throw new ImportError(kind === "aliasvault_avux" ? "import_archive_too_large" : "import_too_large");
+  }
   const head = new Uint8Array(await file.slice(0, 512).arrayBuffer());
   const zipped = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
   if (kind === "aliasvault_avux") {
@@ -95,7 +97,12 @@ async function readDrafts(kind, file, labels) {
       throw new ImportError(/"format"\s*:\s*"avex"/.test(start) ? "import_encrypted_export" : "import_bad_zip");
     }
     // Only the manifest is read; the attachments and logos of the archive are never unpacked.
-    const bytes = await readZipEntry(file, AVUX_MANIFEST_ENTRY);
+    const bytes = await readZipEntry(file, AVUX_MANIFEST_ENTRY, {
+      maxBytes: MAX_FILE_BYTES,
+      maxEntries: MAX_AVUX_ENTRIES,
+      maxFileBytes: MAX_AVUX_FILE_BYTES,
+      codes: { file: "import_archive_too_large", entries: "import_archive_too_many", entry: "import_manifest_too_large" },
+    });
     /** @type {string} */
     let manifest;
     try {

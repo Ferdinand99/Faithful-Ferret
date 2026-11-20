@@ -23,7 +23,7 @@ import { securityErrorText } from "./securityError.mjs";
 export const IMPORT_ERRORS = Object.freeze([
   "import_bad_answer", "import_bad_csv", "import_bad_export", "import_bad_format", "import_bad_json", "import_bad_key", "import_bad_zip",
   "import_busy", "import_does_not_fit", "import_empty", "import_encrypted_export", "import_export_password_required", "import_export_too_large",
-  "import_field_too_large", "import_nothing_left", "import_port_closed", "import_preview_gone", "import_seal_failed", "import_timeout",
+  "import_field_too_large", "import_archive_too_large", "import_archive_too_many", "import_manifest_too_large", "import_nothing_left", "import_port_closed", "import_preview_gone", "import_seal_failed", "import_timeout",
   "import_too_deep", "import_too_large", "import_too_many", "import_unreadable", "import_window_open", "import_worker_failed",
   "import_wrong_export_password", "import_zip", "import_zip_encrypted", "import_zip_entry_missing", "locked", "quota_exceeded", "unsupported",
 ]);
@@ -113,12 +113,15 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   let watch = null;
   /** The page has been in the document (a page that was never shown cannot have been left). */
   let wasShown = false;
+  /** The user left the page: what an import that was still running leaves behind is let go of when it ends. */
+  let gone = false;
 
   /**
    * The user left the page (the router put another one in its place): the worker that reads the file is ended and a preview that is
    * held is let go of, as for a lock. An import that is running is not touched.
    */
   function left() {
+    gone = true;
     stopWatch();
     previewAbort?.abort();
     previewAbort = null;
@@ -276,6 +279,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     wipeContinue();
     stopWatch();
     previewAbort?.abort();
+    gone = true;
     // An import that is running (re-authenticating, opening, sealing) is left alone, as in `left()`: it needs its preview.
     if (preview !== null && !running) {
       discard(preview);
@@ -355,6 +359,12 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     } catch (error) {
       busy.set(false);
       running = false;
+      // The page was left while the import ran, and it did not start: nobody is looking at the error, and nothing refers to the sealed items.
+      if (gone) {
+        discard(shown);
+        preview = null;
+        return;
+      }
       const code = codeOf(error);
       // The file was let go of, or the vault locked: there is nothing to try again, and the page goes back to choosing a file.
       if (code === "import_preview_gone" || code === "locked") {
