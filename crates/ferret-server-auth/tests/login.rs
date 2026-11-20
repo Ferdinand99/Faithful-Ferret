@@ -752,7 +752,8 @@ fn a_malformed_login_id_does_not_touch_the_store() {
             ke3: &ke3,
             current_session: None,
         };
-        let error = ferret_server_auth::login_finish(&f.cx(), &f.store, &request).unwrap_err();
+        let error =
+            ferret_server_auth::login_finish(&f.cx(), &f.store, &f.records, &request).unwrap_err();
         assert_eq!(error, AuthError::Malformed(Malformed::LoginId), "{bad:?}");
     }
     assert_eq!(f.store.len(), 1);
@@ -1076,6 +1077,6 @@ fn an_expired_state_is_refused_even_when_the_store_hands_it_back() {
         current_session: None,
     };
     f.clock.set(NOW + 60);
-    let error = ferret_server_auth::login_finish(&f.cx(), &store, &finish).unwrap_err();
+    let error = ferret_server_auth::login_finish(&f.cx(), &store, &f.records, &finish).unwrap_err();
     assert_eq!(error, denied(DenyReason::StateExpired));
 }

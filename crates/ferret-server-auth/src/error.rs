@@ -91,6 +91,10 @@ pub enum DenyReason {
     StateInvalid,
     /// The third OPAQUE message did not verify.
     Ke3,
+    /// The proof was right for the record the login started from, but the
+    /// account has another record now (a password change, a recovery or a
+    /// restore since `login_start`), or no account any more.
+    RecordChanged,
     /// The nonce was never issued, or is already used.
     NonceUnknown,
     /// The nonce has expired.
@@ -108,6 +112,7 @@ impl DenyReason {
         DenyReason::StateExpired,
         DenyReason::StateInvalid,
         DenyReason::Ke3,
+        DenyReason::RecordChanged,
         DenyReason::NonceUnknown,
         DenyReason::NonceExpired,
         DenyReason::ProofInvalid,
@@ -270,10 +275,11 @@ mod tests {
                 DenyReason::StateExpired => 1,
                 DenyReason::StateInvalid => 2,
                 DenyReason::Ke3 => 3,
-                DenyReason::NonceUnknown => 4,
-                DenyReason::NonceExpired => 5,
-                DenyReason::ProofInvalid => 6,
-                DenyReason::ScopeForbids => 7,
+                DenyReason::RecordChanged => 4,
+                DenyReason::NonceUnknown => 5,
+                DenyReason::NonceExpired => 6,
+                DenyReason::ProofInvalid => 7,
+                DenyReason::ScopeForbids => 8,
             }
         }
         fn malformed_index(m: Malformed) -> usize {
@@ -290,7 +296,7 @@ mod tests {
             }
         }
         let deny: Vec<usize> = DenyReason::ALL.iter().map(|r| deny_index(*r)).collect();
-        assert_eq!(deny, (0..8).collect::<Vec<_>>());
+        assert_eq!(deny, (0..9).collect::<Vec<_>>());
         let malformed: Vec<usize> = Malformed::ALL.iter().map(|m| malformed_index(*m)).collect();
         assert_eq!(malformed, (0..9).collect::<Vec<_>>());
     }
