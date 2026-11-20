@@ -159,6 +159,8 @@ async fn panel_shows_the_backup_status_and_the_last_push_and_no_secret_path_or_u
 }
 
 #[tokio::test]
+/// The codes are written through the status API here, which stores what it is
+/// given, as a status file edited by hand would.
 async fn a_status_file_that_was_edited_by_hand_is_not_shown_as_it_stands() {
     let app = TestApp::new_at_real_time().await;
     admin_user(&app, 1).await;
@@ -168,10 +170,28 @@ async fn a_status_file_that_was_edited_by_hand_is_not_shown_as_it_stands() {
     let res = get(&app, PAGE).await;
     assert_eq!(res.status, StatusCode::OK);
     let page = res.text();
-    assert!(page.contains("unknown"));
+    assert!(page.contains("<code>unknown</code>"));
     for hidden in ["/data/backups/auto", "monitor.example"] {
         assert!(!page.contains(hidden), "{hidden}");
     }
+}
+
+#[tokio::test]
+async fn a_time_the_page_cannot_show_is_left_out_and_not_printed_as_an_empty_time() {
+    let app = TestApp::new_at_real_time().await;
+    admin_user(&app, 1).await;
+    let status = app.backup_status();
+    // Times that no calendar holds (a status file edited by hand).
+    status.record_success(i64::MAX, 1);
+    status.record_failure(i64::MIN, "io");
+    status.record_push(i64::MAX, Err("timeout"));
+    let res = get(&app, PAGE).await;
+    assert_eq!(res.status, StatusCode::OK);
+    let page = res.text();
+    assert!(!page.contains("datetime=\"\""), "an empty time was printed");
+    let text = visible(&page);
+    assert!(text.contains("Last good backup Never"), "{text}");
+    assert!(page.contains("<code>io</code>"), "the code is still shown");
 }
 
 // ------------------------------------------------------------------- the button
@@ -284,7 +304,7 @@ async fn a_click_asks_for_a_run_that_the_job_makes_and_the_page_says_so() {
     let res = get(&app, PAGE).await;
     let text = visible(&res.text());
     assert!(
-        text.contains("A backup was asked for. It starts within a minute."),
+        text.contains("A backup was asked for. It starts in about a minute."),
         "{text}"
     );
     assert!(res.text().contains(" disabled"), "the button is off");

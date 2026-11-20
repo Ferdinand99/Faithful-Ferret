@@ -77,7 +77,7 @@ zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "d
 
 [build-dependencies]
 # Copies the kit's templates into templates/kit/ for askama (build.rs).
-vole-kit-build = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.2" }
+vole-kit-build = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1" }
 
 [features]
 # Lets a release build go ahead without web/dist (the build script refuses

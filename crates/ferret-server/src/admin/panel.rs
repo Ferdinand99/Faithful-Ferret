@@ -45,7 +45,8 @@ pub fn routes() -> Router<FerretState> {
 
 /// The last failure of a run, as the page shows it.
 struct FailureView {
-    when: String,
+    /// When it failed; none when the time cannot be shown.
+    when: Option<String>,
     /// The fixed code (only lowercase letters and underscores).
     code: String,
     /// The translation key of what the code means.
@@ -54,7 +55,7 @@ struct FailureView {
 
 /// The last message to the monitor, as the page shows it.
 struct PushView {
-    when: String,
+    when: Option<String>,
     ok: bool,
     /// The fixed code of a failure.
     code: String,
@@ -82,16 +83,16 @@ struct View {
 struct Page {
     ctx: PageCtx,
     view: View,
+    /// Where the form posts.
+    run_path: &'static str,
 }
 
 /// The time of a Unix second as the kit writes times (UTC,
 /// `YYYY-MM-DD HH:MM:SS`), so the kit's relative-time script can read it.
-/// Seconds that are out of range give an empty text.
-fn utc_text(at: i64) -> String {
-    let Ok(t) = time::OffsetDateTime::from_unix_timestamp(at) else {
-        return String::new();
-    };
-    format!(
+/// Seconds that are out of range give none (a status file edited by hand).
+fn utc_text(at: i64) -> Option<String> {
+    let t = time::OffsetDateTime::from_unix_timestamp(at).ok()?;
+    Some(format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         t.year(),
         u8::from(t.month()),
@@ -99,7 +100,7 @@ fn utc_text(at: i64) -> String {
         t.hour(),
         t.minute(),
         t.second()
-    )
+    ))
 }
 
 /// A code from the status file, as far as it is a fixed word: lowercase
@@ -147,7 +148,7 @@ impl View {
         Self {
             status,
             state,
-            last_good: snapshot.last_good_at.map(utc_text),
+            last_good: snapshot.last_good_at.and_then(utc_text),
             failure: snapshot.last_failure.as_ref().map(|f| {
                 let code = plain_code(&f.code);
                 FailureView {
@@ -166,7 +167,7 @@ impl View {
                     code,
                 }
             }),
-            next_run: snapshot.next_run_at.map(utc_text),
+            next_run: snapshot.next_run_at.and_then(utc_text),
             busy: snapshot.running || snapshot.waiting,
         }
     }
@@ -189,7 +190,15 @@ async fn page(
         "backup",
     )
     .await;
-    Ok((jar, HtmlTemplate(Page { ctx, view })))
+    let run_path = RUN_PATH;
+    Ok((
+        jar,
+        HtmlTemplate(Page {
+            ctx,
+            view,
+            run_path,
+        }),
+    ))
 }
 
 /// `POST /settings/backup/run`: asks the job for a backup, once. Answers with a
@@ -216,9 +225,12 @@ mod tests {
 
     #[test]
     fn a_time_is_written_the_way_the_kit_reads_it() {
-        assert_eq!(utc_text(0), "1970-01-01 00:00:00");
-        assert_eq!(utc_text(1_800_000_000), "2027-01-15 08:00:00");
-        assert_eq!(utc_text(i64::MAX), "");
+        assert_eq!(utc_text(0).as_deref(), Some("1970-01-01 00:00:00"));
+        assert_eq!(
+            utc_text(1_800_000_000).as_deref(),
+            Some("2027-01-15 08:00:00")
+        );
+        assert_eq!(utc_text(i64::MAX), None);
     }
 
     #[test]

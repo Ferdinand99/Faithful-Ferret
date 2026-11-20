@@ -21,11 +21,11 @@
         {%- if let Some(t) = view.last_good %}{{ m::time_ago(t) }}{% else %}{{ tr("backup.never") }}{% endif -%}
       </dd></div>
       <div class="dl-row"><dt>{{ tr("backup.last_failure") }}</dt><dd>
-        {%- if let Some(f) = view.failure %}<code>{{ f.code }}</code> · {{ m::time_ago(f.when) }}{% else %}{{ tr("backup.none") }}{% endif -%}
+        {%- if let Some(f) = view.failure %}<code>{{ f.code }}</code>{% if let Some(w) = f.when %} · {{ m::time_ago(w) }}{% endif %}{% else %}{{ tr("backup.none") }}{% endif -%}
       </dd></div>
       <div class="dl-row"><dt>{{ tr("backup.last_push") }}</dt><dd>
         {%- if let Some(p) = view.push %}
-        {%- if p.ok %}{{ tr("backup.push_ok") }}{% else %}{{ tr("backup.push_failed") }} (<code>{{ p.code }}</code>): {{ tr(p.why) }}{% endif %} · {{ m::time_ago(p.when) }}
+        {%- if p.ok %}{{ tr("backup.push_ok") }}{% else %}{{ tr("backup.push_failed") }} (<code>{{ p.code }}</code>): {{ tr(p.why) }}{% endif %}{% if let Some(w) = p.when %} · {{ m::time_ago(w) }}{% endif %}
         {%- else %}{{ tr("backup.none_yet") }}{% endif -%}
       </dd></div>
       <div class="dl-row"><dt>{{ tr("backup.next_run") }}</dt><dd>
@@ -37,7 +37,7 @@
 
 <section class="section" aria-labelledby="backup-now-title">
   {% call m::section_head(tr("backup.now_title"), tr("backup.now_sub"), "backup-now-title") %}{% endcall %}
-  <form class="card stack-sm" method="post" action="/settings/backup/run">
+  <form class="card stack-sm" method="post" action="{{ run_path }}">
     {%- if view.busy %}
     <p class="help">{{ tr("backup.busy") }}</p>
     {%- endif %}
