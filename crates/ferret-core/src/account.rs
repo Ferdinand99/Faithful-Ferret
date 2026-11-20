@@ -715,8 +715,6 @@ pub struct RecoveryInput<'a> {
     pub rk_wrap: &'a WrapRecord,
     /// The current manifest row.
     pub manifest: ManifestRow<'a>,
-    /// The id of the new recovery wrap.
-    pub new_recovery_method_id: MethodId,
 }
 
 /// Recovers an account with the recovery key code `rk_code`.
@@ -730,9 +728,12 @@ pub struct RecoveryInput<'a> {
 ///    device with a record) or [`PinState::FirstUse`] (a new device). With a
 ///    record the wrap's epoch, `kek_generation` and the vault's `pk_a` are
 ///    checked against it as well.
-/// 4. A new password wrap (under the same method id as in the manifest), a
-///    **new** recovery key with its own wrap (under `new_recovery_method_id`)
-///    and `pk_r`, and a new manifest are made. The vault key is unchanged.
+/// 4. A new password wrap and a **new** recovery key with its own wrap and
+///    `pk_r`, and a new manifest are made. The vault key is unchanged. Both
+///    wraps keep the method ids they have in the manifest: the request names
+///    no method id, and the server replaces the stored wraps under their
+///    stored ids, so a new id would leave a recovery wrap whose associated
+///    data names a method the server does not hold.
 ///
 /// `recovery.manifest` is opened with the recovered
 /// vault key and must list one password and one recovery method, the latter
@@ -755,7 +756,6 @@ pub fn recover<R: SecureRng>(
         rk_code,
         rk_wrap,
         manifest,
-        new_recovery_method_id,
     } = *recovery;
     let NewPassword {
         input,
@@ -806,14 +806,14 @@ pub fn recover<R: SecureRng>(
         return Err(entries_error());
     }
     let password_method_id = password_entry.method_id;
-    // The new recovery wrap needs an id of its own: not the password
-    // wrap's and not any other method's in the manifest (only the old
-    // recovery entry, which it replaces, may share it).
+    // The new recovery wrap replaces the stored one under the same id, as a
+    // renewal does. No other method may share that id.
+    let recovery_method_id = rk_wrap.method_id;
     if old
         .methods
         .iter()
         .enumerate()
-        .any(|(i, e)| i != recovery_index && e.method_id == new_recovery_method_id)
+        .any(|(i, e)| i != recovery_index && e.method_id == recovery_method_id)
     {
         return Err(entries_error());
     }
@@ -846,7 +846,7 @@ pub fn recover<R: SecureRng>(
         ctx,
         vault.vault_key(),
         &recovery_kek,
-        new_recovery_method_id,
+        recovery_method_id,
         recovery_generation,
         Method::Recovery,
     )?;
@@ -858,7 +858,6 @@ pub fn recover<R: SecureRng>(
     }
     {
         let entry = entry_at_mut(&mut new_manifest, recovery_index)?;
-        entry.method_id = new_recovery_method_id;
         entry.kek_generation = recovery_generation;
     }
     let sealed = encrypt_manifest(rng, &vault, new_rev, &new_manifest)?;

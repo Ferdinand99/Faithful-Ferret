@@ -814,9 +814,11 @@ impl UnlockJob {
     /// Returns `{ vault, password_wrap, recovery_wrap, manifest, pk_r,
     /// registration_record, ksf_profile, server_public_key, sk_bit, pinned }`
     /// where `pinned` is the record to store once the server has accepted the
-    /// recovery. The request is signed with the **old** recovery key by
-    /// `recover_sign`; call `recover_done` afterwards. The new recovery key
-    /// is shown with `vault.reveal_recovery_code()`.
+    /// recovery. Both wraps keep the method ids the server stores them under
+    /// (`rk_wrap.method_id` for the recovery wrap). The request is signed with
+    /// the **old** recovery key by `recover_sign`; call `recover_done`
+    /// afterwards. The new recovery key is shown with
+    /// `vault.reveal_recovery_code()`.
     #[allow(clippy::too_many_arguments)]
     pub fn recover(
         &mut self,
@@ -825,7 +827,6 @@ impl UnlockJob {
         rk_code: String,
         rk_wrap: JsValue,
         manifest: JsValue,
-        new_recovery_method_id: Vec<u8>,
         pin: JsValue,
         qr: Option<String>,
     ) -> Result<JsValue, JsValue> {
@@ -835,7 +836,6 @@ impl UnlockJob {
             let ctx = from_js::<CtxDto>(ctx)?.core();
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
             let row: RowDto = from_js(manifest)?;
-            let new_id = MethodId::from_bytes(crate::convert::arr(&new_recovery_method_id)?);
             let qr = qr.map(Zeroizing::new);
             let qr = qr.as_deref().map(|t| parse_setup_qr(t)).transpose()?;
             let registered = self.registered.take().ok_or(Fail::Input)?;
@@ -884,7 +884,6 @@ impl UnlockJob {
                     rk_code: &rk_code,
                     rk_wrap: &rec,
                     manifest: row.core(),
-                    new_recovery_method_id: new_id,
                 },
                 NewPassword {
                     input: &input,
