@@ -938,6 +938,11 @@ async fn request_bytes_never_reach_the_log() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
 
     let text = String::from_utf8(sink.0.lock().unwrap()[mark..].to_vec()).unwrap();
+    // The check only means something if the server logs these calls at all.
+    assert!(
+        text.contains("signed request refused"),
+        "the refusals are logged: {text}"
+    );
     let mut canaries = Vec::new();
     for value in [
         change.registration_record.as_slice(),

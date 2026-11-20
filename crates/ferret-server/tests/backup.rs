@@ -816,6 +816,11 @@ async fn backup_never_logs_file_contents() {
         .map(|b| format!("{b:02x}"))
         .collect();
     let text = log.text();
+    // The capture only counts if it holds the line of the failed run.
+    assert!(
+        text.contains("backup step failed"),
+        "the failed run was not captured: {text}"
+    );
     assert_no_secret(&text, &[CANARY, &key_hex, "opaque_setup"]);
     let error_text = format!("{failed:?}");
     assert_no_secret(&error_text, &[CANARY, &key_hex]);
