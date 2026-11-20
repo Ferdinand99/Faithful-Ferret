@@ -9,17 +9,25 @@
 //! device whose account changed its `session_version` (sign out everywhere, a
 //! disabled user, a restore) is stopped as well.
 //!
-//! This module holds the types. Issuing and looking up come later.
+//! Every token request answers with a `Date` header from the server's clock
+//! ([`with_server_date`]): a device sets the `iat` of its proofs by it, and
+//! syncs to it again after a `401 dpop_invalid`.
 
 use std::fmt;
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
+use axum::http::header::DATE;
+use axum::response::Response;
+use ferret_core::SecureRng;
 use ferret_server_auth::Clock;
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use crate::auth::dpop::{JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER, JtiCache};
-use crate::auth::refresh::{GRACE_CAPACITY, RefreshGrace};
-use crate::ids::{DeviceId, TokenSecret};
+use crate::auth::refresh::{ABSOLUTE_SECS, GRACE_CAPACITY, IDLE_SECS, RefreshGrace};
+use crate::ids::{DeviceId, TokenHash, TokenSecret};
 use crate::state::VaultDb;
+use crate::wire::ACCESS_TOKEN_SECS;
 
 /// What the token routes and the extractor of a token request share: the
 /// database, the clock, the cache of used `jti` values, the successors of the
@@ -53,6 +61,16 @@ impl DeviceAuth {
             replay: Arc::new(JtiCache::new(JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER)),
             grace: Arc::new(RefreshGrace::new(GRACE_CAPACITY)),
             vault_origin: Arc::from(vault_origin.trim_end_matches('/')),
+        }
+    }
+
+    /// The same handle with another cache of used `jti` values: the database,
+    /// the clock, the successors and the origin stay shared. For tests and
+    /// tools that need a cache with other limits than the server's.
+    pub fn with_replay(&self, replay: JtiCache) -> Self {
+        Self {
+            replay: Arc::new(replay),
+            ..self.clone()
         }
     }
 
@@ -154,5 +172,181 @@ impl fmt::Debug for AccessRow {
             .field("expires_at", &self.expires_at)
             .field("session_version", &self.session_version)
             .finish_non_exhaustive()
+    }
+}
+
+/// The tokens of a device that just signed in: an access token that lives
+/// [`ACCESS_TOKEN_SECS`] and the first refresh token of its chain, which lives
+/// [`IDLE_SECS`] without use and [`ABSOLUTE_SECS`] at most. Only their hashes
+/// are written. Call it in the sign-in's transaction, after
+/// `devices::insert`.
+///
+/// Spec: Fase 1 § 7.6.
+pub fn issue_for_new_device<R: SecureRng>(
+    tx: &Transaction<'_>,
+    device: &DeviceId,
+    now: i64,
+    rng: &mut R,
+) -> rusqlite::Result<IssuedTokens> {
+    let access = issue_access(tx, device, now, rng)?;
+    let refresh = TokenSecret::random(rng);
+    tx.execute(
+        "INSERT INTO ferret_refresh
+            (token_hash, device_id, prev_hash, issued_at, idle_expires_at, abs_expires_at, used_at)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, NULL)",
+        params![
+            refresh.hash().0.as_slice(),
+            device.0.as_slice(),
+            now,
+            now.saturating_add(IDLE_SECS),
+            now.saturating_add(ABSOLUTE_SECS),
+        ],
+    )?;
+    Ok(IssuedTokens {
+        access,
+        refresh,
+        expires_in: ACCESS_TOKEN_SECS,
+    })
+}
+
+/// A new access token for `device`, which expires [`ACCESS_TOKEN_SECS`] after
+/// `now`. Only its hash is written.
+///
+/// Spec: Fase 1 § 7.6 (short-lived access tokens).
+pub fn issue_access<R: SecureRng>(
+    tx: &Transaction<'_>,
+    device: &DeviceId,
+    now: i64,
+    rng: &mut R,
+) -> rusqlite::Result<TokenSecret> {
+    let access = TokenSecret::random(rng);
+    tx.execute(
+        "INSERT INTO ferret_access (token_hash, device_id, expires_at) VALUES (?1, ?2, ?3)",
+        params![
+            access.hash().0.as_slice(),
+            device.0.as_slice(),
+            now.saturating_add(i64::from(ACCESS_TOKEN_SECS)),
+        ],
+    )?;
+    Ok(access)
+}
+
+/// What the access token with `hash` is at `now`, through its device: the
+/// device was revoked → [`AccessLookup::DeviceRevoked`] (also for a token that
+/// has expired since); no such token, or it expired (`now` is at or past its
+/// `expires_at`) → [`AccessLookup::Expired`]; else the live row.
+///
+/// The row says nothing about the user: the caller checks the device with
+/// `devices::still_valid` as well.
+///
+/// Spec: Fase 1 § 7.6.
+pub fn lookup_access(
+    conn: &Connection,
+    hash: &TokenHash,
+    now: i64,
+) -> rusqlite::Result<AccessLookup> {
+    type Found = (Vec<u8>, i64, i64, Vec<u8>, i64, Option<i64>);
+    let found: Option<Found> = conn
+        .query_row(
+            "SELECT a.device_id, a.expires_at, d.user_id, d.jkt, d.session_version, d.revoked_at
+             FROM ferret_access a JOIN ferret_devices d ON d.device_id = a.device_id
+             WHERE a.token_hash = ?1",
+            params![hash.0.as_slice()],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((device, expires_at, user_id, jkt, session_version, revoked_at)) = found else {
+        return Ok(AccessLookup::Expired);
+    };
+    if revoked_at.is_some() {
+        return Ok(AccessLookup::DeviceRevoked);
+    }
+    if now >= expires_at {
+        return Ok(AccessLookup::Expired);
+    }
+    let bad = |index: usize, what: &str| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Blob,
+            what.to_string().into(),
+        )
+    };
+    let device = <[u8; 16]>::try_from(device).map_err(|_| bad(0, "device id"))?;
+    let jkt = <[u8; 32]>::try_from(jkt).map_err(|_| bad(3, "jkt"))?;
+    Ok(AccessLookup::Live(AccessRow {
+        device: DeviceId(device),
+        user_id,
+        jkt,
+        expires_at,
+        session_version,
+    }))
+}
+
+/// `response` with a `Date` header of the server's clock at `now` (Unix
+/// seconds), in place of any it had. A device sets the `iat` of its proofs by
+/// this clock and syncs to it after a `401 dpop_invalid`, so the header must
+/// be the clock the proofs are checked against. Without a date (a time past
+/// the year 9999), the response is left as it is.
+///
+/// RFC 9110 § 6.6.1 (`Date`), § 5.6.7 (IMF-fixdate).
+pub fn with_server_date(mut response: Response, now: i64) -> Response {
+    if let Some(date) = http_date(now) {
+        response.headers_mut().insert(DATE, date);
+    }
+    response
+}
+
+/// `now` (Unix seconds) as an IMF-fixdate: `Sun, 06 Nov 1994 08:49:37 GMT`.
+fn http_date(now: i64) -> Option<HeaderValue> {
+    const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let at = time::OffsetDateTime::from_unix_timestamp(now).ok()?;
+    if !(0..=9999).contains(&at.year()) {
+        return None;
+    }
+    let day = DAYS.get(usize::from(at.weekday().number_days_from_monday()))?;
+    let month = MONTHS.get(usize::from(u8::from(at.month())).checked_sub(1)?)?;
+    let text = format!(
+        "{day}, {:02} {month} {:04} {:02}:{:02}:{:02} GMT",
+        at.day(),
+        at.year(),
+        at.hour(),
+        at.minute(),
+        at.second()
+    );
+    HeaderValue::from_str(&text).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_date_is_an_imf_fixdate() {
+        // RFC 9110 § 5.6.7's own example.
+        assert_eq!(
+            http_date(784_111_777).expect("a date"),
+            "Sun, 06 Nov 1994 08:49:37 GMT"
+        );
+        assert_eq!(
+            http_date(0).expect("a date"),
+            "Thu, 01 Jan 1970 00:00:00 GMT"
+        );
+        assert_eq!(
+            http_date(1_793_491_200).expect("a date"),
+            "Sun, 01 Nov 2026 00:00:00 GMT"
+        );
+        assert_eq!(http_date(253_402_300_800), None, "the year 10000");
     }
 }
