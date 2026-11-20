@@ -584,8 +584,7 @@ fn renew_tx(
     // still known). A device the account no longer accepts uses no token.
     // `still_valid` also ends a device at its absolute end, which is the
     // absolute end of every token of its chain: that case is step 5's.
-    if row.revoked || (now < row.abs_expires_at && !devices::still_valid(&tx, &row.device, now)?)
-    {
+    if row.revoked || (now < row.abs_expires_at && !devices::still_valid(&tx, &row.device, now)?) {
         return Ok(Renewed::Refused("device_revoked"));
     }
     // A refresh token with a proof of another key has leaked: the device and
@@ -906,8 +905,14 @@ mod tests {
         grace.put(&old, &next, [1; 32], NOW).expect("room");
         let got = grace.get(&old, &[1; 32], at(GRACE_SECS)).expect("held");
         assert_eq!(got.hash(), next.hash());
-        assert!(grace.get(&old, &[2; 32], at(GRACE_SECS)).is_none(), "another key");
-        assert!(grace.get(&next.hash(), &[1; 32], NOW).is_none(), "not a key");
+        assert!(
+            grace.get(&old, &[2; 32], at(GRACE_SECS)).is_none(),
+            "another key"
+        );
+        assert!(
+            grace.get(&next.hash(), &[1; 32], NOW).is_none(),
+            "not a key"
+        );
         assert!(grace.get(&old, &[1; 32], at(GRACE_SECS + 1)).is_none());
         assert!(grace.is_empty(), "gone once its time is out");
     }
@@ -927,7 +932,10 @@ mod tests {
         );
         // Another key finds the store full, and nothing changes.
         let d = token(b"d");
-        assert_eq!(grace.put(&d.hash(), &a, [2; 32], at(1)), Err(DpopError::Full));
+        assert_eq!(
+            grace.put(&d.hash(), &a, [2; 32], at(1)),
+            Err(DpopError::Full)
+        );
         assert_eq!(grace.len(), 1);
         assert!(grace.get(&b.hash(), &[1; 32], at(1)).is_some());
         // Once its time is out there is room again.

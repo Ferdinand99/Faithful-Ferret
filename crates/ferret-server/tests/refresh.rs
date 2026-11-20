@@ -136,7 +136,11 @@ fn tokens_of(res: &Res) -> (TokenSecret, TokenSecret) {
 }
 
 /// The renewal of `token` succeeds; its new tokens.
-async fn renewed(app: &TestApp, device: &DeviceClient, token: &TokenSecret) -> (TokenSecret, TokenSecret) {
+async fn renewed(
+    app: &TestApp,
+    device: &DeviceClient,
+    token: &TokenSecret,
+) -> (TokenSecret, TokenSecret) {
     tokens_of(&refresh(app, device, token).await)
 }
 
@@ -518,7 +522,10 @@ async fn refresh_needs_a_proof_from_the_bound_key() {
     // Nothing changed: not used, nothing written, no `jti` recorded, the
     // device is not revoked.
     assert_eq!((rows(&app).await, replay_len(&app)), before);
-    assert_eq!(refresh_row(&app, &token).await.expect("a row").used_at, None);
+    assert_eq!(
+        refresh_row(&app, &token).await.expect("a row").used_at,
+        None
+    );
     assert_eq!(revoked_at(&app, device_id(&device)).await, None);
     // The good proof renews.
     renewed(&app, &device, &token).await;
@@ -603,7 +610,10 @@ async fn idle_30_days_and_absolute_90_days_end_the_family() {
         token = renewed(&app, &long, &token).await.1;
     }
     assert_eq!(
-        refresh_row(&app, &token).await.expect("a row").abs_expires_at,
+        refresh_row(&app, &token)
+            .await
+            .expect("a row")
+            .abs_expires_at,
         t0 + ABSOLUTE_SECS
     );
     set_clock(&app, t0, ABSOLUTE_SECS);
@@ -672,7 +682,10 @@ async fn a_replayed_proof_rotates_nothing() {
         assert_eq!(status_and_code(&res), refused(401, "dpop_invalid"));
     }
     assert_eq!(rows(&app).await, before);
-    assert_eq!(refresh_row(&app, &second).await.expect("a row").used_at, None);
+    assert_eq!(
+        refresh_row(&app, &second).await.expect("a row").used_at,
+        None
+    );
     assert_eq!(revoked_at(&app, device_id(&device)).await, None);
     // With a new proof the successor renews.
     renewed(&app, &device, &second).await;
@@ -747,9 +760,7 @@ async fn a_full_grace_cache_refuses_with_busy_and_rotates_nothing() {
         jkt[..8].copy_from_slice(&u64::try_from(i).expect("an index").to_be_bytes());
         let mut old = [0x11; 32];
         old[..8].copy_from_slice(&u64::try_from(i).expect("an index").to_be_bytes());
-        grace
-            .put(&TokenHash(old), &filler, jkt, t)
-            .expect("room");
+        grace.put(&TokenHash(old), &filler, jkt, t).expect("room");
     }
     assert_eq!(grace.len(), GRACE_CAPACITY);
 
@@ -759,7 +770,10 @@ async fn a_full_grace_cache_refuses_with_busy_and_rotates_nothing() {
     assert_eq!(res.header("date"), date_now(&app));
     // Nothing rotated: the token is unused, and no row was written.
     assert_eq!(rows(&app).await, (1, 1, 1));
-    assert_eq!(refresh_row(&app, &token).await.expect("a row").used_at, None);
+    assert_eq!(
+        refresh_row(&app, &token).await.expect("a row").used_at,
+        None
+    );
     assert_eq!(revoked_at(&app, device_id(&device)).await, None);
 
     // Once the others' grace periods are over there is room, and the same
@@ -926,8 +940,12 @@ async fn revoke_with_an_unknown_token_is_204_and_changes_nothing() {
     let res = app
         .call_raw(
             Which::Vault,
-            token_body_req(REVOKE, "not a token", Some(&proof_for(&app, &device, REVOKE)))
-                .build(),
+            token_body_req(
+                REVOKE,
+                "not a token",
+                Some(&proof_for(&app, &device, REVOKE)),
+            )
+            .build(),
         )
         .await;
     assert_eq!(status_and_code(&res), refused(400, "bad_request"));
@@ -977,7 +995,10 @@ async fn purge_removes_expired_access_and_old_used_rows_and_revokes_dead_devices
             ..Purged::default()
         }
     );
-    assert_eq!(revoked_at(&app, device_id(&dead)).await, Some(t0 + IDLE_SECS));
+    assert_eq!(
+        revoked_at(&app, device_id(&dead)).await,
+        Some(t0 + IDLE_SECS)
+    );
     assert_eq!(revoked_at(&app, device_id(&live)).await, None);
     let res = refresh(&app, &dead, &refresh_token(&dead)).await;
     assert_eq!(status_and_code(&res), refused(401, "device_revoked"));
@@ -1111,9 +1132,13 @@ async fn token_routes_are_not_on_the_admin_listener() {
         let res = app
             .call_raw(
                 Which::Admin,
-                token_body_req(path, &token.to_wire(), Some(&proof_for(&app, &device, path)))
-                    .header("origin", Which::Admin.url())
-                    .build(),
+                token_body_req(
+                    path,
+                    &token.to_wire(),
+                    Some(&proof_for(&app, &device, path)),
+                )
+                .header("origin", Which::Admin.url())
+                .build(),
             )
             .await;
         assert!(
@@ -1123,7 +1148,10 @@ async fn token_routes_are_not_on_the_admin_listener() {
         );
     }
     assert_eq!((rows(&app).await, replay_len(&app)), before);
-    assert_eq!(refresh_row(&app, &token).await.expect("a row").used_at, None);
+    assert_eq!(
+        refresh_row(&app, &token).await.expect("a row").used_at,
+        None
+    );
     assert_eq!(revoked_at(&app, device_id(&device)).await, None);
 }
 
@@ -1134,11 +1162,8 @@ async fn no_token_reaches_the_log() {
     let device = signed_in(&app, 1, 1).await;
     let other = signed_in(&app, 1, 2).await;
     let first = refresh_token(&device);
-    let mut secrets: Vec<String> = vec![
-        first.to_wire(),
-        device.key.x.clone(),
-        device.key.y.clone(),
-    ];
+    let mut secrets: Vec<String> =
+        vec![first.to_wire(), device.key.x.clone(), device.key.y.clone()];
     let (log, guard) = capture_log();
     // A renewal, a lost answer's retry, a refused proof, a reuse, a sign-out
     // and a sign-out with another key.
