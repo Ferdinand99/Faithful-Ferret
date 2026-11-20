@@ -12,12 +12,13 @@ function labelsOf(t) {
     "username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code",
     "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country",
     "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number",
+    "gender", "birthdate", "nickname", "pin",
   ]) labels[key] = t(`import.label.${key}`);
   return labels;
 }
 
 /**
- * `#/import`: bring items in from a file of Ferret's own or an unencrypted Bitwarden export. It is listed on the account page.
+ * `#/import`: bring items in from a file of Ferret's own or an unencrypted Bitwarden or AliasVault export. It is listed on the account page.
  * @type {import("../app.mjs").Route}
  */
 export default {

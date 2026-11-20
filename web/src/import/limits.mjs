@@ -24,6 +24,15 @@ export const MAX_DEPTH = 16;
 export const MAX_NODES = MAX_ITEMS * 60;
 /** The most columns in a CSV file. */
 export const MAX_COLUMNS = 256;
+/**
+ * The largest `.avux` file the import takes, in bytes (2 GiB). An export of AliasVault holds every attachment and logo of the vault,
+ * and the import reads none of them: only the directory and `manifest.json` are read, by slices of the file. ZIP64 is refused, so the
+ * offsets of such a file are below 4 GiB anyway; 2 GiB is far above a real vault and keeps the numbers of the reader in the range of a
+ * safe integer and of a 32-bit offset.
+ */
+export const MAX_AVUX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+/** The most entries in the directory of an `.avux` file: all that a ZIP file without ZIP64 can hold (65 535 is its marker). */
+export const MAX_AVUX_ENTRIES = 65_534;
 /** The most entries in the central directory of a ZIP file. */
 export const MAX_ZIP_ENTRIES = 1_000;
 /** The most a ZIP entry may grow when it is unpacked: unpacked bytes per packed byte. */
@@ -42,6 +51,9 @@ export const IMPORT_ERROR_TEXT = Object.freeze({
   import_too_large: "The file is larger than the import allows (50 MiB).",
   import_too_deep: "The file is nested too deeply to be an export of a vault.",
   import_too_many: "The file holds more items than the import allows.",
+  import_archive_too_large: "The archive is larger than the import allows (2 GiB). Only its list of items is read, but a file this large is not an export that Ferret reads. Export as CSV instead, which has no attachments.",
+  import_archive_too_many: "The archive holds more files than the import allows. Export as CSV instead, which has no attachments.",
+  import_manifest_too_large: "The list of items in the archive (manifest.json) is larger than the import allows (50 MiB).",
   import_field_too_large: "A value in the file is longer than the import allows (64 KiB).",
   import_bad_json: "The file is not valid JSON.",
   import_bad_key: "The file holds a key that an export never has, so it is refused.",

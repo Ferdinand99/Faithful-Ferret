@@ -1,0 +1,563 @@
+{
+  "version": "1.0.0",
+  "exportedAt": "2026-01-02T03:04:07.000Z",
+  "exportedBy": "synthetic@example.test",
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000013",
+      "name": "Mail login",
+      "itemType": "Login",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000007",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "alice@example.test",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000008",
+          "fieldKey": "login.password",
+          "fieldDefinitionId": null,
+          "value": "synthetic-password-1",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000009",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "https://mail.example.test/login",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "https://accounts.example.test",
+          "weight": 1
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000011",
+          "fieldKey": "notes.content",
+          "fieldDefinitionId": null,
+          "value": "Notes for the mail login, with æøå",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [
+        {
+          "id": "00000000-0000-4000-8000-000000000012",
+          "name": "Example:alice",
+          "secretKey": "GEZDGNBVGY3TQOJQ",
+          "algorithm": "SHA256",
+          "digits": 8,
+          "period": 60
+        }
+      ],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000025",
+      "name": "Alias with address",
+      "itemType": "Alias",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000014",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "bob.synthetic",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000015",
+          "fieldKey": "login.password",
+          "fieldDefinitionId": null,
+          "value": "synthetic-password-2",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000016",
+          "fieldKey": "login.email",
+          "fieldDefinitionId": null,
+          "value": "bob.synthetic@alias.example.test",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000017",
+          "fieldKey": "alias.first_name",
+          "fieldDefinitionId": null,
+          "value": "Bob",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000018",
+          "fieldKey": "alias.last_name",
+          "fieldDefinitionId": null,
+          "value": "Syntetisk",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000019",
+          "fieldKey": "alias.gender",
+          "fieldDefinitionId": null,
+          "value": "Male",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000020",
+          "fieldKey": "alias.birthdate",
+          "fieldDefinitionId": null,
+          "value": "1990-12-31",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000021",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "app.example.test",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000022",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "androidapp://net.example.synthetic",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000023",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "javascript:alert(1)",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000024",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "http://old.example.test",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": [],
+      "archivedAt": "2026-02-01T00:00:00.000Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000032",
+      "name": "Synthetic card",
+      "itemType": "CreditCard",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000026",
+          "fieldKey": "card.cardholder_name",
+          "fieldDefinitionId": null,
+          "value": "Alice Synthetic",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000027",
+          "fieldKey": "card.number",
+          "fieldDefinitionId": null,
+          "value": "0000000000000000",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000028",
+          "fieldKey": "card.expiry_month",
+          "fieldDefinitionId": null,
+          "value": "12",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000029",
+          "fieldKey": "card.expiry_year",
+          "fieldDefinitionId": null,
+          "value": "2031",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000030",
+          "fieldKey": "card.cvv",
+          "fieldDefinitionId": null,
+          "value": "000",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000031",
+          "fieldKey": "card.pin",
+          "fieldDefinitionId": null,
+          "value": "0000",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000034",
+      "name": "A secure note",
+      "itemType": "Note",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000033",
+          "fieldKey": "notes.content",
+          "fieldDefinitionId": null,
+          "value": "Line one\nLine two",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000045",
+      "name": "Custom fields",
+      "itemType": "Login",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000035",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "carol",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000036",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000001",
+          "value": "text value",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000037",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000002",
+          "value": "hidden value",
+          "weight": 1
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000038",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000003",
+          "value": "carol@example.test",
+          "weight": 2
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000039",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000004",
+          "value": "+4700000000",
+          "weight": 3
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000040",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000005",
+          "value": "",
+          "weight": 4
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000041",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000006",
+          "value": "https://link.example.test",
+          "weight": 5
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000043",
+          "fieldKey": null,
+          "fieldDefinitionId": "00000000-0000-4000-8000-000000000042",
+          "value": "orphan",
+          "weight": 6
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000044",
+          "fieldKey": "login.future_key",
+          "fieldDefinitionId": null,
+          "value": "a key this reader does not know",
+          "weight": 7
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000049",
+      "name": "Two codes",
+      "itemType": "Login",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000046",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "dave",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [
+        {
+          "id": "00000000-0000-4000-8000-000000000047",
+          "name": "",
+          "secretKey": "JBSWY3DPEHPK3PXP",
+          "algorithm": "SHA1",
+          "digits": 6,
+          "period": 30
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000048",
+          "name": "Second",
+          "secretKey": "KRSXG5CTMVRXEZLU",
+          "algorithm": "SHA1",
+          "digits": 6,
+          "period": 30
+        }
+      ],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000052",
+      "name": "Not a base32 secret",
+      "itemType": "Login",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000050",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "erin",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [
+        {
+          "id": "00000000-0000-4000-8000-000000000051",
+          "name": "Odd",
+          "secretKey": "not base32 !!",
+          "algorithm": "SHA1",
+          "digits": 6,
+          "period": 30
+        }
+      ],
+      "passkeys": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000058",
+      "name": "Left behind",
+      "itemType": "Login",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": "folder-1",
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000053",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "frank",
+          "weight": 0
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000054",
+          "fieldKey": "login.password",
+          "fieldDefinitionId": null,
+          "value": "synthetic-password-6",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [
+        {
+          "id": "00000000-0000-4000-8000-000000000056",
+          "fieldKey": "login.password",
+          "fieldDefinitionId": null,
+          "valueSnapshot": "old-password",
+          "changedAt": "2025-01-01T00:00:00.000Z"
+        }
+      ],
+      "attachments": [
+        {
+          "id": "00000000-0000-4000-8000-000000000055",
+          "filename": "readme.txt",
+          "relativePath": "attachments/readme.txt"
+        }
+      ],
+      "totpCodes": [],
+      "passkeys": [
+        {
+          "id": "00000000-0000-4000-8000-000000000057",
+          "credentialId": null,
+          "rpId": "example.test",
+          "userHandle": null,
+          "publicKey": "PUBLIC",
+          "privateKey": "PRIVATE-KEY-THAT-MUST-NOT-LEAK",
+          "prfKey": null,
+          "displayName": "Frank",
+          "additionalData": null
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000060",
+      "name": "A kind from the future",
+      "itemType": "Identity",
+      "createdAt": "2026-01-02T03:04:05.000Z",
+      "updatedAt": "2026-01-02T03:04:06.000Z",
+      "folderId": null,
+      "logoId": null,
+      "fieldValues": [
+        {
+          "id": "00000000-0000-4000-8000-000000000059",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "gina",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": []
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder-1",
+      "name": "Work",
+      "parentFolderId": null,
+      "weight": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "tags": [
+    {
+      "id": "tag-1",
+      "name": "important",
+      "color": "#ff0000",
+      "displayOrder": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "itemTags": [
+    {
+      "id": "00000000-0000-4000-8000-000000000062",
+      "itemId": "00000000-0000-4000-8000-000000000013",
+      "tagId": "tag-1"
+    }
+  ],
+  "fieldDefinitions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fieldType": "Text",
+      "label": "Text field",
+      "isMultiValue": false,
+      "isHidden": false,
+      "enableHistory": false,
+      "weight": 0,
+      "applicableToTypes": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "fieldType": "Hidden",
+      "label": "Hidden field",
+      "isMultiValue": false,
+      "isHidden": true,
+      "enableHistory": false,
+      "weight": 1,
+      "applicableToTypes": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "fieldType": "Email",
+      "label": "Email field",
+      "isMultiValue": false,
+      "isHidden": false,
+      "enableHistory": false,
+      "weight": 2,
+      "applicableToTypes": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "fieldType": "Phone",
+      "label": "Phone field",
+      "isMultiValue": false,
+      "isHidden": false,
+      "enableHistory": false,
+      "weight": 3,
+      "applicableToTypes": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "fieldType": "Section",
+      "label": "A section",
+      "isMultiValue": false,
+      "isHidden": false,
+      "enableHistory": false,
+      "weight": 4,
+      "applicableToTypes": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "fieldType": "URL",
+      "label": "Link field",
+      "isMultiValue": false,
+      "isHidden": false,
+      "enableHistory": false,
+      "weight": 5,
+      "applicableToTypes": null
+    }
+  ],
+  "logos": [
+    {
+      "id": "00000000-0000-4000-8000-000000000061",
+      "kind": "favicon",
+      "source": "mail.example.test",
+      "name": null,
+      "mimeType": "image/png",
+      "fetchedAt": "2026-01-01T00:00:00.000Z",
+      "relativePath": "logos/mail.example.test.png"
+    }
+  ]
+}

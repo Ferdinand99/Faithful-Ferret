@@ -107,7 +107,10 @@ export function fromBitwardenJson(data, options = {}) {
     const item = asObject(entry);
     if (item === null) throw new ImportError("import_bad_format");
     const context = { report, index, labels };
-    const fields = asArray(item.fields).map(asObject).filter((f) => f !== null);
+    // Only the keys of a Bitwarden field are passed on: the kind of a field is its `type` and nothing a file adds (a field of type 1 is
+    // hidden, whatever other keys it has).
+    const rawFields = asArray(item.fields).map(asObject).filter((f) => f !== null);
+    const fields = rawFields.map((f) => ({ name: f.name, value: f.value, type: f.type }));
 
     if (item.deletedDate !== null && item.deletedDate !== undefined && item.deletedDate !== "") {
       report.skipped.trashed++;
@@ -128,7 +131,7 @@ export function fromBitwardenJson(data, options = {}) {
     // Only the items that are read count for what is left behind in them (an item that is skipped as
     // a whole is counted once, by its type).
     report.skipped.unknownKeys += unknownKeys(item, KNOWN_ITEM);
-    for (const f of fields) report.skipped.unknownKeys += unknownKeys(f, KNOWN_FIELD);
+    for (const f of rawFields) report.skipped.unknownKeys += unknownKeys(f, KNOWN_FIELD);
     // Not imported, and said so in the report: the old passwords of an item, and the flag that asks
     // for the master password before the item is shown.
     report.skipped.passwordHistory += asArray(item.passwordHistory).length;

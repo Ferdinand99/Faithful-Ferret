@@ -26,7 +26,8 @@ test("the_worker_sends_drafts_only_over_the_vault_port_and_answers_with_envelope
   const port = vaultPort();
   const reply = await handler()(request(fixtureFile("every-type.json"), port));
 
-  assert.deepEqual(Object.keys(reply).sort(), ["id", "ok", "report", "sealed"]);
+  assert.deepEqual(Object.keys(reply).sort(), ["id", "kind", "ok", "report", "sealed"]);
+  assert.equal(reply.kind, "bitwarden_json");
   assert.equal(reply.id, 7);
   assert.equal(reply.ok, true);
 
@@ -293,10 +294,13 @@ test("a_zip_file_is_refused_before_it_is_read_as_text", async () => {
     read++;
     return "";
   };
-  for (const kind of KINDS) {
+  for (const kind of KINDS.filter((k) => k !== "aliasvault_avux")) {
     const reply = await handler()({ id: 9, kind, file: zip, port: vaultPort() });
     assert.deepEqual(reply, { id: 9, ok: false, error: "import_zip" }, kind);
   }
+  // An .avux file is a ZIP file: its bytes are read, but only by the ZIP reader, which refuses this one.
+  const avux = await handler()({ id: 9, kind: "aliasvault_avux", file: zip, port: vaultPort() });
+  assert.deepEqual(avux, { id: 9, ok: false, error: "import_bad_zip" });
   assert.equal(read, 0);
 });
 
@@ -330,7 +334,7 @@ test("anything_that_is_not_an_import_request_is_unsupported_and_a_worker_does_on
   const one = handler();
   assert.equal((await one(good())).ok, true);
   assert.deepEqual(await one(good()), { id: 7, ok: false, error: "unsupported" });
-  assert.equal(KINDS.length, 2);
+  assert.deepEqual([...KINDS], ["bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux", "csv"]);
   assert.ok(Object.isFrozen(KINDS));
   assert.equal(fixture("small.json").length > 0, true);
 });

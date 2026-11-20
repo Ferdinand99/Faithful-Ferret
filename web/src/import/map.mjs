@@ -53,7 +53,14 @@ export const DEFAULT_LABELS = Object.freeze({
   identity_username: "User name",
   passport_number: "Passport number",
   license_number: "Licence number",
+  gender: "Gender",
+  birthdate: "Birth date",
+  nickname: "Nickname",
+  pin: "PIN",
 });
+
+/** The kinds of field the vault takes (`FieldKind` of the core), as a reader may name them. */
+export const FIELD_KINDS = Object.freeze(["text", "password", "hidden", "url", "email", "phone"]);
 
 /** The longest label a page may pass, in UTF-16 units. */
 const MAX_LABEL_LENGTH = 128;
@@ -88,7 +95,7 @@ export function resolveLabels(custom) {
  *   skipped: {
  *     passkeys: number, folders: number, collections: number, linked: number,
  *     unknownKeys: number, otherTypes: number, trashed: number, tooLarge: number,
- *     passwordHistory: number, reprompt: number,
+ *     passwordHistory: number, reprompt: number, attachments: number, fieldHistory: number, tags: number,
  *   },
  *   warnings: { code: string, index: number }[],
  *   warningsDropped: number,
@@ -102,7 +109,7 @@ export function resolveLabels(custom) {
 export function createReport() {
   return {
     counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0 },
-    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0 },
+    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
     warnings: [],
     warningsDropped: 0,
   };
@@ -251,7 +258,7 @@ export function classifyAddress(address) {
  * @param {unknown} favorite
  * @param {Readonly<Record<string, string>>} labels
  */
-function startDraft(type, name, notes, favorite, labels) {
+export function startDraft(type, name, notes, favorite, labels) {
   /** @type {ItemDraft} */
   const draft = {
     item_type: type,
@@ -270,7 +277,7 @@ function startDraft(type, name, notes, favorite, labels) {
  * @param {string} kind
  * @param {unknown} value
  */
-function addField(draft, id, label, kind, value) {
+export function addField(draft, id, label, kind, value) {
   const text = scalar(value);
   if (text === "") return;
   (draft.fields ??= []).push({ id, label, kind, value: text });
@@ -282,7 +289,7 @@ function addField(draft, id, label, kind, value) {
  * @param {{ uri?: unknown, match?: unknown }[]} uris
  * @param {{ report: ImportReport, index: number, labels: Readonly<Record<string, string>> }} context
  */
-function addAddresses(draft, uris, { report, index, labels }) {
+export function addAddresses(draft, uris, { report, index, labels }) {
   let textCount = 0;
   const toText = (/** @type {string} */ value) => {
     textCount++;
@@ -322,10 +329,11 @@ function addAddresses(draft, uris, { report, index, labels }) {
 /**
  * Puts the custom fields of an item into a draft.
  * @param {ItemDraft} draft
- * @param {{ name?: unknown, value?: unknown, type?: unknown }[]} fields
+ * @param {{ name?: unknown, value?: unknown, type?: unknown, kind?: unknown }[]} fields a reader that knows the kind of a field
+ *   itself (the AliasVault reader) gives `kind` (one of `FIELD_KINDS`) and that is used as it is; the others give a Bitwarden `type`
  * @param {{ report: ImportReport, index: number, labels: Readonly<Record<string, string>> }} context
  */
-function addCustomFields(draft, fields, { report, index, labels }) {
+export function addCustomFields(draft, fields, { report, index, labels }) {
   let n = 0;
   for (const field of fields) {
     // A linked field points at another field of the item and holds no value of its own.
@@ -337,7 +345,8 @@ function addCustomFields(draft, fields, { report, index, labels }) {
     n++;
     /** @type {string} */
     let kind = "text";
-    if (field?.type === 1) kind = "hidden";
+    if (typeof field?.kind === "string" && FIELD_KINDS.includes(field.kind)) kind = field.kind;
+    else if (field?.type === 1) kind = "hidden";
     else if (field?.type !== 0 && field?.type !== 2 && field?.type !== undefined && field?.type !== null) {
       // A kind this reader does not know: kept hidden, because a secret is likelier than not.
       kind = "hidden";
@@ -360,7 +369,7 @@ function addCustomFields(draft, fields, { report, index, labels }) {
  * @param {unknown} raw
  * @param {{ report: ImportReport, index: number, labels: Readonly<Record<string, string>> }} context
  */
-function addTotp(draft, raw, { report, index, labels }) {
+export function addTotp(draft, raw, { report, index, labels }) {
   const mapped = mapTotp(raw);
   if (mapped.warning) warn(report, mapped.warning, index);
   if (mapped.uri !== undefined) {

@@ -1,5 +1,5 @@
 // `#/import`: bring items into the vault from a file of Ferret's own (`.ferretexport`) or from an unencrypted export of
-// Bitwarden (JSON or CSV), spec Fase 1 § 6.4. The page reads the file into a preview first (what is in it, how much room the
+// Bitwarden (JSON or CSV) or of AliasVault (`.avux` or CSV), spec Fase 1 § 6.4. The page reads the file into a preview first (what is in it, how much room the
 // vault has, and a warning when the vault is not empty), and nothing is sent until the user has confirmed the master password
 // again. A file that is not an export of Ferret's holds every password in the clear: the page says to delete it for good
 // afterwards, before the import and again when it has finished.
@@ -23,7 +23,7 @@ import { securityErrorText } from "./securityError.mjs";
 export const IMPORT_ERRORS = Object.freeze([
   "import_bad_answer", "import_bad_csv", "import_bad_export", "import_bad_format", "import_bad_json", "import_bad_key", "import_bad_zip",
   "import_busy", "import_does_not_fit", "import_empty", "import_encrypted_export", "import_export_password_required", "import_export_too_large",
-  "import_field_too_large", "import_nothing_left", "import_port_closed", "import_preview_gone", "import_seal_failed", "import_timeout",
+  "import_field_too_large", "import_archive_too_large", "import_archive_too_many", "import_manifest_too_large", "import_nothing_left", "import_port_closed", "import_preview_gone", "import_seal_failed", "import_timeout",
   "import_too_deep", "import_too_large", "import_too_many", "import_unreadable", "import_window_open", "import_worker_failed",
   "import_wrong_export_password", "import_zip", "import_zip_encrypted", "import_zip_entry_missing", "locked", "quota_exceeded", "unsupported",
 ]);
@@ -33,20 +33,21 @@ export const IMPORT_PHASES = Object.freeze(["checking", "stretching", "opening",
 
 /** What is left out of a file, counted by the worker (`import.skipped.<key>`), in the order the page lists it. */
 export const SKIPPED_KEYS = Object.freeze([
-  "passkeys", "folders", "collections", "linked", "unknownKeys", "otherTypes", "trashed", "tooLarge", "passwordHistory", "reprompt",
+  "passkeys", "folders", "collections", "tags", "attachments", "fieldHistory", "linked", "unknownKeys", "otherTypes", "trashed", "tooLarge",
+  "passwordHistory", "reprompt",
 ]);
 
 /** The warnings the page explains (`import.warning.<code>`); the ones that only repeat a count of what is left out are not here. */
 export const WARNING_CODES = Object.freeze([
-  "field_type_unknown", "field_unreadable", "match_never", "match_regex", "match_starts_with", "match_unknown",
-  "totp_invalid", "totp_steam", "uri_https_added",
+  "alias_needs_aliasvault", "card_and_login", "field_type_unknown", "field_unreadable", "item_archived", "match_never", "match_regex",
+  "match_starts_with", "match_unknown", "totp_extra", "totp_invalid", "totp_steam", "uri_https_added",
 ]);
 
 /** The notes the page writes from the counts of an import (`import.note.<key>`). */
 export const COUNT_NOTES = Object.freeze(["matchNull", "http", "textAddresses"]);
 
 /** The kinds of file that were exported unencrypted: their file holds every secret in the clear. */
-const PLAIN_KINDS = Object.freeze(["bitwarden_json", "bitwarden_csv"]);
+const PLAIN_KINDS = Object.freeze(["bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux"]);
 
 /**
  * The text of an error on this page. An error of the import has its own text; a refusal of the server's import window and the
@@ -112,12 +113,15 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   let watch = null;
   /** The page has been in the document (a page that was never shown cannot have been left). */
   let wasShown = false;
+  /** The user left the page: what an import that was still running leaves behind is let go of when it ends. */
+  let gone = false;
 
   /**
    * The user left the page (the router put another one in its place): the worker that reads the file is ended and a preview that is
    * held is let go of, as for a lock. An import that is running is not touched.
    */
   function left() {
+    gone = true;
     stopWatch();
     previewAbort?.abort();
     previewAbort = null;
@@ -133,6 +137,8 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   }
   function startWatch() {
     if (watch !== null) return;
+    // The page is on screen when the user picks a file: a page that is left before the first look is still a page that was left.
+    if (/** @type {any} */ (root).isConnected === true) wasShown = true;
     watch = setInterval(look, leavePollMs);
     // A timer must not keep a process alive (the tests); the handle of a browser is a number.
     watch?.unref?.();
@@ -144,7 +150,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
 
   // ------------------------------------------------------------- the file
   const fileInput = /** @type {HTMLInputElement} */ (el("input", {
-    id: "import-file", name: "import-file", type: "file", accept: ".ferretexport,.json,.csv", "data-role": "file", required: true,
+    id: "import-file", name: "import-file", type: "file", accept: ".ferretexport,.json,.csv,.avux", "data-role": "file", required: true,
   }));
   const fileStatus = el("p", { class: "status", role: "status", "data-role": "file-status" });
   const fileError = el("p", { class: "error", role: "alert", "data-role": "file-error" });
@@ -273,8 +279,12 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     wipeContinue();
     stopWatch();
     previewAbort?.abort();
-    if (preview !== null) discard(preview);
-    preview = null;
+    gone = true;
+    // An import that is running (re-authenticating, opening, sealing) is left alone, as in `left()`: it needs its preview.
+    if (preview !== null && !running) {
+      discard(preview);
+      preview = null;
+    }
   });
 
   cancel.addEventListener("click", () => resetFile());
@@ -349,6 +359,12 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     } catch (error) {
       busy.set(false);
       running = false;
+      // The page was left while the import ran, and it did not start: nobody is looking at the error, and nothing refers to the sealed items.
+      if (gone) {
+        discard(shown);
+        preview = null;
+        return;
+      }
       const code = codeOf(error);
       // The file was let go of, or the vault locked: there is nothing to try again, and the page goes back to choosing a file.
       if (code === "import_preview_gone" || code === "locked") {
@@ -499,6 +515,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     el("ul", { class: "import-list", "data-role": "formats" },
       line("import.formats.ferret", undefined, "format-ferret"),
       line("import.formats.bitwarden", undefined, "format-bitwarden"),
+      line("import.formats.aliasvault", undefined, "format-aliasvault"),
       line("import.formats.not", undefined, "format-not")),
     el("p", { class: "notice notice-warning", role: "note", "data-role": "plain-file-note" }, t("import.plain.note")),
     tracker,

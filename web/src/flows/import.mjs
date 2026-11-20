@@ -1,7 +1,8 @@
 // Importing items into the vault (spec Fase 1 § 5.2 and § 6.4): a file of Ferret's own (`.ferretexport`) or an
-// unencrypted export of Bitwarden (JSON or CSV). The plain text of a file is never in the main thread:
+// unencrypted export of Bitwarden (JSON or CSV) or of AliasVault (`.avux` or CSV). The plain text of a file is
+// never in the main thread:
 //
-//   Bitwarden JSON / CSV   the page gives an import worker the `File` and one end of a port to the vault worker;
+//   plain files            the page gives an import worker the `File` and one end of a port to the vault worker;
 //                          the worker reads the file, makes the drafts and has the vault seal each one over the
 //                          port. The page gets back sealed envelopes and a report of counts and warning codes.
 //   .ferretexport          the page reads the (encrypted) file, the job worker makes the key from the export
@@ -26,7 +27,7 @@
 // an import is logged, stored outside the vault, or put in an address. An error carries a code, never a text of the file.
 import { hex16 } from "../b64.mjs";
 import { AccountError } from "../crypto/errors.mjs";
-import { IMPORT_ERROR_TEXT, MAX_FILE_BYTES } from "../import/limits.mjs";
+import { IMPORT_ERROR_TEXT, MAX_AVUX_FILE_BYTES, MAX_FILE_BYTES } from "../import/limits.mjs";
 import { encodeWire } from "../wire.mjs";
 import { reauthenticate } from "./reauth.mjs";
 
@@ -42,8 +43,8 @@ export const IMPORT_TIMEOUT_MS = 300_000;
 /** The largest `.ferretexport` the page reads into memory: the body is at most 128 MiB (`MAX_BODY_LEN` of the core), plus a header. */
 export const MAX_EXPORT_FILE_BYTES = 128 * 1024 * 1024 + 4096;
 
-/** The kinds of file the import takes. */
-export const IMPORT_KINDS = Object.freeze(["ferretexport", "bitwarden_json", "bitwarden_csv"]);
+/** The kinds of file the import takes: what a preview says the file is. */
+export const IMPORT_KINDS = Object.freeze(["ferretexport", "bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux"]);
 
 /** The most items one import can bring in: the vault's rows less the manifest. */
 const MAX_IMPORT_ITEMS = VAULT_ROW_LIMIT - 1;
@@ -58,7 +59,7 @@ const states = new WeakMap();
  * @typedef {{ id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }} Sealed
  * @typedef {{
  *   file: Blob | null,
- *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv",
+ *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv" | "aliasvault_csv" | "aliasvault_avux",
  *   sealed: Sealed[] | null,
  *   header: { salt: Uint8Array, kdf: Record<string, number> } | null,
  *   running: boolean,
@@ -66,7 +67,7 @@ const states = new WeakMap();
  * }} PreviewState
  *
  * @typedef {{
- *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv",
+ *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv" | "aliasvault_csv" | "aliasvault_avux",
  *   counts: ImportReport["counts"] | null,
  *   skipped: ImportReport["skipped"] | null,
  *   warnings: ReadonlyArray<{ code: string, count: number }>,
@@ -91,16 +92,20 @@ export function vaultRoom(engine) {
 }
 
 /**
- * What kind of file this is, by its name: the page never reads a file that is not a kind it takes. The worker looks
- * at the first bytes of a JSON or CSV file again (a ZIP file under another name is `import_zip`).
+ * What to ask for, by the name of the file: the page never reads a file that is not a kind it takes. A `.csv` file
+ * may be an export of Bitwarden or of AliasVault: the worker looks at its header and the preview says which it was.
+ * The worker looks at the first bytes of a JSON or CSV file again (a ZIP file under another name is `import_zip`).
+ * An `.avex` file is the encrypted export of AliasVault, which Ferret cannot open.
  * @param {{ name?: unknown }} file
- * @returns {"ferretexport" | "bitwarden_json" | "bitwarden_csv"}
+ * @returns {"ferretexport" | "bitwarden_json" | "csv" | "aliasvault_avux"}
  */
 export function kindOfFile(file) {
   const name = typeof file?.name === "string" ? file.name.toLowerCase() : "";
   if (name.endsWith(".ferretexport")) return "ferretexport";
   if (name.endsWith(".json")) return "bitwarden_json";
-  if (name.endsWith(".csv")) return "bitwarden_csv";
+  if (name.endsWith(".csv")) return "csv";
+  if (name.endsWith(".avux")) return "aliasvault_avux";
+  if (name.endsWith(".avex")) throw new AccountError("import_encrypted_export");
   if (name.endsWith(".zip")) throw new AccountError("import_zip");
   throw new AccountError("import_bad_format");
 }
@@ -137,6 +142,7 @@ const COUNT_KEYS = Object.freeze({
 });
 const SKIPPED_KEYS = Object.freeze({
   passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+  attachments: 0, fieldHistory: 0, tags: 0,
 });
 
 /**
@@ -302,7 +308,10 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     return preview;
   }
 
-  if (file.size > MAX_FILE_BYTES) throw new AccountError("import_too_large");
+  // An `.avux` archive may be large (attachments and logos); only its manifest is read.
+  if (kind === "aliasvault_avux" ? file.size > MAX_AVUX_FILE_BYTES : file.size > MAX_FILE_BYTES) {
+    throw new AccountError(kind === "aliasvault_avux" ? "import_archive_too_large" : "import_too_large");
+  }
   const answer = await runWorker(env, { kind, file, labels }, { signal, timeoutMs });
   if (answer === null || typeof answer !== "object" || answer.id !== 1 || typeof answer.ok !== "boolean") throw new AccountError("import_bad_answer");
   if (answer.ok !== true) throw workerRefusal(answer);
@@ -310,9 +319,15 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
   const report = readReport(answer.report);
   if (sealed.length === 0) throw new AccountError("import_empty");
   if (report.counts.sealed !== sealed.length) throw new AccountError("import_bad_answer");
+  // What the worker read the file as: a `.csv` file is Bitwarden's or AliasVault's by its header. The kind has to be one that
+  // the name allowed.
+  const readAs = answer.kind;
+  /** @type {string[]} */
+  const allowed = kind === "csv" ? ["bitwarden_csv", "aliasvault_csv"] : [kind];
+  if (typeof readAs !== "string" || !allowed.includes(readAs)) throw new AccountError("import_bad_answer");
   /** @type {Preview} */
   const preview = Object.freeze({
-    kind,
+    kind: /** @type {Preview["kind"]} */ (readAs),
     counts: Object.freeze({ ...report.counts, items: sealed.length }),
     skipped: Object.freeze(report.skipped),
     warnings: Object.freeze(report.warnings.map((w) => Object.freeze(w))),
@@ -320,7 +335,7 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     free, used, vaultEmpty: used === 0, fits: sealed.length <= free, createdAt: null,
   });
   // Only an export of Ferret's is read again; a plain file is not kept once it has been parsed.
-  states.set(preview, { file: null, kind, sealed, header: null, running: false, gone: false });
+  states.set(preview, { file: null, kind: preview.kind, sealed, header: null, running: false, gone: false });
   return preview;
 }
 
