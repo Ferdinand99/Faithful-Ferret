@@ -364,11 +364,11 @@ export function createSyncEngine({
   /** @type {Map<string, Promise<unknown>>} */
   const itemQueues = new Map();
   /** @type {Record<string, Set<(payload: any) => void>>} */
-  const listeners = { changed: new Set(), error: new Set(), state: new Set(), import: new Set(), import_window_closed: new Set() };
+  const listeners = { changed: new Set(), error: new Set(), state: new Set(), import: new Set(), import_window_closed: new Set(), copied: new Set() };
 
   // --------------------------------------------------------------- events
 
-  /** @param {"changed" | "error" | "state" | "import" | "import_window_closed"} event @param {any} payload */
+  /** @param {"changed" | "error" | "state" | "import" | "import_window_closed" | "copied"} event @param {any} payload */
   function emit(event, payload) {
     if (stopped) return;
     for (const fn of [...listeners[event]]) {
@@ -1604,7 +1604,57 @@ export function createSyncEngine({
   }
 
   /**
-   * An item that the user brought back over a purged tombstone is written again as a new item under the same id: the sealed draft is sealed
+   * The item that the user brought back over a purged tombstone becomes a copy under a new id (the core's `copy_item`: the same body under a
+   * new item key, sealed inside the worker): the queued writes of the old item are swapped for the first write of the copy in one transaction,
+   * the old item stays deleted on the screen, and the copy shows as pending like any new item. Answers false, and changes nothing, for an item
+   * the core will not copy (`invalid_state` for a passkey, `read_only_schema` for a newer schema).
+   * Spec: Fase 1 section 8.5 ("Keep both" creates a new item: a copy under a new item key) and section 8.4.
+   * @param {string} id @param {import("../store/outbox.mjs").OutboxEntry} last the newest write that waits for the item (a live one)
+   * @param {import("../store/outbox.mjs").OutboxEntry[]} chain
+   * @returns {Promise<boolean>}
+   */
+  async function copyUnderNewId(id, last, chain) {
+    if ("tomb" in last.body) return false;
+    const copyId = randomId();
+    const handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
+    /** @type {{ rev: number, envelope: Uint8Array, tag: Uint8Array }} */
+    let made;
+    try {
+      made = await client.vault.copy_item(handle, hex16.decode(copyId), now(), ...(typeof device === "string" && device !== "" ? [device] : []));
+    } catch (error) {
+      if (stopped || isFatal(error)) throw error;
+      if (codeOf(error) === "invalid_state" || codeOf(error) === "read_only_schema") return false;
+      throw error;
+    } finally {
+      await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+    }
+    alive();
+    const summary = await summarize(copyId, 1, made.envelope, made.tag);
+    alive();
+    const body = { blob: made.envelope, tag: made.tag };
+    const idem = randomId();
+    const restoreEpoch = await acceptedEpoch();
+    if (restoreEpoch === null) unconditioned.add(idem);
+    const written = { idem, itemId: copyId, baseRev: 0, body, bytes: writeBytes({ baseRev: 0, body, idem, restoreEpoch }) };
+    for (const gone of await runner.moveItem(id, chain.map((one) => one.idem), written)) droppedIdems.add(gone);
+    alive();
+    ownDeleted.delete(id);
+    blocked.delete(id);
+    conflictNotes.delete(id);
+    overlay.delete(id);
+    index.delete(id);
+    overlay.set(copyId, { rev: 1, deleted: false, envelope: made.envelope, tag: made.tag });
+    index.set(copyId, summary);
+    flagsDirty = true;
+    void persistFlags();
+    changed([id, copyId]);
+    emit("copied", { from: id, to: copyId });
+    return true;
+  }
+
+  /**
+   * What is done with an item that the user brought back over a purged tombstone (a restore from the trash, or "keep mine", refused with "no row"):
+   * a copy under a new id when the core can copy it (`copyUnderNewId`), else, for an item with a passkey, a new item under the same id: the sealed draft is sealed
    * once more at revision 1 and sent against nothing (`base_rev` 0), under the rules of an item that the server left out: the item is marked
    * `missing_on_server` with the revision of the tombstone as its floor, and the key of the new write is noted, so the row that comes back
    * is taken as this device's own. The refused write goes. A failure leaves the refusal as the conflict it would be.
@@ -1627,6 +1677,10 @@ export function createSyncEngine({
           await dropMoot(id);
           return;
         }
+        // A copy under a new id: the old id stays a deleted item, every device accepts the copy as a new item at revision 1, and nothing has to
+        // be told apart. An item that the core will not copy (a passkey, or a newer schema) is written again under its own id.
+        const copied = await copyUnderNewId(id, last, chain);
+        if (copied) return;
         const handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
         /** @type {Awaited<ReturnType<typeof seal>>} */
         let made;
@@ -4028,7 +4082,7 @@ export function createSyncEngine({
     },
 
     /**
-     * @param {"changed" | "error" | "state" | "import" | "import_window_closed"} event
+     * @param {"changed" | "error" | "state" | "import" | "import_window_closed" | "copied"} event
      * @param {(payload: any) => void} fn
      * @returns {() => void} removes the listener
      */

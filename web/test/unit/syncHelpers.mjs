@@ -636,6 +636,17 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }
       return sealed;
     },
+    /** The same body under a new item key, sealed at revision 1 (the copy is not opened); an item with a passkey is not copied. */
+    async copy_item(handle, newId, nowMs, deviceName) {
+      const open = handles.get(handle);
+      if (!open) throw new FakeFerretError("invalid_handle");
+      calls.push(["copy_item", hex16.encode(newId), open.id]);
+      if (open.body.passkey) throw new FakeFerretError("invalid_state");
+      if (hex16.encode(newId) === open.id || hex16.encode(newId) === "00000000000000000000000000000000") throw new FakeFerretError("invalid_input");
+      const body = { ...open.body, modified: nowMs, ...(deviceName === undefined ? {} : { device: deviceName }) };
+      const sealed = seal(newId, 1, body);
+      return { rev: 1, envelope: sealed.envelope, tag: sealed.tag };
+    },
     async make_tombstone(id, rev) {
       calls.push(["make_tombstone", hex16.encode(id), rev]);
       return { rev, tomb: new Uint8Array(Buffer.concat([mac(Buffer.from("tomb"), id, rev8(rev)), mac(Buffer.from("tomb2"), id).subarray(0, 8)])) };
