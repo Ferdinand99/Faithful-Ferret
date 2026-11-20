@@ -453,32 +453,40 @@ pub struct Purged {
     pub min_valid_since: u64,
 }
 
-/// Removes the tombstones of a vault that were last written before
-/// `older_than` (Unix seconds, compared with `changed_at`).
+/// Removes the tombstones of a vault that were last written before `before`
+/// (Unix seconds, compared with `changed_at`) **and** have `seq <= max_seq`.
+/// `max_seq` is the `seq` of the checkpoint the vault stores: a tombstone above
+/// it is not yet listed by any checkpoint, so removing it would leave a client
+/// that has seen the item as live with an item that is gone without a trace.
 ///
 /// The purge and the counters move in one transaction: `bytes_used` loses the
 /// sizes of the removed rows, and `min_valid_since` rises to the highest `seq`
-/// among them (it never falls). `item_count` is not touched, because it counts
-/// live rows. `seq` is not touched either: a purge is not a change that clients
-/// see in the feed.
+/// among them (it never falls, and it never passes `max_seq`). `item_count` is
+/// not touched, because it counts live rows. `seq` is not touched either: a
+/// purge is not a change that clients see in the feed.
 ///
-/// Spec: Fase 1 § 8.4 (retention of 400 days). Meant for the retention job of
-/// the sync milestone, which calls it per vault with `now` minus the retention
-/// as `older_than`; nothing calls it before that.
+/// Spec: Fase 1 § 8.4 (retention of 400 days; the horizon is the highest purged
+/// `seq`) and § 8.6 (a tombstone entry of the checkpoint may lack its row, a
+/// live entry may not). The retention job calls it once per vault with `now`
+/// minus the retention as `before` and the `seq` of the stored checkpoint as
+/// `max_seq`.
 pub fn purge_tombstones(
     conn: &mut Connection,
     vault: &VaultId,
-    older_than: i64,
+    before: i64,
+    max_seq: u64,
 ) -> Result<Purged, StoreError> {
+    // A `seq` above `i64::MAX` is above every stored `seq`.
+    let max_seq = i64::try_from(max_seq).unwrap_or(i64::MAX);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let (removed, bytes, top_seq): (i64, i64, i64) = tx.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(MAX(seq), 0) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
-        params![vault.as_bytes(), older_than],
+        "SELECT COUNT(*), COALESCE(SUM(size), 0), COALESCE(MAX(seq), 0) FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2 AND seq <= ?3",
+        params![vault.as_bytes(), before, max_seq],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     tx.execute(
-        "DELETE FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2",
-        params![vault.as_bytes(), older_than],
+        "DELETE FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2 AND seq <= ?3",
+        params![vault.as_bytes(), before, max_seq],
     )?;
     let changed = tx.execute(
         "UPDATE ferret_vaults SET bytes_used = bytes_used - ?2, min_valid_since = MAX(min_valid_since, ?3) WHERE vault_id = ?1",
