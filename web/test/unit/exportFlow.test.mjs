@@ -77,6 +77,35 @@ test("an_export_password_equal_to_the_master_password_is_refused_by_the_core", a
   assert.equal((await w.store.exportReminder.status(w.db, w.session.serverUrl, w.scope.accountId, 1_800_000_000_000)).lastExportAt, null);
 });
 
+test("the_encrypted_export_starts_only_with_the_grant_of_a_fresh_sign_in", async () => {
+  const w = await exportWorld();
+  const { files, download } = recordingDownload();
+  await w.session.exportEncrypted({ ...args(), download });
+  // The sign-in makes the grant, and the core is given exactly that grant when it starts the export.
+  const grant = idx(w.log, "vault.reauth_grant");
+  const begin = idx(w.log, "vault.export_begin");
+  assert.ok(grant >= 0 && begin > grant, "the grant comes before the export starts");
+  assert.deepEqual([...w.core.begins[0].token], [...GRANT]);
+  assert.equal(files.length, 1);
+
+  // A grant the core does not accept (replaced, used, too old): reauth_required, no file, nothing begun, no key made.
+  const stale = await exportWorld({ handlers: { reauth_grant: () => filled(32, 77) } });
+  const none = recordingDownload();
+  await assert.rejects(stale.session.exportEncrypted({ ...args(), download: none.download }), (error) => error.code === "reauth_required");
+  assert.equal(none.files.length, 0);
+  assert.ok(!stale.core.calls.some(([name]) => name === "argon2_export_key" || name === "export_finish"));
+  // No grant from the sign-in: the page does not even ask the core to begin.
+  const missing = await exportWorld({ handlers: { reauth_grant: () => undefined } });
+  await assert.rejects(missing.session.exportEncrypted({ ...args(), download: none.download }), (error) => error.code === "reauth_required");
+  assert.ok(!missing.core.calls.some(([name]) => name === "export_begin"));
+  // The grant array the page held is zero afterwards, and one grant is one export.
+  const held = [];
+  const kept = await exportWorld({ handlers: { reauth_grant: () => (held.push(new Uint8Array(GRANT)), held.at(-1)) } });
+  await kept.session.exportEncrypted({ ...args(), download: none.download });
+  assert.ok(held.length === 1 && wiped(held[0]));
+  assert.equal(none.files.length, 1);
+});
+
 test("export_uses_256_mib_and_three_passes", async () => {
   assert.deepEqual({ ...EXPORT_KDF }, { m_kib: 262_144, t: 3, p: 1 });
   assert.equal(EXPORT_KDF.m_kib, 256 * 1024, "256 MiB in KiB");
@@ -231,7 +260,7 @@ test("an_item_that_does_not_open_stops_the_export_and_leaves_no_file", async () 
   const { files, download } = recordingDownload();
   await assert.rejects(w.session.exportEncrypted({ ...args(), download }), (error) => error.code === "export_item_unreadable");
   assert.equal(files.length, 0);
-  assert.equal(w.core.aborted, 1, "the draft that finding the item began is dropped");
+  assert.equal(w.core.aborted, 0, "no draft was begun, and finding the item spends no grant");
   // The refusal names the item that does not open (the others open one by one), and no more.
   const refusal = await w.session.exportEncrypted({ ...args(), download }).catch((error) => error);
   assert.deepEqual(refusal.details.ids, ["55".repeat(16)]);

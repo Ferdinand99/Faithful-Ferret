@@ -42,10 +42,21 @@ export function fakeExportCore({ jobGate = null, begunKdf = null, jobFails = nul
     lastKey: null,
     /** What `reveal_plain_export` was given. */
     reveals: [],
+    begins: [],
     aborted: 0,
     vault: {
-      export_begin(rows, now, kdf) {
+      // Each fresh sign-in makes a new one-time grant (the same bytes, so that tests can compare).
+      reauth_grant() {
+        grantUsed = false;
+        return new Uint8Array(grant);
+      },
+      export_begin(rows, now, kdf, token) {
         calls.push(["export_begin", rows.length, now, kdf]);
+        core.begins.push({ token: token?.slice() ?? null });
+        // The core's gate: only the vault's one-time grant starts an export, and one attempt uses it up.
+        const ok = !grantUsed && token instanceof Uint8Array && same(token, grant);
+        grantUsed = true;
+        if (!ok) throw coded("reauth_required");
         for (const row of rows) {
           if (new TextDecoder().decode(row.envelope).startsWith("DAMAGED")) throw coded("decrypt");
         }
@@ -61,6 +72,15 @@ export function fakeExportCore({ jobGate = null, begunKdf = null, jobFails = nul
         const file = enc.encode(JSON.stringify({ magic: "fake-ferretexport", kdf: draft.kdf, key: [...key], items }));
         draft = null;
         return file;
+      },
+      // What the page uses to find the rows that do not open (no secret comes back, no grant is spent).
+      open_item(id, rev, envelope) {
+        calls.push(["open_item"]);
+        if (new TextDecoder().decode(envelope).startsWith("DAMAGED")) throw coded("decrypt");
+        return 1;
+      },
+      close_item() {
+        calls.push(["close_item"]);
       },
       export_abort() {
         calls.push(["export_abort"]);

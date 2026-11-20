@@ -152,13 +152,29 @@ impl Vault {
     /// more; parameters below that default are `kdf_out_of_range`, since an
     /// export file is attacked offline. Returns `{ salt, kdf }` for
     /// `argon2_export_key`.
+    ///
+    /// The file holds every secret of the vault, passkey private keys and PRF
+    /// seeds included, so it needs the same one-time `token` as
+    /// `reveal_plain_export` (`UnlockJob.reauth_grant`, made only by a fresh
+    /// sign-in with the master password in this session). `created_at` is
+    /// the caller's clock in unix milliseconds and is also the time the token
+    /// is checked against. The token is used up by the first attempt whether
+    /// it matched or not; a missing, wrong, used or replaced token, one that
+    /// is more than five minutes old, and a `created_at` earlier than the
+    /// time of the grant are `reauth_required`. A `created_at` that is not a
+    /// time and parameters below the default are refused first and leave the
+    /// token valid. `export_finish` needs no token of its own: only a draft
+    /// that this call made can be finished.
     pub fn export_begin(
         &mut self,
         rows: JsValue,
         created_at: f64,
         kdf: JsValue,
+        token: Option<Vec<u8>>,
     ) -> Result<JsValue, JsValue> {
         run(|| {
+            let token = Zeroizing::new(token.unwrap_or_default());
+            let now = js_time(created_at)?;
             let params = if kdf.is_undefined() || kdf.is_null() {
                 EXPORT_KDF
             } else {
@@ -168,6 +184,7 @@ impl Vault {
             {
                 return Err(ferret_core::Error::KdfOutOfRange.into());
             }
+            self.take_grant(&token, now)?;
             self.begin_export(rows, created_at, params)
         })
     }
@@ -222,18 +239,7 @@ impl Vault {
             if format != "json" && format != "csv" {
                 return Err(Fail::Input);
             }
-            let grant = self.inner_mut()?.grant.take();
-            let granted = grant.is_some_and(|g| {
-                // Both checks always run; the token comparison is constant time.
-                let same = same_token(&g.token, &token);
-                let fresh = now
-                    .checked_sub(g.granted_ms)
-                    .is_some_and(|age| age <= GRANT_TTL_MS);
-                same & fresh
-            });
-            if !granted {
-                return Err(Fail::Reauth);
-            }
+            self.take_grant(&token, now)?;
             let items = items_of(self, rows)?;
             let options = PlainExportOptions { include_passkeys };
             Ok(match format {
@@ -316,6 +322,23 @@ pub(crate) fn same_token(made: &[u8; 32], given: &[u8]) -> bool {
 }
 
 impl Vault {
+    /// Takes the vault's one-time grant and checks `token` against it: the
+    /// grant is gone afterwards, whatever the answer. `Fail::Reauth` when
+    /// there is none, the token is another, or the grant is older than
+    /// [`GRANT_TTL_MS`] at `now` (or from a later time).
+    pub(crate) fn take_grant(&mut self, token: &[u8], now: u64) -> Res<()> {
+        let grant = self.inner_mut()?.grant.take();
+        let granted = grant.is_some_and(|g| {
+            // Both checks always run; the token comparison is constant time.
+            let same = same_token(&g.token, token);
+            let fresh = now
+                .checked_sub(g.granted_ms)
+                .is_some_and(|age| age <= GRANT_TTL_MS);
+            same & fresh
+        });
+        if granted { Ok(()) } else { Err(Fail::Reauth) }
+    }
+
     /// Starts an export with `params`, which the caller has checked.
     pub(crate) fn begin_export(
         &mut self,

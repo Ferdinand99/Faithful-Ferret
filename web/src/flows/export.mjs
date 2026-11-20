@@ -4,17 +4,18 @@
 //
 // The encrypted export, in order:
 //
-//   login_start ... POST login/finish   the fresh re-authentication (the vault that is open is not touched)
 //   (cache rows)                        the live rows this device holds, as the server sent them (ciphertext)
-//   export_begin                        core: opens every row (a row that does not open fails the export),
+//   login_start ... POST login/finish   the fresh re-authentication (the vault that is open is not touched)
+//   reauth_grant                        core: the one-time token that only that sign-in makes
+//   export_begin                        core: takes the token (the file holds every secret, passkey keys included),
+//                                       opens every row (a row that does not open fails the export),
 //                                       draws the salt, keeps the draft in WASM. 256 MiB, 3 passes, 1 lane.
 //   argon2_export_key                   job worker: the slow step. The core refuses an export password that
 //                                       is shorter than 12 characters or equal to the master password.
 //   export_finish                       core: seals the file with that key and wipes the key
 //   download                            the browser is given the file; the byte array is wiped after
 //
-// The plain export needs the one-time grant that only a fresh sign-in makes (`reauth_grant`,
-// five minutes, one attempt), and an explicit `confirmed: true` that the page gets from two separate
+// The plain export needs the same one-time grant (`reauth_grant`, five minutes, one attempt), and an explicit `confirmed: true` that the page gets from two separate
 // confirmations. JSON includes passkey keys only when asked for; CSV never does, and the core
 // neutralizes formulas in CSV.
 //
@@ -66,8 +67,8 @@ async function opening(use, unreadable = async () => /** @type {string[]} */ ([]
 const MAX_NAMED = 20;
 
 /**
- * Which rows do not open: each is tried alone with `export_begin` (the core opens it and keeps a draft, which is dropped at the end).
- * Best effort; a call that fails for another reason ends the search.
+ * Which rows do not open: each is opened and closed again (the same call the list uses; nothing secret comes back, and
+ * no grant is spent). Best effort; a call that fails for another reason ends the search.
  * @param {Env} env
  * @param {Array<{ item_id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }>} rows
  * @returns {Promise<string[]>} item ids (32 hex characters)
@@ -75,18 +76,15 @@ const MAX_NAMED = 20;
 async function findUnreadable(env, rows) {
   /** @type {string[]} */
   const ids = [];
-  try {
-    for (const row of rows) {
-      if (ids.length >= MAX_NAMED) break;
-      try {
-        await env.client.vault.export_begin([row], env.now(), EXPORT_KDF);
-      } catch (error) {
-        if (/** @type {any} */ (error)?.code === "decrypt") ids.push(hex16.encode(row.item_id));
-        else break;
-      }
+  for (const row of rows) {
+    if (ids.length >= MAX_NAMED) break;
+    try {
+      const handle = await env.client.vault.open_item(row.item_id, row.rev, row.envelope, row.tag);
+      await Promise.resolve(env.client.vault.close_item(handle)).catch(() => undefined);
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code === "decrypt") ids.push(hex16.encode(row.item_id));
+      else break;
     }
-  } finally {
-    await Promise.resolve(env.client.vault.export_abort()).catch(() => undefined);
   }
   return ids;
 }
@@ -150,8 +148,11 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
   // Ciphertext only; an empty vault stops here, before the slow sign-in.
   const rows = await exportRows(env, scope);
   onProgress({ phase: "checking" });
-  // The master password again: a wrong one stops here, and the vault that is open stays open.
-  await reauthenticate(env, { password: masterPassword, skCode });
+  // The master password again: a wrong one stops here, and the vault that is open stays open. The sign-in makes the
+  // one-time grant that the core needs to start the export (it holds every secret of the vault).
+  const done = await reauthenticate(env, { password: masterPassword, skCode, wantGrant: true });
+  const grant = done.grant;
+  if (!(grant instanceof Uint8Array)) throw new AccountError("reauth_required");
 
   /** @type {Uint8Array | null} */
   let key = null;
@@ -163,7 +164,7 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
   let gone = false;
   try {
     onProgress({ phase: "reading", items: rows.length });
-    const begun = await opening(() => client.vault.export_begin(rows, env.now(), EXPORT_KDF), () => findUnreadable(env, rows));
+    const begun = await opening(() => client.vault.export_begin(rows, env.now(), EXPORT_KDF, grant), () => findUnreadable(env, rows));
     draft = true;
     // The cost is the core's to keep; this makes a change of its default visible here instead of in a weaker file.
     if (!begun?.kdf || begun.kdf.m_kib < EXPORT_KDF.m_kib || begun.kdf.t < EXPORT_KDF.t || begun.kdf.p < EXPORT_KDF.p) {
@@ -183,7 +184,8 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
     gone = code === "locked" || code === "worker_failed" || code === "vault_locked";
     throw error;
   } finally {
-    // The core wipes the key it was given; this is for the call that did not get that far.
+    // The core wipes the grant and the key it was given; this is for the calls that did not get that far.
+    grant.fill(0);
     key?.fill(0);
     // The Blob has its own copy; the array is no longer needed.
     file?.fill(0);

@@ -824,7 +824,8 @@ test("export_and_import_split_the_slow_step_into_the_job_worker", () => {
 });
 
 test("export_begin_refuses_kdf_parameters_below_the_default", () => {
-  const { vault } = newAccount("export-floor");
+  const account = newAccount("export-floor");
+  const { vault } = account;
   const id = fill(16, 0x41);
   const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
   for (const kdf of [
@@ -833,16 +834,63 @@ test("export_begin_refuses_kdf_parameters_below_the_default", () => {
     { m_kib: 131072, t: 9, p: 1 },
     { m_kib: 262143, t: 3, p: 1 },
   ]) {
-    assert.equal(code(() => vault.export_begin(rows, NOW, kdf)), "kdf_out_of_range", JSON.stringify(kdf));
+    assert.equal(code(() => vault.export_begin(rows, NOW, kdf, reauthToken(account))), "kdf_out_of_range", JSON.stringify(kdf));
   }
   // The default (256 MiB, 3 passes) and anything stronger is fine; only the
   // draft is made here, no Argon2id runs.
-  assert.deepEqual(vault.export_begin(rows, NOW, undefined).kdf, { m_kib: 262144, t: 3, p: 1 });
-  assert.deepEqual(vault.export_begin(rows, NOW, { m_kib: 262144, t: 4, p: 1 }).kdf, { m_kib: 262144, t: 4, p: 1 });
+  assert.deepEqual(vault.export_begin(rows, NOW, undefined, reauthToken(account)).kdf, { m_kib: 262144, t: 3, p: 1 });
+  assert.deepEqual(vault.export_begin(rows, NOW, { m_kib: 262144, t: 4, p: 1 }, reauthToken(account)).kdf, { m_kib: 262144, t: 4, p: 1 });
   // A key that is refused (here: too short) leaves the draft in place, so the
   // export can be finished with the right key.
   assert.equal(code(() => vault.export_finish(fill(31, 7))), "input_too_short");
   assert.ok(vault.export_finish(fill(32, 7)).length > 100);
+});
+
+test("an_encrypted_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
+  const account = newAccount("export-token");
+  const { vault } = account;
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  const begin = (token, now = NOW, kdf = undefined) => vault.export_begin(rows, now, kdf, token);
+  // No token, a short one, a zero one, a made-up one: reauth_required, no draft, and each attempt uses the grant up.
+  const first = reauthToken(account);
+  assert.equal(code(() => begin(undefined)), "reauth_required");
+  assert.equal(code(() => begin(first.slice())), "reauth_required", "used up by the attempt without a token");
+  const second = reauthToken(account);
+  assert.equal(code(() => begin(new Uint8Array(0))), "reauth_required");
+  assert.equal(code(() => begin(second.slice())), "reauth_required");
+  const third = reauthToken(account);
+  assert.equal(code(() => begin(fill(32, 7))), "reauth_required");
+  assert.equal(code(() => begin(third.slice())), "reauth_required");
+  assert.equal(code(() => vault.export_finish(fill(32, 7))), "invalid_input", "a refused begin leaves no draft");
+  // A grant for the plaintext export is the same permission and is not kept for this one.
+  const plain = reauthToken(account);
+  assert.ok(vault.reveal_plain_export(rows, "json", false, plain.slice(), NOW).length > 0);
+  assert.equal(code(() => begin(plain)), "reauth_required", "one grant, one use");
+  // Five minutes and no more; the clock cannot go back; an attempt uses the token up.
+  assert.ok(begin(reauthToken(account), NOW + 300_000).salt.length === 16);
+  const late = reauthToken(account);
+  assert.equal(code(() => begin(late.slice(), NOW + 300_001)), "reauth_required");
+  assert.equal(code(() => begin(late.slice())), "reauth_required", "used up by the late attempt");
+  const early = reauthToken(account);
+  assert.equal(code(() => begin(early.slice(), NOW - 1)), "reauth_required");
+  assert.equal(code(() => begin(early.slice())), "reauth_required");
+  // A mistake of the page (a time that is not a time, parameters that are too weak) keeps the token.
+  const kept = reauthToken(account);
+  assert.equal(code(() => begin(kept.slice(), NaN)), "invalid_input");
+  assert.equal(code(() => begin(kept.slice(), -5)), "invalid_input");
+  assert.equal(code(() => begin(kept.slice(), NOW, { m_kib: 65536, t: 3, p: 1 })), "kdf_out_of_range");
+  const started = begin(kept, NOW + 1);
+  assert.equal(started.salt.length, 16);
+  // A new token replaces the one before it.
+  const old = reauthToken(account);
+  const newer = reauthToken(account);
+  assert.equal(code(() => begin(old)), "reauth_required");
+  assert.equal(code(() => begin(newer)), "reauth_required", "the failed attempt used it up");
+  // Locking drops the grant.
+  const dropped = reauthToken(account);
+  vault.lock();
+  assert.equal(code(() => begin(dropped)), "vault_locked");
 });
 
 test("a_plaintext_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
@@ -1189,7 +1237,8 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.equal(a.length, 32);
   assert.ok(a.some((x) => x !== 0));
   assert.notDeepEqual(a, b);
-  const { vault, created } = newAccount("zero-keys");
+  const account = newAccount("zero-keys");
+  const { vault, created } = account;
   const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   assert.equal(code(() => wrap(new Uint8Array(32), fill(32, 0x33))), "input_all_zero", "a salt of zeros");
   assert.equal(code(() => wrap(a, new Uint8Array(32))), "input_all_zero", "a PRF output of zeros");
@@ -1198,7 +1247,7 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, new Uint8Array(32), wrap(a, fill(32, 0x33)), pinned(created.pinned))), "input_all_zero");
   assert.equal(code(() => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), new Uint8Array(32))), "input_all_zero");
   const id = fill(16, 0x41);
-  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW);
+  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW, undefined, reauthToken(account));
   assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");
   assert.ok(vault.export_finish(fill(32, 7)).length > 100, "the draft was kept");
 });
