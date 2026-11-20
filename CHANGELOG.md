@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.3.0...v0.4.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wasm:** require the re-authentication grant to start an encrypted export ([#177](https://github.com/Ferdinand99/Faithful-Ferret/issues/177))
+
+### Features
+
+* **core:** renew the recovery key and add an import port to the vault worker ([#138](https://github.com/Ferdinand99/Faithful-Ferret/issues/138)) ([ef28d36](https://github.com/Ferdinand99/Faithful-Ferret/commit/ef28d36bdbfdb275168bb29d4fb65be4f9a197c0))
+
+
+### Bug Fixes
+
+* **core:** keep the stored recovery method id when recovering ([#163](https://github.com/Ferdinand99/Faithful-Ferret/issues/163)) ([4341ce7](https://github.com/Ferdinand99/Faithful-Ferret/commit/4341ce7c91a27c0d999b1c9d9cbe4ba1e6716bec))
+* **wasm:** require the re-authentication grant to start an encrypted export ([#177](https://github.com/Ferdinand99/Faithful-Ferret/issues/177)) ([7f82c05](https://github.com/Ferdinand99/Faithful-Ferret/commit/7f82c05cb2cf8de625cae16cef5bfa515c0c8a47))
+
 ## [0.3.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.2.0...v0.3.0) (2026-11-19)
 
 
