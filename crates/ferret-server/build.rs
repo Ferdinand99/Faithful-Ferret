@@ -6,7 +6,8 @@
 //! It also refuses a release build without the built web vault (`web/dist`),
 //! unless the feature `dev-no-web` is on.
 //!
-//! Later this script also copies the kit's templates for the admin pages.
+//! It also copies the kit's templates to `templates/kit/` (git ignores the copy), so the
+//! admin pages' askama templates can extend the kit's layouts.
 
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 mod registry;
 
 fn main() {
+    vole_kit_build::templates();
     let manifest_dir =
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));

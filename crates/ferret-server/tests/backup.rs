@@ -1069,6 +1069,27 @@ async fn the_status_leaves_running_when_a_run_panics() {
 }
 
 #[tokio::test]
+async fn a_panic_clears_a_waiting_request_so_a_manual_run_can_be_asked_for_again() {
+    let app = app_with_vault().await;
+    let status = app.backup_status();
+    let mut job = job(&app, cfg(&app), Arc::new(set::RealPlatform));
+
+    // A manual request, taken by the job into its collecting window.
+    assert_eq!(status.request_manual_run(), Ok(()));
+    assert!(job.poll().await.is_none(), "the window is collecting");
+    assert!(status.snapshot().waiting);
+    assert!(
+        status.request_manual_run().is_err(),
+        "refused while waiting"
+    );
+
+    // The job panics before the run starts: nothing is waiting any more.
+    job.after_panic();
+    assert!(!status.snapshot().waiting);
+    assert_eq!(status.request_manual_run(), Ok(()));
+}
+
+#[tokio::test]
 async fn a_failed_sync_of_the_backup_folder_after_the_rename_still_counts_as_a_set() {
     let app = app_with_vault().await;
     let cfg = cfg(&app);
