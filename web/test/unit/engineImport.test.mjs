@@ -244,3 +244,26 @@ test("the_import_mark_is_never_in_a_request_to_the_server_and_the_bytes_are_thos
   assert.ok(!text.includes('"import":'), "the mark is the engine's own");
   d.engine.stop();
 });
+
+test("the_page_can_ask_how_an_import_stands_also_after_a_reload", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const first = await started({ model, client });
+  assert.deepEqual(first.engine.importStatus(), { queued: 0, sent: 0, total: 0, failed: 0, windowClosed: false });
+  const window = model.openImportWindow(100);
+  await first.engine.importItems(await sealed(client, 150), { windowId: window });
+  await until(() => first.closed.length === 1, "the window closes after 100");
+  assert.deepEqual(first.engine.importStatus(), { queued: 50, sent: 100, total: 150, failed: 0, windowClosed: true });
+  first.engine.stop();
+
+  // After a reload the engine finds the rest in the outbox and says that the window is closed once the server has said so again.
+  const second = await started({ model, client, db: first.store.database, locks: first.locks });
+  await until(() => second.closed.length === 1, "the old window is refused again");
+  assert.deepEqual(second.engine.importStatus(), { queued: 50, sent: 0, total: 50, failed: 0, windowClosed: true });
+  await second.engine.resumeImport({ windowId: model.openImportWindow(50) });
+  await until(() => model.items.size === 150, "the rest");
+  await until(() => second.engine.importStatus().queued === 0);
+  const done = second.engine.importStatus();
+  assert.deepEqual([done.queued, done.total, done.failed, done.windowClosed], [0, 50, 0, false]);
+  second.engine.stop();
+});

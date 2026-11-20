@@ -1,0 +1,31 @@
+/* The import page. Colours and components come from base.css. No inline style is used anywhere. */
+
+.import-page h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.import-page h3 {
+  margin: var(--sp-4) 0 0;
+  font-size: 0.9375rem;
+}
+
+.import-page [data-role="tracker"] > h2,
+.import-page [data-role="preview"] > h2 {
+  margin-top: 0;
+}
+
+.import-page .import-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding-left: var(--sp-5);
+}
+
+.import-page [data-role="file"] {
+  max-width: 100%;
+}
+
+.import-page [data-role="import-again"] {
+  align-self: flex-start;
+}

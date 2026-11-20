@@ -3722,6 +3722,17 @@ export function createSyncEngine({
     },
 
     /**
+     * How an import stands, for the page that shows it (also after a reload, when the import carries on from the outbox): `queued` writes of
+     * the import are not done yet, `sent` went through since this engine started or the import began, `total` is the size of the import, `failed`
+     * is how many the server refused, and `windowClosed` says that the server refused the window (the page offers "Continue import").
+     * @returns {{ queued: number, sent: number, total: number, failed: number, windowClosed: boolean }}
+     */
+    importStatus() {
+      const { queued, windowClosed } = runner.importState();
+      return { queued, sent: importCount.sent, total: importCount.total, failed: importCount.failed, windowClosed };
+    },
+
+    /**
      * "Continue the import": the server refused the window of the import (`import_window_closed`), or the page was reloaded after it ran
      * out. The writes that are left get the window `windowId` (a new one, made with a fresh re-authentication for as many operations as
      * are left) and go on in batches under their own keys: what the server stored before the window closed comes back as a replay.

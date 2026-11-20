@@ -5,6 +5,6 @@ import { createCryptoSession } from "../crypto/session.mjs";
 /** @type {import("../app.mjs").ServiceDef} */
 export default {
   name: "crypto",
-  deps: ["api", "store", "client", "sync"],
-  create: ({ api, store, client, sync }) => createCryptoSession({ client, api, store, sync }),
+  deps: ["api", "store", "client", "sync", "createImportWorker"],
+  create: ({ api, store, client, sync, createImportWorker }) => createCryptoSession({ client, api, store, sync, createImportWorker }),
 };
