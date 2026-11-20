@@ -268,10 +268,6 @@ pub fn run_case<R: SecureRng>(op: &str, i: &Value, rng: &mut R) -> Result<Value,
                         envelope: &envelope,
                         tag: &tag,
                     },
-                    new_recovery_method_id: MethodId::from_bytes(array(
-                        i,
-                        "new_recovery_method_id",
-                    )),
                 },
                 NewPassword {
                     input: &input,

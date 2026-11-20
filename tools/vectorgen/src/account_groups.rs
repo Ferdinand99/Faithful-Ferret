@@ -520,7 +520,6 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
                 "rk_code": code,
                 "rk_wrap": rk_wrap(&wraps[1]),
                 "manifest": manifest,
-                "new_recovery_method_id": h(&[0x73; 16]),
                 "pinned": pinned,
                 "sign": sign.then(|| json!({ "nonce": h(&[0x44; 32]), "body": h(b"{\"recover\":true}") })),
             }),
@@ -544,6 +543,11 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
     check(
         recovered["recovery_key"] != created["rk"],
         "the recovery key is new",
+    )?;
+    check(
+        recovered["recovery_wrap"]["method_id"] == wraps[1]["method_id"]
+            && recovered["password_wrap"]["method_id"] == wraps[0]["method_id"],
+        "both wraps keep the stored method ids",
     )?;
     m.ok(
         "account/recover/002",
@@ -655,13 +659,23 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
         ),
         "pinned_sk_bit",
     )?;
+    let shared_id = sealed_manifest_json(
+        &vk_hex,
+        1,
+        vec![
+            ferret_core::ManifestEntry::new(1, ferret_core::MethodId::from_bytes([0x71; 16]), 1),
+            ferret_core::ManifestEntry::new(2, ferret_core::MethodId::from_bytes([0x71; 16]), 1),
+        ],
+        vec![],
+        "recover-shared-id",
+    )?;
     m.err(
         "account/recover/011",
-        "the new recovery wrap would get the id of the password wrap",
+        "the password entry has the id of the recovery wrap, which the new wrap keeps",
         "account.recover",
         merge(
             recover_input(&rk_code, &reg_new, None, false),
-            json!({ "new_recovery_method_id": h(&[0x70; 16]) }),
+            json!({ "manifest": shared_id }),
         ),
         "malformed_entries",
     )?;
