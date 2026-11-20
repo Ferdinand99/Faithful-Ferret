@@ -334,6 +334,23 @@ async fn logout_of_another_session_leaves_the_stream_open() {
 }
 
 #[tokio::test]
+async fn a_device_revocation_does_not_close_a_cookie_stream_and_a_session_revocation_still_does() {
+    let w = world().await;
+    let mut stream = open(&w).await;
+    let events = w.app.sync_events();
+    // A token device with the same id as the browser of the stream: a cookie
+    // stream belongs to its session, never to a token device.
+    events.device_revoked(device(1));
+    events.device_revoked(device(2));
+    stream.quiet(Duration::from_millis(900)).await;
+    assert_eq!(live_streams(&w.app).await, 1);
+    // Its own session ending still closes it at once.
+    events.session_revoked(w.issued.sid);
+    stream.end(SECOND).await;
+    wait_until(SECOND, || w.app.state.streams.open() == 0).await;
+}
+
+#[tokio::test]
 async fn the_logout_of_the_admin_listener_does_not_end_a_vault_stream() {
     // A vault session id shown to the admin listener's sign-out is not ended
     // there (the row belongs to the other listener), so its stream goes on.

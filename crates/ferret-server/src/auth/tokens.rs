@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use ferret_server_auth::Clock;
 
-use crate::auth::dpop::{JTI_CAPACITY, JTI_PER_KEY, JtiCache};
+use crate::auth::dpop::{JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER, JtiCache};
 use crate::auth::refresh::{GRACE_CAPACITY, RefreshGrace};
 use crate::ids::{DeviceId, TokenSecret};
 use crate::state::VaultDb;
@@ -34,10 +34,8 @@ pub struct DeviceAuth {
     #[expect(dead_code, reason = "read by the token routes, which come later")]
     clock: Arc<dyn Clock>,
     /// The `jti` values used in the window, for the whole process.
-    #[expect(dead_code, reason = "read by the token routes, which come later")]
     replay: Arc<JtiCache>,
     /// The successors of the grace period, for the whole process.
-    #[expect(dead_code, reason = "read by the token routes, which come later")]
     grace: Arc<RefreshGrace>,
     /// The configured public origin of the vault listener, without a trailing
     /// `/`.
@@ -52,10 +50,20 @@ impl DeviceAuth {
         Self {
             db,
             clock,
-            replay: Arc::new(JtiCache::new(JTI_CAPACITY, JTI_PER_KEY)),
+            replay: Arc::new(JtiCache::new(JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER)),
             grace: Arc::new(RefreshGrace::new(GRACE_CAPACITY)),
             vault_origin: Arc::from(vault_origin.trim_end_matches('/')),
         }
+    }
+
+    /// The cache of used `jti` values, shared by every clone.
+    pub fn replay(&self) -> &JtiCache {
+        &self.replay
+    }
+
+    /// The successors of the grace period, shared by every clone.
+    pub fn grace(&self) -> &RefreshGrace {
+        &self.grace
     }
 
     /// The `htu` a proof for `path` must name: the vault origin and the path
@@ -64,8 +72,23 @@ impl DeviceAuth {
     ///
     /// RFC 9449 § 4.3 (the `htu` matches the URI of the request, without query
     /// and fragment).
-    pub fn htu(&self, path: &str) -> String {
-        format!("{}{path}", self.vault_origin)
+    pub fn htu(&self, path: &str) -> Htu {
+        Htu(format!("{}{path}", self.vault_origin))
+    }
+}
+
+/// The `htu` a proof must name: the configured vault origin and the path of
+/// the request. Only [`DeviceAuth::htu`] makes one, so no route can build it
+/// from `Host`, a forwarded host or anything else the request says.
+///
+/// RFC 9449 § 4.3; Spec: Fase 1 § 7.6.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Htu(String);
+
+impl Htu {
+    /// The URL as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
