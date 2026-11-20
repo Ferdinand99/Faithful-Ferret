@@ -9,7 +9,9 @@
 // unlock the session calls `sync.start({ accountId, vaultId, vkEpoch })`, and
 // on lock and sign-out `sync.stop()`. A sync that is not attached, or that
 // throws, never stops a sign-in.
+import { changePassword } from "../flows/changePassword.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
+import { reauthenticate } from "../flows/reauth.mjs";
 import { register } from "../flows/register.mjs";
 import { readSetupQr } from "../flows/setupQr.mjs";
 import { deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
@@ -87,6 +89,8 @@ export function createCryptoSession({
   let current = null;
   /** @type {number | null} */
   let reauthAt = null;
+  /** When the freshness of the last re-authentication ends (ms since 1970); null when there is none. @type {number | null} */
+  let freshUntil = null;
   /** @type {Set<() => void>} */
   const lockListeners = new Set();
 
@@ -104,6 +108,7 @@ export function createCryptoSession({
     seam.stop();
     current = null;
     reauthAt = null;
+    freshUntil = null;
     try {
       await client.lock();
     } finally {
@@ -150,6 +155,37 @@ export function createCryptoSession({
      */
     freshReauth(maxAgeMs = REAUTH_FRESH_MS) {
       return reauthAt !== null && now() - reauthAt >= 0 && now() - reauthAt <= maxAgeMs;
+    },
+
+    /**
+     * When the server stops counting this session as freshly re-authenticated (milliseconds since 1970), or
+     * null when it is not fresh. A page that asks for the password again skips its dialog while this covers
+     * the next minute (`coversNext`).
+     */
+    reauthUntil() {
+      return freshUntil !== null && freshUntil > now() ? freshUntil : null;
+    },
+
+    /**
+     * Confirms the master password again for the open session (spec Fase 1 § 4.6 (a)). The vault stays open.
+     * @param {Parameters<typeof reauthenticate>[1]} args
+     */
+    async reauthenticate(args) {
+      const done = await reauthenticate(env, args);
+      freshUntil = done.until;
+      return done;
+    },
+
+    /**
+     * Changes the master password of the open account (see `flows/changePassword.mjs`). The vault stays open
+     * and the session goes on; every other session of the account is ended by the server.
+     * @param {Parameters<typeof changePassword>[1]} args
+     */
+    async changePassword(args) {
+      if (current === null) throw new AccountError("session_ended");
+      const done = await changePassword(env, args);
+      freshUntil = done.until;
+      return done;
     },
 
     /**

@@ -112,6 +112,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   const lockButton = el("button", { type: "button", class: "btn btn-secondary btn-sm i-lock", "data-role": "lock" }, t("vault.lock"));
   const navItems = el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items"));
   const navNew = el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"));
+  const navAccount = el("a", { href: "#/account", class: "account-link", "data-role": "nav-account" }, t("security.nav.account"));
   const nav = el("nav", { "aria-label": t("vault.nav.label") }, navItems, navNew);
   // The live-update field: a second pill beside the sync state, only when the page has the channel.
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
@@ -120,6 +121,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     nav,
     // With the live field, the two states share one group, so that on a phone they stack in the second row of the bar.
     liveStatus ? el("span", { class: "vault-status", "data-role": "status-group" }, status, liveStatus) : status,
+    navAccount,
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
   // What the engine has found out about the server (warnings and stops) has its own banner, which follows the engine's
@@ -216,8 +218,11 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     const path = String(win?.location?.hash ?? "").replace(/^#/, "");
     const onNew = path === "/items/new";
     const onItems = !onNew && (path === "/items" || path.startsWith("/items/"));
+    // The account page and the pages it lists (the password page for now) belong to the account link.
+    const onAccount = path === "/account" || path === "/password";
     navItems.setAttribute("aria-current", onItems ? "page" : "false");
     navNew.setAttribute("aria-current", onNew ? "page" : "false");
+    navAccount.setAttribute("aria-current", onAccount ? "page" : "false");
   }
   markCurrent();
   if (typeof win?.addEventListener === "function") {
