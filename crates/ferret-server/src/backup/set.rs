@@ -690,7 +690,7 @@ struct DbFacts {
 }
 
 /// `file:<path>?immutable=1` with the path percent-encoded.
-fn immutable_uri(path: &Path) -> Result<String, BackupError> {
+pub(crate) fn immutable_uri(path: &Path) -> Result<String, BackupError> {
     let abs = std::fs::canonicalize(path).map_err(io_err("could not resolve the database copy"))?;
     let text = abs
         .to_str()

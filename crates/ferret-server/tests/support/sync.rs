@@ -289,11 +289,12 @@ impl World {
         .await;
     }
 
-    /// `ferret restore-epoch bump`: the epoch of every vault goes up by one.
+    /// `ferret restore-epoch bump`, with 0 for the time in its rule
+    /// (`max(stored + 1, now, at_least)`): the epoch of every vault goes up by
+    /// one, so the epochs of the matrix count bumps.
     pub async fn bump_restore_epoch(&self) -> u64 {
         self.db(|conn| {
-            ferret_server::vault::reconcile::bump_restore_epoch(conn, None, 1_793_491_200)
-                .expect("a bump")
+            ferret_server::vault::reconcile::bump_restore_epoch(conn, None, 0).expect("a bump")
         })
         .await
     }
