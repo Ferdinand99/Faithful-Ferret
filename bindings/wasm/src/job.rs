@@ -1087,7 +1087,8 @@ impl UnlockJob {
         })
     }
 
-    /// Makes the one-time token that `Vault.reveal_plain_export` needs. Like
+    /// Makes the one-time token that `Vault.export_begin` and
+    /// `Vault.reveal_plain_export` need. Like
     /// a rekey it needs a fresh sign-in of this job (`login_start`,
     /// `login_finish`) in which the master password was typed again. `pw_wrap`
     /// is the vault's password wrap record from the server: it is opened with
