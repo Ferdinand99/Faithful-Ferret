@@ -870,27 +870,42 @@ fn presented_sid(jar: &SignedCookieJar) -> Option<SidHash> {
 }
 
 /// The OPAQUE record each account has now, as the library's `login_finish`
-/// reads it: on the connection the request holds, by the credential id of the
-/// state (the account id, or the made-up id of a name without an account).
+/// reads it, by the credential id of the state (the account id, or the made-up
+/// id of a name without an account).
+///
+/// `login_finish` runs on a blocking thread, outside the pool: it waits for
+/// the login-state store (its mutex, and the SQLite write lock for `take`),
+/// and a request that held a pooled connection through that wait would let a
+/// flood of finishes, which need no account, starve every other route of the
+/// pool. This source takes a pooled connection for its one `SELECT` only, and
+/// only for a state that opened and that the throttle let through.
 ///
 /// A credential with no row hashes the stand-in record, so a real and a
-/// made-up account cost the same here apart from the index lookup, which finds
-/// a row or not as the lookup of `login/start` does.
-struct StoredRecords<'c>(&'c Connection);
+/// made-up account cost the same here apart from the primary-key lookup, which
+/// finds a row or not as the lookup of `login/start` does.
+struct StoredRecords {
+    db: VaultDb,
+    runtime: tokio::runtime::Handle,
+}
 
-impl CurrentRecord for StoredRecords<'_> {
+impl CurrentRecord for StoredRecords {
     fn current_record(
         &self,
         credential: &CredentialId,
     ) -> Result<Option<RecordBinding>, AuthError> {
+        let account = *credential.as_bytes();
+        // A blocking thread of the runtime, so waiting on the pool is allowed.
         let found: Option<Vec<u8>> = self
-            .0
-            .query_row(
-                "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
-                params![credential.as_bytes().as_slice()],
-                |r| r.get(0),
-            )
-            .optional()
+            .runtime
+            .block_on(self.db.with_conn(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
+                        params![account.as_slice()],
+                        |r| r.get(0),
+                    )
+                    .optional()?)
+            }))
             .map_err(|error| {
                 tracing::error!(%error, "the record of a sign-in could not be read");
                 AuthError::Internal(InternalKind::Storage)
@@ -920,13 +935,13 @@ fn record_is_current(
     Ok(found.is_some_and(|stored| binding.same_as(&RecordBinding::of(&stored))))
 }
 
-/// The library's `login_finish`: it takes and opens the sealed state once,
-/// against the purpose the request names, asks the throttle with the account
-/// of the state, and then reads the account's record on `conn` and checks the
-/// proof.
+/// The library's `login_finish`, on a blocking thread: it takes and opens the
+/// sealed state once, against the purpose the request names, asks the
+/// throttle with the account of the state, and then reads the account's
+/// record (one pooled `SELECT`) and checks the proof.
 fn finish_blocking(
     state: &FerretState,
-    conn: &Connection,
+    runtime: tokio::runtime::Handle,
     caller: Caller,
     login_id: &str,
     ke3: &[u8],
@@ -937,7 +952,10 @@ fn finish_blocking(
     login_finish(
         &cx,
         state.login_states.as_ref(),
-        &StoredRecords(conn),
+        &StoredRecords {
+            db: state.vault_db.clone(),
+            runtime,
+        },
         &LoginFinishRequest {
             caller,
             login_id: login_id.as_bytes(),
@@ -1019,22 +1037,15 @@ async fn login_finish_route(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
     let worker = state.clone();
-    // On a pooled connection (a blocking thread, as the store needs): the
-    // library reads the account's record on it.
-    let verified = state
-        .vault_db
-        .with_conn(move |conn| {
-            Ok(finish_blocking(
-                &worker,
-                conn,
-                caller,
-                &login_id,
-                &ke3,
-                current_session,
-            ))
-        })
-        .await?
-        .map_err(auth_refusal)?;
+    let runtime = tokio::runtime::Handle::current();
+    // On a blocking thread, as the store needs, and outside the pool: see
+    // `StoredRecords`.
+    let verified = tokio::task::spawn_blocking(move || {
+        finish_blocking(&worker, runtime, caller, &login_id, &ke3, current_session)
+    })
+    .await
+    .map_err(|_| ApiError::internal())?
+    .map_err(auth_refusal)?;
     let now = to_i64(now)?;
 
     match verified.purpose {
@@ -1176,6 +1187,13 @@ enum Opened {
 ///
 /// After the commit, the ended session is announced (`session_revoked`), so
 /// its event stream closes at once.
+///
+/// This form checks no OPAQUE record: it is only for a session that no
+/// OPAQUE proof backs (a redeemed sign-in code). A session issued after
+/// `login_finish` must go through `open_session_proven` with the account and
+/// `LoginVerified::record`, so the record is checked again in the session's
+/// transaction; without that check a new master password that commits between
+/// the proof and the session write would not stop the session.
 #[allow(
     clippy::too_many_arguments,
     reason = "each argument is a different fact of the sign-in; a struct would only rename them"

@@ -8,6 +8,7 @@
 
 mod support;
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -447,4 +448,93 @@ async fn a_change_that_commits_after_the_proof_was_checked_still_stops_the_sessi
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     assert_eq!(res.json()["error"], json!("denied"));
     assert_eq!(sessions(&app, client.ids.user_id).await, rows, "no session");
+}
+
+/// A throttle that holds every `login/finish` admission until it is let go,
+/// and counts the ones it holds.
+struct HoldAdmissions {
+    held: AtomicUsize,
+    open: AtomicBool,
+}
+
+impl Throttle for HoldAdmissions {
+    fn admit(&self, stage: Stage, _keys: &[ThrottleKey], _now: u64) -> Result<(), RetryAfter> {
+        if stage == Stage::LoginFinish {
+            self.held.fetch_add(1, Ordering::SeqCst);
+            let until = std::time::Instant::now() + Duration::from_secs(20);
+            while !self.open.load(Ordering::SeqCst) && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        Ok(())
+    }
+
+    fn record(&self, _stage: Stage, _keys: &[ThrottleKey], _outcome: Outcome, _now: u64) {}
+}
+
+#[tokio::test]
+async fn finishes_that_wait_hold_no_database_connection() {
+    // Many finishes with made-up login ids (no account, no state, nothing to
+    // prove) stuck in the sign-in step at once, far more than the pool has
+    // connections. The rest of the server still gets a connection: a finish
+    // takes one only for the one read of a record, after its state opened.
+    const STUCK: usize = 96;
+    let throttle = Arc::new(HoldAdmissions {
+        held: AtomicUsize::new(0),
+        open: AtomicBool::new(false),
+    });
+    let proxies =
+        ProxyList::parse(&[PEER.split(':').next().unwrap().to_string()]).expect("a proxy list");
+    let app = TestApp::builder()
+        .proxies(proxies)
+        .throttle(throttle.clone() as Arc<dyn Throttle>)
+        .build()
+        .await;
+    let junk = (0..STUCK).map(|n| {
+        let app = &app;
+        async move {
+            let mut jar = Jar::default();
+            send(
+                app,
+                &mut jar,
+                vault_post(
+                    "/api/auth/opaque/login/finish",
+                    &json!({
+                        "login_id": format!("{n:032x}"),
+                        "ke3": b64url::encode(&[5u8; 64]),
+                        "device_id": "07".repeat(16),
+                    }),
+                ),
+            )
+            .await
+        }
+    });
+    let check = async {
+        let start = std::time::Instant::now();
+        while throttle.held.load(Ordering::SeqCst) < STUCK {
+            assert!(
+                start.elapsed() < Duration::from_secs(15),
+                "the finishes are held"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let read = tokio::time::timeout(
+            Duration::from_secs(3),
+            app.state
+                .vault_db
+                .with_conn(|conn| Ok(conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))?)),
+        )
+        .await;
+        throttle.open.store(true, Ordering::SeqCst);
+        read
+    };
+    let (answers, read) = tokio::join!(futures_util::future::join_all(junk), check);
+    assert_eq!(
+        read.expect("a connection while every finish waits")
+            .expect("a read"),
+        1
+    );
+    for res in answers {
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    }
 }

@@ -738,9 +738,11 @@ fn parse_ke3(bytes: &[u8]) -> Result<CredentialFinalization<FerretSuite>, AuthEr
 /// `login_start` ([`DenyReason::RecordChanged`]) cannot be told apart by a
 /// client from the status and the body of the answer. A wrong KE3 and a
 /// replaced record also cost the same work: both read the record and run the
-/// OPAQUE step. When both apply, the reason is `Ke3`. The time is another matter: a
-/// missing state returns before any OPAQUE work, so it is faster, and a caller
-/// knows whether it sent a state (see `ct/TRIAGE.md`).
+/// OPAQUE step. When both apply, the reason is `Ke3`. A record source that
+/// fails gives its own error whatever the proof was, so that answer does not
+/// depend on the password either. The time is another matter: a missing state
+/// returns before any OPAQUE work, so it is faster, and a caller knows whether
+/// it sent a state (see `ct/TRIAGE.md`).
 ///
 /// An expired state is reported as [`DenyReason::StateMissing`], not as an
 /// expiry: the store drops a state at its expiry time (`now >= expires_at`)
@@ -809,9 +811,15 @@ pub fn login_finish<S: LoginStateStore, C: CurrentRecord + ?Sized>(
     step("current-record");
     let bound = still_current(&state.record, records.current_record(&state.credential));
     step("opaque-finish");
-    // Both checks run in full; a wrong proof is reported before a replaced
+    // Both checks run in full. A source that could not read the record
+    // decides the answer whatever the proof gave, so the answer never depends
+    // on the password; otherwise a wrong proof is reported before a replaced
     // record.
-    let verdict = check_proof(&state, ke3).and(bound);
+    let proof = check_proof(&state, ke3);
+    let verdict = match bound {
+        Err(failed @ AuthError::Internal(_)) => Err(failed),
+        bound => proof.and(bound),
+    };
     let outcome = if verdict.is_ok() {
         Outcome::Success
     } else {
@@ -1490,27 +1498,34 @@ mod tests {
     }
 
     /// A source that fails refuses the login with its error, a failure for
-    /// the limiter.
+    /// the limiter, and the same error for a right and a wrong proof: the
+    /// answer does not tell whether the password was right.
     #[test]
     fn a_record_source_that_fails_refuses_the_login() {
         let f = LoginFixture::new();
-        let (login_id, ke3) = started(&f, "failing");
-        f.throttle.clear();
         let failing =
             |_: &CredentialId| Err(AuthError::Internal(crate::error::InternalKind::Storage));
-        let hex = login_id.to_hex();
-        let error = login_finish(
-            &f.cx(),
-            &f.store,
-            &failing,
-            &finish_request(hex.as_bytes(), &ke3),
-        )
-        .unwrap_err();
-        assert_eq!(
-            error,
-            AuthError::Internal(crate::error::InternalKind::Storage)
-        );
-        assert_eq!(outcomes(&f), [Outcome::Failure]);
+        for (seed, wrong) in [("failing right", false), ("failing wrong", true)] {
+            let (login_id, mut ke3) = started(&f, seed);
+            if wrong {
+                ke3[0] ^= 1;
+            }
+            f.throttle.clear();
+            let hex = login_id.to_hex();
+            let error = login_finish(
+                &f.cx(),
+                &f.store,
+                &failing,
+                &finish_request(hex.as_bytes(), &ke3),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                AuthError::Internal(crate::error::InternalKind::Storage),
+                "wrong proof: {wrong}"
+            );
+            assert_eq!(outcomes(&f), [Outcome::Failure]);
+        }
     }
 
     /// The state sealed the binding of the record OPAQUE answered from: the
