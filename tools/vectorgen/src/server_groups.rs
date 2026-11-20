@@ -5,8 +5,9 @@
 //!
 //! * **Worked out here, from the specification.** The secret file layout and
 //!   its checksum, the fingerprint of the set-up, the made-up credential id,
-//!   pre-login answer and record, the key of a challenge nonce and the sealed
-//!   login state (key derivation, associated data, plaintext layout) are
+//!   pre-login answer and record, the key of a challenge nonce, the binding of
+//!   a record and the sealed login state (key derivation, associated data,
+//!   plaintext layout) are
 //!   computed in this file from the byte layouts in `vectors/OPS.md` with
 //!   plain HMAC, HKDF, SHA-256 and XChaCha20-Poly1305. The server library is
 //!   not called to make them. `tools/xcheck` works the same values out a
@@ -648,15 +649,26 @@ fn login_cases(
     let blob = started["state_blob"].as_str().ok_or("blob")?.to_string();
     let ke2 = hex_of(&started["ke2"])?;
     let ke3 = ke3_of(client, &alice.password, &ke2)?;
+    // The record the account has when the login finishes: Alice's, unless a
+    // case says otherwise.
+    let finish_with = |login_id: &str,
+                       blob: Option<&str>,
+                       ke3: &[u8],
+                       now: u64,
+                       session: Value,
+                       record: Value| {
+        w.with(json!({
+            "now": now.to_string(),
+            "login_id": login_id,
+            "state_blob": blob,
+            "ke3": h(ke3),
+            "current_session": session,
+            "current_record": record,
+        }))
+    };
     let finish_input =
         |login_id: &str, blob: Option<&str>, ke3: &[u8], now: u64, session: Value| {
-            w.with(json!({
-                "now": now.to_string(),
-                "login_id": login_id,
-                "state_blob": blob,
-                "ke3": h(ke3),
-                "current_session": session,
-            }))
+            finish_with(login_id, blob, ke3, now, session, h(&alice.record))
         };
     cases.push(recorded(
         "server-opaque/login_finish/login",
@@ -811,6 +823,55 @@ fn login_cases(
             &re_ke3,
             NOW + 5,
             session_json(&session, &CRED_BOB),
+        ),
+    ));
+    // The login state is bound to the record it began from (Fase 1 § 4.2).
+    cases.push(denied(
+        "record_replaced",
+        "the account has another record since the login began (a new password, a recovery, a restore)",
+        finish_with(
+            &login_id,
+            Some(&blob),
+            &ke3,
+            NOW + 5,
+            Value::Null,
+            h(&bob.record),
+        ),
+    ));
+    cases.push(denied(
+        "record_one_bit_changed",
+        "a record that differs in one bit from the one the login began from",
+        finish_with(
+            &login_id,
+            Some(&blob),
+            &ke3,
+            NOW + 5,
+            Value::Null,
+            h(&flip(&alice.record, 191)),
+        ),
+    ));
+    cases.push(denied(
+        "account_gone",
+        "the account has no record any more",
+        finish_with(
+            &login_id,
+            Some(&blob),
+            &ke3,
+            NOW + 5,
+            Value::Null,
+            Value::Null,
+        ),
+    ));
+    cases.push(denied(
+        "reauth_record_replaced",
+        "a re-authentication whose account has another record since it began",
+        finish_with(
+            &re_id,
+            Some(&re_blob),
+            &re_ke3,
+            NOW + 5,
+            session_json(&session, &CRED_ALICE),
+            h(&bob.record),
         ),
     ));
     let mut throttled = finish_input(&login_id, Some(&blob), &ke3, NOW + 5, Value::Null);
@@ -1372,6 +1433,7 @@ pub(crate) fn server_secrets() -> Result<Vec<u8>, Error> {
     fingerprint_cases(&mut cases, &w, &other);
     made_up_cases(&mut cases, &w, &other)?;
     challenge_cases(&mut cases);
+    record_binding_cases(&mut cases, &w)?;
     state_cases(&mut cases, &w, &other)?;
     login_state_cases(&mut cases, &w)?;
     finish("server-secrets", "Fase 1 § 4.2 and § 11", cases)
@@ -1864,6 +1926,34 @@ fn challenge_cases(cases: &mut Vec<Case>) {
     }
 }
 
+// ---------------------------------------------------- the record binding
+
+/// `SHA-256("ferret/v1/server/login-record" || record)`, worked out.
+fn record_binding_cases(cases: &mut Vec<Case>, w: &World) -> Result<(), Error> {
+    let alice = register(w, CRED_ALICE, PASSWORD, "server vectors/alice")?;
+    let changed = flip(&alice.record, 191);
+    for (key, title, record) in [
+        ("zeros", "a record of 192 zero bytes", vec![0u8; 192]),
+        ("counting", "the bytes 0 to 191", (0..=191u8).collect()),
+        ("alice", "a registered record", alice.record.clone()),
+        (
+            "alice_last_bit",
+            "the registered record with its last bit changed",
+            changed,
+        ),
+    ] {
+        cases.push(known(
+            &format!("server-secrets/record_binding/{key}"),
+            title,
+            "server.record_binding",
+            json!({ "record": h(&record) }),
+            &[],
+            json!({ "binding": h(&sha256(&[b"ferret/v1/server/login-record", &record])) }),
+        ));
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------- the state
 
 /// The plaintext of a sealed state, written out.
@@ -1873,6 +1963,7 @@ struct Plain {
     flag: u8,
     binding: Vec<u8>,
     credential: Vec<u8>,
+    record: Vec<u8>,
     ksf_profile: u8,
     server_login: Vec<u8>,
 }
@@ -1884,6 +1975,7 @@ impl Plain {
             vec![self.purpose, self.flag],
             self.binding.clone(),
             self.credential.clone(),
+            self.record.clone(),
             vec![self.ksf_profile],
             self.server_login.clone(),
         ]
@@ -1898,6 +1990,7 @@ fn login_plain(expires_at: u64) -> Plain {
         flag: 0,
         binding: vec![0; 48],
         credential: vec![0x42; 16],
+        record: pattern(0xc0, 32),
         ksf_profile: 1,
         server_login: pattern(0x80, 128),
     }
@@ -1923,26 +2016,27 @@ fn plain_input(plain: &Plain) -> Value {
         "expires_at": plain.expires_at.to_string(),
         "purpose": purpose,
         "credential": h(&plain.credential),
+        "record": h(&plain.record),
         "ksf_profile": plain.ksf_profile,
         "server_login": h(&plain.server_login),
     })
 }
 
-/// A blob, worked out: `0x01 || nonce || XChaCha20-Poly1305(key, nonce, aad, plaintext)`.
+/// A blob, worked out: `0x02 || nonce || XChaCha20-Poly1305(key, nonce, aad, plaintext)`.
 fn seal(prelogin: &[u8], login_id: &[u8], nonce: &[u8], plain: &[u8]) -> Result<Vec<u8>, Error> {
     let key: [u8; 32] = hkdf256(prelogin, b"ferret/v1/state-seal", 32)
         .try_into()
         .map_err(|_| "key")?;
     let aad = [
         label("ferret/v1/server/login-state"),
-        tlv(0x02, &[1]),
+        tlv(0x02, &[2]),
         tlv(0x03, &[1]),
         tlv(0x33, login_id),
     ]
     .concat();
     let sealed = aead_seal(&mut ReplayRng::new(vec![nonce.to_vec()]), &key, &aad, plain)
         .map_err(|e| format!("aead: {e}"))?;
-    Ok([vec![1u8], sealed].concat())
+    Ok([vec![2u8], sealed].concat())
 }
 
 fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Error> {
@@ -1956,7 +2050,7 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
     let plain_reauth = reauth_plain(expires, &session, &account);
     let blob_login = seal(&w.prelogin, &login_id, &nonce, &plain_login.bytes())?;
     let blob_reauth = seal(&w.prelogin, &login_id, &nonce, &plain_reauth.bytes())?;
-    assert_eq!(blob_login.len(), 244);
+    assert_eq!(blob_login.len(), 276);
 
     let open_input = |secret: &[u8], id: &str, blob: &[u8], now: u64, expected: Value| {
         json!({
@@ -1994,12 +2088,13 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
     let long_lived = Plain {
         ksf_profile: 3,
         credential: pattern(0x01, 16),
+        record: vec![0xff; 32],
         server_login: vec![0xff; 128],
         ..login_plain(u64::MAX - 1)
     };
     cases.push(known(
         "server-secrets/state_seal/other_fields",
-        "other credential, profile, expiry and state bytes",
+        "other credential, record, profile, expiry and state bytes",
         "server.state_seal",
         seal_input(&other.prelogin, &long_lived, NOW),
         std::slice::from_ref(&nonce),
@@ -2107,7 +2202,7 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
         ("version", 0usize),
         ("nonce", 5),
         ("ciphertext", 60),
-        ("tag", 243),
+        ("tag", 275),
     ] {
         cases.push(denied(
             &format!("changed_{key}"),
@@ -2122,14 +2217,14 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
         ));
     }
     cases.push(denied(
-        "version_2",
-        "a blob of version 2",
+        "version_1",
+        "a blob of version 1 (before the record binding)",
         open_input(
             &w.prelogin,
             &login_id_hex,
             &{
                 let mut blob = blob_login.clone();
-                blob[0] = 2;
+                blob[0] = 1;
                 blob
             },
             NOW,
@@ -2137,18 +2232,18 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
         ),
     ));
     cases.push(denied(
-        "blob_243_bytes",
+        "blob_275_bytes",
         "a blob that is a byte short",
         open_input(
             &w.prelogin,
             &login_id_hex,
-            &blob_login[..243],
+            &blob_login[..275],
             NOW,
             login_expected.clone(),
         ),
     ));
     cases.push(denied(
-        "blob_245_bytes",
+        "blob_277_bytes",
         "a blob with a byte after the tag",
         open_input(
             &w.prelogin,
@@ -2261,8 +2356,8 @@ fn state_cases(cases: &mut Vec<Case>, w: &World, other: &World) -> Result<(), Er
 
 /// The states `login_start` really writes (the OPAQUE state inside is the
 /// server's own, so the answer is recorded), opened. `xcheck` opens the same
-/// blobs with the layout of `OPS.md` and must find the same account, profile,
-/// expiry and purpose.
+/// blobs with the layout of `OPS.md` and must find the same account, record,
+/// profile, expiry and purpose.
 fn login_state_cases(cases: &mut Vec<Case>, w: &World) -> Result<(), Error> {
     let alice = register(w, CRED_ALICE, PASSWORD, "server vectors/alice")?;
     let (ke1, _) = ke1_of(&alice.password, "server vectors/alice login")?;

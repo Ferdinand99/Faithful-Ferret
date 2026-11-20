@@ -82,6 +82,7 @@ const EXEMPT = {
   'prelogin::pick_account': 'private; chooses between two references the caller already holds (an account id from the lookup, or a fixed zero id), and reads nothing from a request',
   'prelogin::step': 'a trace label that tests record to check the order of effects; no client input',
   'replace::ChallengeKey::new': REACHED + ' (authorize_replacement and authorize_signed); it hashes the session and the nonce, whose lengths are checked before',
+  'record::RecordBinding::of': 'hashes the stored bytes of a record with SHA-256 behind a fixed label; it reads no structure and takes any length, and the server passes it only records it stored itself (login_start and the record source of login_finish, which fuzz_server_messages reaches)',
   'state::SealedState::from_bytes': 'wraps stored bytes without reading them; the length and the content are checked in open_state, which has a target',
   'record::ProfileRules::for_tests': 'a constructor behind test-support that takes the numbers a test chooses; no client input',
 };

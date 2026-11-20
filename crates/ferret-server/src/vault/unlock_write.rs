@@ -10,7 +10,7 @@
 //!    (the OPAQUE library, through `Proofs`) and parse the proven body;
 //! 4. checks the content: the manifest envelope, the manifest's `rev` (the
 //!    current one plus 1) and each new generation (strictly above the stored
-//!    one, at most `u32::MAX`);
+//!    one, by at most `MAX_GENERATION_STEP`);
 //! 5. writes the account, each wrap under its stored `method_id`, the manifest
 //!    row and the vault's `seq`, each with a condition on what was read, so a
 //!    write that finds the row changed is `409 write_conflict` and never a
@@ -18,10 +18,9 @@
 //! 6. for a new master password and a recovery, ends every other session of
 //!    the user on both origins and the user's pending sign-in codes, the
 //!    sessions handed over from the asking session too (its admin session:
-//!    it fails safe, the user signs in to the admin pages again), and every
-//!    sign-in that is still half-way; and the asking session when the permit
-//!    says so (a recovery in a reset session). A new recovery key ends no
-//!    session.
+//!    it fails safe, the user signs in to the admin pages again); and the
+//!    asking session when the permit says so (a recovery in a reset session).
+//!    A new recovery key ends no session.
 //!
 //! Either all of it is in, or none of it. [`after_commit`] then tells the
 //! streams about the new `seq` and the ended sessions, and asks for a backup.
@@ -29,15 +28,13 @@
 //! request whose client has gone away still announces what it committed.
 //!
 //! **Half-way sign-ins.** A sign-in that started with the old password keeps
-//! what it needs to finish in its sealed login state, and finishing it does
-//! not read the record again. Its row is not keyed by user, so a change of the
-//! master password or a recovery removes every pending login state on the
-//! server, in the same transaction: such a sign-in cannot finish afterwards.
-//! A sign-in of another user that was half-way through has to start again.
-//! So that one account cannot do this over and over, a new master password
-//! or a recovery waits a minute after the last change (`429`). A sign-in that
-//! reads the old record just before the commit and saves its state just after
-//! it is not caught; see `check_cooldown`.
+//! what it needs to finish in its sealed login state. That state is bound to
+//! the record it was made from (`ferret_server_auth::RecordBinding`), and the
+//! sign-in route compares it with the account's record when the sign-in
+//! finishes and again in the transaction that writes the session. A new
+//! record written here therefore stops every such sign-in of this account,
+//! whenever its state was saved, and touches no sign-in of anyone else. This
+//! module does not have to remove login states.
 //!
 //! Nothing else writes these rows. The manifest row is written here with SQL
 //! of its own: the item store refuses the manifest (a change to it needs a
@@ -71,12 +68,6 @@ const TYPE_RECOVERY: u8 = 2;
 /// The reason a backup is asked for after a change of unlock methods.
 pub const BACKUP_REASON: &str = "unlock_methods";
 
-/// How long, in seconds, a new master password or a recovery waits after the
-/// last change of the account's unlock methods (the manifest row's
-/// `changed_at`). It is the lifetime of a half-way sign-in, so one account
-/// can drop the server's pending sign-ins at most once per lifetime.
-pub const COOLDOWN_SECS: i64 = 60;
-
 /// The session that asks for a change, as its extractor read it.
 #[derive(Clone, Copy, Debug)]
 pub struct Writer {
@@ -92,8 +83,7 @@ pub struct Writer {
     /// permit says so ([`ScopeEffect::EndSession`]).
     pub keep_session: bool,
     /// The kind of change the route makes. `authorize` must give a change of
-    /// this kind; it is known before the proof is checked, so the cooldown can
-    /// refuse without using up the nonce.
+    /// this kind.
     pub kind: ChangeKind,
 }
 
@@ -106,16 +96,6 @@ pub enum ChangeKind {
     Recovery,
     /// A recovery with the recovery key.
     Recover,
-}
-
-impl ChangeKind {
-    /// Whether a change of this kind waits [`COOLDOWN_SECS`] after the last
-    /// change of the account's unlock methods: a new master password and a
-    /// recovery do, because each one drops every half-way sign-in on the
-    /// server.
-    pub fn has_cooldown(self) -> bool {
-        matches!(self, ChangeKind::Password | ChangeKind::Recover)
-    }
 }
 
 /// What a change writes, besides the manifest.
@@ -258,9 +238,6 @@ struct StoredAccount {
 ///
 /// Answers, besides those of `authorize`:
 ///
-/// * a new master password or a recovery within [`COOLDOWN_SECS`] of the
-///   last change: `429 throttled`, before `authorize` runs (the nonce is
-///   kept);
 /// * the asking session ended, its user was disabled or signed out
 ///   everywhere, or it has no account any more: `401 unauthorized`, before
 ///   `authorize` runs (the nonce is kept);
@@ -293,9 +270,6 @@ where
         return Err(ApiError::unauthorized());
     }
     let account = read_account(&tx, writer)?.ok_or_else(ApiError::unauthorized)?;
-    if writer.kind.has_cooldown() {
-        check_cooldown(&tx, &account.vault, now)?;
-    }
     let state = AccountAuthState {
         account: SignedAccount {
             account_id: writer.account,
@@ -332,8 +306,6 @@ where
             // admin session) does not.
             ended.extend(revoke(&tx, &writer.sid, now, Revoke::HandedOver)?);
         }
-        tx.execute("DELETE FROM ferret_login_states", [])
-            .map_err(sql)?;
         ended
     } else if keeps_asking {
         Vec::new()
@@ -508,54 +480,25 @@ fn check_manifest_envelope(envelope: &[u8]) -> Result<(), ApiError> {
     }
 }
 
-/// A new master password or a recovery within [`COOLDOWN_SECS`] of the last
-/// change of the account's unlock methods (the manifest row's `changed_at`,
-/// which only this path and account creation write) is `429 throttled`, with
-/// the seconds left as `Retry-After`. It runs before the proof is checked, so
-/// the nonce is kept. A manifest still at its first revision (no change since
-/// the account was made) and a clock that reads before the last change do not
-/// refuse.
-///
-/// Each such change drops every half-way sign-in on the server; without the
-/// wait, one account could keep every other user from signing in.
-///
-/// What it does not close: a sign-in that reads the old record just before
-/// the change commits and saves its login state just after the commit can
-/// still finish with the old password (the delete has run by then). The
-/// proper fix binds the login state to the registration record it was made
-/// from, in the OPAQUE library and the sign-in route, so `finish` refuses a
-/// record that has since been replaced; it follows as a change of its own,
-/// before the recovery route relies on "every sign-in ends".
-fn check_cooldown(tx: &Transaction<'_>, vault: &VaultId, now: i64) -> Result<(), ApiError> {
-    let row: Option<(i64, i64)> = tx
-        .query_row(
-            "SELECT rev, changed_at FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2",
-            params![vault.as_bytes(), MANIFEST_ITEM_ID.as_bytes()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(sql)?;
-    let changed_at = row.filter(|(rev, _)| *rev > 1).map(|(_, at)| at);
-    let Some(age) = changed_at.and_then(|at| now.checked_sub(at)) else {
-        return Ok(());
-    };
-    if (0..COOLDOWN_SECS).contains(&age) {
-        let left = COOLDOWN_SECS.checked_sub(age).unwrap_or(COOLDOWN_SECS);
-        return Err(ApiError::throttled(u32::try_from(left).unwrap_or(u32::MAX)));
-    }
-    Ok(())
-}
+/// How far one change may move a generation. An honest client moves it by
+/// one, a few more after changes whose answers it never saw, and after a
+/// restore of an older backup by the number of changes since that backup.
+/// Without a bound, one request (a compromised session, a client bug) could
+/// set `u32::MAX` and leave no generation for any later change, the recovery
+/// path included.
+pub const MAX_GENERATION_STEP: u32 = 1 << 16;
 
-/// A generation goes only up: the new one must be strictly above the stored
-/// one. A `u32` cannot pass `u32::MAX`, so the ceiling holds by its type.
+/// A generation goes only up, and by at most [`MAX_GENERATION_STEP`]: the new
+/// one must be strictly above the stored one and not more than the step
+/// above it (`409 write_conflict` otherwise). A `u32` cannot pass `u32::MAX`,
+/// so the ceiling holds by its type.
 ///
 /// Spec: Fase 1 § 4.3 (`kek_generation + 1`; the client rejects a lower one,
 /// so the server never stores one).
 fn check_generation(stored: u32, new: u32) -> Result<(), ApiError> {
-    if new > stored {
-        Ok(())
-    } else {
-        Err(write_conflict())
+    match new.checked_sub(stored) {
+        Some(step) if (1..=MAX_GENERATION_STEP).contains(&step) => Ok(()),
+        _ => Err(write_conflict()),
     }
 }
 
@@ -832,12 +775,21 @@ mod tests {
     use ferret_core::envelope::MAX_ENVELOPE_LEN;
 
     #[test]
-    fn a_generation_must_rise() {
+    fn a_generation_must_rise_by_a_bounded_step() {
         assert!(check_generation(1, 2).is_ok());
-        assert!(check_generation(1, u32::MAX).is_ok());
-        for (stored, new) in [(2, 2), (2, 1), (u32::MAX, u32::MAX), (5, 0)] {
-            let refused = check_generation(stored, new).expect_err("not above");
-            assert_eq!(refused.code, "write_conflict");
+        assert!(check_generation(1, 1 + MAX_GENERATION_STEP).is_ok());
+        assert!(check_generation(u32::MAX - 1, u32::MAX).is_ok());
+        for (stored, new) in [
+            (2, 2),
+            (2, 1),
+            (u32::MAX, u32::MAX),
+            (5, 0),
+            (1, 2 + MAX_GENERATION_STEP),
+            (1, u32::MAX),
+            (0, u32::MAX),
+        ] {
+            let refused = check_generation(stored, new).expect_err("refused");
+            assert_eq!(refused.code, "write_conflict", "{stored} -> {new}");
         }
     }
 

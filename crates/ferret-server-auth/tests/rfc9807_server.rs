@@ -30,8 +30,8 @@ use ferret_server_auth::{
     AccountLookup, AuthContext, AuthError, Caller, CredentialId, DenyReason,
     InMemoryLoginStateStore, LoginFinishRequest, LoginPurpose, LoginStartRequest,
     LoginStartResponse, Malformed, ManualClock, PreloginPolicy, PreloginSecret, ProfileRules,
-    RecordingThrottle, RegistrationKind, ServerKeys, StateSealKey, normalize_login_name,
-    register_finish,
+    RecordBinding, RecordingThrottle, RegistrationKind, ServerKeys, StateSealKey,
+    normalize_login_name, register_finish,
 };
 use serde_json::Value;
 
@@ -124,6 +124,9 @@ struct Server {
     policy: PreloginPolicy,
     profiles: ProfileRules,
     store: InMemoryLoginStateStore,
+    /// The record the last `start` answered from, which `finish` reads as
+    /// the account's record now.
+    current: std::sync::Mutex<Option<RecordBinding>>,
 }
 
 fn caller() -> Caller {
@@ -144,6 +147,7 @@ impl Server {
             policy: PreloginPolicy::single(KsfProfile::from_wire(1).unwrap()),
             profiles: ProfileRules::ferret_v1(),
             store: InMemoryLoginStateStore::new(),
+            current: std::sync::Mutex::new(None),
         }
     }
 
@@ -171,6 +175,7 @@ impl Server {
     ) -> Result<LoginStartResponse, AuthError> {
         let record =
             register_finish(&v.upload, 1, &self.profiles, RegistrationKind::NewAccount).unwrap();
+        *self.current.lock().unwrap() = Some(RecordBinding::of(record.record.as_bytes()));
         let name = normalize_login_name("rfc9807@example.com").unwrap();
         let request = LoginStartRequest {
             caller: caller(),
@@ -204,9 +209,11 @@ impl Server {
     }
 
     fn finish(&self, response: &LoginStartResponse, ke3: &[u8]) -> Result<(), AuthError> {
+        let current = self.current.lock().unwrap().clone();
         ferret_server_auth::login_finish(
             &self.cx(),
             &self.store,
+            &|_: &CredentialId| Ok(current.clone()),
             &LoginFinishRequest {
                 caller: caller(),
                 login_id: response.login_id.to_hex().as_bytes(),

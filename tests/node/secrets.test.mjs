@@ -435,7 +435,7 @@ test("no_reply_holds_key_material", () => {
   recovery.register_finish(server.register_response(IDS.account_id, recoverRequest), 1);
   addSecret("export key (recover)", recovery.test_export_key());
   const qr = wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key);
-  const recovered = call("recover", () => recovery.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr));
+  const recovered = call("recover", () => recovery.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, firstUse(true), qr));
   addSecret("RK (new)", fromHex(op("recovery_key_decode", "code.rk.decode", { code: recovered.vault.reveal_recovery_code() }).key));
   call("recover_sign", () => recovery.recover_sign(fill(32, 2), enc.encode("request")));
 
