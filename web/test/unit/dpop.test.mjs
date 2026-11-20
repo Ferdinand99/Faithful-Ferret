@@ -152,7 +152,8 @@ test("iat_uses_the_server_clock_offset", async () => {
     "Wed, 31 Dec 1969 23:00:00 GMT", "Mon, 01 Jan 1900 00:00:00 GMT", "Tue, 1 Nov 2026 00:00:00 GMT",
     "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994", "Tue, 01 Nov 2026 00:00:00 +0000",
     "tue, 01 nov 2026 00:00:00 gmt", " Tue, 01 Nov 2026 00:00:00 GMT", "Tue, 01 Nov 2026 00:00:00 GMT\n",
-    "Sat, 01 Jan 10000 00:00:00 GMT", "+275760-09-13T00:00:00Z",
+    "Sat, 01 Jan 10000 00:00:00 GMT", "+275760-09-13T00:00:00Z", "Sun, 01 Nov 2026 24:00:00 GMT",
+    "Sun, 01 Nov 2026 23:59:60 GMT", "Tue, 31 Nov 2026 00:00:00 GMT", "Mon, 01 Nov 2026 00:00:00 GMT",
   ]) {
     clock.observe(header);
     assert.equal(clock.nowSeconds(), 1_700_000_000, String(header));

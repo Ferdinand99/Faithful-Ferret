@@ -51,7 +51,10 @@ const LATEST_DATE_MS = 253_402_300_799_000;
 function dateOf(dateHeader) {
   if (typeof dateHeader !== "string" || !IMF_FIXDATE.test(dateHeader)) return null;
   const at = Date.parse(dateHeader);
-  return Number.isFinite(at) && at >= 0 && at <= LATEST_DATE_MS ? at : null;
+  if (!Number.isFinite(at) || at < 0 || at > LATEST_DATE_MS) return null;
+  // `Date.parse` rolls over fields that are out of range (a 60th second, a 31 November) and ignores the
+  // weekday; the time must write back to the same text.
+  return new Date(at).toUTCString() === dateHeader ? at : null;
 }
 
 /**
