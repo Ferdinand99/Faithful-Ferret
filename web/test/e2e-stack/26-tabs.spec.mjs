@@ -121,17 +121,11 @@ test("use_here_with_an_unsaved_edit_warns_first", async ({ browser }) => {
     await expect(notice(second)).toBeVisible({ timeout: 60_000 });
     await expect(first.locator('[data-role="edit-form"]')).toBeVisible({ timeout: 60_000 });
     // The page settles (the screen is built again under the new engine), then the form is the one that was kept: editable, with
-    // every character that was typed. These are soft checks, so that the rest of the scenario (one writer, one write) is still
-    // looked at when the text is gone.
+    // every character that was typed.
     await first.waitForTimeout(2_000);
-    await expect.soft(first.locator('[data-role="name"]'), "the kept form comes back with its name").toHaveValue(name);
-    await expect.soft(first.locator('[data-role="password"]'), "the kept form comes back with its password").toHaveValue(password);
+    await expect(first.locator('[data-role="name"]')).toHaveValue(name);
     await expect(first.locator('[data-role="name"]')).not.toHaveAttribute("readonly", "");
-    if ((await first.locator('[data-role="name"]').inputValue()) === "") {
-      // The text is gone (reported above): it is typed again, so that the save below can be looked at.
-      await first.locator('[data-role="name"]').fill(name);
-      await first.locator('[data-role="password"]').fill(password);
-    }
+    await expect(first.locator('[data-role="password"]')).toHaveValue(password);
     expect(await locksHeld(first), "one tab holds the vault, the first").toBe(1);
     await first.locator('[data-role="save"]').click();
     await expect(first.locator('[data-role="item"] h1')).toContainText(name, { timeout: 60_000 });
