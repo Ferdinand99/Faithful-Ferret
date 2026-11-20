@@ -161,6 +161,17 @@ const batchDeleted = () => ({
   idem: id("idem two"),
 });
 
+/** `n` browsers of one account, newest first, as a full list of devices shows them. */
+const listedBrowsers = (n) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: id(`listed browser ${i}`),
+    kind: "web",
+    name: i === 0 ? "Firefox on a laptop" : `Browser ${i}`,
+    created_at: 1799000000 + 100 * (n - i),
+    last_seen: 1800000000 - i,
+    current: i === 0,
+  }));
+
 /** Every fixture: file name -> object. The type is the name before the first dot. */
 export function fixtures() {
   return {
@@ -512,6 +523,8 @@ export function fixtures() {
       ],
     },
     "devices_res.empty.json": { devices: [] },
+    // An account with more rows than a list holds: the first 200, and how many were left out.
+    "devices_res.more.json": { devices: listedBrowsers(200), more: 7 },
     "revoke_all_res.json": { revoked: 3 },
   };
 }
@@ -1342,9 +1355,11 @@ export function invalidCases() {
     ["65 characters", "a".repeat(65)],
     ["65 characters, 260 bytes", "\u{1d11e}".repeat(65)],
     ["a tab", "tab\there"],
-    ["a right-to-left override", "phone‮knil"],
-    ["a zero-width space", "pho​ne"],
-    ["a byte order mark", "﻿phone"],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
+    ["a byte order mark", "\ufeffphone"],
+    ["a NUL", "nul\u0000"],
+    ["a NUL before more characters", `a\u0000${"b".repeat(100)}`],
     ["a number", 5],
     ["null", null],
     ["a list", ["x"]],
@@ -1424,8 +1439,8 @@ export function invalidCases() {
   }
   for (const [name, value] of [
     ["65 characters", "a".repeat(65)],
-    ["a right-to-left override", "phone‮knil"],
-    ["a zero-width space", "pho​ne"],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
     ["a number", 5],
     ["null", null],
   ]) {
@@ -1448,6 +1463,21 @@ export function invalidCases() {
     parse(`revoke_all_res revoked ${name}`, "revoke_all_res", with_("revoke_all_res.json", { revoked: value }), "revoked is a whole number of 32 bits");
   }
   parse("revoke_all_res without revoked", "revoke_all_res", "{}", "revoked is required");
+  parse("devices_res name a NUL", "devices_res", deviceRow({ name: "nul\u0000" }), "a device name has no control character");
+
+  // A row of the list has the fields of its kind: a device with tokens has a
+  // name and a platform, a browser has no platform (its name may be empty).
+  const rowWhy = "a device with tokens has a name and a platform, a browser has no platform";
+  validate("devices_res: a device row with an empty name", "devices_res", deviceRow({ name: "" }), rowWhy);
+  validate("devices_res: a device row without a platform", "devices_res", deviceRow({ platform: undefined }), rowWhy);
+  validate("devices_res: a web row with a platform", "devices_res", text({ devices: [devices[0], { ...devices[1], platform: "linux" }] }), rowWhy);
+  // `more` says how many rows a full list left out: only on a full list, at least 1.
+  const full = all["devices_res.more.json"];
+  validate("devices_res: more on a list that is not full", "devices_res", text({ devices: full.devices.slice(0, 199), more: 7 }), "more is only on a full list of 200 rows");
+  validate("devices_res: more is 0", "devices_res", text({ ...full, more: 0 }), "more is at least 1");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "7"], ["a fraction", 1.5]]) {
+    parse(`devices_res more ${name}`, "devices_res", text({ ...full, more: value }), "more is a whole number of 32 bits");
+  }
 
   return cases;
 }

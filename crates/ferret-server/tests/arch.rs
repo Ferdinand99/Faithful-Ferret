@@ -30,7 +30,9 @@
 //! The vault modules never handle a device token themselves: they may not
 //! name the token tables (`ferret_devices`, `ferret_access`, `ferret_refresh`)
 //! in a string, nor the types and calls that issue, look up or check a token
-//! (`DeviceAuth`, `TokenSecret`, `issue_access`, ...).
+//! (`DeviceAuth`, `TokenSecret`, `issue_access`, ...), nor reach into the
+//! modules of tokens by any path (`crate::auth::{dpop, tokens, refresh,
+//! devices, device_login}`, or `crate::auth` without an item).
 //!
 //! The proof of a signed request is checked only through the handle
 //! `crate::state::Proofs`, which `auth::proofs` builds. The vault modules may
@@ -130,6 +132,10 @@ const BUILT_ELSEWHERE: &[&str] = &[
 
 /// Macros that pull in a file the scan does not read.
 const INCLUDE_MACROS: &[&str] = &["include", "include_str", "include_bytes"];
+
+/// The modules of device tokens: a vault module names none of them, by any
+/// path.
+const TOKEN_MODULES: &[&str] = &["dpop", "tokens", "refresh", "devices", "device_login"];
 
 /// Text the vault modules must not have in a string.
 const FORBIDDEN_LITERALS: &[&str] = &[
@@ -234,6 +240,16 @@ impl Names {
                     "names `{joined}` (the proof checks come as `crate::state::Proofs`)"
                 ));
             }
+            (Some("crate"), Some("auth")) if at(2).is_some_and(|n| TOKEN_MODULES.contains(&n)) => {
+                self.hit(format!(
+                    "names `{joined}` (device tokens are checked by the extractor, never in `vault/`)"
+                ));
+            }
+            (Some("crate"), Some("auth")) if at(2).is_none() => {
+                self.hit(format!(
+                    "names `{joined}` without an item (a later `auth::..` would not be rooted)"
+                ));
+            }
             (Some("crate"), Some("http")) if at(2).is_none() => {
                 self.hit(format!(
                     "names `{joined}` without an item (a later `http::extract::..` would not be rooted)"
@@ -300,9 +316,19 @@ impl Names {
             "vole_kit::state",
             "crate::auth::secrets",
             "crate::auth::proofs",
+            "crate::auth::dpop",
+            "crate::auth::tokens",
+            "crate::auth::refresh",
+            "crate::auth::devices",
+            "crate::auth::device_login",
             "super::state",
             "super::auth::secrets",
             "super::auth::proofs",
+            "super::auth::dpop",
+            "super::auth::tokens",
+            "super::auth::refresh",
+            "super::auth::devices",
+            "super::auth::device_login",
             "super::http::extract",
         ] {
             if compact.contains(path) {
@@ -1614,6 +1640,22 @@ fn arch_test_forbids_vault_modules_from_naming_token_machinery() {
         "fn f() { println!(\"{:?}\", TokenSecret::random); }",
         "#[some(DeviceAuth)] fn f() {}",
         "fn f() { let _ = r#TokenSecret::from_wire(\"x\"); }",
+        // The token modules by path, whatever the item is called.
+        "use crate::auth::devices::revoke;",
+        "fn f() { crate::auth::dpop::verify(a, b, 0); }",
+        "fn f() { let _ = crate::auth::tokens::AccessLookup::Expired; }",
+        "use crate::auth::refresh::spawn_purge;",
+        "use crate::auth::device_login;",
+        "use crate::auth::{devices::still_valid, session::Origin};",
+        "fn f() { let _ = super::super::auth::devices::insert(a); }",
+        "use super::super::auth::tokens::AccessRow;",
+        "fn f() { println!(\"{:?}\", crate::auth::dpop::Expect); }",
+        "fn f() { format!(\"{}\", super::auth::refresh::GRACE_SECS); }",
+        // `crate::auth` without an item, from which a later path could climb.
+        "use crate::auth;",
+        "use crate::auth as a;",
+        "use crate::auth::{self};",
+        "use super::super::auth;",
     ] {
         assert!(
             !scan_names("planted.rs", planted).is_empty(),
@@ -1625,6 +1667,9 @@ fn arch_test_forbids_vault_modules_from_naming_token_machinery() {
         "fn f(_: MyTokenSecretless) {}",
         "fn f() { let _ = issue_access_log(); }",
         "use crate::ids::TokenHash;",
+        // The session helpers the stream uses stay allowed.
+        "use crate::auth::session::{Origin, still_valid};",
+        "fn f() { let _ = crate::auth::session::still_valid; }",
     ] {
         let found = scan_names("clean.rs", clean);
         assert!(found.is_empty(), "false alarm for {clean}: {found:?}");

@@ -63,7 +63,7 @@ CREATE TABLE ferret_devices (
   device_id BLOB PRIMARY KEY CHECK(length(device_id) = 16),
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   jkt BLOB NOT NULL UNIQUE CHECK(length(jkt) = 32),
-  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64 AND instr(name, char(0)) = 0),
   platform TEXT NOT NULL CHECK(platform IN ('windows','macos','linux','android','ios','chromeos','other')),
   session_version INTEGER NOT NULL,
   created_at INTEGER NOT NULL CHECK(created_at >= 0),

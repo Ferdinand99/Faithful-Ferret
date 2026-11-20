@@ -224,6 +224,7 @@ const M5A_SHAPES: &[&str] = &[
 const M5A_FIXTURES: &[&str] = &[
     "devices_res.empty.json",
     "devices_res.json",
+    "devices_res.more.json",
     "login_finish_req.device.json",
     "login_finish_res.device.json",
     "revoke_all_res.json",
@@ -900,6 +901,10 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
         "items_res" => {
             let page: ItemsRes = serde_json::from_str(text).unwrap();
             page.validate().map_err(|e| e.code())
+        }
+        "devices_res" => {
+            let list: DevicesRes = serde_json::from_str(text).unwrap();
+            list.validate().map_err(|e| e.code())
         }
         "restore_rows_res" => {
             let page: RestoreRowsRes = serde_json::from_str(text).unwrap();
@@ -2606,7 +2611,7 @@ fn wire_contract_fixtures_cover_token_shapes() {
     assert_eq!(login.expires_in, ACCESS_TOKEN_SECS);
     assert_eq!(ACCESS_TOKEN_SECS, 900);
     assert_eq!(login.access_token.0.len(), TOKEN_CHARS);
-    assert_ne!(login.access_token, login.refresh_token);
+    assert_ne!(login.access_token.0, login.refresh_token.0);
     assert!(read("login_finish_res.device.json").starts_with(r#"{"account_id":"#));
     assert!(
         read("login_finish_res.device.json").contains(r#""token_type":"DPoP","expires_in":900}"#)
@@ -2623,9 +2628,9 @@ fn wire_contract_fixtures_cover_token_shapes() {
     // The renewal uses the refresh token of the sign-in, and the sign-out the
     // one of the renewal.
     let refresh: TokenRefreshReq = parse("token_refresh_req.json");
-    assert_eq!(refresh.refresh_token, login.refresh_token);
+    assert_eq!(refresh.refresh_token.0, login.refresh_token.0);
     let revoke: TokenRevokeReq = parse("token_revoke_req.json");
-    assert_eq!(revoke.refresh_token, renewed.refresh_token);
+    assert_eq!(revoke.refresh_token.0, renewed.refresh_token.0);
 
     // The list: a device with tokens (with its platform), browsers (without),
     // one of them with no name, and the one that asks.
@@ -3040,12 +3045,41 @@ fn the_device_list_has_at_most_200_rows_and_names_may_be_empty() {
     );
     let error = serde_json::from_value::<DevicesRes>(with(MAX_DEVICE_LIST + 1)).unwrap_err();
     assert_eq!(refusal_code(&error.to_string()), "bad_request");
-    // A row: the name may be empty (a browser that never gave one), never long
-    // or hidden; the platform may be left out; the kind is one of two.
+    // A row: the name is never long or hidden; it may be empty for a browser
+    // that never gave one, never for a device with tokens; a device has its
+    // platform, a browser has none; the kind is one of two.
     let read = |value: Value| serde_json::from_value::<DeviceJson>(value);
-    let mut named = row.clone();
-    named["name"] = json!("");
-    assert!(read(named).is_ok());
+    let checked = |value: Value| read(value).unwrap().validate();
+    assert_eq!(checked(row.clone()), Ok(()));
+    let mut unnamed = row.clone();
+    unnamed["name"] = json!("");
+    assert!(checked(unnamed).is_err(), "a device with tokens has a name");
+    let mut no_platform = row.clone();
+    no_platform.as_object_mut().unwrap().remove("platform");
+    assert!(
+        checked(no_platform).is_err(),
+        "a device with tokens has a platform"
+    );
+    let browser = list["devices"][1].clone();
+    assert_eq!(checked(browser.clone()), Ok(()));
+    let mut unnamed_browser = browser.clone();
+    unnamed_browser["name"] = json!("");
+    assert_eq!(
+        checked(unnamed_browser),
+        Ok(()),
+        "a browser may have no name"
+    );
+    let mut browser_platform = browser.clone();
+    browser_platform["platform"] = json!("linux");
+    assert!(
+        checked(browser_platform).is_err(),
+        "a browser has no platform"
+    );
+    for bad in ["nul\u{0}", "\u{0}"] {
+        let mut value = row.clone();
+        value["name"] = json!(bad);
+        assert!(read(value).is_err(), "{bad:?}");
+    }
     for bad in ["a".repeat(65), "pho\u{200b}ne".to_string()] {
         let mut value = row.clone();
         value["name"] = json!(bad);
@@ -3068,6 +3102,37 @@ fn the_device_list_has_at_most_200_rows_and_names_may_be_empty() {
         value.as_object_mut().unwrap().remove(field);
         assert!(read(value).is_err(), "{field}");
     }
+
+    // A longer list is cut at 200 rows, and `more` says how many were left
+    // out: only on a full list, and at least 1.
+    let cut: DevicesRes = parse("devices_res.more.json");
+    assert_eq!(cut.devices.len(), MAX_DEVICE_LIST);
+    assert!(cut.more.is_some_and(|n| n >= 1));
+    assert_eq!(cut.validate(), Ok(()));
+    let full = |more: Value| {
+        let mut value = with(MAX_DEVICE_LIST);
+        value["more"] = more;
+        serde_json::from_value::<DevicesRes>(value)
+    };
+    assert_eq!(full(json!(1)).unwrap().validate(), Ok(()));
+    assert_eq!(full(Value::Null).unwrap().more, None);
+    assert!(
+        full(json!(0)).unwrap().validate().is_err(),
+        "more is at least 1"
+    );
+    for bad in [json!(-1), json!(4_294_967_296_u64), json!("3"), json!(1.5)] {
+        assert!(full(bad.clone()).is_err(), "{bad}");
+    }
+    let short: DevicesRes =
+        serde_json::from_value(json!({ "devices": vec![row.clone(); 3], "more": 2 })).unwrap();
+    assert!(short.validate().is_err(), "more only on a full list");
+    let plain: DevicesRes = parse("devices_res.json");
+    assert_eq!(plain.more, None);
+    assert!(
+        !fs::read_to_string(dir().join("devices_res.json"))
+            .unwrap()
+            .contains("more")
+    );
 }
 
 #[test]

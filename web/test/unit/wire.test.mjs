@@ -1039,7 +1039,7 @@ const M5A_SHAPES = [
   "devices_res", "revoke_all_res",
 ];
 const M5A_FIXTURES = [
-  "devices_res.empty.json", "devices_res.json", "login_finish_req.device.json", "login_finish_res.device.json",
+  "devices_res.empty.json", "devices_res.json", "devices_res.more.json", "login_finish_req.device.json", "login_finish_res.device.json",
   "revoke_all_res.json", "token_refresh_req.json", "token_res.json", "token_revoke_req.json",
 ];
 
@@ -1149,9 +1149,9 @@ test("device_names_and_platforms_follow_the_server", () => {
   for (const platform of ["Windows", "freebsd", "", null, 1]) assert.equal(signIn({ platform }), "bad_request", String(platform));
   // The name of a device that signs in: 1 to 64 characters (code points), nothing hidden.
   for (const [name, ok] of [
-    ["a", true], ["a".repeat(64), true], ["\u{1d11e}".repeat(64), true], ["a‍b", true],
+    ["a", true], ["a".repeat(64), true], ["\u{1d11e}".repeat(64), true], ["a\u200db", true],
     ["", false], ["a".repeat(65), false], ["\u{1d11e}".repeat(65), false], ["tab\there", false],
-    ["phone‮knil", false], ["pho​ne", false], [null, false],
+    ["phone\u202eknil", false], ["pho\u200bne", false], [null, false],
   ]) {
     assert.equal(signIn({ device_name: name }), ok ? null : "bad_request", JSON.stringify(name));
   }
@@ -1163,8 +1163,16 @@ test("device_names_and_platforms_follow_the_server", () => {
   const list = parseFile("devices_res.json");
   const row = list.devices[0];
   const listed = (fields) => refusalOf(() => shape(SHAPES.devices_res, { devices: [{ ...row, ...fields }] }));
-  assert.equal(listed({ name: "" }), null);
+  assert.equal(listed({ name: "" }), null); // it reads; the row rule is a check of its own
   assert.equal(listed({ platform: null }), null);
+  // The row rule: a device with tokens has a name and a platform, a browser has no platform.
+  const checked = (devices) => refusalOf(() => checkStep("devices_res", { devices }));
+  const browser = list.devices[1];
+  assert.equal(checked([row, browser, { ...browser, name: "" }]), null);
+  assert.equal(checked([{ ...row, name: "" }]), "bad_request");
+  assert.equal(checked([{ ...row, platform: undefined }]), "bad_request");
+  assert.equal(checked([{ ...browser, platform: "linux" }]), "bad_request");
+  for (const name of ["nul\u0000", "\u0000"]) assert.equal(listed({ name }), "bad_request", JSON.stringify(name));
   assert.equal(listed({ name: "a".repeat(65) }), "bad_request");
   assert.equal(listed({ kind: "browser" }), "bad_request");
 });
@@ -1177,6 +1185,20 @@ test("the_device_list_has_at_most_200_rows", () => {
   assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(MAX_DEVICE_LIST))), null);
   assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(MAX_DEVICE_LIST + 1))), "bad_request");
   assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(0))), null);
+  // A longer list is cut, and `more` says how many rows were left out: only on a full list, at least 1.
+  const cut = readWire("devices_res", read("devices_res.more.json"));
+  assert.equal(cut.devices.length, MAX_DEVICE_LIST);
+  assert.ok(cut.more >= 1);
+  checkStep("devices_res", cut);
+  const more = (devices, value) => refusalOf(() => checkStep("devices_res", { devices, more: value }));
+  assert.equal(more(cut.devices, 1), null);
+  assert.equal(more(cut.devices, null), null);
+  assert.equal(more(cut.devices, 0), "bad_request");
+  assert.equal(more(cut.devices.slice(1), 3), "bad_request");
+  for (const bad of [-1, 2 ** 32, "3", 1.5]) {
+    assert.equal(refusalOf(() => shape(SHAPES.devices_res, { ...cut, more: bad })), "bad_request", String(bad));
+  }
+  assert.equal("more" in parseFile("devices_res.json"), false);
 });
 
 test("the_dpop_jwk_fixture_is_a_public_p256_key_and_its_thumbprint", async () => {

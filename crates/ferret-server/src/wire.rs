@@ -2194,10 +2194,12 @@ pub enum TokenTypeJson {
 /// A device token on the wire: exactly [`TOKEN_CHARS`] characters of strict
 /// base64url without padding that decode to 32 bytes. Anything else is
 /// refused when it is read (`bad_request`). The text is a secret: its `Debug`
-/// shows nothing, and it is zeroed when dropped.
+/// shows nothing, and it is zeroed when dropped. It has no `Clone` and no
+/// `PartialEq`: the server never copies or compares the text of a token, it
+/// reads it with `TokenSecret::from_wire` and compares the hash.
 ///
 /// Spec: Fase 1 § 7.6 (never tokens in URLs or logs).
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Serialize)]
 #[serde(transparent)]
 pub struct TokenJson(pub String);
 
@@ -2298,7 +2300,7 @@ impl fmt::Debug for LoginFinishBody {
 /// server gave the device, and its first tokens.
 ///
 /// Spec: Fase 1 § 7.6; RFC 9449 § 5.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceLoginFinishRes {
     /// The account.
@@ -2327,7 +2329,7 @@ pub struct DeviceLoginFinishRes {
 /// device key in the `DPoP` header.
 ///
 /// Spec: Fase 1 § 7.6 (every renewal needs a proof from the device key).
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenRefreshReq {
     /// The refresh token, used once.
@@ -2336,7 +2338,7 @@ pub struct TokenRefreshReq {
 
 /// The `200` answer to [`TokenRefreshReq`]: a new access token and the next
 /// refresh token.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenRes {
     /// The new access token.
@@ -2351,7 +2353,7 @@ pub struct TokenRes {
 
 /// `POST /api/auth/token/revoke`: a device signs out. The answer is `204`, also
 /// for a token the server does not know.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenRevokeReq {
     /// The refresh token of the device.
@@ -2368,7 +2370,9 @@ pub enum DeviceKindJson {
     Web,
 }
 
-/// One row of `GET /api/auth/devices`.
+/// One row of `GET /api/auth/devices`. A device with tokens has a name and its
+/// platform; a browser has no platform, and its name is `""` when it never
+/// gave one. Call [`DevicesRes::validate`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceJson {
@@ -2394,13 +2398,47 @@ pub struct DeviceJson {
 }
 
 /// `GET /api/auth/devices`: at most [`MAX_DEVICE_LIST`] rows, checked when the
-/// list is read.
+/// list is read. An account with more rows than that gets the first
+/// [`MAX_DEVICE_LIST`] and, in `more`, how many were left out, so the list is
+/// cut instead of refused. Call [`DevicesRes::validate`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DevicesRes {
     /// The devices.
     #[serde(deserialize_with = "device_list::deserialize")]
     pub devices: Vec<DeviceJson>,
+    /// How many rows were left out; left out when none were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<u32>,
+}
+
+impl DeviceJson {
+    /// Checks the row: a device with tokens has a name and a platform, a
+    /// browser has no platform. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        let ok = match self.kind {
+            DeviceKindJson::Device => !self.name.is_empty() && self.platform.is_some(),
+            DeviceKindJson::Web => self.platform.is_none(),
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(WireError::Field("kind, name, platform"))
+        }
+    }
+}
+
+impl DevicesRes {
+    /// Checks every row ([`DeviceJson::validate`]), and that `more` is there
+    /// only on a full list and is at least 1. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if let Some(more) = self.more
+            && (more == 0 || self.devices.len() != MAX_DEVICE_LIST)
+        {
+            return Err(WireError::Field("more"));
+        }
+        self.devices.iter().try_for_each(DeviceJson::validate)
+    }
 }
 
 /// The `200` answer to `POST /api/auth/devices/revoke-all` and

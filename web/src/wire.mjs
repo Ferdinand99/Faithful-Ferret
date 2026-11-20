@@ -246,7 +246,11 @@ const deviceRow = [
   ["id", id], ["kind", oneOf("device", "web")], ["name", deviceName], ["platform", oneOf(...PLATFORMS), true],
   ["created_at", int()], ["last_seen", int()], ["current", bool],
 ];
-/** The list of devices: at most {@link MAX_DEVICE_LIST} rows, checked when it is read. @type {Check} */
+/**
+ * The list of devices: at most {@link MAX_DEVICE_LIST} rows, checked when it is read. An account with more
+ * gets the first ones and, in `more`, how many were left out (see `checkStep`).
+ * @type {Check}
+ */
 const deviceList = (v) => {
   if (Array.isArray(v) && v.length > MAX_DEVICE_LIST) refuse("a list of devices has at most 200 rows");
   list(deviceRow)(v);
@@ -378,7 +382,7 @@ export const SHAPES = Object.freeze({
   token_refresh_req: [["refresh_token", token]],
   token_res: tokens,
   token_revoke_req: [["refresh_token", token]],
-  devices_res: [["devices", deviceList]],
+  devices_res: [["devices", deviceList], ["more", int(U32), true]],
   revoke_all_res: [["revoked", int(U32)]],
 });
 
@@ -547,6 +551,17 @@ export function checkStep(kind, value) {
   if (kind === "batch_res") {
     if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
     for (const result of value.results) checkBatchResult(result);
+  }
+  if (kind === "devices_res") {
+    // A device with tokens has a name and a platform, a browser has no platform;
+    // `more` (rows left out) is only on a full list, and at least 1.
+    for (const row of value.devices) {
+      const ok = row.kind === "device" ? row.name !== "" && present(row, "platform") : !present(row, "platform");
+      if (!ok) refuse("a device with tokens has a name and a platform, a browser has no platform");
+    }
+    if (present(value, "more") && (value.more < 1 || value.devices.length !== MAX_DEVICE_LIST)) {
+      refuse("more is at least 1 and only on a full list");
+    }
   }
   if (kind === "items_res" || kind === "restore_rows_res") {
     // `next_after` is there exactly when more rows follow.

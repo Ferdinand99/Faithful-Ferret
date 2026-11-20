@@ -9,15 +9,16 @@
 -- `jkt` is the RFC 7638 thumbprint of the device key; it is unique over every
 -- row, so a key that was used once never names a second device. `name` is
 -- counted in characters (SQLite counts the characters of a TEXT, as Rust's
--- `chars()` does). A refresh token has at most one successor (`prev_hash` is
--- unique where it is set), and used refresh rows are found by `used_at` when
--- they are purged.
+-- `chars()` does), and holds no NUL (SQLite's `length()` stops at the first
+-- one, so a NUL would hide the rest of a long name). A refresh token has at
+-- most one successor (`prev_hash` is unique where it is set), and used refresh
+-- rows are found by `used_at` when they are purged.
 
 CREATE TABLE ferret_devices (
   device_id BLOB PRIMARY KEY CHECK(length(device_id) = 16),
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   jkt BLOB NOT NULL UNIQUE CHECK(length(jkt) = 32),
-  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64 AND instr(name, char(0)) = 0),
   platform TEXT NOT NULL CHECK(platform IN ('windows','macos','linux','android','ios','chromeos','other')),
   session_version INTEGER NOT NULL,
   created_at INTEGER NOT NULL CHECK(created_at >= 0),

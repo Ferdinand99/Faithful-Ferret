@@ -1222,6 +1222,28 @@ fn migration_adds_three_strict_tables_with_length_checks() {
             "{platform}"
         );
     }
+    // No NUL: SQLite's `length()` stops at the first one, so it would hide the
+    // rest of a long name.
+    assert!(
+        insert_device(
+            &conn,
+            &[13; 16],
+            user,
+            &jkt(13),
+            &format!("a {}", "b".repeat(1000)),
+            "linux"
+        )
+        .is_err(),
+        "a NUL before 1000 more characters"
+    );
+    assert!(
+        insert_device(&conn, &[14; 16], user, &jkt(14), "a b", "linux").is_err(),
+        "a NUL in a short name"
+    );
+    assert!(
+        insert_device(&conn, &[15; 16], user, &jkt(15), " ", "linux").is_err(),
+        "a NUL alone"
+    );
     // A key names one device only, and a device belongs to a user.
     assert!(
         insert_device(&conn, &[11; 16], user, &jkt(1), "again", "linux").is_err(),
@@ -1491,7 +1513,7 @@ fn schema_after_m5a_matches_the_frozen_schema() {
     assert_eq!(added, expected);
     for needle in [
         "jkt BLOB NOT NULL UNIQUE CHECK(length(jkt) = 32)",
-        "name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64)",
+        "name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64 AND instr(name, char(0)) = 0)",
         "CREATE UNIQUE INDEX ferret_refresh_prev ON ferret_refresh(prev_hash) WHERE prev_hash IS NOT NULL",
         "CREATE INDEX ferret_refresh_used ON ferret_refresh(used_at) WHERE used_at IS NOT NULL",
     ] {
