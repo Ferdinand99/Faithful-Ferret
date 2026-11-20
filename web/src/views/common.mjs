@@ -38,7 +38,10 @@ export function createWipeScope() {
 /**
  * Subscribes to an engine event for as long as the screen is on the page: once
  * the node has been shown and is later gone, the next event removes the
- * listener instead of calling it.
+ * listener instead of calling it. A node that is known to be off the page
+ * (`isConnected === false`) is gone as well, shown or not: a screen that was
+ * replaced before any event saw it must not answer events later (it would
+ * build a second notice, and a second screen change on top of the first).
  * @param {HTMLElement} root
  * @param {{ on(event: string, fn: (payload: any) => void): () => void }} engine
  * @param {string} event
@@ -48,7 +51,7 @@ export function listenWhileShown(root, engine, event, fn) {
   let shown = false;
   const off = engine.on(event, (payload) => {
     if (/** @type {any} */ (root).isConnected === true) shown = true;
-    else if (shown) {
+    else if (shown || /** @type {any} */ (root).isConnected === false) {
       off();
       return;
     }
