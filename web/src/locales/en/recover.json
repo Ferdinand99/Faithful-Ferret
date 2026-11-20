@@ -3,7 +3,6 @@
   "recover.cancel": "Stop the recovery",
   "recover.code": "One-time code",
   "recover.code_help": "Ask the administrator of the server for it. It works once and for 24 hours; a newer code replaces it.",
-  "recover.code_limit": "If someone keeps trying codes for your e-mail address, a correct code can be refused for a few minutes. Wait five minutes and try again: the code stays valid until it is used or expires.",
   "recover.done_backup": "The server was asked to make a new backup. It is usually made within a few minutes.",
   "recover.done_devices": "Every other device and browser was signed out. They sign in again with the new master password.",
   "recover.done_heading": "Account recovered",

@@ -3,7 +3,6 @@
   "recover.cancel": "Stopp gjenopprettingen",
   "recover.code": "Engangskode",
   "recover.code_help": "Be den som drifter tjeneren om den. Den virker én gang og i 24 timer; en nyere kode erstatter den.",
-  "recover.code_limit": "Prøver noen stadig koder for e-postadressen din, kan en riktig kode bli avvist i noen minutter. Vent fem minutter og prøv igjen: koden gjelder til den er brukt eller utløpt.",
   "recover.done_backup": "Tjeneren ble bedt om å ta en ny backup. Den tas vanligvis innen noen minutter.",
   "recover.done_devices": "Alle andre enheter og nettlesere ble logget ut. De logger inn igjen med det nye hovedpassordet.",
   "recover.done_heading": "Kontoen er gjenopprettet",
