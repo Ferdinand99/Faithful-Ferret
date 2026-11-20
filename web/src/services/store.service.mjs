@@ -57,7 +57,7 @@ export default {
       loadSyncState,
       saveSyncState,
       trash,
-      // The note that an older server state was accepted (not secret; it only picks a text, see store/restoreNote.mjs).
+      // The note that an older server state was accepted (not secret; it picks a text and gates the reapply, see store/restoreNote.mjs).
       restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
       forgetServer,
       pendingWrites,

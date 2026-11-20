@@ -2,7 +2,8 @@
 // because the server shows an older state than this device remembers. The page
 // says what is certain (nothing here was deleted), shows what accepting the
 // older state would do before anything is done, and asks for a typed word
-// before it does it.
+// before it does it. When the older state took the unlock methods back and the device kept its note
+// of that, the page leads on to "reapply the unlock methods" (J25 (i)).
 //
 // Nothing here is a secret: the counts come from the engine's preview, and no
 // item name or value is read or shown. An error is shown by its code, from a
@@ -45,8 +46,9 @@ const REASONS = Object.freeze(["no_checkpoint"]);
  *   onAccepted?: (result: { reuploaded: number, conflicts: number, manifestOlder?: boolean }) => unknown,
  * }} options `reload` reloads the page; it is the page's own `location.reload` unless a test gives another.
  * `onAccepted` is called once after the engine has accepted the older state (the route keeps a local note there when the
- * unlock methods went back). If it answers `"not_kept"` the page adds a line saying so; nothing else it does or throws
- * changes what the page shows.
+ * unlock methods went back). If it answers `"not_kept"` the page adds a line saying so; if it answers `"kept"` for a
+ * restore that took the unlock methods back, the page adds the way to reapply them (`#/recovery-key`, which checks
+ * again before it offers anything). Nothing else it does or throws changes what the page shows.
  * @returns {HTMLElement}
  */
 export function restoredView({ engine, t, router = { go() {} }, reload = () => /** @type {any} */ (globalThis).location?.reload(), onAccepted = () => {} }) {
@@ -277,8 +279,14 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
       void (async () => {
         try {
           // A note that could not be kept is said on the page; anything else the hook does or throws changes nothing.
-          if ((await onAccepted(done)) === "not_kept") {
+          const kept = await onAccepted(done);
+          if (kept === "not_kept") {
             body.appendChild(el("p", { class: "notice", role: "note", "data-role": "restored-note-not-kept" }, t("syncwarnings.restored.note_not_kept")));
+          } else if (kept === "kept" && done.manifestOlder === true) {
+            // The unlock methods went back and the note is kept: the way to put the newest ones back (J25 (i)).
+            // The page it leads to checks the note and the server again before it offers anything.
+            body.appendChild(el("p", { "data-role": "restored-reapply-note" }, t("keys.reapply.from_restored_note")));
+            body.appendChild(el("div", { class: "actions" }, link("keys.reapply.from_restored", "restored-reapply", () => router.go("/recovery-key"))));
           }
         } catch {
           // The result stays as it is.

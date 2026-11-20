@@ -3,10 +3,14 @@
 // refuses the older method, because the pinned floors are never lowered; the note lets the
 // sign-in and unlock screens say that the cause is the restore and not only an attack.
 //
-// The note is not a secret and carries no key, item or name. It decides which text the screen
-// shows and nothing else: it lowers no floor and changes no check. It lives in the settings
-// under `restore.note.<server>.<account>`, expires after 30 days, and "forget this server"
-// removes it (see `forget.mjs`).
+// The note is not a secret and carries no key, item or name. It decides two things: which text
+// the screen shows for such a refusal, and whether "reapply the unlock methods" is offered. That
+// is the one place the core's after-restore renewal is called (`flows/reapplyMethods.mjs`), and
+// only while the note says `manifestOlder`, has not expired and has the restore epoch the sync
+// state stored when the older state was accepted. Either way the note lowers no floor and
+// changes no check: the renewal it offers only raises the recovery floor. It lives in the
+// settings under `restore.note.<server>.<account>`, expires after 30 days, and "forget this
+// server" removes it (see `forget.mjs`).
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "./idb.mjs";
 import { deleteSetting, getSetting, setSetting } from "./settings.mjs";

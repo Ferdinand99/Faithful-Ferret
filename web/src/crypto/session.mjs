@@ -12,7 +12,10 @@
 import { changePassword } from "../flows/changePassword.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
 import { reauthenticate } from "../flows/reauth.mjs";
+import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
 import { register } from "../flows/register.mjs";
+import { renewRecoveryKey } from "../flows/renewRecovery.mjs";
+import { accessSheet, showSecretKey } from "../flows/showSecretKey.mjs";
 import { readSetupQr } from "../flows/setupQr.mjs";
 import { deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
 import { serverKey } from "../store/idb.mjs";
@@ -265,6 +268,49 @@ export function createCryptoSession({
     /** Removes the secret key this device remembers for the account. */
     async forgetSecretKey(/** @type {string} */ accountId) {
       await forgetSecretKey(await store.open(), server, accountId);
+    },
+
+    /**
+     * A new recovery key for the open account (see `flows/renewRecovery.mjs`). The vault stays open and no
+     * session ends.
+     * @param {Parameters<typeof renewRecoveryKey>[1]} args
+     */
+    async renewRecoveryKey(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return renewRecoveryKey(env, args);
+    },
+
+    /** What "reapply the unlock methods" can do after an accepted restore (see `flows/reapplyMethods.mjs`). */
+    async reapplyOffer() {
+      if (current === null) throw new AccountError("session_ended");
+      return reapplyOffer(env);
+    },
+
+    /**
+     * Renews the recovery key over a wrap that went below the floor with an accepted restore.
+     * @param {Parameters<typeof reapplyMethods>[1]} args
+     */
+    async reapplyMethods(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return reapplyMethods(env, args);
+    },
+
+    /**
+     * The secret key this device remembers, after the password check (see `flows/showSecretKey.mjs`).
+     * @param {Parameters<typeof showSecretKey>[1]} args
+     */
+    async showSecretKey(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return showSecretKey(env, args);
+    },
+
+    /**
+     * Page 1 of the emergency sheet again, as a PDF (see `flows/showSecretKey.mjs`).
+     * @param {Parameters<typeof accessSheet>[1]} args
+     */
+    async accessSheet(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return accessSheet(env, args);
     },
 
     /** Calls `fn` when the vault is locked; returns the function that stops it. */

@@ -2,7 +2,8 @@
 // it when the user accepts an older server state whose unlock methods went back too, and
 // finding it again when a sign-in or an unlock is refused because the server shows an older
 // unlock method. Both are best effort: a store that fails never stops the accept, and never
-// changes which check refuses what; a note that cannot be read is the same as no note.
+// changes which check refuses what; a note that cannot be read is the same as no note. The
+// note also gates "reapply the unlock methods" (`reapplyMethods.mjs`), which reads it itself.
 import { hex16 } from "../b64.mjs";
 
 /**
