@@ -23,9 +23,10 @@
 //! 2. In one `BEGIN IMMEDIATE` transaction the row of the token's hash is read
 //!    with its device. No row: `401 token_expired`. A revoked device, or one
 //!    `devices::still_valid` refuses (a disabled user, the kit's sign-out
-//!    everywhere, an account without a vault): `401 device_revoked`. A device
-//!    whose only fault is its age goes on to step 5 instead, so a family that
-//!    ran out answers `token_expired` at the second its tokens end.
+//!    everywhere, an account without a vault): `401 device_revoked`. The age
+//!    rule of `still_valid` is left to step 5 (the device is checked at the
+//!    last second before its absolute end), so a family that ran out answers
+//!    `token_expired` at the second its tokens end.
 //! 3. The proof's key is not the device's: the device is revoked (its family
 //!    with it) and the answer is `401 token_reused`. A refresh token that
 //!    travels with a proof of another key has leaked. The `jti` of that proof
@@ -34,8 +35,11 @@
 //!    transaction and before anything is written. A replayed `jti` (`401
 //!    dpop_invalid`), a key or an account with too many proofs (`429
 //!    throttled`) or a full cache (`503 busy`) rolls everything back.
-//! 5. The token is past its idle or its absolute end: the device is revoked
-//!    and the answer is `401 token_expired`.
+//! 5. The token is past its absolute end, or it is unused and past its idle
+//!    end: the device is revoked and the answer is `401 token_expired`. A used
+//!    token's idle end means nothing (its successor has its own); the grace
+//!    rule of steps 7 and 8 governs it, so a lost answer whose retry falls
+//!    just after the old token's idle end still gets its successor.
 //! 6. The token was not used: it is marked used, its successor is written
 //!    (`prev_hash` this token, a new idle end, the absolute end inherited; the
 //!    unique index on `prev_hash` allows one successor only), a new access
@@ -583,8 +587,10 @@ fn renew_tx(
     // A revoked device stays revoked (its rows are kept, so its tokens are
     // still known). A device the account no longer accepts uses no token.
     // `still_valid` also ends a device at its absolute end, which is the
-    // absolute end of every token of its chain: that case is step 5's.
-    if row.revoked || (now < row.abs_expires_at && !devices::still_valid(&tx, &row.device, now)?) {
+    // absolute end of every token of its chain: that case is step 5's, so the
+    // device is checked at the last second before it, at the latest.
+    let checked_at = now.min(row.abs_expires_at.saturating_sub(1));
+    if row.revoked || !devices::still_valid(&tx, &row.device, checked_at)? {
         return Ok(Renewed::Refused("device_revoked"));
     }
     // A refresh token with a proof of another key has leaked: the device and
@@ -597,7 +603,8 @@ fn renew_tx(
     if let Err(error) = auth.replay().record(proof, row.user_id, now) {
         return Ok(Renewed::Proof(error));
     }
-    if now >= row.idle_expires_at || now >= row.abs_expires_at {
+    // A used token's idle end means nothing: the grace rule below decides.
+    if now >= row.abs_expires_at || (row.used_at.is_none() && now >= row.idle_expires_at) {
         return revoke_and_commit(tx, &row, Why::Ended, now);
     }
     let Some(used_at) = row.used_at else {

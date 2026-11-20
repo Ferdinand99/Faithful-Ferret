@@ -627,6 +627,50 @@ async fn idle_30_days_and_absolute_90_days_end_the_family() {
 }
 
 #[tokio::test]
+async fn a_lost_answer_retried_after_the_old_tokens_idle_end_gets_the_same_successor() {
+    let app = device_app().await;
+    client_account(&app, 1).await;
+    let t0 = now(&app);
+    let device = signed_in(&app, 1, 1).await;
+    let first = refresh_token(&device);
+    // Renewed 5 seconds before the first token's idle end; the answer is lost.
+    set_clock(&app, t0, IDLE_SECS - 5);
+    let (_, second) = renewed(&app, &device, &first).await;
+    // The retry comes 5 seconds after that idle end, inside the grace period:
+    // a used token's idle end means nothing, so it gets the same successor.
+    set_clock(&app, t0, IDLE_SECS + 5);
+    let (_, same) = renewed(&app, &device, &first).await;
+    assert_eq!(same.hash(), second.hash());
+    assert_eq!(revoked_at(&app, device_id(&device)).await, None);
+    renewed(&app, &device, &second).await;
+}
+
+#[tokio::test]
+async fn at_the_absolute_end_a_device_the_account_no_longer_accepts_is_device_revoked() {
+    let app = device_app().await;
+    let client = client_account(&app, 1).await;
+    let t0 = now(&app);
+    let device = signed_in(&app, 1, 1).await;
+    let token = refresh_token(&device);
+    exec(
+        &app,
+        "UPDATE users SET active = 0 WHERE id = ?1",
+        client.ids.user_id,
+    )
+    .await;
+    // At and past the absolute end the account's own rules still apply: the
+    // final `device_revoked`, with no `jti` recorded and nothing written.
+    for at in [ABSOLUTE_SECS, ABSOLUTE_SECS + 10] {
+        set_clock(&app, t0, at);
+        let before = (rows(&app).await, replay_len(&app));
+        let res = refresh(&app, &device, &token).await;
+        assert_eq!(status_and_code(&res), refused(401, "device_revoked"));
+        assert_eq!((rows(&app).await, replay_len(&app)), before);
+        assert_eq!(revoked_at(&app, device_id(&device)).await, None);
+    }
+}
+
+#[tokio::test]
 async fn concurrent_refresh_with_the_same_token_gives_one_successor_and_no_revocation() {
     let app = device_app().await;
     client_account(&app, 1).await;
