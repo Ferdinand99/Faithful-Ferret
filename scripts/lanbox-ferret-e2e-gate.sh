@@ -462,10 +462,11 @@ m3_phase() {
   # (e2e-reset) instead of building a new one. The gate itself always runs all of them on a fresh stack.
   # shellcheck disable=SC2206
   [ -z "${FERRET_E2E_M3_SPECS:-}" ] || specs=($FERRET_E2E_M3_SPECS)
-  hosted_markers=""
-  for spec in "${specs[@]}"; do hosted_markers="$hosted_markers m3-${spec%%-*}"; done
+  local markers=""
+  for spec in "${specs[@]}"; do markers="$markers m3-${spec%%-*}"; done
   for browser in $browsers; do
     say "recovery scenarios in $browser on a fresh stack"
+    hosted_markers="$markers"
     if [ "${FERRET_E2E_REUSE:-}" = 1 ] && e2e_running; then e2e_reset >&2; else e2e_up >&2; fi
     if run_m2_hosted m3 "" "$browser" "${specs[@]}"; then ok "$browser: scenarios ${specs[*]} passed"; else bad "$browser: scenarios ${specs[*]} failed"; fi
     hosted_markers="m2-restore"
