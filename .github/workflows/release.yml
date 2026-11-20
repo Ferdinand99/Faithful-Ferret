@@ -23,9 +23,17 @@
 # signature, before it starts a stack with real data. Nothing is tagged before the
 # protected environment "release" approves the publish job.
 #
-# The build job has read access only. The publish job gets the write access
+# The package build job has read access only. The publish job gets the write access
 # and the OIDC token, and it runs no code from the repository: it only handles
 # the files it downloads from the build job.
+#
+# The image build jobs are different, and the difference is deliberate: they have `packages: write`
+# so that each one can push its platform image by digest, and they run the Dockerfile of the tag
+# (BuildKit gets no registry credentials, so build steps cannot use the token; the actions
+# in those jobs can). What such a token can do is limited by what comes after: a digest without a
+# tag is not referenced by anything, the tag and the signature come from the publish job under
+# the protected environment, and `scripts/ferret-home.sh up` starts only an image with a good
+# signature from this workflow.
 # Third-party actions are pinned by commit SHA; tools by version and checksum.
 name: Release
 

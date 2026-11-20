@@ -81,11 +81,15 @@ settings() {
     || fail "FERRET_COPY_SFTP_HOST_KEY must be the host key of the target (ssh-ed25519 AAAA...)"
   key_file="${FERRET_COPY_SFTP_KEY_FILE:-/run/secrets/copy_sftp_key}"
   [ -r "$key_file" ] || fail "the SSH key cannot be read (it must be owned by the user of this container, mode 0400)"
+  # A secret mounted from the host keeps the mode of the host file: refuse a key that others can read.
+  if [ -n "$(find "$key_file" -maxdepth 0 -perm /077 2> /dev/null)" ]; then
+    fail "the SSH key is readable by group or others: make it owned by the user of this container with mode 0400"
+  fi
   keep_days="${FERRET_COPY_KEEP_DAYS:-30}"
   [[ "$keep_days" =~ ^[0-9]{1,3}$ ]] && [ "$keep_days" -ge 1 ] || fail "FERRET_COPY_KEEP_DAYS is not a number of days"
   push_url="${FERRET_COPY_PUSH_URL:-}"
-  if [ -n "$push_url" ] && [[ ! "$push_url" =~ ^https?://[A-Za-z0-9._~:/?#@!\$\&\'()*+,\;=%-]+$ ]]; then
-    fail "FERRET_COPY_PUSH_URL is not an address"
+  if [ -n "$push_url" ] && [[ ! "$push_url" =~ ^https://[A-Za-z0-9._~:/?#@!\$\&\'()*+,\;=%-]+$ ]]; then
+    fail "FERRET_COPY_PUSH_URL must be an https address (the push token is a secret)"
   fi
   [ -d "$backups" ] || fail "the backup folder is not mounted"
   if [ -w "$backups" ]; then
@@ -176,28 +180,34 @@ tell_monitor() {
   fi
 }
 
+# Whether a name is a set this script may rank and trim: the form of a set name, a real date, and
+# not in the future (a clock that is a day ahead is allowed for). A name with a date far ahead
+# would otherwise count as one of the three newest and push the real copies out of the keep list.
+valid_set_name() { # name
+  local t
+  [[ "$1" =~ $set_re ]] || return 1
+  t="$(set_time "$1" 2> /dev/null)" || return 1
+  [ "$t" -le "$future_limit" ] || return 1
+}
+
 # The sets on the target that have both files (a copy and its checksum), one per line.
 remote_sets() {
   local n
-  printf '%s
-' "$remote" | grep -E '.tar.age$' | sed 's/.tar.age$//' | while read -r n; do
-    if printf '%s
-' "$remote" | grep -qx "$n.tar.age.sha256"; then printf '%s
-' "$n"; fi
+  printf '%s\n' "$remote" | grep -E '\.tar\.age$' | sed 's/\.tar\.age$//' | while read -r n; do
+    if printf '%s\n' "$remote" | grep -qx "$n.tar.age.sha256"; then printf '%s\n' "$n"; fi
   done
 }
 
 # What stays: the three newest and everything younger than the keep time, over the names given.
-# Sets the array keep.
+# Sets the array keep. Names that are not valid sets (not a date, or in the future) are not ranked.
 decide_keep() {
   local all n rank=0 t
-  all="$(printf '%s
-' "$@" | grep -E "$set_re" | sort -ru || true)"
+  all="$(printf '%s\n' "$@" | grep -E "$set_re" | sort -ru || true)"
   keep=()
   while IFS= read -r n; do
     [ -n "$n" ] || continue
-    # A name that looks like a set but is not a date is not a set.
-    t="$(set_time "$n" 2> /dev/null)" || continue
+    valid_set_name "$n" || continue
+    t="$(set_time "$n")"
     rank=$((rank + 1))
     if [ "$rank" -le "$keep_newest" ] || [ $((now - t)) -le $((keep_days * 86400)) ]; then
       keep+=("$n")
@@ -215,15 +225,16 @@ in_list() { # name, list...
 cycle() {
   settings
   connect_setup
+  # Nothing from a cycle is left in the work folder, whatever happens in it.
+  trap 'rm -rf "$work/key" "$work/known_hosts" "$work/check" "$work"/*.tar.age "$work"/*.tar.age.sha256' EXIT
   local name n local_sets=() on_target=() uploaded=0
   now="$(date -u +%s)"
+  future_limit=$((now + 86400))
 
   # What is on the target now; parts from an earlier, broken run go first.
   remote="$(remote_names)"
-  for name in $(printf '%s
-' "$remote" | grep -E '.part$' || true); do
-    printf -- '-rm %s
-' "$name" | sftp_run
+  for name in $(printf '%s\n' "$remote" | grep -E '\.part$' || true); do
+    printf -- '-rm %s\n' "$name" | sftp_run
   done
   remote="$(remote_names)"
 
@@ -231,7 +242,10 @@ cycle() {
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     [[ "$name" =~ $set_re ]] || continue
-    set_time "$name" > /dev/null 2>&1 || continue
+    if ! valid_set_name "$name"; then
+      log "ignoring $name: not a date, or a date in the future"
+      continue
+    fi
     if [ -d "$backups/$name" ] && [ ! -L "$backups/$name" ] && [ -f "$backups/$name/.complete" ]; then
       local_sets+=("$name")
     fi
@@ -247,18 +261,15 @@ cycle() {
     on_target+=("$name")
   done
 
-  # Trim the target: only names this script writes, only sets that are no longer kept.
+  # Trim the target: only names this script writes, only valid sets that are no longer kept.
   decide_keep "${on_target[@]}"
   remote="$(remote_names)"
-  for name in $(printf '%s
-' "$remote" | grep -E '.tar.age(.sha256)?$' || true); do
+  for name in $(printf '%s\n' "$remote" | grep -E '\.tar\.age(\.sha256)?$' || true); do
     n="${name%.sha256}"
     n="${n%.tar.age}"
-    [[ "$n" =~ $set_re ]] || continue
-    set_time "$n" > /dev/null 2>&1 || continue
+    valid_set_name "$n" || continue
     if ! in_list "$n" "${keep[@]}"; then
-      printf -- '-rm %s
-' "$name" | sftp_run
+      printf -- '-rm %s\n' "$name" | sftp_run
       log "removed the old copy $name from the target"
     fi
   done
@@ -268,7 +279,6 @@ cycle() {
   else
     log "nothing new to copy"
   fi
-  rm -f "$work/key" "$work/known_hosts"
 }
 
 case "${1:-loop}" in

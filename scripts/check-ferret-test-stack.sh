@@ -296,6 +296,7 @@ mkdir "$tmp/bin"
 cat > "$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_LOG"
+if [ -n "${STUB_FAIL:-}" ] && printf '%s' "$*" | grep -qE -- "$STUB_FAIL"; then exit 1; fi
 last="${*: -1}"
 has_volume() { for pair in $STUB_VOLUMES; do [ "${pair%%=*}" = "$1" ] && return 0; done; return 1; }
 case "$*" in
@@ -348,11 +349,11 @@ guard_run() {
   : > "$guard_log"
   (
     export PATH="$PWD/$tmp/bin:$PATH" STUB_LOG="$guard_log" FERRET_DOCKER_ARGS="--context stub" FERRET_ENV_FILE="$tmp/plain.env"
-    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_RESTORE_RC STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP STUB_CP_FAIL STUB_CP_CORRUPT STUB_REAL_CP="$real_cp"
+    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_RESTORE_RC STUB_FAIL STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP STUB_CP_FAIL STUB_CP_CORRUPT STUB_REAL_CP="$real_cp"
     # shellcheck disable=SC1091
     source scripts/lanbox-ferret-test.sh
     "$@"
-  ) >/dev/null 2>&1
+  ) > "$guard_log.out" 2>&1
 }
 logged() { grep -qE -- "$1" "$guard_log"; }
 first_line() { grep -nE -- "$1" "$guard_log" | head -n 1 | cut -d: -f1; }
@@ -490,6 +491,10 @@ guard_run test_snapshot --yes-ferret-test || guard_fail "a snapshot of a stopped
 if logged " start ferret-test-app"; then guard_fail "a snapshot started an app that was stopped before"; fi
 unset STUB_RUNNING STUB_VOLUMES
 
+# The runner of the end-to-end tests installs its packages in a container of its own on the default
+# network and runs the tests on the stack's network only: it is never joined to a second network.
+grep -q -- '--network bridge' scripts/lanbox-ferret-test.sh || guard_fail "the package install must run on the default network"
+if grep -n 'network connect' scripts/lanbox-ferret-test.sh; then guard_fail "the test runner must never be joined to a second network"; fi
 # ferret_test_data_has_its_label: the data volume of the ferret-test stack carries owner=ferret-test (the compose
 # file says so above), `up` refuses a volume that was made without the label, and `label-data` gives it the
 # label by copying the data: checked copy first, the old volume removed only after that, the new one made with
@@ -534,6 +539,35 @@ unset STUB_RESTORE_RC
 STUB_VOLUMES="ferret-test-data= ferret-test-data-relabel=ferret-test"
 if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data went on although an unfinished run left a volume"; fi
 if logged ' stop |volume rm|MODE='; then guard_fail "label-data touched volumes although an unfinished run left one"; fi
+unset STUB_VOLUMES
+# both volumes labelled (a cut-off after the new volume was made): up and label-data refuse and touch nothing
+STUB_VOLUMES="ferret-test-data=ferret-test ferret-test-data-relabel=ferret-test"
+if guard_run require_data_label; then guard_fail "up would start although the temporary volume of label-data is still there"; fi
+grep -q 'DO NOT run up' "$guard_log.out" || guard_fail "require_data_label must say that up must not be run"
+if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data went on with both volumes there"; fi
+if logged ' stop |volume rm|volume create|MODE=|compose .* down'; then guard_fail "label-data touched volumes with both volumes there"; fi
+STUB_VOLUMES="ferret-test-data-relabel=ferret-test"
+if guard_run require_data_label; then guard_fail "up would start with the data volume gone and only the temporary volume left"; fi
+# a cut-off or failure at each step: what is removed, what is kept, and what is said
+unset STUB_VOLUMES
+cut_off() { # step name, failing command (an ERE on the arguments), then what must not and must be logged, and the text
+  local name="$1" fail_re="$2" not_re="$3" must_re="$4" text="$5"
+  STUB_VOLUMES="ferret-test-data="
+  STUB_FAIL="$fail_re"
+  if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data: $name: went on after a failure"; fi
+  unset STUB_FAIL
+  if [ -n "$not_re" ] && logged "$not_re"; then guard_fail "label-data: $name: did something that must not follow: $not_re"; fi
+  if [ -n "$must_re" ] && ! logged "$must_re"; then guard_fail "label-data: $name: expected $must_re"; fi
+  grep -q "$text" "$guard_log.out" || guard_fail "label-data: $name: the message must say: $text (got: $(tr '\n' ' ' < "$guard_log.out"))"
+}
+cut_off "the temporary volume cannot be made" 'volume create --label owner=ferret-test ferret-test-data-relabel$' ' stop |volume rm|MODE=' '' 'nothing was changed'
+cut_off "the app cannot be stopped" 'compose .* stop ' 'volume rm ferret-test-data$|MODE=make' 'volume rm ferret-test-data-relabel$' 'nothing was changed'
+cut_off "the check of the copy" 'MODE=verify' 'volume rm ferret-test-data$|compose .* down|volume rm ferret-test-data-relabel$' 'MODE=make' 'DO NOT run up'
+cut_off "the stack cannot be taken down" 'compose .* down' 'volume rm ferret-test-data$|volume rm ferret-test-data-relabel$' 'MODE=verify' 'DO NOT run up'
+cut_off "the old volume cannot be removed" 'volume rm ferret-test-data$' 'volume create --label owner=ferret-test ferret-test-data$|volume rm ferret-test-data-relabel$' 'compose .* down' 'DO NOT run up'
+cut_off "the new volume cannot be made" 'volume create --label owner=ferret-test ferret-test-data$' 'MODE=restore|volume rm ferret-test-data-relabel$' 'volume rm ferret-test-data$' 'DO NOT run up'
+cut_off "the copy back" 'MODE=restore' 'volume rm ferret-test-data-relabel$' 'volume create --label owner=ferret-test ferret-test-data$' 'DO NOT run up'
+cut_off "the temporary volume cannot be removed at the end" 'volume rm ferret-test-data-relabel$' '' 'MODE=restore' 'remove it by hand before run up'
 unset STUB_VOLUMES
 
 # A tunnel client that runs outside Docker (since the move to Proxmox, Newt is a CT

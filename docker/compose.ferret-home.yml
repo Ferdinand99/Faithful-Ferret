@@ -34,6 +34,35 @@
 #
 # Residual risk, accepted: any process on the host that can open a connection to the
 # loopback ports counts as the proxy. They are the host's own processes.
+#
+# Rules that keep trusting the gateway safe. The server believes X-Forwarded-* only from the
+# gateway, and only processes of this host can reach the loopback ports. Whatever lets a remote
+# client connect to these ports through the proxy client's own network path, instead of through
+# the proxy's web layer, makes every such client "the proxy":
+#  * Never add a raw TCP/UDP resource for the ports 3040 or 3041 on the site of this host, and
+#    never give client access or a private resource on that site that reaches this host or its
+#    loopback address. A forged X-Forwarded-For or X-Forwarded-Proto would then be believed
+#    (the throttles and the https check are defeated, and a sign-in in front of the admin pages
+#    is bypassed). The site may be shared with other apps: look at what is on it first.
+#  * The private resource from this host toward the backup target is limited to the SFTP host and
+#    port. Containers on this host reach it through the host's routes, the app container too.
+#  * A raw-TCP fallback toward the target must never expose the target's main sshd: use a
+#    dedicated SFTP-only sshd (AllowUsers the copy user, no passwords, a chroot folder,
+#    ForceCommand internal-sftp, no forwarding) on a port of its own.
+#  * Read the host key of the target on the target itself, never with ssh-keyscan through the
+#    tunnel (that is trust on first use).
+#  * After the first start, send one request with a forged X-Forwarded-For through the public
+#    address of the vault and look at what the server recorded: the client address must be the
+#    real one, not the forged one, so the proxy does not pass the client's value on as the
+#    entry the server believes.
+#
+# What the host that runs `scripts/ferret-home.sh up` needs: Docker 28 or newer (`up` checks),
+# docker buildx, compose v2, git with the release tags, node, and cosign (or --no-cosign, which
+# is recorded). The release image package must be public in the registry, or the host must be
+# logged in to it. The subnet below must be free. A nightly snapshot of the copy folder on the
+# target needs a file system that has snapshots (ZFS, btrfs); an XFS array cannot. A job on
+# the target that COPIES (not moves) the files into a folder the copy user cannot write also
+# works; moving them would make the copy container upload everything again.
 name: ferret-home
 
 services:
@@ -43,6 +72,12 @@ services:
     # Safe because the restore marker stops the server from starting in the middle of a restore.
     restart: unless-stopped
     mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
     labels:
       owner: ferret-home
     # The entrypoint starts as root only to give /data and /backups to uid 1000 (chown)
@@ -82,6 +117,7 @@ services:
 
   ferret-home-copy:
     image: ferret-home-copy:latest
+    pull_policy: build
     build:
       context: .
       dockerfile: backup-copy.Dockerfile
@@ -92,6 +128,12 @@ services:
     restart: unless-stopped
     init: true
     mem_limit: 1g
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
     labels:
       owner: ferret-home
     user: "1000:1000"

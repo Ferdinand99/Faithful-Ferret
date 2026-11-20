@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 #
 # The copy container of a Faithful Ferret stack with real data: it takes each new
 # backup set from the backup folder (mounted read-only), encrypts it with `age` to
@@ -18,13 +18,17 @@
 # The base image is pinned by digest (an index, so it exists for amd64 and arm64
 # and is built on the machine that runs it). It is the same image as the server's
 # (docker/server.Dockerfile); scripts/check-ferret-home-stack.sh checks that.
-# The apk packages are not pinned to a version, for the reason given there.
+# The BuildKit frontend (the syntax line) and every apk package are pinned too, so the same
+# files give the same image. Alpine drops a package version from its index when a newer one
+# is out; the build then stops with a clear error, and the pins are moved to the new versions
+# (apk policy <package> in the base image shows them). scripts/ferret-home.sh up writes the
+# image ID and the package versions of the copy image it built into docker/home-releases.log.
 
 ARG ALPINE_IMAGE=alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 
 # --- The SFTP server of the drill stack ----------------------------------------
 FROM ${ALPINE_IMAGE} AS test-target
-RUN apk add --no-cache openssh-server \
+RUN apk add --no-cache openssh-server=10.0_p1-r11 \
     && adduser -D -s /sbin/nologin -u 1000 backup \
     # sshd refuses a locked account even for key logins: give it a password nobody knows.
     && echo "backup:$(head -c 32 /dev/urandom | base64)" | chpasswd 2>/dev/null \
@@ -71,7 +75,7 @@ LABEL org.opencontainers.image.title="Faithful Ferret backup copy" \
 # age: the encryption; openssh-client: the SFTP client (sftp; ssh-keygen
 # is only used by the drill stack); curl: the message to the monitor; tar and coreutils:
 # GNU tar and date; bash: the script.
-RUN apk add --no-cache age bash ca-certificates coreutils curl openssh-client tar \
+RUN apk add --no-cache age=1.2.1-r10 bash=5.2.37-r0 ca-certificates=20261020-r0 coreutils=9.7-r1 curl=8.14.1-r4 openssh-client=10.0_p1-r11 tar=1.35-r3 \
     && addgroup -S -g 1000 ferret \
     && adduser -S -D -H -u 1000 -G ferret -h /work -s /sbin/nologin ferret \
     && mkdir -p /work \

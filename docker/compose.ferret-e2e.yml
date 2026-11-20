@@ -186,8 +186,8 @@ networks:
       owner: ferret-e2e
     # No way out of the network: nothing in the stack needs the internet (the terminator makes
     # its own certificates, the app sends no message), so a compromised container cannot
-    # call out. The test runner joins this network and, for its package install only, a
-    # second one (scripts/lanbox-ferret-test.sh e2e-run).
+    # call out. The test runner runs on this network only; its packages are installed first in a
+    # container on the default network (scripts/lanbox-ferret-test.sh e2e-run).
     internal: true
     ipam:
       config:

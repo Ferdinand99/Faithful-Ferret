@@ -91,7 +91,8 @@ COPY --chmod=755 docker/ferret-entrypoint.sh /usr/local/bin/ferret-entrypoint.sh
 # Empty in a local build.
 ARG VERSION=""
 ARG REVISION=""
-LABEL org.opencontainers.image.version="${VERSION}"       org.opencontainers.image.revision="${REVISION}"
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
 ENV FERRET_DATA_DIR=/data
 

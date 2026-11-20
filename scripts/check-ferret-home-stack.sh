@@ -115,6 +115,11 @@ if (c.networks["ferret-home-net"].ipam.config[0].subnet !== "172.30.251.0/28") {
   refused home "the app on the gateway address" "${app}.networks['ferret-home-net'].ipv4_address = '172.30.251.14'" "fixed address"
   # The same rule for the drill.
   refused drill "drill trusting another address" 'c.services["ferret-drill-app"].environment.FERRET_TRUSTED_PROXIES = "172.30.252.3"' "exactly the gateway"
+  # The safety rules for the proxy and the path to the backup target are written where the operator reads.
+  grep -q 'Never add a raw TCP/UDP resource' "$home_compose" || fail "the compose header must forbid a raw TCP/UDP resource for the loopback ports"
+  grep -q 'never expose the target.s main sshd' "$home_compose" || fail "the compose header must say that the target's main sshd is never exposed"
+  grep -q 'forged X-Forwarded-For' "$home_compose" || fail "the compose header must describe the forged X-Forwarded-For check"
+  grep -q 'ssh-keyscan' docker/copy.env.example || fail "docker/copy.env.example must say how to read the host key"
   pass trusted_proxy_is_exactly_the_network_gateway
 }
 
@@ -171,7 +176,19 @@ const c = JSON.parse(process.argv[1]);
 c.services["ferret-home-app"].image = "ghcr.io/x/y:0.4.0";
 try { execFileSync("scripts/ferret-home.sh", ["verify-json", "home", "digest"], { input: JSON.stringify(c), stdio: ["pipe", "ignore", "ignore"] }); process.exit(1); } catch { process.exit(0); }' "$home_json" \
     || fail "an image given by tag was accepted"
-  refused home "the app built here" "${app}.build = { context: '.', labels: { owner: 'ferret-home' } }" "never built here"
+  refused home "the app built here" "${app}.build = { context: '.', labels: { owner: 'ferret-home' } }; ${app}.pull_policy = 'build'" "never built here"
+  refused home "no pids limit" "delete ${app}.pids_limit" "pids_limit"
+  refused home "a huge pids limit" "${copy}.pids_limit = 100000" "pids_limit"
+  refused home "unbounded logs" "${app}.logging = { driver: 'json-file' }" "logging must be"
+  refused home "no log limit" "delete ${copy}.logging.options" "logging must be"
+  refused home "a built image that is pulled" "delete ${copy}.pull_policy" "never pulled"
+  # The copy image is built from pinned parts: the BuildKit frontend and every apk package.
+  head -n 1 docker/backup-copy.Dockerfile | grep -Eq '^# syntax=docker/dockerfile:[0-9.]+@sha256:[0-9a-f]{64}$' || fail "the syntax line of docker/backup-copy.Dockerfile must be pinned by digest"
+  grep -E 'apk add' docker/backup-copy.Dockerfile | while read -r line; do
+    for word in ${line#*--no-cache}; do
+      case "$word" in "\\" | '&&') break ;; *=*) ;; *) echo "unpinned apk package: $word" >&2; exit 1 ;; esac
+    done
+  done || fail "every apk package of docker/backup-copy.Dockerfile must be pinned to a version"
   pass base_images_are_pinned_by_digest
 }
 
@@ -219,6 +236,9 @@ printf 'docker %s\n' "$*" >> "$STUB_LOG"
 case "$*" in
   *"compose"*" config "*) exec "$STUB_REAL_DOCKER" "$@" ;;
   *"info --format"*) echo "${STUB_ARCH:-aarch64}" ;;
+  *"version --format"*) echo "${STUB_DOCKER_VERSION:-28.1.1}" ;;
+  *"ps -aq"*"owner=ferret-home"*) [ -z "${STUB_HOME_RUNNING:-}" ] || echo abc123 ;;
+  *"image inspect"*".Id"*) echo "sha256:copyimageid" ;;
   *"imagetools inspect --raw"*)
     manifest="${STUB_MANIFEST:-}"
     [ -n "$manifest" ] || manifest='{"manifests":[{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"linux","architecture":"amd64"}}]}'
@@ -244,8 +264,8 @@ up_world() {
   local dir="$1"
   rm -rf "$dir"
   mkdir -p "$dir/repo/scripts" "$dir/repo/docker"
-  cp scripts/ferret-home.sh "$dir/repo/scripts/"
-  cp docker/compose.ferret-home.yml docker/compose.ferret-drill.yml docker/home.env.example docker/copy.env.example "$dir/repo/docker/"
+  cp scripts/ferret-home.sh scripts/lanbox-ferret-test.sh "$dir/repo/scripts/"
+  cp docker/compose.ferret-home.yml docker/compose.ferret-drill.yml docker/home.env.example docker/copy.env.example docker/e2e-runner.Dockerfile "$dir/repo/docker/"
   (
     cd "$dir/repo"
     git init -q
@@ -344,6 +364,34 @@ up_refuses_a_branch_build() {
     skip "a missing cosign" "cosign is installed here"
   fi
   pass up_refuses_a_branch_build
+}
+
+up_checks_the_machine_and_records_what_it_started() {
+  local d="$tmp/record"
+  up_world "$d"
+  STUB_DOCKER_VERSION=27.5.1 up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "up started on a Docker engine older than 28"
+  grep -q 'Docker 28 or newer' "$d/err" || fail "up must say that Docker 28 is needed: $(cat "$d/err")"
+  grep -qE 'compose .* (build|up) ' "$d/log" && fail "up started something on an old engine"
+  # --no-cosign is said loudly and recorded; a verified start is recorded as such.
+  up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "a good release was refused: $(cat "$d/err")"
+  grep -q 'NOT checked' "$d/err" || fail "up must say loudly that the signature was not checked"
+  grep -q '^# cosign=SKIPPED' "$d/repo/docker/home-image" || fail "docker/home-image must record cosign=SKIPPED"
+  grep -q 'cosign=SKIPPED' "$d/repo/docker/home-releases.log" || fail "the log must record cosign=SKIPPED"
+  up_world "$d"
+  up_run "$d" v9.9.9 --yes-ferret-home || fail "a good signed release was refused: $(cat "$d/err")"
+  grep -q '^# cosign=verified' "$d/repo/docker/home-image" || fail "docker/home-image must record cosign=verified"
+  grep -q 'cosign=verified copy-image=sha256:copyimageid' "$d/repo/docker/home-releases.log" || fail "the log must record the signature state and the ID of the copy image: $(cat "$d/repo/docker/home-releases.log")"
+  # The platforms are read from the digest that is started, after the pull.
+  grep -q 'imagetools inspect --raw ghcr.io/ferdinand99/faithful-ferret@sha256:' "$d/log" || fail "the platforms must be checked on the digest"
+  grep -q 'imagetools inspect --raw ghcr.io/ferdinand99/faithful-ferret:9.9.9' "$d/log" && fail "the platforms must not be read from the tag"
+  # The drill never runs on a Docker host that runs the stack for real data.
+  (
+    cd "$d/repo"
+    PATH="$up_stubs:$PATH" STUB_LOG="$d/log" STUB_REAL_DOCKER="$real_docker" STUB_HOME_RUNNING=1 FERRET_DOCKER_ARGS="--context stub" \
+      scripts/ferret-home.sh drill
+  ) > "$d/out" 2> "$d/err" && fail "the drill ran on a host with the stack for real data"
+  grep -q 'build machine only' "$d/err" || fail "the drill must say why it refuses: $(cat "$d/err")"
+  pass up_checks_the_machine_and_records_what_it_started
 }
 
 the_copy_container_mounts_the_backups_read_only_and_has_no_private_key() {
@@ -531,6 +579,11 @@ STUB
   run_copy check "FERRET_COPY_SFTP_HOST_KEY=" && fail "the copy script ran without a host key"
   run_copy check "FERRET_COPY_SFTP_DIR=../x" && fail "the copy script accepted a folder outside"
   run_copy check "FERRET_COPY_PUSH_URL=https://x/\"; rm -rf /" && fail "the copy script accepted a bad push address"
+  run_copy check "FERRET_COPY_PUSH_URL=http://monitor.example.org/api/push/SECRETTOKEN" && fail "the copy script accepted a push address without https"
+  chmod 644 "$d/secrets/key"
+  run_copy check && fail "the copy script accepted an SSH key that others can read"
+  grep -q 'readable by group or others' "$d/out" || fail "the copy script must say why the key is refused"
+  chmod 400 "$d/secrets/key"
   chmod u+w "$d/backups"
   if (
     export FERRET_BACKUP_AGE_RECIPIENT="$recipient" FERRET_COPY_SFTP_HOST=h FERRET_COPY_SFTP_USER=u FERRET_COPY_SFTP_HOST_KEY="$hostkey" FERRET_COPY_SFTP_KEY_FILE="$d/secrets/key" FERRET_COPY_BACKUPS_DIR="$d/backups" FERRET_COPY_WORK="$d/work"
@@ -597,11 +650,21 @@ STUB
   done
   echo 'not ours' > "$d/target/ferret/notes.txt"
   echo 'not ours either' > "$d/target/ferret/20200101T000000Z.tar"
+  # Sets dated in the future are never ranked, copied or trimmed: three of them must not push the real
+  # copies out of the three newest.
+  make_set 20991231T000000Z
+  for f in 20991231T000001Z 20991231T000002Z 20991231T000003Z; do
+    printf 'age-encryption.org/v1\nfuture\n' > "$d/target/ferret/$f.tar.age"
+    printf '%s  %s\n' "$(sha256sum "$d/target/ferret/$f.tar.age" | cut -d' ' -f1)" "$f.tar.age" > "$d/target/ferret/$f.tar.age.sha256"
+  done
   mkdir -p "$d/target/ferret/20200101T000000Z"
   run_copy once || fail "the run with old copies failed: $(cat "$d/out")"
   left="$(ls -1 "$d/target/ferret" | tr '\n' ' ')"
   for n in 1 5 40; do ls -1 "$d/target/ferret" | grep -q "^$(days_ago $n | cut -c1-8)" || fail "the copy of $n days ago must stay: $left"; done
   for n in 45 60; do ls -1 "$d/target/ferret" | grep -q "^$(days_ago $n | cut -c1-8)T[0-9]*Z.tar.age" && fail "the copy of $n days ago must go: $left"; done
+  [ -f "$d/target/ferret/20991231T000001Z.tar.age" ] && [ -f "$d/target/ferret/20991231T000003Z.tar.age.sha256" ] || fail "a copy dated in the future was trimmed: $left"
+  ls "$d/target/ferret" | grep -q '^20991231T000000Z' && fail "a set dated in the future was copied"
+  grep -q 'ignoring 20991231T000000Z' "$d/out" || fail "the copy script must say that it ignores a set dated in the future"
   [ -f "$d/target/ferret/notes.txt" ] && [ -f "$d/target/ferret/20200101T000000Z.tar" ] && [ -d "$d/target/ferret/20200101T000000Z" ] || fail "the trim touched something that is not a copy of this script: $left"
   copy_ran=1
   echo "  ok  the copy script: refusals, encrypted copies only, checks on the target, trimming, the monitor's address"
@@ -629,6 +692,7 @@ base_images_are_pinned_by_digest
 image_exists_for_arm64
 the_image_has_no_test_features_and_its_revision_is_the_release_tag
 up_refuses_a_branch_build
+up_checks_the_machine_and_records_what_it_started
 the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
 drill_stack_has_its_own_volumes_and_label
 home_env_is_never_read_by_the_script

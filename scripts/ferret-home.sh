@@ -31,6 +31,12 @@
 #   scripts/ferret-home.sh drill-clean
 #       Removes what a drill that was cut short left behind (by label owner=ferret-drill).
 #
+# What the machine that runs `up` needs: Docker 28 or newer, docker buildx, compose v2, git with
+# the release tags, node, and cosign (or --no-cosign, which is recorded as cosign=SKIPPED). The
+# release image package must be public in the registry, or the machine must be logged in to it.
+# The safety rules for the proxy and for the path to the backup target are in the header of
+# docker/compose.ferret-home.yml; read them before the first start.
+#
 # No part of this script reads docker/home.env or docker/copy.env (the settings and secrets
 # of the stack): only docker compose does, when the stack starts. `config` and `up` check
 # the compose file with the example files instead, which have names and no values.
@@ -106,6 +112,9 @@ for (const [k, s] of Object.entries(services)) {
   if (!(s.security_opt || []).includes("no-new-privileges:true")) fail(k + ": security_opt needs no-new-privileges:true");
   if (JSON.stringify(s.cap_drop) !== JSON.stringify(["ALL"])) fail(k + ": cap_drop must be [ALL]");
   if (!(Number(s.mem_limit) > 0)) fail(k + ": a memory limit is required");
+  if (!(Number(s.pids_limit) > 0 && Number(s.pids_limit) <= 1024)) fail(k + ": a pids_limit (at most 1024) is required");
+  if (s.logging?.driver !== "local" || !s.logging?.options?.["max-size"] || !s.logging?.options?.["max-file"]) fail(k + ": logging must be the local driver with max-size and max-file");
+  if (s.build && s.pull_policy !== "build") fail(k + ": an image that is built here is never pulled (pull_policy: build)");
   if (s.build && s.build.labels?.owner !== labelValue) fail(k + ": build label owner=" + labelValue);
   // Mounts: named volumes of this stack only. No bind mount, no socket.
   for (const v of s.volumes || []) {
@@ -267,6 +276,19 @@ if (missing.length) { console.error("ferret-home: the image has no linux/" + mis
 ' "$arch" || exit 1
 }
 
+# What `up` needs on the machine that starts the stack, checked before anything is pulled.
+preflight() {
+  local tool major server
+  for tool in git node; do
+    command -v "$tool" > /dev/null || refuse "$tool is not installed here (up needs git with the release tags, node, docker buildx and cosign)"
+  done
+  dk buildx version > /dev/null 2>&1 || refuse "docker buildx is not installed here (it reads the manifest of the image)"
+  server="$(dk version --format '{{.Server.Version}}' 2> /dev/null || true)"
+  major="${server%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || refuse "cannot read the version of the Docker engine"
+  [ "$major" -ge 28 ] || refuse "Docker 28 or newer is required (older engines can let a neighbour on the network reach ports published on 127.0.0.1); this one is $server"
+}
+
 up() {
   local tag="" yes=0 cosign_mode=verify arg
   for arg in "$@"; do
@@ -280,6 +302,7 @@ up() {
   [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse "usage: up vX.Y.Z --yes-ferret-home (a release tag; a branch or a commit is never started)"
   [ "$yes" = 1 ] || refuse "this starts the stack for real data on this machine; run it again with --yes-ferret-home after an explicit yes"
   local version="${tag#v}" tag_commit head_commit
+  preflight
 
   tag_commit="$(git rev-parse --verify -q "refs/tags/${tag}^{commit}")" || refuse "$tag is not a tag of this checkout (fetch the tags)"
   head_commit="$(git rev-parse HEAD)"
@@ -295,10 +318,12 @@ up() {
   local ref="$image_repo:$version" digest_ref arch
   arch="$(engine_arch)"
   [ "$arch" != unknown ] || refuse "cannot tell the architecture of this machine"
-  check_platforms "$ref"
   dk pull -q "$ref" > /dev/null
   digest_ref="$(dk image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep -E "^${image_repo//./\\.}@sha256:[0-9a-f]{64}$" | head -n 1 || true)"
   [ -n "$digest_ref" ] || refuse "the pulled image has no digest of $image_repo"
+  # The platforms are read from the digest that is started, not from the tag.
+  check_platforms "$digest_ref"
+  local cosign_state=verified
   if [ "$cosign_mode" = verify ]; then
     command -v cosign > /dev/null || refuse "cosign is not installed here, so the signature of the image cannot be checked; install it, or say so openly with --no-cosign"
     cosign verify "$digest_ref" \
@@ -306,7 +331,10 @@ up() {
       --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
       || refuse "the signature of the image is not good"
   else
-    echo "ferret-home: WARNING: the signature of the image was not checked (--no-cosign)" >&2
+    cosign_state=SKIPPED
+    echo "ferret-home: WARNING: the signature of the image was NOT checked (--no-cosign). The revision," >&2
+    echo "ferret-home: version and feature checks below read labels of a tag that anyone with write" >&2
+    echo "ferret-home: access to the registry can move; this start is recorded as cosign=SKIPPED." >&2
   fi
   local revision built_version info
   revision="$(dk image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$digest_ref")"
@@ -319,12 +347,17 @@ up() {
 
   say "writing the digest down"
   FERRET_IMAGE="$digest_ref" verify_config home digest
-  printf 'FERRET_IMAGE=%s\n' "$digest_ref" > "$home_image_record"
-  printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tag" "$tag_commit" "$digest_ref" >> "$home_releases_log"
-  echo "image: $digest_ref"
+  printf 'FERRET_IMAGE=%s\n# cosign=%s\n' "$digest_ref" "$cosign_state" > "$home_image_record"
+  echo "image: $digest_ref (cosign=$cosign_state)"
 
   say "starting"
+  # The copy container is built here, from pinned parts (docker/backup-copy.Dockerfile). Its image ID
+  # and the versions of its packages are written down next to the release.
   FERRET_IMAGE="$digest_ref" dch build ferret-home-copy
+  local copy_id copy_pkgs
+  copy_id="$(dk image inspect --format '{{.Id}}' ferret-home-copy:latest)"
+  copy_pkgs="$(dk run --rm --network none --read-only --cap-drop ALL --entrypoint apk ferret-home-copy:latest info -v age openssh-client curl | tr '\n' ' ')"
+  printf '%s %s %s %s cosign=%s copy-image=%s packages: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tag" "$tag_commit" "$digest_ref" "$cosign_state" "$copy_id" "$copy_pkgs" >> "$home_releases_log"
   FERRET_IMAGE="$digest_ref" dch up -d
   status
 }
@@ -386,6 +419,7 @@ drill() {
   # shellcheck disable=SC2206
   docker_args=(${FERRET_DOCKER_ARGS})
 
+  [ -z "$(dk ps -aq --filter "label=owner=ferret-home")" ] || refuse "this Docker host runs the stack for real data: the drill runs on the build machine only"
   if [ -n "$(dk ps -aq --filter "label=$drill_label")" ] || [ -n "$(dk volume ls -q --filter "label=$drill_label")" ]; then
     refuse "a drill stack is still there (label $drill_label): run drill-clean first"
   fi

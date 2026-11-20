@@ -43,7 +43,8 @@ chown -R "$uid:$gid" "$data_dir" 2>/dev/null \
 backup_dir="${FERRET_BACKUP_DIR:-}"
 if [ -n "$backup_dir" ]; then
     mkdir -p "$backup_dir"
-    chown "$uid:$gid" "$backup_dir" 2>/dev/null         || echo "warning: could not chown $backup_dir; make it writable for uid $uid" >&2
+    chown "$uid:$gid" "$backup_dir" 2>/dev/null \
+        || echo "warning: could not chown $backup_dir; make it writable for uid $uid" >&2
 fi
 
 exec su-exec "$uid:$gid" "$app" "$@"
