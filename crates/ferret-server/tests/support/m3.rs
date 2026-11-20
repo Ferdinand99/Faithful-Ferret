@@ -543,3 +543,11 @@ pub fn count_in(db: &Path, sql: &str) -> i64 {
         .query_row(sql, [], |row| row.get(0))
         .expect("a count")
 }
+
+/// The seed named by the environment variable `name`, when a test is to replay
+/// that one run alone.
+pub fn only_seed(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+}

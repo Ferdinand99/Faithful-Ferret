@@ -23,7 +23,15 @@
 //!
 //! `FERRET_M3_MATRIX_RUNS` sets the number of runs (2 000 by default) and
 //! `FERRET_M3_MATRIX_SEED` the base seed; a failure names the seed of its run,
-//! and `FERRET_M3_MATRIX_ONLY=<seed>` runs that one alone.
+//! and `FERRET_M3_MATRIX_ONLY=<seed>` runs that one alone (on a fresh server, as
+//! account 1, with the clock at its start; nothing in a run depends on either).
+//! Which of several changes that are sent at once commits first is up to the
+//! database, so a run with a batch may not repeat step for step; the trace names
+//! the winner of each batch.
+//!
+//! A nonce is also tried when it has grown old (fetched when the change was
+//! made, used later), and the admin sessions are checked by their rows: the
+//! guard of the admin listener is the subject of `admin_listener.rs`.
 
 mod support;
 
@@ -62,11 +70,12 @@ const ACCOUNTS_PER_APP: u64 = 100;
 const BYSTANDER: u8 = 250;
 /// The threads the runs are spread over.
 const THREADS: u64 = 4;
-/// Seconds a reset session lives, and an admin session that is not used.
+/// Seconds a reset session lives.
 const RESET_LIFETIME: i64 = 1_800;
-const ADMIN_IDLE: i64 = 3_600;
 /// Seconds a re-authentication is fresh.
 const REAUTH: i64 = 300;
+/// Seconds the server keeps a nonce.
+const NONCE_LIFETIME: i64 = 300;
 /// Seconds a sign-in that is half-way is kept.
 const HALF_WAY_LIFETIME: i64 = 60;
 /// The most time one run lets pass.
@@ -74,6 +83,12 @@ const TIME_BUDGET: i64 = 3_000;
 /// From this many runs on (with the base seed of the file), every row must have
 /// been reached.
 const RUNS_FOR_ALL_ROWS: u64 = 400;
+
+// The bystander's session is a vault session, good for seven days. One server
+// holds the runs of one thread one after another on one clock, and every run may
+// let `TIME_BUDGET` seconds pass; the clock must stay far from that limit, or the
+// bystander check would fail for a reason that has nothing to do with the server.
+const _: () = assert!((ACCOUNTS_PER_APP as i64) * TIME_BUDGET < 7 * 24 * 3600 / 2);
 
 /// Every row of the matrix: what must have been exercised at least once.
 const ROWS: &[&str] = &[
@@ -96,6 +111,7 @@ const ROWS: &[&str] = &[
     "halfway.refused_after_a_new_record",
     "halfway.refused_when_it_expired",
     "halfway.survives_a_new_recovery_key",
+    "nonce.expired_refused",
     "nonce.replay_refused",
     "password.dead_session",
     "password.ok",
@@ -158,7 +174,6 @@ impl Sess {
         let age = now - self.issued_at;
         self.alive
             && match (self.origin, self.scope) {
-                (Origin::Admin, _) => age <= ADMIN_IDLE,
                 (_, SessionScope::AccountReset) => age <= RESET_LIFETIME,
                 _ => true,
             }
@@ -203,8 +218,12 @@ enum Change {
 struct Prepared {
     kind: Kind,
     base: u64,
+    /// How often the recovery key had changed when it was made.
+    rk_base: u64,
     via: usize,
     change: Change,
+    /// A nonce fetched when it was made, and the time it was fetched.
+    early: Option<([u8; 32], i64)>,
 }
 
 /// What it takes to send a prepared change.
@@ -219,6 +238,8 @@ struct Wire {
 struct Job {
     prepared: Prepared,
     reached: bool,
+    /// The nonce it carries is older than the server keeps a nonce.
+    stale_nonce: bool,
     viable: bool,
     nonce: [u8; 32],
     wire: Option<Wire>,
@@ -272,6 +293,8 @@ struct Run<'a> {
     version: u64,
     record_epoch: u64,
     renewals: u64,
+    /// How often the recovery key has changed (a renewal or a recovery).
+    pk_changes: u64,
     password: String,
     old_passwords: Vec<String>,
     old_recovery_keys: Vec<String>,
@@ -317,6 +340,7 @@ impl<'a> Run<'a> {
             version: 0,
             record_epoch: 0,
             renewals: 0,
+            pk_changes: 0,
             password: CLIENT_PASSWORD.to_string(),
             old_passwords: Vec::new(),
             old_recovery_keys: Vec::new(),
@@ -468,11 +492,27 @@ impl<'a> Run<'a> {
             kind.name(),
             self.version
         ));
+        // Now and then the nonce is fetched at once and used later, so that a
+        // nonce that has grown old is tried too.
+        let mut early = None;
+        if self.rng.chance(1, 4) {
+            let challenge = challenge_with(self.app, &jar).await;
+            if challenge.status == StatusCode::OK {
+                let nonce: [u8; 32] =
+                    b64url::decode(challenge.json()["nonce"].as_str().expect("a nonce"))
+                        .expect("base64url")
+                        .try_into()
+                        .expect("32 bytes");
+                early = Some((nonce, self.now()));
+            }
+        }
         self.pending.push(Prepared {
             kind,
             base: self.version,
+            rk_base: self.pk_changes,
             via,
             change,
+            early,
         });
     }
 
@@ -505,22 +545,31 @@ impl<'a> Run<'a> {
                 )
             });
             let reached = live && (prepared.kind == Kind::Recover || session.fresh(now));
-            let viable = reached && prepared.base == self.version;
+            let stale_nonce_possible = prepared
+                .early
+                .is_some_and(|(_, fetched)| now - fetched >= NONCE_LIFETIME);
+            let viable = reached && !stale_nonce_possible && prepared.base == self.version;
             if !live {
                 jobs.push(Job {
                     prepared,
                     reached,
+                    stale_nonce: false,
                     viable,
                     nonce: [0; 32],
                     wire: None,
                 });
                 continue;
             }
-            let nonce: [u8; 32] =
+            let fresh: [u8; 32] =
                 b64url::decode(challenge.json()["nonce"].as_str().expect("a nonce"))
                     .expect("base64url")
                     .try_into()
                     .expect("32 bytes");
+            // A nonce is kept for 300 seconds: it is good while it is younger.
+            let (nonce, stale_nonce) = match prepared.early {
+                Some((early, fetched)) => (early, now - fetched >= NONCE_LIFETIME),
+                None => (fresh, false),
+            };
             let (method, path, body, proof) = match &prepared.change {
                 Change::Password(change, _) => {
                     let body = body_bytes(&password_put_req(change));
@@ -546,6 +595,7 @@ impl<'a> Run<'a> {
             jobs.push(Job {
                 prepared,
                 reached,
+                stale_nonce,
                 viable,
                 nonce,
                 wire: Some(Wire {
@@ -594,46 +644,24 @@ impl<'a> Run<'a> {
 
         // What each came to.
         let viable_count = jobs.iter().filter(|j| j.viable).count();
+        // Who won: the one change the server answered with 200.
         let mut winner: Option<usize> = None;
         for (index, (job, result)) in jobs.iter().zip(&results).enumerate() {
-            let kind = job.prepared.kind.name();
-            let Some(res) = result else {
-                self.hit(&format!("{kind}.dead_session"));
-                continue;
-            };
-            if res.status == StatusCode::OK {
+            if result
+                .as_ref()
+                .is_some_and(|res| res.status == StatusCode::OK)
+            {
                 self.ensure(job.viable && winner.is_none(), || {
                     format!(
-                        "{kind} at base {} via session {} answered 200 (viable: {}, an earlier winner: {:?})",
-                        job.prepared.base, job.prepared.via, job.viable, winner
+                        "{} at base {} via session {} answered 200 (viable: {}, an earlier winner: {:?})",
+                        job.prepared.kind.name(),
+                        job.prepared.base,
+                        job.prepared.via,
+                        job.viable,
+                        winner
                     )
                 });
                 winner = Some(index);
-                continue;
-            }
-            self.ensure(res.status.as_u16() >= 400, || {
-                format!("{kind} answered {}", res.status)
-            });
-            if !job.reached {
-                self.ensure(
-                    (res.status == StatusCode::FORBIDDEN && res.json()["error"] == "reauth_required")
-                        // In a batch, the winner may end this session first.
-                        || (jobs.len() > 1 && res.status == StatusCode::UNAUTHORIZED),
-                    || {
-                        format!(
-                            "{kind} without a fresh re-authentication answered {}: {}",
-                            res.status,
-                            res.text()
-                        )
-                    },
-                );
-                if res.status == StatusCode::FORBIDDEN {
-                    self.hit(&format!("{kind}.reauth_required"));
-                }
-            } else if !job.viable {
-                self.hit(&format!("{kind}.stale_refused"));
-            } else {
-                self.hit("race.loser_refused");
             }
         }
         self.ensure(winner.is_some() == (viable_count > 0), || {
@@ -641,6 +669,83 @@ impl<'a> Run<'a> {
         });
         if viable_count >= 2 {
             self.hit("race.two_viable_one_winner");
+        }
+        // Which of two changes that raced committed first is not fixed, so the
+        // trace says which did.
+        self.note(format!("winner: {winner:?}"));
+
+        // What each of the others was refused with, exactly.
+        let winner_moves_pk = winner.is_some_and(|w| jobs[w].prepared.kind != Kind::Password);
+        let in_batch = jobs.len() > 1;
+        for (index, (job, result)) in jobs.iter().zip(&results).enumerate() {
+            let kind = job.prepared.kind;
+            let name = kind.name();
+            let Some(res) = result else {
+                self.hit(&format!("{name}.dead_session"));
+                continue;
+            };
+            if Some(index) == winner {
+                continue;
+            }
+            let status = res.status;
+            let error = serde_json::from_slice::<serde_json::Value>(&res.body)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let denied = status == StatusCode::UNAUTHORIZED && error == "denied";
+            let conflict = status == StatusCode::CONFLICT && error == "write_conflict";
+            // In a batch the winner may end this session before the proof is read.
+            let ended = in_batch && status == StatusCode::UNAUTHORIZED && error == "unauthorized";
+            let what = || {
+                format!(
+                    "{name} (base {}, session {}) answered {status}: {}",
+                    job.prepared.base,
+                    job.prepared.via,
+                    res.text()
+                )
+            };
+            if !job.reached {
+                self.ensure(
+                    (status == StatusCode::FORBIDDEN && error == "reauth_required") || ended,
+                    || format!("without a fresh re-authentication: {}", what()),
+                );
+                if status == StatusCode::FORBIDDEN {
+                    self.hit(&format!("{name}.reauth_required"));
+                }
+            } else if job.stale_nonce {
+                self.ensure(denied || ended, || {
+                    format!("with a nonce older than 300 seconds: {}", what())
+                });
+                if denied {
+                    self.hit("nonce.expired_refused");
+                }
+            } else {
+                // A recovery is signed with the recovery key the server held when
+                // it was made: once that key changed, the proof is refused before
+                // the manifest is looked at. Everything else loses on the
+                // manifest revision.
+                let key_changed_before =
+                    kind == Kind::Recover && job.prepared.rk_base != self.pk_changes;
+                let ok = if key_changed_before {
+                    denied
+                } else if kind == Kind::Recover && winner_moves_pk {
+                    if job.viable {
+                        denied
+                    } else if in_batch {
+                        conflict || denied
+                    } else {
+                        conflict
+                    }
+                } else {
+                    conflict
+                };
+                self.ensure(ok || ended, || format!("a refused change: {}", what()));
+                if job.viable {
+                    self.hit("race.loser_refused");
+                } else {
+                    self.hit(&format!("{name}.stale_refused"));
+                }
+            }
         }
 
         let mut won: Option<(Kind, usize, [u8; 32])> = None;
@@ -680,6 +785,7 @@ impl<'a> Run<'a> {
                     .push(encode_recovery_key(&self.client.recovery_key).to_string());
                 took_recovery(&mut self.client, renewed);
                 self.renewals += 1;
+                self.pk_changes += 1;
                 self.hit("renew.ok");
                 self.hit("sessions.kept_by_a_new_recovery_key");
             }
@@ -687,6 +793,7 @@ impl<'a> Run<'a> {
                 self.old_recovery_keys
                     .push(encode_recovery_key(&self.client.recovery_key).to_string());
                 took_recovered(&mut self.client, *made, &pw);
+                self.pk_changes += 1;
                 self.old_passwords
                     .push(std::mem::replace(&mut self.password, pw));
                 self.record_epoch += 1;

@@ -40,9 +40,9 @@ use support::accounts::{
 };
 use support::backup::{cfg, job, make};
 use support::m3::{
-    Ledger, Rng, Served, count_in, database_is_whole, env_number, epochs_in, peek,
-    recovery_key_opens, run_in_parallel, seed_of, signs_in, snapshot_in, took_recovered,
-    took_recovery, vault_get,
+    Ledger, Rng, Served, Vault, count_in, database_is_whole, env_number, epochs_in, only_seed,
+    peek, recovery_key_opens, run_in_parallel, seed_of, signs_in, snapshot_in, took_recovered,
+    took_recovery, vault_get, vault_post,
 };
 use support::session::{issue, make_fresh};
 use support::{Jar, PEER, START, TestApp};
@@ -292,7 +292,7 @@ async fn put_live(app: &TestApp, client: &Client, n: u8) {
 }
 
 /// A pending one-time code for the user, as the kit's Users page makes one.
-async fn pending_code(app: &TestApp, user: i64) {
+async fn pending_code(app: &TestApp, user: i64) -> String {
     let code = vole_kit::auth::sign_in_codes::generate();
     let hash = vole_kit::auth::sign_in_codes::hash(&code);
     app.state
@@ -303,6 +303,7 @@ async fn pending_code(app: &TestApp, user: i64) {
         })
         .await
         .expect("a code");
+    code
 }
 
 // ----------------------------------------------- the newest set holds the newest wraps
@@ -457,9 +458,16 @@ async fn newest_run(seed: u64, ledger: &Ledger) {
 
 #[test]
 fn the_newest_set_after_an_unlock_change_holds_the_newest_wraps() {
+    let ledger = Ledger::new();
+    if let Some(seed) = only_seed("FERRET_BACKUP_MATRIX_ONLY") {
+        run_in_parallel(1, 1, |_| {
+            let ledger = ledger.clone();
+            async move { newest_run(seed, &ledger).await }
+        });
+        return;
+    }
     let runs = env_number("FERRET_BACKUP_MATRIX_RUNS", RUNS_NEWEST);
     let base = env_number("FERRET_BACKUP_MATRIX_SEED", BASE_SEED);
-    let ledger = Ledger::new();
     run_in_parallel(runs, THREADS, |range| {
         let ledger = ledger.clone();
         async move {
@@ -487,7 +495,7 @@ const RESTORE_ROWS: &[&str] = &[
     "restore.restored_server_signs_in_with_the_backups_password",
     "restore.rows_of_the_backup_are_back",
     "restore.at_least_is_honoured",
-    "restore.kill_after_every_step",
+    "restore.killed_at_a_step",
 ];
 
 /// What the scene knows of the two moments.
@@ -505,6 +513,8 @@ struct Scene {
     at_live: Held,
     session_before: Jar,
     session_after: Jar,
+    /// A one-time code that was pending when the backup was made.
+    pending_code: String,
     client: Client,
     /// The app, which holds the folder of the backup sets.
     _app: TestApp,
@@ -547,7 +557,7 @@ async fn scene(rng: &mut Rng, seed: u64) -> Scene {
     for n in 0..rng.below(3) {
         put_live(&app, &client, u8::try_from(n + 1).expect("an item")).await;
     }
-    pending_code(&app, user).await;
+    let code = pending_code(&app, user).await;
     let session_before = issue(&app, user, Origin::Vault, SessionScope::Full, 5)
         .await
         .jar;
@@ -606,6 +616,7 @@ async fn scene(rng: &mut Rng, seed: u64) -> Scene {
         at_live: held(&client),
         session_before,
         session_after,
+        pending_code: code,
         data,
         client,
         _app: app,
@@ -775,6 +786,27 @@ async fn assert_restored(
             res.text()
         );
     }
+    // The code that was pending when the backup was made is refused, by the route.
+    let redeem = state
+        .send(
+            vault_post(
+                "/api/auth/redeem",
+                &serde_json::json!({ "email": email(&scene.client), "code": scene.pending_code }),
+            )
+            .header("x-forwarded-for", "203.0.113.77")
+            .build(),
+        )
+        .await;
+    assert_eq!(
+        redeem.status,
+        StatusCode::UNAUTHORIZED,
+        "seed {seed}: the pending code: {}",
+        redeem.text()
+    );
+    assert_eq!(
+        redeem.body, br#"{"error":"denied"}"#,
+        "seed {seed}: the pending code is refused as any other"
+    );
     ledger.hit("restore.every_session_and_code_ends");
     let address = email(&scene.client);
     assert!(
@@ -901,7 +933,7 @@ async fn restore_run(seed: u64, ledger: &Ledger) {
                     "seed {seed}: {step}: the server started with a restore in progress"
                 );
                 ledger.hit("restore.killed_and_left_refuses_to_start");
-                ledger.hit("restore.kill_after_every_step");
+                ledger.hit("restore.killed_at_a_step");
             }
             Ok(Some(report)) => {
                 // Already past that step: the run finished.
@@ -967,9 +999,16 @@ async fn restore_run(seed: u64, ledger: &Ledger) {
 
 #[test]
 fn a_restore_at_any_point_leaves_a_consistent_database_and_a_higher_epoch() {
+    let ledger = Ledger::new();
+    if let Some(seed) = only_seed("FERRET_BACKUP_MATRIX_ONLY") {
+        run_in_parallel(1, 1, |_| {
+            let ledger = ledger.clone();
+            async move { restore_run(seed, &ledger).await }
+        });
+        return;
+    }
     let runs = env_number("FERRET_BACKUP_MATRIX_RUNS", RUNS_RESTORE);
     let base = env_number("FERRET_BACKUP_MATRIX_SEED", BASE_SEED ^ 0x55);
-    let ledger = Ledger::new();
     run_in_parallel(runs, THREADS, |range| {
         let ledger = ledger.clone();
         async move {
