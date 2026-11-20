@@ -3408,8 +3408,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vole-kit"
-version = "0.8.2"
-source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.8.2#af74370c06fd7b502871bb8e38dfecd89b7fe599"
+version = "0.9.1"
+source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.9.1#3474a0f7bb679c0e609d13fc638ff5d422f3563a"
 dependencies = [
  "argon2",
  "askama",
