@@ -1,0 +1,93 @@
+{
+  "format": "ferret-dpop-js-proofs/1",
+  "comment": "DPoP proofs made by web/src/auth/dpop.mjs with the test key (scalar 32 bytes of 0x11), at the server time `now`; `key.exported_members` are the members of the real exportKey the public JWK was copied from. Written by generate.mjs.",
+  "now": 1793491200,
+  "vault_url": "https://vault.ferret.test",
+  "key": {
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "AhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0",
+      "y": "GUp968uXcS0t2jyoWqh2Wlb0X8dYWZZS8ol8ZTBuV5Q"
+    },
+    "jkt": "OEurnbzOGbRad4qOD9lNK8VYMQGvg5cmLnVKeydAqL4",
+    "exported_members": [
+      "crv",
+      "ext",
+      "key_ops",
+      "kty",
+      "x",
+      "y"
+    ]
+  },
+  "access_token": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI",
+  "proofs": [
+    {
+      "name": "device_login",
+      "method": "POST",
+      "url": "https://vault.ferret.test/api/auth/opaque/login/finish",
+      "path": "/api/auth/opaque/login/finish",
+      "token": false,
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiQWhmbUZfQzJSRGtvSjQtV21aNXBvanBQTEJVcjMyMXMzMmJsdUFLQzFPMCIsInkiOiJHVXA5Njh1WGNTMHQyanlvV3FoMldsYjBYOGRZV1paUzhvbDhaVEJ1VjVRIn19.eyJqdGkiOiJZS3pBLUNZWFdYMG44TFJuc2Z2NDBnIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vdmF1bHQuZmVycmV0LnRlc3QvYXBpL2F1dGgvb3BhcXVlL2xvZ2luL2ZpbmlzaCIsImlhdCI6MTc5MzQ5MTIwMH0.ejVlRyvFBL4rWdKHwwU_C8UyCLObGw13CimCQyRCi0I3DLwQ0fkyvzIeoZRrITFFwNIAdIsXyBGB7VazrerDmw"
+    },
+    {
+      "name": "refresh",
+      "method": "POST",
+      "url": "https://vault.ferret.test/api/auth/token/refresh",
+      "path": "/api/auth/token/refresh",
+      "token": false,
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiQWhmbUZfQzJSRGtvSjQtV21aNXBvanBQTEJVcjMyMXMzMmJsdUFLQzFPMCIsInkiOiJHVXA5Njh1WGNTMHQyanlvV3FoMldsYjBYOGRZV1paUzhvbDhaVEJ1VjVRIn19.eyJqdGkiOiJYcnZKUFFPWXhsSWQyRWxZalRqc0Z3IiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vdmF1bHQuZmVycmV0LnRlc3QvYXBpL2F1dGgvdG9rZW4vcmVmcmVzaCIsImlhdCI6MTc5MzQ5MTIwMH0.BpAuI49tpEQxHWwULtoXMfnalFXqlmflx70M2j8alJCBGHQp5cFsZZdsSAe7brf7MWci9-L_AVPkKI9aVabPlg"
+    },
+    {
+      "name": "changes_with_query",
+      "method": "GET",
+      "url": "https://vault.ferret.test/api/sync/changes?since=5&limit=100#top",
+      "path": "/api/sync/changes",
+      "token": true,
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiQWhmbUZfQzJSRGtvSjQtV21aNXBvanBQTEJVcjMyMXMzMmJsdUFLQzFPMCIsInkiOiJHVXA5Njh1WGNTMHQyanlvV3FoMldsYjBYOGRZV1paUzhvbDhaVEJ1VjVRIn19.eyJqdGkiOiIzNFpqVmxBOW81LW85NFJaUWtHb3NnIiwiaHRtIjoiR0VUIiwiaHR1IjoiaHR0cHM6Ly92YXVsdC5mZXJyZXQudGVzdC9hcGkvc3luYy9jaGFuZ2VzIiwiaWF0IjoxNzkzNDkxMjAwLCJhdGgiOiI1dUFMcHNya01mVElPLXBCOVlrbGgtSzR5U1VzaTdsd29jMUxiTTBMb3g0In0.M4be3Zc0ved9cKmJ15AmRp-oGN6ZulQn9r801k7BnK5jMfvuL2tcdgYUcyuO5U1UXrY-PMcTZicphf4hOgP91w"
+    },
+    {
+      "name": "item_put",
+      "method": "PUT",
+      "url": "https://vault.ferret.test/api/sync/items/a1a2a3a4a5a6a7a8a9aaabacadaeafb0",
+      "path": "/api/sync/items/a1a2a3a4a5a6a7a8a9aaabacadaeafb0",
+      "token": true,
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiQWhmbUZfQzJSRGtvSjQtV21aNXBvanBQTEJVcjMyMXMzMmJsdUFLQzFPMCIsInkiOiJHVXA5Njh1WGNTMHQyanlvV3FoMldsYjBYOGRZV1paUzhvbDhaVEJ1VjVRIn19.eyJqdGkiOiJRTlowVkxLQkREUjhjd0MwZkpQbmNBIiwiaHRtIjoiUFVUIiwiaHR1IjoiaHR0cHM6Ly92YXVsdC5mZXJyZXQudGVzdC9hcGkvc3luYy9pdGVtcy9hMWEyYTNhNGE1YTZhN2E4YTlhYWFiYWNhZGFlYWZiMCIsImlhdCI6MTc5MzQ5MTIwMCwiYXRoIjoiNXVBTHBzcmtNZlRJTy1wQjlZa2xoLUs0eVNVc2k3bHdvYzFMYk0wTG94NCJ9.wCSxMEjQjfEJikELAr3oE3_sSYzrDoch9jZrL0JfmJh6mRF3Wy9roxSYgp39B7M-LgXF2CuRj73l7TxbZbzMug"
+    },
+    {
+      "name": "events",
+      "method": "GET",
+      "url": "https://vault.ferret.test/api/sync/events",
+      "path": "/api/sync/events",
+      "token": true,
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiQWhmbUZfQzJSRGtvSjQtV21aNXBvanBQTEJVcjMyMXMzMmJsdUFLQzFPMCIsInkiOiJHVXA5Njh1WGNTMHQyanlvV3FoMldsYjBYOGRZV1paUzhvbDhaVEJ1VjVRIn19.eyJqdGkiOiJ0RFNrcHRYUjAzRjNIY0x3Y0lBRUJnIiwiaHRtIjoiR0VUIiwiaHR1IjoiaHR0cHM6Ly92YXVsdC5mZXJyZXQudGVzdC9hcGkvc3luYy9ldmVudHMiLCJpYXQiOjE3OTM0OTEyMDAsImF0aCI6IjV1QUxwc3JrTWZUSU8tcEI5WWtsaC1LNHlTVXNpN2x3b2MxTGJNMExveDQifQ.wprPpxASvJ-wlbFlKiefgwaPME_IgqON7k3R4LmbY0jxW-HH57058OTh_jQc4DOfxzRbop3ofCNYUR-VxmFC6g"
+    }
+  ],
+  "rfc9449": {
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs",
+      "y": "9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA"
+    },
+    "jkt": "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I",
+    "examples": [
+      {
+        "figure": 2,
+        "origin": "https://server.example.com",
+        "method": "POST",
+        "path": "/token",
+        "iat": 1562262616,
+        "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwieCI6Imw4dEZyaHgtMzR0VjNoUklDUkRZOXpDa0RscEJoRjQyVVFVZldWQVdCRnMiLCJ5IjoiOVZFNGpmX09rX282NHpiVFRsY3VOSmFqSG10NnY5VERWclUwQ2R2R1JEQSIsImNydiI6IlAtMjU2In19.eyJqdGkiOiItQndDM0VTYzZhY2MybFRjIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNTYyMjYyNjE2fQ.2-GxA6T8lP4vfrg8v-FdWP0A0zdrj8igiMLvqRMUvwnQg4PtFLbdLXiOSsX0x7NVY-FNyJK70nfbV37xRZT3Lg"
+      },
+      {
+        "figure": 7,
+        "origin": "https://server.example.com",
+        "method": "POST",
+        "path": "/token",
+        "iat": 1562265296,
+        "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2IiwiandrIjp7Imt0eSI6IkVDIiwieCI6Imw4dEZyaHgtMzR0VjNoUklDUkRZOXpDa0RscEJoRjQyVVFVZldWQVdCRnMiLCJ5IjoiOVZFNGpmX09rX282NHpiVFRsY3VOSmFqSG10NnY5VERWclUwQ2R2R1JEQSIsImNydiI6IlAtMjU2In19.eyJqdGkiOiItQndDM0VTYzZhY2MybFRjIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNTYyMjY1Mjk2fQ.pAqut2IRDm_De6PR93SYmGBPXpwrAk90e8cP2hjiaG5QsGSuKDYW7_X620BxqhvYC8ynrrvZLTk41mSRroapUA"
+      }
+    ]
+  }
+}
