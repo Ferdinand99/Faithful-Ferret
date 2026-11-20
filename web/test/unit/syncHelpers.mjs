@@ -147,11 +147,15 @@ export class FakeChannels {
   }
 }
 
-/** Waits (real time, in turns of the event loop) until `condition()` is true. */
+/**
+ * Waits until `condition()` is true, at most 20 seconds of real time. Work that waits for the thread pool (the hashes of WebCrypto) finishes in real
+ * time, not in turns of the event loop, so a wait that counted only turns would end early on a busy machine; every few turns a millisecond is given.
+ */
 export async function until(condition, what = "condition") {
-  for (let turn = 0; turn < 3000; turn += 1) {
+  const started = Date.now();
+  for (let turn = 0; Date.now() - started < 20_000; turn += 1) {
     if (await condition()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => (turn % 16 === 15 ? setTimeout(resolve, 1) : setImmediate(resolve)));
   }
   throw new Error(`timed out waiting for ${what}`);
 }
