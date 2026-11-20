@@ -28,6 +28,8 @@ async function boot() {
     createVaultWorker: () => new Worker(/** @type {string} */ (tt.workerUrl("vault")), { type: "module" }),
     createJobWorker: () => new Worker(/** @type {string} */ (tt.workerUrl("job")), { type: "module" }),
   });
+  // The import worker is the page's own file; it is made only when a file is imported.
+  const createImportWorker = () => new Worker(/** @type {string} */ (tt.workerUrl("import")), { type: "module" });
   const lang = negotiate(navigator.languages ?? [navigator.language], SUPPORTED_LANGUAGES);
   const catalogs = { en: await loadCatalog("en") };
   if (lang !== "en") /** @type {Record<string, Record<string, string>>} */ (catalogs)[lang] = await loadCatalog(lang);
@@ -37,7 +39,7 @@ async function boot() {
   if (!root) throw new Error("no #app element");
   const foot = document.getElementById("foot");
   if (foot) mountFooter(foot, { t: i18n.t });
-  const app = startApp({ root, routes, serviceDefs: services, client, i18n });
+  const app = startApp({ root, routes, serviceDefs: services, client, i18n, createImportWorker });
   // Inter is added when its bytes have arrived; the system font stands in until then.
   void loadInter();
   return { client, i18n, router: app.router, services: app.services, tt };
