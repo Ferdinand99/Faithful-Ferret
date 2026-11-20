@@ -73,49 +73,24 @@
   margin-top: var(--sp-4);
 }
 
-/* The link to the account sits in the bar apart from the item links, in the group with the sync state and
-   Lock. It is its own item in the bar, so the links and the state keep the room they had on a phone. */
-.vault-ui .vault-bar > .account-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: var(--r-full);
-  color: var(--muted);
-  font-size: 0.875rem;
-  font-weight: 500;
-  letter-spacing: -0.006em;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.vault-ui .vault-bar > .account-link[aria-current="page"] {
-  background: var(--fill);
-  color: var(--text);
-}
-
-@media (pointer: coarse) {
-  .vault-ui .vault-bar > .account-link {
-    min-height: 44px;
-  }
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .vault-ui .vault-bar > .account-link:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
+/* The account link is its own landmark in the bar, apart from the item links, so that on a phone it can stand in
+   the first row (with the name and Lock) and the links and the sync state keep the room they had. */
+.vault-ui .vault-bar > nav.account-nav {
+  margin-inline-end: 0;
 }
 
 /* On a phone it stands in the first row, with the name and Lock. */
 @media (max-width: 40rem) {
-  .vault-ui .vault-bar > .account-link {
+  .vault-ui .vault-bar > nav.account-nav {
     order: 2;
     margin-inline-start: auto;
+  }
+
+  .vault-ui .vault-bar > nav.account-nav a {
     padding-inline: 8px;
   }
 
-  .vault-ui .vault-bar > .account-link + [data-role="lock"] {
+  .vault-ui .vault-bar > nav.account-nav + [data-role="lock"] {
     margin-inline-start: 0;
   }
 }

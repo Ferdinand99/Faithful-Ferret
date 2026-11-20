@@ -180,11 +180,12 @@ test("reauthenticate_takes_the_freshness_from_the_server_and_never_more_than_fiv
   done = await world.session.reauthenticate({ password: PASSWORD });
   assert.ok(done.until <= Date.now() + 300_000);
 
-  // An answer without `reauth_until`, or no answer, leaves the local estimate: five minutes from now.
+  // An answer without `reauth_until`, or no answer, is no freshness: it fails closed and the next operation asks again.
   for (const overrides of [{}, { "GET /api/auth/session": (_b, state) => (state.requests.length > 3 ? answer(500, { error: "x" }) : undefined) }]) {
     world = await signedInWorld({ overrides });
     done = await world.session.reauthenticate({ password: PASSWORD });
-    assert.ok(done.until > Date.now() + 290_000 && done.until <= Date.now() + 300_000);
+    assert.equal(done.until, null);
+    assert.equal(world.session.reauthUntil(), null);
   }
 
   // A lock forgets it: the next operation asks again.
@@ -278,4 +279,74 @@ test("nothing_typed_reaches_the_address_the_console_or_the_database_during_a_rea
     assert.ok(!JSON.stringify(request.body ?? "").includes(PASSWORD), "the password is not in a body");
   }
   assert.ok(!(await dumpDatabase(world.db.store)).includes(PASSWORD), "nothing typed is stored");
+});
+
+test("a_lock_while_the_password_is_being_checked_does_not_bring_the_freshness_back", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const world = await signedInWorld({
+    reauthUntil: Math.floor(Date.now() / 1000) + 300,
+    handlers: { login_finish: async () => (await gate, { ke3: new Uint8Array(64).fill(2), server_public_key: new Uint8Array(32).fill(9) }) },
+  });
+  const pending = world.session.reauthenticate({ password: PASSWORD });
+  await settle();
+  await world.session.lock();
+  release();
+  await pending;
+  assert.equal(world.session.reauthUntil(), null, "the lock cleared it and the late answer did not write it back");
+});
+
+test("a_caller_that_needs_the_grant_is_never_skipped_by_the_freshness", async () => {
+  await withDom(async (document) => {
+    const seen = [];
+    const pending = reauthDialog({ t, run: async (typed) => seen.push(typed), until: NOW + 240_000, now: () => NOW, host: document.body, needGrant: true });
+    assert.ok(byRole(document.body, "reauth-dialog"), "the dialog opens although the freshness covers the next minute");
+    byRole(document.body, "reauth-password").value = PASSWORD;
+    await fire(byRole(document.body, "reauth-form"), "submit");
+    assert.equal(await pending, "ok");
+    assert.equal(seen.length, 1, "the check ran, so a grant can be made");
+  });
+});
+
+test("tab_stays_inside_the_dialog_and_focus_goes_back_when_it_closes", async () => {
+  await withDom(async (document) => {
+    const opener = { focused: 0, focus() { this.focused += 1; } };
+    document.activeElement = opener;
+    const pending = reauthDialog({ t, run: async () => {}, until: null, now: () => NOW, host: document.body, skRequired: true });
+    const password = byRole(document.body, "reauth-password");
+    const sk = byRole(document.body, "reauth-secret-key");
+    const cancel = byRole(document.body, "reauth-cancel");
+    const confirm = byRole(document.body, "reauth-confirm");
+    let focused = null;
+    for (const node of [password, sk, cancel, confirm]) node.focus = () => { focused = node; };
+    const dialog = byRole(document.body, "reauth-dialog");
+    const tab = async (target, shiftKey = false) => {
+      const event = { key: "Tab", shiftKey, target, prevented: false, preventDefault() { this.prevented = true; } };
+      for (const [kind, fn] of dialog.listeners) if (kind === "keydown") await fn(event);
+      return event;
+    };
+    // In the middle Tab goes on by itself; at the ends it goes round.
+    assert.equal((await tab(password)).prevented, false);
+    assert.equal((await tab(cancel, true)).prevented, false);
+    let event = await tab(confirm);
+    assert.equal(event.prevented, true);
+    assert.equal(focused, password);
+    event = await tab(password, true);
+    assert.equal(event.prevented, true);
+    assert.equal(focused, confirm);
+    // From outside the dialog it comes in at the first control.
+    event = await tab({}, false);
+    assert.equal(event.prevented, true);
+    assert.equal(focused, password);
+    // While it works no control is enabled: Tab is held still.
+    for (const node of [password, sk, cancel, confirm]) node.disabled = true;
+    assert.equal((await tab(password)).prevented, true);
+    for (const node of [password, sk, cancel, confirm]) node.disabled = false;
+
+    await fire(cancel, "click");
+    assert.equal(await pending, "cancelled");
+    assert.equal(opener.focused, 1, "focus went back to the opener");
+  });
 });

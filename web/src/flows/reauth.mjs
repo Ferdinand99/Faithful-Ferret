@@ -68,11 +68,11 @@ export function coversNext(until, now, needMs = REAUTH_SKIP_MS) {
  * hold it (`sk_required` says so). With `wantGrant`, the answer also holds the one-time
  * token that a plain export needs (`reauth_grant`, five minutes, one use).
  *
- * `until` is the end of the freshness in milliseconds since 1970. It is the server's
- * `reauth_until`, never later than five minutes from now on this device's clock.
+ * `until` is the end of the freshness in milliseconds since 1970, or null when the server did not say. It is the
+ * server's `reauth_until`, never later than five minutes from now on this device's clock.
  * @param {Env} env
  * @param {{ password: string, skCode?: string, wantGrant?: boolean, context?: Awaited<ReturnType<typeof accountContext>> }} args
- * @returns {Promise<{ until: number, ksfProfile: number, grant?: Uint8Array }>}
+ * @returns {Promise<{ until: number | null, ksfProfile: number, grant?: Uint8Array }>}
  */
 export async function reauthenticate(env, { password, skCode, wantGrant = false, context }) {
   const { client, api, store } = env;
@@ -111,13 +111,16 @@ export async function reauthenticate(env, { password, skCode, wantGrant = false,
     throw error;
   }
 
+  // The freshness is the server's word. Without `reauth_until` (or without the answer) it is not counted, and the next
+  // sensitive operation asks for the password again: at most one extra prompt.
   const ceiling = env.now() + REAUTH_WINDOW_MS;
-  let until = ceiling;
+  /** @type {number | null} */
+  let until = null;
   try {
     const session = await api.get("/api/auth/session", { shape: "session_res" });
     if (Number.isSafeInteger(session.reauth_until)) until = Math.min(session.reauth_until * 1000, ceiling);
   } catch {
-    // The server's own answer is the better source, but the password was accepted: the local estimate stands.
+    // No answer: the freshness stays uncounted.
   }
 
   /** @type {Uint8Array | undefined} */

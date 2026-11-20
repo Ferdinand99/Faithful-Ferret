@@ -7,7 +7,8 @@
 //
 // The body is built once, as bytes. The bytes that are signed are the bytes that are
 // sent, never a second serialisation of the same value: the server hashes what it
-// receives. Nothing here is a secret: the nonce and the proof are public, and the body
+// receives. A failure of the write itself carries `afterSend: true`; one of the challenge does not.
+// Nothing here is a secret: the nonce and the proof are public, and the body
 // holds only wraps, a registration record and a manifest row, which the server stores.
 import { b64u } from "../b64.mjs";
 import { MAX_SIGNED_BODY, NONCE_LEN, PROOF_LEN, SHAPES, encodeWireBytes } from "../wire.mjs";
@@ -57,5 +58,11 @@ export async function signedCall(env, { op, method, path, shape, body, reply, si
   const proof = await signer(nonce.slice(), bytes.slice());
   if (!(proof instanceof Uint8Array) || proof.length !== PROOF_LEN) throw new AccountError("bad_response");
   const answerShape = reply === undefined ? replyShapeOf(shape) : (reply ?? undefined);
-  return api.sendSigned(method, path, bytes, { nonce, proof }, answerShape === undefined ? {} : { shape: answerShape });
+  try {
+    return await api.sendSigned(method, path, bytes, { nonce, proof }, answerShape === undefined ? {} : { shape: answerShape });
+  } catch (error) {
+    // The write was sent: the caller can tell a failure before it (nothing happened) from one after it.
+    if (error !== null && typeof error === "object") /** @type {any} */ (error).afterSend = true;
+    throw error;
+  }
 }

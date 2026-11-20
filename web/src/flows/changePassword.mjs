@@ -1,5 +1,5 @@
 // Changing the master password (spec Fase 1 § 4.6 and § 6.3, the password
-// wrap; J9, J10). The order of the calls:
+// wrap). The order of the calls:
 //
 //   (the two typed passwords are compared, the floor is checked, nothing is sent)
 //   check_master_password   core: the creation floor (12 characters with a secret key, 15 without)
@@ -14,13 +14,17 @@
 //
 // This device's record is replaced only after the server has accepted the change. A
 // refusal at any step leaves the record, the session and the open vault as they were,
-// and says why (the error's `code`). The server ends every other session of the
-// account when it accepts the change (J10); this one goes on. Old exports and server
+// and says why (the error's `code`). The one case that does not say "nothing was changed" is a
+// failure after the signed write was sent that is not an explicit refusal (no answer, a server
+// error, an answer that is not understood): the server may hold the new password, so the error is
+// `change_unconfirmed` and the page tells the user to try the new password first. The server ends every other session of the
+// account when it accepts the change; this one goes on. Old exports and server
 // backups still open with the old password: the page says so.
 //
 // The three passwords are strings from the page (JavaScript strings cannot be wiped);
 // each is encoded to a byte array for the core, and the core's copy is wiped after the
 // call. No password, key or code is logged, stored or put in an address.
+import { ApiError } from "../api.mjs";
 import { b64u } from "../b64.mjs";
 import { num, rowToCore, rowToWire, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
 import { AccountError } from "../crypto/errors.mjs";
@@ -40,13 +44,26 @@ function sameBytes(a, b) {
 }
 
 /**
+ * Whether a failure of the signed write leaves it unknown if the server applied the change: it was sent (the
+ * challenge is not the write), and the answer is no answer, a server error or not an answer this page understands.
+ * An explicit refusal (a status below 500 with the server's code) is not: nothing was changed.
+ * @param {unknown} error
+ */
+function outcomeUnknown(error) {
+  const e = /** @type {any} */ (error);
+  if (e?.afterSend !== true && e?.details?.afterSend !== true) return false;
+  if (e instanceof ApiError) return e.status === 0 || e.status >= 500 || e.code === "bad_response" || e.code === "network";
+  return e?.code === "bad_response";
+}
+
+/**
  * Changes the master password.
  *
  * `skCode` is only needed when the account has a secret key and this device does
  * not hold it (`sk_required` says so); the secret key itself does not change.
  * @param {Env} env
  * @param {{ current: string, next: string, nextAgain: string, skCode?: string }} args
- * @returns {Promise<{ kekGeneration: number, until: number }>}
+ * @returns {Promise<{ kekGeneration: number, until: number | null }>}
  */
 export async function changePassword(env, { current, next, nextAgain, skCode }) {
   const { client, api, store, server } = env;
@@ -84,22 +101,30 @@ export async function changePassword(env, { current, next, nextAgain, skCode }) 
     await registerForSession(env, { password: next, skCode: code ?? undefined, profile: fresh.ksfProfile, context });
     const change = await client.vault.change_password(seeded, wrapToCore(passwordWraps[0], fresh.ksfProfile), manifest);
 
-    const answer = await signedCall(env, {
-      op: "unlock-method.password.put",
-      method: "PUT",
-      path: "/api/vault/unlock-methods/password",
-      shape: "password_put_req",
-      body: {
-        registration_record: b64u.encode(change.registration_record),
-        ksf_profile: num(change.ksf_profile),
-        wrap: b64u.encode(change.wrap.wrap),
-        kek_generation: num(change.wrap.kek_generation),
-        manifest: rowToWire(change.manifest),
-      },
-    });
+    /** @type {Record<string, any>} */
+    let answer;
+    try {
+      answer = await signedCall(env, {
+        op: "unlock-method.password.put",
+        method: "PUT",
+        path: "/api/vault/unlock-methods/password",
+        shape: "password_put_req",
+        body: {
+          registration_record: b64u.encode(change.registration_record),
+          ksf_profile: num(change.ksf_profile),
+          wrap: b64u.encode(change.wrap.wrap),
+          kek_generation: num(change.wrap.kek_generation),
+          manifest: rowToWire(change.manifest),
+        },
+      });
+      // An answer for another generation than the one that was signed cannot be trusted either way.
+      if (answer.kek_generation !== num(change.wrap.kek_generation)) throw new AccountError("bad_response", { afterSend: true });
+    } catch (error) {
+      if (outcomeUnknown(error)) throw new AccountError("change_unconfirmed");
+      throw error;
+    }
 
     // The server has accepted the change. Only now does this device pin the new generation.
-    if (answer.kek_generation !== num(change.wrap.kek_generation)) throw new AccountError("bad_response");
     try {
       await store.savePinned(db, server, info.accountId, info.email, change.pinned);
     } catch (error) {

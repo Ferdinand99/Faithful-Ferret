@@ -91,6 +91,8 @@ export function createCryptoSession({
   let reauthAt = null;
   /** When the freshness of the last re-authentication ends (ms since 1970); null when there is none. @type {number | null} */
   let freshUntil = null;
+  /** Counts the locks, so a call that was running when the vault locked does not write its result back. */
+  let locks = 0;
   /** @type {Set<() => void>} */
   const lockListeners = new Set();
 
@@ -109,6 +111,7 @@ export function createCryptoSession({
     current = null;
     reauthAt = null;
     freshUntil = null;
+    locks += 1;
     try {
       await client.lock();
     } finally {
@@ -171,8 +174,9 @@ export function createCryptoSession({
      * @param {Parameters<typeof reauthenticate>[1]} args
      */
     async reauthenticate(args) {
+      const before = locks;
       const done = await reauthenticate(env, args);
-      freshUntil = done.until;
+      if (locks === before) freshUntil = done.until;
       return done;
     },
 
@@ -183,8 +187,9 @@ export function createCryptoSession({
      */
     async changePassword(args) {
       if (current === null) throw new AccountError("session_ended");
+      const before = locks;
       const done = await changePassword(env, args);
-      freshUntil = done.until;
+      if (locks === before) freshUntil = done.until;
       return done;
     },
 

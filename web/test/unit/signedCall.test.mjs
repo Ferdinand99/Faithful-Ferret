@@ -128,3 +128,15 @@ test("the_reply_shape_follows_the_request_shape", () => {
   assert.equal(replyShapeOf("login_start_res"), undefined);
   assert.equal(replyShapeOf("no_such_req"), undefined);
 });
+
+test("a_failure_of_the_write_is_marked_as_after_the_send_and_one_of_the_challenge_is_not", async () => {
+  const rigged = rig({ put: () => answer(500, { error: "internal" }) });
+  await assert.rejects(call(rigged.env), (error) => error.afterSend === true && error.status === 500);
+  const env = {
+    api: createApi({ fetchImpl: async () => {
+      throw new Error("offline");
+    } }),
+    client: { vault: { auth_sign: async () => assert.fail("nothing to sign") } },
+  };
+  await assert.rejects(call(env), (error) => error.code === "network" && error.afterSend === undefined);
+});

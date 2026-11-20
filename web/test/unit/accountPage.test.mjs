@@ -212,6 +212,27 @@ test("the_password_page_empties_the_fields_before_the_call_and_names_a_refusal_w
   });
 });
 
+test("an_unknown_outcome_hides_the_form_and_tells_the_user_to_try_the_new_password_first", async () => {
+  for (const [lang, text] of [["en", /unlock it with the new master password first/], ["nb", /lås det opp med det nye hovedpassordet først/]]) {
+    await withDom(async () => {
+      let calls = 0;
+      const change = async () => {
+        calls += 1;
+        throw Object.assign(new Error("x"), { code: "change_unconfirmed" });
+      };
+      const page = passwordView({ t: i18n(lang).t, change, skBit: true });
+      typeInto(page, { "current-password": "a-current-password", "new-password": "a-new-password-1", "new-password-again": "a-new-password-1" });
+      await fire(find(page, "password-form"), "submit");
+      await settle();
+      assert.match(textOf(find(page, "error")), text);
+      // The form is gone, so the same change is not sent again with the old password as "current", and no success is claimed.
+      assert.equal(find(page, "password-form").hidden, true);
+      assert.equal(find(page, "password-done").hidden, true);
+      assert.equal(calls, 1);
+    });
+  }
+});
+
 test("the_secret_key_is_asked_for_only_when_the_device_does_not_hold_it", async () => {
   await withDom(async () => {
     const calls = [];
@@ -349,6 +370,39 @@ test("the_frame_has_an_account_link_that_is_marked_on_the_pages_of_the_account",
     assert.equal(link.getAttribute("href"), "#/account");
     assert.equal(textOf(link).trim(), "security.nav.account");
     assert.equal(link.getAttribute("aria-current"), "false");
+    // It stands in a landmark of its own, with its own name.
+    const nav = [...allNodes(root)].find((n) => n.tagName === "nav" && n.getAttribute("data-role") === null && n.getAttribute("aria-label") === "security.nav.account");
+    assert.ok(nav, "an account navigation landmark");
+    assert.ok([...allNodes(nav)].includes(link));
+  });
+});
+
+function* allNodes(node) {
+  yield node;
+  for (const child of node.childNodes ?? []) yield* allNodes(child);
+}
+
+test("the_account_link_is_marked_on_the_account_page_and_on_every_page_it_lists", async () => {
+  await withDom(async () => {
+    const listeners = [];
+    const win = { location: { hash: "#/items" }, addEventListener: (type, fn) => listeners.push([type, fn]), removeEventListener() {} };
+    const root = shellView({
+      t: keyT, engine: fakeEngine(), session: { onLock() {} }, content: globalThis.document.createElement("div"),
+      lock: async () => {}, touch: () => true, scope: createWipeScope(), onLocked: () => globalThis.document.createElement("div"), win,
+      accountPaths: menuRoutes([{ path: "/password", title: "k", menu: "account" }, { path: "/later-page", title: "k", menu: "account" }]).map((r) => r.path),
+    });
+    const link = find(root, "nav-account");
+    const mark = (hash) => {
+      win.location.hash = hash;
+      for (const [type, fn] of listeners) if (type === "hashchange") fn();
+      return link.getAttribute("aria-current");
+    };
+    assert.equal(mark("#/account"), "page");
+    assert.equal(mark("#/password"), "page");
+    // A page that a later task adds to the menu is marked with no change to the frame.
+    assert.equal(mark("#/later-page"), "page");
+    assert.equal(mark("#/items"), "false");
+    assert.equal(mark("#/not-listed"), "false");
   });
 });
 

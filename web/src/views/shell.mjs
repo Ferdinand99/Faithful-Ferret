@@ -10,6 +10,7 @@ import { el, mount } from "../dom.mjs";
 import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
 import { createWipeScope, describeError, listenWhileShown } from "./common.mjs";
+import { menuRoutes } from "./account.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
@@ -31,6 +32,7 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {{ location?: { hash?: string }, addEventListener?: Function, removeEventListener?: Function }} [win] the page, for the link of the current screen
  * @property {LiveSource} [live] the live-update channel (`state`, `on`); without it the frame has no live field
  * @property {{ go(path: string): void }} [router] where the actions of the sync banner lead
+ * @property {readonly string[]} [accountPaths] the addresses of the pages the account page lists (routes that say `menu: "account"`); the account link is marked on them and on `/account`
  * @property {StandbySource} [standby] where the tab is told that another tab took the vault; without it the frame never shows the standby notice
  *
  * @typedef {object} LiveSource
@@ -105,14 +107,16 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
   const lockButton = el("button", { type: "button", class: "btn btn-secondary btn-sm i-lock", "data-role": "lock" }, t("vault.lock"));
   const navItems = el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items"));
   const navNew = el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"));
-  const navAccount = el("a", { href: "#/account", class: "account-link", "data-role": "nav-account" }, t("security.nav.account"));
+  const navAccount = el("a", { href: "#/account", "data-role": "nav-account" }, t("security.nav.account"));
+  // Its own landmark, apart from the item links: on a phone it stands in the first row with the name and Lock.
+  const accountNav = el("nav", { class: "account-nav", "aria-label": t("security.nav.account") }, navAccount);
   const nav = el("nav", { "aria-label": t("vault.nav.label") }, navItems, navNew);
   // The live-update field: a second pill beside the sync state, only when the page has the channel.
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
@@ -121,7 +125,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     nav,
     // With the live field, the two states share one group, so that on a phone they stack in the second row of the bar.
     liveStatus ? el("span", { class: "vault-status", "data-role": "status-group" }, status, liveStatus) : status,
-    navAccount,
+    accountNav,
     lockButton);
   const main = el("main", { class: "vault-main", "data-role": "content" }, content);
   // What the engine has found out about the server (warnings and stops) has its own banner, which follows the engine's
@@ -218,8 +222,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     const path = String(win?.location?.hash ?? "").replace(/^#/, "");
     const onNew = path === "/items/new";
     const onItems = !onNew && (path === "/items" || path.startsWith("/items/"));
-    // The account page and the pages it lists (the password page for now) belong to the account link.
-    const onAccount = path === "/account" || path === "/password";
+    // The account page and the pages it lists belong to the account link.
+    const onAccount = path === "/account" || accountPaths.includes(path);
     navItems.setAttribute("aria-current", onItems ? "page" : "false");
     navNew.setAttribute("aria-current", onNew ? "page" : "false");
     navAccount.setAttribute("aria-current", onAccount ? "page" : "false");
@@ -369,6 +373,7 @@ export async function enterVault(ctx) {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
       return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
+        accountPaths: menuRoutes(ctx.routes ?? []).map((route) => route.path),
         standby: typeof sync.onStandby === "function" ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard } : undefined,
       });
     },

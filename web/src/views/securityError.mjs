@@ -9,7 +9,7 @@ import { describeError } from "./form.mjs";
 
 /** The codes with a text of their own in the security catalog (one key per code). */
 export const SECURITY_ERRORS = Object.freeze([
-  "body_too_large", "decrypt", "denied", "generation_exhausted", "password_unchanged", "pin_missing", "pin_save_failed",
+  "body_too_large", "change_unconfirmed", "decrypt", "denied", "generation_exhausted", "password_unchanged", "pin_missing", "pin_save_failed",
   "reauth_required", "second_factor_required", "secret_key_not_held", "write_conflict",
 ]);
 

@@ -122,10 +122,55 @@ test("a_change_the_server_accepts_but_this_device_cannot_pin_says_so", async () 
   };
   await assert.rejects(change(world), (error) => error.code === "pin_save_failed");
   assert.equal(world.client.called("change_password").length, 1);
-  // A different generation in the server's answer than the one signed is not trusted: nothing is pinned.
+  // A different generation in the server's answer than the one signed is not trusted: nothing is pinned, and the outcome is unknown.
   const other = await signedInWorld({ putBody: { kek_generation: 7, seq: 12 } });
-  await assert.rejects(change(other), { code: "bad_response" });
+  await assert.rejects(change(other), { code: "change_unconfirmed" });
   assert.equal(await storedGeneration(other), 1);
+});
+
+test("a_failure_after_the_write_was_sent_that_is_no_refusal_is_an_unknown_outcome_not_try_again", async () => {
+  const unknown = {
+    "no answer": () => {
+      throw new Error("offline");
+    },
+    "a server error": () => answer(500, { error: "internal" }),
+    "a gateway error": () => answer(502, { error: "bad_gateway" }),
+    "a page that is not JSON": () => new Response("<html>proxy</html>", { status: 200, headers: { "content-type": "text/html" } }),
+    "an answer of the wrong shape": () => answer(200, { kek_generation: "2" }),
+    "an answer for another generation": () => answer(200, { kek_generation: 7, seq: 12 }),
+  };
+  for (const [name, put] of Object.entries(unknown)) {
+    const world = await signedInWorld({ overrides: { "PUT /api/vault/unlock-methods/password": put } });
+    const saves = [];
+    const save = world.store.savePinned;
+    world.store.savePinned = async (...args) => {
+      saves.push(args);
+      return save(...args);
+    };
+    await assert.rejects(change(world), { code: "change_unconfirmed" }, name);
+    // Nothing is pinned: the server's state is not known, and the old record is still a floor the new password passes.
+    assert.deepEqual(saves, [], name);
+    assert.equal(await storedGeneration(world), 1, name);
+    assert.ok(world.session.current(), "the vault stays open");
+  }
+
+  // Explicit refusals are not unknown: the server said nothing was changed.
+  for (const [status, code] of [[403, "reauth_required"], [409, "write_conflict"], [401, "denied"], [422, "bad_request"], [429, "throttled"]]) {
+    const world = await signedInWorld({ putStatus: status, putBody: { error: code } });
+    await assert.rejects(change(world), (error) => error.code === code, code);
+  }
+
+  // A failure before the write (the challenge) is certain: nothing was sent, so it stays what it is.
+  const world = await signedInWorld({
+    overrides: {
+      "POST /api/auth/challenge": () => {
+        throw new Error("offline");
+      },
+    },
+  });
+  await assert.rejects(change(world), { code: "network" });
+  assert.equal(world.requests.some((r) => r.method === "PUT"), false);
+  assert.equal(await storedGeneration(world), 1);
 });
 
 test("the_new_password_must_meet_the_floor_for_the_sk_bit_and_match_twice", async () => {

@@ -110,8 +110,8 @@ export function passwordView({ t, change, skRequired = false, skBit = null, scop
         const code = /** @type {any} */ (error)?.code;
         if (code === "sk_required" && !skRequired) mount(skRow, sk.row);
         showError(securityErrorText(t, error));
-        // The server accepted the change but this device could not save its record: the password is changed.
-        if (code === "pin_save_failed") form.hidden = true;
+        // The password is changed (the record could not be saved) or may be (no answer): trying again would ask for the old one.
+        if (code === "pin_save_failed" || code === "change_unconfirmed") form.hidden = true;
         return;
       }
       busy.set(false);
