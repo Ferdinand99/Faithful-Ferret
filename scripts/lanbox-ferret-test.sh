@@ -98,20 +98,41 @@ docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
 dk() { docker "${docker_args[@]}" "$@"; }
 dc() { dk compose -p "$project" -f "$composefile" --env-file "$envfile" "$@"; }
 
-# The end-to-end stack: everything it uses is named ferret-e2e* and has this label.
-e2e_project=ferret-e2e
-e2e_label=owner=ferret-e2e
+# The end-to-end stack: everything it uses is named ferret-<suffix>* and has this label. The
+# suffix is `e2e` unless FERRET_E2E_SUFFIX says another one (letters and digits), and the
+# network's first three octets are FERRET_E2E_SUBNET (default 172.30.250), so a second stack can
+# run beside the first: another project, containers, volumes, network, label and host names
+# (vault-<suffix>.test), and nothing of the first is touched.
+e2e_suffix="${FERRET_E2E_SUFFIX:-e2e}"
+case "$e2e_suffix" in
+  '' | *[!a-z0-9]* | ?????????????*) echo "lanbox-ferret-test: FERRET_E2E_SUFFIX is 1 to 12 lower-case letters and digits" >&2; exit 2 ;;
+esac
+e2e_subnet="${FERRET_E2E_SUBNET:-172.30.250}"
+if ! printf '%s' "$e2e_subnet" | grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+  echo "lanbox-ferret-test: FERRET_E2E_SUBNET is the first three octets of a /28, for example 172.30.250" >&2
+  exit 2
+fi
+export FERRET_E2E_SUFFIX="$e2e_suffix" FERRET_E2E_SUBNET="$e2e_subnet"
+e2e_project="ferret-$e2e_suffix"
+e2e_label="owner=ferret-$e2e_suffix"
 e2e_composefile=docker/compose.ferret-e2e.yml
-e2e_app=ferret-e2e-app
-e2e_tls=ferret-e2e-tls
-e2e_network=ferret-e2e-net
-e2e_image=ferret-e2e-app:latest
+e2e_app="ferret-$e2e_suffix-app"
+e2e_tls="ferret-$e2e_suffix-tls"
+e2e_network="ferret-$e2e_suffix-net"
+e2e_image="ferret-$e2e_suffix-app:latest"
+e2e_vault_url="https://vault-$e2e_suffix.test"
+e2e_admin_url="https://admin-$e2e_suffix.test"
+e2e_playwright="ferret-$e2e_suffix-playwright"
+# The services of the compose file keep their names (the containers' addresses on the network).
+e2e_app_service=ferret-e2e-app
+e2e_evil_service=ferret-e2e-evil
 # The malicious server between the terminator and the app (web/test/e2e-stack/evil), and the
 # volumes of the app's data and of its snapshot.
-e2e_evil=ferret-e2e-evil
-e2e_evil_image=ferret-e2e-evil:latest
-e2e_data_volume=ferret-e2e-data
+e2e_evil="ferret-$e2e_suffix-evil"
+e2e_evil_image="ferret-$e2e_suffix-evil:latest"
+e2e_data_volume="ferret-$e2e_suffix-data"
 e2e_snapshot_volume=ferret-e2e-snapshot
+[ "$e2e_suffix" = e2e ] || e2e_snapshot_volume="ferret-$e2e_suffix-snapshot"
 # The compose file wants the setup token of the run; commands that only stop or
 # list the stack do not need the real one.
 dce() { FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" dk compose -p "$e2e_project" -f "$e2e_composefile" "$@"; }
@@ -456,7 +477,7 @@ e2e_up() {
   FERRET_E2E_SETUP_TOKEN="$token" dce up -d --build --wait
   echo
   echo "End-to-end stack is up (project $e2e_project, no published ports):"
-  echo "  vault  https://vault-e2e.test  admin  https://admin-e2e.test   (only on the network $e2e_network)"
+  echo "  vault  $e2e_vault_url  admin  $e2e_admin_url   (only on the network $e2e_network)"
   echo "  run the tests:  scripts/lanbox-ferret-test.sh e2e-run    setup token:  scripts/lanbox-ferret-test.sh e2e-token"
 }
 
@@ -623,7 +644,7 @@ process.exit(answer.ok ? 0 : 1);
 
 e2e_clock_before=0
 e2e_stop_app() { dk stop "$e2e_app" >/dev/null; }
-e2e_bump() { dce run --rm -T --no-deps "$e2e_app" restore-epoch bump --yes; }
+e2e_bump() { dce run --rm -T --no-deps "$e2e_app_service" restore-epoch bump --yes; }
 # A restart empties /tmp of the app, where the clock offset is: it is put back.
 e2e_start_app() {
   dk start "$e2e_app" >/dev/null
@@ -642,7 +663,7 @@ process.exit(answer.ok ? 0 : 1);
 e2e_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_start_app
+  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_start_app
   echo "e2e-snapshot: the data of $e2e_app is in the volume $e2e_snapshot_volume"
 }
 
@@ -650,7 +671,7 @@ e2e_snapshot() {
 e2e_restore_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_bump e2e_start_app
+  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_bump e2e_start_app
   e2e_evil_reset
   echo "e2e-restore-snapshot: $e2e_app runs on the snapshot, with a higher restore epoch"
 }
@@ -660,7 +681,7 @@ e2e_restore_snapshot() {
 # content of the file. The Dockerfile goes in on stdin, so no build context (and
 # nothing from docker/, where the .env of the test stack lives) is sent.
 runner_hash="$(tr -d '' < docker/e2e-runner.Dockerfile | sha256sum | cut -c1-12)"
-runner_image="ferret-e2e-playwright:$runner_hash"
+runner_image="ferret-$e2e_suffix-playwright:$runner_hash"
 e2e_runner_image() {
   if ! dk image inspect "$runner_image" >/dev/null 2>&1; then
     dk build --label "$e2e_label" -t "$runner_image" - < docker/e2e-runner.Dockerfile >&2
@@ -685,8 +706,8 @@ e2e_run() {
   local pem token
   pem="$(e2e_ca)"
   token="$(e2e_token)"
-  PW_NETWORK="$e2e_network" PW_NAME=ferret-e2e-playwright PW_LABEL="$e2e_label" \
-    PW_VAULT_URL=https://vault-e2e.test PW_ADMIN_URL=https://admin-e2e.test PW_EVIL_URL="http://$e2e_evil:9000" \
+  PW_NETWORK="$e2e_network" PW_NAME="$e2e_playwright" PW_LABEL="$e2e_label" \
+    PW_VAULT_URL="$e2e_vault_url" PW_ADMIN_URL="$e2e_admin_url" PW_EVIL_URL="http://$e2e_evil_service:9000" \
     PW_TOKEN="$token" PW_CA_PEM="$pem" PW_HOSTS="" \
     playwright_run "$@"
 }
@@ -755,7 +776,7 @@ exit $status'
         --tmpfs /root/.npm:size=512m \
         -w /work \
         "$runner_image" \
-        sh -c 'tar -x -C /work && cd /work/web && npm ci --no-audit --no-fund --ignore-scripts >&2 && tar -c -C /work web/node_modules' > "$deps"
+        sh -c 'tar -x -C /work && cd /work/web && npm ci --no-audit --no-fund --ignore-scripts >&2 && node -e '"'"'import("./test/e2e-stack/deviceClient.mjs").then((m) => m.prepareWasmNode())'"'"' >&2 && tar -c -C /work web/node_modules web/.wasm-node' > "$deps"
   { tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web; cat "$deps"; } \
     | {
       dk create --rm -i --init \

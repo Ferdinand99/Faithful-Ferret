@@ -35,7 +35,7 @@ name: ferret-e2e
 
 services:
   ferret-e2e-app:
-    image: ferret-e2e-app:latest
+    image: ferret-${FERRET_E2E_SUFFIX:-e2e}-app:latest
     build:
       context: ..
       dockerfile: docker/server.Dockerfile
@@ -43,12 +43,12 @@ services:
         # The test clock (FERRET_E2E_CLOCK_FILE below). Only this image has it.
         FEATURES: e2e-clock
       labels:
-        owner: ferret-e2e
-    container_name: ferret-e2e-app
+        owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
+    container_name: ferret-${FERRET_E2E_SUFFIX:-e2e}-app
     restart: "no"
     mem_limit: 512m
     labels:
-      owner: ferret-e2e
+      owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     # As in the stack of the owner: the entrypoint starts as root only to give
     # /data to uid 1000 and then drops to that user; nothing else is kept.
     cap_drop:
@@ -68,15 +68,15 @@ services:
       - ferret-e2e-data:/data
     networks:
       ferret-e2e-net:
-        ipv4_address: 172.30.250.3
+        ipv4_address: ${FERRET_E2E_SUBNET:-172.30.250}.3
     environment:
       FERRET_DATA_DIR: /data
-      FERRET_VAULT_URL: https://vault-e2e.test
-      FERRET_ADMIN_URL: https://admin-e2e.test
+      FERRET_VAULT_URL: https://vault-${FERRET_E2E_SUFFIX:-e2e}.test
+      FERRET_ADMIN_URL: https://admin-${FERRET_E2E_SUFFIX:-e2e}.test
       # Only the proxy between the terminator and the app is believed (the
       # terminator's forwarding headers pass through it untouched). Never the
       # network's gateway, never the terminator itself.
-      FERRET_TRUSTED_PROXIES: 172.30.250.4
+      FERRET_TRUSTED_PROXIES: ${FERRET_E2E_SUBNET:-172.30.250}.4
       FERRET_TRUST_PROXY: "1"
       # Made up by `e2e-up` for every start; the tests read it from the container.
       FERRET_SETUP_TOKEN: ${FERRET_E2E_SETUP_TOKEN:?start the stack with scripts/lanbox-ferret-test.sh e2e-up}
@@ -86,17 +86,17 @@ services:
       FERRET_E2E_CLOCK_FILE: /tmp/e2e-clock
 
   ferret-e2e-evil:
-    image: ferret-e2e-evil:latest
+    image: ferret-${FERRET_E2E_SUFFIX:-e2e}-evil:latest
     build:
       context: ../web/test/e2e-stack/evil
       dockerfile: Dockerfile
       labels:
-        owner: ferret-e2e
-    container_name: ferret-e2e-evil
+        owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
+    container_name: ferret-${FERRET_E2E_SUFFIX:-e2e}-evil
     restart: "no"
     mem_limit: 128m
     labels:
-      owner: ferret-e2e
+      owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     depends_on:
       ferret-e2e-app:
         condition: service_healthy
@@ -109,7 +109,7 @@ services:
       - /tmp:size=8m
     networks:
       ferret-e2e-net:
-        ipv4_address: 172.30.250.4
+        ipv4_address: ${FERRET_E2E_SUBNET:-172.30.250}.4
     environment:
       # The vault listener and the admin listener of the app. The ports of the
       # proxy: 8041 (vault), 8040 (admin) and the control port 9000.
@@ -123,11 +123,11 @@ services:
 
   ferret-e2e-tls:
     image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
-    container_name: ferret-e2e-tls
+    container_name: ferret-${FERRET_E2E_SUFFIX:-e2e}-tls
     restart: "no"
     mem_limit: 128m
     labels:
-      owner: ferret-e2e
+      owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     depends_on:
       ferret-e2e-evil:
         condition: service_healthy
@@ -146,11 +146,11 @@ services:
       - /config:size=8m
     networks:
       ferret-e2e-net:
-        ipv4_address: 172.30.250.2
+        ipv4_address: ${FERRET_E2E_SUBNET:-172.30.250}.2
         # The two test host names. `.test` never exists on the internet.
         aliases:
-          - vault-e2e.test
-          - admin-e2e.test
+          - vault-${FERRET_E2E_SUFFIX:-e2e}.test
+          - admin-${FERRET_E2E_SUFFIX:-e2e}.test
     entrypoint:
       - /bin/sh
       - -c
@@ -164,26 +164,26 @@ services:
           auto_https disable_redirects
           skip_install_trust
         }
-        https://vault-e2e.test {
+        https://vault-${FERRET_E2E_SUFFIX:-e2e}.test {
           tls internal
           reverse_proxy ferret-e2e-evil:8041
         }
-        https://admin-e2e.test {
+        https://admin-${FERRET_E2E_SUFFIX:-e2e}.test {
           tls internal
           reverse_proxy ferret-e2e-evil:8040
         }
 
 volumes:
   ferret-e2e-data:
-    name: ferret-e2e-data
+    name: ferret-${FERRET_E2E_SUFFIX:-e2e}-data
     labels:
-      owner: ferret-e2e
+      owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
 
 networks:
   ferret-e2e-net:
-    name: ferret-e2e-net
+    name: ferret-${FERRET_E2E_SUFFIX:-e2e}-net
     labels:
-      owner: ferret-e2e
+      owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     # No way out of the network: nothing in the stack needs the internet (the terminator makes
     # its own certificates, the app sends no message), so a compromised container cannot
     # call out. The test runner runs on this network only; its packages are installed first in a
@@ -191,4 +191,4 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: 172.30.250.0/28
+        - subnet: ${FERRET_E2E_SUBNET:-172.30.250}.0/28

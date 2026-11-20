@@ -5,3 +5,5 @@ test-results/
 src/*.gen.mjs
 # The worker client of the published WASM package, unpacked by the build
 /js/
+# The Node build of the pinned WASM package, fetched for the device scenarios of the end-to-end stack
+/.wasm-node/

@@ -630,6 +630,63 @@ async fn a_session_with_this_browsers_id_is_listed_apart_and_can_be_revoked() {
 }
 
 #[tokio::test]
+async fn deleting_this_browsers_id_ends_neither_this_session_nor_its_own_admin_session() {
+    let app = device_app().await;
+    let (client, victim) = account(&app, 1).await;
+    let uid = client.ids.user_id;
+    // This browser's own admin session, handed over from it: it carries the
+    // browser's device id, as a hand-over gives the child its parent's.
+    let own_admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 1).await;
+    // Another session with this browser's id (a browser chooses its id), and
+    // an admin session handed over from that one.
+    let other = issue(&app, uid, Origin::Vault, SessionScope::Full, 1).await;
+    let other_admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 1).await;
+    let pairs = [(own_admin.sid, victim.sid), (other_admin.sid, other.sid)];
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            for (child, parent) in pairs {
+                set_parent(conn, &child, &parent)?;
+            }
+            Ok(())
+        })
+        .await
+        .expect("the hand-overs");
+
+    let own = support::session::device(1).0;
+    let mut revocations = app.sync_events().subscribe_revocations();
+    let res = delete(&app, &victim.jar, &own).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    // The other session and its admin session end; the asking session and its
+    // own admin session stay.
+    assert!(session_ended(&app, other.sid).await);
+    assert!(session_ended(&app, other_admin.sid).await);
+    assert!(
+        !session_ended(&app, victim.sid).await,
+        "the asking session stays"
+    );
+    assert!(
+        !session_ended(&app, own_admin.sid).await,
+        "the asking session's own admin session stays"
+    );
+    assert_eq!(
+        sorted(heard(&mut revocations)),
+        sorted(vec![
+            Revoked::Session(other.sid),
+            Revoked::Session(other_admin.sid),
+        ])
+    );
+
+    // With nothing else under the id, the same call changes nothing and says
+    // so, whatever admin session this browser has open.
+    let res = delete(&app, &victim.jar, &own).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
+    assert!(!session_ended(&app, victim.sid).await);
+    assert!(!session_ended(&app, own_admin.sid).await);
+    assert!(heard(&mut revocations).is_empty());
+}
+
+#[tokio::test]
 async fn the_three_changes_refuse_a_request_from_another_site() {
     let app = device_app().await;
     let (client, browser) = account(&app, 1).await;
