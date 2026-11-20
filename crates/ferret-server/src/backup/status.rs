@@ -21,6 +21,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+/// The reason of a run that the admin panel asked for.
+pub const MANUAL_REASON: &str = "manual";
+
+/// A backup is already going on or on its way: [`BackupStatus::request_manual_run`]
+/// asked for one too many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Busy;
+
 /// The name of the status file in the backup folder.
 pub const STATUS_FILE: &str = "status.json";
 
@@ -63,6 +71,9 @@ pub struct BackupSnapshot {
     pub next_run_at: Option<i64>,
     /// Whether a run is going on now.
     pub running: bool,
+    /// Whether a run that was asked for has not started yet: the request is
+    /// waiting to be picked up, or the job is collecting requests (60 seconds).
+    pub waiting: bool,
 }
 
 /// The coarse state of the backup, for a badge.
@@ -109,6 +120,8 @@ struct Inner {
     saved: Saved,
     next_run_at: Option<i64>,
     running: bool,
+    /// A request was taken by the job and its run has not started yet.
+    waiting: bool,
     /// The reason of the first request that has not been taken yet.
     requested: Option<&'static str>,
 }
@@ -195,9 +208,43 @@ impl BackupStatus {
         self.shared.wake.notify_one();
     }
 
-    /// Takes the pending request, if there is one (the scheduler's side).
+    /// Asks for a backup now, for the "Take a backup now" button of the admin
+    /// panel: like [`Self::request_run`] with the reason `manual`, but refused
+    /// while a run is going on or an earlier request has not been run yet (one
+    /// click is one backup; a second click while it is on its way does nothing
+    /// but say so). The check and the request are one step, so two clicks at
+    /// once cannot both go through.
+    ///
+    /// # Errors
+    ///
+    /// [`Busy`] when a run is going on or a requested run has not started.
+    pub fn request_manual_run(&self) -> Result<(), Busy> {
+        {
+            let mut inner = self.lock();
+            if inner.running || inner.waiting || inner.requested.is_some() {
+                return Err(Busy);
+            }
+            inner.requested = Some(MANUAL_REASON);
+        }
+        self.shared.wake.notify_one();
+        Ok(())
+    }
+
+    /// Takes the pending request, if there is one (the scheduler's side). Until
+    /// the run starts ([`Self::set_running`]) the status says a run is waiting.
     pub fn take_request(&self) -> Option<&'static str> {
-        self.lock().requested.take()
+        let mut inner = self.lock();
+        let taken = inner.requested.take();
+        if taken.is_some() {
+            inner.waiting = true;
+        }
+        taken
+    }
+
+    /// The job dropped the requests it had collected without running (after a
+    /// panic): nothing is waiting any more.
+    pub fn clear_waiting(&self) {
+        self.lock().waiting = false;
     }
 
     /// Whether a request is waiting.
@@ -220,12 +267,17 @@ impl BackupStatus {
             last_push: inner.saved.last_push.clone(),
             next_run_at: inner.next_run_at,
             running: inner.running,
+            waiting: inner.waiting || inner.requested.is_some(),
         }
     }
 
-    /// A run starts or ends.
+    /// A run starts or ends. A run that starts is the one that was waiting.
     pub fn set_running(&self, running: bool) {
-        self.lock().running = running;
+        let mut inner = self.lock();
+        inner.running = running;
+        if running {
+            inner.waiting = false;
+        }
     }
 
     /// When the next run is due.
@@ -365,6 +417,25 @@ mod tests {
         assert!(status.has_request());
         assert_eq!(status.take_request(), Some("unlock_methods"));
         assert_eq!(status.take_request(), None);
+    }
+
+    #[test]
+    fn a_manual_request_is_refused_while_one_is_on_its_way_or_running() {
+        let status = BackupStatus::new();
+        assert_eq!(status.request_manual_run(), Ok(()));
+        // Asked for, not yet taken.
+        assert_eq!(status.request_manual_run(), Err(Busy));
+        // Taken by the job, collecting.
+        assert_eq!(status.take_request(), Some(MANUAL_REASON));
+        assert!(status.snapshot().waiting);
+        assert_eq!(status.request_manual_run(), Err(Busy));
+        // Running.
+        status.set_running(true);
+        assert!(!status.snapshot().waiting);
+        assert_eq!(status.request_manual_run(), Err(Busy));
+        // Done: a new request goes through again.
+        status.set_running(false);
+        assert_eq!(status.request_manual_run(), Ok(()));
     }
 
     #[test]

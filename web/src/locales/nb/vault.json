@@ -1,4 +1,5 @@
 {
+  "vault.banner.copied": "Et element du gjenopprettet var fjernet fra tjeneren for godt, så det ble lagret på nytt som en ny kopi.",
   "vault.banner.dismiss": "Lukk",
   "vault.banner.item": "{name}: {message}",
   "vault.banner.sign_in_again": "Innloggingen din er utløpt. Logg inn på nytt for å holde endringene dine synkronisert.",

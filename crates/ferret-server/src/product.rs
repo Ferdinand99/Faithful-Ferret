@@ -12,7 +12,7 @@ use vole_kit::config::{CredentialMode, ExternalCredentials, KitConfig, KitFeatur
 use vole_kit::docs::{DocsSpec, RouteDoc};
 use vole_kit::http::assets::StaticFile;
 use vole_kit::notify::webhook::Wording;
-use vole_kit::page::{NavItem, SettingsTab, Ui};
+use vole_kit::page::{NavItem, SettingsTab, TabAccess, Ui};
 use vole_kit::settings::{FieldKind, GeneralSettings, SettingField, SettingsSection};
 
 /// The product's version (`CARGO_PKG_VERSION`), reported by the OpenAPI
@@ -104,6 +104,15 @@ pub static DOCS: DocsSpec = DocsSpec {
     strict_access: false,
 };
 
+/// The Backup tab of the settings (`admin::panel`), for administrators.
+const BACKUP_TAB: SettingsTab = SettingsTab {
+    id: "backup",
+    href: crate::admin::panel::PATH,
+    label: "nav.backup",
+    icon: "archive",
+    access: TabAccess::Admins,
+};
+
 /// The General page's own part. The kit shows its mail settings on the page
 /// whenever sign-in codes are on and has no switch to hide them, so the page
 /// says what they are for here: nothing. The one field has one value; it holds
@@ -170,6 +179,7 @@ pub static KIT: KitConfig = KitConfig {
         settings_tabs: &[
             SettingsTab::GENERAL,
             SettingsTab::USERS,
+            BACKUP_TAB,
             SettingsTab::SECURITY,
         ],
         home_url: "https://hedgerow.tools/Faithful-Ferret/",

@@ -217,3 +217,39 @@ test("unlock_view_takes_the_facts_it_is_given", async () => {
     assert.equal(find(view, "password").getAttribute("autocomplete"), "current-password");
   });
 });
+
+test("the_lock_screen_links_to_account_recovery", async () => {
+  await withDom(async () => {
+    const session = fakeSession({ status: { pinned: true, skBit: false, skStored: false } });
+    const { host } = await screen(session);
+    const link = find(host, "recover-link");
+    assert.ok(link, "a link for a forgotten master password");
+    assert.equal(link.getAttribute("href"), "#/recover");
+    assert.ok(textOf(link).includes("recover.link"));
+  });
+});
+
+test("a_refusal_of_an_older_password_after_a_restore_offers_the_recovery_key_on_the_lock_screen", async () => {
+  await withDom(async () => {
+    const session = fakeSession({ status: { pinned: true, skBit: false, skStored: false } });
+    session.unlockError = Object.assign(coded("pinned_kek_generation"), { recoveryOffer: "recover" });
+    const { host, moves } = await screen(session);
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.equal(find(host, "recovery-offer").hidden, false);
+    assert.ok(textOf(find(host, "error")).includes("recover.offer.recover"));
+    const button = find(host, "use-recovery-key");
+    assert.ok(button);
+    await button.listeners.find(([kind]) => kind === "click")[1]();
+    assert.deepEqual(moves, ["/recover"]);
+    assert.equal(find(host, "password").value, "", "the password is not left in the form");
+
+    // When the recovery key was renewed after the backup, the way out is to forget the server, with the warning text.
+    session.unlockError = Object.assign(coded("pinned_kek_generation"), { recoveryOffer: "old_sheet" });
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.ok(find(host, "offer-forget"));
+    assert.ok(textOf(find(host, "error")).includes("recover.offer.old_sheet"));
+    assert.equal(find(host, "use-recovery-key"), null);
+  });
+});
