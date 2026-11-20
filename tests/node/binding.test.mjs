@@ -880,8 +880,20 @@ test("an_encrypted_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
   assert.equal(code(() => begin(kept.slice(), NaN)), "invalid_input");
   assert.equal(code(() => begin(kept.slice(), -5)), "invalid_input");
   assert.equal(code(() => begin(kept.slice(), NOW, { m_kib: 65536, t: 3, p: 1 })), "kdf_out_of_range");
+  // A kdf that is not the shape of one (a wrong type, a missing or an extra field) is a mistake of the page as well.
+  for (const bad of [{ m_kib: "x", t: 3, p: 1 }, { m_kib: 262144 }, { m_kib: 262144, t: 3, p: 1, extra: 1 }, "argon2id", 7]) {
+    assert.equal(code(() => begin(kept.slice(), NOW, bad)), "invalid_input", JSON.stringify(bad));
+  }
   const started = begin(kept, NOW + 1);
   assert.equal(started.salt.length, 16);
+  assert.ok(vault.export_finish(fill(32, 7)).length > 100);
+  // A row that does not open is found after the token is checked: the token is used up, no draft is made, and the
+  // same token is `reauth_required` afterwards (the page finds such rows with open_item, which spends no grant).
+  const damaged = [row(id, { ...vault.encrypt_item(id, 2, LOGIN_DRAFT, undefined, NOW), tag: fill(32, 0) })];
+  const spent = reauthToken(account);
+  assert.equal(code(() => vault.export_begin(damaged, NOW, undefined, spent.slice())), "decrypt");
+  assert.equal(code(() => vault.export_finish(fill(32, 7))), "invalid_input", "no draft after a row that does not open");
+  assert.equal(code(() => begin(spent.slice())), "reauth_required", "the failed attempt used the token up");
   // A new token replaces the one before it.
   const old = reauthToken(account);
   const newer = reauthToken(account);

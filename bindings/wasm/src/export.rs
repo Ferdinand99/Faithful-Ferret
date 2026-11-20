@@ -5,7 +5,7 @@
 //! to the size of the largest import until it is locked:
 //!
 //! ```text
-//! export:  vault.export_begin(rows, created_at)   -> { salt, kdf }
+//! export:  vault.export_begin(rows, created_at, kdf, token) -> { salt, kdf }
 //!          argon2_export_key(pw, salt, kdf, ...)  -> K_exp          (job worker)
 //!          vault.export_finish(K_exp)             -> file
 //! import:  import_header(file)                    -> { salt, kdf, created_at }
@@ -161,7 +161,11 @@ impl Vault {
     /// is checked against. The token is used up by the first attempt whether
     /// it matched or not; a missing, wrong, used or replaced token, one that
     /// is more than five minutes old, and a `created_at` earlier than the
-    /// time of the grant are `reauth_required`. A `created_at` that is not a
+    /// time of the grant are `reauth_required`. Both ends of that window are
+    /// the page's clock, so the five minutes bound an honest page and do not
+    /// stop page script that already holds a token: single use, the binding
+    /// to this vault, and a lock or rekey dropping the grant are the
+    /// boundary against it. A `created_at` that is not a
     /// time and parameters below the default are refused first and leave the
     /// token valid. `export_finish` needs no token of its own: only a draft
     /// that this call made can be finished.
@@ -325,7 +329,9 @@ impl Vault {
     /// Takes the vault's one-time grant and checks `token` against it: the
     /// grant is gone afterwards, whatever the answer. `Fail::Reauth` when
     /// there is none, the token is another, or the grant is older than
-    /// [`GRANT_TTL_MS`] at `now` (or from a later time).
+    /// [`GRANT_TTL_MS`] at `now` (or from a later time). `now` and the time
+    /// of the grant both come from the caller's clock, so the window bounds
+    /// an honest page and does not stop page script that holds a token.
     pub(crate) fn take_grant(&mut self, token: &[u8], now: u64) -> Res<()> {
         let grant = self.inner_mut()?.grant.take();
         let granted = grant.is_some_and(|g| {

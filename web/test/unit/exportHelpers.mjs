@@ -43,6 +43,9 @@ export function fakeExportCore({ jobGate = null, begunKdf = null, jobFails = nul
     /** What `reveal_plain_export` was given. */
     reveals: [],
     begins: [],
+    /** Handles `open_item` gave out, and handles `close_item` was given back. */
+    opened: 0,
+    closed: 0,
     aborted: 0,
     vault: {
       // Each fresh sign-in makes a new one-time grant (the same bytes, so that tests can compare).
@@ -77,10 +80,12 @@ export function fakeExportCore({ jobGate = null, begunKdf = null, jobFails = nul
       open_item(id, rev, envelope) {
         calls.push(["open_item"]);
         if (new TextDecoder().decode(envelope).startsWith("DAMAGED")) throw coded("decrypt");
+        core.opened += 1;
         return 1;
       },
       close_item() {
         calls.push(["close_item"]);
+        core.closed += 1;
       },
       export_abort() {
         calls.push(["export_abort"]);

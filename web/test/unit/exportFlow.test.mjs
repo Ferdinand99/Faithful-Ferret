@@ -264,6 +264,9 @@ test("an_item_that_does_not_open_stops_the_export_and_leaves_no_file", async () 
   // The refusal names the item that does not open (the others open one by one), and no more.
   const refusal = await w.session.exportEncrypted({ ...args(), download }).catch((error) => error);
   assert.deepEqual(refusal.details.ids, ["55".repeat(16)]);
+  // Every handle that was opened to look is closed again (the row that does not open gave none).
+  assert.ok(w.core.opened > 0);
+  assert.equal(w.core.closed, w.core.opened);
   // A wrong master password is `decrypt`; an unreadable item is not mistaken for it.
 });
 

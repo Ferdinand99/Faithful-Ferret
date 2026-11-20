@@ -149,7 +149,8 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
   const rows = await exportRows(env, scope);
   onProgress({ phase: "checking" });
   // The master password again: a wrong one stops here, and the vault that is open stays open. The sign-in makes the
-  // one-time grant that the core needs to start the export (it holds every secret of the vault).
+  // one-time grant that the core needs to start the export (it holds every secret of the vault). The grant's five
+  // minutes use this page's clock: they bound an honest page, not page script that already holds the token.
   const done = await reauthenticate(env, { password: masterPassword, skCode, wantGrant: true });
   const grant = done.grant;
   if (!(grant instanceof Uint8Array)) throw new AccountError("reauth_required");
