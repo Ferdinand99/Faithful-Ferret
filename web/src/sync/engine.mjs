@@ -93,7 +93,7 @@ import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
 import {
-  checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
+  checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, entryMap, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
   UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
 } from "./checkpoint.mjs";
 import { compareFields, TRASH_MS } from "./conflict.mjs";
@@ -309,6 +309,13 @@ export function createSyncEngine({
    * @type {Map<string, { rev: number, seq: number, tomb: Uint8Array }>}
    */
   const ownDeleted = new Map();
+  /**
+   * The revision of the newer tombstone that a checkpoint listed for an item whose older tombstone this device holds and the server has
+   * purged: a live row at or below it is a replay of an old state, and is refused like any row below what this device holds. Kept for this
+   * session; the checkpoint that says it is verified again.
+   * @type {Map<string, number>}
+   */
+  const heldFloors = new Map();
   /** The import that is under way (writes of it are queued): how many items it has, how many the server has taken, how many it refused for good. */
   const importCount = { total: 0, sent: 0, failed: 0 };
   /** Items of the import whose writes were answered since the last batch ended. @type {Set<string>} */
@@ -1188,6 +1195,11 @@ export function createSyncEngine({
           continue;
         }
       }
+      const heldFloor = heldFloors.get(id);
+      if (heldFloor !== undefined && !row.deleted && row.rev <= heldFloor) {
+        lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: heldFloor });
+        continue;
+      }
       if (local) {
         if (row.rev < local.rev) {
           lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: local.rev });
@@ -1384,6 +1396,8 @@ export function createSyncEngine({
     for (const itemId of draftLate) await showServerVersion(itemId); // a refusal came in while the page was used: the draft is what the screen shows
     // The row of an item this device deleted has come back: the note that the deletion is done is no longer needed.
     for (const row of accepted) {
+      const floor = heldFloors.get(row.itemId);
+      if (floor !== undefined && row.rev > floor) heldFloors.delete(row.itemId);
       const own = ownDeleted.get(row.itemId);
       if (own !== undefined && row.rev >= own.rev) {
         ownDeleted.delete(row.itemId);
@@ -1604,8 +1618,16 @@ export function createSyncEngine({
     try {
       await withItem(id, async () => {
         const row = rows.get(id);
-        if (runner.entriesOf(id)[0]?.idem !== entry.idem || !row?.deleted || "tomb" in entry.body) return; // the item has moved on
-        const handle = await client.vault.open_item(hex16.decode(id), entry.baseRev + 1, entry.body.blob, entry.body.tag);
+        const chain = runner.entriesOf(id);
+        if (chain[0]?.idem !== entry.idem || !row?.deleted) return; // the item has moved on
+        const last = /** @type {import("../store/outbox.mjs").OutboxEntry} */ (chain.at(-1));
+        // The user's last word is what is written again. A deletion after the restore leaves nothing to upload: the item is deleted on both
+        // sides (the server has nothing), and the chain goes, as for any deletion over a tombstone that this device holds.
+        if ("tomb" in last.body) {
+          await dropMoot(id);
+          return;
+        }
+        const handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
         /** @type {Awaited<ReturnType<typeof seal>>} */
         let made;
         try {
@@ -1614,17 +1636,41 @@ export function createSyncEngine({
           await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
         }
         alive();
-        flags.set(id, { kind: "missing_on_server", rev: row.rev });
+        const { envelope, tag } = made.sealed;
+        const body = { blob: envelope, tag };
+        const idem = randomId();
+        const restoreEpoch = await acceptedEpoch();
+        if (restoreEpoch === null) unconditioned.add(idem);
+        const bytes = writeBytes({ baseRev: 0, body, idem, restoreEpoch });
+        // The mark and the key of the new write are saved first (the row that comes back must be taken as ours), then the queued writes of the
+        // item are swapped for the new one in one transaction: it fails, changing nothing, when the store holds other writes of the item than
+        // the ones that were looked at, and the item is never absent from the store between the two.
+        const before = flags.get(id);
+        flags.set(id, { kind: "missing_on_server", rev: row.rev, sent: [await ownKeyOfBody(1, body)] });
         flagsDirty = true;
-        for (const idem of await runner.discard(id)) droppedIdems.add(idem);
+        try {
+          await saveFlags(await store.open());
+          for (const gone of await runner.replace({ idem, itemId: id, baseRev: 0, body, bytes }, chain.map((one) => one.idem))) droppedIdems.add(gone);
+        } catch (failure) {
+          if (before === undefined) flags.delete(id);
+          else flags.set(id, before);
+          flagsDirty = true;
+          void persistFlags();
+          throw failure;
+        }
+        alive();
         blocked.delete(id);
         conflictNotes.delete(id);
-        const { envelope, tag } = made.sealed;
-        await queue(id, 0, { blob: envelope, tag }, { rev: 1, deleted: false, envelope, tag }, made.summary);
+        overlay.set(id, { rev: 1, deleted: false, envelope, tag });
+        index.set(id, made.summary);
+        changed([id]);
       });
     } catch (failure) {
       if (stopped || isFatal(failure)) return;
-      refuse(entry, error, "conflict", false);
+      // The store holds other writes of the item than the ones that were looked at: another tab of this browser has dealt with it (it is
+      // writing the item again itself), and this tab's view is stale. Nothing is said, and nothing is changed here.
+      if (codeOf(failure) === "outbox_changed") return;
+      refuse(entry, error, "conflict", false); // nothing was swapped: the refusal stands as the conflict it is
     }
   }
 
@@ -1989,6 +2035,16 @@ export function createSyncEngine({
       held = found;
     }
     const verdict = /** @type {Verdict} */ (/** @type {unknown} */ (box.verdict));
+    if (verdict.ok && held !== null) {
+      // A held tombstone that the checkpoint lists as a newer tombstone: the item is deleted at that revision (the checkpoint is signed), so
+      // nothing live at or below it can be true any more.
+      const listed = entryMap(checkpoint.entries);
+      for (const id of held) {
+        const entry = listed?.get(id);
+        const mine = rows.get(id);
+        if (entry && entry.hash === null && mine && entry.rev > mine.rev) heldFloors.set(id, entry.rev);
+      }
+    }
     if (verdict.ok) {
       verifiedInSession = true;
       forgedUnlock = false;
@@ -2851,6 +2907,7 @@ export function createSyncEngine({
     epochRetryAt = 0;
     epochMovedAt = null;
     feedFloor = 0;
+    heldFloors.clear();
     // The server's state is another one now: what it took before is not what it holds.
     if (ownDeleted.size > 0) {
       ownDeleted.clear();
@@ -3360,6 +3417,7 @@ export function createSyncEngine({
       unconditioned.clear();
       epochRefusals.clear();
       ownDeleted.clear();
+      heldFloors.clear();
       feedFloor = 0;
       standing.clear();
       lastDrain = null;

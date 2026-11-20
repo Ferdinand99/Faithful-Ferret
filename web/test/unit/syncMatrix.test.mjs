@@ -6,11 +6,13 @@
 // `FERRET_MATRIX_RUNS` sets how many seeded runs the randomised tests make (500 by default, 5000 at the gate); a failing run names its
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
-// What the model does not assert, because it is reported: nothing. `KNOWN_GAPS` in `syncModel.mjs` is empty, so every run is strict. The one
-// gap there was, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does the
-// same, `purgeTombstones`), and the engine holds a tombstone the server has purged and counts a deletion of its own that was purged before it was
-// read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`). `FERRET_MATRIX_STRICT=1`
-// and `FERRET_MATRIX_TOLERATE=<gap>` stay for the next gap.
+// What the model does not assert: one documented limit, `reupload_after_purge` in `KNOWN_GAPS` of `syncModel.mjs` (section 8.8 of the design). An
+// item that is brought back from the trash over a tombstone the server has purged is uploaded again under its id at revision 1, and a device
+// that holds the item at a higher revision refuses that copy with a warning; the checks leave those items, and those warnings, alone. The gap that
+// there was before, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does
+// the same, `purgeTombstones`), and the engine holds a tombstone the server has purged (an older one too) and counts a deletion of its own that
+// was purged before it was read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`).
+// `FERRET_MATRIX_STRICT=1` tolerates none, and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are let through.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
@@ -1490,9 +1492,9 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   // that no device has seen, with a floor above the cursor of the devices that are behind. Every invariant of the matrix holds all the same.
   const was = { strict: process.env.FERRET_MATRIX_STRICT, tolerate: process.env.FERRET_MATRIX_TOLERATE };
   process.env.FERRET_MATRIX_STRICT = "1";
-  delete process.env.FERRET_MATRIX_TOLERATE;
+  process.env.FERRET_MATRIX_TOLERATE = "reupload_after_purge"; // the one documented limit, and nothing about purged tombstones
   try {
-    assert.deepEqual([...KNOWN_GAPS], [], "no gap is tolerated");
+    assert.deepEqual([...KNOWN_GAPS], ["reupload_after_purge"], "the only gap is the documented limit of uploading an item again; none is about purging");
     // `FERRET_MATRIX_PURGE_HEAVY=1`: more deletions and purges than the usual mix (it finds shapes that the usual mix meets rarely).
     const actions = process.env.FERRET_MATRIX_PURGE_HEAVY === "1"
       ? ACTIONS.map(([name, weight]) => [name, name === "purge" ? 6 : name === "remove" ? 12 : weight])
@@ -1505,6 +1507,7 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   } finally {
     if (was.strict === undefined) delete process.env.FERRET_MATRIX_STRICT;
     else process.env.FERRET_MATRIX_STRICT = was.strict;
-    if (was.tolerate !== undefined) process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
+    if (was.tolerate === undefined) delete process.env.FERRET_MATRIX_TOLERATE;
+    else process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
   }
 });

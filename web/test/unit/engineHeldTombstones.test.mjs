@@ -448,3 +448,90 @@ test("an_older_held_tombstone_is_no_alarm_against_the_entry_of_a_newer_tombstone
   d.engine.stop();
   e.engine.stop();
 });
+
+/** The device has restored an item from its trash over a purged tombstone, offline, so the write waits in the outbox. */
+async function restoredOffline() {
+  const d = await started();
+  const id = await d.engine.create(draft("short-lived"));
+  await until(() => d.model.items.get(id)?.rev === 1);
+  await d.engine.syncNow();
+  await d.engine.remove(id);
+  await until(() => d.model.items.get(id)?.rev === 2);
+  await d.engine.syncNow();
+  d.model.pinCheckpoint();
+  d.model.items.delete(id);
+  d.model.minValidSince = 2;
+  const put = d.api.put;
+  d.offline = true;
+  d.api.put = async (...args) => {
+    if (d.offline) throw new ApiError(0, "network");
+    return put(...args);
+  };
+  await d.engine.restoreFromTrash(id);
+  return { d, id };
+}
+
+const nameOf = async (d, id) => {
+  const open = await d.engine.open(id);
+  try {
+    return open.view.name;
+  } finally {
+    await open.close();
+  }
+};
+
+test("an_edit_made_after_the_restore_is_what_is_uploaded_again_when_the_tombstone_was_purged", async () => {
+  const { d, id } = await restoredOffline();
+  await d.engine.update(id, { name: "edited after the restore" }, d.engine.list().find((item) => item.id === id).rev);
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 2, "the restore and the edit wait");
+  d.offline = false;
+  d.timers.advance(70_000);
+  await until(() => d.model.items.get(id)?.rev === 1, "the item is written again");
+  await settle(30);
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
+  assert.equal(await nameOf(d, id), "edited after the restore", "the edit is not lost");
+  assert.equal(d.engine.list().find((item) => item.id === id).blocked, false);
+  d.engine.stop();
+});
+
+test("a_deletion_made_after_the_restore_leaves_nothing_to_upload_when_the_tombstone_was_purged", async () => {
+  const { d, id } = await restoredOffline();
+  await d.engine.remove(id);
+  d.offline = false;
+  d.timers.advance(70_000);
+  await settle(60);
+  assert.ok(!d.model.items.has(id), "the server gets nothing");
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0, "the chain is gone");
+  assert.ok(!d.engine.list().some((item) => item.id === id), "the item is deleted");
+  d.engine.stop();
+});
+
+test("a_store_that_fails_during_the_upload_again_keeps_the_draft_queued", async () => {
+  const { d, id } = await restoredOffline();
+  d.store.failEnqueue = 1; // the swap of the queued writes for the new one fails
+  d.offline = false;
+  d.timers.advance(70_000);
+  await settle(60);
+  const queued = await d.store.outbox.all(d.store.database.store, scope());
+  assert.equal(queued.length, 1, "the restored item is still in the store");
+  assert.ok(!d.model.items.has(id));
+  assert.ok(d.engine.list().some((item) => item.id === id), "and on the screen");
+  d.engine.stop();
+});
+
+test("a_live_row_at_or_below_the_revision_of_a_newer_purged_tombstone_is_refused", async () => {
+  // The device holds the rev 2 tombstone and accepts that the checkpoint lists a tombstone at rev 4: nothing live at rev 3 or below can be true
+  // any more, so a server that shows the old rev 3 row again does not bring the item back.
+  const d = await started();
+  const id = await holdingATombstone(d);
+  d.model.items.delete(id);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.checkpoint = signedTombstone(d, id, 4);
+  assert.equal(await d.engine.verifyNow(), "ok");
+  d.model.set(id, { rev: 3, ...d.client.wireRow(id, 3, draft("replayed")) });
+  await d.engine.syncNow();
+  assert.ok(!d.engine.list().some((item) => item.id === id), "the old row is not shown");
+  assert.ok(d.events.state.some((event) => event.kind === "warning" && event.code === "rev_lower_than_local"), "and it is said");
+  d.engine.stop();
+});
