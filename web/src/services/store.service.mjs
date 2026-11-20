@@ -58,7 +58,7 @@ export default {
       loadSyncState,
       saveSyncState,
       trash,
-      // The note that an older server state was accepted (not secret; it only picks a text, see store/restoreNote.mjs).
+      // The note that an older server state was accepted (not secret; it picks a text and gates the reapply, see store/restoreNote.mjs).
       restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
       // The date of the last encrypted export and the reminder to take another (not secret; see store/exportReminder.mjs).
       exportReminder,
