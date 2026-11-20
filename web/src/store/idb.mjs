@@ -1,4 +1,4 @@
-// The browser's local storage for the vault: one IndexedDB database with seven
+// The browser's local storage for the vault: one IndexedDB database with eight
 // object stores.
 //
 //   pinned          the non-secret record of what this device has seen of an account
@@ -10,14 +10,18 @@
 //                   device has seen, so a server cannot roll it back unnoticed)
 //   trash           the last live row of an item that a verified tombstone deleted,
 //                   kept as ciphertext for a while so the user can restore it
+//   device_keys     the key of a device client on a server: a non-extractable
+//                   signing key, its public JWK, the server's device id and the
+//                   refresh token (one record per server, keyed by its origin)
 //
 // Nothing here holds a master password, a recovery key or a vault key, and the
 // decrypted item index never comes here: it lives in memory and is dropped on
 // lock. Clearing the rows (and the trash, which is a copy of rows) leaves the
 // other stores alone.
 //
-// The database is at version 2. Version 1 had the first five stores; the upgrade
-// from it adds the last two and touches no existing record.
+// The database is at version 3. Version 1 had the first five stores, version 2
+// added `sync_state` and `trash`, and version 3 adds `device_keys`. Each upgrade
+// creates stores only and touches no existing record.
 
 /** An error of the local store. `code` is a word for the caller to switch on. */
 export class StoreError extends Error {
@@ -33,10 +37,10 @@ export class StoreError extends Error {
   }
 }
 
-export const STORES = Object.freeze(["pinned", "rows", "outbox", "settings", "device_secrets", "sync_state", "trash"]);
+export const STORES = Object.freeze(["pinned", "rows", "outbox", "settings", "device_secrets", "sync_state", "trash", "device_keys"]);
 
 /** The version of the database that this code opens (and creates). */
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /**
  * @typedef {object} Store
@@ -81,6 +85,10 @@ export function openStore(factory = indexedDB, name = "ferret", keyRange = globa
         // Version 2.
         db.createObjectStore("sync_state", { keyPath: ["serverUrl", "accountId"] });
         db.createObjectStore("trash", { keyPath: ["accountId", "vaultId", "vkEpoch", "itemId"] });
+      }
+      if (event.oldVersion < 3) {
+        // Version 3.
+        db.createObjectStore("device_keys", { keyPath: "serverUrl" });
       }
     };
     request.onsuccess = () => {
