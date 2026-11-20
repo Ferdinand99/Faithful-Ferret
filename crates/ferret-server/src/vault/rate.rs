@@ -351,7 +351,8 @@ pub const IMPORT_WINDOW_SECS: u32 = 1800;
 /// Why an import window was not opened or not used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportRefused {
-    /// The vault has an open window already (`409 import_window_open`).
+    /// The vault has an open window that another device opened (`409
+    /// import_window_open`).
     Open,
     /// There is no such window for this vault and device, it has ended, or
     /// it has too few operations left (`409 import_window_invalid`). One
@@ -420,9 +421,12 @@ impl ImportWindows {
     /// its id. It lasts [`IMPORT_WINDOW_SECS`] from `now`.
     ///
     /// A vault has one open window. One that has ended, or has no operation
-    /// left, is replaced; any other is [`ImportRefused::Open`], whichever
-    /// device opened it. `ops` of 0 is [`ImportRefused::Invalid`]: the caller
-    /// checks the number against the room of the vault first.
+    /// left, is replaced, and so is one that this device opened (it has just
+    /// proved the master password again; the old window closes at once and a
+    /// batch still running on it is not counted in the new one). A window that
+    /// another device opened and that is still open is
+    /// [`ImportRefused::Open`]. `ops` of 0 is [`ImportRefused::Invalid`]: the
+    /// caller checks the number against the room of the vault first.
     ///
     /// Spec: Fase 1 § 8.2.
     pub fn open(
@@ -439,7 +443,10 @@ impl ImportWindows {
         // A window nobody can use any more is gone; one with a batch still
         // running is kept until that batch has settled.
         table.retain(|_, w| w.is_open(now) || w.reserved > 0);
-        if table.get(vault).is_some_and(|w| w.is_open(now)) {
+        if table
+            .get(vault)
+            .is_some_and(|w| w.is_open(now) && w.device != *device)
+        {
             return Err(ImportRefused::Open);
         }
         let mut id = [0u8; 16];
@@ -679,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn a_window_is_replaced_only_when_it_has_ended_or_is_used_up() {
+    fn a_window_of_another_device_is_replaced_only_when_it_has_ended_or_is_used_up() {
         let windows = ImportWindows::new();
         let id = windows.open(&vault(1), &device(1), 2, 100).expect("open");
         assert_eq!(
@@ -709,6 +716,23 @@ mod tests {
         held.commit(5);
         assert_eq!(windows.remaining(&vault(1), 103 + 1800), Some(5));
         assert_ne!(second, third);
+        // The device that holds an open window may replace it: the old id
+        // stops working at once.
+        let again = windows
+            .open(&vault(1), &device(2), 4, 103 + 1801)
+            .expect("replaced");
+        assert_ne!(third, again);
+        assert_eq!(
+            windows
+                .reserve(&vault(1), &device(2), &third, 1, 103 + 1801)
+                .err(),
+            Some(ImportRefused::Invalid)
+        );
+        assert!(
+            windows
+                .reserve(&vault(1), &device(2), &again, 1, 103 + 1801)
+                .is_ok()
+        );
     }
 
     #[test]

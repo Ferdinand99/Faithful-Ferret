@@ -9,15 +9,18 @@
 //! 2. the size of the body, at most 6 MiB (`413`);
 //! 3. the JSON, with the same strictness as a single write (`400`);
 //! 4. one to 100 operations, and no item id twice (`400`, nothing is written);
-//! 5. the import window, if the batch names one (`import_window`): the batch
-//!    holds one operation of the window for each item (`409
-//!    import_window_invalid` when the window is not this device's, has ended,
-//!    or has too few operations left; nothing is written);
-//! 6. the rate limits. A batch without a window counts as one operation per
-//!    item and its body in bytes. A batch with a window counts its body in
-//!    bytes only: the window has its operations (`429` with `Retry-After`);
-//! 7. one place in the write queue for the whole batch (`503 busy` with
+//! 5. the rate limits. A batch without a window counts as one operation per
+//!    item and its body in bytes. A batch that names an import window
+//!    (`import_window`) counts its body in bytes only: its operations are
+//!    counted in the window (`429` with `Retry-After`);
+//! 6. one place in the write queue for the whole batch (`503 busy` with
 //!    `Retry-After` when the queue is full);
+//! 7. the import window, if the batch names one: the batch holds one operation
+//!    of the window for each item that is new, that is, each operation whose
+//!    `idem` has no record yet. Repeats of a write that was stored earlier
+//!    hold nothing and need no window at all. `409 import_window_invalid` when
+//!    the window is not this device's, has ended, or has fewer operations left
+//!    than the batch has new items; nothing is written;
 //! 8. each operation in turn, in its own transaction: the manifest id is
 //!    `403`, an envelope or tombstone that is not stored here is `422` (or
 //!    `413`), anything else goes to [`store::put_item`], which checks the
@@ -44,7 +47,8 @@
 //! The operations a window holds for a batch are taken for good only for the
 //! writes that stored something new. A repeat of an earlier `idem` (`replayed`),
 //! a conflict and a refusal take nothing, so the retry of a batch whose answer
-//! was lost does not use the window up twice.
+//! was lost does not use the window up twice, and still works when the window
+//! was spent or has ended, or when the vault is full: a repeat writes nothing.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -62,6 +66,7 @@ use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 
 use super::events::EventStreams;
+use super::idem::{self, Lookup};
 use super::import::refused as window_refused;
 use super::notify::SyncEvents;
 use super::quota::Limits;
@@ -159,10 +164,9 @@ fn blank(id: [u8; 16]) -> BatchOpJson {
 }
 
 /// The batch in the raw body: one to 100 operations and the optional import
-/// window. An operation that does
-/// not parse refuses the whole request, with the code of the failure, as a
-/// single write does; except a tombstone of the wrong size, which is only that
-/// operation's own `422`.
+/// window. An operation that does not parse refuses the whole request, with
+/// the code of the failure, as a single write does; except a tombstone of the
+/// wrong size, which is only that operation's own `422`.
 fn parse_body(raw: &[u8]) -> Result<Parsed, ApiError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -361,6 +365,27 @@ fn run_op(
     }
 }
 
+/// How many of the operations are new writes: the ones that came in well
+/// formed and whose `idem` has no record for this vault and device that carries
+/// the same request. A repeat is not new. An `idem` with a record of another
+/// request is counted as new (the write is refused later, and then holds
+/// nothing in the end).
+fn count_new(
+    conn: &Connection,
+    vault: &VaultId,
+    device: &DeviceId,
+    ops: &[Result<PreparedOp, &'static str>],
+) -> Result<u32, StoreError> {
+    let mut new = 0u32;
+    for op in ops.iter().flatten() {
+        let seen = idem::lookup(conn, vault, device, &op.idem, &op.request_hash)?;
+        if !matches!(seen, Lookup::Replay { .. }) {
+            new = new.saturating_add(1);
+        }
+    }
+    Ok(new)
+}
+
 /// Writes up to 100 items of the session vault.
 async fn post_batch(
     session: VaultSession,
@@ -389,17 +414,9 @@ async fn post_batch(
     drop(raw);
 
     let count = u32::try_from(ops.len()).unwrap_or(u32::MAX);
-    // A batch of an import holds its operations in the window; it is held
-    // before the limits are asked and given back if they, or the queue, turn
-    // the batch away (the reservation is dropped with the request).
-    let reservation = import_window
-        .map(|id| windows.reserve(&session.vault, &session.device, &id, count, session.now))
-        .transpose()
-        .map_err(|why| {
-            tracing::info!(ops = count, "batch write refused, import window not usable");
-            window_refused(why)
-        })?;
-    let admitted = if reservation.is_some() {
+    // A batch of an import counts only its bytes here: the operations are held
+    // in the window later, once the database says which of them are new.
+    let admitted = if import_window.is_some() {
         limits.admit_bytes(&session.vault, &session.device, body_len)
     } else {
         limits.admit(&session.vault, &session.device, count, body_len)
@@ -425,6 +442,23 @@ async fn post_batch(
     let results = db
         .with_conn(move |conn| {
             let _turn = permit;
+            // The operations of the window that this batch holds: one for each
+            // item whose `idem` has no record, so a repeat holds nothing. The
+            // hold is given back if the batch fails before it is done.
+            let reservation = match import_window {
+                Some(id) => {
+                    let new = count_new(conn, &vault, &device, &ops)?;
+                    if new == 0 {
+                        None
+                    } else {
+                        match windows.reserve(&vault, &device, &id, new, now) {
+                            Ok(held) => Some(held),
+                            Err(why) => return Ok(Err(why)),
+                        }
+                    }
+                }
+                None => None,
+            };
             let results = run_batch(conn, &vault, &device, &ops, &Limits::DEFAULT, now);
             // The window pays for what was stored new: not for repeats of an
             // earlier `idem`, conflicts or refusals. Done here, with the turn,
@@ -446,7 +480,7 @@ async fn post_batch(
             if let Some(seq) = highest {
                 events.notify(vault, seq);
             }
-            Ok(results)
+            Ok(Ok(results))
         })
         .await
         .map_err(ApiError::from)
@@ -456,6 +490,10 @@ async fn post_batch(
                 code = e.code,
                 "batch write failed"
             );
+        })?
+        .map_err(|why| {
+            tracing::info!(ops = count, "batch write refused, import window not usable");
+            window_refused(why)
         })?;
     let stored = results.iter().filter(|r| r.status == 200).count();
     let conflicts = results.iter().filter(|r| r.status == 409).count();

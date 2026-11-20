@@ -95,9 +95,14 @@ fn idem(n: u32) -> [u8; 16] {
 
 /// A live operation that creates item `n`.
 fn op(u: &User, n: u32) -> Value {
+    op_with_notes(u, n, format!("notes of {n}"))
+}
+
+/// A live operation that creates item `n` with these notes.
+fn op_with_notes(u: &User, n: u32, notes: String) -> Value {
     let id = item(n);
     let mut body = ItemBody::new(ItemType::Note, format!("note {n}"), 1);
-    body.notes = Some(format!("notes of {n}"));
+    body.notes = Some(notes);
     let sealed = encrypt_item(
         &mut TestRng::new(format!("import/{n}").as_bytes()),
         &u.vault,
@@ -205,6 +210,19 @@ async fn db<T: Send + 'static>(
         .with_conn(move |conn| Ok(f(conn)?))
         .await
         .expect("a database call")
+}
+
+/// How many rows (live and deleted, the manifest included) the vault has.
+async fn item_rows(app: &TestApp, u: &User) -> i64 {
+    let vault = u.account.vault_id;
+    db(app, move |c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM ferret_items WHERE vault_id = ?1",
+            [vault.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+    })
+    .await
 }
 
 async fn vault_seq(app: &TestApp, u: &User) -> i64 {
@@ -351,26 +369,34 @@ async fn one_open_window_per_vault() {
     let u = fresh_user(&app, 1).await;
     let first = window_of(&open(&app, &u.jar, 10).await);
 
-    // Neither the same device nor another one of the vault gets a second one.
-    let again = open(&app, &u.jar, 10).await;
-    assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.text());
-    assert_eq!(error(&again), "import_window_open");
+    // Another device of the vault does not get a second one.
     let (jar2, _) = other_device(&app, &u, 2).await;
     let other = open(&app, &jar2, 10).await;
-    assert_eq!(other.status, StatusCode::CONFLICT);
+    assert_eq!(other.status, StatusCode::CONFLICT, "{}", other.text());
     assert_eq!(error(&other), "import_window_open");
     assert_eq!(left(&app, &u), Some(10), "the window is as it was");
+
+    // The device that holds it may replace it: the old one closes at once.
+    let replaced = window_of(&open(&app, &u.jar, 12).await);
+    assert_ne!(first, replaced);
+    assert_eq!(left(&app, &u), Some(12));
+    let old = batch(&app, &u.jar, &ops(&u, 1, 1), Some(first)).await;
+    assert_eq!(old.status, StatusCode::CONFLICT, "{}", old.text());
+    assert_eq!(error(&old), "import_window_invalid");
+    // Still one window for the vault: the other device is refused as before.
+    let other = open(&app, &jar2, 10).await;
+    assert_eq!(error(&other), "import_window_open");
 
     // Another vault has its own.
     let v2 = fresh_user(&app, 2).await;
     window_of(&open(&app, &v2.jar, 10).await);
 
-    // A window that is used up makes room for the next.
-    let used = batch(&app, &u.jar, &ops(&u, 1, 10), Some(first)).await;
-    assert_eq!(statuses(&used), vec![200; 10]);
+    // A window that is used up makes room for the next, for any device.
+    let used = batch(&app, &u.jar, &ops(&u, 1, 12), Some(replaced)).await;
+    assert_eq!(statuses(&used), vec![200; 12]);
     assert_eq!(left(&app, &u), Some(0));
     let second = window_of(&open(&app, &jar2, 5).await);
-    assert_ne!(first, second);
+    assert_ne!(replaced, second);
 
     // So does one that has ended; the old id is not the new window.
     app.clock.advance(u64::from(IMPORT_WINDOW_SECS));
@@ -380,6 +406,70 @@ async fn one_open_window_per_vault() {
     let old = batch(&app, &jar2, &ops(&u, 100, 1), Some(second)).await;
     assert_eq!(old.status, StatusCode::CONFLICT);
     assert_eq!(error(&old), "import_window_invalid");
+}
+
+#[tokio::test]
+async fn repeats_need_neither_window_operations_nor_free_rows() {
+    // The vault has room for exactly 100 more rows.
+    let app = TestApp::new().await;
+    let u = fresh_user(&app, 1).await;
+    let vault = u.account.vault_id;
+    db(&app, move |c| {
+        c.execute(
+            "UPDATE ferret_vaults SET item_count = 9900 WHERE vault_id = ?1",
+            [vault.as_bytes().as_slice()],
+        )
+    })
+    .await;
+    let window = window_of(&open(&app, &u.jar, 100).await);
+    let last = ops(&u, 1, 100);
+    let sent = batch(&app, &u.jar, &last, Some(window)).await;
+    assert_eq!(statuses(&sent), vec![200; 100]);
+    assert_eq!(left(&app, &u), Some(0), "the window is spent");
+    let seq = vault_seq(&app, &u).await;
+    let stored_rows = item_rows(&app, &u).await;
+
+    // The vault is full, so there is no room for a window of any size.
+    let none = open(&app, &u.jar, 1).await;
+    assert_eq!(none.status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    // The answer of the last batch was lost. The retry is all repeats: it goes
+    // through the spent window, and then through the ended one, and writes
+    // nothing.
+    for round in 0..2 {
+        let res = batch(&app, &u.jar, &last, Some(window)).await;
+        assert_eq!(statuses(&res), vec![200; 100], "round {round}");
+        let results = res.json()["results"].clone();
+        assert!(
+            results
+                .as_array()
+                .expect("an array")
+                .iter()
+                .all(|r| r["replayed"] == true),
+            "round {round}"
+        );
+        assert_eq!(vault_seq(&app, &u).await, seq);
+        assert_eq!(item_rows(&app, &u).await, stored_rows, "no duplicates");
+        app.clock.advance(u64::from(IMPORT_WINDOW_SECS));
+        make_fresh(&app, u.sid).await;
+    }
+    assert_eq!(left(&app, &u), None);
+
+    // A new item has no window to use, and a batch of a repeat and a new item
+    // is refused as a whole.
+    let new = batch(&app, &u.jar, &ops(&u, 200, 1), Some(window)).await;
+    assert_eq!(new.status, StatusCode::CONFLICT);
+    assert_eq!(error(&new), "import_window_invalid");
+    let mixed = vec![last[0].clone(), op(&u, 201)];
+    let res = batch(&app, &u.jar, &mixed, Some(window)).await;
+    assert_eq!(error(&res), "import_window_invalid");
+    assert_eq!(vault_seq(&app, &u).await, seq);
+
+    // A repeat in a batch of another device is no repeat: that device has its
+    // own records.
+    let (jar2, _) = other_device(&app, &u, 2).await;
+    let res = batch(&app, &jar2, &last[..1], Some(window)).await;
+    assert_eq!(error(&res), "import_window_invalid");
 }
 
 // ---------------------------------------------------------------------------
@@ -707,7 +797,11 @@ async fn ten_thousand_items_import_within_five_minutes() {
     let mut next = 1;
     while next <= ITEMS {
         let count = (ITEMS - next + 1).min(100);
-        let body = ops(&u, next, count);
+        // Notes of about 3 KiB, as a real item has them: the bucket of bytes
+        // runs dry now and then, and the loop waits as the answer says.
+        let body: Vec<Value> = (next..next + count)
+            .map(|n| op_with_notes(&u, n, "x".repeat(3000)))
+            .collect();
         loop {
             let res = batch(&app, &u.jar, &body, Some(window)).await;
             if res.status == StatusCode::TOO_MANY_REQUESTS {
