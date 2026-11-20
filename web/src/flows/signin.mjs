@@ -106,7 +106,7 @@ export async function deviceStatus(env, email) {
  * @param {import("./setupQr.mjs").SetupQr | null} [qr] the sheet's text, when there is one: its bit is the answer
  * @returns {Promise<{ skBit: boolean, skCode: string | null }>}
  */
-async function decideSecretKey(env, db, record, args, qr = null) {
+export async function decideSecretKey(env, db, record, args, qr = null) {
   // The sheet answers the question. An answer or a record that differs from it is no wrong password: nothing is
   // sent, and the refusal says that the sheet and the device disagree.
   if (qr !== null && ((typeof args.skBit === "boolean" && args.skBit !== qr.skBit) || (record && (record.sk_bit === true) !== qr.skBit))) {

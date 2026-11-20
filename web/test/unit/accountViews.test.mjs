@@ -10,7 +10,6 @@ import { consumeEntry, getEntry, plainNext, readEntry } from "../../src/flows/en
 import { completeHandoff } from "../../src/flows/handoff.mjs";
 import { KNOWN_ERRORS } from "../../src/views/form.mjs";
 import { loginView } from "../../src/views/login.mjs";
-import { passwordView } from "../../src/views/password.mjs";
 import { setupView } from "../../src/views/setup.mjs";
 import { ACCOUNT, EMAIL, PASSWORD, RK_CODE, SERVER, SK_CODE, accountDocument, byRole, coded, fire, scenario, settle, textOf, until } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
@@ -531,22 +530,6 @@ test("the_setup_form_checks_that_the_two_passwords_match_before_anything_is_star
   });
 });
 
-test("the_password_page_is_a_real_page_and_starts_no_hand_over", async () => {
-  await withDom(async () => {
-    const page = passwordView({ t: i18n().t });
-    assert.ok(byRole(page, "password-page"));
-    assert.match(textOf(page), /not available in this version/);
-    assert.equal(byRole(page, "password"), null, "no password field");
-    // The route is a page of its own, not a sign-in.
-    const route = (await import("../../src/routes/password.route.mjs")).default;
-    assert.equal(route.path, "/password");
-    const loaded = await route.load({ i18n: i18n() });
-    assert.ok(byRole(loaded, "password-page"));
-    const source = readFileSync(join(web, "src", "routes", "password.route.mjs"), "utf8") + readFileSync(join(web, "src", "views", "password.mjs"), "utf8");
-    assert.doesNotMatch(source, /handoff|goToAdmin/i);
-  });
-});
-
 test("the_address_is_read_once_and_the_challenge_and_the_token_are_taken_out_of_it", () => {
   const replaced = [];
   const win = (pathname, search = "", hash = "") => ({
@@ -608,7 +591,7 @@ test("every_text_the_account_pages_use_exists_in_both_languages", () => {
   // The route titles are texts too.
   for (const file of readdirSync(join(web, "src", "routes"))) {
     const title = /title: "([^"]+)"/.exec(readFileSync(join(web, "src", "routes", file), "utf8"))?.[1];
-    if (file.startsWith("login") || file.startsWith("reauth") || file.startsWith("setup") || file.startsWith("password")) assert.ok(title in en, file);
+    if (file.startsWith("login") || file.startsWith("reauth") || file.startsWith("setup")) assert.ok(title in en, file);
   }
   // No unused text is left behind.
   for (const key of Object.keys(en)) {
