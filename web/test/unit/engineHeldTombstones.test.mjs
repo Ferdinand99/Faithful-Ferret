@@ -13,6 +13,7 @@ import { createFakeClient, Model, settle, syncDevice, until } from "./syncHelper
 
 const hex = (n) => n.toString(16).padStart(32, "0");
 const draft = (name) => ({ item_type: "login", name });
+const draftBody = draft;
 const FLAGS = (s = scope()) => `sync.flags.${s.accountId}.${s.vaultId}.${s.vkEpoch}`;
 const rowsOf = (d) => cache.getRows(d.store.database.store, scope());
 
@@ -322,4 +323,68 @@ test("an_own_deletion_stays_deleted_on_the_screen_after_a_restart_until_the_tomb
   assert.ok(!second.engine.list().some((item) => item.id === id));
   assert.equal((await second.store.getSetting(second.store.database.store, FLAGS()))?.deleted, undefined);
   second.engine.stop();
+});
+
+test("a_held_tombstone_does_not_hide_a_checkpoint_that_lists_the_item_live", async () => {
+  // The device holds the tombstone (rev 2). The checkpoint at the top lists the item live at rev 1, and the server has no row and a floor
+  // that covers the tombstone. Leaving the held row out leaves a live entry without a row: still an alarm (the core's second look decides).
+  const d = await started();
+  const id = await holdingATombstone(d);
+  d.model.items.set(id, { rev: 1, seq: 1, deleted: false, tomb: null, ...d.client.wireRow(id, 1, draftBody("short-lived")) });
+  d.model.pinCheckpoint();
+  d.model.items.delete(id);
+  d.model.minValidSince = 2;
+  assert.equal(await d.engine.verifyNow(), "server_shows_older_state");
+  assert.deepEqual(d.engine.health().warnings, ["server_shows_older_state"]);
+  d.engine.stop();
+});
+
+test("an_own_deletion_is_not_uploaded_again_when_the_floor_cannot_be_read", async () => {
+  // A listing that no 410 of this session began (the page was closed in the middle of one) does not know the floor, and the server does not
+  // answer when asked. The item that this device deleted is not marked as missing and not uploaded again; the note stays, and a later listing
+  // that can read the floor settles it.
+  const model = new Model();
+  const client = createFakeClient();
+  const first = await started({ model, client });
+  const id = await first.engine.create(draft("to be deleted"));
+  await until(() => model.items.get(id)?.rev === 1);
+  await first.engine.syncNow();
+  first.api.failFeed = new ApiError(0, "network");
+  first.api.failFeedTimes = 1000;
+  await first.engine.remove(id);
+  await until(() => model.items.get(id)?.rev === 2);
+  await settle(30);
+  first.engine.stop();
+  model.pinCheckpoint();
+  model.items.delete(id);
+  model.minValidSince = 2;
+  model.set(hex(0x77), { rev: 1, ...client.wireRow(hex(0x77), 1, { item_type: "login", name: "written elsewhere" }) });
+  const db = first.store.database.store;
+  const listingNote = `${FLAGS()}.listing`;
+
+  await first.store.setSetting(db, listingNote, { v: 1 });
+  const second = await syncDevice({ model, client, db: first.store.database, locks: first.locks });
+  const get = second.api.get;
+  second.api.get = async (path, ...rest) => {
+    if (path.includes("since=1&limit=1")) throw new ApiError(0, "network");
+    return get(path, ...rest);
+  };
+  await second.engine.start();
+  await settle(30);
+  assert.ok(second.api.gets.some((path) => path.startsWith("/api/sync/items")), "the vault was listed");
+  assert.ok(!second.engine.list().some((item) => item.id === id), "the item stays deleted");
+  assert.equal(second.engine.list().filter((item) => item.missingOnServer).length, 0, "it is not marked as missing");
+  assert.equal(second.api.puts.length, 0, "and not uploaded again");
+  assert.ok(!model.items.has(id));
+  assert.ok((await second.store.getSetting(db, FLAGS()))?.deleted?.[id], "the note stays");
+  second.engine.stop();
+
+  await second.store.setSetting(db, listingNote, { v: 1 });
+  const third = await syncDevice({ model, client, db: first.store.database, locks: first.locks });
+  await third.engine.start();
+  await settle(30);
+  assert.equal((await rowsOf(third)).find((row) => row.itemId === id)?.deleted, true, "a listing that reads the floor settles it");
+  assert.equal((await third.store.getSetting(db, FLAGS()))?.deleted, undefined);
+  assert.equal(third.api.puts.length, 0);
+  third.engine.stop();
 });

@@ -133,7 +133,10 @@ export const MANIFEST_ID = "00000000000000000000000000000000";
 /** Rows asked for in one page of the feed (the server's maximum). */
 const PAGE_LIMIT = MAX_PAGE;
 
-/** The most own deletions that are kept as done until the feed has brought their tombstones back (the oldest go first). */
+/**
+ * The most own deletions that are kept as done until the feed has brought their tombstones back (the oldest go first; an item whose note
+ * has gone is seen as missing from a listing, like any other).
+ */
 const MAX_OWN_DELETED = 1024;
 
 /**
@@ -1485,7 +1488,10 @@ export function createSyncEngine({
     }
     if (candidates.length === 0) return;
     // The floor this engine has seen may be older than the purge (this listing may have been begun by another engine, or owed by a start).
-    /** Whether the server's floor covers the deletion: its tombstone has the `seq` of the answer, or, when that is not known (0), some purge has happened. */
+    /**
+     * Whether the server's floor covers the deletion: its tombstone has the `seq` of the answer, or, when that is not known (0: the answer was
+     * a conflict that says "deleted at this revision"), some purge has happened. The floor is the server's word, as everywhere here.
+     */
     const covered = (/** @type {{ seq: number }} */ own) => (own.seq > 0 ? own.seq <= feedFloor : feedFloor > 0);
     if (candidates.some(({ own }) => !covered(own))) await learnFloor(); // the floor is read into `feedFloor`; no answer leaves the deletions as they are
     alive();
@@ -1520,6 +1526,9 @@ export function createSyncEngine({
     const missing = [];
     for (const [id, row] of rows) {
       if (seen.has(id) || id === MANIFEST_ID || row.deleted) continue;
+      // A deletion this device made and the server took is never uploaded again, whether or not its floor could be read just now: the note
+      // stays, and a later listing that knows the floor settles it. (A note dropped past `MAX_OWN_DELETED` does not protect its item.)
+      if (ownDeleted.has(id)) continue;
       // Another mark stays as it is. An item that was uploaded again and is left out once more is marked again, with
       // the floor it already has. The keys of its own writes are kept only for writes that are still queued or in
       // flight (their echo must still be taken as ours); the others belong to a copy the server has dropped. Keys
@@ -1803,7 +1812,7 @@ export function createSyncEngine({
   async function learnFloor() {
     try {
       await api.get("/api/sync/changes?since=1&limit=1", { shape: "changes_res" });
-      return feedFloor; // no 410: the floor is below 2, and the one this session knew is not above it
+      return 0; // no 410: the floor is below 2 (one from before a restore is not reused)
     } catch (error) {
       const err = /** @type {any} */ (error);
       if (err?.code === "gone" && Number.isSafeInteger(err.minValidSince)) {
@@ -2770,6 +2779,7 @@ export function createSyncEngine({
     epochRefusals.clear();
     epochRetryAt = 0;
     epochMovedAt = null;
+    feedFloor = 0;
     // The server's state is another one now: what it took before is not what it holds.
     if (ownDeleted.size > 0) {
       ownDeleted.clear();

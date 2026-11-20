@@ -727,8 +727,13 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }
     }
     if (topSeq === checkpoint.seq) {
-      const listed = new Set(entries.map((entry) => entry.id));
-      for (const id of byId.keys()) if (!listed.has(id)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+      // At the top every row is an entry with the same revision and hash (or both deleted), as in the core.
+      const listed = new Map(entries.map((entry) => [entry.id, entry]));
+      for (const [id, row] of byId) {
+        const entry = listed.get(id);
+        const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
+        if (!entry || entry.rev !== row.rev || !entry.hash.equals(hash)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+      }
     }
   }
   /** A sealed row for the model, as the wire has it (base64url). */

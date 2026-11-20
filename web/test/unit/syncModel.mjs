@@ -633,8 +633,8 @@ export class Sim {
   }
 
   /**
-   * The items whose tombstone the retention job leaves alone: the ones a device holds a live copy of (a row it has cached, or what it wrote
-   * and has not read back) or has a write waiting for. A device that was away for more than the retention would bring such an item back as
+   * The items whose tombstone the retention job leaves alone: the ones a device holds a live copy of (a row it has cached, what it wrote
+   * and has not read back, or what it shows) or has a write waiting for. A device that was away for more than the retention would bring such an item back as
    * a new one (nothing is deleted on the server's word), and the matrix does not look at that. A tombstone that a device holds, a deletion
    * that a device made itself and has not read back, and an item that a device never saw are not here: the engine meets the purge of those
    * (`heldTombstones` and `settleOwnDeletions` in `engine.mjs`).
@@ -649,6 +649,9 @@ export class Sim {
       for (const [id, kind] of lastOwn) if (kind !== "remove") ids.add(id);
       for (const row of await cache.getRows(db, scope())) if (!row.deleted && lastOwn.get(row.itemId) !== "remove") ids.add(row.itemId);
       for (const entry of await outbox.all(db, scope())) ids.add(entry.itemId);
+      // What the device shows as live is a copy it holds, whatever its last write was: it restored the item from its trash, or kept its own
+      // or the server's version in a conflict. (A deletion that is not read back yet is hidden there, so the engine still settles it.)
+      for (const item of dev.engine.list()) ids.add(item.id);
     }
     return ids;
   }

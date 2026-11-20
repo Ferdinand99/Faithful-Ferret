@@ -236,7 +236,7 @@ export const outbox = Object.freeze({
       req(table.index("by_scope").getAll(store.keyRange.only(prefix(scope)))),
     );
     return rows.map(({ idem, itemId, baseRev, body, bytes, import: mark }) => ({
-      idem, itemId, baseRev, body, bytes, ...(typeof mark === "string" ? { import: mark } : {}),
+      idem, itemId, baseRev, body, bytes, ...(hex16.is(mark) ? { import: mark } : {}), // a mark that is not a window id is read as no mark
     }));
   },
 

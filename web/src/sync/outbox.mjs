@@ -495,7 +495,17 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     async enqueueMany(entries) {
       if (entries.some((entry) => entry.import === undefined)) throw new TypeError("the writes of an import carry the import mark");
       const db = await store.open();
-      await store.outbox.enqueueMany(db, scope, entries);
+      try {
+        await store.outbox.enqueueMany(db, scope, entries);
+      } catch (error) {
+        // Chunks before the one that failed are stored: they are taken out again, so a call that failed has stored nothing (best effort).
+        try {
+          await store.outbox.removeMany(db, scope, entries.map((entry) => entry.idem));
+        } catch {
+          // The next start sends what is left, as any queued write.
+        }
+        throw error;
+      }
       if (stopped) return;
       for (const entry of entries) laneOf(entry.itemId).entries.push(entry);
       void pumpBatch();
@@ -517,9 +527,8 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
         const db = await store.open();
         await store.outbox.remark(db, scope, idems, windowId);
         if (stopped) return 0;
-        for (const lane of lanes.values()) {
-          lane.entries = lane.entries.map((entry) => (entry.import === undefined ? entry : { ...entry, import: windowId }));
-        }
+        // In place: a batch that is in flight holds these very objects (it finds its entry at the head of its lane by identity).
+        for (const lane of lanes.values()) for (const entry of lane.entries) if (entry.import !== undefined) entry.import = windowId;
       }
       if (batchTimer !== null) timers.clear(batchTimer);
       batchTimer = null;

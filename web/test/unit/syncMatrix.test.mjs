@@ -772,6 +772,7 @@ test("a_chain_that_restores_and_deletes_again_is_kept_when_another_device_brough
   const { sim, a, b, id } = await sharedItem();
   await a.engine.remove(id);
   await untilServerRev(sim, id, 2);
+  await pump(a); // A has read its own tombstone back, so its trash holds the item
   await pump(b); // B holds the tombstone
   offline(b);
   await b.engine.restoreFromTrash(id);
