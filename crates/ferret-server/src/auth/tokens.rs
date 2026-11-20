@@ -72,8 +72,23 @@ impl DeviceAuth {
     ///
     /// RFC 9449 § 4.3 (the `htu` matches the URI of the request, without query
     /// and fragment).
-    pub fn htu(&self, path: &str) -> String {
-        format!("{}{path}", self.vault_origin)
+    pub fn htu(&self, path: &str) -> Htu {
+        Htu(format!("{}{path}", self.vault_origin))
+    }
+}
+
+/// The `htu` a proof must name: the configured vault origin and the path of
+/// the request. Only [`DeviceAuth::htu`] makes one, so no route can build it
+/// from `Host`, a forwarded host or anything else the request says.
+///
+/// RFC 9449 § 4.3; Spec: Fase 1 § 7.6.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Htu(String);
+
+impl Htu {
+    /// The URL as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

@@ -37,13 +37,14 @@
 
 pub mod proof;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
 
 use axum::http::{HeaderMap, Method, StatusCode};
 use jsonwebtoken::{Algorithm, DecodingKey};
 
+use crate::auth::tokens::Htu;
 use crate::error::ApiError;
 use crate::ids::TokenSecret;
 
@@ -89,8 +90,8 @@ pub struct Expect<'a> {
     /// The method of the request (`htm`).
     pub method: &'a Method,
     /// The configured vault origin and the path, without query or fragment
-    /// (`htu`); see `DeviceAuth::htu`.
-    pub htu: &'a str,
+    /// (`htu`); only `DeviceAuth::htu` makes one.
+    pub htu: &'a Htu,
     /// The token of the request: `ath` must be its hash. `None` for a sign-in
     /// and a renewal, whose proof has no `ath`.
     pub access: Option<&'a TokenSecret>,
@@ -193,12 +194,11 @@ impl From<DpopError> for ApiError {
     }
 }
 
-/// One remembered `jti`, in the order it was recorded.
+/// One remembered `jti`.
 struct Entry {
     jkt: [u8; 32],
     jti: String,
     user_id: i64,
-    expires_at: i64,
 }
 
 /// The cache behind the lock.
@@ -206,8 +206,12 @@ struct Entry {
 struct Seen {
     /// `(jkt, jti)` → when it may be forgotten (Unix seconds).
     live: HashMap<([u8; 32], String), i64>,
-    /// The same values, oldest first, for forgetting them.
-    order: VecDeque<Entry>,
+    /// The same values by the time they may be forgotten (and a number that
+    /// keeps equal times apart), so the first is always the next to go, even
+    /// when the clock was stepped back between two records.
+    order: BTreeMap<(i64, u64), Entry>,
+    /// The number of the next record.
+    next: u64,
     /// How many values each key has.
     per_key: HashMap<[u8; 32], usize>,
     /// How many values each account has.
@@ -225,13 +229,18 @@ fn release<K: std::hash::Hash + Eq>(counts: &mut HashMap<K, usize>, key: &K) {
 }
 
 impl Seen {
-    /// Forgets the values whose time is out at `now`. Values are recorded in
-    /// the order of the clock, so the oldest are in front; should the clock
-    /// step back, a value waits behind an older one a little longer, which
-    /// only refuses more.
+    /// Forgets the values whose time is out at `now`. They are ordered by
+    /// that time, not by when they were recorded, so a value recorded while
+    /// the clock was ahead never holds back the values recorded after the
+    /// clock was set back (it stays until its own time, since its proof could
+    /// pass the clock check again by then).
     fn forget_expired(&mut self, now: i64) {
-        while self.order.front().is_some_and(|e| e.expires_at <= now) {
-            let Some(entry) = self.order.pop_front() else {
+        while self
+            .order
+            .first_key_value()
+            .is_some_and(|(&(expires_at, _), _)| expires_at <= now)
+        {
+            let Some((_, entry)) = self.order.pop_first() else {
                 break;
             };
             self.live.remove(&(entry.jkt, entry.jti));
@@ -304,12 +313,16 @@ impl JtiCache {
 
         let expires_at = now.saturating_add(JTI_TTL_SECS);
         seen.live.insert(key, expires_at);
-        seen.order.push_back(Entry {
-            jkt: proof.jkt,
-            jti: proof.jti.clone(),
-            user_id,
-            expires_at,
-        });
+        let number = seen.next;
+        seen.next = number.wrapping_add(1);
+        seen.order.insert(
+            (expires_at, number),
+            Entry {
+                jkt: proof.jkt,
+                jti: proof.jti.clone(),
+                user_id,
+            },
+        );
         let for_key = seen.per_key.entry(proof.jkt).or_default();
         *for_key = for_key.saturating_add(1);
         let for_user = seen.per_user.entry(user_id).or_default();
@@ -348,9 +361,12 @@ impl fmt::Debug for JtiCache {
 /// does the work (its aws-lc-rs backend, the one rustls uses); only `Ok(true)`
 /// counts, and every error of the library is a `false`.
 ///
-/// This is the signature alone, never a proof check: [`verify`] is that.
+/// This is the signature alone, never a proof check: [`verify`] is that. It is
+/// public only so the Wycheproof test runs this exact call; nothing but
+/// [`verify`] calls it in the server (`tests/dpop.rs` checks the names).
 ///
 /// RFC 7518 § 3.4.
+#[doc(hidden)]
 pub fn signature_holds(signature_b64: &str, signing_input: &[u8], x: &str, y: &str) -> bool {
     let Ok(key) = DecodingKey::from_ec_components(x, y) else {
         return false;
@@ -410,7 +426,7 @@ pub fn verify(
     proof::check_claims(
         &claims,
         expect.method.as_str(),
-        expect.htu,
+        expect.htu.as_str(),
         ath.as_ref(),
         now,
     )?;

@@ -39,6 +39,10 @@ pub enum Revoked {
     Device(DeviceId),
 }
 
+/// For the tests of the third milestone, which compare a received
+/// revocation with a session hash; server code matches on the variant. To be
+/// removed once those tests match on `Revoked::Session`.
+#[doc(hidden)]
 impl PartialEq<SidHash> for Revoked {
     /// A revoked session equals its hash; a revoked device equals no
     /// session.

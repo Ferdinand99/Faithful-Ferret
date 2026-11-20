@@ -122,9 +122,11 @@ fn the_limits_are_the_ones_of_the_design() {
 fn a_bare_or_broken_proof_is_refused_and_the_purge_purges_nothing_yet() {
     let token = TokenSecret::random(&mut TestRng::new(b"m5a wiring token"));
     let method = Method::GET;
+    let htu = support::dpop::vault_htu("/api/sync/changes");
+    assert_eq!(htu.as_str(), "https://vault.ferret.test/api/sync/changes");
     let expect = Expect {
         method: &method,
-        htu: "https://vault.ferret.test/api/sync/changes",
+        htu: &htu,
         access: Some(&token),
     };
     let mut headers = HeaderMap::new();
@@ -157,11 +159,11 @@ async fn device_auth_names_the_vault_origin_in_htu_and_prints_nothing() {
     let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(1));
     let auth = DeviceAuth::new(db.clone(), clock.clone(), VAULT_URL);
     assert_eq!(
-        auth.htu("/api/sync/changes"),
+        auth.htu("/api/sync/changes").as_str(),
         "https://vault.ferret.test/api/sync/changes"
     );
     assert_eq!(
-        auth.htu("/api/auth/token/refresh"),
+        auth.htu("/api/auth/token/refresh").as_str(),
         format!("{VAULT_URL}/api/auth/token/refresh")
     );
     // A trailing `/` of the origin is not doubled.
@@ -182,7 +184,7 @@ async fn state_hands_out_device_auth() {
     // origin, with an empty cache that every clone shares.
     let auth = DeviceAuth::from_ref(&app.state);
     assert_eq!(
-        auth.htu("/api/auth/token/refresh"),
+        auth.htu("/api/auth/token/refresh").as_str(),
         format!("{VAULT_URL}/api/auth/token/refresh")
     );
     assert!(auth.replay().is_empty());

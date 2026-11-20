@@ -14,13 +14,13 @@ use ferret_server::auth::dpop::proof::{self, ProofError};
 use ferret_server::auth::dpop::{
     self, DpopError, Expect, JTI_TTL_SECS, JtiCache, MAX_PROOF_LEN, VerifiedProof,
 };
-use ferret_server::auth::tokens::DeviceAuth;
+use ferret_server::auth::tokens::{DeviceAuth, Htu};
 use ferret_server::error::ApiError;
 use ferret_server::ids::TokenSecret;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use support::backup::capture_log;
-use support::dpop::{DeviceKey, b64, claims, fresh_jti, headers_with, segments, unhex};
+use support::dpop::{DeviceKey, b64, claims, fresh_jti, headers_with, segments, unhex, vault_htu};
 use support::{Req, START, TestApp, VAULT_URL, Which};
 
 const NOW: i64 = START as i64;
@@ -36,13 +36,13 @@ fn token(seed: &[u8]) -> TokenSecret {
 
 /// Checks `proof` for a `GET` of [`PATH`] with `access`, at `now`.
 fn check(proof: &str, access: Option<&TokenSecret>, now: i64) -> Result<VerifiedProof, DpopError> {
-    check_for(proof, &Method::GET, &htu(), access, now)
+    check_for(proof, &Method::GET, &vault_htu(PATH), access, now)
 }
 
 fn check_for(
     proof: &str,
     method: &Method,
-    htu: &str,
+    htu: &Htu,
     access: Option<&TokenSecret>,
     now: i64,
 ) -> Result<VerifiedProof, DpopError> {
@@ -372,13 +372,32 @@ fn a_jwk_that_is_not_p256_or_has_short_coordinates_is_refused() {
         assert_eq!(whole, DpopError::Malformed, "{what}");
     }
 
-    // Coordinates of the right size that are not a point of the curve pass
-    // the reader and fail at the library.
-    let mut header = key.header();
-    header["jwk"]["y"] = json!(b64(&[1u8; 32]));
-    let proof = with_header(&key, &header);
-    assert!(proof::split(&proof).is_ok());
-    assert_eq!(check(&proof, None, NOW).unwrap_err(), DpopError::Signature);
+    // Coordinates of the right size that are not the key that signed pass
+    // the reader and fail at the library: off the curve, a coordinate equal
+    // to the field prime p, the point (0, 0), and (x, p − y), which is a point
+    // of the curve but another key.
+    let p256_prime = unhex("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+    let y = unhex_b64(&key.y);
+    let negated_y = b64(&sub_be(&p256_prime, &y));
+    assert_ne!(negated_y, key.y);
+    for (what, x, y) in [
+        ("off the curve", key.x.clone(), b64(&[1u8; 32])),
+        ("x = p", b64(&p256_prime), key.y.clone()),
+        ("y = p", key.x.clone(), b64(&p256_prime)),
+        ("(0, 0)", b64(&[0u8; 32]), b64(&[0u8; 32])),
+        ("(x, p - y)", key.x.clone(), negated_y),
+    ] {
+        let mut header = key.header();
+        header["jwk"]["x"] = json!(x);
+        header["jwk"]["y"] = json!(y);
+        let proof = with_header(&key, &header);
+        assert!(proof::split(&proof).is_ok(), "{what}");
+        assert_eq!(
+            check(&proof, None, NOW).unwrap_err(),
+            DpopError::Signature,
+            "{what}"
+        );
+    }
     // Another key's coordinates: a good point, the wrong one.
     let other = DeviceKey::new(6);
     let mut header = key.header();
@@ -387,6 +406,23 @@ fn a_jwk_that_is_not_p256_or_has_short_coordinates_is_refused() {
         check(&with_header(&key, &header), None, NOW).unwrap_err(),
         DpopError::Signature
     );
+}
+
+/// `a − b` for two 32-byte big-endian numbers with `a ≥ b`.
+fn sub_be(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; 32];
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+        let mut d = i16::from(a[i]) - i16::from(b[i]) - borrow;
+        borrow = 0;
+        if d < 0 {
+            d += 256;
+            borrow = 1;
+        }
+        out[i] = u8::try_from(d).expect("a byte");
+    }
+    assert_eq!(borrow, 0, "a >= b");
+    out
 }
 
 fn unhex_b64(text: &str) -> Vec<u8> {
@@ -482,7 +518,7 @@ fn a_proof_over_4_kib_is_refused_before_decoding() {
         HeaderValue::from_str(&"a.".repeat(MAX_PROOF_LEN)).expect("a value"),
     );
     let method = Method::GET;
-    let htu = htu();
+    let htu = vault_htu(PATH);
     let expect = Expect {
         method: &method,
         htu: &htu,
@@ -499,7 +535,7 @@ fn two_dpop_headers_are_refused() {
     let key = DeviceKey::new(9);
     let proof = good(&key);
     let method = Method::GET;
-    let htu = htu();
+    let htu = vault_htu(PATH);
     let expect = Expect {
         method: &method,
         htu: &htu,
@@ -649,7 +685,7 @@ fn htm_must_match_the_method() {
     ] {
         let proof = key.proof(signed, &htu, NOW, None);
         assert_eq!(
-            check_for(&proof, &method, &htu, None, NOW).unwrap_err(),
+            check_for(&proof, &method, &vault_htu(PATH), None, NOW).unwrap_err(),
             DpopError::Claims,
             "{signed} for {method}"
         );
@@ -657,7 +693,7 @@ fn htm_must_match_the_method() {
     for method in [Method::GET, Method::POST, Method::PUT, Method::DELETE] {
         let proof = key.proof(method.as_str(), &htu, NOW, None);
         assert!(
-            check_for(&proof, &method, &htu, None, NOW).is_ok(),
+            check_for(&proof, &method, &vault_htu(PATH), None, NOW).is_ok(),
             "{method}"
         );
     }
@@ -1044,6 +1080,34 @@ fn expired_jti_entries_free_their_place() {
 }
 
 #[test]
+fn a_clock_stepped_back_does_not_hold_back_later_entries() {
+    let cache = JtiCache::new(100, 2, 100);
+    let key = DeviceKey::new(44);
+    // Recorded while the clock was an hour ahead: kept until its own time.
+    let ahead = good(&key);
+    cache
+        .record(&verified(&ahead), 1, NOW + 3_600)
+        .expect("ahead");
+    // The clock is set back; the key fills its place.
+    cache.record(&verified(&good(&key)), 1, NOW).expect("one");
+    assert_eq!(
+        cache.record(&verified(&good(&key)), 1, NOW),
+        Err(DpopError::KeyBusy)
+    );
+    // Once the entry recorded after the step is out, its place is free,
+    // although the one from before the step is still there.
+    cache
+        .record(&verified(&good(&key)), 1, NOW + JTI_TTL_SECS)
+        .expect("free again");
+    assert_eq!(cache.len(), 2);
+    assert_eq!(
+        cache.record(&verified(&ahead), 1, NOW + JTI_TTL_SECS),
+        Err(DpopError::Replay),
+        "the entry from before the step stays until its own time"
+    );
+}
+
+#[test]
 fn the_per_key_cap_refuses_that_key_only() {
     let cache = JtiCache::new(100, 2, 100);
     let busy = DeviceKey::new(42);
@@ -1176,4 +1240,97 @@ async fn dpop_header_never_reaches_the_logs() {
     let text = log.text();
     assert!(!text.contains(CANARY), "{text}");
     assert!(!text.contains(&key.x) && !text.contains(&key.y), "{text}");
+}
+
+// ------------------------------------------------------- who may call what
+
+/// The source files of the server, without the check itself.
+fn server_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("a directory") {
+        let path = entry.expect("an entry").path();
+        if path.is_dir() {
+            server_sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// The names of the check's inner parts that `text` uses in code (not in
+/// comments): the stand-alone reader by path (`proof::`), the claims reader
+/// and checker, and the raw signature call.
+fn inner_parts_named(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let code = line.split("//").next().unwrap_or("");
+        for word in [
+            "check_claims",
+            "signature_holds",
+            "signing_input",
+            "signature_b64",
+        ] {
+            if code.contains(word) {
+                found.push(word.to_string());
+            }
+        }
+        let mut rest = code;
+        while let Some(at) = rest.find("proof::") {
+            let before = rest[..at].chars().last();
+            if !before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                found.push("proof::".to_string());
+            }
+            rest = &rest[at + "proof::".len()..];
+        }
+        if code.contains("mod proof;")
+            || code.contains("mod proof {")
+            || code.contains("dpop::proof")
+            || (code.contains("dpop::{") && code.contains("proof"))
+        {
+            found.push("proof".to_string());
+        }
+    }
+    found
+}
+
+#[test]
+fn only_the_check_reads_claims_or_calls_the_raw_signature_check() {
+    // `proof::claims` and `check_claims` read and check claims without a
+    // signature, and `signature_holds` checks a signature without the claims:
+    // only `dpop::verify` may put them together.
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let allowed = [src.join("auth/dpop.rs"), src.join("auth/dpop/proof.rs")];
+    let mut files = Vec::new();
+    server_sources(&src, &mut files);
+    assert!(files.len() > 40, "the sources were found");
+    let mut problems = Vec::new();
+    for file in files.iter().filter(|f| !allowed.contains(f)) {
+        let text = std::fs::read_to_string(file).expect("a source file");
+        for name in inner_parts_named(&text) {
+            problems.push(format!("{}: {name}", file.display()));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+
+    // The rule catches what it is for, and not prose or other names.
+    for planted in [
+        "fn f() { let c = crate::auth::dpop::proof::claims(&p); }",
+        "use crate::auth::dpop::proof::{claims, split};",
+        "use super::dpop::proof;",
+        "pub mod proof;",
+        "use crate::auth::dpop::{proof, verify};",
+        "fn f() { proof::check_claims(&c, m, h, None, 0); }",
+        "fn f() { dpop::signature_holds(s, i, x, y); }",
+        "fn f() { let i = signing_input(&p); }",
+    ] {
+        assert!(!inner_parts_named(planted).is_empty(), "{planted}");
+    }
+    for clean in [
+        "// proof::claims is read only after the signature holds",
+        "fn f() { crate::auth::proofs::Proofs::from_ref(s); }",
+        "fn f() { dpop::verify(&h, &e, now); }",
+        "pub mod proofs;",
+        "use crate::auth::dpop::{DpopError, Expect};",
+    ] {
+        assert!(inner_parts_named(clean).is_empty(), "{clean}");
+    }
 }

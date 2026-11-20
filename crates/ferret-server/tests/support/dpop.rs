@@ -6,16 +6,35 @@
 //! with another implementation (the JOSE library over aws-lc-rs), so a proof
 //! that passes is a proof two implementations agree on.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::http::{HeaderMap, HeaderValue};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ferret_server::auth::tokens::{DeviceAuth, Htu};
 use ferret_server::ids::TokenSecret;
+use ferret_server::state::VaultDb;
+use ferret_server_auth::{Clock, ManualClock};
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature, SigningKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+
+/// A handle for the vault origin of the tests, over a database that is never
+/// opened: for the tests that check proofs without a running app.
+pub fn device_auth() -> DeviceAuth {
+    let pool = deadpool_sqlite::Config::new("/ferret-no-such-directory/none.db")
+        .create_pool(deadpool_sqlite::Runtime::Tokio1)
+        .expect("a pool");
+    let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(super::START));
+    DeviceAuth::new(VaultDb::new(pool), clock, super::VAULT_URL)
+}
+
+/// The `htu` of `path` on the vault origin of the tests.
+pub fn vault_htu(path: &str) -> Htu {
+    device_auth().htu(path)
+}
 
 /// base64url without padding.
 pub fn b64(bytes: &[u8]) -> String {
