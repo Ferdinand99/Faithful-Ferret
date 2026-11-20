@@ -51,7 +51,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0004_handoff_links.sql",
             "0005_sync.sql",
             "0006_restore_seq.sql",
-            "0007_reauth.sql"
+            "0007_reauth.sql",
+            "0008_devices.sql"
         ]
     );
     let mut sorted = names.clone();
@@ -193,13 +194,16 @@ fn schema_matches_section_7() {
     assert_eq!(
         names,
         [
+            "ferret_access",
             "ferret_accounts",
             "ferret_checkpoints",
+            "ferret_devices",
             "ferret_handoffs",
             "ferret_idem",
             "ferret_items",
             "ferret_login_states",
             "ferret_meta",
+            "ferret_refresh",
             "ferret_registrations",
             "ferret_restore_rows",
             "ferret_sessions",
@@ -665,6 +669,17 @@ static BUILD_AT_0007: MigrationSet = MigrationSet {
     after: no_fixups,
 };
 
+/// What the third milestone ran: the kit's core set with the sign-in codes, and
+/// our migrations up to 0007. `tests/fixtures/schema/m3.sql` is its schema.
+static BUILD_AT_M3: MigrationSet = MigrationSet {
+    core: &CORE_MIGRATIONS,
+    adopt_core: None,
+    migrations: up_to_0007,
+    fk_off_marker: "-- ff:foreign_keys=off",
+    baseline: None,
+    after: no_fixups,
+};
+
 fn empty_database() -> Connection {
     product::install();
     let conn = Connection::open_in_memory().expect("open");
@@ -907,7 +922,7 @@ fn kit_sign_in_codes_migration_runs_after_0006_and_0007_and_keeps_every_row() {
     );
     let fresh = {
         let mut conn = empty_database();
-        apply_migrations(&mut conn).expect("a fresh database");
+        apply_migrations_with(&mut conn, &BUILD_AT_M3).expect("a fresh database");
         conn
     };
     let fresh_schema = dump_schema(&fresh);
@@ -919,7 +934,7 @@ fn kit_sign_in_codes_migration_runs_after_0006_and_0007_and_keeps_every_row() {
     let mut direct = database_at_0006();
     let kept_tables = tables(&direct);
     let before = dump_rows(&direct, &kept_tables);
-    let applied = apply_migrations(&mut direct).expect("the new migrations");
+    let applied = apply_migrations_with(&mut direct, &BUILD_AT_M3).expect("the new migrations");
     assert!(applied.iter().any(|n| n == SIGN_IN_CODES.0), "{applied:?}");
     assert!(
         applied.iter().any(|n| n == "0007_reauth.sql"),
@@ -946,7 +961,7 @@ fn kit_sign_in_codes_migration_runs_after_0006_and_0007_and_keeps_every_row() {
     assert!(!tables(&stepped).iter().any(|t| t == "sign_in_codes"));
     let kept_tables = tables(&stepped);
     let before = dump_rows(&stepped, &kept_tables);
-    let applied = apply_migrations(&mut stepped).expect("then the codes");
+    let applied = apply_migrations_with(&mut stepped, &BUILD_AT_M3).expect("then the codes");
     assert_eq!(applied, [SIGN_IN_CODES.0], "only the codes were missing");
     let order = recorded(&stepped);
     let position = |name: &str| order.iter().position(|n| n == name).expect(name);
@@ -997,9 +1012,9 @@ fn dump_schema(conn: &Connection) -> String {
 }
 
 #[test]
-fn schema_after_m3_matches_the_frozen_schema() {
+fn the_m3_schema_still_matches_m3_sql() {
     let mut conn = empty_database();
-    apply_migrations(&mut conn).expect("migrations apply");
+    apply_migrations_with(&mut conn, &BUILD_AT_M3).expect("migrations apply");
     let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema/m3.sql");
     if std::env::var("FERRET_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
@@ -1075,4 +1090,507 @@ fn an_older_build_refuses_a_database_with_a_newer_migration() {
             .expect("the old build")
             .is_empty()
     );
+}
+
+// ---------------------------------------------------------------- devices and their tokens
+
+/// The three tables of migration 0008.
+const DEVICE_TABLES: [&str; 3] = ["ferret_access", "ferret_devices", "ferret_refresh"];
+
+/// The five indexes of migration 0008.
+const DEVICE_INDEXES: [&str; 5] = [
+    "ferret_access_device",
+    "ferret_devices_user",
+    "ferret_refresh_device",
+    "ferret_refresh_prev",
+    "ferret_refresh_used",
+];
+
+/// Adds a device row; the arguments that the checks look at are given.
+fn insert_device(
+    conn: &Connection,
+    device: &[u8],
+    user: i64,
+    jkt: &[u8],
+    name: &str,
+    platform: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO ferret_devices \
+         (device_id, user_id, jkt, name, platform, session_version, created_at, last_seen) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+        params![device, user, jkt, name, platform, NOW],
+    )
+}
+
+/// Adds a refresh row of `device`.
+fn insert_refresh(
+    conn: &Connection,
+    hash: &[u8],
+    device: &[u8],
+    prev: Option<&[u8]>,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO ferret_refresh \
+         (token_hash, device_id, prev_hash, issued_at, idle_expires_at, abs_expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?4, ?4)",
+        params![hash, device, prev, NOW],
+    )
+}
+
+/// Adds an access row of `device`.
+fn insert_access(conn: &Connection, hash: &[u8], device: &[u8]) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO ferret_access (token_hash, device_id, expires_at) VALUES (?1, ?2, ?3)",
+        params![hash, device, NOW],
+    )
+}
+
+#[test]
+fn migration_adds_three_strict_tables_with_length_checks() {
+    let conn = migrated();
+    let strict: Vec<(String, i64)> = conn
+        .prepare(
+            "SELECT name, strict FROM pragma_table_list \
+             WHERE schema = 'main' AND name IN ('ferret_access', 'ferret_devices', 'ferret_refresh') \
+             ORDER BY name",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert_eq!(
+        strict,
+        DEVICE_TABLES.map(|t| (t.to_string(), 1)).to_vec(),
+        "the three tables are there and STRICT"
+    );
+    let user = insert_user(&conn);
+    let jkt = |n: u8| [n; 32];
+
+    // A device: 16-byte id, 32-byte thumbprint, a known platform, a name of
+    // 1 to 64 characters.
+    assert!(
+        insert_device(
+            &conn,
+            &[1; 16],
+            user,
+            &jkt(1),
+            "Ferret for Firefox",
+            "windows"
+        )
+        .is_ok()
+    );
+    assert!(
+        insert_device(&conn, &[2; 15], user, &jkt(2), "a", "linux").is_err(),
+        "a 15-byte id"
+    );
+    assert!(
+        insert_device(&conn, &[3; 16], user, &[3; 31], "a", "linux").is_err(),
+        "a 31-byte jkt"
+    );
+    assert!(
+        insert_device(&conn, &[4; 16], user, &jkt(4), "a", "freebsd").is_err(),
+        "an unknown platform"
+    );
+    assert!(
+        insert_device(&conn, &[5; 16], user, &jkt(5), "a", "Windows").is_err(),
+        "a platform is lower case"
+    );
+    assert!(
+        insert_device(&conn, &[6; 16], user, &jkt(6), "", "linux").is_err(),
+        "an empty name"
+    );
+    // Characters, not bytes: 64 four-byte characters (256 bytes) are a name,
+    // 65 are not.
+    let clef = "\u{1d11e}";
+    assert_eq!(clef.len(), 4);
+    assert!(insert_device(&conn, &[7; 16], user, &jkt(7), &clef.repeat(64), "macos").is_ok());
+    assert!(
+        insert_device(&conn, &[8; 16], user, &jkt(8), &clef.repeat(65), "macos").is_err(),
+        "65 characters"
+    );
+    assert!(insert_device(&conn, &[9; 16], user, &jkt(9), &"a".repeat(64), "other").is_ok());
+    assert!(
+        insert_device(&conn, &[10; 16], user, &jkt(10), &"a".repeat(65), "other").is_err(),
+        "65 characters"
+    );
+    // Every platform of the wire is one the table takes.
+    for (n, platform) in (40u8..).zip(ferret_server::wire::PLATFORMS) {
+        assert!(
+            insert_device(&conn, &[n; 16], user, &jkt(n), "a", platform).is_ok(),
+            "{platform}"
+        );
+    }
+    // A key names one device only, and a device belongs to a user.
+    assert!(
+        insert_device(&conn, &[11; 16], user, &jkt(1), "again", "linux").is_err(),
+        "the same jkt twice"
+    );
+    assert!(
+        insert_device(&conn, &[12; 16], 4242, &jkt(12), "a", "linux").is_err(),
+        "no such user"
+    );
+    // Times are not negative.
+    for column in ["revoked_at", "last_seen", "created_at"] {
+        assert!(
+            conn.execute(
+                &format!("UPDATE ferret_devices SET {column} = -1 WHERE device_id = ?1"),
+                [&[1u8; 16][..]],
+            )
+            .is_err(),
+            "{column}"
+        );
+    }
+
+    // Token rows: 32-byte hashes of a device that exists.
+    assert!(insert_refresh(&conn, &[1; 32], &[1; 16], None).is_ok());
+    assert!(
+        insert_refresh(&conn, &[2; 31], &[1; 16], None).is_err(),
+        "a 31-byte hash"
+    );
+    assert!(
+        insert_refresh(&conn, &[3; 32], &[1; 16], Some(&[1; 31][..])).is_err(),
+        "a 31-byte prev_hash"
+    );
+    assert!(
+        insert_refresh(&conn, &[4; 32], &[99; 16], None).is_err(),
+        "no such device"
+    );
+    assert!(
+        insert_refresh(&conn, &[5; 32], &[1; 15], None).is_err(),
+        "a 15-byte device id"
+    );
+    for column in ["used_at", "issued_at", "idle_expires_at", "abs_expires_at"] {
+        assert!(
+            conn.execute(
+                &format!("UPDATE ferret_refresh SET {column} = -1 WHERE token_hash = ?1"),
+                [&[1u8; 32][..]],
+            )
+            .is_err(),
+            "{column}"
+        );
+    }
+    assert!(insert_access(&conn, &[1; 32], &[1; 16]).is_ok());
+    assert!(
+        insert_access(&conn, &[2; 31], &[1; 16]).is_err(),
+        "a 31-byte hash"
+    );
+    assert!(
+        insert_access(&conn, &[3; 32], &[99; 16]).is_err(),
+        "no such device"
+    );
+    assert!(
+        insert_access(&conn, &[1; 32], &[1; 16]).is_err(),
+        "the same hash twice"
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_access (token_hash, device_id, expires_at) VALUES (?1, ?2, -1)",
+            params![&[4u8; 32][..], &[1u8; 16][..]],
+        )
+        .is_err(),
+        "a negative expiry"
+    );
+
+    // The indexes are there.
+    for index in DEVICE_INDEXES {
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                [index],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(found, 1, "{index}");
+    }
+}
+
+#[test]
+fn a_token_has_at_most_one_successor() {
+    let conn = migrated();
+    let user = insert_user(&conn);
+    insert_device(&conn, &[1; 16], user, &[1; 32], "a", "linux").expect("a device");
+    assert!(insert_refresh(&conn, &[1; 32], &[1; 16], None).is_ok());
+    // Many tokens start a chain (no predecessor), but a token has one
+    // successor.
+    assert!(insert_refresh(&conn, &[2; 32], &[1; 16], None).is_ok());
+    assert!(insert_refresh(&conn, &[3; 32], &[1; 16], Some(&[1; 32][..])).is_ok());
+    assert!(
+        insert_refresh(&conn, &[4; 32], &[1; 16], Some(&[1; 32][..])).is_err(),
+        "a second successor of the same token"
+    );
+    assert!(insert_refresh(&conn, &[5; 32], &[1; 16], Some(&[3; 32][..])).is_ok());
+    // The index that holds it is unique and partial.
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'ferret_refresh_prev'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the index");
+    assert_eq!(
+        sql,
+        "CREATE UNIQUE INDEX ferret_refresh_prev ON ferret_refresh(prev_hash) WHERE prev_hash IS NOT NULL"
+    );
+}
+
+/// A database as the third milestone left it: its migrations only, two
+/// accounts with items, sessions of every scope (one with a fresh
+/// re-authentication, one ended) and a sign-in code.
+fn database_at_m3() -> Connection {
+    let mut conn = database_at_0006();
+    apply_migrations_with(&mut conn, &BUILD_AT_M3).expect("the migrations of the third milestone");
+    conn.execute(
+        "UPDATE ferret_sessions SET reauth_at = ?1 WHERE sid_hash = ?2",
+        params![NOW + 2, [1u8; 32].as_slice()],
+    )
+    .expect("a fresh re-authentication");
+    let user: i64 = conn
+        .query_row("SELECT id FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .expect("a user");
+    conn.execute(
+        "INSERT INTO sign_in_codes (user_id, code_hash, created_by, expires_at) \
+         VALUES (?1, x'0102', ?1, '2026-11-02 00:00:00')",
+        [user],
+    )
+    .expect("a code");
+    conn
+}
+
+#[test]
+fn migration_0008_keeps_every_m3_row() {
+    let names: Vec<&str> = MIGRATION_FILES.iter().map(|(name, _)| *name).collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).expect(name);
+    assert_eq!(at("0008_devices.sql"), at("0007_reauth.sql") + 1);
+
+    // Additive: three new tables and five new indexes, nothing else.
+    let made = statements("0008_devices.sql");
+    assert_eq!(made.len(), 8, "{made:?}");
+    for table in DEVICE_TABLES {
+        assert!(
+            made.iter()
+                .any(|s| s.starts_with(&format!("CREATE TABLE {table} ("))),
+            "{table}"
+        );
+    }
+    for index in DEVICE_INDEXES {
+        assert!(
+            made.iter().any(|s| {
+                s.starts_with(&format!("CREATE INDEX {index} ON "))
+                    || s.starts_with(&format!("CREATE UNIQUE INDEX {index} ON "))
+            }),
+            "{index}"
+        );
+    }
+
+    let mut conn = database_at_m3();
+    let kept_tables = tables(&conn);
+    for table in DEVICE_TABLES {
+        assert!(!kept_tables.iter().any(|t| t == table), "{table}");
+    }
+    let before = dump_rows(&conn, &kept_tables);
+    let rows_of = |table: &str| -> usize {
+        before
+            .iter()
+            .find(|t| t.starts_with(&format!("{table}: ")))
+            .map_or(0, |t| t.lines().count())
+    };
+    assert_eq!(rows_of("ferret_sessions"), 4);
+    assert!(rows_of("ferret_items") >= 4);
+    assert_eq!(rows_of("sign_in_codes"), 1);
+    let schema_before = dump_schema(&conn);
+
+    let applied = apply_migrations(&mut conn).expect("0008 applies over data");
+    assert_eq!(applied, ["0008_devices.sql"], "only 0008 was missing");
+
+    // Every row of every table that was there is as it was, and so is the
+    // schema of those tables; the new tables are empty.
+    assert_eq!(before, dump_rows(&conn, &kept_tables), "every row kept");
+    let schema_after = dump_schema(&conn);
+    for entry in schema_before.split("\n\n") {
+        assert!(schema_after.contains(entry), "changed: {entry}");
+    }
+    for table in DEVICE_TABLES {
+        let rows: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(rows, 0, "{table}");
+    }
+    // The same schema as a fresh database of this build.
+    let mut fresh = empty_database();
+    apply_migrations(&mut fresh).expect("a fresh database");
+    assert_eq!(schema_after, dump_schema(&fresh));
+}
+
+/// The entries of a frozen schema file, without its header: one per table,
+/// index, view or trigger.
+fn golden_entries(text: &str) -> Vec<String> {
+    text.split("\n-- ")
+        .skip(1)
+        .filter(|entry| {
+            entry.starts_with("table ")
+                || entry.starts_with("index ")
+                || entry.starts_with("view ")
+                || entry.starts_with("trigger ")
+        })
+        .map(|entry| entry.trim_end().to_string())
+        .collect()
+}
+
+#[test]
+fn schema_after_m5a_matches_the_frozen_schema() {
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema");
+    let path = dir.join("m5a.sql");
+    if std::env::var("FERRET_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(&path, &actual).expect("write the frozen schema");
+        return;
+    }
+    let frozen = std::fs::read_to_string(&path)
+        .expect("tests/fixtures/schema/m5a.sql")
+        .replace('\r', "");
+    let first_difference = frozen
+        .lines()
+        .zip(actual.lines())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| frozen.lines().count().min(actual.lines().count()))
+        + 1;
+    assert!(
+        frozen == actual,
+        "the schema is not the frozen one. A change of the schema needs a migration and a new \
+         frozen file (FERRET_UPDATE_GOLDEN=1); the first difference is at line {first_difference}"
+    );
+
+    // Against the schema of the third milestone: every entry of it is still
+    // there, the same, and only the three tables and five indexes are new.
+    let m3 = std::fs::read_to_string(dir.join("m3.sql"))
+        .expect("tests/fixtures/schema/m3.sql")
+        .replace('\r', "");
+    let old = golden_entries(&m3);
+    let new = golden_entries(&frozen);
+    assert!(old.len() > 20, "the entries of m3.sql were found");
+    for entry in &old {
+        assert!(new.contains(entry), "changed or gone: {entry}");
+    }
+    let mut added: Vec<String> = new
+        .iter()
+        .filter(|entry| !old.contains(entry))
+        .map(|entry| entry.lines().next().unwrap_or_default().to_string())
+        .collect();
+    added.sort();
+    let mut expected: Vec<String> = DEVICE_TABLES
+        .iter()
+        .map(|t| format!("table {t}"))
+        .chain(DEVICE_INDEXES.iter().map(|i| format!("index {i}")))
+        .collect();
+    expected.sort();
+    assert_eq!(added, expected);
+    for needle in [
+        "jkt BLOB NOT NULL UNIQUE CHECK(length(jkt) = 32)",
+        "name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64)",
+        "CREATE UNIQUE INDEX ferret_refresh_prev ON ferret_refresh(prev_hash) WHERE prev_hash IS NOT NULL",
+        "CREATE INDEX ferret_refresh_used ON ferret_refresh(used_at) WHERE used_at IS NOT NULL",
+    ] {
+        assert!(frozen.contains(needle), "{needle}");
+    }
+    // SQLite keeps indexes of its own for the primary keys and for
+    // `UNIQUE(jkt)`; they have no SQL and are not in the file.
+    let auto = |table: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+             AND tbl_name = ?1 AND name LIKE 'sqlite_autoindex_%'",
+            [table],
+            |r| r.get(0),
+        )
+        .expect("count")
+    };
+    assert_eq!(auto("ferret_devices"), 2, "the primary key and jkt");
+    assert_eq!(auto("ferret_refresh"), 1, "the primary key");
+    assert_eq!(auto("ferret_access"), 1, "the primary key");
+}
+
+#[test]
+fn an_m3_build_refuses_a_database_with_0008() {
+    // A database made by this build.
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let before = dump_schema(&conn);
+    let recorded_before = recorded(&conn);
+
+    // A build of the third milestone does not know 0008 and says no.
+    let refused = apply_migrations_with(&mut conn, &BUILD_AT_M3).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+    assert_eq!(dump_schema(&conn), before, "nothing was changed");
+    assert_eq!(recorded(&conn), recorded_before, "nothing was recorded");
+
+    // A control: the same build goes on with a database that has only what it
+    // knows, and this build adds 0008 to it.
+    let mut old = database_at_m3();
+    assert!(
+        apply_migrations_with(&mut old, &BUILD_AT_M3)
+            .expect("the same build")
+            .is_empty()
+    );
+    assert_eq!(
+        apply_migrations(&mut old).expect("this build"),
+        ["0008_devices.sql"]
+    );
+}
+
+#[test]
+fn deleting_a_user_removes_its_devices_and_tokens() {
+    let mut conn = migrated();
+    let admin = insert_named_user(&conn, "admin@example.com", "admin");
+    let member = insert_named_user(&conn, "member@example.com", "editor");
+    for (user, n) in [(admin, 1u8), (member, 2u8)] {
+        // Two devices each, a live one and a revoked one, both with tokens.
+        for d in [n, n + 10] {
+            insert_device(&conn, &[d; 16], user, &[d; 32], "a device", "linux").expect("device");
+            insert_refresh(&conn, &[d; 32], &[d; 16], None).expect("refresh");
+            insert_refresh(&conn, &[d + 100; 32], &[d; 16], Some(&[d; 32][..])).expect("next");
+            insert_access(&conn, &[d; 32], &[d; 16]).expect("access");
+        }
+        conn.execute(
+            "UPDATE ferret_devices SET revoked_at = ?1 WHERE device_id = ?2",
+            params![NOW, [n + 10; 16].as_slice()],
+        )
+        .expect("revoke");
+    }
+    assert_eq!(count(&conn, "ferret_refresh", "device_id", &[2; 16]), 2);
+    assert_eq!(count(&conn, "ferret_access", "device_id", &[12; 16]), 1);
+
+    // The kit's way to delete a user (the Users page calls it).
+    let result = vole_kit::db::users::delete_user(&mut conn, member).expect("delete");
+    assert!(result.is_ok(), "the user could not be deleted");
+
+    for device in [2u8, 12] {
+        for table in ["ferret_devices", "ferret_refresh", "ferret_access"] {
+            assert_eq!(
+                count(&conn, table, "device_id", &[device; 16]),
+                0,
+                "{table} keeps rows of the user"
+            );
+        }
+    }
+    assert_eq!(count_user(&conn, "ferret_devices", member), 0);
+    // Nothing of the other user went.
+    for device in [1u8, 11] {
+        assert_eq!(
+            count(&conn, "ferret_devices", "device_id", &[device; 16]),
+            1
+        );
+        assert_eq!(
+            count(&conn, "ferret_refresh", "device_id", &[device; 16]),
+            2
+        );
+        assert_eq!(count(&conn, "ferret_access", "device_id", &[device; 16]), 1);
+    }
+    assert_eq!(count_user(&conn, "ferret_devices", admin), 2);
 }

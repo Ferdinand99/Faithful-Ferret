@@ -24,6 +24,13 @@
 //! there is refused: `Cap` (a vault module must not invent a capability),
 //! `ProvenBody` (it must not stand in for a permit of the library),
 //! `session_binding`, `SessionClock`, `AdminSession` and the header names.
+//! `VaultCaller`, the extractor of a route that takes a session cookie or a
+//! device token, is allowed too; what it holds inside (`Credential`) is not.
+//!
+//! The vault modules never handle a device token themselves: they may not
+//! name the token tables (`ferret_devices`, `ferret_access`, `ferret_refresh`)
+//! in a string, nor the types and calls that issue, look up or check a token
+//! (`DeviceAuth`, `TokenSecret`, `issue_access`, ...).
 //!
 //! The proof of a signed request is checked only through the handle
 //! `crate::state::Proofs`, which `auth::proofs` builds. The vault modules may
@@ -78,6 +85,16 @@ const FORBIDDEN_IDENTS: &[&str] = &[
     "register_finish",
     "verify_auth_proof",
     "verify_recovery_proof",
+    // The machinery of device tokens: a vault module takes a caller from its
+    // extractor and never issues, looks up or checks a token itself.
+    "DeviceAuth",
+    "JtiCache",
+    "RefreshGrace",
+    "TokenSecret",
+    "IssuedTokens",
+    "issue_access",
+    "issue_for_new_device",
+    "lookup_access",
 ];
 
 /// The only items of `crate::state` that the vault modules may name: the narrow
@@ -93,6 +110,8 @@ const EXTRACT_ALLOWED: &[&str] = &[
     "FreshReauth",
     "SignedBody",
     "caps",
+    // The caller of a route that takes a session cookie or a device token.
+    "VaultCaller",
 ];
 
 /// Types that only the library, the extractors or `auth::proofs` may build. A
@@ -113,15 +132,22 @@ const BUILT_ELSEWHERE: &[&str] = &[
 const INCLUDE_MACROS: &[&str] = &["include", "include_str", "include_bytes"];
 
 /// Text the vault modules must not have in a string.
-const FORBIDDEN_LITERALS: &[&str] = &["session.key", "session_key"];
+const FORBIDDEN_LITERALS: &[&str] = &[
+    "session.key",
+    "session_key",
+    // The tables of device tokens.
+    "ferret_devices",
+    "ferret_access",
+    "ferret_refresh",
+];
 
 /// Types with a byte field that are not secret and may derive `Debug`: a device
-/// id, and the hash that keys a session row.
-const DERIVED_DEBUG_ALLOWED: &[&str] = &["DeviceId", "SidHash"];
+/// id, and the hashes that key a session row and a token row.
+const DERIVED_DEBUG_ALLOWED: &[&str] = &["DeviceId", "SidHash", "TokenHash"];
 
 /// Types that must not derive `Debug` besides those the wire module lists in
 /// `redacted_debug!`.
-const ALSO_REDACTED: &[&str] = &["SessionSecret", "Secrets"];
+const ALSO_REDACTED: &[&str] = &["SessionSecret", "Secrets", "TokenSecret"];
 
 /// The name an identifier stands for: `r#Name` is `Name`.
 fn ident_name(ident: &syn::Ident) -> String {
@@ -1082,6 +1108,12 @@ fn arch_test_detects_a_planted_violation() {
         // A macro defined in `vault/`.
         "macro_rules! m { ($t:ident) => { $t { reauth_at: 0 } }; }",
         "macro_rules! m { () => {}; }",
+        // The machinery of device tokens, and their tables.
+        "use crate::ids::TokenSecret;",
+        "fn f(t: &TokenSecret) -> [u8; 32] { t.ath() }",
+        "fn f() { let _ = \"SELECT device_id FROM ferret_devices\"; }",
+        "fn f(c: &C) { c.execute(\"DELETE FROM ferret_access\", []); }",
+        "use crate::http::extract::Credential;",
     ];
     for source in violations {
         assert!(
@@ -1132,6 +1164,8 @@ fn arch_test_detects_a_planted_violation() {
         "use crate::http::headers::NO_STORE;",
         "fn f() { let _ = r#match_this(); }",
         "impl T for X { type A = u8; }",
+        // The extractor of a route that takes a cookie or a device token.
+        "use crate::http::extract::VaultCaller;",
     ];
     for source in clean {
         let found = scan_names("clean.rs", source);
@@ -1521,4 +1555,139 @@ fn proofs_is_built_only_in_auth_proofs_and_hands_out_nothing() {
         );
     }
     let _ = std::fs::remove_dir_all(&copy);
+}
+
+// ---------------------------------------------------------------------------
+// Device tokens: the vault modules never handle one themselves
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arch_test_forbids_vault_modules_from_naming_token_tables() {
+    for table in ["ferret_devices", "ferret_access", "ferret_refresh"] {
+        for planted in [
+            format!("fn f() {{ let _ = \"SELECT * FROM {table}\"; }}"),
+            format!("const SQL: &str = \"UPDATE {table} SET x = 1\";"),
+            format!("fn f(c: &C) {{ c.execute(\"DELETE FROM {table} WHERE 1\", []); }}"),
+            format!("fn f() {{ println!(\"{{}}\", \"{table}\"); }}"),
+            format!("fn f() {{ let _ = format!(\"SELECT 1 FROM {table}\"); }}"),
+        ] {
+            let found = scan_names("planted.rs", &planted);
+            assert!(
+                found.iter().any(|f| f.contains(table)),
+                "not detected: {planted}: {found:?}"
+            );
+        }
+    }
+    // The tables of the vault and the sessions are named as before.
+    for clean in [
+        "fn f() { let _ = \"SELECT 1 FROM ferret_accounts\"; }",
+        "fn f() { let _ = \"SELECT 1 FROM ferret_items WHERE vault_id = ?1\"; }",
+        "fn f() { let _ = \"SELECT 1 FROM ferret_sessions\"; }",
+    ] {
+        let found = scan_names("clean.rs", clean);
+        assert!(found.is_empty(), "false alarm for {clean}: {found:?}");
+    }
+    // And no vault module names one now.
+    let found = scan_dir_names(&manifest_dir().join("src/vault"));
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn arch_test_forbids_vault_modules_from_naming_token_machinery() {
+    for planted in [
+        "use crate::auth::tokens::DeviceAuth;",
+        "fn f(_: crate::auth::tokens::DeviceAuth) {}",
+        "fn f<S>(s: &S) { let _ = DeviceAuth::from_ref(s); }",
+        "use crate::auth::dpop::JtiCache;",
+        "fn f(_: &JtiCache) {}",
+        "use crate::auth::refresh::RefreshGrace;",
+        "fn f(_: std::sync::Arc<RefreshGrace>) {}",
+        "use crate::ids::TokenSecret;",
+        "fn f(t: &crate::ids::TokenSecret) -> String { t.to_wire() }",
+        "fn f() { let _ = TokenSecret::from_wire(\"x\"); }",
+        "use crate::auth::tokens::IssuedTokens;",
+        "fn f(_: IssuedTokens) {}",
+        "fn f() { let _ = crate::auth::tokens::issue_access(a, b); }",
+        "fn f() { let _ = issue_for_new_device(a, b); }",
+        "fn f() { let _ = crate::auth::tokens::lookup_access(a, b); }",
+        "use crate::auth::tokens::{lookup_access as find};",
+        "fn f() { println!(\"{:?}\", TokenSecret::random); }",
+        "#[some(DeviceAuth)] fn f() {}",
+        "fn f() { let _ = r#TokenSecret::from_wire(\"x\"); }",
+    ] {
+        assert!(
+            !scan_names("planted.rs", planted).is_empty(),
+            "not detected: {planted}"
+        );
+    }
+    // A name that only starts like one of them is not one of them.
+    for clean in [
+        "fn f(_: MyTokenSecretless) {}",
+        "fn f() { let _ = issue_access_log(); }",
+        "use crate::ids::TokenHash;",
+    ] {
+        let found = scan_names("clean.rs", clean);
+        assert!(found.is_empty(), "false alarm for {clean}: {found:?}");
+    }
+
+    // The types of the machinery that hold a key's thumbprint or a token write
+    // their `Debug` by hand (or have none), so `{:?}` never prints `jkt`.
+    let types = scan_types(&manifest_dir().join("src"));
+    for name in [
+        "AccessRow",
+        "VerifiedProof",
+        "NewDevice",
+        "TokenSecret",
+        "IssuedTokens",
+        "DeviceAuth",
+    ] {
+        let declared: Vec<&Declared> = types.declared.iter().filter(|d| d.name == name).collect();
+        assert_eq!(declared.len(), 1, "{name} is declared once");
+        assert!(!declared[0].derives_debug, "{name} derives Debug");
+    }
+    for name in ["AccessRow", "VerifiedProof", "NewDevice", "TokenSecret"] {
+        assert!(
+            types
+                .declared
+                .iter()
+                .any(|d| d.name == name && d.holds_bytes),
+            "{name} is seen as holding bytes, so a derived Debug would be caught"
+        );
+    }
+    // The row hash may derive it: it is a hash of a random value, as the
+    // session row's is.
+    assert!(
+        types
+            .declared
+            .iter()
+            .any(|d| d.name == "TokenHash" && d.derives_debug && d.holds_bytes)
+    );
+}
+
+#[test]
+fn arch_allows_vault_caller_as_an_extractor() {
+    for clean in [
+        "use crate::http::extract::VaultCaller;",
+        "use crate::http::extract::{SessionAuth, VaultCaller, VaultSession};",
+        "fn f(_: crate::http::extract::VaultCaller) {}",
+        "fn f(caller: &crate::http::extract::VaultCaller) -> bool { caller.still_valid(1) }",
+        "fn f() { println!(\"{:?}\", crate::http::extract::VaultCaller::from_request_parts); }",
+    ] {
+        let found = scan_names("clean.rs", clean);
+        assert!(found.is_empty(), "false alarm for {clean}: {found:?}");
+    }
+    // What the caller holds inside, and anything else of `http::extract`, is
+    // still refused.
+    for planted in [
+        "use crate::http::extract::Credential;",
+        "fn f(_: crate::http::extract::Credential) {}",
+        "use crate::http::extract::{VaultCaller, Credential};",
+        "use crate::http::extract::VaultCallerX;",
+        "fn f() { println!(\"{:?}\", crate::http::extract::Credential::Token); }",
+    ] {
+        assert!(
+            !scan_names("planted.rs", planted).is_empty(),
+            "not detected: {planted}"
+        );
+    }
 }

@@ -13,6 +13,8 @@
 
 pub mod accounts;
 pub mod backup;
+pub mod device;
+pub mod dpop;
 pub mod events;
 pub mod handoff;
 pub mod m3;
