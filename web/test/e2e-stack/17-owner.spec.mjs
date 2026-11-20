@@ -165,6 +165,10 @@ test("use_here_takes_the_vault_after_about_three_seconds_when_the_other_tab_does
     });
     const from = Date.now();
     await second.locator('[data-role="use-here"]').click();
+    // The owner says nothing within a second: the notice warns, and the user goes on.
+    await expect(second.locator('[data-role="warning"]')).toBeVisible({ timeout: 30_000 });
+    await expect(second.locator('[data-role="warning"]')).toContainText(/did not answer/i);
+    await second.locator('[data-role="use-here-anyway"]').click();
     await expect(second.locator('[data-role="use-here"]')).toHaveAttribute("aria-busy", "true");
     await expect(list(second)).toBeVisible({ timeout: 30_000 });
     const took = Date.now() - from;

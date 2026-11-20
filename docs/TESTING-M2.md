@@ -77,8 +77,9 @@ and no real passwords. Reload every open vault tab after a deploy: a tab loaded 
    restored. A conflict against a deleted item offers "Restore mine" and "Accept the deletion".
 5. **One tab per browser.** Open the vault in a second tab of the same browser: it shows "The vault is open in another
    tab" with "Use here" and nothing from the vault. Press "Use here": the vault moves, the first tab shows the notice,
-   and a change that was waiting in the first tab is sent. An edit that is open and unsaved in the old tab is lost
-   (a known limit). Locking in the new tab and unlocking again works.
+   and a change that was waiting in the first tab is sent. If the first tab has an edit that is not saved, the second
+   tab warns first ("Use here anyway"); after that the first tab keeps the form on screen, read-only, with "Take back".
+   Locking in the new tab hands the vault to the first waiting tab that is in view, and unlocking again works.
 6. **A restored server.** The administrator stops the server, restores a snapshot, bumps the restore epoch and starts it
    again (`docs/OPERATIONS.md`). Both browsers show "The server was restored" and stop syncing. "See what happened"
    shows how many local changes would be uploaded again. Accepting the older state uploads them, and creates conflicts
@@ -108,7 +109,7 @@ each of them. The ones to expect while testing:
 - Two devices that accept the same restore get a conflict for every item that was created or changed after the backup.
 - A tombstone purged after 400 days, or a device's own deletion purged before it was read back, no longer fails the checkpoint check (from M3 on): the server purges only tombstones that its checkpoint covers, a device holds a tombstone that the server has purged and leaves it out of the check, and a deletion of its own that was purged before it was read back counts as done. An item that is brought back from the trash (or with "keep mine") over a tombstone that the server has purged becomes a copy under a new id (the core's `copy_item`, as "keep both" does), so every device takes it as a new item at revision 1. Two devices that bring the same purged item back at the same time (or one after the other, each from its own trash) each make their own copy under their own id, so the vault ends with two items with the same content; nothing is lost and no warning is raised, and duplicates are not removed by the engine. What is left: an item that holds a passkey is not copied by the core and is written again under its own id at revision 1, and another device that holds such an item at a higher revision refuses that copy with a warning (section 8.8 of the design). The matrix has no passkey items, so it tolerates nothing here.
 - One tab per browser: no fence for an old tab that is alive but not answering, a standby tab unlocks the account keys,
-  an unsaved edit is lost on "Use here", and locking or signing out during "Use here" can leave no syncing tab until a reload.
+  and locking or signing out in a tab while "Use here" is going on hands the vault to a waiting tab that is in view; when no waiting tab is in view, no tab syncs until one is.
 - A rolled-back newest write, a fork and withheld writes are not detected (§ 8.6), `top_seq` is not signed, and clearing
   site data resets the sync memory.
 - The same account id pinned under two server addresses in one browser shares one local cache, and "Forget this server" leaves the shared rows in place.
