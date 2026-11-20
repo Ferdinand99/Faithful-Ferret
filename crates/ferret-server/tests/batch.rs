@@ -466,6 +466,18 @@ async fn a_request_that_is_not_a_batch_is_400() {
                 .into_bytes(),
         ),
         (
+            "an import window that is not 32 hex",
+            json!({ "ops": [good.clone()], "import_window": "zz" })
+                .to_string()
+                .into_bytes(),
+        ),
+        (
+            "an import window that is a number",
+            json!({ "ops": [good.clone()], "import_window": 5 })
+                .to_string()
+                .into_bytes(),
+        ),
+        (
             "unknown field of an op",
             batch_body(&[with_field(("surprise", json!(1)))]),
         ),
