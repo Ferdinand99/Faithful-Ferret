@@ -140,6 +140,13 @@ const PAGE_LIMIT = MAX_PAGE;
 const MAX_OWN_DELETED = 1024;
 
 /**
+ * The failures of the check of a checkpoint that a tombstone the server has purged can cause: a row at the top that has no entry
+ * (`checkpoint_top_digest_mismatch`), and an older tombstone of an item that was brought back and deleted again, against the entry of the
+ * newer tombstone (`checkpoint_lower_rev`). Only these start the look for held tombstones (`heldTombstones`).
+ */
+const HELD_CODES = new Set(["checkpoint_top_digest_mismatch", "checkpoint_lower_rev"]);
+
+/**
  * The codes that stop the engine: nothing is pulled or sent until the user acts.
  * `server_restored` and `restore_epoch_lowered` are about the restore epoch,
  * `rollback_suspected` about the top `seq`, `sync_memory_full` and `unsupported`
@@ -612,6 +619,12 @@ export function createSyncEngine({
         // An upload nobody asked for (a copy of an item the server left out, sent again by this engine) that the server
         // refuses is not a change of the user's: it says so, and it is not a conflict the user can resolve with a choice.
         const automatic = kind === "conflict" && entry.baseRev === 0 && flags.get(entry.itemId)?.kind === "missing_on_server";
+        // The user brought an item back over a tombstone this device holds (a restore from the trash, or "keep mine"), and the server has no
+        // row for it any more: the tombstone was purged. There is nothing to choose between; the item is uploaded again.
+        if (kind === "conflict" && !automatic && purgedUnderneath(entry, error)) {
+          void recreateAfterPurge(entry, error);
+          return;
+        }
         // The refusal of a write over an item this device already holds a verified tombstone for, when everything that waits for the
         // item ends in a deletion: the item may be deleted on both sides, with nothing to choose. The 409 does not decide that, whatever
         // it says: the chain is kept, the item is marked for a check, and the next pass of the feed that begins from here settles it
@@ -1560,6 +1573,62 @@ export function createSyncEngine({
   }
 
   /**
+   * Whether the refusal of `entry` says that the tombstone it was built on has been purged: the entry is the user's choice to bring an item
+   * back (a live write with `resurrect`, based on the tombstone this device holds), and the server answers that it has no row for the item.
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+   */
+  function purgedUnderneath(entry, error) {
+    const body = error.body;
+    const row = rows.get(entry.itemId);
+    if (!body || body.current_rev !== 0 || body.deleted === true || body.blob != null) return false;
+    if (!row?.deleted || entry.baseRev !== row.rev || "tomb" in entry.body) return false;
+    try {
+      return JSON.parse(new TextDecoder().decode(entry.bytes)).resurrect === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * An item that the user brought back over a purged tombstone is written again as a new item under the same id: the sealed draft is sealed
+   * once more at revision 1 and sent against nothing (`base_rev` 0), under the rules of an item that the server left out: the item is marked
+   * `missing_on_server` with the revision of the tombstone as its floor, and the key of the new write is noted, so the row that comes back
+   * is taken as this device's own. The refused write goes. A failure leaves the refusal as the conflict it would be.
+   * Spec: Fase 1 section 8.4 ("Local items the server does not know are shown as 'exists only on this device'. The default action is 'keep
+   * and upload again'"; "No resurrection without an active choice": the choice is the write that was refused) and section 8.8 (a device
+   * that holds the item at a higher revision refuses the copy with a warning).
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+   */
+  async function recreateAfterPurge(entry, error) {
+    const id = entry.itemId;
+    try {
+      await withItem(id, async () => {
+        const row = rows.get(id);
+        if (runner.entriesOf(id)[0]?.idem !== entry.idem || !row?.deleted || "tomb" in entry.body) return; // the item has moved on
+        const handle = await client.vault.open_item(hex16.decode(id), entry.baseRev + 1, entry.body.blob, entry.body.tag);
+        /** @type {Awaited<ReturnType<typeof seal>>} */
+        let made;
+        try {
+          made = await seal(id, 1, {}, handle);
+        } finally {
+          await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+        }
+        alive();
+        flags.set(id, { kind: "missing_on_server", rev: row.rev });
+        flagsDirty = true;
+        for (const idem of await runner.discard(id)) droppedIdems.add(idem);
+        blocked.delete(id);
+        conflictNotes.delete(id);
+        const { envelope, tag } = made.sealed;
+        await queue(id, 0, { blob: envelope, tag }, { rev: 1, deleted: false, envelope, tag }, made.summary);
+      });
+    } catch (failure) {
+      if (stopped || isFatal(failure)) return;
+      refuse(entry, error, "conflict", false);
+    }
+  }
+
+  /**
    * Queues the local copy of a missing item as a new write (revision 1 against
    * nothing), unless one is queued, was answered, or is being made. The digest
    * of what is sent is saved with the mark before the write is stored, so the
@@ -1778,9 +1847,11 @@ export function createSyncEngine({
   /**
    * The tombstones this device holds that the server has purged. The server purges a tombstone only when the checkpoint it holds
    * covers its `seq`, so a device that never held the tombstone makes later checkpoints without it, and at the top of such a checkpoint a
-   * tombstone this device holds is a row without an entry. When that is the only thing the checkpoint disagrees with, and the server's
+   * tombstone this device holds is a row without an entry; and a tombstone this device holds of an older revision (the item was brought back
+   * and deleted again) is below the entry of the newer tombstone that was purged. When that is the only thing the checkpoint disagrees with, and the server's
    * floor (`min_valid_since`) is at or above the `seq` of each of those tombstones, they are held: left out of the rows given to the
-   * check, and kept locally. A live row is never held, and neither is a tombstone above the floor: those stay what they are, an alarm.
+   * check, and kept locally. A live row is never held, and neither is a tombstone above the floor: those stay what they are, an alarm. An
+   * entry that lists the item live stays an alarm as well: without the held row it is a live entry without a row, and the core refuses that.
    * Answers the ids, `null` (nothing is held), or `"unreachable"` (the server cannot be asked for its floor now: nothing is said, as
    * when the checkpoint itself cannot be read, and the check is made again later).
    * Spec: Fase 1 section 8.4 ("Retention"), section 8.6 ("What a recipient checks", point 5).
@@ -1888,7 +1959,7 @@ export function createSyncEngine({
         } catch (error) {
           if (isFatal(error)) throw error;
           const code = codeOf(error);
-        if (!heldTried && code === "checkpoint_top_digest_mismatch") {
+          if (!heldTried && HELD_CODES.has(code)) {
             box.verdict = { ok: false, code, moved, warning: "", kept: "", heldCheck: true };
             return null; // nothing is stored or said before the held tombstones have been looked at
           }

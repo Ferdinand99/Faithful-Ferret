@@ -21,9 +21,12 @@ on the test stacks is throwaway test data.
 | The end-to-end gate on a private stack, in Chromium, Firefox and WebKit (scenarios 01 to 17) | `web/test/e2e-stack/` | `scripts/lanbox-ferret-e2e-gate.sh` (the sync scenarios alone: `scripts/lanbox-ferret-e2e-gate.sh m2`) |
 
 The matrix tolerates no known shape any more. The one there was, a tombstone that the server purged after 400 days, is handled: the server
-purges only what its checkpoint covers, and the engine holds a tombstone that the server has purged and counts a deletion of its own that was
-purged before it was read back as done. So every run is strict, and `KNOWN_GAPS` in `syncModel.mjs` is empty. `FERRET_MATRIX_STRICT=1` and
-`FERRET_MATRIX_TOLERATE=<shape>` stay for the next one. `FERRET_MATRIX_RUNS` sets the number of seeded runs: 500 by default, 5 000 at the gate. A failing run names its seed, and `FERRET_MATRIX_SEED=<seed>` repeats it.
+purges only what its checkpoint covers, and the engine holds a tombstone that the server has purged (also an older one, of an item that was
+brought back and deleted again) and counts a deletion of its own that was purged before it was read back as done. So every run is strict, and
+`KNOWN_GAPS` in `syncModel.mjs` is empty. `FERRET_MATRIX_STRICT=1` and `FERRET_MATRIX_TOLERATE=<shape>` stay for the next one.
+`FERRET_MATRIX_PURGE_HEAVY=1` doubles the weights of deletions and purges in `matrix_passes_strict_without_tolerating_purge`; it finds shapes
+that the usual mix meets rarely (add the variable to `FERRET_PASS_ENV`). `FERRET_MATRIX_RUNS` sets the number of seeded runs: 500 by default,
+5 000 at the gate (the strict test makes a fifth of that). A failing run names its seed, and `FERRET_MATRIX_SEED=<seed>` repeats it.
 
 ### The sync scenarios of the end-to-end gate
 
@@ -102,7 +105,7 @@ each of them. The ones to expect while testing:
   that drops changes that were not sent yet. A backup from before the `restore_seq` migration needs a start, a stop
   and then the bump.
 - Two devices that accept the same restore get a conflict for every item that was created or changed after the backup.
-- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, no longer fails the checkpoint check (from M3 on): the server purges only tombstones that its checkpoint covers, a device holds a tombstone that the server has purged and leaves it out of the check, and a deletion of its own that was purged before it was read back counts as done.
+- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, no longer fails the checkpoint check (from M3 on): the server purges only tombstones that its checkpoint covers, a device holds a tombstone that the server has purged and leaves it out of the check, and a deletion of its own that was purged before it was read back counts as done. What is left: an item that is brought back from the trash (or with "keep mine") over a tombstone that the server has purged is uploaded again under its id, at revision 1; another device that holds the item at a higher revision refuses that copy with a warning (section 8.8 of the design), until "keep both" can make a copy under a new id. The matrix does not restore such items.
 - One tab per browser: no fence for an old tab that is alive but not answering, a standby tab unlocks the account keys,
   an unsaved edit is lost on "Use here", and locking or signing out during "Use here" can leave no syncing tab until a reload.
 - A rolled-back newest write, a fork and withheld writes are not detected (§ 8.6), `top_seq` is not signed, and clearing

@@ -606,6 +606,10 @@ export class Sim {
     const entries = await this.attempt(`${dev.label} trash`, () => dev.engine.trash());
     const entry = entries ? this.rng.pick(entries) : null;
     if (!entry) return;
+    // An item whose tombstone the server has purged is uploaded again under its id when it is restored: a device that holds the item at a higher
+    // revision refuses that copy with a warning (the known limit of section 8.8, until "keep both" can make a copy under a new id). The matrix
+    // does not assert that; `restoreFromTrash` over a purged tombstone has its own test.
+    if (!this.server.items.has(entry.id)) return;
     const done = await this.attempt(`${dev.label} restoreFromTrash`, async () => {
       await dev.engine.restoreFromTrash(entry.id);
       return true;

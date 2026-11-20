@@ -9,13 +9,16 @@ import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { scope } from "./idbHelpers.mjs";
-import { createFakeClient, Model, settle, syncDevice, until } from "./syncHelpers.mjs";
+import { createFakeClient, Model, settle, signCheckpoint, syncDevice, until } from "./syncHelpers.mjs";
 
 const hex = (n) => n.toString(16).padStart(32, "0");
 const draft = (name) => ({ item_type: "login", name });
-const draftBody = draft;
 const FLAGS = (s = scope()) => `sync.flags.${s.accountId}.${s.vaultId}.${s.vkEpoch}`;
 const rowsOf = (d) => cache.getRows(d.store.database.store, scope());
+
+/** A checkpoint at the top of the model that lists one item: as a tombstone at `rev`, or live at `rev`. */
+const signedTombstone = (d, id, rev) => signCheckpoint(d.model.signKey, d.model.seq, [{ item_id: hex16.decode(id), rev, hash: null }]);
+const signedLive = (d, id, rev) => signCheckpoint(d.model.signKey, d.model.seq, [{ item_id: hex16.decode(id), rev, hash: new Uint8Array(32).fill(1) }]);
 
 /** A started device, and a spy on the rows each call of the check of a checkpoint is given. */
 async function started({ model = new Model(), client = createFakeClient(), db = null, locks } = {}) {
@@ -330,7 +333,7 @@ test("a_held_tombstone_does_not_hide_a_checkpoint_that_lists_the_item_live", asy
   // that covers the tombstone. Leaving the held row out leaves a live entry without a row: still an alarm (the core's second look decides).
   const d = await started();
   const id = await holdingATombstone(d);
-  d.model.items.set(id, { rev: 1, seq: 1, deleted: false, tomb: null, ...d.client.wireRow(id, 1, draftBody("short-lived")) });
+  d.model.items.set(id, { rev: 1, seq: 1, deleted: false, tomb: null, ...d.client.wireRow(id, 1, draft("short-lived")) });
   d.model.pinCheckpoint();
   d.model.items.delete(id);
   d.model.minValidSince = 2;
@@ -387,4 +390,61 @@ test("an_own_deletion_is_not_uploaded_again_when_the_floor_cannot_be_read", asyn
   assert.equal((await third.store.getSetting(db, FLAGS()))?.deleted, undefined);
   assert.equal(third.api.puts.length, 0);
   third.engine.stop();
+});
+
+test("a_restore_from_the_trash_over_a_purged_tombstone_is_written_again_as_a_new_item", async () => {
+  // The device holds the tombstone of an item and has it in its trash. The server has purged the tombstone, so a write on top of it
+  // (base_rev the tombstone's revision, resurrect) is refused with "no row". That is no conflict to choose in: the user's choice was to bring the
+  // item back, and an item the server does not know is uploaded again (revision 1, against nothing).
+  const d = await started();
+  const id = await d.engine.create(draft("short-lived"));
+  await until(() => d.model.items.get(id)?.rev === 1);
+  await d.engine.syncNow(); // the device holds the live row, so the deletion puts it in the trash
+  await d.engine.remove(id);
+  await until(() => d.model.items.get(id)?.rev === 2);
+  await d.engine.syncNow();
+  assert.equal((await d.engine.trash()).length, 1, "the item is in the trash");
+  d.model.pinCheckpoint();
+  d.model.items.delete(id);
+  d.model.minValidSince = 2;
+  const putsBefore = d.api.puts.length;
+  await d.engine.restoreFromTrash(id);
+  await until(() => d.model.items.get(id)?.rev === 1, "the server has the item again, at revision 1");
+  await settle(30);
+  assert.equal(d.api.puts.length - putsBefore, 2, "the write over the tombstone was refused, and the item was written again");
+  assert.equal(JSON.parse(d.api.puts.at(-1).text).base_rev, 0);
+  assert.equal(JSON.parse(d.api.puts.at(-1).text).resurrect, undefined);
+  assert.equal(d.model.items.get(id).deleted, false);
+  const shown = d.engine.list().find((item) => item.id === id);
+  assert.ok(shown, "the item is shown");
+  assert.equal(shown.blocked, false, "and nothing is blocked");
+  assert.equal(shown.conflict, false);
+  assert.equal(d.events.error.filter((event) => event.code === "conflict").length, 0, "no conflict was shown");
+  assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
+  d.engine.stop();
+});
+
+test("an_older_held_tombstone_is_no_alarm_against_the_entry_of_a_newer_tombstone", async () => {
+  // The item was deleted (rev 2), brought back (rev 3) and deleted again (rev 4); the newer tombstone was purged. The device holds the rev 2
+  // tombstone; the checkpoint that covers the purge lists the item as a tombstone at rev 4, and the server has no row and a floor above the seq.
+  const d = await started();
+  const id = await holdingATombstone(d);
+  d.model.items.delete(id);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.checkpoint = signedTombstone(d, id, 4);
+  d.api.gets.length = 0;
+  assert.equal(await d.engine.verifyNow(), "ok", "an honest server that purged the newer tombstone is no reason for an alarm");
+  assert.deepEqual(d.engine.health().warnings, []);
+  assert.equal((await rowsOf(d)).find((row) => row.itemId === id)?.rev, 2, "the older tombstone is kept");
+  // The same checkpoint with the item listed live above the tombstone's revision is still an alarm.
+  const e = await started();
+  const other = await holdingATombstone(e);
+  e.model.items.delete(other);
+  e.model.seq += 4;
+  e.model.minValidSince = e.model.seq;
+  e.model.checkpoint = signedLive(e, other, 4);
+  assert.equal(await e.engine.verifyNow(), "server_shows_older_state", "a live entry is never explained by a purge");
+  d.engine.stop();
+  e.engine.stop();
 });
