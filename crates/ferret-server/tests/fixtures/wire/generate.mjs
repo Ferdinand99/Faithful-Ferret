@@ -161,6 +161,17 @@ const batchDeleted = () => ({
   idem: id("idem two"),
 });
 
+/** `n` browsers of one account, newest first, as a full list of devices shows them. */
+const listedBrowsers = (n) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: id(`listed browser ${i}`),
+    kind: "web",
+    name: i === 0 ? "Firefox on a laptop" : `Browser ${i}`,
+    created_at: 1799000000 + 100 * (n - i),
+    last_seen: 1800000000 - i,
+    current: i === 0,
+  }));
+
 /** Every fixture: file name -> object. The type is the name before the first dot. */
 export function fixtures() {
   return {
@@ -454,8 +465,90 @@ export function fixtures() {
     "import_window_res.json": { window_id: id("import window"), ops: 250, expires_in: 1800 },
     // A batch of an import: the same operations, counted against the window.
     "batch_req_import.json": { ops: [batchLive(), batchDeleted()], import_window: id("import window") },
+    // Devices and their tokens. A `<shape>.device.json` is the device form of
+    // the shape (`<shape>_device`, see `shapeOf`).
+    "login_finish_req.device.json": {
+      login_id: id("login"),
+      ke3: b64("ke3", 64),
+      client: "device",
+      device_name: "Ferret for Firefox (Windows)",
+      platform: "windows",
+    },
+    "login_finish_res.device.json": {
+      account_id: id("account"),
+      vault_id: id("vault"),
+      vk_epoch: 1,
+      device_id: id("token device"),
+      access_token: b64("access token", 32),
+      refresh_token: b64("refresh token", 32),
+      token_type: "DPoP",
+      expires_in: 900,
+    },
+    "token_refresh_req.json": { refresh_token: b64("refresh token", 32) },
+    "token_res.json": {
+      access_token: b64("access token next", 32),
+      refresh_token: b64("refresh token next", 32),
+      token_type: "DPoP",
+      expires_in: 900,
+    },
+    "token_revoke_req.json": { refresh_token: b64("refresh token next", 32) },
+    // A device with tokens, this browser, and another browser that never gave a name.
+    "devices_res.json": {
+      devices: [
+        {
+          id: id("token device"),
+          kind: "device",
+          name: "Ferret for Firefox (Windows)",
+          platform: "windows",
+          created_at: 1800000000,
+          last_seen: 1800000300,
+          current: false,
+        },
+        {
+          id: id("device"),
+          kind: "web",
+          name: "Firefox on a laptop",
+          created_at: 1799990000,
+          last_seen: 1800000200,
+          current: true,
+        },
+        {
+          id: id("other browser"),
+          kind: "web",
+          name: "",
+          created_at: 1799980000,
+          last_seen: 1799990100,
+          current: false,
+        },
+      ],
+    },
+    "devices_res.empty.json": { devices: [] },
+    // An account with more rows than a list holds: the first 200, and how many were left out.
+    "devices_res.more.json": { devices: listedBrowsers(200), more: 7 },
+    "revoke_all_res.json": { revoked: 3 },
   };
 }
+
+/** The shape of a fixture file: the name before the first dot; `<shape>.device.json` is `<shape>_device`. */
+export function shapeOf(file) {
+  const [shape, variant] = file.split(".");
+  return variant === "device" ? `${shape}_device` : shape;
+}
+
+/**
+ * A fixed public P-256 key (the example key of RFC 9449 § 4.1) and its RFC 7638
+ * thumbprint, for the DPoP check and the client to check theirs against.
+ */
+export const DPOP_JWK = {
+  jwk: {
+    kty: "EC",
+    crv: "P-256",
+    x: "l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs",
+    y: "9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA",
+  },
+  // Made with Node's crypto: createHash("sha256").update('{"crv":"P-256","kty":"EC","x":…,"y":…}').digest("base64url").
+  jkt: "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I",
+};
 
 /** The golden list of error codes. */
 export const ERROR_CODES = [
@@ -498,6 +591,10 @@ export const ERROR_CODES = [
   "write_conflict",
   "import_window_open",
   "import_window_invalid",
+  "dpop_invalid",
+  "token_expired",
+  "token_reused",
+  "device_revoked",
 ];
 
 /**
@@ -545,6 +642,10 @@ export const STATUS_OF = {
   write_conflict: 409,
   import_window_open: 409,
   import_window_invalid: 409,
+  dpop_invalid: 401,
+  token_expired: 401,
+  token_reused: 401,
+  device_revoked: 401,
 };
 
 /**
@@ -685,7 +786,7 @@ export function invalidCases() {
 
   // Unknown fields: at the top of every shape, then inside parts.
   for (const [file, value] of Object.entries(all)) {
-    const shape = file.split(".")[0];
+    const shape = shapeOf(file);
     parse(`unknown field in ${file}`, shape, text({ ...value, x: 1 }), "an unknown field is refused");
   }
   const nested = (name, shape, file, path, why) => {
@@ -1228,6 +1329,156 @@ export function invalidCases() {
   validate("batch_req without an import window and with no operations", "batch_req", text({ ops: [] }), "a batch has 1 to 100 operations");
   parse("batch_req with an import_window that is not an id", "batch_req", with_("batch_req.json", { import_window: "x" }), "an id is 32 lower-case hexadecimal characters");
 
+  // Devices and their tokens. The device sign-in: the OPAQUE fields as in the
+  // cookie body (with their codes), `client` is `device`, a name of 1 to 64
+  // characters, a known platform, and no `device_id`, `purpose` or key.
+  const deviceLogin = "login_finish_req.device.json";
+  sized("ke3", "login_finish_req_device", deviceLogin, 64, "malformed_ke3");
+  for (const [name, value] of [["upper case", id("login").toUpperCase()], ["short", id("login").slice(1)], ["a number", 5]]) {
+    parse(`login_finish_req_device login_id ${name}`, "login_finish_req_device", with_(deviceLogin, { login_id: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  for (const value of ["web", "Device", "DEVICE", "", 1, true, null]) {
+    parse(`login_finish_req_device client ${JSON.stringify(value)}`, "login_finish_req_device", with_(deviceLogin, { client: value }), "client is device");
+  }
+  for (const field of ["login_id", "ke3", "client", "device_name", "platform"]) {
+    parse(`login_finish_req_device without ${field}`, "login_finish_req_device", with_(deviceLogin, { [field]: undefined }), `${field} is required`);
+  }
+  for (const [field, value] of [
+    ["device_id", id("device")],
+    ["purpose", "login"],
+    ["jwk", { kty: "EC", crv: "P-256", x: b64("jwk x", 32), y: b64("jwk y", 32) }],
+  ]) {
+    parse(`login_finish_req_device with ${field}`, "login_finish_req_device", with_(deviceLogin, { [field]: value }), "the server gives the id, the key is the proof's, and a device does not re-authenticate");
+  }
+  for (const [name, value] of [
+    ["empty", ""],
+    ["65 characters", "a".repeat(65)],
+    ["65 characters, 260 bytes", "\u{1d11e}".repeat(65)],
+    ["a tab", "tab\there"],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
+    ["a byte order mark", "\ufeffphone"],
+    ["a NUL", "nul\u0000"],
+    ["a NUL before more characters", `a\u0000${"b".repeat(100)}`],
+    ["a number", 5],
+    ["null", null],
+    ["a list", ["x"]],
+  ]) {
+    parse(`login_finish_req_device device_name ${name}`, "login_finish_req_device", with_(deviceLogin, { device_name: value }), "a device name has 1 to 64 characters and no control or invisible ones");
+  }
+  for (const value of ["freebsd", "Windows", "", 1, null]) {
+    parse(`login_finish_req_device platform ${JSON.stringify(value)}`, "login_finish_req_device", with_(deviceLogin, { platform: value }), "platform is one of the seven words");
+  }
+
+  // A token: exactly 43 characters of strict base64url that decode to 32 bytes.
+  const token = (shape, file, field) => {
+    const good = all[file][field];
+    const spare = good.at(-1) === "B" ? "C" : "B";
+    for (const [name, value] of [
+      ["42 characters", good.slice(0, 42)],
+      ["44 characters", `${good}A`],
+      ["padded", `${good.slice(0, 42)}=`],
+      ["padded to 44", `${good}=`],
+      ["spare bits", `${good.slice(0, 42)}${spare}`],
+      ["standard alphabet", `+${good.slice(1)}`],
+      ["empty", ""],
+      ["a number", 5],
+      ["null", null],
+    ]) {
+      parse(`${shape} ${field} ${name}`, shape, with_(file, { [field]: value }), "a token is 43 characters of strict base64url without padding (32 bytes)");
+    }
+  };
+  token("token_refresh_req", "token_refresh_req.json", "refresh_token");
+  token("token_revoke_req", "token_revoke_req.json", "refresh_token");
+  token("token_res", "token_res.json", "access_token");
+  token("token_res", "token_res.json", "refresh_token");
+  token("login_finish_res_device", "login_finish_res.device.json", "access_token");
+  token("login_finish_res_device", "login_finish_res.device.json", "refresh_token");
+  parse("token_refresh_req without refresh_token", "token_refresh_req", "{}", "refresh_token is required");
+  parse("token_revoke_req without refresh_token", "token_revoke_req", "{}", "refresh_token is required");
+  for (const [shape, file] of [["token_res", "token_res.json"], ["login_finish_res_device", "login_finish_res.device.json"]]) {
+    for (const value of ["dpop", "Bearer", "DPOP", "", 1, null]) {
+      parse(`${shape} token_type ${JSON.stringify(value)}`, shape, with_(file, { token_type: value }), "token_type is DPoP");
+    }
+    for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "900"], ["a fraction", 1.5]]) {
+      parse(`${shape} expires_in ${name}`, shape, with_(file, { expires_in: value }), "expires_in is a whole number of 32 bits");
+    }
+    for (const field of ["access_token", "refresh_token", "token_type", "expires_in"]) {
+      parse(`${shape} without ${field}`, shape, with_(file, { [field]: undefined }), `${field} is required`);
+    }
+  }
+  const deviceLoginRes = "login_finish_res.device.json";
+  parse("login_finish_res_device vk_epoch 2^53", "login_finish_res_device", with_(deviceLoginRes, { vk_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("login_finish_res_device device_id upper case", "login_finish_res_device", with_(deviceLoginRes, { device_id: id("token device").toUpperCase() }), "an id is lower case");
+  parse("login_finish_res_device device_id short", "login_finish_res_device", with_(deviceLoginRes, { device_id: id("token device").slice(1) }), "an id is 32 characters");
+  parse("login_finish_res_device without device_id", "login_finish_res_device", with_(deviceLoginRes, { device_id: undefined }), "device_id is required");
+
+  // The list of devices: at most 200 rows, each a device with tokens or a
+  // browser, with a name that may be empty and an optional platform.
+  const devices = all["devices_res.json"].devices;
+  const deviceRow = (fields) => {
+    const row = { ...devices[0] };
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete row[key];
+      else row[key] = v;
+    }
+    return text({ devices: [row, devices[1]] });
+  };
+  const rows = (n) => text({ devices: Array.from({ length: n }, (_, i) => ({ ...devices[0], id: id(`listed ${i}`) })) });
+  parse("devices_res with 201 devices", "devices_res", rows(201), "the list has at most 200 devices");
+  parse("devices_res with 300 devices", "devices_res", rows(300), "the list has at most 200 devices");
+  parse("devices_res devices is not a list", "devices_res", text({ devices: {} }), "devices is a list");
+  parse("devices_res devices is null", "devices_res", text({ devices: null }), "devices is a list");
+  parse("devices_res without devices", "devices_res", "{}", "devices is required");
+  parse("devices_res devices holds a string", "devices_res", text({ devices: ["x"] }), "a device is an object");
+  for (const value of ["browser", "Web", "", 1, null]) {
+    parse(`devices_res kind ${JSON.stringify(value)}`, "devices_res", deviceRow({ kind: value }), "kind is device or web");
+  }
+  for (const value of ["freebsd", "Windows", "", 1]) {
+    parse(`devices_res platform ${JSON.stringify(value)}`, "devices_res", deviceRow({ platform: value }), "platform is one of the seven words, or left out");
+  }
+  for (const [name, value] of [
+    ["65 characters", "a".repeat(65)],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
+    ["a number", 5],
+    ["null", null],
+  ]) {
+    parse(`devices_res name ${name}`, "devices_res", deviceRow({ name: value }), "a device name has at most 64 characters and no control or invisible ones");
+  }
+  for (const [name, value] of [["upper case", id("token device").toUpperCase()], ["short", id("token device").slice(1)], ["empty", ""]]) {
+    parse(`devices_res id ${name}`, "devices_res", deviceRow({ id: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  for (const field of ["created_at", "last_seen"]) {
+    for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800000000"], ["a fraction", 1.5]]) {
+      parse(`devices_res ${field} ${name}`, "devices_res", deviceRow({ [field]: value }), `${field} is a whole number up to 2^53 - 1`);
+    }
+  }
+  parse("devices_res current is a string", "devices_res", deviceRow({ current: "true" }), "current is a boolean");
+  for (const field of ["id", "kind", "name", "created_at", "last_seen", "current"]) {
+    parse(`devices_res row without ${field}`, "devices_res", deviceRow({ [field]: undefined }), `${field} is required`);
+  }
+  nested("unknown field in a row of devices_res", "devices_res", "devices_res.json", ["devices", 1], "an unknown field is refused inside a part");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "3"], ["a fraction", 1.5], ["null", null]]) {
+    parse(`revoke_all_res revoked ${name}`, "revoke_all_res", with_("revoke_all_res.json", { revoked: value }), "revoked is a whole number of 32 bits");
+  }
+  parse("revoke_all_res without revoked", "revoke_all_res", "{}", "revoked is required");
+  parse("devices_res name a NUL", "devices_res", deviceRow({ name: "nul\u0000" }), "a device name has no control character");
+
+  // A row of the list has the fields of its kind: a device with tokens has a
+  // name and a platform, a browser has no platform (its name may be empty).
+  const rowWhy = "a device with tokens has a name and a platform, a browser has no platform";
+  validate("devices_res: a device row with an empty name", "devices_res", deviceRow({ name: "" }), rowWhy);
+  validate("devices_res: a device row without a platform", "devices_res", deviceRow({ platform: undefined }), rowWhy);
+  validate("devices_res: a web row with a platform", "devices_res", text({ devices: [devices[0], { ...devices[1], platform: "linux" }] }), rowWhy);
+  // `more` says how many rows a full list left out: only on a full list, at least 1.
+  const full = all["devices_res.more.json"];
+  validate("devices_res: more on a list that is not full", "devices_res", text({ devices: full.devices.slice(0, 199), more: 7 }), "more is only on a full list of 200 rows");
+  validate("devices_res: more is 0", "devices_res", text({ ...full, more: 0 }), "more is at least 1");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "7"], ["a fraction", 1.5]]) {
+    parse(`devices_res more ${name}`, "devices_res", text({ ...full, more: value }), "more is a whole number of 32 bits");
+  }
+
   return cases;
 }
 
@@ -1242,6 +1493,7 @@ export function files() {
   });
   out["error_statuses.json"] = `${JSON.stringify(Object.fromEntries(statuses))}\n`;
   out["invalid.json"] = `[\n${invalidCases().map((c) => JSON.stringify(c)).join(",\n")}\n]\n`;
+  out["dpop_jwk.json"] = `${JSON.stringify(DPOP_JWK)}\n`;
   return out;
 }
 

@@ -189,6 +189,10 @@ impl ApiError {
 /// admin session): the call is made without a session, so 401 would tell the
 /// page that the user is signed out, and one status for every reason keeps the
 /// answer from saying which check failed.
+///
+/// The four codes of a device's tokens are 401: `dpop_invalid` (the DPoP proof
+/// is missing or wrong, for every reason alike), `token_expired`,
+/// `token_reused` and `device_revoked` (Spec: Fase 1 § 7.6).
 pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("unauthorized", StatusCode::UNAUTHORIZED),
     ("denied", StatusCode::UNAUTHORIZED),
@@ -229,6 +233,10 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("write_conflict", StatusCode::CONFLICT),
     ("import_window_open", StatusCode::CONFLICT),
     ("import_window_invalid", StatusCode::CONFLICT),
+    ("dpop_invalid", StatusCode::UNAUTHORIZED),
+    ("token_expired", StatusCode::UNAUTHORIZED),
+    ("token_reused", StatusCode::UNAUTHORIZED),
+    ("device_revoked", StatusCode::UNAUTHORIZED),
 ];
 
 /// The status of `code`. A code that is not in the table is a bug of the

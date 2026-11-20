@@ -17,9 +17,12 @@ import {
   checkStep, encodeWire, encodeWireBytes, ERROR_STATUS, handoffCode, MAX_BATCH_OPS, MAX_SIGNED_BODY, NONCE_LEN,
   PASSWORD_WRAP_LEN, PROOF_LEN, readJson, readWire, RECOVERY_WRAP_LEN, REDEEM_SCOPE, SESSION_SCOPES, SHAPES, shape,
 } from "../../src/wire.mjs";
+import { ACCESS_TOKEN_SECS, MAX_DEVICE_LIST, MAX_DEVICES, PLATFORMS, TOKEN_CHARS } from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
-const NOT_SHAPES = ["headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json"];
+const NOT_SHAPES = [
+  "headers.json", "generate.mjs", "error_codes.json", "error_statuses.json", "invalid.json", "dpop_jwk.json",
+];
 
 const read = (name) => readFileSync(join(DIR, name), "utf8");
 const parseFile = (name) => JSON.parse(read(name));
@@ -28,7 +31,11 @@ const parseFile = (name) => JSON.parse(read(name));
 const decode = (text, code) => Buffer.from(b64u.decode(text, code));
 const id = (text) => void hex16.decode(text);
 
-const kindOf = (name) => name.split(".")[0];
+/** The shape of a fixture: the name before the first dot; `<shape>.device.json` is `<shape>_device`. */
+const kindOf = (name) => {
+  const [kind, variant] = name.split(".");
+  return variant === "device" ? `${kind}_device` : kind;
+};
 const fixtures = () =>
   readdirSync(DIR)
     .filter((name) => name.endsWith(".json") && !NOT_SHAPES.includes(name))
@@ -609,8 +616,9 @@ test("new_codes_have_their_status", () => {
   // They come after the codes of the first version, so that list is unchanged.
   assert.ok(codes.indexOf("busy") + 1 === codes.indexOf("checkpoint_stale"));
   assert.ok(codes.indexOf("checkpoint_invalid") < codes.indexOf("restore_epoch_changed"));
-  // The codes of the third milestone close the list, in this order.
-  assert.deepEqual(codes.slice(-5), [
+  // The codes of the third milestone follow, in this order (the codes of device tokens come after them).
+  const m3 = codes.indexOf("reauth_required");
+  assert.deepEqual(codes.slice(m3, m3 + 5), [
     "reauth_required", "second_factor_required", "write_conflict", "import_window_open", "import_window_invalid",
   ]);
   assert.ok(codes.indexOf("restore_epoch_changed") < codes.indexOf("reauth_required"));
@@ -1022,4 +1030,188 @@ test("sign_in_code_and_import_window_bodies_have_the_fields_of_the_plan", () => 
   const answer = parseFile("recovery_res.json");
   assert.equal(answer.account_id, parseFile("login_finish_res.json").account_id);
   assert.equal(answer.vault_id, parseFile("login_finish_res.json").vault_id);
+});
+
+// ------------------------------------------------------- devices and tokens
+
+const M5A_SHAPES = [
+  "login_finish_req_device", "login_finish_res_device", "token_refresh_req", "token_res", "token_revoke_req",
+  "devices_res", "revoke_all_res",
+];
+const M5A_FIXTURES = [
+  "devices_res.empty.json", "devices_res.json", "devices_res.more.json", "login_finish_req.device.json", "login_finish_res.device.json",
+  "revoke_all_res.json", "token_refresh_req.json", "token_res.json", "token_revoke_req.json",
+];
+
+test("m5a_fixtures_decode_and_reencode_identically", () => {
+  const all = fixtures();
+  assert.deepEqual(all.filter((name) => M5A_SHAPES.includes(kindOf(name))), M5A_FIXTURES);
+  for (const name of M5A_FIXTURES) {
+    const kind = kindOf(name);
+    const text = read(name);
+    const value = readWire(kind, text);
+    assert.equal(`${JSON.stringify(value)}\n`, text, name);
+    assert.equal(`${encodeWire(kind, value)}\n`, text, name);
+    checkStep(kind, value);
+    assert.ok(!hasNull(value), name);
+  }
+  for (const kind of M5A_SHAPES) assert.ok(kind in SHAPES, kind);
+  // The device body is the cookie body's shape name with `_device`; the cookie fixtures read as before.
+  assert.equal(kindOf("login_finish_req.device.json"), "login_finish_req_device");
+  assert.equal(kindOf("login_finish_req.reauth.json"), "login_finish_req");
+  const device = readWire("login_finish_req_device", read("login_finish_req.device.json"));
+  assert.deepEqual(Object.keys(device), ["login_id", "ke3", "client", "device_name", "platform"]);
+  assert.equal(device.client, "device");
+  assert.equal(refusalOf(() => readWire("login_finish_req", read("login_finish_req.device.json"))), "bad_request");
+  assert.equal(refusalOf(() => readWire("login_finish_req_device", read("login_finish_req.json"))), "bad_request");
+  // The tokens: the renewal uses the sign-in's refresh token, the sign-out the renewal's.
+  const login = readWire("login_finish_res_device", read("login_finish_res.device.json"));
+  const renewed = readWire("token_res", read("token_res.json"));
+  assert.equal(login.token_type, "DPoP");
+  assert.equal(login.expires_in, ACCESS_TOKEN_SECS);
+  assert.equal(readWire("token_refresh_req", read("token_refresh_req.json")).refresh_token, login.refresh_token);
+  assert.equal(readWire("token_revoke_req", read("token_revoke_req.json")).refresh_token, renewed.refresh_token);
+  assert.equal(login.account_id, parseFile("login_finish_res.json").account_id);
+  // The list: a device with tokens, this browser, and a browser with no name.
+  const list = readWire("devices_res", read("devices_res.json"));
+  assert.equal(list.devices[0].kind, "device");
+  assert.equal(list.devices[0].id, login.device_id);
+  assert.equal(list.devices.filter((row) => row.current).length, 1);
+  assert.ok(list.devices.some((row) => row.name === "" && !("platform" in row)));
+});
+
+test("token_codes_are_401_on_both_sides", () => {
+  const statuses = parseFile("error_statuses.json");
+  const codes = errorCodes();
+  const added = ["dpop_invalid", "token_expired", "token_reused", "device_revoked"];
+  for (const code of added) {
+    assert.equal(statuses[code], 401, code);
+    assert.equal(STATUS_OF[code], 401, code);
+    assert.equal(ERROR_STATUS[code], 401, code);
+  }
+  // They close the list, after the codes of the third milestone.
+  assert.deepEqual(codes.slice(-4), added);
+  assert.equal(codes.indexOf("import_window_invalid") + 1, codes.indexOf("dpop_invalid"));
+  // A refused operation of a batch may carry them, with their status.
+  for (const code of added) checkStep("batch_res", { results: [{ status: 401, error: code }] });
+});
+
+test("m5a_invalid_cases_are_refused_the_same_way_in_rust_and_js", () => {
+  const cases = parseFile("invalid.json").filter((c) => M5A_SHAPES.includes(c.shape));
+  assert.ok(cases.length >= 100, `found only ${cases.length} cases`);
+  for (const c of cases) {
+    const label = `${c.name} (${c.why})`;
+    if (c.layer === "parse") {
+      assert.equal(refusalOf(() => readWire(c.shape, c.json)), c.error, label);
+    } else {
+      const value = readWire(c.shape, c.json);
+      assert.equal(refusalOf(() => checkStep(c.shape, value)), c.error, label);
+    }
+  }
+  for (const kind of M5A_SHAPES) assert.ok(cases.some((c) => c.shape === kind), kind);
+  assert.ok(cases.some((c) => c.shape === "login_finish_req_device" && c.error === "malformed_ke3"));
+  for (const name of [
+    "token_refresh_req refresh_token 42 characters", "token_refresh_req refresh_token 44 characters",
+    "token_refresh_req refresh_token padded", "token_refresh_req refresh_token spare bits",
+    "token_res token_type \"Bearer\"", "login_finish_req_device device_name empty",
+    "login_finish_req_device device_name 65 characters", "login_finish_req_device platform \"freebsd\"",
+    "devices_res with 201 devices", "devices_res kind \"browser\"",
+  ]) {
+    assert.ok(cases.some((c) => c.name === name), name);
+  }
+});
+
+test("tokens_are_43_strict_base64url_characters_and_token_type_is_dpop", () => {
+  assert.equal(TOKEN_CHARS, 43);
+  const good = b64u.encode(new Uint8Array(32).fill(0x5a));
+  const refreshed = (value) => refusalOf(() => shape(SHAPES.token_refresh_req, { refresh_token: value }));
+  assert.equal(refreshed(good), null);
+  const spare = good.at(-1) === "B" ? "C" : "B";
+  for (const bad of [
+    good.slice(0, 42), `${good}A`, `${good.slice(0, 42)}=`, `${good}=`, `${good.slice(0, 42)}${spare}`,
+    `+${good.slice(1)}`, `/${good.slice(1)}`, ` ${good.slice(1)}`, "", 5, null, [good],
+  ]) {
+    assert.equal(refreshed(bad), "bad_request", JSON.stringify(bad));
+  }
+  const renewed = parseFile("token_res.json");
+  for (const bad of ["dpop", "DPOP", "Bearer", "", " DPoP", 1, null]) {
+    assert.equal(refusalOf(() => shape(SHAPES.token_res, { ...renewed, token_type: bad })), "bad_request", String(bad));
+  }
+  assert.equal(refusalOf(() => shape(SHAPES.token_res, { ...renewed, expires_in: 2 ** 32 })), "bad_request");
+});
+
+test("device_names_and_platforms_follow_the_server", () => {
+  assert.deepEqual(PLATFORMS, ["windows", "macos", "linux", "android", "ios", "chromeos", "other"]);
+  assert.ok(Object.isFrozen(PLATFORMS));
+  const device = parseFile("login_finish_req.device.json");
+  const signIn = (fields) => refusalOf(() => shape(SHAPES.login_finish_req_device, { ...device, ...fields }));
+  for (const platform of PLATFORMS) assert.equal(signIn({ platform }), null, platform);
+  for (const platform of ["Windows", "freebsd", "", null, 1]) assert.equal(signIn({ platform }), "bad_request", String(platform));
+  // The name of a device that signs in: 1 to 64 characters (code points), nothing hidden.
+  for (const [name, ok] of [
+    ["a", true], ["a".repeat(64), true], ["\u{1d11e}".repeat(64), true], ["a\u200db", true],
+    ["", false], ["a".repeat(65), false], ["\u{1d11e}".repeat(65), false], ["tab\there", false],
+    ["phone\u202eknil", false], ["pho\u200bne", false], [null, false],
+  ]) {
+    assert.equal(signIn({ device_name: name }), ok ? null : "bad_request", JSON.stringify(name));
+  }
+  // The body of a device has no device_id, purpose or key.
+  for (const field of ["device_id", "purpose", "jwk"]) {
+    assert.equal(signIn({ [field]: "x" }), "bad_request", field);
+  }
+  // In the list, a browser with no name has `""`; the platform may be left out.
+  const list = parseFile("devices_res.json");
+  const row = list.devices[0];
+  const listed = (fields) => refusalOf(() => shape(SHAPES.devices_res, { devices: [{ ...row, ...fields }] }));
+  assert.equal(listed({ name: "" }), null); // it reads; the row rule is a check of its own
+  assert.equal(listed({ platform: null }), null);
+  // The row rule: a device with tokens has a name and a platform, a browser has no platform.
+  const checked = (devices) => refusalOf(() => checkStep("devices_res", { devices }));
+  const browser = list.devices[1];
+  assert.equal(checked([row, browser, { ...browser, name: "" }]), null);
+  assert.equal(checked([{ ...row, name: "" }]), "bad_request");
+  assert.equal(checked([{ ...row, platform: undefined }]), "bad_request");
+  assert.equal(checked([{ ...browser, platform: "linux" }]), "bad_request");
+  for (const name of ["nul\u0000", "\u0000"]) assert.equal(listed({ name }), "bad_request", JSON.stringify(name));
+  assert.equal(listed({ name: "a".repeat(65) }), "bad_request");
+  assert.equal(listed({ kind: "browser" }), "bad_request");
+});
+
+test("the_device_list_has_at_most_200_rows", () => {
+  assert.equal(MAX_DEVICES, 20);
+  assert.equal(MAX_DEVICE_LIST, 200);
+  const row = parseFile("devices_res.json").devices[0];
+  const rows = (n) => ({ devices: Array.from({ length: n }, () => row) });
+  assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(MAX_DEVICE_LIST))), null);
+  assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(MAX_DEVICE_LIST + 1))), "bad_request");
+  assert.equal(refusalOf(() => shape(SHAPES.devices_res, rows(0))), null);
+  // A longer list is cut, and `more` says how many rows were left out: only on a full list, at least 1.
+  const cut = readWire("devices_res", read("devices_res.more.json"));
+  assert.equal(cut.devices.length, MAX_DEVICE_LIST);
+  assert.ok(cut.more >= 1);
+  checkStep("devices_res", cut);
+  const more = (devices, value) => refusalOf(() => checkStep("devices_res", { devices, more: value }));
+  assert.equal(more(cut.devices, 1), null);
+  assert.equal(more(cut.devices, null), null);
+  assert.equal(more(cut.devices, 0), "bad_request");
+  assert.equal(more(cut.devices.slice(1), 3), "bad_request");
+  for (const bad of [-1, 2 ** 32, "3", 1.5]) {
+    assert.equal(refusalOf(() => shape(SHAPES.devices_res, { ...cut, more: bad })), "bad_request", String(bad));
+  }
+  assert.equal("more" in parseFile("devices_res.json"), false);
+});
+
+test("the_dpop_jwk_fixture_is_a_public_p256_key_and_its_thumbprint", async () => {
+  const { jwk, jkt, ...rest } = parseFile("dpop_jwk.json");
+  assert.deepEqual(rest, {});
+  assert.deepEqual(Object.keys(jwk), ["kty", "crv", "x", "y"]);
+  // RFC 7638 § 3: the required members in lexical order, no white space.
+  const canonical = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
+  assert.equal(createHash("sha256").update(canonical).digest("base64url"), jkt);
+  assert.equal(decode(jkt).length, 32);
+  // It is a point of P-256: the platform imports it as a public key.
+  const { createPublicKey } = await import("node:crypto");
+  const key = createPublicKey({ key: jwk, format: "jwk" });
+  assert.equal(key.type, "public");
+  assert.equal(key.asymmetricKeyDetails.namedCurve, "prime256v1");
 });

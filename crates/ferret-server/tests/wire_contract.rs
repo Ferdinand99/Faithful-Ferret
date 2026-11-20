@@ -21,6 +21,11 @@ use ferret_server::wire::{
     RestoreRowsRes, SESSION_SCOPES, SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson,
     b64url, hex16, parse_handoff_code, refusal_code,
 };
+use ferret_server::wire::{
+    ACCESS_TOKEN_SECS, DeviceJson, DeviceKindJson, DeviceLoginFinishReq, DeviceLoginFinishRes,
+    DevicesRes, LoginFinishBody, MAX_DEVICE_LIST, MAX_DEVICES, PLATFORMS, PlatformJson,
+    RevokeAllRes, TOKEN_CHARS, TokenJson, TokenRefreshReq, TokenRes, TokenRevokeReq, TokenTypeJson,
+};
 use ferret_server_auth::{AuthError, DenyReason, Malformed, SessionScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -50,7 +55,19 @@ const NOT_SHAPES: &[&str] = &[
     "error_codes.json",
     "error_statuses.json",
     "invalid.json",
+    "dpop_jwk.json",
 ];
+
+/// The shape of a fixture file: the name before the first dot, and for a
+/// `<shape>.device.json` the device form `<shape>_device`.
+fn shape_of(name: &str) -> String {
+    let mut parts = name.split('.');
+    let shape = parts.next().unwrap();
+    match parts.next() {
+        Some("device") => format!("{shape}_device"),
+        _ => shape.to_string(),
+    }
+}
 
 /// All fixture files: (file name, shape name before the first dot).
 fn fixtures() -> Vec<(String, String)> {
@@ -59,7 +76,7 @@ fn fixtures() -> Vec<(String, String)> {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .filter(|name| !NOT_SHAPES.contains(&name.as_str()))
         .map(|name| {
-            let shape = name.split('.').next().unwrap().to_string();
+            let shape = shape_of(&name);
             (name, shape)
         })
         .collect();
@@ -123,6 +140,13 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "redeem_res" => through::<RedeemRes>(text),
         "import_window_req" => through::<ImportWindowReq>(text),
         "import_window_res" => through::<ImportWindowRes>(text),
+        "login_finish_req_device" => through::<DeviceLoginFinishReq>(text),
+        "login_finish_res_device" => through::<DeviceLoginFinishRes>(text),
+        "token_refresh_req" => through::<TokenRefreshReq>(text),
+        "token_res" => through::<TokenRes>(text),
+        "token_revoke_req" => through::<TokenRevokeReq>(text),
+        "devices_res" => through::<DevicesRes>(text),
+        "revoke_all_res" => through::<RevokeAllRes>(text),
         other => panic!("no shape for the fixture kind {other}"),
     }
 }
@@ -176,6 +200,37 @@ const SHAPES: &[&str] = &[
     "redeem_res",
     "import_window_req",
     "import_window_res",
+    "login_finish_req_device",
+    "login_finish_res_device",
+    "token_refresh_req",
+    "token_res",
+    "token_revoke_req",
+    "devices_res",
+    "revoke_all_res",
+];
+
+/// The shapes of devices and their tokens.
+const M5A_SHAPES: &[&str] = &[
+    "login_finish_req_device",
+    "login_finish_res_device",
+    "token_refresh_req",
+    "token_res",
+    "token_revoke_req",
+    "devices_res",
+    "revoke_all_res",
+];
+
+/// The fixtures of devices and their tokens.
+const M5A_FIXTURES: &[&str] = &[
+    "devices_res.empty.json",
+    "devices_res.json",
+    "devices_res.more.json",
+    "login_finish_req.device.json",
+    "login_finish_res.device.json",
+    "revoke_all_res.json",
+    "token_refresh_req.json",
+    "token_res.json",
+    "token_revoke_req.json",
 ];
 
 /// The shapes that came with the third milestone.
@@ -846,6 +901,10 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
         "items_res" => {
             let page: ItemsRes = serde_json::from_str(text).unwrap();
             page.validate().map_err(|e| e.code())
+        }
+        "devices_res" => {
+            let list: DevicesRes = serde_json::from_str(text).unwrap();
+            list.validate().map_err(|e| e.code())
         }
         "restore_rows_res" => {
             let page: RestoreRowsRes = serde_json::from_str(text).unwrap();
@@ -1556,9 +1615,11 @@ fn new_codes_have_their_status() {
     assert!(at("gone") < at("busy") && at("busy") < at("checkpoint_stale"));
     assert!(at("checkpoint_stale") < at("checkpoint_invalid"));
     assert!(at("checkpoint_invalid") < at("restore_epoch_changed"));
-    // The codes of the third milestone close the list, in this order.
+    // The codes of the third milestone follow, in this order (the codes of
+    // device tokens come after them).
+    let m3 = at("reauth_required");
     assert_eq!(
-        &ERROR_CODES[ERROR_CODES.len() - 5..],
+        &ERROR_CODES[m3..m3 + 5],
         [
             "reauth_required",
             "second_factor_required",
@@ -1838,6 +1899,49 @@ fn invalid_cases_are_refused_the_same_way_in_rust_and_js() {
         "malformed_registration_record",
     ] {
         assert!(m3.iter().any(|case| case.error == code), "{code}");
+    }
+
+    // The shapes of devices and their tokens, the same way.
+    let m5a: Vec<&Invalid> = cases
+        .iter()
+        .filter(|case| M5A_SHAPES.contains(&case.shape.as_str()))
+        .collect();
+    assert!(m5a.len() >= 100, "found only {} cases", m5a.len());
+    for case in &m5a {
+        assert_refused(case);
+    }
+    for shape in M5A_SHAPES {
+        assert!(m5a.iter().any(|case| case.shape == *shape), "{shape}");
+    }
+    assert!(
+        m5a.iter()
+            .any(|case| case.shape == "login_finish_req_device" && case.error == "malformed_ke3")
+    );
+    // The cases the token shapes need: a token of 42 and 44 characters, with
+    // `=` and with spare bits; another `token_type`; an empty and a long
+    // device name; an unknown platform; a list over 200; an unknown kind.
+    for name in [
+        "token_refresh_req refresh_token 42 characters",
+        "token_refresh_req refresh_token 44 characters",
+        "token_refresh_req refresh_token padded",
+        "token_refresh_req refresh_token spare bits",
+        "token_res access_token 42 characters",
+        "token_res refresh_token spare bits",
+        "token_revoke_req refresh_token padded",
+        "login_finish_res_device access_token 44 characters",
+        "token_res token_type \"Bearer\"",
+        "login_finish_res_device token_type \"dpop\"",
+        "login_finish_req_device device_name empty",
+        "login_finish_req_device device_name 65 characters",
+        "login_finish_req_device platform \"freebsd\"",
+        "devices_res platform \"freebsd\"",
+        "devices_res with 201 devices",
+        "devices_res kind \"browser\"",
+    ] {
+        assert!(
+            m5a.iter().any(|case| case.name == name),
+            "no case named {name}"
+        );
     }
 }
 
@@ -2453,4 +2557,606 @@ fn debug_of_redeem_and_signed_bodies_is_redacted() {
     let text = format!("{password:?}{recover:?}{challenge:?}");
     assert!(!text.contains(&b64url::encode(&password.wrap)));
     assert!(!text.contains(&b64url::encode(&challenge.nonce)));
+}
+
+// ---------------------------------------------------------- devices and tokens
+
+/// A strict token of 32 bytes on the wire, made from `byte`.
+fn token_text(byte: u8) -> String {
+    b64url::encode(&[byte; 32])
+}
+
+#[test]
+fn wire_contract_fixtures_cover_token_shapes() {
+    // `web/test/unit/wire.test.mjs` reads the same files under the same names.
+    let all = fixtures();
+    for name in M5A_FIXTURES {
+        assert!(
+            all.iter().any(|(file, _)| file == name),
+            "{name} is missing"
+        );
+    }
+    for (name, shape) in all
+        .iter()
+        .filter(|(name, _)| M5A_FIXTURES.contains(&name.as_str()))
+    {
+        assert!(M5A_SHAPES.contains(&shape.as_str()), "{name}: {shape}");
+        let text = read(name);
+        let text = text.trim_end_matches('\n');
+        assert_eq!(
+            round_trip(shape, text).unwrap_or_else(|e| panic!("{name}: {e}")),
+            text,
+            "{name} changes when it is read and written"
+        );
+        assert_eq!(check_step(shape, text), Ok(()), "{name}");
+        assert!(
+            !has_null(&serde_json::from_str::<Value>(text).unwrap()),
+            "{name}"
+        );
+    }
+    let covered: BTreeSet<&str> = all.iter().map(|(_, shape)| shape.as_str()).collect();
+    for shape in M5A_SHAPES {
+        assert!(covered.contains(shape), "{shape}");
+        assert!(SHAPES.contains(shape), "{shape}");
+    }
+
+    // The fields, in the order the server writes them.
+    assert!(read("login_finish_req.device.json").starts_with(r#"{"login_id":"#));
+    assert_eq!(
+        keys(&json_of("login_finish_req.device.json")),
+        BTreeSet::from(["login_id", "ke3", "client", "device_name", "platform"])
+    );
+    let login: DeviceLoginFinishRes = parse("login_finish_res.device.json");
+    assert_eq!(login.token_type, TokenTypeJson::DPoP);
+    assert_eq!(login.expires_in, ACCESS_TOKEN_SECS);
+    assert_eq!(ACCESS_TOKEN_SECS, 900);
+    assert_eq!(login.access_token.0.len(), TOKEN_CHARS);
+    assert_ne!(login.access_token.0, login.refresh_token.0);
+    assert!(read("login_finish_res.device.json").starts_with(r#"{"account_id":"#));
+    assert!(
+        read("login_finish_res.device.json").contains(r#""token_type":"DPoP","expires_in":900}"#)
+    );
+    // The account of a device sign-in is the account of the cookie one.
+    let cookie: LoginFinishRes = parse("login_finish_res.json");
+    assert_eq!(
+        (login.account_id, login.vault_id, login.vk_epoch),
+        (cookie.account_id, cookie.vault_id, cookie.vk_epoch)
+    );
+    let renewed: TokenRes = parse("token_res.json");
+    assert_eq!(renewed.token_type, TokenTypeJson::DPoP);
+    assert_eq!(renewed.expires_in, ACCESS_TOKEN_SECS);
+    // The renewal uses the refresh token of the sign-in, and the sign-out the
+    // one of the renewal.
+    let refresh: TokenRefreshReq = parse("token_refresh_req.json");
+    assert_eq!(refresh.refresh_token.0, login.refresh_token.0);
+    let revoke: TokenRevokeReq = parse("token_revoke_req.json");
+    assert_eq!(revoke.refresh_token.0, renewed.refresh_token.0);
+
+    // The list: a device with tokens (with its platform), browsers (without),
+    // one of them with no name, and the one that asks.
+    let list: DevicesRes = parse("devices_res.json");
+    assert!(list.devices.len() >= 3);
+    let device = &list.devices[0];
+    assert_eq!(device.kind, DeviceKindJson::Device);
+    assert_eq!(device.platform, Some(PlatformJson::Windows));
+    assert_eq!(device.id, login.device_id);
+    assert!(
+        list.devices
+            .iter()
+            .any(|d| d.kind == DeviceKindJson::Web && d.platform.is_none() && d.current)
+    );
+    assert!(list.devices.iter().any(|d| d.name.is_empty()));
+    assert_eq!(
+        list.devices.iter().filter(|d| d.current).count(),
+        1,
+        "one row is the browser that asks"
+    );
+    let empty: DevicesRes = parse("devices_res.empty.json");
+    assert!(empty.devices.is_empty());
+    let revoked: RevokeAllRes = parse("revoke_all_res.json");
+    assert!(revoked.revoked > 0);
+}
+
+#[test]
+fn the_cookie_login_fixtures_are_unchanged_byte_for_byte() {
+    // The web vault's sign-in is byte for byte what it was: the files of the
+    // cookie shape have the SHA-256 they had before devices came.
+    for (name, sha256) in [
+        (
+            "login_finish_req.json",
+            "9266c302d9b93cfcb6551ee73d4bbc2221b0e4338d28f65a68c90b0805be9a0a",
+        ),
+        (
+            "login_finish_req.minimal.json",
+            "35e73c9cf5ad3e4c9126cf1b9eaf21f2f40dadcaf620bfea580b213da7e5404b",
+        ),
+        (
+            "login_finish_req.reauth.json",
+            "11879deb48a900f769ba189b928e7a61e48590a1434384187640db737eb81208",
+        ),
+        (
+            "login_finish_res.json",
+            "fb46417eed46c0d6dc46ffd6ac89bfee471d126e144483762e0c5b854d44482d",
+        ),
+    ] {
+        let bytes = fs::read(dir().join(name)).unwrap();
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(digest, sha256, "{name} changed");
+    }
+    // And each still reads as the cookie shape, through the body of the
+    // sign-in as well as alone.
+    for name in [
+        "login_finish_req.json",
+        "login_finish_req.minimal.json",
+        "login_finish_req.reauth.json",
+    ] {
+        let alone: LoginFinishReq = parse(name);
+        match LoginFinishBody::from_json(read(name).as_bytes()).unwrap() {
+            LoginFinishBody::Cookie(body) => assert!(body == alone, "{name}"),
+            LoginFinishBody::Device(_) => panic!("{name} read as a device body"),
+        }
+    }
+}
+
+#[test]
+fn login_finish_body_is_the_cookie_shape_unless_client_is_device() {
+    let device = read("login_finish_req.device.json");
+    match LoginFinishBody::from_json(device.as_bytes()).unwrap() {
+        LoginFinishBody::Device(body) => {
+            assert_eq!(
+                body,
+                parse::<DeviceLoginFinishReq>("login_finish_req.device.json")
+            );
+            assert_eq!(body.device_name, "Ferret for Firefox (Windows)");
+            assert_eq!(body.platform, PlatformJson::Windows);
+            assert_eq!(body.ke3.len(), 64);
+        }
+        LoginFinishBody::Cookie(_) => panic!("the device body read as the cookie body"),
+    }
+    // The key `client` decides, wherever it is in the object.
+    let mut value = json_of("login_finish_req.device.json");
+    let client = value.as_object_mut().unwrap().remove("client").unwrap();
+    let mut reordered = serde_json::Map::new();
+    reordered.insert("client".into(), client);
+    reordered.extend(value.as_object().unwrap().clone());
+    assert!(matches!(
+        LoginFinishBody::from_json(Value::Object(reordered).to_string().as_bytes()),
+        Ok(LoginFinishBody::Device(_))
+    ));
+    // Without the key, a device body is a cookie body that is wrong
+    // (`device_id` is missing, `platform` is unknown), never a device body.
+    let mut value = json_of("login_finish_req.device.json");
+    value.as_object_mut().unwrap().remove("client");
+    let error = LoginFinishBody::from_json(value.to_string().as_bytes()).unwrap_err();
+    assert_eq!(refusal_code(&error.to_string()), "bad_request");
+    // `client: null` and another word are not a device body either.
+    for client in [
+        Value::Null,
+        json!("web"),
+        json!("Device"),
+        json!(""),
+        json!(1),
+    ] {
+        let mut value = json_of("login_finish_req.device.json");
+        value["client"] = client.clone();
+        let error = LoginFinishBody::from_json(value.to_string().as_bytes()).unwrap_err();
+        assert_eq!(refusal_code(&error.to_string()), "bad_request", "{client}");
+    }
+    // A cookie body with `client` added is read as a device body, and refused
+    // for what the device body has not (`device_id`, `purpose`).
+    let mut value = json_of("login_finish_req.json");
+    value["client"] = json!("device");
+    let error = LoginFinishBody::from_json(value.to_string().as_bytes()).unwrap_err();
+    assert_eq!(refusal_code(&error.to_string()), "bad_request");
+    // What is not an object is read as the cookie shape and refused by it.
+    for text in ["", "[]", "null", "5", "\"client\"", "{"] {
+        let body = LoginFinishBody::from_json(text.as_bytes()).unwrap_err();
+        let alone = serde_json::from_str::<LoginFinishReq>(text).unwrap_err();
+        assert_eq!(body.to_string(), alone.to_string(), "{text:?}");
+    }
+    // A repeated key `client` is refused.
+    let repeated = device.replacen(
+        r#""client":"device""#,
+        r#""client":"device","client":"device""#,
+        1,
+    );
+    assert_ne!(repeated, device);
+    assert!(LoginFinishBody::from_json(repeated.as_bytes()).is_err());
+    // Debug shows which shape, and nothing of it.
+    let body = LoginFinishBody::from_json(device.as_bytes()).unwrap();
+    assert_eq!(format!("{body:?}"), "LoginFinishBody::Device([redacted])");
+}
+
+#[test]
+fn a_device_body_with_device_id_purpose_or_jwk_is_refused() {
+    let base = json_of("login_finish_req.device.json");
+    assert!(serde_json::from_value::<DeviceLoginFinishReq>(base.clone()).is_ok());
+    // The server gives the id, the key is the proof's, and a device does not
+    // re-authenticate.
+    for (field, extra) in [
+        ("device_id", json!(hex16::encode(&[1; 16]))),
+        ("purpose", json!("login")),
+        ("purpose", json!("reauth")),
+        (
+            "jwk",
+            json!({"kty": "EC", "crv": "P-256", "x": token_text(1), "y": token_text(2)}),
+        ),
+        ("device_jwk", json!({})),
+        ("x", json!(1)),
+    ] {
+        let mut value = base.clone();
+        value[field] = extra;
+        let text = value.to_string();
+        let error = serde_json::from_str::<DeviceLoginFinishReq>(&text).unwrap_err();
+        assert_eq!(refusal_code(&error.to_string()), "bad_request", "{field}");
+        let error = LoginFinishBody::from_json(text.as_bytes()).unwrap_err();
+        assert_eq!(refusal_code(&error.to_string()), "bad_request", "{field}");
+    }
+    // Every field is needed.
+    for field in ["login_id", "ke3", "client", "device_name", "platform"] {
+        let mut value = base.clone();
+        value.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<DeviceLoginFinishReq>(value).is_err(),
+            "{field}"
+        );
+    }
+    // The name: 1 to 64 characters, none of them hidden.
+    for (name, ok) in [
+        ("a".to_string(), true),
+        ("a".repeat(64), true),
+        ("\u{1d11e}".repeat(64), true),
+        ("a\u{200d}b".to_string(), true),
+        (String::new(), false),
+        ("a".repeat(65), false),
+        ("\u{1d11e}".repeat(65), false),
+        ("tab\there".to_string(), false),
+        ("phone\u{202e}knil".to_string(), false),
+        ("pho\u{200b}ne".to_string(), false),
+    ] {
+        let mut value = base.clone();
+        value["device_name"] = json!(name);
+        assert_eq!(
+            serde_json::from_value::<DeviceLoginFinishReq>(value).is_ok(),
+            ok,
+            "{name:?}"
+        );
+    }
+    // The platforms are the seven words, lower case.
+    assert_eq!(
+        PLATFORMS,
+        [
+            "windows", "macos", "linux", "android", "ios", "chromeos", "other"
+        ]
+    );
+    for (word, platform) in PLATFORMS.iter().zip(PlatformJson::ALL) {
+        let mut value = base.clone();
+        value["platform"] = json!(word);
+        let body: DeviceLoginFinishReq = serde_json::from_value(value).unwrap();
+        assert_eq!(body.platform, platform);
+        assert_eq!(platform.as_str(), *word);
+        assert_eq!(PlatformJson::from_word(word), Some(platform));
+        assert_eq!(serde_json::to_value(platform).unwrap(), json!(word));
+    }
+    for word in ["Windows", "freebsd", "", "mac"] {
+        assert_eq!(PlatformJson::from_word(word), None);
+    }
+}
+
+#[test]
+fn login_finish_body_keeps_the_field_codes_of_both_shapes() {
+    // Every invalid case of the cookie body gives the same code through the
+    // body of the sign-in as through the cookie shape alone.
+    let cases: Vec<Invalid> = parse("invalid.json");
+    let cookie: Vec<&Invalid> = cases
+        .iter()
+        .filter(|case| case.shape == "login_finish_req")
+        .collect();
+    assert!(cookie.len() >= 20, "found only {} cases", cookie.len());
+    let code =
+        |result: Result<(), serde_json::Error>| result.map_err(|e| refusal_code(&e.to_string()));
+    for case in &cookie {
+        let alone = code(serde_json::from_str::<LoginFinishReq>(&case.json).map(|_| ()));
+        let body = code(LoginFinishBody::from_json(case.json.as_bytes()).map(|_| ()));
+        assert_eq!(body, alone, "{}", case.name);
+        assert_eq!(alone, Err(case.error.as_str()), "{}", case.name);
+    }
+    assert!(cookie.iter().any(|case| case.error == "malformed_ke3"));
+    // The device body keeps them too: a short `ke3` is `malformed_ke3`.
+    let mut value = json_of("login_finish_req.device.json");
+    value["ke3"] = json!(b64url::encode(&[7; 63]));
+    let text = value.to_string();
+    assert_eq!(
+        code(LoginFinishBody::from_json(text.as_bytes()).map(|_| ())),
+        Err("malformed_ke3")
+    );
+    assert_eq!(
+        code(serde_json::from_str::<DeviceLoginFinishReq>(&text).map(|_| ())),
+        Err("malformed_ke3")
+    );
+    for case in cases
+        .iter()
+        .filter(|case| case.shape == "login_finish_req_device")
+    {
+        let alone = code(serde_json::from_str::<DeviceLoginFinishReq>(&case.json).map(|_| ()));
+        let body = code(LoginFinishBody::from_json(case.json.as_bytes()).map(|_| ()));
+        assert_eq!(alone, Err(case.error.as_str()), "{}", case.name);
+        if case.json.contains("\"client\":\"device\"") {
+            assert_eq!(body, alone, "{}", case.name);
+        }
+    }
+    // The cookie path's codes are the ones it had.
+    let mut value = json_of("login_finish_req.json");
+    value["ke3"] = json!(b64url::encode(&[7; 65]));
+    assert_eq!(
+        code(LoginFinishBody::from_json(value.to_string().as_bytes()).map(|_| ())),
+        Err("malformed_ke3")
+    );
+}
+
+#[test]
+fn token_codes_are_401_on_both_sides() {
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(&read("error_statuses.json")).unwrap();
+    let codes: Vec<String> = serde_json::from_str(&read("error_codes.json")).unwrap();
+    let new = [
+        "dpop_invalid",
+        "token_expired",
+        "token_reused",
+        "device_revoked",
+    ];
+    for code in new {
+        assert!(ERROR_CODES.contains(&code), "{code}");
+        assert_eq!(
+            ferret_server::error::status_of(code).as_u16(),
+            401,
+            "{code}"
+        );
+        assert_eq!(ApiError::coded(code).status.as_u16(), 401, "{code}");
+        assert_eq!(golden[code], 401, "{code} in error_statuses.json");
+    }
+    // They close the list, after the codes of the third milestone, so the
+    // older list is unchanged.
+    assert_eq!(&ERROR_CODES[ERROR_CODES.len() - 4..], new);
+    assert_eq!(&codes[codes.len() - 4..], new);
+    let at = |code: &str| ERROR_CODES.iter().position(|c| *c == code).unwrap();
+    assert_eq!(at("import_window_invalid") + 1, at("dpop_invalid"));
+    // A refusal of an operation in a batch may carry them with their status.
+    for code in new {
+        BatchResultJson::refused(code)
+            .validate()
+            .unwrap_or_else(|e| panic!("{code}: {e}"));
+    }
+}
+
+#[test]
+fn token_types_have_redacted_debug() {
+    let login: DeviceLoginFinishRes = parse("login_finish_res.device.json");
+    let request: DeviceLoginFinishReq = parse("login_finish_req.device.json");
+    let refresh: TokenRefreshReq = parse("token_refresh_req.json");
+    let renewed: TokenRes = parse("token_res.json");
+    let revoke: TokenRevokeReq = parse("token_revoke_req.json");
+    let list: DevicesRes = parse("devices_res.json");
+    let revoked: RevokeAllRes = parse("revoke_all_res.json");
+    let shown = [
+        (format!("{login:?}"), "DeviceLoginFinishRes([redacted])"),
+        (format!("{request:?}"), "DeviceLoginFinishReq([redacted])"),
+        (format!("{refresh:?}"), "TokenRefreshReq([redacted])"),
+        (format!("{renewed:?}"), "TokenRes([redacted])"),
+        (format!("{revoke:?}"), "TokenRevokeReq([redacted])"),
+        (format!("{list:?}"), "DevicesRes([redacted])"),
+        (format!("{:?}", list.devices[0]), "DeviceJson([redacted])"),
+        (format!("{revoked:?}"), "RevokeAllRes([redacted])"),
+        (format!("{:?}", login.access_token), "TokenJson([redacted])"),
+    ];
+    for (shown, expected) in &shown {
+        assert_eq!(shown, expected);
+    }
+    // No token is in any of them.
+    let all: String = shown.iter().map(|(text, _)| text.as_str()).collect();
+    for token in [
+        &login.access_token,
+        &login.refresh_token,
+        &renewed.access_token,
+        &renewed.refresh_token,
+    ] {
+        assert!(!all.contains(&token.0));
+    }
+    // A token read from the wire keeps its text for the server, and the
+    // server's own secret reads it.
+    let secret = ferret_server::ids::TokenSecret::from_wire(&login.access_token.0).unwrap();
+    assert_eq!(secret.to_wire(), login.access_token.0);
+    assert_eq!(format!("{secret:?}"), "TokenSecret([redacted])");
+}
+
+#[test]
+fn tokens_on_the_wire_are_43_strict_base64url_characters() {
+    let good = token_text(0x5a);
+    assert_eq!(good.len(), TOKEN_CHARS);
+    let read = |text: &Value| serde_json::from_value::<TokenJson>(text.clone());
+    assert_eq!(read(&json!(good)).unwrap().0, good);
+    assert_eq!(
+        serde_json::to_string(&TokenJson(good.clone())).unwrap(),
+        format!("\"{good}\"")
+    );
+    let last = good.chars().last().unwrap();
+    let spare = if last == 'B' { 'C' } else { 'B' };
+    for bad in [
+        json!(&good[..42]),
+        json!(format!("{good}A")),
+        json!(format!("{}=", &good[..42])),
+        json!(format!("{good}=")),
+        json!(format!("{}{spare}", &good[..42])),
+        json!(format!("+{}", &good[1..])),
+        json!(format!("/{}", &good[1..])),
+        json!(format!(" {}", &good[1..])),
+        json!(""),
+        json!(5),
+        Value::Null,
+        json!([good]),
+    ] {
+        let error = read(&bad).unwrap_err();
+        assert_eq!(refusal_code(&error.to_string()), "bad_request", "{bad}");
+    }
+    // In every shape that carries one.
+    for (name, field) in [
+        ("token_refresh_req.json", "refresh_token"),
+        ("token_revoke_req.json", "refresh_token"),
+        ("token_res.json", "access_token"),
+        ("token_res.json", "refresh_token"),
+        ("login_finish_res.device.json", "access_token"),
+        ("login_finish_res.device.json", "refresh_token"),
+    ] {
+        let mut value = json_of(name);
+        value[field] = json!(&good[..42]);
+        assert!(
+            round_trip(&shape_of(name), &value.to_string()).is_err(),
+            "{name} {field}"
+        );
+    }
+    // `token_type` is the one word `DPoP`.
+    assert_eq!(
+        serde_json::to_value(TokenTypeJson::DPoP).unwrap(),
+        json!("DPoP")
+    );
+    for bad in ["dpop", "DPOP", "Bearer", "bearer", "", " DPoP"] {
+        assert!(
+            serde_json::from_value::<TokenTypeJson>(json!(bad)).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn the_device_list_has_at_most_200_rows_and_names_may_be_empty() {
+    assert_eq!((MAX_DEVICES, MAX_DEVICE_LIST), (20, 200));
+    let list = json_of("devices_res.json");
+    let row = list["devices"][0].clone();
+    let with = |n: usize| json!({ "devices": vec![row.clone(); n] });
+    assert_eq!(
+        serde_json::from_value::<DevicesRes>(with(MAX_DEVICE_LIST))
+            .unwrap()
+            .devices
+            .len(),
+        200
+    );
+    let error = serde_json::from_value::<DevicesRes>(with(MAX_DEVICE_LIST + 1)).unwrap_err();
+    assert_eq!(refusal_code(&error.to_string()), "bad_request");
+    // A row: the name is never long or hidden; it may be empty for a browser
+    // that never gave one, never for a device with tokens; a device has its
+    // platform, a browser has none; the kind is one of two.
+    let read = |value: Value| serde_json::from_value::<DeviceJson>(value);
+    let checked = |value: Value| read(value).unwrap().validate();
+    assert_eq!(checked(row.clone()), Ok(()));
+    let mut unnamed = row.clone();
+    unnamed["name"] = json!("");
+    assert!(checked(unnamed).is_err(), "a device with tokens has a name");
+    let mut no_platform = row.clone();
+    no_platform.as_object_mut().unwrap().remove("platform");
+    assert!(
+        checked(no_platform).is_err(),
+        "a device with tokens has a platform"
+    );
+    let browser = list["devices"][1].clone();
+    assert_eq!(checked(browser.clone()), Ok(()));
+    let mut unnamed_browser = browser.clone();
+    unnamed_browser["name"] = json!("");
+    assert_eq!(
+        checked(unnamed_browser),
+        Ok(()),
+        "a browser may have no name"
+    );
+    let mut browser_platform = browser.clone();
+    browser_platform["platform"] = json!("linux");
+    assert!(
+        checked(browser_platform).is_err(),
+        "a browser has no platform"
+    );
+    for bad in ["nul\u{0}", "\u{0}"] {
+        let mut value = row.clone();
+        value["name"] = json!(bad);
+        assert!(read(value).is_err(), "{bad:?}");
+    }
+    for bad in ["a".repeat(65), "pho\u{200b}ne".to_string()] {
+        let mut value = row.clone();
+        value["name"] = json!(bad);
+        assert!(read(value).is_err(), "{bad:?}");
+    }
+    let mut web = row.clone();
+    web.as_object_mut().unwrap().remove("platform");
+    web["kind"] = json!("web");
+    let parsed = read(web.clone()).unwrap();
+    assert_eq!(parsed.platform, None);
+    assert_eq!(parsed.kind, DeviceKindJson::Web);
+    assert!(!serde_json::to_string(&parsed).unwrap().contains("platform"));
+    for kind in ["browser", "Web", "", "token"] {
+        let mut value = row.clone();
+        value["kind"] = json!(kind);
+        assert!(read(value).is_err(), "{kind}");
+    }
+    for field in ["id", "kind", "name", "created_at", "last_seen", "current"] {
+        let mut value = row.clone();
+        value.as_object_mut().unwrap().remove(field);
+        assert!(read(value).is_err(), "{field}");
+    }
+
+    // A longer list is cut at 200 rows, and `more` says how many were left
+    // out: only on a full list, and at least 1.
+    let cut: DevicesRes = parse("devices_res.more.json");
+    assert_eq!(cut.devices.len(), MAX_DEVICE_LIST);
+    assert!(cut.more.is_some_and(|n| n >= 1));
+    assert_eq!(cut.validate(), Ok(()));
+    let full = |more: Value| {
+        let mut value = with(MAX_DEVICE_LIST);
+        value["more"] = more;
+        serde_json::from_value::<DevicesRes>(value)
+    };
+    assert_eq!(full(json!(1)).unwrap().validate(), Ok(()));
+    assert_eq!(full(Value::Null).unwrap().more, None);
+    assert!(
+        full(json!(0)).unwrap().validate().is_err(),
+        "more is at least 1"
+    );
+    for bad in [json!(-1), json!(4_294_967_296_u64), json!("3"), json!(1.5)] {
+        assert!(full(bad.clone()).is_err(), "{bad}");
+    }
+    let short: DevicesRes =
+        serde_json::from_value(json!({ "devices": vec![row.clone(); 3], "more": 2 })).unwrap();
+    assert!(short.validate().is_err(), "more only on a full list");
+    let plain: DevicesRes = parse("devices_res.json");
+    assert_eq!(plain.more, None);
+    assert!(
+        !fs::read_to_string(dir().join("devices_res.json"))
+            .unwrap()
+            .contains("more")
+    );
+}
+
+#[test]
+fn the_dpop_jwk_fixture_is_a_public_p256_key_and_its_thumbprint() {
+    // A fixed public P-256 key and its RFC 7638 thumbprint, for the DPoP check
+    // and the client to check their thumbprints against.
+    let fixture = json_of("dpop_jwk.json");
+    assert_eq!(keys(&fixture), BTreeSet::from(["jwk", "jkt"]));
+    let jwk = &fixture["jwk"];
+    assert_eq!(keys(jwk), BTreeSet::from(["kty", "crv", "x", "y"]));
+    assert_eq!(jwk["kty"], "EC");
+    assert_eq!(jwk["crv"], "P-256");
+    for member in ["x", "y"] {
+        let text = jwk[member].as_str().unwrap();
+        assert_eq!(text.len(), 43, "{member}");
+        assert_eq!(b64url::decode(text).unwrap().len(), 32, "{member}");
+    }
+    // RFC 7638 § 3: the required members in lexical order, no white space.
+    let canonical = format!(
+        r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
+        jwk["x"].as_str().unwrap(),
+        jwk["y"].as_str().unwrap()
+    );
+    let jkt = fixture["jkt"].as_str().unwrap();
+    assert_eq!(b64url::encode(&Sha256::digest(canonical.as_bytes())), jkt);
+    assert_eq!(b64url::decode(jkt).unwrap().len(), 32);
 }
