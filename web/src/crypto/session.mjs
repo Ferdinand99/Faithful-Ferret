@@ -11,6 +11,7 @@
 // throws, never stops a sign-in.
 import { changePassword } from "../flows/changePassword.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
+import { encryptedExport, plainExport } from "../flows/export.mjs";
 import { reauthenticate } from "../flows/reauth.mjs";
 import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
 import { register } from "../flows/register.mjs";
@@ -194,6 +195,28 @@ export function createCryptoSession({
       const done = await changePassword(env, args);
       if (locks === before) freshUntil = done.until;
       return done;
+    },
+
+    /**
+     * The encrypted export of the open vault (see `flows/export.mjs`): a fresh sign-in with the master password, then the
+     * file for the browser. The vault stays open; a lock while it runs ends it with `locked`.
+     * @param {Omit<Parameters<typeof encryptedExport>[1], "scope">} args
+     */
+    async exportEncrypted(args) {
+      if (current === null) throw new AccountError("session_ended");
+      const { accountId, vaultId, vkEpoch } = current;
+      return encryptedExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
+    },
+
+    /**
+     * The plain export of the open vault (see `flows/export.mjs`): behind the master password again and an explicit
+     * confirmation. The file holds every secret in the clear.
+     * @param {Omit<Parameters<typeof plainExport>[1], "scope">} args
+     */
+    async exportPlain(args) {
+      if (current === null) throw new AccountError("session_ended");
+      const { accountId, vaultId, vkEpoch } = current;
+      return plainExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
     },
 
     /**
