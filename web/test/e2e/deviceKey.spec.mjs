@@ -7,12 +7,18 @@ import { expect, test } from "@playwright/test";
 
 const SERVER = "https://vault.ferret.test";
 
-/** Collects page errors and console messages (as csp.spec.mjs does). */
+/**
+ * Collects page errors and console messages (as csp.spec.mjs does) while `seen.paused` is false. A reload is not
+ * watched: Firefox warns there about the page's own module loads that the reload cuts off.
+ */
 function watch(page) {
-  const seen = { errors: [], console: [] };
-  page.on("pageerror", (e) => seen.errors.push(String(e)));
+  const seen = { errors: [], console: [], paused: false };
+  page.on("pageerror", (e) => {
+    if (!seen.paused) seen.errors.push(String(e));
+  });
   const webkit = page.context().browser()?.browserType().name() === "webkit";
   page.on("console", (m) => {
+    if (seen.paused) return;
     // WebKit (Playwright 1.65) logs this note about cross-origin isolation after a reload; it is not about our code.
     if (webkit && /^This document is not cross-origin isolated because the Cross-Origin-Embedder-Policy header is missing/.test(m.text())) return;
     seen.console.push(`${m.type()}: ${m.text()}`);
@@ -83,8 +89,10 @@ test("device_key_is_not_extractable_and_survives_reopening_the_db", async ({ pag
   expect(made.refreshToken).toBe(true);
 
   // After a reload the browser gives the stored key back, and it still signs proofs that its public JWK verifies.
+  seen.paused = true;
   await page.reload();
   await open(page);
+  seen.paused = false;
   const after = await page.evaluate(async (server) => {
     const { loadDeviceKey, deleteDeviceKey, thumbprint } = await import("/app/auth/deviceKey.mjs");
     const { createClock, createProof } = await import("/app/auth/dpop.mjs");
