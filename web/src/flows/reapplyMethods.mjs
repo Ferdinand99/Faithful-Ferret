@@ -1,4 +1,4 @@
-// "Reapply the unlock methods" after a restore (J25 (i)). The server was restored from a backup older
+// "Reapply the unlock methods" after a restore (spec Fase 1 § 8.8). The server was restored from a backup older
 // than the last change of an unlock method, the user accepted that older state on this device, and the
 // recovery wrap the server holds is now below the floor this device pinned. The default renewal refuses
 // such a wrap, because anywhere else it is a rollback (`renewRecovery.mjs`). Here, and only here, the
@@ -26,6 +26,11 @@ import { belowFloor, readMethods, runRenewal } from "./renewRecovery.mjs";
 /**
  * The restore note of the account that still applies: kept, not expired, with `manifestOlder`, and for the restore
  * epoch the sync state stored when the older state was accepted. Null otherwise. Never throws.
+ *
+ * The epoch compared is the one this device accepted, not one the server states now. The server's word cannot raise
+ * trust here (it is the party a rollback comes from), and the sync state moves only when the user accepts an older
+ * state, so a later restore that this device has not accepted leaves the note on the old epoch until it is accepted
+ * too; the accept then writes a new note. A renewal made in between still only raises floors and opens no old wrap.
  * @param {Env} env
  * @param {any} db
  * @param {string} accountId
@@ -78,6 +83,8 @@ export async function reapplyOffer(env) {
 export async function reapplyMethods(env, { note, confirmNewRk, reauth }) {
   if (/** @type {any} */ (note)?.manifestOlder !== true) throw new AccountError("reapply_not_offered");
   let nothing = false;
+  /** @type {{ db: any, accountId: string, passwordBelow: boolean } | null} */
+  let seen = null;
   try {
     await runRenewal(env, {
       confirmNewRk,
@@ -85,16 +92,29 @@ export async function reapplyMethods(env, { note, confirmNewRk, reauth }) {
       check: async (methods, context) => {
         // The note is read again: the page's copy decides nothing on its own.
         if (!sameNote(await noteThatApplies(env, context.db, context.info.accountId), note)) throw new AccountError("reapply_not_offered");
-        if (!belowFloor(methods).includes("recovery")) {
+        const below = belowFloor(methods);
+        if (!below.includes("recovery")) {
           nothing = true;
           throw new AccountError("nothing_to_reapply");
         }
+        seen = { db: context.db, accountId: context.info.accountId, passwordBelow: below.includes("password") };
       },
       entry: (vault, pinned, current, manifest) => vault.renew_recovery_after_restore(pinned, current, manifest),
     });
   } catch (error) {
     if (nothing) return [];
     throw error;
+  }
+  // Done: the note goes, so a later rollback of the same restore gets the plain refusal and its warning, not a second
+  // quiet reapply. While the password is still below its floor it stays: the next unlock is refused, and the note is
+  // what explains that refusal. Best effort; a note that stays expires after 30 days.
+  const done = /** @type {{ db: any, accountId: string, passwordBelow: boolean } | null} */ (seen);
+  if (done !== null && !done.passwordBelow) {
+    try {
+      await env.store.restoreNote.delete(done.db, env.server, done.accountId);
+    } catch {
+      // as above
+    }
   }
   return ["recovery"];
 }

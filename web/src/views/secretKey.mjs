@@ -3,7 +3,7 @@
 // § 4.6 (a)) and read only what this device remembers; nothing is sent to the server.
 //
 // The secret key is shown as text or as a QR code of that text, one at a time, never both, until
-// "Hide", a lock of the vault or leaving the page; then it leaves the page. When this device does not
+// "Hide", a lock of the vault, leaving the page or hiding the tab; then it leaves the page. When this device does not
 // remember the key, the page says where it is: page 1 of the emergency sheet.
 //
 // Page 1 again is a PDF of one page, saved after a warning about synced folders. Page 2 (the recovery
@@ -20,7 +20,7 @@ import { keysErrorText, onLeave } from "./renewRecovery.mjs";
 
 /** @typedef {import("./form.mjs").Translate} Translate */
 /** @typedef {{ add(fn: () => void): () => void }} Scope */
-/** @typedef {{ addEventListener?: Function, removeEventListener?: Function }} Win */
+/** @typedef {import("./renewRecovery.mjs").Win} Win */
 /** @typedef {{ skBit: boolean | null, skStored: boolean } | null} DeviceStatus */
 /** @typedef {{ size: number, dark: (x: number, y: number) => boolean }} QrCode */
 
@@ -149,9 +149,13 @@ export function secretKeyView({ t, show, status = null, scope, win = globalThis 
       const answer = await show();
       setText(statusLine, "");
       if (answer === "not_remembered" || answer === "no_secret_key") {
+        // Said once, in place of the button: there is nothing to show on another click.
+        showButton.hidden = true;
         mount(body, answer === "not_remembered" ? notRemembered(t) : el("p", { "data-role": "sk-none" }, t("keys.secret.no_secret_key")));
         return;
       }
+      // The page was left while the password was checked: the key is not put on a page nobody sees.
+      if (/** @type {any} */ (root).isConnected === false) return;
       held = { code: answer.code, qr: answer.qr };
       as = "text";
       stop = onLeave({ scope, win }, hide);

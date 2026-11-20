@@ -3,7 +3,7 @@
 // says what is certain (nothing here was deleted), shows what accepting the
 // older state would do before anything is done, and asks for a typed word
 // before it does it. When the older state took the unlock methods back and the device kept its note
-// of that, the page leads on to "reapply the unlock methods" (J25 (i)).
+// of that, the page leads on to "reapply the unlock methods".
 //
 // Nothing here is a secret: the counts come from the engine's preview, and no
 // item name or value is read or shown. An error is shown by its code, from a
@@ -283,7 +283,7 @@ export function restoredView({ engine, t, router = { go() {} }, reload = () => /
           if (kept === "not_kept") {
             body.appendChild(el("p", { class: "notice", role: "note", "data-role": "restored-note-not-kept" }, t("syncwarnings.restored.note_not_kept")));
           } else if (kept === "kept" && done.manifestOlder === true) {
-            // The unlock methods went back and the note is kept: the way to put the newest ones back (J25 (i)).
+            // The unlock methods went back and the note is kept: the way to put the newest ones back.
             // The page it leads to checks the note and the server again before it offers anything.
             body.appendChild(el("p", { "data-role": "restored-reapply-note" }, t("keys.reapply.from_restored_note")));
             body.appendChild(el("div", { class: "actions" }, link("keys.reapply.from_restored", "restored-reapply", () => router.go("/recovery-key"))));

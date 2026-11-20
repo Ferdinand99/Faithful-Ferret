@@ -1,6 +1,6 @@
 // A new recovery key: the password check first, the new page 2 shown, nothing sent before the key is
 // typed back, the pin raised only after 200, the new key out of the worker on every path, the texts of
-// the page (J48), and the rollback text when the core refuses a wrap below the floor.
+// the page, and the rollback text when the core refuses a wrap below the floor.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { b64u } from "../../src/b64.mjs";
@@ -232,9 +232,11 @@ test("the_page_says_a_backup_was_taken_and_to_keep_the_old_sheet_until_a_newer_b
       assert.equal(textOf(byRole(page, "renew-done-old-key")).trim(), texts["keys.recovery.done_old_key"]);
     });
   }
-  // J48, word for word.
+  // The sentence about an older backup, word for word.
   assert.equal(catalog("nb")["keys.recovery.done_keep_old"],
-    "Gjenopprettes serveren fra en backup fra før i dag, virker den gamle nøkkelen igjen og den nye ikke. Ta vare på det gamle arket til du har sett en ny backup.");
+    "Gjenopprettes tjeneren fra en backup fra før denne endringen, virker den gamle nøkkelen igjen og den nye ikke. Ta vare på det gamle arket til du har sett en ny backup.");
+  assert.equal(catalog("en")["keys.recovery.done_keep_old"],
+    "If the server is restored from a backup from before this change, the old key works again and the new one does not. Keep the old sheet until you have seen a new backup.");
   assert.match(catalog("en")["keys.recovery.done_backup"], /asked to make a new backup/);
   assert.match(catalog("nb")["keys.recovery.done_backup"], /bedt om å ta en ny backup/);
 });
@@ -305,4 +307,37 @@ test("keys_texts_exist_in_both_languages", async () => {
     const sheet = JSON.parse(readFileSync(join(web, "src", "locales", lang, "sheet.json"), "utf8"));
     for (const key of ["sheet.new_browser", "sheet.download_continue", "sheet.download_cancel", "sheet.download_done", "sheet.pdf.title_access"]) assert.ok(Object.hasOwn(sheet, key), key);
   }
+});
+
+test("a_page_left_or_hidden_while_the_key_is_made_drops_it_at_once", async () => {
+  await withDom(async () => {
+    const { confirmInPage } = await import("../../src/views/renewRecovery.mjs");
+    // Left before the sheet would be shown: the host is no longer on the page.
+    const world = await keysWorld();
+    const host = document.createElement("div");
+    host.isConnected = false;
+    await assert.rejects(world.session.renewRecoveryKey({ reauth: reauthWith(world), confirmNewRk: confirmInPage({ t: i18n("en").t, host, win: {} }) }), { code: "cancelled" });
+    assert.equal(host.childNodes.length, 0, "no sheet on a page nobody sees");
+    assert.equal(world.core.held, null);
+    assert.equal(writes(world).length, 0);
+
+    // The tab is hidden while the sheet is up.
+    const hidden = await keysWorld();
+    const listeners = new Map();
+    const doc = { visibilityState: "visible", addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+    const shown = document.createElement("div");
+    const running = hidden.session.renewRecoveryKey({ reauth: reauthWith(hidden), confirmNewRk: confirmInPage({ t: i18n("en").t, host: shown, win: { document: doc } }) });
+    await settle();
+    assert.ok(textOf(shown).includes(RK_CODE));
+    // Going visible again changes nothing; hidden ends it.
+    listeners.get("visibilitychange")();
+    assert.ok(textOf(shown).includes(RK_CODE));
+    doc.visibilityState = "hidden";
+    listeners.get("visibilitychange")();
+    await assert.rejects(running, { code: "cancelled" });
+    assert.ok(!textOf(shown).includes(RK_CODE));
+    assert.equal(hidden.core.held, null);
+    assert.equal(listeners.size, 0);
+    assert.equal(writes(hidden).length, 0);
+  });
 });

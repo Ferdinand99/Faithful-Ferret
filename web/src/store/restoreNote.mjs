@@ -10,7 +10,8 @@
 // state stored when the older state was accepted. Either way the note lowers no floor and
 // changes no check: the renewal it offers only raises the recovery floor. It lives in the
 // settings under `restore.note.<server>.<account>`, expires after 30 days, and "forget this
-// server" removes it (see `forget.mjs`).
+// server" removes it (see `forget.mjs`). A successful unlock does not remove it; a reapply that
+// leaves no unlock method below its floor does.
 import { hex16 } from "../b64.mjs";
 import { serverKey } from "./idb.mjs";
 import { deleteSetting, getSetting, setSetting } from "./settings.mjs";

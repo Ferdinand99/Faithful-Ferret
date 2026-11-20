@@ -1,11 +1,11 @@
 // `#/recovery-key`: a new recovery key (spec Fase 1 § 4.6, § 6.1), and "reapply the unlock methods"
-// after an accepted restore (J25 (i)). The page says first what a new key does and does not do; the
+// after an accepted restore (§ 8.8). The page says first what a new key does and does not do; the
 // button asks for the master password again, then shows the new page 2 once (the emergency sheet in
 // its "renew" mode). Nothing is sent until the new key has been typed back. "Do not use the new key",
 // a lock of the vault or leaving the page discards it, and the old key goes on working.
 //
 // After the server has the new key, the page says what changed and what did not, and that an older
-// backup of the server still holds the old key (J48): the old sheet is kept until a new backup has
+// backup of the server still holds the old key: the old sheet is kept until a new backup has
 // been seen.
 //
 // The reapply part is shown only when this device keeps a restore note that applies and the server's
@@ -25,7 +25,7 @@ import { sheetView } from "./sheet.mjs";
 /** @typedef {import("./form.mjs").Translate} Translate */
 /** @typedef {import("../flows/renewRecovery.mjs").ConfirmNewRk} ConfirmNewRk */
 /** @typedef {{ add(fn: () => void): () => void }} Scope */
-/** @typedef {{ addEventListener?: Function, removeEventListener?: Function }} Win */
+/** @typedef {{ addEventListener?: Function, removeEventListener?: Function, document?: { visibilityState?: string, addEventListener?: Function, removeEventListener?: Function } }} Win */
 
 /** The codes with a text of their own in the keys catalog (`keys.error.<code>`). */
 export const KEYS_ERRORS = Object.freeze([
@@ -64,7 +64,8 @@ export function pageReauth({ t, session, scope }) {
 }
 
 /**
- * Calls `fn` once when the page is left (the address changes) or the vault locks. Returns what stops it.
+ * Calls `fn` once when the page is left: the address changes, the tab is hidden (another tab, another app, a
+ * minimised window), or the vault locks. Returns what stops it.
  * @param {{ scope?: Scope, win?: Win }} where
  * @param {() => void} fn
  */
@@ -82,6 +83,14 @@ export function onLeave({ scope, win }, fn) {
   if (typeof win?.addEventListener === "function") {
     win.addEventListener("hashchange", once);
     offs.push(() => win.removeEventListener?.("hashchange", once));
+  }
+  const doc = win?.document;
+  if (typeof doc?.addEventListener === "function") {
+    const hidden = () => {
+      if (doc.visibilityState === "hidden") once();
+    };
+    doc.addEventListener("visibilitychange", hidden);
+    offs.push(() => doc.removeEventListener?.("visibilitychange", hidden));
   }
   return () => {
     gone = true;
@@ -104,6 +113,12 @@ export function onLeave({ scope, win }, fn) {
  */
 export function confirmInPage({ t, host, scope, win, download, print }) {
   return ({ sheet, verify }) => new Promise((resolve) => {
+    // The page was left while the key was being made (the password dialog, the server's answer): the sheet is not
+    // shown on a page nobody sees, and the key goes at once.
+    if (/** @type {any} */ (host).isConnected === false) {
+      resolve(false);
+      return;
+    }
     let done = false;
     /** @type {{ root: HTMLElement, wipe(): void } | null} */
     let view = null;

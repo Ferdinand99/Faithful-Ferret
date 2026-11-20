@@ -1,4 +1,4 @@
-// "Reapply the unlock methods" after an accepted restore (J25 (i)): offered only for a note that says the unlock
+// "Reapply the unlock methods" after an accepted restore: offered only for a note that says the unlock
 // methods went back, for the restore epoch the sync state stored, and only while the server's recovery key is
 // below this device's floor; it renews over that wrap through the core's after-restore entry, with the
 // generation above every floor, and no floor ever goes down. No other module of the web vault names that entry.
@@ -6,7 +6,10 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { restoreNoteTools } from "../../src/flows/restoreNote.mjs";
 import { loadPinned } from "../../src/store/pinned.mjs";
+import { loadRestoreNote } from "../../src/store/restoreNote.mjs";
+import { unlockScreen } from "../../src/views/unlock.mjs";
 import { saveSyncState } from "../../src/store/syncState.mjs";
 import { renewRecoveryView } from "../../src/views/renewRecovery.mjs";
 import { restoredView } from "../../src/views/restored.mjs";
@@ -198,9 +201,53 @@ test("only_the_reapply_flow_names_the_after_restore_entry", () => {
     const path = join(dir, name);
     return statSync(path).isDirectory() ? files(path) : [path];
   });
-  const naming = [...files(join(web, "src")), ...files(join(web, "admin"))]
-    .filter((path) => /\.(?:mjs|js|html|json)$/.test(path))
+  const naming = ["src", "admin", "types", "scripts"].flatMap((dir) => files(join(web, dir)))
+    .filter((path) => /\.(?:[cm]?[jt]s|d\.[cm]?ts|html|json|css)$/.test(path))
     .filter((path) => readFileSync(path, "utf8").includes("renew_recovery_after_restore"))
     .map((path) => relative(web, path).replace(/\\/g, "/"));
   assert.deepEqual(naming, ["src/flows/reapplyMethods.mjs"]);
+});
+
+test("the_note_stays_after_a_successful_unlock_and_the_reapply_is_still_offered", async () => {
+  // Only the recovery key went back: the password still unlocks.
+  let held = null;
+  const world = await restoredWorld({ handlers: { unlock_password: async () => ({ pinned: await loadPinned(held.db.store, SERVER, EMAIL) }) } });
+  held = world;
+  // The unlock and sign-in screens get the finder only.
+  const tools = restoreNoteTools({ store: world.store, serverUrl: world.session.serverUrl });
+  assert.deepEqual(Object.keys(tools), ["restoreNote"]);
+
+  await world.session.lock();
+  await withDom(async () => {
+    let unlocked = 0;
+    const host = unlockScreen({ session: world.session, t: i18n("en").t, go() {}, onUnlocked: () => (unlocked += 1), ...tools, locale: "en" });
+    await settle(60);
+    find(host, "password").value = "test-password-for-unit-tests-only";
+    await submit(find(host, "unlock-form"));
+    await settle(60);
+    assert.equal(unlocked, 1, "the unlock went through");
+  });
+  assert.ok(world.session.current());
+  assert.deepEqual(await loadRestoreNote(world.db.store, SERVER, ACCOUNT, Date.now()), world.note);
+  const offer = await world.session.reapplyOffer();
+  assert.deepEqual(offer.below, ["recovery"]);
+  assert.deepEqual(offer.note, world.note);
+});
+
+test("a_successful_reapply_removes_the_note_unless_the_password_is_also_below", async () => {
+  const only = await restoredWorld();
+  assert.deepEqual(await only.session.reapplyMethods({ note: only.note, reauth: reauthWith(only), confirmNewRk: typing(only, RK_CODE) }), ["recovery"]);
+  assert.equal(await loadRestoreNote(only.db.store, SERVER, ACCOUNT, Date.now()), null);
+  // A later rollback of the same restore is a plain refusal again: nothing is offered.
+  assert.deepEqual(await only.session.reapplyOffer(), { note: null, below: [] });
+
+  const both = await restoredWorld({ floors: { password: 2, recovery: 3 } });
+  assert.deepEqual(await both.session.reapplyMethods({ note: both.note, reauth: reauthWith(both), confirmNewRk: typing(both, RK_CODE) }), ["recovery"]);
+  // The password still goes back at the next unlock; the note stays to explain that refusal.
+  assert.deepEqual(await loadRestoreNote(both.db.store, SERVER, ACCOUNT, Date.now()), both.note);
+
+  // Nothing done, nothing removed: a refused or abandoned reapply keeps the note.
+  const no = await restoredWorld();
+  await assert.rejects(no.session.reapplyMethods({ note: no.note, reauth: reauthWith(no), confirmNewRk: async () => false }), { code: "cancelled" });
+  assert.deepEqual(await loadRestoreNote(no.db.store, SERVER, ACCOUNT, Date.now()), no.note);
 });

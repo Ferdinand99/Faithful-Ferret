@@ -23,7 +23,7 @@
   "keys.recovery.cancel": "Ikke bruk den nye nøkkelen",
   "keys.recovery.done_backup": "Tjeneren ble bedt om å ta en ny backup.",
   "keys.recovery.done_heading": "Den nye gjenopprettingsnøkkelen gjelder",
-  "keys.recovery.done_keep_old": "Gjenopprettes serveren fra en backup fra før i dag, virker den gamle nøkkelen igjen og den nye ikke. Ta vare på det gamle arket til du har sett en ny backup.",
+  "keys.recovery.done_keep_old": "Gjenopprettes tjeneren fra en backup fra før denne endringen, virker den gamle nøkkelen igjen og den nye ikke. Ta vare på det gamle arket til du har sett en ny backup.",
   "keys.recovery.done_old_key": "Den gamle gjenopprettingsnøkkelen åpner ikke lenger hvelvet på denne tjeneren. Enhetene dine forblir innlogget, og side 1 av arket endres ikke.",
   "keys.recovery.effects": "Når tjeneren har den nye nøkkelen, åpner den gamle nøkkelen ikke lenger hvelvet på denne tjeneren. Side 1 av arket og den hemmelige nøkkelen er de samme, og enhetene dine forblir innlogget.",
   "keys.recovery.heading": "Ny gjenopprettingsnøkkel",

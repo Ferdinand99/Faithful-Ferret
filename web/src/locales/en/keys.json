@@ -23,7 +23,7 @@
   "keys.recovery.cancel": "Do not use the new key",
   "keys.recovery.done_backup": "The server was asked to make a new backup.",
   "keys.recovery.done_heading": "The new recovery key is in force",
-  "keys.recovery.done_keep_old": "If the server is restored from a backup from before today, the old key works again and the new one does not. Keep the old sheet until you have seen a new backup.",
+  "keys.recovery.done_keep_old": "If the server is restored from a backup from before this change, the old key works again and the new one does not. Keep the old sheet until you have seen a new backup.",
   "keys.recovery.done_old_key": "The old recovery key no longer opens the vault on this server. Your devices stay signed in, and page 1 of your sheet does not change.",
   "keys.recovery.effects": "Once the server has the new key, the old key no longer opens the vault on this server. Page 1 of the sheet and your secret key stay the same, and your devices stay signed in.",
   "keys.recovery.heading": "New recovery key",

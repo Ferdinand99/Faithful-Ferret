@@ -151,3 +151,35 @@ test("without_a_remembered_secret_key_the_page_points_to_page_1_of_the_sheet", a
   }
 });
 
+
+test("the_secret_key_is_not_shown_on_a_page_that_was_left_and_goes_when_the_tab_is_hidden", async () => {
+  await withDom(async () => {
+    // Left while the password was checked: the answer is dropped.
+    const left = secretKeyView({ t: i18n("en").t, show: async () => ({ code: SK_CODE, qr: { size: 1, dark: () => true } }), status: { skBit: true, skStored: true }, win: {} });
+    left.isConnected = false;
+    await fire(byRole(left, "sk-show"), "click");
+    await settle();
+    assert.equal(byRole(left, "sk-code"), null);
+    assert.ok(!textOf(left).includes(SK_CODE));
+
+    // Hidden tab: the key goes.
+    const listeners = new Map();
+    const doc = { visibilityState: "visible", addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+    const page = secretKeyView({ t: i18n("en").t, show: async () => ({ code: SK_CODE, qr: { size: 1, dark: () => true } }), status: { skBit: true, skStored: true }, win: { document: doc } });
+    await fire(byRole(page, "sk-show"), "click");
+    await settle();
+    assert.ok(byRole(page, "sk-code"));
+    doc.visibilityState = "hidden";
+    listeners.get("visibilitychange")();
+    assert.equal(byRole(page, "sk-code"), null);
+    assert.ok(!textOf(page).includes(SK_CODE));
+    assert.equal(listeners.size, 0);
+
+    // "Not remembered" is said once and the button goes.
+    const once = secretKeyView({ t: i18n("en").t, show: async () => "not_remembered", status: { skBit: true, skStored: true }, win: {} });
+    await fire(byRole(once, "sk-show"), "click");
+    await settle();
+    assert.equal(byRole(once, "sk-show"), null);
+    assert.equal(textOf(once).split(catalog("en")["keys.secret.not_remembered"]).length, 2);
+  });
+});

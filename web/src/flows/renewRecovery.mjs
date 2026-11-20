@@ -12,7 +12,7 @@
 //   POST challenge, auth_sign, PUT unlock-methods/recovery   the signed write (`signedCall.mjs`)
 //   savePinned              only after the server answered 200
 //
-// Nothing is sent before the new key has been typed back and checked (J22). A "no" at the sheet,
+// Nothing is sent before the new key has been typed back and checked (spec Fase 1 § 6.1). A "no" at the sheet,
 // a lock or any refusal discards the new key (`clear_setup_secrets`) and leaves the record and
 // the server as they were: the old key still works. The new key also leaves the worker after a
 // write that went through. A renewal ends no session; the server asks for a backup after it.
