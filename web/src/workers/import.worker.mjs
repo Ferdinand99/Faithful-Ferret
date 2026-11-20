@@ -7,9 +7,10 @@
 // so the worker cannot send what it reads anywhere.
 //
 // Request (from the page, with the port in the transfer list):
-//   { id, kind: "bitwarden_json" | "bitwarden_csv", file: File, port: MessagePort, labels?: {...} }
+//   { id, kind: "bitwarden_json" | "bitwarden_csv" | "aliasvault_csv" | "aliasvault_avux" | "csv", file: File, port: MessagePort, labels?: {...} }
+//   (`csv` is a CSV file of either service: the header says which, and the answer names the kind it was read as)
 // Answer (once, to the page):
-//   { id, ok: true, sealed: [{ id, rev, envelope, tag }], report }  or  { id, ok: false, error, line? }
+//   { id, ok: true, kind, sealed: [{ id, rev, envelope, tag }], report }  or  { id, ok: false, error, line? }
 // `sealed` holds the 16-byte item ids and the envelopes the vault made; `report` holds counts and
 // warnings (a code and the position of an item), never a name or a value. The caller ends the worker
 // after the answer.
@@ -22,16 +23,18 @@
 // a draft that is too large to seal is left out with a warning; any other refusal stops the import. One import per worker: a second request is `unsupported`.
 
 import { parseCsv } from "../import/csv.mjs";
+import { AVUX_MANIFEST_ENTRY, fromAliasVaultCsv, fromAvuxManifest, isAliasVaultCsvHeader } from "../import/aliasvault.mjs";
 import { fromBitwardenCsv, fromBitwardenJson } from "../import/bitwarden.mjs";
 import { ImportError, MAX_FILE_BYTES } from "../import/limits.mjs";
 import { resolveLabels, warn, withTotpAsHidden } from "../import/map.mjs";
 import { safeJsonParse } from "../import/prescan.mjs";
+import { readZipEntry } from "../import/zip.mjs";
 
 /** The value that says "no item exists under this id", as the vault worker's import port wants it. */
 export const NO_EXISTING = "no_existing";
 
 /** The kinds of file the worker reads. */
-export const KINDS = Object.freeze(["bitwarden_json", "bitwarden_csv"]);
+export const KINDS = Object.freeze(["bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux", "csv"]);
 
 /** How many drafts are on their way to the vault worker at once. */
 const IN_FLIGHT = 16;
@@ -78,12 +81,31 @@ function isRequest(message) {
  * @param {string} kind
  * @param {Blob} file
  * @param {unknown} labels
+ * @returns {Promise<{ drafts: import("../import/map.mjs").ItemDraft[], report: import("../import/map.mjs").ImportReport, kind: string }>}
  */
 async function readDrafts(kind, file, labels) {
   // The size is the file's own, known before a byte is read.
   if (file.size > MAX_FILE_BYTES) throw new ImportError("import_too_large");
-  const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-  if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) throw new ImportError("import_zip");
+  const head = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+  const zipped = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+  if (kind === "aliasvault_avux") {
+    if (!zipped) {
+      // The encrypted export of AliasVault is a small JSON file that says what it is; it is not opened.
+      const start = new TextDecoder().decode(head);
+      throw new ImportError(/"format"\s*:\s*"avex"/.test(start) ? "import_encrypted_export" : "import_bad_zip");
+    }
+    // Only the manifest is read; the attachments and logos of the archive are never unpacked.
+    const bytes = await readZipEntry(file, AVUX_MANIFEST_ENTRY);
+    /** @type {string} */
+    let manifest;
+    try {
+      manifest = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new ImportError("import_bad_json");
+    }
+    return { ...fromAvuxManifest(safeJsonParse(manifest), { labels }), kind };
+  }
+  if (zipped) throw new ImportError("import_zip");
   /** @type {string} */
   let text;
   try {
@@ -91,9 +113,12 @@ async function readDrafts(kind, file, labels) {
   } catch {
     throw new ImportError("import_unreadable");
   }
-  if (kind === "bitwarden_json") return fromBitwardenJson(safeJsonParse(text), { labels });
+  if (kind === "bitwarden_json") return { ...fromBitwardenJson(safeJsonParse(text), { labels }), kind };
   const { rows, lines } = parseCsv(text);
-  return fromBitwardenCsv(rows, { labels, lines });
+  // A CSV file named only `.csv` is read as what its header says it is.
+  const as = kind === "csv" ? (isAliasVaultCsvHeader(rows[0]) ? "aliasvault_csv" : "bitwarden_csv") : kind;
+  if (as === "aliasvault_csv") return { ...fromAliasVaultCsv(rows, { labels, lines }), kind: as };
+  return { ...fromBitwardenCsv(rows, { labels, lines }), kind: as };
 }
 
 /**
@@ -217,10 +242,10 @@ export async function runImport(request, deps = {}) {
   const random = deps.random ?? ((/** @type {Uint8Array} */ bytes) => (globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)), bytes));
   const labels = resolveLabels(request.labels);
   try {
-    const { drafts, report } = await readDrafts(request.kind, request.file, request.labels);
+    const { drafts, report, kind } = await readDrafts(request.kind, request.file, request.labels);
     const sealed = await sealAll(drafts, report, request.port, labels, { now, random });
     report.counts.sealed = sealed.length;
-    return { sealed, report };
+    return { sealed, report, kind };
   } finally {
     try {
       request.port.onmessage = null;
@@ -244,7 +269,7 @@ export function createHandler(deps) {
     taken = true;
     try {
       const result = await runImport(message, deps);
-      return { id: message.id, ok: /** @type {const} */ (true), sealed: result.sealed, report: result.report };
+      return { id: message.id, ok: /** @type {const} */ (true), kind: result.kind, sealed: result.sealed, report: result.report };
     } catch (error) {
       // Only a code goes back: no message of an error holds anything of the file.
       if (error instanceof ImportError) {

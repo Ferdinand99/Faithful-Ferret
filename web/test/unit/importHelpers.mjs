@@ -9,6 +9,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The folder of the synthetic Bitwarden fixtures. */
 export const bitwardenDir = resolve(here, "..", "fixtures", "import", "bitwarden");
 
+/** The folder of the synthetic AliasVault fixtures. */
+export const aliasvaultDir = resolve(here, "..", "fixtures", "import", "aliasvault");
+
+/** The text of an AliasVault fixture. @param {string} name */
+export const avText = (name) => readFileSync(join(aliasvaultDir, name), "utf8");
+
+/** The bytes of an AliasVault fixture. @param {string} name */
+export const avBytes = (name) => readFileSync(join(aliasvaultDir, name));
+
+/** An AliasVault fixture as a file. @param {string} name @param {string} [as] */
+export const avFile = (name, as = name) => new File([avBytes(name)], as);
+
 /** The text of a fixture. @param {string} name */
 export const fixture = (name) => readFileSync(join(bitwardenDir, name), "utf8");
 

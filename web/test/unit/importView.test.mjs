@@ -39,7 +39,10 @@ const MASTER = "master-pass-for-unit-tests";
 const EXPORT_PW = "export-pass-for-unit-tests";
 
 const COUNTS = { items: 12, login: 9, note: 2, card: 1, identity: 0, urls: 14, totp: 3, customFields: 4, matchNull: 5, http: 2, textAddresses: 1, sealed: 12 };
-const SKIPPED = { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 3, otherTypes: 2, trashed: 1, tooLarge: 1, passwordHistory: 4, reprompt: 2 };
+const SKIPPED = {
+  passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 3, otherTypes: 2, trashed: 1, tooLarge: 1, passwordHistory: 4, reprompt: 2,
+  attachments: 3, fieldHistory: 5, tags: 2,
+};
 /** A preview as the flow gives it for a Bitwarden file. */
 const bitwarden = (extra = {}) => Object.freeze({
   kind: "bitwarden_json", counts: COUNTS, skipped: SKIPPED,
@@ -81,6 +84,7 @@ function page(options = {}) {
       calls.runs.push({ preview, ...args, fieldAtCall: find(root, "master-password").value, exportFieldAtCall: find(root, "export-password")?.value });
       args.onProgress({ phase: "checking" });
       args.onProgress({ phase: "window", items: 12 });
+      if (options.runGate) await options.runGate;
       if (options.runError) throw options.runError;
       return { queued: 12 };
     },
@@ -128,7 +132,7 @@ test("preview_shows_counts_free_space_and_warns_when_the_vault_is_not_empty", as
     assert.equal(find(preview, "submit").disabled, false);
 
     // What the report says about addresses (the preview texts for the new report fields).
-    assert.match(textOf(find(preview, "note-matchNull")), /5 address\(es\) had no matching rule.*base domain.*exact host/);
+    assert.match(textOf(find(preview, "note-matchNull")), /5 address\(es\) had no matching rule.*exact host/);
     assert.match(textOf(find(preview, "note-http")), /2 address\(es\) start with http:\/\/.*does not fill them on pages that use https/);
     assert.match(textOf(find(preview, "note-textAddresses")), /1 address\(es\) are not web addresses/);
     // What is left out, each by its count.
@@ -136,6 +140,9 @@ test("preview_shows_counts_free_space_and_warns_when_the_vault_is_not_empty", as
     assert.match(textOf(find(preview, "skipped-passwordHistory")), /password history of 4 item/);
     assert.match(textOf(find(preview, "skipped-reprompt")), /2 item\(s\) asked for the master password/);
     assert.match(textOf(find(preview, "skipped-folders")), /2 folder/);
+    assert.match(textOf(find(preview, "skipped-attachments")), /3 attachment/);
+    assert.match(textOf(find(preview, "skipped-fieldHistory")), /earlier values of 5 field/);
+    assert.match(textOf(find(preview, "skipped-tags")), /2 tag/);
     // Warnings by code; the ones that only repeat a count of what is left out are not listed twice.
     assert.match(textOf(find(preview, "warning-uri_https_added")), /6 address\(es\) had no http/);
     assert.match(textOf(find(preview, "warning-totp_invalid")), /1 one-time password secret/);
@@ -569,14 +576,14 @@ test("import_texts_exist_in_both_languages", async () => {
   const sources = ["flows/import.mjs", "views/import.mjs", "routes/import.route.mjs"].map((f) => readFileSync(join(web, "src", f), "utf8")).join("\n");
   const used = new Set([...sources.matchAll(/["'`](import\.[A-Za-z_.]+?)["'`]/g)].map((m) => m[1]));
   for (const key of used) assert.ok(key in en, `missing text: ${key}`);
-  const labels = ["username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code", "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country", "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number"];
+  const labels = ["username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code", "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country", "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number", "gender", "birthdate", "nickname", "pin"];
   const dynamic = [
     ...IMPORT_ERRORS.map((code) => `import.error.${code}`),
     ...IMPORT_PHASES.map((phase) => `import.progress.${phase}`),
     ...SKIPPED_KEYS.map((key) => `import.skipped.${key}`),
     ...WARNING_CODES.map((code) => `import.warning.${code}`),
     ...COUNT_NOTES.map((key) => `import.note.${key}`),
-    ...["ferretexport", "bitwarden_json", "bitwarden_csv"].map((kind) => `import.kind.${kind}`),
+    ...["ferretexport", "bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux"].map((kind) => `import.kind.${kind}`),
     ...labels.map((key) => `import.label.${key}`),
   ];
   for (const key of dynamic) assert.ok(key in en && key in nb, key);
@@ -717,5 +724,79 @@ test("leaving_the_page_ends_the_reading_and_lets_go_of_a_held_preview", async ()
     held.root.isConnected = false;
     await pause(30);
     assert.equal(held.calls.discards.length, 1);
+  });
+});
+
+test("leaving_within_the_first_look_still_ends_the_reading", async () => {
+  await withDom(async () => {
+    // The page is on screen when the file is chosen. A page that is left before the first look of the timer is still a page that was left.
+    /** @type {() => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const quick = page({ previewGate: gate, view: { leavePollMs: 5 } });
+    quick.root.isConnected = true;
+    find(quick.root, "file").files = [{ name: "x.json" }];
+    const pending = fire(find(quick.root, "file"), "change");
+    quick.root.isConnected = false;
+    await pause(30);
+    assert.equal(quick.calls.signals[0].aborted, true, "the reading ended although the timer had not seen the page before");
+    release();
+    await pending;
+    assert.equal(quick.calls.discards.length, 1);
+  });
+});
+
+test("an_import_that_is_running_keeps_its_preview_when_another_page_is_opened", async () => {
+  await withDom(async () => {
+    /** @type {() => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const running = page({ runGate: gate });
+    await choose(running.root);
+    type(running.root, { "master-password": MASTER });
+    const sending = submit(running.root);
+    await settle();
+    // Another page of the vault is opened while the master password is checked and the items are sealed: the wipe of the page runs.
+    running.scope.run();
+    assert.equal(running.calls.discards.length, 0, "the preview of a running import is not let go of");
+    release();
+    await sending;
+    await settle();
+    assert.equal(running.calls.runs.length, 1);
+
+    // A preview that no import is using is let go of, as before.
+    const idle = page();
+    await choose(idle.root);
+    idle.scope.run();
+    assert.equal(idle.calls.discards.length, 1);
+  });
+});
+
+test("an_aliasvault_file_is_named_and_the_page_says_to_delete_it_and_which_notes_apply", async () => {
+  await withDom(async () => {
+    const root = page().root;
+    assert.match(find(root, "file").getAttribute("accept"), /\.avux/);
+    assert.match(textOf(find(root, "format-aliasvault")), /AliasVault export without encryption, as \.avux or CSV.*not the encrypted \.avex/);
+    assert.match(textOf(find(root, "format-not")), /AliasVault's encrypted \.avex/);
+    for (const kind of ["aliasvault_avux", "aliasvault_csv"]) {
+      const shown = page({
+        preview: bitwarden({
+          kind,
+          warnings: [{ code: "alias_needs_aliasvault", count: 4 }, { code: "item_archived", count: 1 }, { code: "totp_extra", count: 2 }, { code: "card_and_login", count: 1 }],
+        }),
+      });
+      await choose(shown.root, kind === "aliasvault_csv" ? "export.csv" : "export.avux");
+      assert.match(textOf(find(shown.root, "preview-kind")), /An AliasVault export/);
+      assert.match(textOf(find(shown.root, "plain-file-warning")), /delete it for good/, kind);
+      assert.match(textOf(find(shown.root, "warning-alias_needs_aliasvault")), /4 item\(s\) have an e-mail address that may be an alias.*only receives mail while your AliasVault server runs/);
+      assert.ok(find(shown.root, "warning-item_archived") && find(shown.root, "warning-totp_extra") && find(shown.root, "warning-card_and_login"));
+    }
+    const nb = i18n("nb").t;
+    assert.match(nb("import.warning.alias_needs_aliasvault", { count: 4 }), /4 element\(er\).*AliasVault-tjeneren din kjører/);
+    assert.match(nb("import.kind.aliasvault_avux"), /AliasVault-eksport \(\.avux\)/);
   });
 });

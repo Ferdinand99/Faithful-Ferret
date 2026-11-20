@@ -70,7 +70,7 @@ test("bitwarden_json_maps_every_type_and_field_kind", () => {
     items: 8, login: 5, note: 1, card: 1, identity: 1,
     urls: 7, totp: 2, customFields: 4, matchNull: 2, http: 1, textAddresses: 2, sealed: 0,
   });
-  assert.deepEqual(report.skipped, { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0 });
+  assert.deepEqual(report.skipped, { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 });
 });
 
 test("passkeys_folders_linked_fields_and_unknown_keys_are_counted_and_skipped", () => {

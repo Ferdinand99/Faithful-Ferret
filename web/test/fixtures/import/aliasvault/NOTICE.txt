@@ -1,0 +1,28 @@
+SPDX-License-Identifier: AGPL-3.0-only
+Modified by Faithful Ferret.
+
+The files in this folder are test data for the AliasVault import. They are made up: every
+name, address, user name, password, one-time password seed, card number and note in them is
+invented, and none belongs to a real account. A JSON file and a ZIP file cannot carry a header
+of their own, and a CSV file should not, so this notice covers all of them.
+
+Their shapes (the columns of the CSV file, the manifest of an .avux file with its field keys,
+custom field definitions, one-time password entries, passkeys and attachments, and the one
+JSON header that says a file is the encrypted .avex) follow the AliasVault export code and
+its test files:
+
+  synthetic.csv, old-mobile.csv
+      core/client/src/transfer/export/AliasVaultCsvExportService.ts and
+      core/client/src/transfer/import/importers/aliasvault/__tests__/aliasvault_mobile_app_export.csv
+  synthetic-manifest.json, synthetic.avux
+      core/client/src/transfer/export/AvuxManifest.ts and
+      core/client/src/transfer/import/importers/aliasvault/__tests__/aliasvault.avux
+      (synthetic.avux holds synthetic-manifest.json as its manifest.json, a text file as an
+      attachment and a one-pixel picture as a logo; web/test/unit/importAliasVault.test.mjs
+      checks that the two agree)
+  encrypted.avex
+      core/client/src/transfer/import/importers/aliasvault/__tests__/aliasvault.avex (the
+      header only; the payload is not encrypted data and opens with nothing)
+
+Origin: https://github.com/aliasvault/aliasvault, GNU Affero General Public License v3. See
+notices-extra.json and THIRD-PARTY-NOTICES in the root of this repository.

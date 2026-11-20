@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { kindOfFile, previewImport, vaultRoom } from "../../src/flows/import.mjs";
 import { dumpDatabase } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
-import { allStrings, fixtureFile, textFile } from "./importHelpers.mjs";
+import { allStrings, avFile, fixtureFile, textFile } from "./importHelpers.mjs";
 import { EXPORT_PASSWORD, NOW, PASSWORD, WINDOW, answer, coded, fakeExportFileCore, fakeImportEngine, importWorld, sealingPort } from "./importFlowHelpers.mjs";
 import { EMAIL, SK_CODE } from "./securityHelpers.mjs";
 import { Model, createFakeClient, settle, syncDevice, until } from "./syncHelpers.mjs";
@@ -87,10 +87,62 @@ test("the_page_passes_its_language_to_the_worker_and_the_worker_gets_the_file_an
   assert.ok(w.workers.made[0].terminated, "the worker is ended after its answer");
 });
 
+test("an_aliasvault_file_is_previewed_by_what_the_worker_read_it_as", async () => {
+  const engine = fakeImportEngine({ used: 2 });
+  const w = await importWorld();
+  const avux = await w.session.importPreview(avFile("synthetic.avux"), { engine });
+  assert.equal(avux.kind, "aliasvault_avux");
+  assert.equal(avux.counts.items, 8);
+  assert.equal(avux.counts.sealed, 8);
+  assert.equal(avux.skipped.attachments, 1);
+  assert.equal(avux.skipped.fieldHistory, 1);
+  assert.equal(avux.skipped.tags, 1);
+  assert.equal(avux.skipped.passkeys, 1);
+  assert.equal(avux.counts.matchNull, 4);
+  assert.deepEqual(w.workers.made[0].posted[0].message.kind, "aliasvault_avux");
+
+  // A `.csv` file is asked for as `csv`, and its header says whose it is.
+  const csv = await w.session.importPreview(avFile("synthetic.csv"), { engine });
+  assert.equal(csv.kind, "aliasvault_csv");
+  assert.equal(csv.counts.items, 8);
+  assert.equal(w.workers.made[1].posted[0].message.kind, "csv");
+  const bitwarden = await w.session.importPreview(fixtureFile("small.csv"), { engine });
+  assert.equal(bitwarden.kind, "bitwarden_csv");
+  assert.ok(w.workers.made.every((worker) => worker.terminated));
+
+  // Nothing of the files is in a preview, and the page counts the warnings by code.
+  const seen = JSON.stringify([avux, csv]);
+  for (const word of ["synthetic-password", "alice@example.test", "Mail login", "PRIVATE-KEY", "GEZDGNBV", "Alice Synthetic", "Syntetisk"]) assert.ok(!seen.includes(word), word);
+  assert.ok(avux.warnings.some((warning) => warning.code === "alias_needs_aliasvault" && warning.count === 1));
+
+  // The encrypted export of AliasVault is refused by its name before any worker starts, and by the worker when it is named .avux.
+  const before = w.workers.made.length;
+  await assert.rejects(w.session.importPreview(new File(["{}"], "vault.avex"), { engine }), (e) => e.code === "import_encrypted_export");
+  assert.equal(w.workers.made.length, before);
+  await assert.rejects(w.session.importPreview(avFile("encrypted.avex", "vault.avux"), { engine }), (e) => e.code === "import_encrypted_export");
+});
+
+test("an_answer_that_names_a_kind_the_name_did_not_allow_is_refused", async () => {
+  const sealed = [{ id: new Uint8Array(16).fill(1), rev: 1, envelope: new Uint8Array([1]), tag: new Uint8Array(32) }];
+  for (const [name, kind] of [["x.csv", "bitwarden_json"], ["x.csv", "ferretexport"], ["x.json", "aliasvault_csv"], ["x.avux", "bitwarden_csv"], ["x.json", undefined], ["x.csv", {}]]) {
+    const w = await importWorld({ mode: "garbage", garbage: { id: 1, ok: true, kind, sealed, report: { counts: { sealed: 1 } } } });
+    await assert.rejects(w.session.importPreview(new File(["x"], name), { engine: fakeImportEngine() }), (e) => e.code === "import_bad_answer", `${name} ${String(kind)}`);
+  }
+  // The kinds the name does allow are taken.
+  for (const [name, kind] of [["x.csv", "aliasvault_csv"], ["x.csv", "bitwarden_csv"], ["x.json", "bitwarden_json"], ["x.avux", "aliasvault_avux"]]) {
+    const w = await importWorld({ mode: "garbage", garbage: { id: 1, ok: true, kind, sealed, report: { counts: { sealed: 1 } } } });
+    assert.equal((await w.session.importPreview(new File(["x"], name), { engine: fakeImportEngine() })).kind, kind);
+  }
+});
+
 test("the_kind_of_a_file_comes_from_its_name_and_a_zip_or_an_unknown_name_is_refused_before_a_worker_starts", async () => {
   assert.equal(kindOfFile({ name: "Backup.FerretExport" }), "ferretexport");
   assert.equal(kindOfFile({ name: "bitwarden_export.json" }), "bitwarden_json");
-  assert.equal(kindOfFile({ name: "export.CSV" }), "bitwarden_csv");
+  // A CSV file is Bitwarden's or AliasVault's: the worker says which, by its header.
+  assert.equal(kindOfFile({ name: "export.CSV" }), "csv");
+  assert.equal(kindOfFile({ name: "Vault.AVUX" }), "aliasvault_avux");
+  // The encrypted export of AliasVault is not read.
+  assert.throws(() => kindOfFile({ name: "vault.avex" }), (e) => e.code === "import_encrypted_export");
   assert.throws(() => kindOfFile({ name: "export.zip" }), (e) => e.code === "import_zip");
   assert.throws(() => kindOfFile({ name: "export.txt" }), (e) => e.code === "import_bad_format");
   assert.throws(() => kindOfFile({}), (e) => e.code === "import_bad_format");
