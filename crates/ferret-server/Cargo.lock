@@ -1075,6 +1075,7 @@ dependencies = [
 name = "ferret-server"
 version = "0.3.0"
 dependencies = [
+ "askama",
  "axum",
  "axum-extra",
  "base64 0.23.1",
@@ -1102,6 +1103,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "vole-kit",
+ "vole-kit-build",
  "zeroize",
 ]
 
@@ -3442,6 +3444,11 @@ dependencies = [
  "url",
  "webpki-root-certs",
 ]
+
+[[package]]
+name = "vole-kit-build"
+version = "0.8.2"
+source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.8.2#af74370c06fd7b502871bb8e38dfecd89b7fe599"
 
 [[package]]
 name = "voprf"

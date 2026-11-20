@@ -113,6 +113,7 @@ impl Job {
     pub fn after_panic(&mut self) {
         let now = seconds(self.clock.as_ref()).unwrap_or(0);
         self.request_due = None;
+        self.status.clear_waiting();
         self.next_scheduled = Some(now.saturating_add(RETRY_AFTER));
     }
 

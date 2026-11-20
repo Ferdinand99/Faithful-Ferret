@@ -44,6 +44,9 @@ ferret-server-auth = { path = "../ferret-server-auth" }
 # The versions below match vole-kit's, so both use one copy of each crate.
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
+# The admin pages are askama templates that extend the kit's layouts (build.rs copies the kit's
+# templates to templates/kit/). Same version as vole-kit.
+askama = "0.16.1"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 # Fork of deadpool-sqlite that supports rusqlite 0.41 (bundled SQLite 3.54.1, RUSTSEC-2026-0459); the
@@ -71,6 +74,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
+
+[build-dependencies]
+# Copies the kit's templates into templates/kit/ for askama (build.rs).
+vole-kit-build = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.2" }
 
 [features]
 # Lets a release build go ahead without web/dist (the build script refuses
