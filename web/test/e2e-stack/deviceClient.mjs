@@ -145,6 +145,7 @@ async function pace() {
  * @property {import("../../src/api.mjs").Api} api the API client of the device: tokens and proofs on every request
  * @property {import("../../src/auth/tokens.mjs").TokenAuth} auth
  * @property {import("../../src/auth/dpop.mjs").Clock} clock
+ * @property {{ ms: number, runaway: number, reads: number }} skew how far the device's clock is from the server's (see signInDevice)
  * @property {typeof fetch} fetchImpl the transport, with the fetch metadata of this device
  * @property {{ url: string, status: number, code: string }[]} answers the refusals the device met
  * @property {CryptoKey} privateKey
@@ -172,7 +173,10 @@ export async function signInDevice({ vaultUrl, email, password, secretKey = "", 
   const wasm = await loadCore();
   const store = await openStore(new IDBFactory(), "ferret", IDBKeyRange);
   const key = await generateDeviceKey(vaultUrl);
-  const clock = createClock({ now: () => Date.now() + skewMs });
+  // The device's own clock, which a scenario can move: `ms` is a fixed distance from the server's, `runaway` makes each reading
+  // another `runaway` milliseconds later than the one before (a clock that no answer can set right).
+  const skew = { ms: skewMs, runaway: 0, reads: 0 };
+  const clock = createClock({ now: () => { skew.reads += skew.runaway === 0 ? 0 : 1; return Date.now() + skew.ms + skew.reads * skew.runaway; } });
   /** @type {{ url: string, status: number, code: string }[]} */
   const answers = [];
   const fetchImpl = extensionFetch({ site, origin, answers });
@@ -190,7 +194,7 @@ export async function signInDevice({ vaultUrl, email, password, secretKey = "", 
         const body = { login_id: start.login_id, ke3: b64u.encode(finished.ke3), client: "device", device_name: name, platform };
         const answer = await finishSignIn({ vaultUrl, key, clock, fetchImpl, body });
         await auth.accept(answer);
-        return { vaultUrl, deviceId: answer.device_id, accountId: answer.account_id, api, auth, clock, fetchImpl, answers, privateKey: key.privateKey, publicJwk: key.publicJwk, store };
+        return { vaultUrl, deviceId: answer.device_id, accountId: answer.account_id, api, auth, clock, fetchImpl, answers, skew, privateKey: key.privateKey, publicJwk: key.publicJwk, store };
       } catch (error) {
         // The server's limit on sign-in starts counts the browsers of the run too: take the wait it names.
         if (error instanceof ApiError && error.status === 429 && attempt < 5) {

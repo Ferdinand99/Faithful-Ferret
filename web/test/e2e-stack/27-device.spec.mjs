@@ -77,7 +77,7 @@ test("a_device_signs_in_syncs_and_is_revoked", async ({ browser }) => {
     // The renewal is refused with `device_revoked`, and the device then holds no tokens.
     await expect(device.auth.refresh()).rejects.toMatchObject({ status: 401, code: "device_revoked" });
     expect(device.auth.state).toBe("revoked");
-    await expect(changes(device)).rejects.toMatchObject({ status: 401 });
+    await expect(changes(device)).rejects.toMatchObject({ status: 401, code: "device_revoked" });
     // The page no longer lists it.
     await expect(deviceRows(page)).toHaveCount(0, { timeout: 30_000 });
   } finally {
@@ -127,8 +127,8 @@ test("a_password_change_in_the_web_vault_ends_the_device", async ({ browser }) =
     // refresh token both say `device_revoked`.
     await expect.poll(() => stream.state.ended, { timeout: 30_000, message: "the stream of a device ended by a new password" }).toBe(true);
     await expect(changes(device)).rejects.toMatchObject({ status: 401, code: "device_revoked" });
-    await expect(device.auth.refresh()).rejects.toMatchObject({ status: 401 });
-    expect(["revoked", "signed_out"]).toContain(device.auth.state);
+    await expect(device.auth.refresh()).rejects.toMatchObject({ status: 401, code: "device_revoked" });
+    expect(device.auth.state).toBe("revoked");
     // This browser stays signed in, and a new device signs in with the new password only.
     await expect(page.locator('[data-role="password-done"]')).toBeVisible();
     await pace();
@@ -202,8 +202,8 @@ test("a_device_token_reaches_neither_the_admin_listener_nor_the_handoff", async 
       ["GET", "/api/auth/session"],
     ])) {
       const answer = await send(vaultUrl, method, path);
-      expect(answer.status, `vault ${method} ${path}`).toBeGreaterThanOrEqual(400);
-      expect(answer.status, `vault ${method} ${path}`).toBeLessThan(500);
+      expect(answer.status, `vault ${method} ${path}`).toBe(401);
+      expect(JSON.parse(answer.text).error, `vault ${method} ${path}`).toBe("unauthorized");
       expect(answer.cookie, `vault ${method} ${path} sets no cookie`).toBeNull();
     }
     // Nothing of that ended the device: it still syncs.
@@ -368,19 +368,20 @@ test("contexts_of_one_browser_renew_at_once_and_never_reuse_a_token", async ({ b
     );
     expect(signedIn.state).toBe("ok");
 
-    // Four pages of the one browser, each as a new background page that holds no access token: each one's first request
+    // Six pages of the one browser, each as a new background page that holds no access token: each one's first request
     // renews, all at the same moment, over and over. Each round must leave every page with a working request, and the
     // device alive: a renewal that sent a used token would revoke it.
     const pages = [first];
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 5; i += 1) {
       const page = await context.newPage();
       await page.goto(`${vaultUrl}/vault/login`);
       pages.push(page);
     }
-    const round = () =>
-      Promise.all(
-        pages.map((page) =>
+    /** A new token auth in a page, whose first request renews. @param {import("@playwright/test").Page} page */
+    const renewOn = (page) =>
           page.evaluate(async () => {
+            // A little jitter, so the pages meet the lock and the record at different points of their renewal.
+            await new Promise((resolve) => setTimeout(resolve, Math.random() * 200));
             const { openStore } = await import("/app/store/idb.mjs");
             const { loadDeviceKey } = await import("/app/auth/deviceKey.mjs");
             const { createClock } = await import("/app/auth/dpop.mjs");
@@ -401,13 +402,32 @@ test("contexts_of_one_browser_renew_at_once_and_never_reuse_a_token", async ({ b
             } finally {
               store.close();
             }
-          }),
-        ),
-      );
-    for (let n = 1; n <= 8; n += 1) {
+          });
+    const round = () => Promise.all(pages.map(renewOn));
+    for (let n = 1; n <= 20; n += 1) {
       const results = await round();
       expect(results, `round ${n}: every page renewed and synced`).toEqual(results.map(() => expect.objectContaining({ ok: true, state: "ok" })));
     }
+
+    // A page whose renewal is slow on the network (the request is held for two and a half seconds) while the others renew twice
+    // over: its record was read before two rotations. It must not send a token that two others have used since, which would
+    // revoke the device; the lock makes the others wait for it.
+    const slow = pages[1];
+    const others = pages.filter((page) => page !== slow);
+    await slow.route("**/api/auth/token/refresh", async (route) => {
+      await sleep(2_500);
+      await route.continue();
+    });
+    const held = renewOn(slow);
+    await sleep(700);
+    for (let n = 1; n <= 2; n += 1) {
+      const results = await Promise.all(others.map(renewOn));
+      expect(results, `while one page is slow, round ${n}`).toEqual(results.map(() => expect.objectContaining({ ok: true, state: "ok" })));
+    }
+    expect(await held, "the slow page").toEqual(expect.objectContaining({ ok: true, state: "ok" }));
+    await slow.unroute("**/api/auth/token/refresh");
+    const after = await round();
+    expect(after, "every page renews after it").toEqual(after.map(() => expect.objectContaining({ ok: true, state: "ok" })));
 
     // The device is still its own: the last renewal worked, and signing it out is accepted.
     const out = await first.evaluate(async () => {
@@ -432,24 +452,57 @@ test("contexts_of_one_browser_renew_at_once_and_never_reuse_a_token", async ({ b
 
 // ------------------------------------------------------------ the clock follows a refusal of a proof, and only that
 
-test("a_device_with_a_wrong_clock_takes_the_servers_time_once_from_a_refused_proof", async () => {
-  test.setTimeout(300_000);
+test("a_device_takes_the_servers_time_from_a_refused_proof_once_and_from_nothing_else", async ({ browser }) => {
+  test.setTimeout(600_000);
   useAccount();
+  const { context, page } = await newDevice(browser);
   await pace();
-  // The device's clock is ten minutes ahead: its first proof is outside the server's window.
-  const device = await signInDevice({ ...credentials(), skewMs: 10 * 60_000 });
+  // The device signs in with a right clock: no proof is refused so far.
+  const device = await signInDevice(credentials());
   try {
-    const refused = () => device.answers.filter((answer) => answer.code === "dpop_invalid");
-    // The sign-in's proof was refused once, the clock was taken from that answer, and the sign-in then went through.
-    expect(refused(), "one refused proof at the sign-in").toHaveLength(1);
+    const refused = () => device.answers.filter((answer) => answer.code === "dpop_invalid").length;
+    expect(refused(), "no refused proof with a right clock").toBe(0);
+    expect((await changes(device)).latest_seq).toBeGreaterThan(0);
+
+    // Its clock then runs ten minutes ahead. The next request's proof is outside the server's window: the answer is
+    // `dpop_invalid`, the client takes the server's time from that answer and sends the request once more, and it works.
+    device.skew.ms = 10 * 60_000;
+    expect((await changes(device)).latest_seq).toBeGreaterThan(0);
+    expect(refused(), "one refused proof, then the retry with the server's time").toBe(1);
     // Everything after it carries the server's time: no more refusals, for requests and for the renewal.
     expect((await changes(device)).latest_seq).toBeGreaterThan(0);
     await device.auth.refresh();
     expect((await changes(device)).latest_seq).toBeGreaterThan(0);
-    expect(refused(), "no further proof was refused").toHaveLength(1);
-    expect(device.answers.filter((answer) => answer.status === 401).map((answer) => answer.code)).toEqual(["dpop_invalid"]);
+    expect(refused(), "no further refused proof").toBe(1);
+
+    // A clock that no answer can set right (each reading is ten minutes later than the last): the request is refused,
+    // the time is taken once, the retry is refused too, and that is the end of it (no loop).
+    device.skew.runaway = 10 * 60_000;
+    await expect(changes(device)).rejects.toMatchObject({ status: 401, code: "dpop_invalid" });
+    expect(refused(), "exactly two refused proofs for one request").toBe(3);
+    // The clock is put right again by the same rule on the next request.
+    device.skew.runaway = 0;
+    device.skew.ms = 0;
+    expect((await changes(device)).latest_seq).toBeGreaterThan(0);
+
+    // Only a refused proof sets the clock: another refusal of the server (a revoked device) does not. The device's clock
+    // is 30 seconds ahead (inside the window, so every proof is accepted), the device is revoked from the page, and the
+    // refusal `device_revoked` carries the server's `Date` all the same: the clock stays 30 seconds ahead.
+    device.skew.ms = 30_000;
+    expect((await changes(device)).latest_seq).toBeGreaterThan(0);
+    const before = refused();
+    await openDevices(page);
+    const row = deviceRows(page).first();
+    await expect(deviceRows(page)).toHaveCount(1, { timeout: 30_000 });
+    await row.locator('[data-role="devices-revoke"]').click();
+    await page.locator('[data-role="dialog-confirm"]').click();
+    await expect(deviceRows(page)).toHaveCount(0, { timeout: 30_000 });
+    await expect(changes(device)).rejects.toMatchObject({ status: 401, code: "device_revoked" });
+    const ahead = device.clock.nowSeconds() - Math.floor(Date.now() / 1000);
+    expect(ahead, "the clock was not set by a refusal that is not dpop_invalid").toBeGreaterThanOrEqual(28);
+    expect(refused(), "and no proof was refused on the way").toBe(before);
   } finally {
-    await device.auth.revoke().catch(() => {});
     closeDevice(device);
+    await context.close();
   }
 });

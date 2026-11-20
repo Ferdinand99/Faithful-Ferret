@@ -271,6 +271,9 @@ async fn tokens_and_proofs_never_reach_the_logs() {
         secrets.token(device.refresh.as_ref().expect("signed in"));
         secrets.add(device.key.x.clone());
         secrets.add(device.key.y.clone());
+        // The private key (the scalar the key signs with) is the most secret of all.
+        secrets.add(device.key.secret_b64());
+        secrets.add(device.key.secret_hex());
     }
     let old_refresh = TokenSecret::from_wire(&first.refresh.as_ref().expect("signed in").to_wire())
         .expect("a token");
@@ -369,6 +372,11 @@ async fn tokens_and_proofs_never_reach_the_logs() {
         (Method::GET, "/api/sync/checkpoint", None),
         (Method::PUT, "/api/sync/checkpoint", Some(json!({}))),
         (Method::POST, "/api/sync/batch", Some(json!({}))),
+        (
+            Method::PUT,
+            "/api/sync/items/00000000000000000000000000000001",
+            Some(json!({})),
+        ),
         (Method::GET, "/api/sync/events", None),
         (Method::GET, "/api/auth/devices", None),
     ];
@@ -390,7 +398,7 @@ async fn tokens_and_proofs_never_reach_the_logs() {
                 // The real token with the real proof is the one request that
                 // may work; it is not a canary, and its answer is not read for
                 // the canary, only for the real secrets.
-                seen.take(&format!("{method} {path} {}", token.to_wire().len()), &res);
+                seen.take("a route that takes a token, with a bad proof", &res);
             }
         }
         // A token header and a cookie together, and on the admin listener.
@@ -465,7 +473,7 @@ async fn tokens_and_proofs_never_reach_the_logs() {
                 };
                 let res = send(&app, req).await;
                 sends += 1;
-                seen.take(&format!("{path} with a bad proof"), &res);
+                seen.take("a token route with a bad proof", &res);
             }
         }
     }

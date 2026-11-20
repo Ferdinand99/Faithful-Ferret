@@ -90,6 +90,21 @@ impl DeviceKey {
         unreachable!("a scalar below the group order is found at once");
     }
 
+    /// The secret scalar of the key, base64url (for a test that looks for it
+    /// where it must never be).
+    pub fn secret_b64(&self) -> String {
+        b64(self.signing.to_bytes().as_slice())
+    }
+
+    /// The secret scalar of the key, in lower-case hexadecimal.
+    pub fn secret_hex(&self) -> String {
+        self.signing
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     /// The public JWK: exactly `kty`, `crv`, `x` and `y`.
     pub fn jwk(&self) -> Value {
         json!({"kty": "EC", "crv": "P-256", "x": self.x, "y": self.y})

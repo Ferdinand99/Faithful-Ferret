@@ -10,6 +10,7 @@
 #   scripts/lanbox-ferret-e2e-gate.sh restart    restart the container; lost opaque_setup refuses to start
 #   scripts/lanbox-ferret-e2e-gate.sh limits     session limits with the moved clock
 #   scripts/lanbox-ferret-e2e-gate.sh m2         the sync scenarios 10 to 17 in every browser
+#   scripts/lanbox-ferret-e2e-gate.sh m5a        the device scenarios (27) in every browser, a fresh stack for each
 #
 # Steps:
 #  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
@@ -29,7 +30,8 @@
 #     shows the notice, "Use here" moves the vault). The screenshots of every phase are
 #     saved in test-results/out/m2-shots/.
 #
-# Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
+# Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_SUFFIX and FERRET_E2E_SUBNET (another stack name
+# and network, see scripts/lanbox-ferret-test.sh), FERRET_E2E_BROWSERS
 # (default "chromium firefox webkit").
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -41,10 +43,11 @@ cd "$(dirname "$0")/.."
 browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
 m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 shots_dir=test-results/out/m2-shots
+m5a_specs=(01-setup 27-device)
 main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
 failures=0
-vault_origin=https://vault-e2e.test
-admin_origin=https://admin-e2e.test
+vault_origin="$e2e_vault_url"
+admin_origin="$e2e_admin_url"
 
 say() { printf '\n== %s\n' "$*" >&2; }
 ok() { printf '  ok    %s\n' "$*" >&2; }
@@ -158,8 +161,8 @@ restart_phase() { # browser, state
 
   say "a lost opaque_setup refuses to start"
   dk stop "$e2e_app" > /dev/null
-  dk run --rm --name ferret-e2e-wipe --label "$e2e_label" --entrypoint rm \
-    -v ferret-e2e-data:/data "$e2e_image" -f /data/opaque_setup
+  dk run --rm --name "$e2e_project-wipe" --label "$e2e_label" --entrypoint rm \
+    -v "$e2e_data_volume:/data" "$e2e_image" -f /data/opaque_setup
   dk start "$e2e_app" > /dev/null
   running=true
   for _ in $(seq 1 30); do
@@ -305,7 +308,7 @@ hosted_out=""
 hosted_cleanup() {
   [ -z "$hosted_pid" ] || kill "$hosted_pid" 2>/dev/null || true
   [ -z "$hosted_out" ] || rm -f "$hosted_out"
-  dk rm -f ferret-e2e-playwright > /dev/null 2>&1 || true
+  dk rm -f "$e2e_playwright" > /dev/null 2>&1 || true
   hosted_pid=""
   hosted_out=""
 }
@@ -343,27 +346,27 @@ run_m2_hosted() { # phase name, state, browser, files...
   hosted_pid=$!
   # The runner container has a fixed name (scripts/lanbox-ferret-test.sh, e2e_run).
   for _ in $(seq 1 600); do
-    [ "$(dk inspect -f '{{.State.Running}}' ferret-e2e-playwright 2>/dev/null || true)" = true ] && break
+    [ "$(dk inspect -f '{{.State.Running}}' "$e2e_playwright" 2>/dev/null || true)" = true ] && break
     kill -0 "$hosted_pid" 2>/dev/null || break
     sleep 1
   done
-  if ! dk exec ferret-e2e-playwright touch /tmp/host-ready; then
+  if ! dk exec "$e2e_playwright" touch /tmp/host-ready; then
     bad "$browser: the runner container did not come up, so the tests have no host"
     hosted_cleanup
     trap - EXIT INT TERM
     return 1
   fi
   while kill -0 "$hosted_pid" 2>/dev/null; do
-    requests="$(dk exec ferret-e2e-playwright sh -c 'ls /tmp/host-request-* 2>/dev/null' 2>/dev/null || true)"
+    requests="$(dk exec "$e2e_playwright" sh -c 'ls /tmp/host-request-* 2>/dev/null' 2>/dev/null || true)"
     for request in $requests; do
       step="${request#/tmp/host-request-}"
-      dk exec ferret-e2e-playwright rm -f "$request" > /dev/null 2>&1 || true
+      dk exec "$e2e_playwright" rm -f "$request" > /dev/null 2>&1 || true
       say "host step for the tests: $step"
       if host_step "$step"; then
-        dk exec ferret-e2e-playwright touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
+        dk exec "$e2e_playwright" touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
       else
         bad "the host step $step failed"
-        dk exec ferret-e2e-playwright touch "/tmp/host-failed-$step" > /dev/null 2>&1 || true
+        dk exec "$e2e_playwright" touch "/tmp/host-failed-$step" > /dev/null 2>&1 || true
       fi
     done
     sleep 2
@@ -401,6 +404,22 @@ m2_phase() {
   done
 }
 
+# ------------------------------------------------------------------------ m5a
+
+# The device scenarios (27): a device client in Node signs in as its own device, syncs, is revoked from the
+# page "Devices" and by a password change, and stays out of the admin listener; the web vault sends no token
+# header; contexts of one browser renew at once. Each browser gets a fresh stack and its own account (01-setup).
+# Run it on a stack of its own, so the stack of another run is left alone:
+#   FERRET_E2E_SUFFIX=m5a FERRET_E2E_SUBNET=172.30.248 scripts/lanbox-ferret-e2e-gate.sh m5a
+m5a_phase() {
+  local browser
+  for browser in $browsers; do
+    say "device scenarios in $browser on a fresh stack"
+    e2e_up >&2
+    if run_phase m5a "$browser" "${m5a_specs[@]}"; then ok "$browser: the device scenarios passed"; else bad "$browser: the device scenarios failed"; fi
+  done
+}
+
 # ---------------------------------------------------------------------- main
 
 main_gate() {
@@ -413,6 +432,7 @@ main_gate() {
       ;;
     browsers) browsers_phase ;;
     m2) m2_phase ;;
+    m5a) m5a_phase ;;
     restart)
       first="$(printf '%s' "$browsers" | awk '{print $1}')"
       e2e_up >&2

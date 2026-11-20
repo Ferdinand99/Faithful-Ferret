@@ -768,27 +768,56 @@ async fn handoff_reauth_reconcile_and_sensitive_routes_refuse_a_token() {
     assert_eq!(replay_len(&app), before, "no route took the token's proof");
 }
 
-/// Whether a type is, or holds, a `VaultCaller` that an extractor makes: bare,
-/// as the argument of a generic (`Result<VaultCaller, _>`, `Option<..>`, a
-/// wrapper extractor), through a path (`extract::VaultCaller`), in a tuple or a
-/// slice. A reference is a helper that is handed one, not an extractor, and is
-/// not looked into. (A type alias is found by the other check: the file that
-/// makes the alias names `VaultCaller` too.)
-struct NamesCaller(bool);
+/// Whether a type is, or holds, a `VaultCaller` that an extractor makes, or a
+/// name that the file gives it (`type C = VaultCaller;`, `use … VaultCaller as
+/// C;`): bare, as the argument of a generic (`Result<VaultCaller, _>`,
+/// `Option<..>`, a wrapper extractor), through a path (`extract::VaultCaller`),
+/// in a tuple or a slice. A reference is a helper that is handed one, not an
+/// extractor, and is not looked into.
+struct NamesCaller<'a> {
+    aliases: &'a [String],
+    found: bool,
+}
 
-impl<'ast> Visit<'ast> for NamesCaller {
+impl<'ast> Visit<'ast> for NamesCaller<'_> {
     fn visit_ident(&mut self, ident: &'ast syn::Ident) {
-        if ident == "VaultCaller" {
-            self.0 = true;
+        if ident == "VaultCaller" || self.aliases.iter().any(|alias| ident == alias) {
+            self.found = true;
         }
     }
 
     fn visit_type_reference(&mut self, _: &'ast syn::TypeReference) {}
 }
-fn names_caller(ty: &syn::Type) -> bool {
-    let mut names = NamesCaller(false);
+
+fn names_caller(ty: &syn::Type, aliases: &[String]) -> bool {
+    let mut names = NamesCaller {
+        aliases,
+        found: false,
+    };
     names.visit_type(ty);
-    names.0
+    names.found
+}
+
+/// The names a file gives `VaultCaller`: a type alias whose type names it (or
+/// another alias of the file), and a `use` that renames it.
+fn aliases_of(file: &syn::File) -> Vec<String> {
+    struct Aliases(Vec<String>);
+    impl<'ast> Visit<'ast> for Aliases {
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if names_caller(&item.ty, &self.0) {
+                self.0.push(item.ident.to_string());
+            }
+        }
+
+        fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+            if rename.ident == "VaultCaller" {
+                self.0.push(rename.rename.to_string());
+            }
+        }
+    }
+    let mut aliases = Aliases(Vec::new());
+    aliases.visit_file(file);
+    aliases.0
 }
 
 /// What the sources under `src/` say about `VaultCaller`: the handlers that
@@ -800,11 +829,12 @@ fn caller_routes() -> (Vec<String>, Vec<String>) {
         file: &'a str,
         found: Vec<String>,
         named: bool,
+        aliases: Vec<String>,
     }
     impl<'ast> Visit<'ast> for Finder<'_> {
         fn visit_signature(&mut self, sig: &'ast syn::Signature) {
             let takes = sig.inputs.iter().any(|input| match input {
-                syn::FnArg::Typed(typed) => names_caller(&typed.ty),
+                syn::FnArg::Typed(typed) => names_caller(&typed.ty, &self.aliases),
                 syn::FnArg::Receiver(_) => false,
             });
             if takes {
@@ -847,6 +877,7 @@ fn caller_routes() -> (Vec<String>, Vec<String>) {
             file: &name,
             found: Vec::new(),
             named: false,
+            aliases: aliases_of(&parsed),
         };
         finder.visit_file(&parsed);
         found.extend(finder.found);
@@ -907,7 +938,7 @@ fn the_route_scan_sees_a_caller_behind_generics_and_wrappers() {
         "extract::VaultCaller",
     ] {
         let ty: syn::Type = syn::parse_str(named).expect("a type");
-        assert!(names_caller(&ty), "{named}");
+        assert!(names_caller(&ty, &[]), "{named}");
     }
     for other in [
         "VaultSession",
@@ -917,8 +948,24 @@ fn the_route_scan_sees_a_caller_behind_generics_and_wrappers() {
         "&mut Option<VaultCaller>",
     ] {
         let ty: syn::Type = syn::parse_str(other).expect("a type");
-        assert!(!names_caller(&ty), "{other}");
+        assert!(!names_caller(&ty, &[]), "{other}");
     }
+}
+
+#[test]
+fn the_route_scan_follows_an_alias_of_the_caller_inside_a_file() {
+    // A handler that takes the extractor under another name is found: the
+    // names a file gives it are collected first.
+    let file: syn::File = syn::parse_str(
+        "use crate::http::extract::VaultCaller as Who; type Caller = Who; type Both = (u8, Caller); type Other = String; fn f(a: Both) {} fn g(b: Other) {}",
+    )
+    .expect("a file");
+    let aliases = aliases_of(&file);
+    assert_eq!(aliases, ["Who", "Caller", "Both"]);
+    let ty: syn::Type = syn::parse_str("Both").expect("a type");
+    assert!(names_caller(&ty, &aliases));
+    let ty: syn::Type = syn::parse_str("Other").expect("a type");
+    assert!(!names_caller(&ty, &aliases));
 }
 
 // --------------------------------------------------------- the token itself
