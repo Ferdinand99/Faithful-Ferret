@@ -539,6 +539,11 @@ cat >> "$STUB_LOG.curl-stdin"
 exit "${STUB_CURL_RC:-0}"
 STUB
   chmod +x "$d/bin/sftp" "$d/bin/age" "$d/bin/curl"
+  # stat that fails when asked to (the mode check of the key must fail closed), else the real one.
+  real_stat="$(command -v stat)"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\n[ "${STUB_STAT_FAIL:-}" != 1 ] || exit 1\n[ "${STUB_STAT_JUNK:-}" != 1 ] || { echo "?"; exit 0; }\nexec %s "$@"\n' "$real_stat" > "$d/bin/stat"
+  chmod +x "$d/bin/stat"
   local recipient hostkey
   recipient="age1$(printf 'q%.0s' {1..58})"
   hostkey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEHOSTKEYEXAMPLEHOSTKEYEXAMPLEHOSTKEY0"
@@ -584,6 +589,11 @@ STUB
   run_copy check && fail "the copy script accepted an SSH key that others can read"
   grep -q 'readable by group or others' "$d/out" || fail "the copy script must say why the key is refused"
   chmod 400 "$d/secrets/key"
+  # The check of the mode fails closed: a stat that fails, or answers nonsense, refuses the key.
+  run_copy check "STUB_STAT_FAIL=1" && fail "the copy script accepted a key whose mode could not be read"
+  grep -q 'mode of the SSH key cannot be read' "$d/out" || fail "the copy script must say that the mode could not be read: $(cat "$d/out")"
+  run_copy check "STUB_STAT_JUNK=1" && fail "the copy script accepted a key whose mode was not a number"
+  run_copy check || fail "the copy script refused a key with mode 0400: $(cat "$d/out")"
   chmod u+w "$d/backups"
   if (
     export FERRET_BACKUP_AGE_RECIPIENT="$recipient" FERRET_COPY_SFTP_HOST=h FERRET_COPY_SFTP_USER=u FERRET_COPY_SFTP_HOST_KEY="$hostkey" FERRET_COPY_SFTP_KEY_FILE="$d/secrets/key" FERRET_COPY_BACKUPS_DIR="$d/backups" FERRET_COPY_WORK="$d/work"

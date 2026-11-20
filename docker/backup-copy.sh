@@ -82,8 +82,12 @@ settings() {
   key_file="${FERRET_COPY_SFTP_KEY_FILE:-/run/secrets/copy_sftp_key}"
   [ -r "$key_file" ] || fail "the SSH key cannot be read (it must be owned by the user of this container, mode 0400)"
   # A secret mounted from the host keeps the mode of the host file: refuse a key that others can read.
-  if [ -n "$(find "$key_file" -maxdepth 0 -perm /077 2> /dev/null)" ]; then
-    fail "the SSH key is readable by group or others: make it owned by the user of this container with mode 0400"
+  # Fails closed: if the mode cannot be read, or is not an octal number, the key is refused too.
+  local key_mode
+  key_mode="$(stat -c %a "$key_file" 2> /dev/null)" || fail "the mode of the SSH key cannot be read; the key is refused"
+  [[ "$key_mode" =~ ^[0-7]{3,4}$ ]] || fail "the mode of the SSH key is not readable as a number ($key_mode); the key is refused"
+  if [ $((8#$key_mode & 8#077)) -ne 0 ]; then
+    fail "the SSH key is readable by group or others (mode $key_mode): make it owned by the user of this container with mode 0400"
   fi
   keep_days="${FERRET_COPY_KEEP_DAYS:-30}"
   [[ "$keep_days" =~ ^[0-9]{1,3}$ ]] && [ "$keep_days" -ge 1 ] || fail "FERRET_COPY_KEEP_DAYS is not a number of days"

@@ -493,6 +493,19 @@ drill() {
   else
     drill_ok "a wrong host key stops the copy"
   fi
+  # A key that others can read is refused, and nothing is written to the target (the key file is
+  # made world-readable for this one run and put back).
+  dk run --rm --user 0:0 --network none --label "$drill_label" -v ferret-drill-client:/c --entrypoint chmod ferret-drill-copy:latest 644 /c/id_ed25519
+  local key_out key_rc=0
+  key_out="$(dcd run -T --rm -e FERRET_COPY_SFTP_HOST_KEY="$host_key" ferret-drill-copy once 2>&1)" || key_rc=$?
+  dk run --rm --user 0:0 --network none --label "$drill_label" -v ferret-drill-client:/c --entrypoint chmod ferret-drill-copy:latest 600 /c/id_ed25519
+  if [ "$key_rc" != 0 ] && printf '%s' "$key_out" | grep -q 'readable by group or others (mode 644)'; then
+    drill_ok "an SSH key at mode 0644 is refused by the copy container"
+  else
+    drill_bad "the copy container did not refuse an SSH key at mode 0644 (exit $key_rc)"
+  fi
+  drill_check "nothing was written to the target by the refused run" "0" \
+    "$(dcd run -T --rm ferret-drill-decrypt 'find /target/ferret -type f | wc -l' | tr -d '\r ')"
   dcd run -T --rm -e FERRET_COPY_SFTP_HOST_KEY="$host_key" ferret-drill-copy once >&2 || rc=$?
   drill_check "the copy ran" 0 "$rc"
   rc=0
