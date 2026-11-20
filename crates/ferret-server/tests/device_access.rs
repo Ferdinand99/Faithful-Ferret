@@ -768,29 +768,55 @@ async fn handoff_reauth_reconcile_and_sensitive_routes_refuse_a_token() {
     assert_eq!(replay_len(&app), before, "no route took the token's proof");
 }
 
-/// The handlers that take a `VaultCaller`, as `path::function` under `src/`.
-fn caller_routes() -> Vec<String> {
+/// Whether a type is, or holds, a `VaultCaller` that an extractor makes: bare,
+/// as the argument of a generic (`Result<VaultCaller, _>`, `Option<..>`, a
+/// wrapper extractor), through a path (`extract::VaultCaller`), in a tuple or a
+/// slice. A reference is a helper that is handed one, not an extractor, and is
+/// not looked into. (A type alias is found by the other check: the file that
+/// makes the alias names `VaultCaller` too.)
+struct NamesCaller(bool);
+
+impl<'ast> Visit<'ast> for NamesCaller {
+    fn visit_ident(&mut self, ident: &'ast syn::Ident) {
+        if ident == "VaultCaller" {
+            self.0 = true;
+        }
+    }
+
+    fn visit_type_reference(&mut self, _: &'ast syn::TypeReference) {}
+}
+fn names_caller(ty: &syn::Type) -> bool {
+    let mut names = NamesCaller(false);
+    names.visit_type(ty);
+    names.0
+}
+
+/// What the sources under `src/` say about `VaultCaller`: the handlers that
+/// take one (a parameter whose type names it anywhere), and the files whose
+/// code names it at all (comments and documentation are not code; `syn` does
+/// not see them).
+fn caller_routes() -> (Vec<String>, Vec<String>) {
     struct Finder<'a> {
         file: &'a str,
         found: Vec<String>,
+        named: bool,
     }
     impl<'ast> Visit<'ast> for Finder<'_> {
         fn visit_signature(&mut self, sig: &'ast syn::Signature) {
             let takes = sig.inputs.iter().any(|input| match input {
-                syn::FnArg::Typed(typed) => match &*typed.ty {
-                    syn::Type::Path(path) => path
-                        .path
-                        .segments
-                        .last()
-                        .is_some_and(|s| s.ident == "VaultCaller"),
-                    _ => false,
-                },
+                syn::FnArg::Typed(typed) => names_caller(&typed.ty),
                 syn::FnArg::Receiver(_) => false,
             });
             if takes {
                 self.found.push(format!("{}::{}", self.file, sig.ident));
             }
             visit::visit_signature(self, sig);
+        }
+
+        fn visit_ident(&mut self, ident: &'ast syn::Ident) {
+            if ident == "VaultCaller" {
+                self.named = true;
+            }
         }
     }
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -808,6 +834,7 @@ fn caller_routes() -> Vec<String> {
     walk(&src, &mut files);
     assert!(files.len() > 40, "the sources were found");
     let mut found = Vec::new();
+    let mut named = Vec::new();
     for file in files {
         let text = std::fs::read_to_string(&file).expect("a source file");
         let parsed = syn::parse_file(&text).expect("a Rust file");
@@ -819,20 +846,26 @@ fn caller_routes() -> Vec<String> {
         let mut finder = Finder {
             file: &name,
             found: Vec::new(),
+            named: false,
         };
         finder.visit_file(&parsed);
         found.extend(finder.found);
+        if finder.named {
+            named.push(name);
+        }
     }
     found.sort();
-    found
+    named.sort();
+    (found, named)
 }
 
 #[test]
 fn only_the_sync_routes_take_a_token() {
     // The sync routes and nothing else: a new route that takes a token must
     // be added here on purpose, and every other route stays closed.
+    let (routes, files) = caller_routes();
     assert_eq!(
-        caller_routes(),
+        routes,
         [
             "vault/batch.rs::post_batch",
             "vault/changes.rs::get_changes",
@@ -843,6 +876,49 @@ fn only_the_sync_routes_take_a_token() {
             "vault/methods.rs::get_methods",
         ]
     );
+    // The files whose code names `VaultCaller`: the extractor and the seven
+    // handlers. A handler that takes it through an alias, a wrapper extractor
+    // or a macro is not found above, but it is found here, in a file that is
+    // not in this list, and the list is then edited on purpose.
+    assert_eq!(
+        files,
+        [
+            "http/extract.rs",
+            "vault/batch.rs",
+            "vault/changes.rs",
+            "vault/checkpoint.rs",
+            "vault/events.rs",
+            "vault/items.rs",
+            "vault/methods.rs",
+        ]
+    );
+}
+
+#[test]
+fn the_route_scan_sees_a_caller_behind_generics_and_wrappers() {
+    // The scan itself is tried on text that is not in the sources: a caller
+    // as the argument of a generic, through a path, behind a reference and
+    // inside a tuple is named; another type is not.
+    for named in [
+        "Result<VaultCaller, Response>",
+        "Option<crate::http::extract::VaultCaller>",
+        "(Json<Body>, VaultCaller)",
+        "Wrapped<Vec<VaultCaller>>",
+        "extract::VaultCaller",
+    ] {
+        let ty: syn::Type = syn::parse_str(named).expect("a type");
+        assert!(names_caller(&ty), "{named}");
+    }
+    for other in [
+        "VaultSession",
+        "Result<VaultSession, Response>",
+        "Json<VaultCallerBody>",
+        "&VaultCaller",
+        "&mut Option<VaultCaller>",
+    ] {
+        let ty: syn::Type = syn::parse_str(other).expect("a type");
+        assert!(!names_caller(&ty), "{other}");
+    }
 }
 
 // --------------------------------------------------------- the token itself

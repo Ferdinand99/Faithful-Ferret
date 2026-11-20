@@ -67,6 +67,29 @@ impl DeviceKey {
         }
     }
 
+    /// A key for a long run of tests, from a number: every number gives
+    /// another key (the scalar is the SHA-256 of a label and the number, so
+    /// any `u64` will do, where [`DeviceKey::new`] has 127 keys).
+    pub fn from_counter(counter: u64) -> Self {
+        for salt in 0u8..=255 {
+            let mut hasher = Sha256::new();
+            hasher.update(b"ferret test device key");
+            hasher.update(counter.to_be_bytes());
+            hasher.update([salt]);
+            let scalar: [u8; 32] = hasher.finalize().into();
+            if let Ok(signing) = SigningKey::from_slice(&scalar) {
+                let point = signing.verifying_key().to_sec1_point(false);
+                let bytes = point.as_bytes();
+                return Self {
+                    x: b64(&bytes[1..33]),
+                    y: b64(&bytes[33..65]),
+                    signing,
+                };
+            }
+        }
+        unreachable!("a scalar below the group order is found at once");
+    }
+
     /// The public JWK: exactly `kty`, `crv`, `x` and `y`.
     pub fn jwk(&self) -> Value {
         json!({"kty": "EC", "crv": "P-256", "x": self.x, "y": self.y})

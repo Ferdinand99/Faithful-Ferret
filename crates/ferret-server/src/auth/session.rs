@@ -472,8 +472,9 @@ pub fn end_all_credentials(
 }
 
 /// Ends every live session of `user_id` from the browser `device` (on both
-/// origins) at `now`, except the session `keep` if given, and every session
-/// handed over from one of the others (their admin sessions), in the caller's
+/// origins) at `now`, except the session `keep` if given and the sessions
+/// handed over from it (its admin sessions, which carry its device id too), and
+/// every session handed over from one of the others, in the caller's
 /// transaction. Returns the ids of the sessions it ended, each once, for the
 /// caller to announce after the commit.
 ///
@@ -495,6 +496,7 @@ pub fn end_device_sessions(
         "UPDATE ferret_sessions SET revoked_at = ?3
          WHERE user_id = ?1 AND device_id = ?2 AND revoked_at IS NULL
            AND (?4 IS NULL OR sid_hash <> ?4)
+           AND (?4 IS NULL OR parent_sid IS NULL OR parent_sid <> ?4)
          RETURNING sid_hash",
         params![user_id, device.0.as_slice(), now, keep],
     )?;
