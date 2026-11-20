@@ -576,33 +576,43 @@ fn epochs(conn: &Connection) -> Vec<i64> {
 }
 
 #[test]
-fn bump_keeps_the_m2_rule_with_the_new_signature() {
+fn bump_takes_one_more_the_time_or_at_least_whichever_is_highest() {
     let mut conn = migrated();
     for n in 1..=2 {
         add_account(&mut conn, n, NOW);
     }
-    // One more than the stored epoch, whatever `now` is.
-    assert_eq!(bump_restore_epoch(&mut conn, None, NOW).expect("a bump"), 1);
-    assert_eq!(bump_restore_epoch(&mut conn, None, 5).expect("a bump"), 2);
-    assert_eq!(epochs(&conn), [2, 2]);
-    let bumped = reconcile::bump(&mut conn, None, NOW).expect("a bump");
-    assert_eq!((bumped.vaults, bumped.restore_epoch), (2, 3));
+    let now = u64::try_from(NOW).expect("a time");
+    // Behind the time: the time.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, NOW).expect("a bump"),
+        now
+    );
+    // An older time: one more than the stored epoch.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, 5).expect("a bump"),
+        now + 1
+    );
+    assert_eq!(epochs(&conn), [NOW + 1, NOW + 1]);
+    let bumped = reconcile::bump(&mut conn, Some(now + 10), NOW).expect("a bump");
     assert_eq!(
         bumped,
         reconcile::Bumped {
             vaults: 2,
-            restore_epoch: 3
+            restore_epoch: now + 10
         }
     );
+    assert_eq!(epochs(&conn), [NOW + 10, NOW + 10]);
 
-    // A lowest epoch is refused for now, and nothing changes: no command says
-    // that it raised the epoch to a number that it did not.
-    let refused = bump_restore_epoch(&mut conn, Some(10), NOW).expect_err("not supported yet");
+    // A lowest epoch no JSON integer can carry is refused, and nothing
+    // changes: no command says that it raised the epoch to a number that it
+    // did not.
+    let refused = bump_restore_epoch(&mut conn, Some(ferret_server::wire::MAX_JSON_INT + 1), NOW)
+        .expect_err("too large");
     assert!(
         matches!(refused, ferret_server::error::StoreError::Invalid(_)),
         "{refused}"
     );
-    assert_eq!(epochs(&conn), [3, 3]);
+    assert_eq!(epochs(&conn), [NOW + 10, NOW + 10]);
 }
 
 // ------------------------------------------------------------ the backup settings

@@ -16,7 +16,7 @@ use axum::http::StatusCode;
 use ferret_core::testing::opaque::{TestKsf, login_finish_with};
 use ferret_core::{OPAQUE_CONTEXT, OsRng, PinState, RecoveryKey, TestRng, opaque_login_start};
 use ferret_server::http::proxy_guard::ProxyList;
-use ferret_server::vault::reconcile::bump_all_vaults;
+use ferret_server::vault::reconcile::bump_restore_epoch;
 use ferret_server::vault::unlock_write::{ChangeKind, UnlockChange, Writer, apply};
 use ferret_server::wire::{SealedRowJson, b64url};
 use ferret_server_auth::{
@@ -372,7 +372,7 @@ async fn a_sign_in_begun_before_a_restore_of_an_older_record_cannot_finish_after
                 "UPDATE ferret_accounts SET opaque_record = ?1 WHERE account_id = ?2",
                 rusqlite::params![older, account.as_bytes().as_slice()],
             )?;
-            bump_all_vaults(conn)?;
+            bump_restore_epoch(conn, None, 0)?;
             Ok(())
         })
         .await
