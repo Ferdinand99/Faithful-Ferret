@@ -37,7 +37,8 @@
 //!    select the real or the made-up ones;
 //! 6. parse the chosen record once and run `ServerLogin::start` with the
 //!    context `ferret/v1/opaque` and no identities;
-//! 7. seal the 128-byte state, put it in the store for
+//! 7. seal the state (the `ServerLogin` and the [`RecordBinding`] of the
+//!    chosen record among it), put it in the store for
 //!    [`STATE_TTL_SECS`](crate::STATE_TTL_SECS) seconds, and answer.
 //!
 //! `login_finish`:
@@ -51,12 +52,29 @@
 //!    asked;
 //! 3. ask the throttle (`Stage::LoginFinish`) with the credential id of the
 //!    state, or with the address alone when no state could be opened;
-//! 4. run `ServerLogin::finish` on the KE3 and wipe the session key.
+//! 4. read the record the account has now ([`CurrentRecord`]);
+//! 5. run `ServerLogin::finish` on the KE3 and wipe the session key;
+//! 6. refuse unless the proof verified and the record of step 4 is the one
+//!    the state was made from.
 //!
 //! The state is gone after step 2 whatever happens next: a wrong KE3, a
 //! throttled caller or a failed check each cost the client a new
 //! `login_start`. That is the price of single use, and it is what stops a
 //! guess at KE3 from being repeated against the same state.
+//!
+//! # Bound to the record
+//!
+//! The expected MAC in the state was computed from the record that was stored
+//! at `login_start`. Without more, a login started with the old password a
+//! moment before a password change (or a recovery, or a restore) could finish
+//! after it. The state therefore holds the [`RecordBinding`] of that record,
+//! and `login_finish` refuses with [`DenyReason::RecordChanged`] when the
+//! account's record is another one by then. Steps 4 to 6 run in full for every
+//! state that opened, so a wrong password and a replaced record are refused
+//! after the same work and with the same answer. A caller that issues a
+//! session afterwards compares [`LoginVerified::record`] once more with the
+//! record in the transaction that writes the session, which closes the gap
+//! between step 4 and that write.
 //!
 //! Every refusal of `login_finish` is [`AuthError::Denied`] with an own
 //! [`DenyReason`] for the server's log and the one public code `denied`; the
@@ -106,7 +124,7 @@ use crate::name::NormalizedLoginName;
 use crate::prelogin::{
     PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, fake_record_bytes, step,
 };
-use crate::record::{ProfileRules, StoredRecord, ValidatedRecord};
+use crate::record::{ProfileRules, RecordBinding, StoredRecord, ValidatedRecord};
 use crate::scope::{Capability, SessionScope, authorize};
 use crate::state::{
     LoginPurpose, LoginStateStore, SERVER_LOGIN_LEN, StatePlain, StateSealKey, open_state,
@@ -328,12 +346,48 @@ impl fmt::Debug for LoginFinishRequest<'_> {
 /// A state lives for 60 seconds, so an account that was disabled between
 /// `login_start` and `login_finish` still finishes with `Ok`. The caller must
 /// look the account up again and refuse a disabled one before it issues a
-/// session.
+/// session. In the same transaction it compares [`LoginVerified::record`]
+/// with the account's record, and refuses when they differ.
 pub struct LoginVerified {
     /// The account the login was for.
     pub credential: CredentialId,
     /// What the login was for, as the request expected it.
     pub purpose: LoginPurpose,
+    /// The record the proof was checked against. `login_finish` has found it
+    /// to be the account's record when it read it; a record that was replaced
+    /// after that read is caught only by the caller's own comparison.
+    pub record: RecordBinding,
+}
+
+/// Where [`login_finish`] reads the record an account has now.
+///
+/// It is asked once for every state that opened, after the limiter and
+/// before the OPAQUE work, with the credential id of the state: a real one or
+/// the made-up one of a name without an account. An implementation answers
+/// `Ok(None)` when no account has the id, and should do the same work either
+/// way (compute a binding of a stand-in when there is no row), so the answer
+/// takes the same time. An error refuses the login with that error.
+///
+/// A closure `Fn(&CredentialId) -> Result<Option<RecordBinding>, AuthError>`
+/// is one.
+///
+/// Spec: Fase 1 § 4.2 ("Innlogging").
+pub trait CurrentRecord {
+    /// The [`RecordBinding`] of the record stored for `credential` now.
+    fn current_record(&self, credential: &CredentialId)
+    -> Result<Option<RecordBinding>, AuthError>;
+}
+
+impl<F> CurrentRecord for F
+where
+    F: Fn(&CredentialId) -> Result<Option<RecordBinding>, AuthError>,
+{
+    fn current_record(
+        &self,
+        credential: &CredentialId,
+    ) -> Result<Option<RecordBinding>, AuthError> {
+        self(credential)
+    }
 }
 
 impl fmt::Debug for LoginVerified {
@@ -611,6 +665,9 @@ fn start_admitted<R: SecureRng, S: LoginStateStore>(
     let server_login = server_login_bytes(&started.state)?;
     let plain = StatePlain {
         credential: *id,
+        // The record OPAQUE answered from: the account's own or the made-up
+        // one, hashed the same way.
+        record: RecordBinding::of(record.as_slice()),
         purpose: req.purpose,
         expires_at,
         ksf_profile,
@@ -671,14 +728,17 @@ fn parse_ke3(bytes: &[u8]) -> Result<CredentialFinalization<FerretSuite>, AuthEr
 ///
 /// The structure is checked first and without touching the store. The state
 /// is then taken (single use) and opened; only after that is the limiter
-/// asked, with the credential id of the state, and only then does any OPAQUE
-/// work start. When no state could be opened the limiter is asked with the
-/// address alone.
+/// asked, with the credential id of the state, and only then are the
+/// account's current record read from `records` and the OPAQUE work done.
+/// When no state could be opened the limiter is asked with the address alone.
 ///
 /// Every refusal of the proof is [`AuthError::Denied`] with a reason of its
 /// own and the one public code `denied`; a missing, used, expired, foreign
-/// or wrongly bound state and a wrong KE3 cannot be told apart by a client
-/// from the status and the body of the answer. The time is another matter: a
+/// or wrongly bound state, a wrong KE3 and a record that was replaced since
+/// `login_start` ([`DenyReason::RecordChanged`]) cannot be told apart by a
+/// client from the status and the body of the answer. A wrong KE3 and a
+/// replaced record also cost the same work: both read the record and run the
+/// OPAQUE step. When both apply, the reason is `Ke3`. The time is another matter: a
 /// missing state returns before any OPAQUE work, so it is faster, and a caller
 /// knows whether it sent a state (see `ct/TRIAGE.md`).
 ///
@@ -690,9 +750,10 @@ fn parse_ke3(bytes: &[u8]) -> Result<CredentialFinalization<FerretSuite>, AuthEr
 /// answer is the same either way.
 ///
 /// Spec: Fase 1 § 4.2 ("Innlogging", steps 3 and 4).
-pub fn login_finish<S: LoginStateStore>(
+pub fn login_finish<S: LoginStateStore, C: CurrentRecord + ?Sized>(
     cx: &AuthContext<'_>,
     store: &S,
+    records: &C,
     req: &LoginFinishRequest<'_>,
 ) -> Result<LoginVerified, AuthError> {
     let now = cx.clock.now_unix();
@@ -745,19 +806,41 @@ pub fn login_finish<S: LoginStateStore>(
         now,
     )?;
 
+    step("current-record");
+    let bound = still_current(&state.record, records.current_record(&state.credential));
     step("opaque-finish");
-    let proof = check_proof(&state, ke3);
-    let outcome = if proof.is_ok() {
+    // Both checks run in full; a wrong proof is reported before a replaced
+    // record.
+    let verdict = check_proof(&state, ke3).and(bound);
+    let outcome = if verdict.is_ok() {
         Outcome::Success
     } else {
         Outcome::Failure
     };
     ticket.finish(outcome, now);
-    proof?;
+    verdict?;
     Ok(LoginVerified {
         credential: state.credential,
         purpose: expected,
+        record: state.record.clone(),
     })
+}
+
+/// Whether the record of the state is the record the account has now. A
+/// missing account is compared with a stand-in, so the comparison runs on
+/// every path, and refused.
+fn still_current(
+    sealed: &RecordBinding,
+    current: Result<Option<RecordBinding>, AuthError>,
+) -> Result<(), AuthError> {
+    let current = current?;
+    let stand_in = RecordBinding::from_bytes([0u8; 32]);
+    let same = sealed.same_as(current.as_ref().unwrap_or(&stand_in));
+    if same & current.is_some() {
+        Ok(())
+    } else {
+        Err(AuthError::Denied(DenyReason::RecordChanged))
+    }
 }
 
 /// Ends a request that failed before the account was known: the limiter is
@@ -1052,7 +1135,14 @@ mod tests {
         let known = trace(f.active());
         assert_eq!(
             known,
-            ["parse-finish", "take", "open", "admit", "opaque-finish"]
+            [
+                "parse-finish",
+                "take",
+                "open",
+                "admit",
+                "current-record",
+                "opaque-finish"
+            ]
         );
         assert_eq!(trace(AccountLookup::Unknown), known);
         assert_eq!(trace(AccountLookup::Disabled), known);
@@ -1140,22 +1230,47 @@ mod tests {
 
         // Success: the state is taken, then the limiter, then the proof.
         clear_steps();
-        login_finish(&cx, &store, &finish_request(hex.as_bytes(), &ke3)).unwrap();
+        login_finish(
+            &cx,
+            &store,
+            &f.records,
+            &finish_request(hex.as_bytes(), &ke3),
+        )
+        .unwrap();
         assert_eq!(log.take(), ["take", "admit", "record"]);
         assert_eq!(
             steps(),
-            ["parse-finish", "take", "open", "admit", "opaque-finish"]
+            [
+                "parse-finish",
+                "take",
+                "open",
+                "admit",
+                "current-record",
+                "opaque-finish"
+            ]
         );
 
         // No state: the limiter, with the address alone, and no proof.
         clear_steps();
-        login_finish(&cx, &store, &finish_request(hex.as_bytes(), &ke3)).unwrap_err();
+        login_finish(
+            &cx,
+            &store,
+            &f.records,
+            &finish_request(hex.as_bytes(), &ke3),
+        )
+        .unwrap_err();
         assert_eq!(log.take(), ["take", "admit", "record"]);
         assert_eq!(steps(), ["parse-finish", "take", "admit"]);
 
         // A structure error: the limiter first, the store is not touched.
         clear_steps();
-        login_finish(&cx, &store, &finish_request(hex.as_bytes(), &ke3[..63])).unwrap_err();
+        login_finish(
+            &cx,
+            &store,
+            &f.records,
+            &finish_request(hex.as_bytes(), &ke3[..63]),
+        )
+        .unwrap_err();
         assert_eq!(log.take(), ["admit", "record"]);
         assert_eq!(steps(), ["parse-finish", "admit"]);
 
@@ -1171,7 +1286,13 @@ mod tests {
         throttle.refuse.store(true, Ordering::SeqCst);
         clear_steps();
         let hex = response.login_id.to_hex();
-        let error = login_finish(&cx, &store, &finish_request(hex.as_bytes(), &ke3)).unwrap_err();
+        let error = login_finish(
+            &cx,
+            &store,
+            &f.records,
+            &finish_request(hex.as_bytes(), &ke3),
+        )
+        .unwrap_err();
         assert_eq!(
             error,
             AuthError::Throttled {
@@ -1191,5 +1312,238 @@ mod tests {
         let key = response.login_id.store_key();
         let gone = LoginFixture::START + STATE_TTL_SECS;
         assert!(f.store.take(&key, gone).unwrap().is_none());
+    }
+
+    // ------------------------------------------------ bound to the record
+
+    /// A login of the fixture's account with the right password, up to KE3.
+    fn started(f: &LoginFixture, seed: &str) -> (LoginId, Vec<u8>) {
+        let (ke1, state) = f.client_start(FIXTURE_PASSWORD, seed);
+        let response = f.start(f.active(), &ke1, LoginPurpose::Login).unwrap();
+        let ke3 = f
+            .client_finish(state, FIXTURE_PASSWORD, &response.ke2, OPAQUE_CONTEXT)
+            .unwrap();
+        (response.login_id, ke3)
+    }
+
+    fn outcomes(f: &LoginFixture) -> Vec<Outcome> {
+        f.throttle
+            .calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                crate::ThrottleCall::Record { outcome, .. } => Some(outcome),
+                crate::ThrottleCall::Admit { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Spec: Fase 1 § 4.2. A login started with the right password before
+    /// the record was replaced (a password change) does not finish after it,
+    /// and is a failure for the limiter.
+    #[test]
+    fn a_login_started_before_the_record_was_replaced_does_not_finish() {
+        let f = LoginFixture::new();
+        let (login_id, ke3) = started(&f, "before");
+        f.register(&f.credential, "a new master password");
+        f.throttle.clear();
+        let error = f.finish(&login_id, &ke3, None).unwrap_err();
+        assert_eq!(error, AuthError::Denied(DenyReason::RecordChanged));
+        assert_eq!(error.public_code(), "denied");
+        assert_eq!(outcomes(&f), [Outcome::Failure]);
+        // The state is used up.
+        assert!(f.store.is_empty());
+    }
+
+    /// The account the state names has no record any more.
+    #[test]
+    fn a_login_of_an_account_that_is_gone_does_not_finish() {
+        let f = LoginFixture::new();
+        let (login_id, ke3) = started(&f, "gone");
+        f.records.remove(&f.credential);
+        assert_eq!(
+            f.finish(&login_id, &ke3, None).unwrap_err(),
+            AuthError::Denied(DenyReason::RecordChanged)
+        );
+    }
+
+    /// The record that came back is the one the state holds: the account's
+    /// own, as stored.
+    #[test]
+    fn a_login_of_an_unchanged_record_finishes_and_names_it() {
+        let f = LoginFixture::new();
+        // Another account changes its record in between: no matter here.
+        let other = CredentialId::from_bytes([0x07; 16]);
+        f.register(&other, "first");
+        let (login_id, ke3) = started(&f, "unchanged");
+        f.register(&other, "second");
+        let verified = f.finish(&login_id, &ke3, None).unwrap();
+        assert!(
+            verified
+                .record
+                .same_as(&RecordBinding::of(f.record.record.as_bytes()))
+        );
+        assert!(
+            !verified
+                .record
+                .same_as(&RecordBinding::of(&[0u8; REGISTRATION_RECORD_LEN]))
+        );
+    }
+
+    /// A wrong KE3 and a replaced record take the same steps, give the same
+    /// public answer and the same outcome to the limiter. When both apply,
+    /// the proof decides the reason.
+    #[test]
+    fn a_replaced_record_is_refused_after_the_same_work_as_a_wrong_password() {
+        let f = LoginFixture::new();
+        let trace = |replace: bool, ke3_wrong: bool, seed: &str| {
+            f.register(&f.credential, FIXTURE_PASSWORD);
+            let (login_id, mut ke3) = started(&f, seed);
+            if replace {
+                f.register(&f.credential, "a new master password");
+            }
+            if ke3_wrong {
+                ke3[0] ^= 1;
+            }
+            f.throttle.clear();
+            clear_steps();
+            let error = f.finish(&login_id, &ke3, None).unwrap_err();
+            (error, steps(), outcomes(&f))
+        };
+        let (wrong, wrong_steps, wrong_outcomes) = trace(false, true, "wrong");
+        let (changed, changed_steps, changed_outcomes) = trace(true, false, "changed");
+        let (both, both_steps, _) = trace(true, true, "both");
+        assert_eq!(wrong, AuthError::Denied(DenyReason::Ke3));
+        assert_eq!(changed, AuthError::Denied(DenyReason::RecordChanged));
+        assert_eq!(both, AuthError::Denied(DenyReason::Ke3));
+        assert_eq!(wrong.public_code(), changed.public_code());
+        assert_eq!(wrong.http_class(), changed.http_class());
+        assert_eq!(
+            wrong_steps,
+            [
+                "parse-finish",
+                "take",
+                "open",
+                "admit",
+                "current-record",
+                "opaque-finish"
+            ]
+        );
+        assert_eq!(changed_steps, wrong_steps);
+        assert_eq!(both_steps, wrong_steps);
+        assert_eq!(changed_outcomes, wrong_outcomes);
+    }
+
+    /// The record is asked for once, with the credential of the state, for
+    /// a real and for a made-up account alike, after the limiter.
+    #[test]
+    fn the_record_is_read_once_for_every_kind_of_lookup() {
+        let f = LoginFixture::new();
+        let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "client");
+        let fake = crate::fake_credential_id(&f.prelogin, &f.name);
+        for (lookup, expected) in [
+            (f.active(), f.credential),
+            (AccountLookup::Unknown, fake),
+            (AccountLookup::Disabled, fake),
+        ] {
+            let response = f.start(lookup, &ke1, LoginPurpose::Login).unwrap();
+            let asked = Mutex::new(Vec::new());
+            let records = |credential: &CredentialId| {
+                asked.lock().unwrap().push(*credential);
+                Ok(None)
+            };
+            let hex = response.login_id.to_hex();
+            let error = login_finish(
+                &f.cx(),
+                &f.store,
+                &records,
+                &finish_request(hex.as_bytes(), &[9u8; 64]),
+            )
+            .unwrap_err();
+            assert_eq!(error, AuthError::Denied(DenyReason::Ke3));
+            assert_eq!(*asked.lock().unwrap(), [expected]);
+        }
+        // A state that does not open, or a limiter that refuses, asks nothing.
+        let asked = AtomicBool::new(false);
+        let records = |_: &CredentialId| {
+            asked.store(true, Ordering::SeqCst);
+            Ok(None)
+        };
+        let error = login_finish(
+            &f.cx(),
+            &f.store,
+            &records,
+            &finish_request(&[b'0'; 32], &[9u8; 64]),
+        )
+        .unwrap_err();
+        assert_eq!(error, AuthError::Denied(DenyReason::StateMissing));
+        let response = f.start(f.active(), &ke1, LoginPurpose::Login).unwrap();
+        f.throttle.refuse_with(Some(RetryAfter::new(3)));
+        let hex = response.login_id.to_hex();
+        login_finish(
+            &f.cx(),
+            &f.store,
+            &records,
+            &finish_request(hex.as_bytes(), &[9u8; 64]),
+        )
+        .unwrap_err();
+        assert!(!asked.load(Ordering::SeqCst));
+    }
+
+    /// A source that fails refuses the login with its error, a failure for
+    /// the limiter.
+    #[test]
+    fn a_record_source_that_fails_refuses_the_login() {
+        let f = LoginFixture::new();
+        let (login_id, ke3) = started(&f, "failing");
+        f.throttle.clear();
+        let failing =
+            |_: &CredentialId| Err(AuthError::Internal(crate::error::InternalKind::Storage));
+        let hex = login_id.to_hex();
+        let error = login_finish(
+            &f.cx(),
+            &f.store,
+            &failing,
+            &finish_request(hex.as_bytes(), &ke3),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            AuthError::Internal(crate::error::InternalKind::Storage)
+        );
+        assert_eq!(outcomes(&f), [Outcome::Failure]);
+    }
+
+    /// The state sealed the binding of the record OPAQUE answered from: the
+    /// account's for an account, the made-up one for a name without.
+    #[test]
+    fn the_state_holds_the_binding_of_the_record_it_answered_from() {
+        let f = LoginFixture::new();
+        let (ke1, _) = f.client_start(FIXTURE_PASSWORD, "client");
+        let open = |lookup| {
+            let response = f.start(lookup, &ke1, LoginPurpose::Login).unwrap();
+            let sealed = f
+                .store
+                .take(&response.login_id.store_key(), LoginFixture::START)
+                .unwrap()
+                .unwrap();
+            open_state(
+                &f.seal,
+                &response.login_id,
+                &sealed,
+                &LoginPurpose::Login,
+                LoginFixture::START,
+            )
+            .unwrap()
+        };
+        let real = open(f.active());
+        assert!(
+            real.record
+                .same_as(&RecordBinding::of(f.record.record.as_bytes()))
+        );
+        let fake = open(AccountLookup::Unknown);
+        let fake_id = crate::fake_credential_id(&f.prelogin, &f.name);
+        let made_up = fake_record_bytes(&f.keys, &f.prelogin, &fake_id);
+        assert!(fake.record.same_as(&RecordBinding::of(made_up.as_slice())));
+        assert!(!fake.record.same_as(&real.record));
     }
 }

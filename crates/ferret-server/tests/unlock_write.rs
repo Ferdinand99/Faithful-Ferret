@@ -14,8 +14,8 @@ use ferret_server::auth::session::{Origin, lookup, revoke, set_parent};
 use ferret_server::error::ApiError;
 use ferret_server::ids::SidHash;
 use ferret_server::vault::unlock_write::{
-    Applied, Authorized, BACKUP_REASON, COOLDOWN_SECS, ChangeKind, UnlockChange, Writer,
-    after_commit, apply, is_recovery_public_key,
+    Applied, Authorized, BACKUP_REASON, ChangeKind, UnlockChange, Writer, after_commit, apply,
+    is_recovery_public_key,
 };
 use ferret_server::wire::SealedRowJson;
 use ferret_server_auth::{Clock as _, ScopeEffect, SessionScope, WriteBasis};
@@ -456,7 +456,8 @@ async fn a_full_session_that_recovers_goes_on() {
     )
     .await;
     // The admin session handed over from the asking one ends too (it fails
-    // safe), and so does every half-way sign-in.
+    // safe). A half-way sign-in is not removed: it is bound to the record
+    // it began from, which the sign-in route checks when it finishes.
     let child = handed_over(&app, &client, this.sid, 3).await;
     insert_login_state(&app).await;
     let (result, _) = run(
@@ -481,7 +482,7 @@ async fn a_full_session_that_recovers_goes_on() {
     assert_eq!(result.expect("applied").ended, expected);
     assert!(!is_ended(&app, this.sid).await);
     assert!(is_ended(&app, child).await);
-    assert_eq!(login_states(&app).await, 0);
+    assert_eq!(login_states(&app).await, 1, "no sign-in state is removed");
 }
 
 #[tokio::test]
@@ -599,7 +600,9 @@ async fn the_manifest_row_is_the_only_item_written() {
 }
 
 #[tokio::test]
-async fn a_new_password_or_recovery_waits_a_minute_after_the_last_change() {
+async fn a_new_password_or_recovery_right_after_the_last_change_is_written() {
+    // There is no wait between changes: a change touches no other account's
+    // sign-ins, so nothing needs to bound how often one account changes.
     let app = TestApp::new().await;
     let client = client_account(&app, 10).await;
     let this = client_session(&app, &client, SessionScope::Full, 1).await;
@@ -610,62 +613,29 @@ async fn a_new_password_or_recovery_waits_a_minute_after_the_last_change() {
     )
     .await;
     result.expect("the first change");
-    let before = snapshot(&app, &client).await;
-
-    // A second password change and a recovery, at once and 59 s later: 429
-    // before the proof is checked.
-    for wait in [0, COOLDOWN_SECS - 1] {
-        app.clock
-            .set(app.clock.now_unix() + u64::try_from(wait).unwrap());
-        let recover = UnlockChange::Recover {
-            record: stored_record().record,
-            profile: 1,
-            pw_wrap: vec![0x71; 104],
-            pw_generation: 3,
-            rk_wrap: vec![0x72; 72],
-            rk_generation: 2,
-            pk_r: new_pk_r(&client, "recovered"),
-        };
-        for change in [password(3), recover] {
-            let (result, ran) = run(
-                &app,
-                writer(&app, &client, this.sid, true).await,
-                authorized(change, manifest(&client, 3)),
-            )
-            .await;
-            let refused = result.expect_err("too soon");
-            assert_eq!(refused.code, "throttled");
-            assert!(refused.retry_after.is_some_and(|secs| secs >= 1));
-            assert!(!ran, "the proof is never checked, so its nonce is kept");
-            unchanged(&app, &client, &before).await;
-        }
-    }
-    // A new recovery key does not wait.
     let (result, _) = run(
         &app,
         writer(&app, &client, this.sid, true).await,
-        authorized(
-            UnlockChange::Recovery {
-                wrap: vec![0x66; 72],
-                generation: 2,
-                pk_r: new_pk_r(&client, "renewed"),
-            },
-            manifest(&client, 3),
-        ),
+        authorized(password(3), manifest(&client, 3)),
     )
     .await;
-    result.expect("a new recovery key");
-
-    // A minute after the last change, a new password goes through.
-    app.clock
-        .set(app.clock.now_unix() + u64::try_from(COOLDOWN_SECS).unwrap());
+    assert_eq!(result.expect("a second password at once").seq, 3);
+    let recover = UnlockChange::Recover {
+        record: stored_record().record,
+        profile: 1,
+        pw_wrap: vec![0x71; 104],
+        pw_generation: 4,
+        rk_wrap: vec![0x72; 72],
+        rk_generation: 2,
+        pk_r: new_pk_r(&client, "recovered"),
+    };
     let (result, _) = run(
         &app,
         writer(&app, &client, this.sid, true).await,
-        authorized(password(3), manifest(&client, 4)),
+        authorized(recover, manifest(&client, 4)),
     )
     .await;
-    assert_eq!(result.expect("after the wait").seq, 4);
+    assert_eq!(result.expect("a recovery at once").seq, 4);
 }
 
 #[tokio::test]
