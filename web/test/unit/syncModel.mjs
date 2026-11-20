@@ -33,8 +33,8 @@ const frames = () => (new Error().stack ?? "").split("\n").slice(3, 10).map((lin
 /**
  * The gaps of the engine that the runs still tolerate. A purged tombstone no longer looks like a rollback (the retention follows the rule of
  * the server, see `purgeTombstones`, and the engine holds such a tombstone). The one gap is `reupload_after_purge`, a documented limit that is
- * not a fault: what other devices show of an item that was brought back over a purged tombstone (see `REUPLOAD_WARNINGS`), which the checks
- * leave alone for those items only. `FERRET_MATRIX_STRICT=1` tolerates none and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are
+ * not a fault: what other devices show of an item that was brought back over a purged tombstone (see `REUPLOAD_ITEM_WARNINGS`), which the checks
+ * leave alone for those items and those devices only. The device that restored the item is held to it (`checkReuploaded`). `FERRET_MATRIX_STRICT=1` tolerates none and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are
  * still let through.
  */
 export const KNOWN_GAPS = Object.freeze(["reupload_after_purge"]);
@@ -44,7 +44,10 @@ export const KNOWN_GAPS = Object.freeze(["reupload_after_purge"]);
  * tombstone the server has purged is uploaded again under its id at revision 1, and a device that holds the item at a higher revision refuses that
  * copy (section 8.8 of the design: the known limit of uploading an item again, until "keep both" can copy it under a new id).
  */
-const REUPLOAD_WARNINGS = new Set(["rev_lower_than_local", "rev_same_row_changed", "rev_below_remembered", "server_shows_older_state", "verify_deferred", "checkpoint_rolled_back"]);
+const REUPLOAD_ITEM_WARNINGS = new Set(["rev_lower_than_local", "rev_same_row_changed", "rev_below_remembered"]);
+/** And the ones about a checkpoint, which are let through only while every refusal of a checkpoint in the run was about those items (`refusals`). */
+const ROUTINE_REFUSALS = new Set(["checkpoint_top_digest_mismatch", "checkpoint_lower_rev"]);
+const REUPLOAD_CHECKPOINT_WARNINGS = new Set(["server_shows_older_state", "verify_deferred", "checkpoint_rolled_back"]);
 const tolerated = () => (process.env.FERRET_MATRIX_STRICT
   ? new Set((process.env.FERRET_MATRIX_TOLERATE ?? "").split(",").map((name) => name.trim()).filter(Boolean))
   : new Set(KNOWN_GAPS));
@@ -247,6 +250,7 @@ export class Sim {
       try {
         return await verify(...args);
       } catch (error) {
+        this.refusals.push({ code: error.code, ids: error.ids ?? [], step: this.step });
         const listed = new Set();
         for (let at = 0; at < args[0].entries.length; at += 56) listed.add(Buffer.from(args[0].entries.subarray(at, at + 16)).toString("hex"));
         const unlisted = args[1].map((row) => hex16.encode(row.item_id)).filter((id) => !listed.has(id)).map((id) => {
@@ -279,6 +283,8 @@ export class Sim {
     this.keptMine = new Set(); // "browser:id": the user chose "keep mine" for the item in that browser
     this.tallied = false;
     this.reuploaded = new Set(); // ids that were brought back from the trash over a tombstone the server had purged
+    this.restoredBy = new Map(); // id -> the labels of the devices that did it
+    this.refusals = []; // every refusal of a checkpoint by the core: { code, ids } (ids: the items it was about; none: the checkpoint as a whole)
     this.tolerated = tolerated(); // the known gaps that are not asserted against (the todo tests hold them); FERRET_MATRIX_STRICT=1 asserts against them too
     this.stats = {}; // how often each thing happened, to see that a run does what it is meant to
     this.restoredAt = null; // the write index of the server when it was restored
@@ -622,7 +628,11 @@ export class Sim {
       return true;
     });
     if (done) {
-      if (purged) this.reuploaded.add(entry.id);
+      if (purged) {
+        this.reuploaded.add(entry.id);
+        this.restoredBy.set(entry.id, (this.restoredBy.get(entry.id) ?? new Set()).add(dev.label));
+        this.writes.push({ dev: dev.label, id: entry.id, kind: "restore", marker: entry.name, step: this.step });
+      }
       this.choices.set(entry.id, (this.choices.get(entry.id) ?? 0) + 1);
       this.note(`${dev.label} restoreFromTrash ${short(entry.id)}`);
     }
@@ -820,6 +830,8 @@ export class Sim {
         dev.d.timers.advance(POLL_MS + 1_000);
         await dev.engine.syncNow();
         await settle(8);
+        // Work that waits for the thread pool (the hashes of WebCrypto) finishes in real time, not in turns of the event loop: a moment is given to it.
+        await new Promise((resolve) => setTimeout(resolve, 2));
       }
       for (const dev of devs) while (await this.resolve(dev, choose)) await settle(8);
       quiet = this.signature(devs) === before ? quiet + 1 : 0;
@@ -950,44 +962,64 @@ export class Sim {
     for (const dev of this.devices) {
       const health = dev.engine.health();
       if (health.halted !== null) this.fail(`${dev.label} is halted: ${health.halted}`);
-      const let_through = (code) => this.reuploaded.size > 0 && this.tolerates("reupload_after_purge") && REUPLOAD_WARNINGS.has(code);
-      for (const warning of health.warnings) if (!let_through(warning)) this.fail(`${dev.label} shows a warning: ${warning}`);
+      // A warning about an item is let through only for an item that was brought back over a purged tombstone; one about a checkpoint only when
+      // every refusal of a checkpoint in the run was about such items. Anything else is a fault.
+      const tolerant = this.tolerates("reupload_after_purge") && this.reuploaded.size > 0;
+      // (A refusal for a row without an entry, or for an older tombstone, is the one the engine answers by holding the purged tombstone: it is
+      // routine, whatever the item, and not what a warning is about.)
+      const scoped = tolerant && this.refusals.some((one) => one.ids.length > 0 && one.ids.every((id) => this.reuploaded.has(id))) &&
+        this.refusals.every((one) => ROUTINE_REFUSALS.has(one.code) || (one.ids.length > 0 && one.ids.every((id) => this.reuploaded.has(id))));
+      const let_through = (event) => tolerant && (
+        (REUPLOAD_ITEM_WARNINGS.has(event.code) && this.reuploaded.has(event.id)) || (REUPLOAD_CHECKPOINT_WARNINGS.has(event.code) && scoped));
+      for (const warning of health.warnings) if (!let_through({ code: warning })) this.fail(`${dev.label} shows a warning: ${warning}`);
       for (const state of dev.d.events.state) if (state.kind === "halted" && !allowed.includes(state.code)) this.fail(`${dev.label} halted with ${state.code} during the run`);
-      for (const event of dev.d.events.state) if (event.kind === "warning" && !allowed.includes(event.code) && !let_through(event.code)) this.fail(`${dev.label} raised the warning ${event.code} during the run`);
+      for (const event of dev.d.events.state) if (event.kind === "warning" && !allowed.includes(event.code) && !let_through(event)) this.fail(`${dev.label} raised the warning ${event.code} during the run; refusals ${JSON.stringify(this.refusals.map((r) => `${r.step}:${r.code}:${r.ids.map(short)}`))}; restored by ${JSON.stringify([...this.restoredBy].map(([id, l]) => `${short(id)}:${[...l]}`))}`);
     }
   }
 
   /** The items that some device still has a write waiting for. */
-  async queuedIds() {
+  async queuedIds(label) {
     const ids = new Set();
-    for (const dev of this.devices) for (const entry of await outbox.all(dev.d.store.database.store, scope())) ids.add(entry.itemId);
+    for (const dev of this.devices) if (dev.label === label) for (const entry of await outbox.all(dev.d.store.database.store, scope())) ids.add(entry.itemId);
     return ids;
   }
 
+  /** Whether the upload again of an item that the device restored over a purged tombstone was refused (the draft stays, as for any item the server left out). */
+  refusedUpload(dev, id) {
+    return dev.d.events.error.some((event) => event.code === "reupload_refused" && event.id === id);
+  }
+
   /** Whether the checks leave an item alone: it was brought back over a purged tombstone, and the known gap is tolerated. */
-  leftAlone(id) {
-    return this.reuploaded.has(id) && this.tolerates("reupload_after_purge");
+  leftAlone(id, dev = null) {
+    if (!this.reuploaded.has(id) || !this.tolerates("reupload_after_purge")) return false;
+    if (dev === null) return true; // the server's side of it
+    return !this.restoredBy.get(id)?.has(dev.label) || this.refusedUpload(dev, id); // the devices that did not restore it hold a higher floor
   }
 
   /** The devices show what the server holds, and nothing waits, is blocked or is marked. */
   async checkConverged() {
     const live = await this.serverLive();
     for (const dev of this.devices) {
-      const shown = new Map(dev.engine.list().filter((item) => !this.leftAlone(item.id)).map((item) => [item.id, item]));
+      const shown = new Map(dev.engine.list().filter((item) => !this.leftAlone(item.id, dev)).map((item) => [item.id, item]));
       for (const [id, row] of live) {
-        if (this.leftAlone(id)) continue;
+        if (this.leftAlone(id, dev)) continue;
         const item = shown.get(id);
+        // (A device that restored the item and then, in a conflict with the copy that another device wrote first, chose to accept the deletion, does not show it.)
+        if (!item && this.restoredBy.get(id)?.has(dev.label) && this.tolerates("reupload_after_purge") && (this.discarded.has(this.keyOf(dev, id)) || this.conflicted.has(this.keyOf(dev, id)))) continue;
         if (!item) this.fail(`${dev.label} lacks ${short(id)}, the server has ${row.name} at rev ${row.rev}`);
-        else if (item.rev !== row.rev || item.name !== row.name) this.fail(`${dev.label} shows ${short(id)} as ${item.name} rev ${item.rev}, the server has ${row.name} rev ${row.rev}`);
+        // The device that restored the item holds the floor of the tombstone it restored over: what other devices write to the copy at lower revisions
+        // it refuses (section 8.8), so it can show its own version while the server has theirs.
+        else if ((item.rev !== row.rev || item.name !== row.name) && !(this.restoredBy.get(id)?.has(dev.label) && this.tolerates("reupload_after_purge"))) this.fail(`${dev.label} shows ${short(id)} as ${item.name} rev ${item.rev}, the server has ${row.name} rev ${row.rev}`);
       }
       for (const [id, item] of shown) {
-        if (!live.has(id)) this.fail(`${dev.label} shows ${short(id)} (${item.name}), the server holds it deleted or not at all`);
+        // (The restoring device refuses what others write to the copy at or below the floor of the old tombstone, a deletion too: it keeps showing the item.)
+        if (!live.has(id) && !(this.restoredBy.get(id)?.has(dev.label) && this.tolerates("reupload_after_purge"))) this.fail(`${dev.label} shows ${short(id)} (${item.name}), the server holds it deleted or not at all`);
         if (item.pending || item.blocked || item.conflict || item.damaged || item.quarantined || item.missingOnServer) {
           this.fail(`${dev.label} still has ${short(id)} pending=${item.pending} blocked=${item.blockedReason} conflict=${item.conflict} damaged=${item.damaged} quarantined=${item.quarantined} missing=${item.missingOnServer}`);
         }
       }
       // (An item that was uploaded again over a purged tombstone can be refused because another device did the same first: its draft stays, as for any item the server left out.)
-      const queued = (await outbox.all(dev.d.store.database.store, scope())).filter((entry) => !this.leftAlone(entry.itemId));
+      const queued = (await outbox.all(dev.d.store.database.store, scope())).filter((entry) => !this.leftAlone(entry.itemId, dev));
       if (queued.length > 0) this.fail(`${dev.label} still has ${queued.length} writes in the outbox: ${queued.map((e) => `${short(e.itemId)} base ${e.baseRev} ${"tomb" in e.body ? "tombstone" : "live"}`).join(", ")}; last errors ${JSON.stringify(dev.d.events.error.slice(-4))}; server has ${JSON.stringify(queued.map((e) => { const row = this.server.items.get(e.itemId); return row ? { rev: row.rev, deleted: row.deleted } : null; }))}`);
     }
   }
@@ -1031,7 +1063,10 @@ export class Sim {
       if (this.discarded.has(key)) continue;
       if (this.conflicted.has(key) && last.get(key) !== write) continue; // a version that was replaced by a newer one of the same device in a conflict
       // The edits that were made after a restore over a purged tombstone go out as one write, the last (like "keep mine": the newest local version).
-      if (this.leftAlone(write.id) && (last.get(key) !== write || (await this.queuedIds()).has(write.id))) continue; // or the draft waits: another device wrote the item again first
+      if (this.reuploaded.has(write.id) && this.tolerates("reupload_after_purge")) {
+        if (last.get(key) !== write) continue; // the edits after a restore go out as one write, the last
+        if (this.refusedUpload(this.devices.find((one) => one.label === write.dev), write.id)) continue; // refused: another device wrote the item again first, and the draft waits
+      }
       // The same user deleted the item after the edit and the server holds it deleted: the edit went with the deletion (a draft that only
       // deletes, or a chain that ends in a deletion, is moot once the server has deleted the item), as the user's last word was the deletion.
       if (last.get(key).kind === "remove" && last.get(key) !== write && accepted.some((a) => a.id === write.id && a.deleted)) continue;
@@ -1043,6 +1078,22 @@ export class Sim {
           history.push(`#${a.at} rev ${a.rev}${a.deleted ? " deleted" : ` ${a.blob === null ? "?" : await this.nameOf(a.id, a.rev, a.blob, a.tag)}`}${a.resurrect ? " resurrect" : ""}`);
         }
         this.fail(`the write ${write.marker} of ${write.dev} to ${short(write.id)} (step ${write.step}) is not on the server and was not dropped by a choice; the server took: ${history.join("; ")}`);
+      }
+    }
+  }
+
+  /**
+   * An item that was brought back over a purged tombstone is never silently gone: the server holds it, or the device that restored it still has
+   * the draft (refused as an upload again), unless a user deleted it since.
+   */
+  async checkReuploaded() {
+    if (!this.tolerates("reupload_after_purge")) return;
+    for (const id of this.reuploaded) {
+      const deleted = this.writes.some((write) => write.id === id && write.kind === "remove");
+      if (deleted || this.server.items.has(id)) continue;
+      for (const label of this.restoredBy.get(id) ?? []) {
+        if (!this.devices.some((one) => one.label === label)) continue;
+        if (!(await this.queuedIds(label)).has(id)) this.fail(`${short(id)} was brought back by ${label} over a purged tombstone and is neither on the server nor a draft there`);
       }
     }
   }

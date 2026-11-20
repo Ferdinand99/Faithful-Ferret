@@ -1647,9 +1647,11 @@ export function createSyncEngine({
         // the ones that were looked at, and the item is never absent from the store between the two.
         const before = flags.get(id);
         flags.set(id, { kind: "missing_on_server", rev: row.rev, sent: [await ownKeyOfBody(1, body)] });
+        ownDeleted.delete(id); // the item is brought back: a deletion of it is not what this device has now
         flagsDirty = true;
         try {
           await saveFlags(await store.open());
+          alive(); // a save that is skipped because the engine has been stopped must not be followed by the swap: the mark has to be stored first
           for (const gone of await runner.replace({ idem, itemId: id, baseRev: 0, body, bytes }, chain.map((one) => one.idem))) droppedIdems.add(gone);
         } catch (failure) {
           if (before === undefined) flags.delete(id);
@@ -1866,8 +1868,9 @@ export function createSyncEngine({
    * @param {string} code the failure of the core
    * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
    * @param {import("../store/syncState.mjs").SyncState} state the state the verification ran against
+   * @param {Set<string> | null} [held] the held tombstones, which the check was made without: they disagree with nothing here
    */
-  async function explainedByMarks(code, checkpoint, topSeq, state) {
+  async function explainedByMarks(code, checkpoint, topSeq, state, held = null) {
     if (hardWarningOf(code, { deferred: true }) !== "verify_deferred") return false;
     if (state.verifiedSeq !== null && checkpoint.seq < state.verifiedSeq) return false;
     /** @type {Set<string>} */
@@ -1876,11 +1879,12 @@ export function createSyncEngine({
     if (marked.size === 0) return false;
     const failing = await failingIds(checkpoint.entries, rows, checkpoint.seq === topSeq);
     if (failing === null) return false;
+    for (const id of held ?? []) failing.delete(id);
     // A row below what this device remembers (the copy that was uploaded again is below its old floor, by design) is not
     // a disagreement between entries and rows: it is explained when nothing unmarked disagrees.
     if (code !== REV_BELOW_REMEMBERED && failing.size === 0) return false;
     if (![...failing].every((id) => marked.has(id))) return false;
-    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
+    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId) && !held?.has(row.itemId)).map(coreRow);
     try {
       await client.vault.accept_rows(unmarked, topSeq, state.memory);
     } catch (error) {
@@ -2017,7 +2021,7 @@ export function createSyncEngine({
             box.verdict = { ok: false, code, moved, warning: "", kept: "", offered: true };
             return null; // a restored server that shows what this device cannot verify: the user is offered the older state, nothing is said
           }
-          const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state) });
+          const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state, held) });
           // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
           const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
           box.verdict = { ok: false, code, moved, warning, kept };
@@ -2391,6 +2395,8 @@ export function createSyncEngine({
     const idem = randomId();
     const restoreEpoch = await acceptedEpoch();
     const bytes = writeBytes({ baseRev, body, idem, resurrect, restoreEpoch });
+    // The user brings the item back: the note that a deletion of it is done is over (it would hide the item after a restart).
+    if (resurrect && ownDeleted.delete(id)) flagsDirty = true;
     if (restoreEpoch === null) unconditioned.add(idem);
     const kept = flags.get(id)?.kind;
     const key = kept === "missing_on_server" || kept === "reuploaded" ? await ownKeyOfBody(baseRev + 1, body) : null;

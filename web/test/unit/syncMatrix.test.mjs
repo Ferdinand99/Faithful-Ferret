@@ -378,6 +378,7 @@ async function check(sim) {
   await sim.checkConverged();
   sim.checkOwners();
   await sim.checkWrites();
+  await sim.checkReuploaded();
   sim.checkResurrections();
   await sim.checkFloorsCoverRows();
   await sim.checkCheckpointLive();
@@ -682,6 +683,62 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
     sim.writes.push({ dev: sim.devices[0].label, id, kind: "update", marker: "SECRET-never-sent", step: 1 });
     await sim.checkWrites();
     complains(sim, "is not on the server");
+    await sim.stopAll();
+  });
+
+  await t.test("a warning that the known gap does not cover", async () => {
+    // The gap `reupload_after_purge` lets through what other devices show about an item that was brought back over a purged tombstone, and about
+    // a checkpoint only when every refusal of a checkpoint was about such items. A warning about another item, or about a checkpoint that was
+    // refused for another item, or as a whole, is still a fault.
+    const restored = "ab".repeat(16);
+    const other = "cd".repeat(16);
+    const tolerant = async () => {
+      const sim = await fresh();
+      sim.tolerated = new Set(["reupload_after_purge"]);
+      sim.reuploaded.add(restored);
+      return sim;
+    };
+    const warn = (sim, event) => sim.devices[0].d.events.state.push({ kind: "warning", ...event });
+    let sim = await tolerant();
+    warn(sim, { code: "rev_lower_than_local", id: restored });
+    sim.refusals.push({ code: "checkpoint_hidden_or_rolled_back", ids: [restored] });
+    warn(sim, { code: "server_shows_older_state" });
+    sim.checkHealthy();
+    assert.deepEqual(sim.problems, [], "about the restored item: let through");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    warn(sim, { code: "rev_lower_than_local", id: other });
+    sim.checkHealthy();
+    complains(sim, "rev_lower_than_local");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    sim.refusals.push({ code: "checkpoint_hidden_or_rolled_back", ids: [restored] }, { code: "checkpoint_hidden_or_rolled_back", ids: [other] });
+    warn(sim, { code: "server_shows_older_state" });
+    warn(sim, { code: "checkpoint_rolled_back" });
+    sim.checkHealthy();
+    complains(sim, "server_shows_older_state");
+    complains(sim, "checkpoint_rolled_back");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    sim.refusals.push({ code: "checkpoint_seq_below_remembered", ids: [] });
+    warn(sim, { code: "checkpoint_rolled_back" });
+    sim.checkHealthy();
+    complains(sim, "checkpoint_rolled_back");
+    await sim.stopAll();
+  });
+
+  await t.test("an item that was brought back over a purged tombstone and is gone", async () => {
+    const sim = await fresh();
+    sim.tolerated = new Set(["reupload_after_purge"]);
+    const [a] = sim.devices;
+    const id = "ab".repeat(16);
+    sim.reuploaded.add(id);
+    sim.restoredBy.set(id, new Set([a.label]));
+    await sim.checkReuploaded();
+    complains(sim, "neither on the server nor a draft");
     await sim.stopAll();
   });
 

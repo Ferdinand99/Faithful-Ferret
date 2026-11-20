@@ -489,6 +489,7 @@ test("an_edit_made_after_the_restore_is_what_is_uploaded_again_when_the_tombston
   await until(() => d.model.items.get(id)?.rev === 1, "the item is written again");
   await settle(30);
   assert.equal((await d.store.outbox.all(d.store.database.store, scope())).length, 0);
+  await until(() => d.engine.list().find((item) => item.id === id)?.pending === false, "the row has come back"); // until then the item cannot be opened
   assert.equal(await nameOf(d, id), "edited after the restore", "the edit is not lost");
   assert.equal(d.engine.list().find((item) => item.id === id).blocked, false);
   d.engine.stop();
@@ -534,4 +535,38 @@ test("a_live_row_at_or_below_the_revision_of_a_newer_purged_tombstone_is_refused
   assert.ok(!d.engine.list().some((item) => item.id === id), "the old row is not shown");
   assert.ok(d.events.state.some((event) => event.kind === "warning" && event.code === "rev_lower_than_local"), "and it is said");
   d.engine.stop();
+});
+
+test("an_item_restored_over_a_purged_tombstone_is_shown_after_a_restart_although_its_deletion_was_noted", async () => {
+  // The device deleted the item (the server took it, the note that it is done was saved), the tombstone was purged before the device read it
+  // back, and the user restored the item from the trash: the upload again is what this device has now, and the note must not hide it.
+  const model = new Model();
+  const client = createFakeClient();
+  const first = await started({ model, client });
+  const id = await first.engine.create(draft("short-lived"));
+  await until(() => model.items.get(id)?.rev === 1);
+  await first.engine.syncNow();
+  const get = first.api.get;
+  first.api.get = async (path, ...rest) => {
+    if (path.includes("/api/sync/changes")) throw new ApiError(0, "network");
+    return get(path, ...rest);
+  };
+  await first.engine.remove(id);
+  await until(() => model.items.get(id)?.rev === 2);
+  await settle(20);
+  assert.ok((await first.store.getSetting(first.store.database.store, FLAGS()))?.deleted?.[id], "the deletion is noted");
+  first.api.get = get;
+  model.pinCheckpoint();
+  model.items.delete(id);
+  model.minValidSince = 2;
+  model.set(hex(0x77), { rev: 1, ...client.wireRow(hex(0x77), 1, draft("written elsewhere")) });
+  await first.engine.syncNow(); // 410: the listing settles the deletion, and the trash holds the item
+  await first.engine.restoreFromTrash(id);
+  await until(() => model.items.get(id)?.rev === 1, "the item is written again");
+  await settle(30);
+  first.engine.stop();
+  const second = await started({ model, client, db: first.store.database, locks: first.locks });
+  await settle(30);
+  assert.ok(second.engine.list().some((item) => item.id === id), "the item is shown after the restart");
+  second.engine.stop();
 });
