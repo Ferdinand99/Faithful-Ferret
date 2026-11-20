@@ -24,7 +24,7 @@ use ferret_core::testing::TestRng;
 use ferret_server_auth::testing::vectors::peek_server_login;
 use ferret_server_auth::testing::{
     LoginFixture, SEALED_STATE_LEN, STATE_PLAIN_LEN, StateFields, encode_state_plain, open_fields,
-    parse_state_plain, put_state, seal_fields, server_login_parses,
+    parse_state_plain, put_state, record_binding_bytes, seal_fields, server_login_parses,
 };
 use ferret_server_auth::{
     AuthError, DenyReason, InMemoryLoginStateStore, InternalKind, LoginId, Malformed, SealedState,
@@ -107,7 +107,7 @@ fn raw_blob(s: &State, body: &[u8]) {
     let account = [4u8; 16];
     let exact = fit(body, SEALED_STATE_LEN);
     let mut versioned = exact.clone();
-    versioned[0] = 1;
+    versioned[0] = 2;
     for blob in [body.to_vec(), exact, versioned] {
         let sealed = SealedState::from_bytes(blob);
         for expected in [None, Some((session, account))] {
@@ -127,6 +127,7 @@ fn round_trip(s: &State, body: &[u8]) {
     let reauth: Reauth = (bytes.byte() & 1 == 1).then(|| (bytes.array(), bytes.array()));
     let fields = StateFields {
         credential: bytes.array(),
+        record: bytes.array(),
         reauth,
         expires_at: NOW + 1 + u64::from(u16::from_be_bytes(bytes.array())),
         ksf_profile: bytes.byte(),
@@ -295,6 +296,7 @@ fn server_login_in_a_state(s: &State, body: &[u8]) {
     let run = |server_login: [u8; SERVER_LOGIN_LEN], ke3: &[u8]| {
         let fields = StateFields {
             credential: *world.f.credential.as_bytes(),
+            record: record_binding_bytes(&world.f.record),
             reauth: None,
             expires_at: NOW + 60,
             ksf_profile: 1,
