@@ -782,7 +782,9 @@ These are written down on purpose. None of them loses a stored item silently. Wh
 - The sync engine runs in one tab per server and account in a browser. A second tab shows "the vault is open in another tab" with "Use here".
 - After "Use here" takes the lock, there is no fence for an old tab that is alive but not answering. It can still send writes for a short time; the server's checks on every write still apply.
 - A standby tab unlocks the account keys into its own worker even though it syncs nothing.
-- An edit that is not saved in the old tab is lost when the user presses "Use here". Locking or signing out while "Use here" is going on can leave no syncing tab until the page is reloaded. Standby behaviour across two accounts in one browser, which existed before this release, is not handled either.
+- "Use here" first asks the tab that holds the vault whether it has changes that are not saved (a yes or a no over the tabs' channel; nothing of the form is sent). A yes, or no answer within a second, shows a warning with "Use here anyway". If the user goes on, the old tab keeps the form on screen, read-only, with "Take back"; nothing is saved from it until the vault is taken back, and a lock wipes it. The form lives in the page only: it is never written to IndexedDB, web storage or a URL.
+- A tab that is unlocked and waits stands in the queue of the lock. When the tab that holds the vault locks, signs out or closes, the first waiting tab gets the lock and starts the engine, but only when it is in view (a tab out of view lets the lock go on and asks again when it comes into view).
+- Standby behaviour across two accounts in one browser, which existed before this release, is not handled.
 - The sync tests exercise handovers between tabs, not two engines writing at the very same time.
 
 **Server and operations**

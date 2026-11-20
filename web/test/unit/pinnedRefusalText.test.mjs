@@ -192,7 +192,7 @@ test("the_restore_text_never_offers_to_lower_a_floor_in_place", async () => {
     const everyControl = [...walk(host)]
       .filter((node) => node instanceof FakeElement && ["BUTTON", "A"].includes(String(node.tagName).toUpperCase()))
       .map((node) => node.getAttribute("data-role"));
-    assert.deepEqual(everyControl.sort(), ["forget-link", "other-account", "submit"].sort());
+    assert.deepEqual(everyControl.sort(), ["forget-link", "other-account", "recover-link", "submit"].sort());
     assert.ok(controls.length >= 3);
     assert.equal(session.unlocks.length, 1);
   });

@@ -6,6 +6,15 @@
 // has no engine, `standby()` says so, and `takeOver()` ("Use here") moves the engine
 // to it. The tab that held the engine is on standby from then on.
 //
+// A tab on standby that is unlocked stands in the queue of the lock. When the owner locks, signs out or
+// closes, the first tab in the queue gets the lock and starts the engine, but only when the tab is visible
+// (a hidden tab lets the lock go on and asks again when it becomes visible).
+//
+// A form with edits that are not saved (the edit screen) tells the service with `trackUnsaved`. The owner
+// answers "yes" to a tab that asks (`askOwner`), and a tab that goes on standby keeps such a form on screen,
+// read-only (`freezeUnsaved`), until the user takes the vault back, locks, or leaves. Nothing of the form is
+// stored: it lives in the page and nowhere else.
+//
 // Parts that follow the engine (the live-update client, the warning banner) do
 // not poll `current()`: they register with `onEngine`, which hands them each
 // engine once it has started and `null` once it has stopped.
@@ -33,13 +42,14 @@ function memoryFor({ store, client, serverUrl, accountId, locks }) {
 export default {
   name: "sync",
   deps: ["api", "store", "client"],
-  // `serverUrl`, `locks`, `nav`, `win`, `makeChannel`, `timers` and `tabId` are for tests: in the browser they are the page's own.
+  // `serverUrl`, `locks`, `nav`, `win`, `doc`, `makeChannel`, `timers` and `tabId` are for tests: in the browser they are the page's own.
   create: ({
     api, store, client,
     serverUrl = globalThis.location?.origin,
     locks = /** @type {any} */ (globalThis).navigator?.locks,
     nav = /** @type {any} */ (globalThis).navigator,
     win = /** @type {any} */ (globalThis).window ?? null,
+    doc = /** @type {any} */ (globalThis).document ?? null,
     makeChannel = /** @type {((name: string) => any) | undefined} */ (undefined),
     timers = /** @type {any} */ (undefined),
     tabId = /** @type {string | undefined} */ (undefined),
@@ -87,6 +97,29 @@ export default {
     let freed = Promise.resolve();
     /** @type {Promise<ReturnType<typeof createSyncEngine> | null> | null} */
     let taking = null;
+    /** Set while this tab stands in the queue of the lock. @type {object | null} */
+    let waiting = null;
+
+    /** @typedef {import("../views/edit.mjs").UnsavedForm} UnsavedForm */
+    /** @type {Set<UnsavedForm>} */
+    const unsavedForms = new Set();
+    /** Forms kept on screen, read-only, after the vault moved to another tab. @type {UnsavedForm[]} */
+    let frozen = [];
+
+    /** Whether a form holds edits that are not saved. A form that cannot tell counts as having some. */
+    const hasUnsaved = () => {
+      for (const form of [...unsavedForms]) {
+        try {
+          if (form.dirty()) return true;
+        } catch {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    /** Whether the tab is in view; a page without a document is taken as in view. */
+    const visible = () => doc?.visibilityState !== "hidden";
 
     /** @param {boolean} on */
     const announceStandby = (on) => {
@@ -115,8 +148,60 @@ export default {
         makeChannel: makeChannel ? () => makeChannel(ownerName(server, accountId)) : undefined,
         onYield: () => toStandby(made),
         onLost: () => toStandby(made),
+        onFreed: () => scheduleWait(),
+        hasUnsaved,
       });
       return made;
+    }
+
+    /**
+     * Stands in the queue of the lock, when this tab is on standby and in view. The tab that is granted the lock starts the
+     * engine, if it is still on standby and in view; otherwise it lets the lock go on (and asks again when it is in view).
+     */
+    function scheduleWait() {
+      const made = owner;
+      if (made === null || standbyScope === null || waiting !== null || !visible()) return;
+      const token = {};
+      waiting = token;
+      const mine = generation;
+      void (async () => {
+        /** @type {"granted" | "cancelled"} */
+        let result = "cancelled";
+        try {
+          result = await made.wait();
+        } catch {
+          result = "cancelled";
+        }
+        if (waiting === token) waiting = null;
+        if (result !== "granted") return;
+        const scope = standbyScope;
+        if (mine !== generation || owner !== made || scope === null || taking !== null || !visible()) {
+          // Stale, or the tab is out of view: the lock goes on to the next tab. A tab that is on standby keeps its lock object.
+          freed = made.release();
+          return;
+        }
+        try {
+          await runHere(scope, mine);
+        } catch {
+          // An engine that cannot start: the tab is off standby, and the page asks again (see `begin`)
+        }
+      })();
+    }
+
+    /**
+     * The engine moves to this tab: standby ends, and the listeners are told once the engine runs (or has failed to start).
+     * @param {import("../store/cache.mjs").Scope} scope
+     * @param {number} mine the generation of the start that asked
+     */
+    async function runHere(scope, mine) {
+      standbyScope = null;
+      engine?.stop(); // never a second engine in this tab
+      engine = null;
+      try {
+        return await begin(scope, mine);
+      } finally {
+        announceStandby(false);
+      }
     }
 
     /** Lets go of the owner lock. */
@@ -205,6 +290,7 @@ export default {
           if (role === "standby") {
             standbyScope = scope;
             announceStandby(true);
+            scheduleWait();
             return null;
           }
         }
@@ -222,6 +308,8 @@ export default {
       releaseOwner();
       openScope = null;
       taking = null;
+      waiting = null;
+      frozen = []; // what is on screen is wiped by the lock; nothing of it is kept here
       if (standbyScope !== null) {
         standbyScope = null;
         announceStandby(false);
@@ -233,8 +321,13 @@ export default {
     win?.addEventListener?.("pagehide", () => {
       if (owner === null || openScope === null) return;
       generation += 1; // a start that is still asking for the lock does not go on to run an engine in a tab that shows the notice
+      waiting = null;
       toStandby(owner);
       freed = owner.release(); // the owner stays: a page that comes back asks for the lock again with "Use here"
+    });
+    // A tab that comes into view stands in the queue of the lock (it left it when it was granted the lock out of view).
+    doc?.addEventListener?.("visibilitychange", () => {
+      if (visible()) scheduleWait();
     });
 
     return {
@@ -287,17 +380,19 @@ export default {
         const made = owner;
         if (scope === null || made === null) return Promise.reject(new SyncError("invalid_state"));
         const mine = generation;
+        waiting = null; // the owner's queue place is given up by `takeOver`
         const run = (async () => {
-          await made.takeOver();
+          try {
+            await made.takeOver();
+          } catch (error) {
+            if (mine === generation && owner === made) scheduleWait(); // still on standby: back into the queue
+            throw error;
+          }
           if (mine !== generation || owner !== made) {
             void made.release(); // the vault was locked meanwhile: the lock goes with it
             return null;
           }
-          standbyScope = null;
-          announceStandby(false);
-          engine?.stop(); // never a second engine in this tab
-          engine = null;
-          return begin(scope, mine);
+          return runHere(scope, mine);
         })();
         taking = run;
         const clear = () => {
@@ -305,6 +400,67 @@ export default {
         };
         run.then(clear, clear);
         return run;
+      },
+      /**
+       * "Use here", step one: asks the tab that holds the vault whether it has changes that are not saved, and waits about a
+       * second for the answer. "clear" and "free" (nobody holds the lock) go on to `takeOver()`; "unsaved" and "no_answer" are
+       * a warning for the user to decide on. Rejects with `invalid_state` when the tab is not on standby.
+       * @returns {Promise<"free" | "clear" | "unsaved" | "no_answer">}
+       */
+      askOwner() {
+        const made = owner;
+        if (standbyScope === null || made === null) return Promise.reject(new SyncError("invalid_state"));
+        return made.askUnsaved();
+      },
+      /**
+       * A form with edits that are not saved registers here (see the top of the file). Returns the function that removes it.
+       * @param {UnsavedForm} form
+       * @returns {() => void}
+       */
+      trackUnsaved(form) {
+        unsavedForms.add(form);
+        return () => void unsavedForms.delete(form);
+      },
+      /** Whether a form on screen holds edits that are not saved. */
+      hasUnsaved,
+      /**
+       * The vault moved to another tab: every form with edits that are not saved is made read-only and kept (its content
+       * stays on screen). Answers whether there was one.
+       * @returns {boolean}
+       */
+      freezeUnsaved() {
+        /** @type {UnsavedForm[]} */
+        const kept = [];
+        for (const form of [...unsavedForms]) {
+          let dirty = true;
+          try {
+            dirty = form.dirty();
+          } catch {
+            dirty = true;
+          }
+          if (!dirty) continue;
+          try {
+            form.freeze();
+          } catch {
+            // Not frozen: it is still kept as it is
+          }
+          unsavedForms.delete(form);
+          kept.push(form);
+        }
+        // A second frame of the same tab asks again for the same event: the forms that are kept stay kept.
+        frozen = [...frozen.filter((form) => !kept.includes(form) && /** @type {any} */ (form.root).isConnected !== false), ...kept];
+        return frozen.length > 0;
+      },
+      /**
+       * Takes back the frozen form of a screen, when this tab has it and it is still on the page (the user took the vault back).
+       * @param {string} key
+       * @returns {UnsavedForm | null}
+       */
+      takeFrozen(key) {
+        const at = frozen.findIndex((form) => form.key === key && /** @type {any} */ (form.root).isConnected !== false);
+        if (at < 0) return null;
+        const [form] = frozen.splice(at, 1);
+        return form;
       },
       /**
        * Calls `listener` with each engine after it has started, and with null

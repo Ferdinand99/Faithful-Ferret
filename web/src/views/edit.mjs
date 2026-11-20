@@ -9,11 +9,26 @@
 //
 // A draft is the core's `DraftDto`: only what the user changed, in the core's
 // own key names (`item_type`, `matching`).
+//
+// Changes that are not saved live in the form and nowhere else: never in a store, a URL or a message. When
+// the vault moves to another tab (`tracker`), the form is kept on screen read-only (`freeze`) and goes on
+// when the vault comes back (`thaw`); a lock wipes it as it wipes every screen. The form tells whether it
+// has edits (`dirty`) by comparing with what it started with, without holding a copy of any secret.
 import { el, mount } from "../dom.mjs";
-import { canChange, describeError, markBadges } from "./common.mjs";
+import { canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
 import { typeLabel } from "./item.mjs";
 
 const TYPES = Object.freeze(["login", "note"]);
+
+/**
+ * @typedef {object} UnsavedForm what the sync service holds about a form with edits that are not saved
+ * @property {string} key which form it is: `new`, or `edit:<item id>`
+ * @property {HTMLElement} root the form's screen
+ * @property {() => boolean} dirty whether it holds edits that are not saved
+ * @property {() => void} freeze makes it read-only (the vault moved to another tab); the content stays
+ * @property {(next: { engine: any, touch?: () => boolean, scope?: { add(fn: () => void): () => void }, go?: (path: string) => void, tracker?: any }) => void} thaw
+ *   the vault is back in this tab: the form is editable again, under the new engine, and the screen it is put in
+ */
 
 /**
  * @typedef {{ id: string, label?: string, kind?: string, value?: string }} FieldDraft
@@ -39,10 +54,11 @@ function scrub(draft) {
  *   go?: (path: string) => void,
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
- * }} options `id` is null for a new item
+ *   tracker?: { trackUnsaved(form: UnsavedForm): () => void },
+ * }} options `id` is null for a new item; `tracker` is told about the form's unsaved edits (the sync service)
  * @returns {Promise<HTMLElement>}
  */
-export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope }) {
+export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope, tracker }) {
   const root = el("section", { class: "card edit", "data-role": "edit" });
 
   /** @type {any} */
@@ -124,9 +140,16 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   password.input.value = "";
   notes.input.value = "";
   favorite.checked = view?.favorite === true;
+  // What the form started with, for telling whether it has edits. Only values that are shown anyway; no secret is copied.
+  const start = { name: name.input.value, username: username.input.value, url: url.input.value, favorite: favorite.checked };
 
   // The notes of an item that has some are read in only on request.
   let notesLoaded = !(view?.has_notes === true);
+  // Typed into the notes of an item that had some (the text itself is not copied to compare with).
+  let notesTouched = false;
+  notes.input.addEventListener("input", () => {
+    notesTouched = true;
+  });
   const notesSlot = el("div", { "data-role": "notes-slot" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
@@ -138,7 +161,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     mount(notesSlot, el("div", { class: "field" }, el("span", { class: "label" }, t("vault.edit.notes")), loadNotes,
       el("small", { class: "help" }, t("vault.edit.notes_help"))));
     loadNotes.addEventListener("click", async () => {
-      if (!touch()) return;
+      if (frozen || !touch()) return;
       try {
         const opened = await engine.open(/** @type {string} */ (id));
         try {
@@ -168,11 +191,44 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   typeSelect.addEventListener("change", syncRows);
   syncRows();
 
+  /** The form was saved or wiped: it holds nothing to lose any more. */
+  let settled = false;
+  /** The form is read-only: the vault is in another tab. */
+  let frozen = false;
+  /** Removes the form from the list of forms with unsaved edits, and the wipe from the scope of the screen. @type {(() => void)[]} */
+  let leave = [];
+
   /** Everything the form holds is emptied. */
   function wipeForm() {
     for (const input of [name.input, username.input, password.input, url.input, notes.input]) input.value = "";
     favorite.checked = false;
     notesLoaded = false;
+    settled = true;
+    for (const forget of leave.splice(0)) forget();
+  }
+
+  /** Whether the form holds edits that are not saved: a field that differs from the start, a typed password, typed notes. */
+  function dirty() {
+    if (settled || /** @type {any} */ (root).isConnected === false) return false;
+    if (name.input.value !== start.name || username.input.value !== start.username || url.input.value !== start.url) return true;
+    if (favorite.checked !== start.favorite || password.input.value !== "") return true;
+    if (id === null && typeSelect.value !== "login") return true;
+    return notesLoaded && (view?.has_notes === true ? notesTouched : notes.input.value !== "");
+  }
+
+  /** @param {boolean} on */
+  function setReadOnly(on) {
+    frozen = on;
+    for (const input of [name.input, username.input, password.input, url.input, notes.input]) {
+      input.readOnly = on;
+      if (on) input.setAttribute("readonly", "");
+      else input.removeAttribute?.("readonly");
+    }
+    for (const control of [favorite, typeSelect, save, loadNotes]) {
+      /** @type {any} */ (control).disabled = on;
+    }
+    root.setAttribute("data-state", on ? "frozen" : "open");
+    if (on) mount(status);
   }
 
   /** @returns {Draft} */
@@ -219,6 +275,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     "data-role": "edit-form",
     onsubmit: async (/** @type {Event} */ event) => {
       event.preventDefault();
+      if (frozen) return; // the vault is in another tab: nothing is saved from here
       errorBox.hidden = true;
       if (!touch()) return;
       if (name.input.value.trim() === "") {
@@ -261,9 +318,72 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   el("div", { class: "actions" }, save, cancel));
 
   mount(root, el("h1", null, t(id === null ? "vault.edit.heading_new" : "vault.edit.heading")), form);
-  scope?.add(() => {
-    wipeForm();
-    mount(root);
-  });
+
+  /** The wipe for the lock, in the scope of the screen the form is in. @param {{ add(fn: () => void): () => void } | undefined} where */
+  const wipeWith = (where) => {
+    const removeWipe = where?.add(() => {
+      wipeForm();
+      mount(root);
+    });
+    if (removeWipe) leave.push(removeWipe);
+  };
+  /** @param {{ trackUnsaved(form: UnsavedForm): () => void } | undefined} where */
+  const trackWith = (where) => {
+    const untrack = where?.trackUnsaved(unsaved);
+    if (untrack) leave.push(untrack);
+  };
+  /** @type {UnsavedForm} */
+  const unsaved = {
+    get key() {
+      return id === null ? "new" : `edit:${id}`;
+    },
+    root,
+    dirty,
+    freeze: () => setReadOnly(true),
+    // The vault is back in this tab (the form is put in a new screen, under the new engine). The wipe of the old screen no
+    // longer reaches it; the wipe and the tracking of the new one do.
+    thaw(next) {
+      for (const forget of leave.splice(0)) forget();
+      engine = next.engine;
+      if (next.touch) touch = next.touch;
+      if (next.go) go = next.go;
+      setReadOnly(false);
+      save.disabled = false;
+      mount(status);
+      watchCopies();
+      wipeWith(next.scope);
+      trackWith(next.tracker);
+    },
+  };
+
+  /** @type {(() => void) | null} */
+  let stopWatching = null;
+  /**
+   * A restore over an item the server had purged became a copy under a new id (the engine's `copied`): the form goes on
+   * with the copy, and the address says so. The form is not rebuilt, so what was typed stays.
+   */
+  function watchCopies() {
+    stopWatching?.();
+    stopWatching = null;
+    if (id === null || typeof engine?.on !== "function") return;
+    stopWatching = listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
+      if (payload?.from !== id || typeof payload?.to !== "string") return;
+      const from = id;
+      id = payload.to;
+      const entry = engine.list().find((/** @type {any} */ i) => i.id === id);
+      baseRev = entry?.rev ?? 1;
+      cancel.setAttribute("href", `#/items/${id}`);
+      try {
+        const here = globalThis.location?.hash;
+        if (here === `#/items/${from}/edit`) globalThis.history?.replaceState?.(null, "", `#/items/${id}/edit`);
+      } catch {
+        // The address stays as it is; the form works on the copy either way
+      }
+    });
+  }
+  watchCopies();
+
+  wipeWith(scope);
+  trackWith(tracker);
   return root;
 }

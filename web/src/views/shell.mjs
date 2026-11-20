@@ -46,7 +46,8 @@ import { unlockScreen } from "./unlock.mjs";
  *
  * @typedef {object} StandbySource
  * @property {(fn: (standby: boolean) => void) => () => void} onStandby
- * @property {() => ReturnType<typeof standbyView>} card makes the notice
+ * @property {(options?: { unsaved?: boolean }) => ReturnType<typeof standbyView>} card makes the notice; `unsaved` when a form is kept below it
+ * @property {() => boolean} [freeze] makes the forms with edits that are not saved read-only and keeps them; answers whether there was one
  */
 
 /** More conflicts than this are shown as one banner with the count. */
@@ -317,6 +318,15 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   if (standby) {
     listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
       if (on !== true) return;
+      // A form with edits that are not saved stays on screen, read-only, under the notice (with "Take back"); the lock wipes it.
+      // Anything else on the screen goes, as before.
+      if (standby.freeze?.() === true) {
+        const card = standby.card({ unsaved: true });
+        const kept = [...main.childNodes];
+        mount(main, card.root, ...kept);
+        card.focus();
+        return;
+      }
       scope.run();
       shown.clear();
       const card = standby.card();
@@ -324,6 +334,16 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       card.focus();
     });
   }
+
+  // An item that was restored over one the server had purged is a copy under a new id now (the engine's `copied`): the screen of
+  // the old one moves to the copy, and the user is told once. An edit screen follows by itself (it keeps what was typed).
+  listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
+    const from = payload?.from;
+    const to = payload?.to;
+    if (typeof from !== "string" || typeof to !== "string") return;
+    if (String(win?.location?.hash ?? "").replace(/^#/, "") === `/items/${from}`) router.go(`/items/${to}`);
+    banner(`copied:${to}`, "info", t("vault.banner.copied"));
+  });
 
   lockButton.addEventListener("click", async () => {
     await lock();
@@ -368,8 +388,8 @@ export async function enterVault(ctx) {
   if (!autoLock.running()) autoLock.start();
 
   // Another tab holds the vault: this tab has no engine and shows nothing from it, only the way to move it here.
-  const standbyCard = () => standbyView({
-    t, sync, onTaken: () => go(path), lock: () => autoLock.lock(), touch: () => autoLock.touch(),
+  const standbyCard = (/** @type {{ unsaved?: boolean }} */ options = {}) => standbyView({
+    t, sync, onTaken: () => go(path), lock: () => autoLock.lock(), touch: () => autoLock.touch(), unsaved: options.unsaved === true,
   });
   const standbyScreen = () => {
     const card = standbyCard();
@@ -413,10 +433,21 @@ export async function enterVault(ctx) {
       return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
         accountPaths: menuRoutes(ctx.routes ?? []).map((route) => route.path),
         reminder: reminderOf(services.store, session.serverUrl, open.accountId),
-        standby: typeof sync.onStandby === "function" ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard } : undefined,
+        standby: typeof sync.onStandby === "function"
+          ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard, freeze: typeof sync.freezeUnsaved === "function" ? () => sync.freezeUnsaved() : undefined }
+          : undefined,
       });
     },
   };
+}
+
+/**
+ * The sync service as the edit screen's tracker of unsaved edits, or undefined where it has none (a stand-in).
+ * @param {any} sync
+ * @returns {{ trackUnsaved(form: import("./edit.mjs").UnsavedForm): () => void, takeFrozen(key: string): import("./edit.mjs").UnsavedForm | null } | undefined}
+ */
+export function trackerOf(sync) {
+  return typeof sync?.trackUnsaved === "function" && typeof sync?.takeFrozen === "function" ? sync : undefined;
 }
 
 /**
