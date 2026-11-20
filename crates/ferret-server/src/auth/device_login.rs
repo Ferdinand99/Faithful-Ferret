@@ -14,4 +14,12 @@
 //! proof's `jti` is recorded only after the device row is written, inside the
 //! same transaction.
 //!
+//! Like the cookie session, the device row and its tokens must be written in
+//! a transaction that checks the account's registration record again against
+//! `LoginVerified::record`, the record the proof was checked against: issue
+//! them through `open_session_proven` in `auth::login` (or the same check in
+//! the device transaction), never through `open_session`. Without that check a
+//! new master password that commits between the proof and the device row would
+//! not stop the sign-in.
+//!
 //! Not built yet: the sign-in route reads the cookie body only.
