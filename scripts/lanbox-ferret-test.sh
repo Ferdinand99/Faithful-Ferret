@@ -131,7 +131,8 @@ e2e_evil_service=ferret-e2e-evil
 e2e_evil="ferret-$e2e_suffix-evil"
 e2e_evil_image="ferret-$e2e_suffix-evil:latest"
 e2e_data_volume="ferret-$e2e_suffix-data"
-e2e_snapshot_volume="ferret-$e2e_suffix-snapshot"
+e2e_snapshot_volume=ferret-e2e-snapshot
+[ "$e2e_suffix" = e2e ] || e2e_snapshot_volume="ferret-$e2e_suffix-snapshot"
 # The compose file wants the setup token of the run; commands that only stop or
 # list the stack do not need the real one.
 dce() { FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" dk compose -p "$e2e_project" -f "$e2e_composefile" "$@"; }
@@ -662,7 +663,7 @@ process.exit(answer.ok ? 0 : 1);
 e2e_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" "ferret-$e2e_suffix-snapshot" e2e_stop_app e2e_start_app
+  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_start_app
   echo "e2e-snapshot: the data of $e2e_app is in the volume $e2e_snapshot_volume"
 }
 
@@ -670,7 +671,7 @@ e2e_snapshot() {
 e2e_restore_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" "ferret-$e2e_suffix-snapshot" e2e_stop_app e2e_bump e2e_start_app
+  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_bump e2e_start_app
   e2e_evil_reset
   echo "e2e-restore-snapshot: $e2e_app runs on the snapshot, with a higher restore epoch"
 }
