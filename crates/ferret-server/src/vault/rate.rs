@@ -510,6 +510,16 @@ impl ImportWindows {
         }
     }
 
+    /// Whether `window` is an open window of this vault and device at `now`,
+    /// with at least one operation left. It only looks: nothing is held. A
+    /// batch that names a window that is not usable is counted like a batch
+    /// without one, so a made-up id gets no way round the operation limit.
+    pub fn usable(&self, vault: &VaultId, device: &DeviceId, window: &[u8; 16], now: i64) -> bool {
+        self.table()
+            .get(vault)
+            .is_some_and(|w| w.id == *window && w.device == *device && w.is_open(now))
+    }
+
     /// How many operations the window of `vault` has left, if it has one that
     /// has not ended at `now`.
     #[doc(hidden)]
@@ -733,6 +743,24 @@ mod tests {
                 .reserve(&vault(1), &device(2), &again, 1, 103 + 1801)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn only_the_window_of_this_vault_and_device_that_is_open_is_usable() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 2, 100).expect("open");
+        assert!(windows.usable(&vault(1), &device(1), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(1), &[0; 16], 100));
+        assert!(!windows.usable(&vault(2), &device(1), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(2), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(1), &id, 1900));
+        // Looking holds nothing, and a spent window is not usable.
+        assert_eq!(windows.remaining(&vault(1), 100), Some(2));
+        windows
+            .reserve(&vault(1), &device(1), &id, 2, 100)
+            .expect("both")
+            .commit(2);
+        assert!(!windows.usable(&vault(1), &device(1), &id, 100));
     }
 
     #[test]

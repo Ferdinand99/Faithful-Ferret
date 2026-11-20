@@ -174,6 +174,17 @@ async fn batches_without_a_window_count_as_in_m2() {
             Some(&json!({ "ops": &ops[10..11], "import_window": window })),
         )
         .await;
+    // The window is spent, so the batch is counted like any other: the bucket is
+    // empty now, and once it has refilled the answer is that the window is no use.
+    assert_eq!(none_left.status, StatusCode::TOO_MANY_REQUESTS);
+    world.app.clock.advance(60);
+    let none_left = a
+        .send(
+            Method::POST,
+            "/api/sync/batch",
+            Some(&json!({ "ops": &ops[10..11], "import_window": window })),
+        )
+        .await;
     assert_eq!(none_left.status, StatusCode::CONFLICT);
     assert_eq!(error(&none_left), "import_window_invalid");
 }

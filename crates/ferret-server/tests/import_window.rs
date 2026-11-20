@@ -500,7 +500,12 @@ async fn a_window_admits_its_ops_beyond_the_per_device_rate() {
         assert_eq!(statuses(&res), vec![200; 6], "batch {batch_n}");
     }
     assert_eq!(left(&app, &u), Some(0));
-    // The thirty-first operation is not in it.
+    // The thirty-first operation is not in it. The window is spent, so the
+    // batch is counted like any other: the bucket is empty, and once it has
+    // refilled the answer is that the window is no use.
+    let past = batch(&app, &u.jar, &ops(&u, 200, 1), Some(window)).await;
+    assert_eq!(past.status, StatusCode::TOO_MANY_REQUESTS);
+    app.clock.advance(60);
     let past = batch(&app, &u.jar, &ops(&u, 200, 1), Some(window)).await;
     assert_eq!(past.status, StatusCode::CONFLICT);
     assert_eq!(error(&past), "import_window_invalid");
@@ -752,6 +757,53 @@ async fn after_a_server_restart_the_window_is_gone_and_a_new_one_can_be_opened()
     )
     .await;
     assert_eq!(statuses(&res), vec![200; 6]);
+}
+
+#[tokio::test]
+async fn a_bogus_or_dead_window_gets_no_way_round_the_operation_limit() {
+    // One operation a second and room for four at once.
+    let rate = RateConfig {
+        ops_per_min: 60,
+        ops_burst: 4,
+        ..RateConfig::DEFAULT
+    };
+    let app = TestApp::builder().rate(rate).build().await;
+    let u = fresh_user(&app, 1).await;
+    let (jar2, _) = other_device(&app, &u, 2).await;
+    let real = window_of(&open(&app, &u.jar, 40).await);
+
+    // A made-up id: the first batch takes the bucket and is refused as a
+    // window, the next is throttled like any batch.
+    let mut seen = Vec::new();
+    for n in 0..4u32 {
+        let res = batch(&app, &u.jar, &ops(&u, n * 4 + 1, 4), Some([9; 16])).await;
+        seen.push((res.status.as_u16(), error(&res)));
+    }
+    assert_eq!(seen[0], (409, "import_window_invalid".to_string()));
+    assert!(
+        seen[1..].iter().all(|(s, e)| *s == 429 && e == "throttled"),
+        "{seen:?}"
+    );
+
+    // The window of another device is the same for this device.
+    let res = batch(&app, &jar2, &ops(&u, 50, 4), Some(real)).await;
+    assert_eq!(error(&res), "import_window_invalid");
+    let res = batch(&app, &jar2, &ops(&u, 54, 4), Some(real)).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.text());
+
+    // The real window, for its own device, is not held back by that bucket.
+    for n in 0..4u32 {
+        let res = batch(&app, &u.jar, &ops(&u, 100 + n * 4, 4), Some(real)).await;
+        assert_eq!(statuses(&res), vec![200; 4], "batch {n}");
+    }
+    assert_eq!(left(&app, &u), Some(24));
+
+    // Once it has ended, its id counts like any other.
+    app.clock.advance(u64::from(IMPORT_WINDOW_SECS));
+    let first = batch(&app, &u.jar, &ops(&u, 200, 4), Some(real)).await;
+    assert_eq!(error(&first), "import_window_invalid");
+    let next = batch(&app, &u.jar, &ops(&u, 204, 4), Some(real)).await;
+    assert_eq!(next.status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

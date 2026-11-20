@@ -9,10 +9,11 @@
 //! 2. the size of the body, at most 6 MiB (`413`);
 //! 3. the JSON, with the same strictness as a single write (`400`);
 //! 4. one to 100 operations, and no item id twice (`400`, nothing is written);
-//! 5. the rate limits. A batch without a window counts as one operation per
-//!    item and its body in bytes. A batch that names an import window
-//!    (`import_window`) counts its body in bytes only: its operations are
-//!    counted in the window (`429` with `Retry-After`);
+//! 5. the rate limits. A batch counts as one operation per item and its body
+//!    in bytes. A batch that names an import window (`import_window`) that this
+//!    device can use counts its body in bytes only: its operations are counted
+//!    in the window. A window that is not usable (another device's, ended,
+//!    spent, made up) changes nothing here (`429` with `Retry-After`);
 //! 6. one place in the write queue for the whole batch (`503 busy` with
 //!    `Retry-After` when the queue is full);
 //! 7. the import window, if the batch names one: the batch holds one operation
@@ -414,9 +415,14 @@ async fn post_batch(
     drop(raw);
 
     let count = u32::try_from(ops.len()).unwrap_or(u32::MAX);
-    // A batch of an import counts only its bytes here: the operations are held
-    // in the window later, once the database says which of them are new.
-    let admitted = if import_window.is_some() {
+    // A batch of an import in a window that can be used counts only its bytes
+    // here: the operations are held in the window later, once the database says
+    // which of them are new. A batch that names a window that is not this
+    // device's, has ended or is spent counts its operations like any other, so
+    // a made-up id is no way round the limit.
+    let in_window = import_window
+        .is_some_and(|id| windows.usable(&session.vault, &session.device, &id, session.now));
+    let admitted = if in_window {
         limits.admit_bytes(&session.vault, &session.device, body_len)
     } else {
         limits.admit(&session.vault, &session.device, count, body_len)
