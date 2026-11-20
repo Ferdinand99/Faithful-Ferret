@@ -317,3 +317,18 @@ test("a_restore_that_became_a_copy_moves_the_open_form_to_the_new_id", async () 
     assert.deepEqual(engine.expectedRevs, [1]);
   });
 });
+
+test("a_form_that_moved_to_a_copy_still_answers_to_the_key_of_the_old_item", async () => {
+  await withDom(async () => {
+    const COPY = "cd".repeat(16);
+    const forms = [];
+    const tracker = { trackUnsaved: (form) => (forms.push(form), () => {}) };
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
+    const client = fakeClient(engine, { notes: { [ID]: NOTES } });
+    await editView({ engine, client, id: ID, t, go() {}, tracker });
+    engine.items = [{ ...ENTRY, id: COPY, rev: 1 }];
+    engine.emit("copied", { from: ID, to: COPY });
+    assert.equal(forms[0].key, `edit:${COPY}`);
+    assert.deepEqual(forms[0].keys, [`edit:${ID}`, `edit:${COPY}`]);
+  });
+});

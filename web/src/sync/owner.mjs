@@ -336,6 +336,8 @@ export function createOwner({
         }
       }
     },
+    /** Leaves the queue of the lock, if the tab stands in it (it holds nothing). */
+    leaveQueue: stopWaiting,
     /**
      * Stands in the queue of the lock (this tab has no engine and is unlocked). Resolves with "granted" when the lock came
      * to this tab (it is held, and a "use here" from another tab can ask for it), or "cancelled" when the tab left the queue
@@ -362,6 +364,8 @@ export function createOwner({
         const handle = await hold({ signal: state.controller.signal });
         if (state.cancelled || handle === null) {
           handle?.release();
+          // A request that was refused (not a wait that was given up) leaves the queue, so that a later `wait()` can stand in it again.
+          if (!state.cancelled) stopWaiting();
           return "cancelled";
         }
         if (!state.claimed) {

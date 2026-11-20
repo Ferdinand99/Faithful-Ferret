@@ -23,6 +23,7 @@ const TYPES = Object.freeze(["login", "note"]);
 /**
  * @typedef {object} UnsavedForm what the sync service holds about a form with edits that are not saved
  * @property {string} key which form it is: `new`, or `edit:<item id>`
+ * @property {string[]} [keys] every key it has answered to (a form that moved to a copy keeps the key of the old id too)
  * @property {HTMLElement} root the form's screen
  * @property {() => boolean} dirty whether it holds edits that are not saved
  * @property {() => void} freeze makes it read-only (the vault moved to another tab); the content stays
@@ -332,10 +333,15 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     const untrack = where?.trackUnsaved(unsaved);
     if (untrack) leave.push(untrack);
   };
+  /** The keys the form has had: the item it was opened on, and the copy it moved to. */
+  const names = new Set([id === null ? "new" : `edit:${id}`]);
   /** @type {UnsavedForm} */
   const unsaved = {
     get key() {
       return id === null ? "new" : `edit:${id}`;
+    },
+    get keys() {
+      return [...names];
     },
     root,
     dirty,
@@ -370,6 +376,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       if (payload?.from !== id || typeof payload?.to !== "string") return;
       const from = id;
       id = payload.to;
+      names.add(`edit:${id}`);
       const entry = engine.list().find((/** @type {any} */ i) => i.id === id);
       baseRev = entry?.rev ?? 1;
       cancel.setAttribute("href", `#/items/${id}`);

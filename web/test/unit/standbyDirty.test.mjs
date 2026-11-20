@@ -192,6 +192,22 @@ test("a_kept_form_goes_on_when_the_vault_comes_back_by_itself_and_a_lock_wipes_i
 });
 
 test("the_draft_never_goes_to_indexeddb", async () => {
+  // Everything the page prints is captured, and the capture is proved to work before the flow starts.
+  const printed = [];
+  const methods = ["log", "info", "warn", "error", "debug", "trace", "dir"];
+  const saved = Object.fromEntries(methods.map((method) => [method, console[method]]));
+  for (const method of methods) console[method] = (...args) => void printed.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, (_k, v) => (v instanceof Error ? v.stack : v)))).join(" "));
+  try {
+    console.warn("capture-probe");
+    assert.deepEqual(printed, ["capture-probe"], "the capture works");
+    printed.length = 0;
+    await draftNeverLeaves(printed);
+  } finally {
+    for (const method of methods) console[method] = saved[method];
+  }
+});
+
+async function draftNeverLeaves(printed) {
   await withDom(async () => {
     const r = await rig();
     try {
@@ -215,8 +231,9 @@ test("the_draft_never_goes_to_indexeddb", async () => {
         assert.ok(!JSON.stringify([r.one.store.spy, r.two.store.spy]).includes(piece), "nor in what the stores were asked to write");
       }
       for (const storage of [globalThis.localStorage, globalThis.sessionStorage]) assert.equal(storage?.length ?? 0, 0, "nor in web storage");
+      for (const piece of [SECRET, NAME_TEXT]) assert.ok(!printed.join(" ").includes(piece), "nor in the console");
     } finally {
       r.done();
     }
   });
-});
+}

@@ -141,7 +141,7 @@ test("a_waiting_tab_starts_its_engine_only_when_unlocked_and_visible", async () 
 
   one.sync.stop();
   await settle(30);
-  // The lock reached the hidden tab, which did not start an engine and let the lock go on; the locked tab never asked.
+  // A tab out of view left the queue, so the lock was not held by it; the locked tab never asked.
   assert.equal(hidden.sync.current(), null, "a tab out of view does not start the engine");
   assert.equal(locked.sync.current(), null, "a locked tab does not start the engine");
   assert.equal(b.locks.held.has(NAME), false, "and nobody holds the lock meanwhile");
@@ -255,5 +255,95 @@ test("an_owner_that_goes_while_the_question_is_asked_hands_the_vault_to_the_wait
   assert.equal(await two.sync.askOwner(), "clear");
   one.sync.stop(); // the owner goes after it answered
   await until(() => two.sync.current() !== null, "the waiting tab got the vault");
+  b.stopAll();
+});
+
+test("a_tab_that_goes_out_of_view_leaves_the_queue_so_it_cannot_block_the_ones_behind_it", async () => {
+  const b = await browser();
+  const one = await b.tab();
+  const two = await b.tab();
+  const three = await b.tab();
+  await one.sync.start(scope);
+  await two.sync.start(scope); // first in the queue
+  await three.sync.start(scope);
+  two.doc.hide(); // a background tab that the browser may freeze
+  await settle(10);
+  one.sync.stop();
+  await until(() => three.standby.length === 2, "the tab behind it in the queue gets the vault");
+  assert.equal(two.sync.current(), null);
+  assert.equal(two.sync.standby(), true);
+  // It queues again when it is in view.
+  two.doc.show();
+  await settle(10);
+  three.sync.stop();
+  await until(() => two.standby.length === 2, "and then gets it when it comes in view and the vault is free");
+  b.stopAll();
+});
+
+test("a_refused_lock_request_does_not_keep_the_tab_out_of_the_queue", async () => {
+  const b = await browser();
+  let refuse = 0;
+  // The browser refuses the next request for a place in the queue (not the "if available" ones).
+  const locks = {
+    request: (name, options, callback) => {
+      if (options?.ifAvailable !== true && refuse > 0) {
+        refuse -= 1;
+        return Promise.reject(new Error("refused"));
+      }
+      return b.locks.request(name, options, callback);
+    },
+  };
+  const one = await b.tab();
+  const two = await b.tab({ locks });
+  await one.sync.start(scope);
+  refuse = 1;
+  await two.sync.start(scope);
+  await settle(10);
+  one.sync.stop();
+  await settle(20);
+  assert.equal(two.sync.current(), null, "no place in the queue yet");
+  // The tab asks again after a while.
+  b.clock.advance(5000);
+  await settle(20);
+  assert.equal(b.locks.held.has(NAME), true, "the tab took the free lock");
+  await until(() => two.standby.length === 2, "and runs the engine");
+  b.stopAll();
+});
+
+test("locking_in_the_tab_that_asked_while_use_here_goes_on_hands_the_vault_to_the_old_owner", async () => {
+  const b = await browser();
+  const one = await b.tab();
+  const two = await b.tab();
+  await one.sync.start(scope);
+  await two.sync.start(scope);
+  for (const channel of b.channels.all) if (channel.name === NAME && channel.listeners.size > 0) channel.muted = true; // the owner does not answer
+  const taking = two.sync.takeOver();
+  await settle(10);
+  two.sync.stop(); // the user locks the tab while "Use here" waits
+  b.clock.advance(3000);
+  assert.equal(await taking, null, "no engine in the tab that locked");
+  assert.equal(two.sync.current(), null);
+  // The old owner lost the lock to the steal, stood in the queue again, and gets the vault when the lock goes.
+  await until(() => one.sync.current() !== null, "the old owner syncs again");
+  assert.equal(one.sync.standby(), false);
+  b.stopAll();
+});
+
+test("a_kept_form_is_found_under_every_key_it_has_had", async () => {
+  const b = await browser();
+  const one = await b.tab();
+  const two = await b.tab();
+  await one.sync.start(scope);
+  await two.sync.start(scope);
+  // A form that moved to a copy answers to the old key (the address the screen is rebuilt from) and to the new one.
+  const moved = { ...form("edit:new-id"), keys: ["edit:old-id", "edit:new-id"] };
+  one.sync.trackUnsaved(moved);
+  await two.sync.takeOver();
+  await until(() => one.sync.standby(), "the first tab is on standby");
+  assert.equal(one.sync.freezeUnsaved(), true, "the screen keeps the form");
+  assert.equal(moved.state.frozen, true);
+  assert.equal(one.sync.takeFrozen("edit:other"), null);
+  assert.equal(one.sync.takeFrozen("edit:old-id"), moved);
+  assert.equal(one.sync.takeFrozen("edit:new-id"), null, "it is taken once");
   b.stopAll();
 });

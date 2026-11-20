@@ -38,6 +38,9 @@ function memoryFor({ store, client, serverUrl, accountId, locks }) {
   }
 }
 
+/** How long a tab waits before it stands in the queue of the lock again after the browser refused the request. */
+const REQUEUE_MS = 5000;
+
 /** @type {import("../app.mjs").ServiceDef} */
 export default {
   name: "sync",
@@ -172,8 +175,18 @@ export default {
         } catch {
           result = "cancelled";
         }
+        const refused = waiting === token; // still ours: nobody gave the place up on purpose
         if (waiting === token) waiting = null;
-        if (result !== "granted") return;
+        if (result !== "granted") {
+          // A lock request that was refused: try again in a while, if the tab is still on standby and in view.
+          if (refused && mine === generation && owner === made) {
+            const later = timers ?? globalThis;
+            later.setTimeout(() => {
+              if (mine === generation) scheduleWait();
+            }, REQUEUE_MS);
+          }
+          return;
+        }
         const scope = standbyScope;
         if (mine !== generation || owner !== made || scope === null || taking !== null || !visible()) {
           // Stale, or the tab is out of view: the lock goes on to the next tab. A tab that is on standby keeps its lock object.
@@ -326,8 +339,14 @@ export default {
       freed = owner.release(); // the owner stays: a page that comes back asks for the lock again with "Use here"
     });
     // A tab that comes into view stands in the queue of the lock (it left it when it was granted the lock out of view).
+    // A tab that goes out of view leaves the queue, so that a background tab that the browser has frozen cannot sit at the head of it.
     doc?.addEventListener?.("visibilitychange", () => {
-      if (visible()) scheduleWait();
+      if (visible()) {
+        scheduleWait();
+      } else if (waiting !== null && standbyScope !== null) {
+        waiting = null;
+        owner?.leaveQueue();
+      }
     });
 
     return {
@@ -457,7 +476,7 @@ export default {
        * @returns {UnsavedForm | null}
        */
       takeFrozen(key) {
-        const at = frozen.findIndex((form) => form.key === key && /** @type {any} */ (form.root).isConnected !== false);
+        const at = frozen.findIndex((form) => (form.keys ?? [form.key]).includes(key) && /** @type {any} */ (form.root).isConnected !== false);
         if (at < 0) return null;
         const [form] = frozen.splice(at, 1);
         return form;

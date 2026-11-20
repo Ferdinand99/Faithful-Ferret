@@ -19,7 +19,7 @@ export async function browser() {
   const client = createFakeClient();
   const tabs = [];
   /** A tab: its own service over the shared storage, a window and a document whose visibility the test sets. */
-  async function tab({ visible = true } = {}) {
+  async function tab({ visible = true, locks: ownLocks = null } = {}) {
     const win = new Map();
     const doc = {
       visibilityState: visible ? "visible" : "hidden",
@@ -37,7 +37,7 @@ export async function browser() {
     const api = createFakeApi(model);
     const store = await createFakeStore({ db });
     const sync = syncService.create({
-      api, store, client: { vault: client.vault }, serverUrl: SERVER, locks, nav: { userAgent: "" }, win: pageWin, doc,
+      api, store, client: { vault: client.vault }, serverUrl: SERVER, locks: ownLocks ?? locks, nav: { userAgent: "" }, win: pageWin, doc,
       makeChannel: (name) => channels.channel(name), timers: { setTimeout: clock.set, clearTimeout: clock.clear }, tabId: `tab-${tabs.length + 1}`,
     });
     const standby = [];
