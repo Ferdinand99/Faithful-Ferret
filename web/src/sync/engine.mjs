@@ -2360,6 +2360,8 @@ export function createSyncEngine({
     const mine = overlay.get(id);
     const row = rows.get(id);
     if (mine && (!row || mine.rev > row.rev)) return mine;
+    // An item that is being uploaded again over a tombstone this device holds (it is below the tombstone's revision, by design) is the copy.
+    if (mine && !mine.deleted && row?.deleted && flags.get(id)?.kind === "missing_on_server") return mine;
     return row ?? null;
   }
 
