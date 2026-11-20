@@ -7,7 +7,7 @@ import { el, mount } from "./dom.mjs";
 import { createRouter } from "./router.mjs";
 
 /** Services the page makes before any feature service: a feature may depend on them. */
-export const BASE_SERVICES = Object.freeze(["client", "i18n"]);
+export const BASE_SERVICES = Object.freeze(["client", "i18n", "createImportWorker"]);
 
 /**
  * @typedef {object} RouteContext
@@ -108,11 +108,12 @@ const NOT_FOUND = {
  *   serviceDefs: readonly ServiceDef[],
  *   client: any,
  *   i18n: RouteContext["i18n"],
+ *   createImportWorker?: () => any,
  *   win?: any,
- * }} options
+ * }} options `createImportWorker` makes the import worker; a service that needs it names it in `deps`
  */
-export function startApp({ root, routes, serviceDefs, client, i18n, win = window }) {
-  const services = resolveServices(serviceDefs, { client, i18n });
+export function startApp({ root, routes, serviceDefs, client, i18n, createImportWorker, win = window }) {
+  const services = resolveServices(serviceDefs, { client, i18n, createImportWorker });
   let token = 0;
 
   /** @param {import("./router.mjs").Match} match */

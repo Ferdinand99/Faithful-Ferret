@@ -31,12 +31,13 @@ const short = (id) => `${id.slice(0, 4)}..${id.slice(-2)}`;
 const frames = () => (new Error().stack ?? "").split("\n").slice(3, 10).map((line) => line.trim().replace("at ", "").split("/").at(-1)).join(" < ");
 
 /**
- * The gaps of the engine that the runs still tolerate, each with a todo test in `syncMatrix.test.mjs`. There are none: a purged tombstone no
- * longer looks like a rollback (the retention follows the rule of the server, see `purgeTombstones`, and the engine holds such a tombstone),
- * so every run is strict. The list and the two variables stay for the next gap: `FERRET_MATRIX_STRICT=1` tolerates none and
- * `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are still let through.
+ * The gaps of the engine that the runs still tolerate: none. A purged tombstone no longer looks like a rollback (the retention follows the rule
+ * of the server, see `purgeTombstones`, and the engine holds such a tombstone), and an item that is brought back from the trash over a purged
+ * tombstone becomes a copy under a new id, which every device takes as a new item. The list and the two variables stay for the next gap:
+ * `FERRET_MATRIX_STRICT=1` tolerates none and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are still let through.
  */
 export const KNOWN_GAPS = Object.freeze(/** @type {string[]} */ ([]));
+
 const tolerated = () => (process.env.FERRET_MATRIX_STRICT
   ? new Set((process.env.FERRET_MATRIX_TOLERATE ?? "").split(",").map((name) => name.trim()).filter(Boolean))
   : new Set(KNOWN_GAPS));
@@ -270,6 +271,7 @@ export class Sim {
     this.seen = new Map(); // browser label -> Set of "id:rev": the rows its engines were shown by the feed and the listing, and wrote themselves
     this.keptMine = new Set(); // "browser:id": the user chose "keep mine" for the item in that browser
     this.tallied = false;
+    this.restoredNames = new Map(); // id -> { name, step }: the name and the step of an item that a device restored from its trash over a tombstone the server had purged (it becomes a copy)
     this.tolerated = tolerated(); // the known gaps that are not asserted against (the todo tests hold them); FERRET_MATRIX_STRICT=1 asserts against them too
     this.stats = {}; // how often each thing happened, to see that a run does what it is meant to
     this.restoredAt = null; // the write index of the server when it was restored
@@ -387,6 +389,14 @@ export class Sim {
     const d = await simEngine({ model: this.server, client: this.client, seed: this.instances, db: group.db, locks: group.locks, deviceName: label, skewMs });
     const dev = { label, group, tab, skewMs, d, engine: d.engine, offline: false, stopped: false, lateCalls: [], landed: [] };
     this.patch(dev);
+    // An item restored over a purged tombstone becomes a copy under a new id: a new item that the device wrote.
+    d.engine.on("copied", ({ from, to }) => {
+      const restored = this.restoredNames.get(from);
+      if (restored === undefined) return;
+      // The copy is made from the newest version that waits: an edit made after the restore, else the item as it was in the trash.
+      const edits = this.writes.filter((write) => write.dev === label && write.id === from && write.kind === "update" && write.step >= restored.step);
+      this.writes.push({ dev: label, id: to, kind: "create", marker: edits.at(-1)?.marker ?? restored.name, step: this.step });
+    });
     return dev;
   }
 
@@ -606,6 +616,10 @@ export class Sim {
     const entries = await this.attempt(`${dev.label} trash`, () => dev.engine.trash());
     const entry = entries ? this.rng.pick(entries) : null;
     if (!entry) return;
+    // An item whose tombstone the server has purged becomes a copy under a new id when it is restored: the engine says so with a `copied` event (see
+    // `spawn`), and the copy is a write of the device like any other.
+    const purged = !this.server.items.has(entry.id);
+    if (purged) this.restoredNames.set(entry.id, { name: entry.name, step: this.step });
     const done = await this.attempt(`${dev.label} restoreFromTrash`, async () => {
       await dev.engine.restoreFromTrash(entry.id);
       return true;
@@ -615,6 +629,7 @@ export class Sim {
       this.note(`${dev.label} restoreFromTrash ${short(entry.id)}`);
     }
   }
+
 
   /** A fault for the next requests of a device. */
   fault(dev) {
@@ -808,6 +823,8 @@ export class Sim {
         dev.d.timers.advance(POLL_MS + 1_000);
         await dev.engine.syncNow();
         await settle(8);
+        // Work that waits for the thread pool (the hashes of WebCrypto) finishes in real time, not in turns of the event loop: a moment is given to it.
+        await new Promise((resolve) => setTimeout(resolve, 2));
       }
       for (const dev of devs) while (await this.resolve(dev, choose)) await settle(8);
       quiet = this.signature(devs) === before ? quiet + 1 : 0;
@@ -1001,6 +1018,8 @@ export class Sim {
       const key = this.keyOf({ label: write.dev }, write.id);
       if (this.discarded.has(key)) continue;
       if (this.conflicted.has(key) && last.get(key) !== write) continue; // a version that was replaced by a newer one of the same device in a conflict
+      // The edits made after a restore over a purged tombstone are copied as one version, the last, under the new id (like "keep mine"): the newest local version.
+      if (this.restoredNames.has(write.id) && last.get(key) !== write) continue;
       // The same user deleted the item after the edit and the server holds it deleted: the edit went with the deletion (a draft that only
       // deletes, or a chain that ends in a deletion, is moot once the server has deleted the item), as the user's last word was the deletion.
       if (last.get(key).kind === "remove" && last.get(key) !== write && accepted.some((a) => a.id === write.id && a.deleted)) continue;

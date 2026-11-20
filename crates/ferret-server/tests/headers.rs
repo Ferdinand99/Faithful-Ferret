@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use ferret_server::http::headers::{VAULT_CSP, VAULT_HEADERS};
+use ferret_server::http::headers::{
+    IMPORT_WORKER_CSP, IMPORT_WORKER_PATHS, VAULT_CSP, VAULT_HEADERS,
+};
 
 const SPEC: &str = include_str!("../../../docs/design/phase-1-security-design.md");
 const FIXTURE: &str = include_str!("fixtures/wire/headers.json");
@@ -65,4 +67,26 @@ fn the_policy_allows_no_inline_script_or_style_and_no_other_origin() {
     assert!(VAULT_CSP.starts_with("default-src 'none';"));
     assert!(VAULT_CSP.contains("require-trusted-types-for 'script'"));
     assert!(VAULT_CSP.contains("trusted-types ferret"));
+}
+
+#[test]
+fn the_import_worker_policy_is_the_vault_policy_with_no_connection_allowed() {
+    // One directive differs: `connect-src 'self'` becomes `connect-src 'none'`.
+    assert!(VAULT_CSP.contains("connect-src 'self';"));
+    assert_eq!(
+        IMPORT_WORKER_CSP,
+        VAULT_CSP.replace("connect-src 'self';", "connect-src 'none';")
+    );
+    assert!(IMPORT_WORKER_CSP.contains("connect-src 'none';"));
+    assert_eq!(IMPORT_WORKER_CSP.matches("connect-src").count(), 1);
+    for forbidden in ["'unsafe-inline'", "'unsafe-eval'", "http:", "https:", "*"] {
+        assert!(!IMPORT_WORKER_CSP.contains(forbidden), "{forbidden}");
+    }
+    assert!(IMPORT_WORKER_CSP.starts_with("default-src 'none';"));
+    assert!(IMPORT_WORKER_CSP.contains("require-trusted-types-for 'script'"));
+    // The two files: the entry the page starts and the module it loads.
+    assert_eq!(
+        IMPORT_WORKER_PATHS,
+        ["/js/import.worker.mjs", "/app/workers/import.worker.mjs"]
+    );
 }

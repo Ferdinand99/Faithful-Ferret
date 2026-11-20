@@ -13,7 +13,7 @@
 //   POST login/finish       purpose reauth: the session becomes fresh
 //   GET session             `reauth_until`
 //   GET unlock-methods      (only with `wantGrant`) the password wrap
-//   reauth_grant            (only with `wantGrant`) core: the one-time token of a plain export
+//   reauth_grant            (only with `wantGrant`) core: the one-time token of an export
 //   clear                   the core drops the sign-in it held
 //
 // The vault that is open is never touched: no `unlock_password` runs here, so the
@@ -66,7 +66,9 @@ export function coversNext(until, now, needMs = REAUTH_SKIP_MS) {
  *
  * `skCode` is only needed when the account has a secret key and this device does not
  * hold it (`sk_required` says so). With `wantGrant`, the answer also holds the one-time
- * token that a plain export needs (`reauth_grant`, five minutes, one use).
+ * token that an export needs (`reauth_grant`, five minutes, one use). The five minutes are measured on this page's
+ * clock, so they bound an honest page; they do not stop page script that already holds a token. Single use and the
+ * core binding the grant to the open vault (a lock or rekey drops it) are the boundary against that.
  *
  * `until` is the end of the freshness in milliseconds since 1970, or null when the server did not say. It is the
  * server's `reauth_until`, never later than five minutes from now on this device's clock.

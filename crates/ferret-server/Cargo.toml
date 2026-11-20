@@ -35,7 +35,7 @@ path = "src/main.rs"
 [dependencies]
 # The shared product kit (auth, i18n, db, HTTP, admin pages). Same tag as
 # Keen Kestrel and Wise Wren.
-vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.2" }
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1" }
 # The crypto core (only the server suite of OPAQUE; no argon2 or opaque-ke on a
 # line of our own) and the OPAQUE server library. Paths, never `version = "=..."`:
 # release-please bumps the lock entries (release-please-config.json).
@@ -44,6 +44,9 @@ ferret-server-auth = { path = "../ferret-server-auth" }
 # The versions below match vole-kit's, so both use one copy of each crate.
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
+# The admin pages are askama templates that extend the kit's layouts (build.rs copies the kit's
+# templates to templates/kit/). Same version as vole-kit.
+askama = "0.16.1"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 # Fork of deadpool-sqlite that supports rusqlite 0.41 (bundled SQLite 3.54.1, RUSTSEC-2026-0459); the
@@ -78,6 +81,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
 
+[build-dependencies]
+# Copies the kit's templates into templates/kit/ for askama (build.rs).
+vole-kit-build = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1" }
+
 [features]
 # Lets a release build go ahead without web/dist (the build script refuses
 # otherwise: a release binary without the web vault serves no vault). For jobs
@@ -96,7 +103,7 @@ rustix = { version = "1.1.5", default-features = false, features = ["fs", "proce
 [dev-dependencies]
 # `/setup` without a setup token in the in-process tests, and the software
 # passkey authenticator.
-vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.2", features = ["test-support"] }
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1", features = ["test-support"] }
 # The manual clock and the replay generators.
 ferret-core = { path = "../ferret-core", features = ["server-suite", "test-support"] }
 ferret-server-auth = { path = "../ferret-server-auth", features = ["test-support"] }

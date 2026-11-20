@@ -112,7 +112,8 @@ pub(crate) struct PendingPasskey {
 /// How long a re-authentication token is good for, in milliseconds.
 pub(crate) const GRANT_TTL_MS: u64 = 300_000;
 
-/// A one-time permission for a plaintext export. Only a fresh sign-in with
+/// A one-time permission for an export, encrypted (`export_begin`) or
+/// plaintext (`reveal_plain_export`). Only a fresh sign-in with
 /// the master password makes one (`UnlockJob.reauth_grant`); the vault keeps
 /// it until the export consumes it, a new one replaces it, it is
 /// [`GRANT_TTL_MS`] old, or the vault is locked or rekeyed.

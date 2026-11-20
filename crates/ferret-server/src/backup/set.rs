@@ -690,7 +690,7 @@ struct DbFacts {
 }
 
 /// `file:<path>?immutable=1` with the path percent-encoded.
-fn immutable_uri(path: &Path) -> Result<String, BackupError> {
+pub(crate) fn immutable_uri(path: &Path) -> Result<String, BackupError> {
     let abs = std::fs::canonicalize(path).map_err(io_err("could not resolve the database copy"))?;
     let text = abs
         .to_str()
@@ -741,16 +741,31 @@ fn inspect_db(path: &Path) -> Result<DbFacts, BackupError> {
         return Err(BackupError::Verify("the database copy failed its check"));
     }
 
-    // The three tables the check reads are tables, not views that run SQL.
+    // The four tables the check reads are tables, not views that run SQL.
     let tables: i64 = conn
         .query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE type = 'table'              AND name IN ('schema_migrations', 'ferret_vaults', 'ferret_meta', 'ferret_accounts')",
+            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' \
+             AND name IN ('schema_migrations', 'ferret_vaults', 'ferret_meta', 'ferret_accounts')",
             [],
             |row| row.get(0),
         )
         .map_err(bad)?;
     if tables != 4 {
         return Err(BackupError::Verify("the database copy lacks a table"));
+    }
+    // The server's schema has neither triggers nor views. One in a set would
+    // run its SQL when the set is restored and used.
+    let code: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE type IN ('trigger', 'view')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(bad)?;
+    if code != 0 {
+        return Err(BackupError::Verify(
+            "the database copy holds a trigger or a view",
+        ));
     }
 
     let migrations: Vec<String> = conn

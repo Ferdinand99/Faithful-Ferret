@@ -256,3 +256,79 @@ test("an_item_without_a_summary_when_the_form_opened_is_not_saved_later", async 
     assert.ok(textOf(find(root, "error")).includes("vault.error.item_changed"));
   });
 });
+
+test("the_form_tells_whether_it_holds_edits_that_are_not_saved", async () => {
+  await withDom(async () => {
+    const forms = [];
+    const tracker = { trackUnsaved: (form) => (forms.push(form), () => void forms.splice(forms.indexOf(form), 1)) };
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
+    const client = fakeClient(engine, { notes: { [ID]: NOTES } });
+    const root = await editView({ engine, client, id: ID, t, go() {}, tracker });
+    const [form] = forms;
+    assert.equal(form.key, `edit:${ID}`);
+    assert.equal(form.dirty(), false, "nothing typed");
+    type(root, "name", "Bank 2");
+    assert.equal(form.dirty(), true);
+    type(root, "name", "Bank");
+    assert.equal(form.dirty(), false, "back to what it started with");
+    type(root, "password", PASSWORD);
+    assert.equal(form.dirty(), true, "a typed password is an edit");
+    type(root, "password", "");
+    find(root, "favorite").checked = true;
+    assert.equal(form.dirty(), true);
+    find(root, "favorite").checked = false;
+    // Notes of an item that has some count once they were typed into.
+    await click(find(root, "load-notes"));
+    assert.equal(form.dirty(), false, "notes that were only read in are no edit");
+    for (const [kind, fn] of find(root, "notes").listeners) if (kind === "input") fn({});
+    assert.equal(form.dirty(), true);
+    // A frozen form is read-only and sends nothing.
+    form.freeze();
+    assert.equal(find(root, "name").readOnly, true);
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter(([kind]) => kind === "update"), []);
+    // A lock wipes it, and then it holds nothing to lose.
+    const wiped = [];
+    form.thaw({ engine, scope: { add: (fn) => (wiped.push(fn), () => {}) } });
+    assert.equal(find(root, "name").readOnly, false);
+    wiped[0]();
+    assert.equal(form.dirty(), false);
+    assert.equal(forms.length, 0, "it left the list");
+    assert.equal(find(root, "name"), null);
+  });
+});
+
+test("a_restore_that_became_a_copy_moves_the_open_form_to_the_new_id", async () => {
+  await withDom(async () => {
+    const COPY = "cd".repeat(16);
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
+    const client = fakeClient(engine, { notes: { [ID]: NOTES } });
+    const moves = [];
+    const root = await editView({ engine, client, id: ID, t, go: (path) => moves.push(path) });
+    type(root, "name", "Typed after the restore");
+    engine.items = [{ ...ENTRY, id: COPY, rev: 1 }];
+    engine.emit("copied", { from: "ee".repeat(16), to: COPY }); // another item: ignored
+    assert.equal(find(root, "cancel").getAttribute("href"), `#/items/${ID}`);
+    engine.emit("copied", { from: ID, to: COPY });
+    assert.equal(find(root, "name").value, "Typed after the restore", "what was typed stays");
+    assert.equal(find(root, "cancel").getAttribute("href"), `#/items/${COPY}`);
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter(([kind]) => kind === "update").map(([, id]) => id), [COPY], "it is saved to the copy");
+    assert.deepEqual(engine.expectedRevs, [1]);
+  });
+});
+
+test("a_form_that_moved_to_a_copy_still_answers_to_the_key_of_the_old_item", async () => {
+  await withDom(async () => {
+    const COPY = "cd".repeat(16);
+    const forms = [];
+    const tracker = { trackUnsaved: (form) => (forms.push(form), () => {}) };
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
+    const client = fakeClient(engine, { notes: { [ID]: NOTES } });
+    await editView({ engine, client, id: ID, t, go() {}, tracker });
+    engine.items = [{ ...ENTRY, id: COPY, rev: 1 }];
+    engine.emit("copied", { from: ID, to: COPY });
+    assert.equal(forms[0].key, `edit:${COPY}`);
+    assert.deepEqual(forms[0].keys, [`edit:${ID}`, `edit:${COPY}`]);
+  });
+});

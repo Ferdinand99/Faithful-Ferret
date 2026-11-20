@@ -1,0 +1,16 @@
+{
+  "format": "avex",
+  "version": "1.0.0",
+  "kdf": {
+    "type": "Argon2Id",
+    "salt": "AAAAAAAAAAAAAAAAAAAAAA==",
+    "memoryKiB": 65536,
+    "iterations": 3,
+    "parallelism": 4
+  },
+  "cipher": {
+    "type": "Aes256Gcm",
+    "nonce": "AAAAAAAAAAAAAAAA"
+  },
+  "payload": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}

@@ -11,8 +11,13 @@
 // throws, never stops a sign-in.
 import { changePassword } from "../flows/changePassword.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
+import { encryptedExport, plainExport } from "../flows/export.mjs";
+import { continueImport, discardImport, previewImport, runImport } from "../flows/import.mjs";
 import { reauthenticate } from "../flows/reauth.mjs";
+import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
 import { register } from "../flows/register.mjs";
+import { renewRecoveryKey } from "../flows/renewRecovery.mjs";
+import { accessSheet, showSecretKey } from "../flows/showSecretKey.mjs";
 import { readSetupQr } from "../flows/setupQr.mjs";
 import { deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
 import { serverKey } from "../store/idb.mjs";
@@ -63,7 +68,8 @@ function createSyncSeam() {
  *   rand?: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>,
  *   sync?: any,
  *   secrets?: import("../flows/deviceSecret.mjs").Env,
- * }} options
+ *   createImportWorker?: () => any,
+ * }} options `createImportWorker` makes the import worker (the page's own file, started through the Trusted Types policy)
  */
 export function createCryptoSession({
   client: given,
@@ -75,13 +81,14 @@ export function createCryptoSession({
   rand = (bytes) => globalThis.crypto.getRandomValues(bytes),
   sync,
   secrets,
+  createImportWorker,
 }) {
   const client = given ?? createClient?.();
   if (!client) throw new TypeError("the crypto session needs a client");
   // One form of the address reaches the core and the store.
   const server = serverKey(serverUrl);
   /** @type {Env} */
-  const env = { client, api, store, server, now, rand, secrets, lock: () => lock() };
+  const env = { client, api, store, server, now, rand, secrets, lock: () => lock(), createImportWorker };
 
   const seam = createSyncSeam();
   seam.attach(sync);
@@ -95,6 +102,8 @@ export function createCryptoSession({
   let locks = 0;
   /** @type {Set<() => void>} */
   const lockListeners = new Set();
+  /** The previews of an import that are held (sealed items, ciphertext): a lock lets go of them. @type {Set<object>} */
+  const previews = new Set();
 
   /**
    * @param {Unlocked} unlocked
@@ -115,6 +124,8 @@ export function createCryptoSession({
     try {
       await client.lock();
     } finally {
+      for (const preview of [...previews]) discardImport(preview);
+      previews.clear();
       for (const listener of [...lockListeners]) {
         try {
           listener();
@@ -194,6 +205,95 @@ export function createCryptoSession({
     },
 
     /**
+     * The encrypted export of the open vault (see `flows/export.mjs`): a fresh sign-in with the master password, then the
+     * file for the browser. The vault stays open; a lock while it runs ends it with `locked`.
+     * @param {Omit<Parameters<typeof encryptedExport>[1], "scope">} args
+     */
+    async exportEncrypted(args) {
+      if (current === null) throw new AccountError("session_ended");
+      const { accountId, vaultId, vkEpoch } = current;
+      return encryptedExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
+    },
+
+    /**
+     * The plain export of the open vault (see `flows/export.mjs`): behind the master password again and an explicit
+     * confirmation. The file holds every secret in the clear.
+     * @param {Omit<Parameters<typeof plainExport>[1], "scope">} args
+     */
+    async exportPlain(args) {
+      if (current === null) throw new AccountError("session_ended");
+      const { accountId, vaultId, vkEpoch } = current;
+      return plainExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
+    },
+
+    /**
+     * Reads an import file and says what is in it (see `flows/import.mjs`). The import worker reads a JSON or CSV file and
+     * the vault seals what it makes; the plain text never reaches this thread. A lock of the vault ends the worker and drops
+     * the preview. `engine` is the sync engine of the open vault. `signal`: the page that asked has gone (the user left it); the worker is
+     * ended and nothing is kept, as for a lock.
+     * @param {Blob & { name?: string }} file
+     * @param {{ engine: any, labels?: unknown, timeoutMs?: number, signal?: AbortSignal }} options
+     */
+    async importPreview(file, options) {
+      if (current === null) throw new AccountError("session_ended");
+      const { signal: given, ...rest } = options;
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      if (given?.aborted) throw new AccountError("locked");
+      given?.addEventListener("abort", stop, { once: true });
+      lockListeners.add(stop);
+      try {
+        const preview = await previewImport(env, file, { ...rest, signal: controller.signal });
+        // A lock that came while the worker was running leaves nothing behind.
+        if (controller.signal.aborted || current === null) {
+          discardImport(preview);
+          throw new AccountError("locked");
+        }
+        previews.add(preview);
+        return preview;
+      } finally {
+        lockListeners.delete(stop);
+        given?.removeEventListener("abort", stop);
+      }
+    },
+
+    /**
+     * Imports a previewed file (see `flows/import.mjs`): a fresh sign-in with the master password, an import window, and the
+     * engine stores all of it in the outbox before it sends anything. A lock while it runs ends it.
+     * @param {Parameters<typeof runImport>[1]} preview
+     * @param {Omit<Parameters<typeof runImport>[2], "signal">} args
+     */
+    async importRun(preview, args) {
+      if (current === null) throw new AccountError("session_ended");
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      lockListeners.add(stop);
+      try {
+        const done = await runImport(env, preview, { ...args, signal: controller.signal });
+        previews.delete(preview);
+        return done;
+      } finally {
+        lockListeners.delete(stop);
+      }
+    },
+
+    /**
+     * "Continue import" (see `flows/import.mjs`): a fresh sign-in, a new import window for the items that are left, and the
+     * engine sends only those.
+     * @param {Omit<Parameters<typeof continueImport>[1], never>} args
+     */
+    async importContinue(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return continueImport(env, args);
+    },
+
+    /** Lets go of a preview (the sealed items it holds). @param {object} preview */
+    importDiscard(preview) {
+      previews.delete(preview);
+      discardImport(preview);
+    },
+
+    /**
      * Registers an account up to the sheet. The returned flow's `finish()`
      * also makes the new account the open one.
      * @param {Parameters<typeof register>[1]} args
@@ -265,6 +365,49 @@ export function createCryptoSession({
     /** Removes the secret key this device remembers for the account. */
     async forgetSecretKey(/** @type {string} */ accountId) {
       await forgetSecretKey(await store.open(), server, accountId);
+    },
+
+    /**
+     * A new recovery key for the open account (see `flows/renewRecovery.mjs`). The vault stays open and no
+     * session ends.
+     * @param {Parameters<typeof renewRecoveryKey>[1]} args
+     */
+    async renewRecoveryKey(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return renewRecoveryKey(env, args);
+    },
+
+    /** What "reapply the unlock methods" can do after an accepted restore (see `flows/reapplyMethods.mjs`). */
+    async reapplyOffer() {
+      if (current === null) throw new AccountError("session_ended");
+      return reapplyOffer(env);
+    },
+
+    /**
+     * Renews the recovery key over a wrap that went below the floor with an accepted restore.
+     * @param {Parameters<typeof reapplyMethods>[1]} args
+     */
+    async reapplyMethods(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return reapplyMethods(env, args);
+    },
+
+    /**
+     * The secret key this device remembers, after the password check (see `flows/showSecretKey.mjs`).
+     * @param {Parameters<typeof showSecretKey>[1]} args
+     */
+    async showSecretKey(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return showSecretKey(env, args);
+    },
+
+    /**
+     * Page 1 of the emergency sheet again, as a PDF (see `flows/showSecretKey.mjs`).
+     * @param {Parameters<typeof accessSheet>[1]} args
+     */
+    async accessSheet(args) {
+      if (current === null) throw new AccountError("session_ended");
+      return accessSheet(env, args);
     },
 
     /** Calls `fn` when the vault is locked; returns the function that stops it. */

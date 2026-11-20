@@ -816,6 +816,11 @@ async fn backup_never_logs_file_contents() {
         .map(|b| format!("{b:02x}"))
         .collect();
     let text = log.text();
+    // The capture only counts if it holds the line of the failed run.
+    assert!(
+        text.contains("backup step failed"),
+        "the failed run was not captured: {text}"
+    );
     assert_no_secret(&text, &[CANARY, &key_hex, "opaque_setup"]);
     let error_text = format!("{failed:?}");
     assert_no_secret(&error_text, &[CANARY, &key_hex]);
@@ -1061,6 +1066,27 @@ async fn the_status_leaves_running_when_a_run_panics() {
         !entries(&cfg.dir).iter().any(|n| n.starts_with(".tmp-")),
         "the half-written folder is gone"
     );
+}
+
+#[tokio::test]
+async fn a_panic_clears_a_waiting_request_so_a_manual_run_can_be_asked_for_again() {
+    let app = app_with_vault().await;
+    let status = app.backup_status();
+    let mut job = job(&app, cfg(&app), Arc::new(set::RealPlatform));
+
+    // A manual request, taken by the job into its collecting window.
+    assert_eq!(status.request_manual_run(), Ok(()));
+    assert!(job.poll().await.is_none(), "the window is collecting");
+    assert!(status.snapshot().waiting);
+    assert!(
+        status.request_manual_run().is_err(),
+        "refused while waiting"
+    );
+
+    // The job panics before the run starts: nothing is waiting any more.
+    job.after_panic();
+    assert!(!status.snapshot().waiting);
+    assert_eq!(status.request_manual_run(), Ok(()));
 }
 
 #[tokio::test]

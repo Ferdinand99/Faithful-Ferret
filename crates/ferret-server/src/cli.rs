@@ -25,11 +25,13 @@
 //!   have run on, and never makes one;
 //! * `restore-epoch bump` and `backup create` refuse while a restore is in
 //!   progress ([`restore::refuse_if_in_progress`]);
-//! * `restore-epoch bump` takes the lock of the data directory (`data_lock`),
-//!   which the server holds for as long as it runs, so it refuses while a server
-//!   uses the same directory. `--data-dir` falls back to `FERRET_DATA_DIR`, so a
-//!   command run inside the container of a live server would otherwise reach the
-//!   live data.
+//! * `restore-epoch bump`, `backup restore` and `backup restore --abort` take
+//!   the lock of the data directory (`data_lock`), which the server holds for as
+//!   long as it runs, so they refuse while a server uses the same directory.
+//!   `--data-dir` falls back to `FERRET_DATA_DIR`, so a command run inside the
+//!   container of a live server would otherwise reach the live data;
+//! * `restore-epoch bump` and `backup restore` raise the restore epoch with the
+//!   same rule: `max(stored + 1, now, --at-least)` ([`reconcile::bump`]).
 //!
 //! No listener is started and no URL setting is read.
 //!
@@ -298,8 +300,9 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             at_least,
         } => {
             require_yes("backup restore changes the data directory", confirmed)?;
-            let report = restore::restore(&data_dir, &from, at_least, now_unix()?)?;
-            Ok(format!(
+            let report = restore::restore(&data_dir, &from, at_least, now_unix()?)
+                .map_err(|error| restore_failed(&data_dir, error))?;
+            let mut said = format!(
                 "restored {} vault{}: restore epoch is now {}, {} session{} ended, the files \
                  that were there are in {}",
                 report.vaults,
@@ -308,7 +311,17 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
                 report.sessions_ended,
                 plural(report.sessions_ended),
                 report.moved_aside.display()
-            ))
+            );
+            if report.seen_epoch_unknown {
+                said.push_str(
+                    "\nwarning: the restore epoch of the data that was there could not be read \
+                     (no database, or a broken one). If clients may have seen a higher restore \
+                     epoch than this one (after an --at-least, or a clock that ran ahead), run \
+                     `ferret restore-epoch bump --yes --at-least <n>` above it before you start \
+                     the server",
+                );
+            }
+            Ok(said)
         }
         Command::BackupAbort {
             data_dir,
@@ -336,6 +349,19 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             ))
         }
     }
+}
+
+/// The error of a restore, with what it left: with the marker there the restore
+/// is half done and the server does not start; without it the data directory
+/// is as it was.
+fn restore_failed(data_dir: &Path, error: crate::backup::BackupError) -> StartError {
+    let left = if restore::refuse_if_in_progress(data_dir).is_err() {
+        "the restore is not finished and the server will not start: run the same command again \
+         to finish it, or `ferret backup restore --abort --yes` to put the old files back"
+    } else {
+        "the data directory was not changed"
+    };
+    format!("{error}; {left}").into()
 }
 
 fn plural(n: u64) -> &'static str {

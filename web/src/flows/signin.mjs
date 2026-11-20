@@ -36,10 +36,15 @@
 // pin is refused (`pinned_elsewhere`). A refused sign-in locks the vault and asks
 // the server to end the new session (best effort); a refused re-authentication
 // keeps the session it was made for, because nothing was pinned.
+//
+// One refusal keeps the new session too: the core refuses the server's password wrap as
+// older than this device has seen (`pinned_kek_generation`) and the server's restore epoch
+// is above the one this device stored. The server was restored from a backup, and the page
+// offers the recovery key (`pinnedRefusalAction`); that recovery runs in this session.
 import { ApiError } from "../api.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { rowToCore, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
-import { AccountError, withSkHint } from "../crypto/errors.mjs";
+import { AccountError, codeOf, withSkHint } from "../crypto/errors.mjs";
 import { encodeWire } from "../wire.mjs";
 import { forgetSecretKey, hasSecretKey, loadSecretKey, saveSecretKey } from "./deviceSecret.mjs";
 import { checkQrAfterLogin, checkQrBeforeKe3, readSetupQr, SetupQrError } from "./setupQr.mjs";
@@ -64,14 +69,16 @@ function sameBytes(a, b) {
 }
 
 /**
- * What the vault session says, or null when there is none.
+ * What the vault session says, or null when there is none. Only a full session is a signed-in one: a reset session
+ * (`account_reset`, from a one-time code) can do nothing but recover the account, and one that waits for a second
+ * factor can do nothing at all.
  * @param {Env} env
  * @returns {Promise<{ accountId: string, email: string } | null>}
  */
 export async function sessionInfo(env) {
   try {
     const res = await env.api.get("/api/auth/session", { shape: "session_res" });
-    if (res.origin !== "vault" || !hex16.is(res.account_id)) return null;
+    if (res.origin !== "vault" || res.scope !== "full" || !hex16.is(res.account_id)) return null;
     return { accountId: res.account_id, email: res.email };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return null;
@@ -200,17 +207,24 @@ async function open(env, p) {
     throw error;
   }
 
+  // What the refusal of an older password is weighed against (see `pinnedRefusalAction`).
+  /** @type {Record<string, any> | null} */
+  let seenRecord = null;
+  /** @type {Record<string, any> | null} */
+  let seenMethods = null;
   try {
     // The server has named the account. It is the sheet's account, and no other address has it pinned: both
     // are asked before anything is pinned.
     if (qr !== null) checkQrAfterLogin(qr, { accountId: done.account_id });
     const record = await store.pinnedForSignIn(db, server, p.email, done.account_id);
+    seenRecord = record;
     // A re-authentication in a session that is already pinned here makes no new pin; every other path does.
     if (p.purpose === "login" || !record) {
       const other = await store.pinnedElsewhere(db, server, done.account_id);
       if (other !== null) throw new AccountError("pinned_elsewhere", { server: other, accountId: done.account_id });
     }
     const methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+    seenMethods = methods;
     if (methods.vk_epoch !== done.vk_epoch) throw new AccountError("epoch_mismatch");
     const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
     if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
@@ -247,11 +261,85 @@ async function open(env, p) {
     };
   } catch (error) {
     await Promise.resolve(env.lock()).catch(() => undefined);
+    // A refusal of an older password after a restore of the server can be answered with the recovery key.
+    const offer = codeOf(error) === "pinned_kek_generation" && seenRecord && seenMethods
+      ? await pinnedRefusalAction(env, db, { accountId: done.account_id, record: seenRecord, methods: seenMethods }).catch(() => null)
+      : null;
+    if (offer !== null && error !== null && typeof error === "object") /** @type {any} */ (error).recoveryOffer = offer;
     // A sign-in that did not open the vault leaves no session behind; a
-    // re-authentication must not end the session it was made for.
-    if (p.purpose === "login") await api.post("/api/auth/logout").catch(() => undefined);
+    // re-authentication must not end the session it was made for. The one
+    // exception is the offer to recover: that recovery runs in this session.
+    if (p.purpose === "login" && offer !== "recover") await api.post("/api/auth/logout").catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * The floor this device has pinned for an unlock method, or null.
+ * @param {Record<string, any>} record
+ * @param {"password" | "recovery"} type
+ * @returns {number | null}
+ */
+function floorOf(record, type) {
+  const floor = Array.isArray(record?.kek_generation_max) ? record.kek_generation_max.find((/** @type {any} */ f) => f?.type === type) : undefined;
+  return Number.isSafeInteger(floor?.generation) ? floor.generation : null;
+}
+
+/**
+ * The generation of the server's wrap of an unlock method type (1 password, 2 recovery), or null.
+ * @param {Record<string, any>} methods the answer of `GET /api/vault/unlock-methods`
+ * @param {number} type
+ * @returns {number | null}
+ */
+function serverGeneration(methods, type) {
+  const wraps = Array.isArray(methods?.methods) ? methods.methods.filter((/** @type {any} */ m) => m.method_type === type) : [];
+  return wraps.length === 1 && Number.isSafeInteger(wraps[0].kek_generation) ? wraps[0].kek_generation : null;
+}
+
+/**
+ * What a page can offer after the core refused the server's password wrap as older than the one this device has
+ * seen (`pinned_kek_generation`, spec Fase 1 § 4.5 and § 8.6, "re-applying the newest unlock methods"):
+ *
+ *   - `"recover"`: the server's restore epoch is above the one this device has stored, so the server was restored
+ *     from a backup. If the restore is the user's own, the recovery key the server holds opens the vault, and a
+ *     recovery with the newest master password as the new one puts the password back (in this session);
+ *   - `"old_sheet"`: as above, but the server's recovery wrap is below this device's recovery floor too (the recovery
+ *     key was renewed after the backup). The newest recovery key does not work on this server, and this device does
+ *     not use the older one: the way out is to forget this server here, then use the sheet from before the renewal,
+ *     or sign in with the password the server knows;
+ *   - `null`: the epoch was not raised (or cannot be read), so the refusal keeps the text that it can be an attack.
+ *
+ * No answer here lowers a floor or changes a check; it only picks what the page says and offers. The restore epoch
+ * the server states is not authenticated, so a server that raises it (with an older wrap) can lead the user on:
+ *   - into a recovery: the server then gets a new OPAQUE record for the newest master password (open to guessing
+ *     offline by whoever holds the OPRF key when the account has no secret key), the recovery key is rotated, and the
+ *     account's other sessions end. The recovery key never leaves the core, the request is signed with the old one,
+ *     every pin of this device is checked (the core refuses a recovery wrap below its floor) and the store refuses a
+ *     record that would lower one;
+ *   - in the `old_sheet` case, towards forgetting this server on this device, which drops its pins. Both texts say
+ *     so only "if you restored the server yourself" and name the attack otherwise.
+ * These checks protect the honest-code case: the web vault's code comes from the same origin, so a hostile server can
+ * serve code that skips them; the extension and the apps keep them.
+ * @param {Env} env
+ * @param {import("../store/idb.mjs").Store} db
+ * @param {{ accountId: string, record: Record<string, any>, methods: Record<string, any> }} seen
+ * @returns {Promise<"recover" | "old_sheet" | null>}
+ */
+export async function pinnedRefusalAction(env, db, { accountId, record, methods }) {
+  const passwordFloor = floorOf(record, "password");
+  const passwordOnServer = serverGeneration(methods, 1);
+  // The refusal is about the password wrap, and that wrap really is below what this device has seen.
+  if (passwordFloor === null || passwordOnServer === null || passwordOnServer >= passwordFloor) return null;
+  const state = await env.store.loadSyncState(db, env.server, accountId);
+  const stored = state?.restoreEpoch;
+  if (!Number.isSafeInteger(stored)) return null;
+  // A cursor at the top of the feed asks for no rows, only the head (and is never below the floor).
+  const feed = await env.api.get(`/api/sync/changes?since=${Number.MAX_SAFE_INTEGER}&limit=1`, { shape: "changes_res" });
+  if (!Number.isSafeInteger(feed.restore_epoch) || feed.restore_epoch <= stored) return null;
+  const recoveryFloor = floorOf(record, "recovery");
+  const recoveryOnServer = serverGeneration(methods, 2);
+  if (recoveryOnServer === null) return null;
+  return recoveryFloor !== null && recoveryOnServer < recoveryFloor ? "old_sheet" : "recover";
 }
 
 /**

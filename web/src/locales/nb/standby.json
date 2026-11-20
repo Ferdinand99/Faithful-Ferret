@@ -1,7 +1,15 @@
 {
   "standby.body": "Synkroniseringen kjører i én fane om gangen, så ingen endring går tapt eller blandes. Ingenting fra hvelvet vises i denne fanen.",
+  "standby.cancel": "Avbryt",
+  "standby.checking": "Spør den andre fanen …",
   "standby.error": "Hvelvet kunne ikke flyttes til denne fanen. Prøv igjen.",
+  "standby.take_back": "Ta tilbake",
   "standby.title": "Hvelvet er åpent i en annen fane",
+  "standby.unsaved_body": "Hvelvet ble flyttet til en annen fane. Endringene du ikke hadde lagret, vises fortsatt under, men de er skrivebeskyttet her og kan ikke lagres fra denne fanen. Ta hvelvet tilbake for å fortsette å redigere, eller kopier det du trenger først.",
+  "standby.unsaved_title": "Hvelvet ble flyttet til en annen fane",
+  "standby.use_anyway": "Bruk her likevel",
   "standby.use_here": "Bruk her",
+  "standby.warn_no_answer": "Den andre fanen svarte ikke. Den kan være opptatt, eller ha endringer du ikke har lagret. Hvis du bruker hvelvet her, blir det den ikke har lagret, stående der skrivebeskyttet og kan ikke lagres derfra med mindre du tar hvelvet tilbake.",
+  "standby.warn_unsaved": "Den andre fanen har endringer som ikke er lagret. Hvis du bruker hvelvet her, blir de stående der skrivebeskyttet og kan ikke lagres derfra med mindre du tar hvelvet tilbake.",
   "standby.working": "Flytter hvelvet til denne fanen …"
 }
