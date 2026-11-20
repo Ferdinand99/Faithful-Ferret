@@ -22,7 +22,7 @@ use ferret_server::ids::{AccountId, ItemId, SidHash, VaultId};
 use ferret_server::product;
 use ferret_server::state::{BackupStatus, ImportWindows, Proofs, VaultDb};
 use ferret_server::vault::events::EventStreams;
-use ferret_server::vault::notify::{SyncEvents, VaultChange};
+use ferret_server::vault::notify::{Revoked, SyncEvents, VaultChange};
 use ferret_server::vault::rate::{SyncLimits, WriteGate};
 use ferret_server::vault::validate::check_envelope;
 use ferret_server_auth::{Clock, SessionScope};
@@ -144,8 +144,14 @@ async fn revocations_reach_a_subscriber() {
     let mut rx = events.subscribe_revocations();
     let mut other = events.subscribe_revocations();
     events.session_revoked(SidHash([2; 32]));
-    assert_eq!(rx.recv().await.expect("a revocation"), SidHash([2; 32]));
-    assert_eq!(other.recv().await.expect("a revocation"), SidHash([2; 32]));
+    assert_eq!(
+        rx.recv().await.expect("a revocation"),
+        Revoked::Session(SidHash([2; 32]))
+    );
+    assert_eq!(
+        other.recv().await.expect("a revocation"),
+        Revoked::Session(SidHash([2; 32]))
+    );
     // The two channels are separate.
     let mut changes = events.subscribe();
     events.session_revoked(SidHash([3; 32]));

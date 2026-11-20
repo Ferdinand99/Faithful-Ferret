@@ -16,6 +16,7 @@ use ferret_core::{OPAQUE_CONTEXT, OsRng, PinState, opaque_login_start};
 use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
+use ferret_server::vault::notify::Revoked;
 use ferret_server::vault::unlock_write::MAX_GENERATION_STEP;
 use ferret_server::wire::b64url;
 use ferret_server_auth::testing::SMALL;
@@ -742,7 +743,7 @@ async fn a_change_committed_after_its_client_went_away_still_announces_and_asks_
         .await
         .expect("in time")
         .expect("a revocation");
-    assert_eq!(revoked, other.sid);
+    assert_eq!(revoked, Revoked::Session(other.sid));
     let after = snapshot(&app, &client).await;
     assert_eq!(after.record, change.registration_record);
     assert_eq!(after.vault_seq, 2);

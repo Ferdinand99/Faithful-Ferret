@@ -11,6 +11,7 @@
 
 use tokio::sync::broadcast;
 
+use crate::auth::session::Ended;
 use crate::ids::{DeviceId, SidHash, VaultId};
 
 /// How many notifications of each kind wait for a slow subscriber.
@@ -37,18 +38,6 @@ pub enum Revoked {
     Session(SidHash),
     /// The token device with this id was revoked.
     Device(DeviceId),
-}
-
-/// For the tests of the third milestone, which compare a received
-/// revocation with a session hash; server code matches on the variant. To be
-/// removed once those tests match on `Revoked::Session`.
-#[doc(hidden)]
-impl PartialEq<SidHash> for Revoked {
-    /// A revoked session equals its hash; a revoked device equals no
-    /// session.
-    fn eq(&self, sid: &SidHash) -> bool {
-        matches!(self, Revoked::Session(ended) if ended == sid)
-    }
 }
 
 /// The two channels the event streams listen to. Cheap to clone: every clone
@@ -91,6 +80,22 @@ impl SyncEvents {
     /// streams close at once. Never fails.
     pub fn device_revoked(&self, device: DeviceId) {
         let _ = self.revocations.send(Revoked::Device(device));
+    }
+
+    /// Tells the streams about everything a bulk end of credentials ended
+    /// (`session::end_all_credentials` and the routes of the list of devices):
+    /// `session_revoked` for each session and `device_revoked` for each
+    /// device, so every stream of each closes at once. Call it after the
+    /// commit, never before: a stream that wakes up must find its row ended.
+    ///
+    /// Spec: Fase 1 § 7.6 (revocation closes all open streams of the device).
+    pub fn announce_ended(&self, ended: &Ended) {
+        for sid in &ended.sessions {
+            self.session_revoked(*sid);
+        }
+        for device in &ended.devices {
+            self.device_revoked(*device);
+        }
     }
 
     /// A receiver of the revocations sent from now on.

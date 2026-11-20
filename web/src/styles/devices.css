@@ -1,0 +1,62 @@
+/* The page "Devices": the list of browsers and devices of the account, and the actions that revoke them.
+   Colours and components come from base.css. */
+
+.devices-page > h2,
+.devices-many > h2,
+.devices-note > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.devices-note {
+  margin-block: var(--sp-4);
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.devices-note > h2 {
+  margin-top: 0;
+}
+
+.devices-list {
+  list-style: none;
+  margin: var(--sp-4) 0;
+  padding: 0;
+}
+
+.devices-row {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.devices-row:last-child {
+  border-bottom: 0;
+}
+
+.devices-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+  /* A long name breaks instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.devices-facts,
+.devices-seen {
+  margin: 0;
+}
+
+.devices-row > .actions {
+  margin-top: var(--sp-1);
+}
+
+/* "This browser": a calm pill, tinted as information. */
+.devices-current {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+}
