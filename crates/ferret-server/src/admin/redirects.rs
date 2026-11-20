@@ -2,7 +2,8 @@
 //! redirects on the admin listener. They start the hand-over of a session from
 //! the vault origin (`/auth/handoff/begin`), where the password is typed.
 //!
-//! * `/vault/login` and `/vault/password`: a new admin session (`login`).
+//! * `/vault/login` and `/vault/password` (without `code`): a new admin
+//!   session (`login`).
 //! * `/vault/reauth`: a fresh check of the password for the open admin session
 //!   (`reauth`).
 //! * `/vault/setup`: the first administrator is made on the vault origin, so
@@ -11,10 +12,20 @@
 //!
 //! `next`, where the browser should end up on the admin origin, is cleaned
 //! with `auth::handoff::sanitize_next` here and again by `begin`.
+//!
+//! A one-time sign-in code is for a user who has forgotten the master
+//! password, so its way never leads to a page that asks for it. The kit's own
+//! code page (`/sign-in-code`, any method) and the kit's link from it
+//! (`/vault/password?code=1`) both go to the vault origin's recovery page
+//! (`{vault}/vault/#/recover`), where the code is typed and redeemed
+//! (`POST /api/auth/redeem`). The kit's page never runs, so its form never
+//! spends a code; [`sign_in_code_to_recover`] sits in front of the kit's
+//! routes for that. Spec: Fase 1 § 6.3 step 1.
 
 use axum::Router;
-use axum::extract::{FromRef, RawQuery, State};
-use axum::response::Redirect;
+use axum::extract::{FromRef, RawQuery, Request, State};
+use axum::middleware::Next;
+use axum::response::{IntoResponse as _, Redirect, Response};
 use axum::routing::get;
 
 use crate::auth::handoff::sanitize_next;
@@ -47,6 +58,40 @@ async fn reauth(RawQuery(query): RawQuery) -> Redirect {
     Redirect::to(&begin_location(query.as_deref(), true))
 }
 
+/// The path of the kit's page for one-time sign-in codes.
+pub const SIGN_IN_CODE_PATH: &str = "/sign-in-code";
+
+/// Where a sign-in code is typed: the recovery page of the web vault.
+pub fn recover_location(origins: &Origins) -> String {
+    format!("{}/vault/#/recover", origins.vault())
+}
+
+/// `/vault/password`: the kit's link for a password. With `code` in the query
+/// (the kit's `?code=1`, from its sign-in code page) it is the recovery page of
+/// the vault origin, since the person has a code and not the password;
+/// otherwise a new admin session, like `/vault/login`. Nothing of the query
+/// goes along to the recovery page.
+async fn password(State(origins): State<Origins>, RawQuery(query): RawQuery) -> Redirect {
+    if query_param(query.as_deref(), "code").is_some() {
+        return Redirect::to(&recover_location(&origins));
+    }
+    Redirect::to(&begin_location(query.as_deref(), false))
+}
+
+/// In front of the kit's routes: `/sign-in-code`, with any method and any
+/// query, is a `303` to the vault origin's recovery page, so the kit's page and
+/// its form never run (and never spend a code). Every other path goes on.
+pub async fn sign_in_code_to_recover(
+    State(origins): State<Origins>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.uri().path() == SIGN_IN_CODE_PATH {
+        return Redirect::to(&recover_location(&origins)).into_response();
+    }
+    next.run(request).await
+}
+
 /// The setup token of a query, if it is well formed: 1 to 128 characters of
 /// letters, digits and `.`, `_`, `~`, `-` (what a token made by the kit or typed
 /// by an operator looks like). Anything else is no token.
@@ -71,7 +116,8 @@ async fn setup(State(origins): State<Origins>, RawQuery(query): RawQuery) -> Red
     Redirect::to(&target)
 }
 
-/// `/vault/{login,setup,password,reauth}`.
+/// `/vault/{login,setup,password,reauth}`. `/sign-in-code` is not a route here:
+/// the kit has one, so [`sign_in_code_to_recover`] answers it as a layer.
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -79,7 +125,7 @@ where
 {
     Router::new()
         .route("/vault/login", get(login))
-        .route("/vault/password", get(login))
+        .route("/vault/password", get(password))
         .route("/vault/reauth", get(reauth))
         .route("/vault/setup", get(setup))
 }
