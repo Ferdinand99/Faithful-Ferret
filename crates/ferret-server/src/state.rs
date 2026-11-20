@@ -104,22 +104,8 @@ impl std::fmt::Debug for Challenges {
     }
 }
 
-/// The open import windows, one per vault at most (a later part fills it in:
-/// the windows are made, counted and ended there). One set for the process,
-/// shared by every handle.
-#[derive(Clone, Debug, Default)]
-pub struct ImportWindows {
-    _windows: Arc<()>,
-}
-
-impl ImportWindows {
-    /// No window open.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 pub use crate::backup::status::BackupStatus;
+pub use crate::vault::rate::ImportWindows;
 
 /// Everything the two routers share.
 #[derive(Clone)]
