@@ -115,7 +115,7 @@ test("backup_wipe_restore_and_every_item_is_back", async ({ browser }) => {
 
   // The first browser says what it knows that the server lost, and puts it back; a new browser then sees that too.
   await openRestoredPage(a.page);
-  await expect(a.page.locator('[data-role="preview-reupload"]')).toContainText("1");
+  await expect(a.page.locator('[data-role="preview-reupload"]')).toHaveText("Your newer changes that will be sent to the server: 1");
   await accept(a.page);
   await synced(a.page, 90_000);
   await server.page.reload();

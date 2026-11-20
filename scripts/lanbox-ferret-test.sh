@@ -693,6 +693,11 @@ e2e_newest_set() {
     "$alpine_image" sh -c 'ls -1t /backups | grep -v "^\." | head -n 1'
 }
 
+# How many backup sets the volume holds (folders; the status file is not one). Mounted read-only.
+e2e_set_count() {
+  dk run --rm --name ferret-e2e-countbackups --label "$e2e_label" --network none     --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --memory 64m     -v "$e2e_backups_volume:/backups:ro"     "$alpine_image" sh -c 'find /backups -mindepth 1 -maxdepth 1 -type d ! -name ".*" | wc -l'
+}
+
 # A new, empty server: the app is stopped, the data is emptied, the app is started (a new server key, no account, the setup
 # token of the stack still works). The backup sets stay. Nothing the malicious server recorded belongs to it any more.
 e2e_reset() {

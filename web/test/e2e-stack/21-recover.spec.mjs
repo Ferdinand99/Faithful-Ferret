@@ -139,11 +139,18 @@ test("recover_on_a_new_browser_with_a_one_time_code_and_both_pages_of_the_sheet"
     const path = new URL(request.url()).pathname;
     if (path.startsWith("/api/")) triedCalls.push(`${request.method()} ${path}`);
   });
+  /** @type {number[]} */
+  const redeemAnswers = [];
+  tried.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/auth/redeem") redeemAnswers.push(response.status());
+  });
   await tried.goto(`${vaultUrl}/vault/#/recover`);
   await expect(tried.locator('[data-role="recover-page"]')).toBeVisible({ timeout: 20_000 });
   await fillRecover(tried, { code: second, rk: oldRecoveryKey, newPassword: `Other-${Date.now().toString(36)}-horse-battery-staple` });
   await tried.locator('[data-role="recover-form"] [data-role="submit"]').click();
-  await expect(tried.locator('[data-role="recover-page"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  // The code was good and was redeemed; it is the recovery key that is refused, before anything is uploaded.
+  await expect(tried.locator('[data-role="recover-page"] [data-role="error"]')).toContainText(/recovery key does not open this account/i, { timeout: SLOW });
+  expect(redeemAnswers, "the code was redeemed").toEqual([200]);
   await expect(tried.locator('[data-role="sheet-page"]')).toHaveCount(0);
   expect(triedCalls.filter((c) => c === "POST /api/vault/recover"), "the old recovery key never gets as far as an upload").toEqual([]);
   await again.close();
@@ -152,7 +159,23 @@ test("recover_on_a_new_browser_with_a_one_time_code_and_both_pages_of_the_sheet"
   const check = await newDevice(browser);
   await expect(rowsNamed(check.page, name)).toHaveCount(1, { timeout: 60_000 });
   await check.context.close();
-  void oldPassword;
+
+  // The old password signs in nowhere: a browser that has never seen the account is refused with the one plain message.
+  const stale = await freshContext(browser);
+  const refused = await stale.newPage();
+  await refused.goto(`${vaultUrl}/vault/login`);
+  await expect(refused.locator('[data-role="credentials"]')).toBeVisible({ timeout: 20_000 });
+  await refused.locator('[data-role="email"]').fill(secrets.email);
+  await refused.locator('[data-role="email"]').blur();
+  await expect(refused.locator('[data-role="sk-question"]')).toBeVisible();
+  await refused.locator('[data-role="password"]').fill(oldPassword);
+  await refused.locator('[data-role="sk-yes"]').check();
+  await refused.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+  await pace();
+  await refused.locator('[data-role="credentials"] [data-role="submit"]').click();
+  await expect(refused.locator('[data-role="credentials"] ~ [data-role="error"]')).toContainText(/could not be opened/i, { timeout: SLOW });
+  await expect(refused.locator('[data-role="list"]')).toHaveCount(0);
+  await stale.close();
   await context.close();
   leave("m3-21-a", { done: true });
 });

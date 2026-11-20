@@ -2,7 +2,7 @@
 // form comes back whole; locking the tab that holds the vault hands it to the tab that waits, and a tab that is out of view does not
 // take it; a tab that does not answer is warned about, and a waiting tab that nobody sees does not stand in the way. The last
 // scenario puts a copy of the server's data back over a server that has purged the tombstones the copy still holds.
-import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, listNames, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInOn, SLOW, synced, syncBanner, test, unlockWith, useAccount, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, syncBanner, test, unlockWith, useAccount, vaultUrl } from "./support.mjs";
 
 // The scenarios do not depend on each other (each makes its own browsers), so one that fails does not skip the rest.
 noViolations();
@@ -266,7 +266,6 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
   await openList(late.page);
   await expect(rowsNamed(late.page, keep)).toHaveCount(1);
   await expect(rowsNamed(late.page, gone)).toHaveCount(0);
-  await late.context.close();
 
   // The copy from before the purge is put back with a higher restore number: the tombstone is on the server again, with the feed floor
   // of the copy.
@@ -279,12 +278,23 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
   await expect(fresh.page.locator('[data-role="sync-banner"]')).toHaveCount(0);
   await expect(fresh.page.locator('[data-role="banner"][data-banner^="error:"]')).toHaveCount(0);
   await expect(fresh.page.locator('[data-role="banner"][data-banner^="warning:"]')).toHaveCount(0);
-  // A browser that signed in before the restore, and has seen the purge, says the server was restored and nothing worse.
+  // The browser that saw the purge was kept open across the restore: its session is over, it signs in again, and it says that the server
+  // was restored and nothing worse (no alarm about the feed, the checkpoint or a rollback), and the deleted item stays deleted.
+  expect((await late.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "the session from before the restore is over").toBe(401);
+  await late.page.goto(`${vaultUrl}/vault/login`);
+  await signInHere(late.page);
+  await expect(syncBanner(late.page, "server_restored")).toBeVisible({ timeout: 150_000 });
+  const codes = await late.page.locator('[data-role="sync-banner"]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-code")));
+  expect(codes, "the server was restored and nothing worse").toEqual(["server_restored"]);
+  await expect(late.page.locator('[data-role="banner"][data-banner^="error:"]')).toHaveCount(0);
+  await expect(late.page.locator('[data-role="banner"][data-banner^="warning:"]')).toHaveCount(0);
+  await openList(late.page);
+  await expect(rowsNamed(late.page, keep)).toHaveCount(1);
+  await expect(rowsNamed(late.page, gone), "the deleted item stays deleted").toHaveCount(0);
+  await late.context.close();
   const feed = await feedOf(fresh.context);
   expect(feed.changes.some((change) => change.deleted), "the restored server holds the tombstone again").toBe(true);
   expect(feed.restore_epoch).toBeGreaterThan(0);
-  void syncBanner;
-  void listNames;
   await fresh.context.close();
 
   // What the host script searches for in the data, the backup sets and the log at the end of the run.

@@ -71,7 +71,7 @@ test("a_new_browser_with_the_sheet_text_pins_the_server_key", async ({ browser }
   // Without the confirmation the sign-in is not sent.
   await pace();
   await page.locator('[data-role="credentials"] [data-role="submit"]').click();
-  await expect(page.locator('[data-role="error"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-role="error"]')).toContainText(/confirm the address it shows/i, { timeout: 15_000 });
   expect(sent.filter((path) => path.startsWith("/api/auth/opaque")), "an unconfirmed sheet sends nothing").toEqual([]);
 
   await page.locator('[data-role="qr-confirm"]').check();
@@ -117,7 +117,7 @@ test("a_sheet_text_with_another_server_key_is_refused_before_sign_in", async ({ 
   await page.locator('[data-role="qr-confirm"]').check();
   await pace();
   await page.locator('[data-role="credentials"] [data-role="submit"]').click();
-  await expect(page.locator('[data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(page.locator('[data-role="error"]')).toContainText(/different identity than the one on your emergency sheet/i, { timeout: SLOW });
   expect(sent.some((entry) => entry.endsWith("/api/auth/opaque/login/start")), "the first message was the only one of the sign-in").toBe(true);
   expect(sent.filter((entry) => entry.endsWith("/api/auth/opaque/login/finish")), "the second message never went").toEqual([]);
   expect((await page.request.get(`${vaultUrl}/api/auth/session`)).status(), "no session was made").toBe(401);
@@ -132,7 +132,7 @@ test("a_sheet_text_with_another_server_key_is_refused_before_sign_in", async ({ 
   sent.length = 0;
   await page.locator('[data-role="qr-text"]').fill(elsewhere);
   await page.locator('[data-role="qr-read"]').click();
-  await expect(page.locator('[data-role="error"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-role="error"]')).toContainText(/another server address than the one of this page/i, { timeout: 15_000 });
   await expect(page.locator('[data-role="qr-shown"]')).toBeHidden();
   expect(sent, "a sheet for another address sends nothing").toEqual([]);
   await context.close();

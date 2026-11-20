@@ -126,8 +126,6 @@ test("setup_downloads_a_two_page_pdf_and_prints_only_the_sheet", async ({ browse
   for (const marker of ["/JavaScript", "/JS", "/URI", "/Launch", "/AcroForm", "/OpenAction", "/EmbeddedFile", "/Info", "/Metadata", "/Annots", "/Encrypt", "/Producer", "/Creator", "/CreationDate"]) {
     expect(raw, `the file has no ${marker}`).not.toContain(marker);
   }
-  // The file is saved for the review (a made-up sheet: the account of this run is thrown away).
-  await testInfo.attach("ferret-emergency-sheet.pdf", { body: bytes, contentType: "application/pdf" });
 
   // ---- Print: the button asks the browser to print, and what prints is the sheet and nothing else.
   await page.evaluate(() => {

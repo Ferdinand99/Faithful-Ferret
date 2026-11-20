@@ -840,7 +840,7 @@ export async function hostAvailable() {
  * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`,
  * `clock-<seconds>`, and for the recovery scenarios `reset` (a new, empty server), `backup` (a backup set made while the
  * app is stopped), `restore-backup` (the newest set on empty data), `code-<e-mail>` (a one-time sign-in code, which is
- * returned) and `monitor-reset` (empties the record of the stand-in monitor). The host script
+ * returned) and `set-count` (how many backup sets the volume holds). The host script
  * (scripts/lanbox-ferret-e2e-gate.sh m2 or m3) watches for the request file in the runner container, does the step and answers
  * with a done file, or with a failed file when the step failed (the test then fails). The test is skipped when the run has no
  * host script, except in the phases that the gate script runs with one. Returns what the step printed for the test, or "".

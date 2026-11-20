@@ -118,6 +118,11 @@ test("a_new_recovery_key_makes_the_old_one_useless_and_a_backup_follows", async 
     const path = new URL(request.url()).pathname;
     if (path.startsWith("/api/")) triedCalls.push(`${request.method()} ${path}`);
   });
+  /** @type {number[]} */
+  const redeemAnswers = [];
+  tried.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/auth/redeem") redeemAnswers.push(response.status());
+  });
   await tried.goto(`${vaultUrl}/vault/#/recover`);
   await expect(tried.locator('[data-role="recover-page"]')).toBeVisible({ timeout: 20_000 });
   const fill = async (/** @type {string} */ useCode, /** @type {string} */ rk, /** @type {string} */ password) => {
@@ -135,7 +140,9 @@ test("a_new_recovery_key_makes_the_old_one_useless_and_a_backup_follows", async 
   };
   await fill(code, oldKey, `Never-${Date.now().toString(36)}-horse-battery-staple`);
   await tried.locator('[data-role="recover-form"] [data-role="submit"]').click();
-  await expect(tried.locator('[data-role="recover-page"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  // The code was good and was redeemed; it is the old recovery key that is refused, before anything is uploaded.
+  await expect(tried.locator('[data-role="recover-page"] [data-role="error"]')).toContainText(/recovery key does not open this account/i, { timeout: SLOW });
+  expect(redeemAnswers, "the code was redeemed").toEqual([200]);
   await expect(tried.locator('[data-role="sheet-page"]')).toHaveCount(0);
   expect(triedCalls.filter((c) => c === "POST /api/vault/recover"), "the old key never gets as far as an upload").toEqual([]);
   await other.close();
@@ -185,16 +192,19 @@ test("every_good_backup_pushes_to_the_stand_in_monitor_without_a_secret", async 
   expect(pushToken.length, "the run knows the token of the push address").toBeGreaterThanOrEqual(16);
   for (const call of calls) {
     expect(call.method).toBe("GET");
-    expect(call.path, "the path is the address the server was given").toBe(`/api/push/${pushToken}`);
+    expect(call.path === `/api/push/${pushToken}`, "the path is the address the server was given").toBe(true);
     // Two values, and nothing of the server in them: no name, no path, no count, no key.
     expect(call.query).toBe("?status=up&msg=backup+ok");
     // No cookie, no authorization, no referring page: the secret path goes to the monitor's host and nowhere else.
     expect(Object.keys(call.headers).sort(), "only the client's name is sent").toEqual(["user-agent"]);
     expect(call.headers["user-agent"]).not.toMatch(/(secret|password|email|@)/i);
   }
-  // The monitor has been told about each set once; the sets are minutes apart, never in a burst.
-  const times = calls.map((call) => call.at).sort((a, b) => a - b);
-  for (let i = 1; i < times.length; i += 1) expect(times[i] - times[i - 1], "one message per set").toBeGreaterThan(1_000);
+  // The monitor has been told about each set once: as many calls as sets the server made (nothing in this run has made a set
+  // with the command yet, and the command never tells the monitor). A set that is being made when this runs is waited for.
+  await expect
+    .poll(async () => Number(await hostStep("set-count")) - (await monitorCalls()).length, { timeout: 180_000, intervals: [10_000], message: "one call for each set" })
+    .toBe(0);
+  expect(Number(await hostStep("set-count")), "the server made sets").toBeGreaterThan(0);
   addNeedle("push token", pushToken);
   leave("m3-22-b", { calls: calls.length });
 });

@@ -336,7 +336,7 @@ host_step() { # step
     restore-backup) (set -e; e2e_restore_backup) >&2 ;;
     restore-backup-*) (set -e; e2e_restore_backup "${1#restore-backup-}") >&2 ;;
     code-*) host_answer="$(e2e_code "${1#code-}")" ;;
-    monitor-reset) host_answer="$(dk exec ferret-e2e-monitor wget -q -O - http://127.0.0.1:9100/__reset)" ;;
+    set-count) host_answer="$(e2e_set_count | tr -d ' ')" ;;
     *)
       echo "the tests asked for a step the host does not know: $1" >&2
       false

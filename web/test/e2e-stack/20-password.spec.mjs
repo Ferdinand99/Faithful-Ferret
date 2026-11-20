@@ -90,7 +90,7 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   await refused.locator('[data-role="sk-code"]').fill(secrets.secretKey);
   await pace();
   await refused.locator('[data-role="credentials"] [data-role="submit"]').click();
-  await expect(refused.locator('[data-role="credentials"] ~ [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(refused.locator('[data-role="credentials"] ~ [data-role="error"]')).toContainText(/could not be opened/i, { timeout: SLOW });
   await expect(refused.locator('[data-role="list"]')).toHaveCount(0);
   expect((await readStores(refused)).pinned.count, "a refused sign-in pins nothing").toBe(0);
   await old.close();
@@ -103,6 +103,10 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   await b.page.goto(`${vaultUrl}/vault/login`);
   await signInHere(b.page);
   await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: 60_000 });
+  // The write that waited in the browser while the session was over goes to the server now: the outbox is empty and the item is there.
+  await synced(b.page, 90_000);
+  await expect(rowsNamed(b.page, offline)).toHaveCount(1);
+  expect((await readStores(b.page)).outbox.count).toBe(0);
 
   // ---- It opens the vault again after a lock; the old one does not.
   await a.page.locator('[data-role="lock"]').click();

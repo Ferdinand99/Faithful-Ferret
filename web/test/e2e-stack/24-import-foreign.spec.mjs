@@ -1,8 +1,9 @@
 // Import from other password managers, with the real core and the real server: a Bitwarden export (JSON and CSV), an AliasVault
 // export (.avux and CSV), the preview of what a file holds, the refusals for files that are not good, a thousand items inside a time
 // budget, and what an import window does when the account is changed under it.
+import { request } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { addNeedle, bulkJson, chooseImportFile, expect, feedOf, leave, listNames, memory, newDevice, noViolations, openImport, openItem, openList, pace, readStores, remember, requireAccount, rowsNamed, runChosenImport, secrets, SLOW, startHeldImport, synced, test, vaultUrl } from "./support.mjs";
+import { addNeedle, bulkJson, freshRedeemWindow, hostStep, redeemCode, signInHere, chooseImportFile, expect, feedOf, leave, listNames, memory, newDevice, noViolations, openImport, openItem, openList, pace, readStores, remember, requireAccount, rowsNamed, runChosenImport, secrets, SLOW, startHeldImport, synced, test, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -40,9 +41,9 @@ test("bitwarden_json_and_csv_import_with_the_preview_counts", async ({ browser }
     await chooseImportFile(page, fixture(one.file));
     // The preview says what kind of file it is and how many items of each kind it holds, and that the file is not encrypted.
     await expect(page.locator('[data-role="preview-kind"]')).toHaveText(one.kind);
-    await expect(page.locator('[data-role="preview-items"]')).toContainText(`Items to import: ${one.items}.`);
-    for (const line of one.lines) await expect(page.locator('[data-role="preview-counts"]')).toContainText(line);
-    await expect(page.locator('[data-role="preview-room"]')).toContainText(`${before} item(s)`);
+    await expect(page.locator('[data-role="preview-items"]')).toHaveText(`Items to import: ${one.items}.`);
+    for (const line of one.lines) await expect(page.locator('[data-role="preview-counts"]').getByText(line, { exact: true })).toHaveCount(1);
+    await expect(page.locator('[data-role="preview-room"]')).toContainText(`Your vault has ${before} item(s) and room for`);
     await expect(page.locator('[data-role="plain-file-warning"]')).toBeVisible();
     if (before > 0) await expect(page.locator('[data-role="not-empty"]')).toBeVisible();
     await runChosenImport(page, one.items);
@@ -111,12 +112,12 @@ test("an_import_of_1000_items_finishes_within_budget", async ({ browser }) => {
   const seqBefore = (await feedOf(device.context)).latest_seq;
   await openImport(page);
   await chooseImportFile(page, { name: "thousand.json", mimeType: "application/json", buffer: bulkJson(tag, 1000) });
-  await expect(page.locator('[data-role="preview-items"]')).toContainText("Items to import: 1000.");
+  await expect(page.locator('[data-role="preview-items"]')).toHaveText("Items to import: 1000.");
   await page.locator('[data-role="import-form"] [data-role="master-password"]').fill(secrets.password);
   await pace();
   const started = Date.now();
   await page.locator('[data-role="import-form"] [data-role="submit"]').click();
-  await expect(page.locator('[data-role="done-items"]')).toContainText("1000", { timeout: BUDGET_MS });
+  await expect(page.locator('[data-role="done-items"]')).toHaveText("Items sent to the server: 1000.", { timeout: BUDGET_MS });
   await synced(page, BUDGET_MS);
   const took = Date.now() - started;
   test.info().annotations.push({ type: "import 1000 items", description: `${Math.round(took / 1000)} s` });
@@ -190,10 +191,8 @@ test("a_password_change_while_an_import_window_is_open_leaves_the_dead_session_n
   await pace();
   await other.page.locator('[data-role="password-form"] [data-role="submit"]').click();
   await expect(other.page.locator('[data-role="password-done"]')).toBeVisible({ timeout: SLOW });
-  const oldPassword = secrets.password;
   secrets.password = newPassword;
   remember();
-  void oldPassword;
   expect((await dead.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "the importing browser's session is over").toBe(401);
   const before = await feedOf(other.context);
 
@@ -204,8 +203,28 @@ test("a_password_change_while_an_import_window_is_open_leaves_the_dead_session_n
   const after = await feedOf(other.context);
   expect(after.latest_seq, "the ended session's window wrote nothing").toBe(before.latest_seq);
   expect(after.changes.filter((c) => !before.changes.some((b) => b.id === c.id)), "no new row").toEqual([]);
-  await dead.context.close();
 
+  // ---- The same with a recovery: a one-time code is redeemed (the kit's way of ending every other session) while the batches of an
+  // import wait. The same browser signs in again (it replaces its own window), starts an import, and the code ends its session.
+  await freshRedeemWindow();
+  await dead.page.goto(`${vaultUrl}/vault/login`);
+  await signInHere(dead.page);
+  const heldAgain = await startHeldImport(dead.page, bulkJson(`recovery-${tag}`, 300));
+  const beforeRecovery = await feedOf(other.context);
+  const reset = await request.newContext({ ignoreHTTPSErrors: true });
+  const redeemed = await redeemCode(reset, secrets.email, await hostStep(`code-${secrets.email}`));
+  expect(redeemed.status(), "the code is redeemed").toBe(200);
+  expect((await dead.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "the importing browser's session is over").toBe(401);
+  expect((await other.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "so is every other session").toBe(401);
+  heldAgain.release();
+  await dead.page.waitForTimeout(10_000);
+  const checker = await newDevice(browser);
+  const afterRecovery = await feedOf(checker.context);
+  expect(afterRecovery.latest_seq, "the window of the session the code ended wrote nothing").toBe(beforeRecovery.latest_seq);
+  expect(afterRecovery.changes.filter((c) => !beforeRecovery.changes.some((b) => b.id === c.id)), "no new row").toEqual([]);
+  await reset.dispose();
+  await checker.context.close();
+  await dead.context.close();
   await other.context.close();
   leave("m3-24", { done: true });
 });

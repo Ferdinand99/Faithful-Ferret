@@ -33,7 +33,7 @@ async function openExportPage(page) {
     location.hash = "#/export";
   });
   await expect(page.locator('[data-role="export-page"]')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('[data-role="readiness-status"]')).not.toHaveText(/Checking/i, { timeout: 60_000 }).catch(() => {});
+  await expect(page.locator('[data-role="readiness-status"]')).not.toHaveText(/Checking/i, { timeout: 60_000 });
 }
 
 test("the_export_reminder_shows_after_30_days", async ({ browser }) => {
@@ -116,16 +116,16 @@ test("an_encrypted_export_imports_into_a_fresh_account_on_a_wiped_server", async
   // ---- The export: the page refuses what the core refuses, then writes the file.
   await openExportPage(device.page);
   await exportTo(device.page, { master: secrets.password, password: "Short1!", again: "Short1!" });
-  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toContainText(/too short/i, { timeout: SLOW });
   await exportTo(device.page, { master: secrets.password, password: exportPassword, again: `${exportPassword}x` });
-  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toContainText(/not the same/i, { timeout: SLOW });
   // The master password as the export password is refused: the file would open with the password that the server can be asked to test.
   await exportTo(device.page, { master: secrets.password, password: secrets.password });
-  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(device.page.locator('[data-role="encrypted-form"] [data-role="error"]')).toContainText(/same as your master password/i, { timeout: SLOW });
 
   const [download] = await Promise.all([device.page.waitForEvent("download", { timeout: SLOW }), exportTo(device.page, { master: secrets.password, password: exportPassword })]);
   await expect(device.page.locator('[data-role="encrypted-done"]')).toBeVisible({ timeout: SLOW });
-  await expect(device.page.locator('[data-role="done-items"]')).toContainText(String(namesBefore.length));
+  await expect(device.page.locator('[data-role="done-items"]')).toHaveText(`Items in the file: ${namesBefore.length}.`);
   const bytes = readFileSync(/** @type {string} */ (await download.path()));
   expect(bytes.length).toBeGreaterThan(200);
   // Nothing of the vault is readable in the file: no name, no password, no note, no e-mail address, no key.
@@ -174,7 +174,7 @@ test("an_encrypted_export_imports_into_a_fresh_account_on_a_wiped_server", async
   };
   await fill(`${exportPassword}-wrong`);
   await setupPage.locator('[data-role="import-form"] [data-role="submit"]').click();
-  await expect(setupPage.locator('[data-role="import-form"] [data-role="error"]')).toBeVisible({ timeout: SLOW });
+  await expect(setupPage.locator('[data-role="import-form"] [data-role="error"]')).toContainText(/export password is wrong/i, { timeout: SLOW });
   await setupPage.evaluate(() => {
     location.hash = "#/";
   });
@@ -191,7 +191,7 @@ test("an_encrypted_export_imports_into_a_fresh_account_on_a_wiped_server", async
   }
   await fill(exportPassword);
   await setupPage.locator('[data-role="import-form"] [data-role="submit"]').click();
-  await expect(setupPage.locator('[data-role="done-items"]')).toContainText(String(namesBefore.length), { timeout: 300_000 });
+  await expect(setupPage.locator('[data-role="done-items"]')).toHaveText(`Items sent to the server: ${namesBefore.length}.`, { timeout: 300_000 });
   await synced(setupPage, 120_000);
 
   // The same items, with the same fields.
