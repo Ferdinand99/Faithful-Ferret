@@ -310,9 +310,16 @@ function serverGeneration(methods, type) {
  *   - `null`: the epoch was not raised (or cannot be read), so the refusal keeps the text that it can be an attack.
  *
  * No answer here lowers a floor or changes a check; it only picks what the page says and offers. The restore epoch
- * the server states is not authenticated, so a server that raises it gains only this offer: the recovery that
- * follows checks every pin of this device (the core refuses a recovery wrap below its floor) and the store refuses a
- * record that would lower one.
+ * the server states is not authenticated, so a server that raises it (with an older wrap) can lead the user on:
+ *   - into a recovery: the server then gets a new OPAQUE record for the newest master password (open to guessing
+ *     offline by whoever holds the OPRF key when the account has no secret key), the recovery key is rotated, and the
+ *     account's other sessions end. The recovery key never leaves the core, the request is signed with the old one,
+ *     every pin of this device is checked (the core refuses a recovery wrap below its floor) and the store refuses a
+ *     record that would lower one;
+ *   - in the `old_sheet` case, towards forgetting this server on this device, which drops its pins. Both texts say
+ *     so only "if you restored the server yourself" and name the attack otherwise.
+ * These checks protect the honest-code case: the web vault's code comes from the same origin, so a hostile server can
+ * serve code that skips them; the extension and the apps keep them.
  * @param {Env} env
  * @param {import("../store/idb.mjs").Store} db
  * @param {{ accountId: string, record: Record<string, any>, methods: Record<string, any> }} seen

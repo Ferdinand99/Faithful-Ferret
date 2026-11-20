@@ -109,13 +109,15 @@ export async function recoverySession(env) {
 
 /**
  * The text the core is given for the sheet: the sheet's own when it names this page's origin exactly, else the same
- * values with the canonical origin. The caller has checked that the two are the same origin.
+ * values with the canonical origin. A sheet for another origin is refused here as well (`qr_server_url`), so no caller
+ * can turn a sheet for one server into the text of another.
  * @param {Env} env
  * @param {string} text the text as typed (trimmed)
  * @param {import("./setupQr.mjs").SetupQr} qr what the core read from it
  * @returns {Promise<string>}
  */
 export async function canonicalQrText(env, text, qr) {
+  checkQrBeforeKe3(qr, { serverUrl: env.server });
   if (qr.serverUrl === env.server) return text;
   return env.client.vault.setup_qr_build(env.server, hex16.decode(qr.accountId), qr.ksfProfile, qr.skBit, qr.serverPublicKey.slice());
 }
@@ -145,6 +147,10 @@ export async function recoverAccount(env, args, hooks = {}) {
 
   const session = await recoverySession(env);
   const full = session?.scope === "full" ? session : null;
+  // A typed e-mail that is not the full session's: the session is another account than the one the page was opened for.
+  if (full && trimmed(args.email) !== "" && trimmed(args.email).toLowerCase() !== full.email.trim().toLowerCase()) {
+    throw new AccountError("pinned_account_mismatch");
+  }
   const email = full ? full.email : trimmed(args.email);
   if (email === "") throw new AccountError("email_required");
   const reuseReset = session?.scope === "account_reset" && session.email.trim().toLowerCase() === email.toLowerCase();

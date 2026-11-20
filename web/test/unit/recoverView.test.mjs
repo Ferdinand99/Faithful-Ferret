@@ -29,11 +29,12 @@ async function withDom(body) {
  * The page over the real flow in a recovery world (or over `recover` when given).
  * @param {{ world?: any, recover?: (args: any) => Promise<any>, info?: any, lang?: string, device?: any }} [options]
  */
-function page({ world, recover, info = null, lang = "en", device = { pinned: false, skBit: null, skStored: false } } = {}) {
+function page({ world, recover, info = null, lang = "en", device = { pinned: false, skBit: null, skStored: false }, resetOpen = false } = {}) {
   const went = [];
   const root = recoverView({
     t: translator(lang),
     info,
+    resetOpen,
     serverUrl: SERVER,
     readSetupQr: (text) => readSetupQr({ vault: { setup_qr_parse: parseQr } }, text),
     deviceStatus: async () => device,
@@ -150,6 +151,7 @@ test("the_new_key_is_shown_alone_typed_back_and_the_page_ends_signed_in", async 
     assert.equal(byRole(root, "sheet-page"), null, "the sheet left the page");
     assert.equal(textOf(byRole(root, "done-signed-in")).trim(), EN["recover.done_signed_in"]);
     assert.ok(textOf(byRole(root, "recover-done")).includes(EN["recover.done_old_key"]));
+    assert.equal(byRole(root, "qr-text").value, "", "the sheet text left the page");
     await fire(byRole(root, "open-vault"), "click");
     assert.deepEqual(went, ["/"]);
   });
@@ -196,9 +198,45 @@ test("a_wrong_code_shows_the_single_failure_text", async () => {
     assert.match(EN["recover.code_limit"], /a correct code can be refused for a few minutes/);
     // With a full session there is no code to type.
     const { root } = page({ recover: async () => "recovered", info: { accountId: "aa".repeat(16), email: EMAIL } });
-    assert.equal(byRole(root, "code"), null);
-    assert.equal(byRole(root, "email"), null);
+    assert.equal(byRole(root, "code").parentNode.hidden, true);
+    assert.equal(byRole(root, "email").parentNode.hidden, true);
+    assert.equal(byRole(root, "code-limit").hidden, true);
     assert.ok(textOf(byRole(root, "signed-in")).includes(EMAIL));
+  });
+});
+
+test("the_code_field_follows_the_session", async () => {
+  await withDom(async () => {
+    // The code is never a "required" field: a reset session that is still open needs none, and the page says so.
+    const { root } = page({ recover: async () => "recovered", resetOpen: true });
+    assert.equal(byRole(root, "code").getAttribute("required") ?? null, null);
+    assert.equal(byRole(root, "reset-open").hidden, false);
+    assert.equal(textOf(byRole(root, "reset-open")).trim(), EN["recover.reset_open"]);
+    assert.equal(byRole(page({ recover: async () => "recovered" }).root, "reset-open").hidden, true, "no note without an open reset session");
+    // The full session the page was opened with ends before the submit: the e-mail and the code fields come back.
+    const calls = [];
+    const full = page({
+      info: { accountId: "aa".repeat(16), email: EMAIL },
+      recover: async (args) => {
+        calls.push(args);
+        throw Object.assign(new Error("code_required"), { code: "code_required" });
+      },
+    });
+    await settle();
+    await fill(full.root, { sheet: null });
+    await submit(full.root);
+    await until(() => byRole(full.root, "error").hidden === false);
+    assert.equal(calls[0].email, EMAIL, "the session's e-mail was used");
+    assert.equal(byRole(full.root, "code").parentNode.hidden, false);
+    assert.equal(byRole(full.root, "email").parentNode.hidden, false);
+    assert.equal(byRole(full.root, "signed-in").hidden, true);
+    assert.equal(textOf(byRole(full.root, "error")).trim(), EN["recover.error.code_required"]);
+    // The next try sends what was typed.
+    await fill(full.root, { sheet: null });
+    byRole(full.root, "email").value = "ada@example.test";
+    await submit(full.root);
+    await until(() => calls.length === 2);
+    assert.equal(calls[1].code, CODE);
   });
 });
 

@@ -1,4 +1,4 @@
-import { recoverAccount } from "../flows/recover.mjs";
+import { recoverAccount, recoverySession } from "../flows/recover.mjs";
 import { recoverView } from "../views/recover.mjs";
 
 /**
@@ -22,9 +22,12 @@ export default {
       now: Date.now,
       rand: (bytes) => globalThis.crypto.getRandomValues(bytes),
     };
+    // A reset session from an earlier code that is still open: the page says the code is not needed again.
+    const resetOpen = info === null ? (await recoverySession(env).catch(() => null))?.scope === "account_reset" : false;
     return recoverView({
       t: i18n.t,
       info,
+      resetOpen,
       serverUrl: session.serverUrl,
       readSetupQr: (text) => session.readSetupQr(text),
       deviceStatus: (email) => session.deviceStatus(email),

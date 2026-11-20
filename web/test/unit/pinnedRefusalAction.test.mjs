@@ -121,7 +121,12 @@ test("a_pinned_refusal_after_a_raised_restore_epoch_offers_the_recovery_key_and_
     for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
       const { root, went } = await refusedPage(Object.assign(coded("pinned_kek_generation"), { recoveryOffer: "recover" }), lang);
       assert.equal(textOf(byRole(root, "error")).trim(), catalog["recover.offer.recover"]);
-      assert.doesNotMatch(textOf(byRole(root, "error")), /can be an attack|kan være et angrep/);
+      // The offer stands only for a restore the user made; otherwise the text names the attack.
+      const text = textOf(byRole(root, "error"));
+      const own = lang === "en" ? "If you restored the server yourself" : "Har du gjenopprettet tjeneren selv";
+      const attack = lang === "en" ? "this can be an attack" : "kan dette være et angrep";
+      assert.ok(text.includes(own) && text.includes(attack), lang);
+      assert.match(text, lang === "en" ? /^The server says it was restored/ : /^Tjeneren sier at den er gjenopprettet/, "the restore is the server's word, not a fact");
       const button = byRole(root, "use-recovery-key");
       assert.ok(button, `${lang}: the offer is there`);
       await fire(button, "click");
@@ -152,6 +157,16 @@ test("restoring_a_set_from_before_a_renewal_offers_forget_and_names_the_old_shee
       assert.match(text, lang === "en" ? /sheet you had before the renewal/ : /arket du hadde før fornyelsen/);
       assert.match(text, lang === "en" ? /newest recovery key does not work/ : /nyeste gjenopprettingsnøkkelen din virker ikke/);
       assert.ok(text.includes(catalog["syncwarnings.forget.link"]), "the way out by its name");
+      // Forgetting the server's pins is suggested only for a restore the user made; otherwise it is named as an attack
+      // and the user is told not to forget the server.
+      const own = lang === "en" ? "If you restored the server yourself" : "Har du gjenopprettet tjeneren selv";
+      const otherwise = lang === "en"
+        ? "If you did not restore the server yourself, this can be an attack: do not forget the server, and contact the person who runs it."
+        : "Har du ikke gjenopprettet tjeneren selv, kan dette være et angrep: ikke glem tjeneren, og kontakt den som drifter den.";
+      assert.ok(text.indexOf(own) >= 0 && text.indexOf(own) < text.indexOf(catalog["syncwarnings.forget.link"]), `${lang}: the condition comes before the way out`);
+      assert.ok(text.endsWith(otherwise), `${lang}: the attack sentence closes the text`);
+      assert.match(text, lang === "en" ? /^The server says it was restored/ : /^Tjeneren sier at den er gjenopprettet/);
+      if (lang === "nb") assert.doesNotMatch(text, /server/i, "the Norwegian texts say «tjeneren»");
       assert.equal(byRole(root, "use-recovery-key"), null, "the key this device has does not work here: no offer to use it");
       assert.equal(byRole(root, "offer-forget").getAttribute("href"), "#/forget");
     }

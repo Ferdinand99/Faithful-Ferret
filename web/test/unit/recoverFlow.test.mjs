@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { b64u } from "../../src/b64.mjs";
 import { canonicalQrText, recoverAccount } from "../../src/flows/recover.mjs";
+import { readSetupQr } from "../../src/flows/setupQr.mjs";
 import { dumpDatabase } from "./accountHelpers.mjs";
 import {
   ACCOUNT, CODE, EMAIL, NEW_PASSWORD, NEW_RK, PASSWORD, PROOF, RK_CODE, RK_TYPO, SERVER, SK_CODE,
@@ -188,7 +189,10 @@ test("a_new_device_binds_the_recovery_to_the_sheet_and_this_origin", async () =>
   assert.equal(call.args[0], SERVER);
   assert.deepEqual(call.args[5], { kind: "first_use", sk_bit: true });
   assert.equal(call.args[6], qrText({ url: SERVER }));
-  assert.equal(await canonicalQrText(world.env, qrText(), { serverUrl: SERVER }), qrText(), "a canonical text is passed as it is");
+  const read = (text) => readSetupQr(world.client, text);
+  assert.equal(await canonicalQrText(world.env, qrText(), await read(qrText())), qrText(), "a canonical text is passed as it is");
+  // It never turns a sheet for another server into this server's text.
+  await assert.rejects(canonicalQrText(world.env, qrText({ url: "https://other.example" }), await read(qrText({ url: "https://other.example" }))), (e) => e.code === "qr_server_url");
   // A sheet for another server: nothing is sent.
   const other = await recoverWorld();
   assert.equal((await recoverIn(other, { qrText: qrText({ url: "https://other.example" }) }).catch((e) => e)).code, "qr_server_url");
@@ -208,6 +212,11 @@ test("a_full_session_or_a_reset_session_for_the_same_email_needs_no_new_code", a
   await pinHere(full, { keepSk: true });
   assert.equal(await recoverIn(full, { email: "", code: "", qrText: null, skCode: "" }), "recovered");
   assert.ok(!full.requests.some((r) => r.url === "/api/auth/redeem"), "no code with a full session");
+  // A typed e-mail of another account than the full session's: refused before anything is sent.
+  const other = await recoverWorld({ session: "full" });
+  await pinHere(other, { keepSk: true });
+  assert.equal((await recoverIn(other, { email: "someone-else@example.test", code: "", qrText: null, skCode: "" }).catch((e) => e)).code, "pinned_account_mismatch");
+  assert.deepEqual(other.requests.filter((r) => r.method !== "GET"), []);
   const reset = await recoverWorld({ session: "account_reset" });
   assert.equal(await recoverIn(reset, { code: "" }), "recovered");
   assert.ok(!reset.requests.some((r) => r.url === "/api/auth/redeem"), "the open reset session is used again");

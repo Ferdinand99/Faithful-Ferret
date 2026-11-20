@@ -45,6 +45,7 @@ export function recoverErrorText(t, error) {
  * @typedef {object} RecoverDeps
  * @property {import("./form.mjs").Translate} t
  * @property {{ accountId: string, email: string } | null} info the full session found when the page was opened
+ * @property {boolean} [resetOpen] a reset session from an earlier code is still open in this browser
  * @property {string} serverUrl this page's server, as one canonical origin
  * @property {(text: string) => Promise<import("../flows/setupQr.mjs").SetupQr>} readSetupQr reads the sheet's QR text (no request)
  * @property {(email: string) => Promise<{ pinned: boolean, skBit: boolean | null, skStored: boolean }>} deviceStatus what this device knows (no request)
@@ -81,8 +82,21 @@ export function recoverView(deps) {
   }
 
   const form = el("form", { class: "stack", "data-role": "recover-form" });
-  const email = info === null ? field(t, { id: "recover-email", role: "email", label: "recover.email", type: "email", autocomplete: "username" }) : null;
-  const code = info === null ? field(t, { id: "recover-code", role: "code", label: "recover.code", help: "recover.code_help", secret: true }) : null;
+  // The e-mail and the code: asked for unless a full session was found. They are not "required" fields: the flow says
+  // what is missing (a reset session that is still open needs no code again).
+  let needCode = info === null;
+  const email = field(t, { id: "recover-email", role: "email", label: "recover.email", type: "email", autocomplete: "username", required: false });
+  const code = field(t, { id: "recover-code", role: "code", label: "recover.code", help: "recover.code_help", secret: true, required: false });
+  const codeLimit = el("p", { class: "notice", role: "note", "data-role": "code-limit" }, t("recover.code_limit"));
+  const resetOpen = el("p", { class: "notice", role: "note", "data-role": "reset-open" }, t("recover.reset_open"));
+  const signedIn = info !== null ? el("p", { class: "notice", role: "note", "data-role": "signed-in" }, t("recover.signed_in", { email: info.email })) : null;
+  function showCodeFields() {
+    email.row.hidden = !needCode;
+    code.row.hidden = !needCode;
+    codeLimit.hidden = !needCode;
+    resetOpen.hidden = !(needCode && deps.resetOpen === true);
+    if (signedIn) signedIn.hidden = needCode;
+  }
 
   // The sheet's QR text: read with no request, confirmed by the user, then used.
   const qrText = field(t, { id: "recover-qr", role: "qr-text", label: "recover.qr_label", required: false, help: "recover.qr_help", secret: true });
@@ -109,7 +123,7 @@ export function recoverView(deps) {
     if (sk.row.hidden) sk.input.value = "";
   }
   async function refreshDevice() {
-    const typed = email ? email.input.value.trim() : (info?.email ?? "");
+    const typed = needCode ? email.input.value.trim() : (info?.email ?? "");
     try {
       device = typed === "" ? { pinned: false, skBit: null, skStored: false } : await deps.deviceStatus(typed);
     } catch {
@@ -150,9 +164,9 @@ export function recoverView(deps) {
     layout();
   });
   qrRead.addEventListener("click", () => void readSheet());
-  email?.input.addEventListener("change", () => void refreshDevice());
+  email.input.addEventListener("change", () => void refreshDevice());
 
-  const controls = [qrText.input, qrRead, qrConfirm.input, sk.input, rk.input, next.input, again.input, submit, ...(email ? [email.input] : []), ...(code ? [code.input] : [])];
+  const controls = [qrText.input, qrRead, qrConfirm.input, sk.input, rk.input, next.input, again.input, submit, email.input, code.input];
   const busy = busyState({ root: form, status, controls, t, key: "recover.busy" });
 
   /**
@@ -231,8 +245,8 @@ export function recoverView(deps) {
       }
       // The secrets are read and emptied before anything is awaited.
       const args = {
-        email: email ? email.input.value : (info?.email ?? ""),
-        code: code ? code.input.value : "",
+        email: needCode ? email.input.value : (info?.email ?? ""),
+        code: needCode ? code.input.value : "",
         qrText: confirmed ? confirmed.text : null,
         skCode: sk.row.hidden ? "" : sk.input.value,
         rkCode: rk.input.value,
@@ -240,17 +254,27 @@ export function recoverView(deps) {
         newPasswordAgain: again.input.value,
         confirmNewRk,
       };
-      for (const input of [sk.input, rk.input, next.input, again.input, ...(code ? [code.input] : [])]) input.value = "";
+      for (const input of [sk.input, rk.input, next.input, again.input, code.input]) input.value = "";
       busy.set(true);
       try {
         await deps.recover(args);
+        // The sheet text leaves the page too.
+        qrText.input.value = "";
+        forgetSheet();
         showDone(true);
       } catch (error) {
         sheetNodes = [];
         render();
         if (codeOf(error) === "recovered_not_signed_in") {
+          qrText.input.value = "";
+          forgetSheet();
           showDone(false);
         } else {
+          // The full session the page was opened with has ended meanwhile: the e-mail and a code are needed now.
+          if (codeOf(error) === "code_required" && !needCode) {
+            needCode = true;
+            showCodeFields();
+          }
           form.hidden = false;
           showError(error);
         }
@@ -264,9 +288,10 @@ export function recoverView(deps) {
   mount(
     form,
     ...[
-      email?.row,
-      code?.row,
-      info === null ? el("p", { class: "notice", role: "note", "data-role": "code-limit" }, t("recover.code_limit")) : null,
+      email.row,
+      code.row,
+      resetOpen,
+      codeLimit,
       qrText.row,
       el("div", { class: "actions" }, qrRead),
       qrBox,
@@ -277,6 +302,7 @@ export function recoverView(deps) {
       submit,
     ].filter((n) => n !== null && n !== undefined),
   );
+  showCodeFields();
   layout();
   void refreshDevice();
 
@@ -284,7 +310,7 @@ export function recoverView(deps) {
     el("h1", null, t("recover.heading")),
     el("p", null, t("recover.intro")),
     el("p", { class: "notice", role: "note", "data-role": "new-browser" }, t("recover.new_browser")),
-    ...(info !== null ? [el("p", { class: "notice", role: "note", "data-role": "signed-in" }, t("recover.signed_in", { email: info.email }))] : []),
+    ...(signedIn ? [signedIn] : []),
   ];
   const foot = [el("p", { class: "no-print" }, el("a", { href: "#/login", "data-role": "sign-in-link" }, t("recover.sign_in_link"))), trustNotice(t)];
   function render() {
