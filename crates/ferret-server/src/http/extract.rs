@@ -113,6 +113,10 @@ impl fmt::Debug for SessionClock {
 }
 
 /// A signed-in session on the vault listener, with its account and vault.
+///
+/// The fields are the facts of the request's `full` session: read them, never
+/// rebind or write them. They become private with getters when this file is
+/// next opened, as the fields of [`SessionFacts`] are.
 #[derive(Debug, Clone)]
 pub struct VaultSession {
     pub sid: SidHash,
@@ -410,6 +414,23 @@ pub mod caps {
 ///     f.sid = other;
 /// }
 /// ```
+///
+/// Nor can it widen the scope, which decides what using a capability does to
+/// the session (a reset session's recovery ends it):
+///
+/// ```
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn scope(s: &ScopedSession<caps::Recover>) -> ferret_server_auth::SessionScope {
+///     s.scope()
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn widen(s: &mut ScopedSession<caps::Recover>) {
+///     s.scope = s.scope();
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct SessionFacts {
     sid: SidHash,
@@ -598,8 +619,10 @@ pub fn session_binding(sid: &SidHash) -> SessionBinding {
 /// server (`admin::guard`). A kit upgrade that adds another second factor must
 /// be added to this check.
 ///
-/// Only the extractor makes one: the field is private, so a route can neither
-/// build a `FreshReauth` nor change the time in one it was given.
+/// Only the extractor makes one: the fields are private, so a route can
+/// neither build a `FreshReauth` nor change the time in one it was given. It
+/// names the session it was read for, and `Proofs` refuses it for any other
+/// session.
 ///
 /// ```
 /// fn when(fresh: &ferret_server::http::extract::FreshReauth) -> i64 {
@@ -620,6 +643,7 @@ pub fn session_binding(sid: &SidHash) -> SessionBinding {
 /// Spec: Fase 1 § 4.6 (a) and (b).
 #[derive(Debug, Clone, Copy)]
 pub struct FreshReauth {
+    sid: SidHash,
     reauth_at: i64,
 }
 
@@ -627,6 +651,11 @@ impl FreshReauth {
     /// When the session proved the master password again (Unix seconds).
     pub fn reauth_at(&self) -> i64 {
         self.reauth_at
+    }
+
+    /// The session whose row said it was fresh.
+    pub(crate) fn sid(&self) -> SidHash {
+        self.sid
     }
 }
 
@@ -649,9 +678,10 @@ where
             return Err(ApiError::coded("second_factor_required"));
         }
         match verified.row.reauth_at {
-            Some(reauth_at) if reauth_fresh(&verified.row, verified.now) => {
-                Ok(FreshReauth { reauth_at })
-            }
+            Some(reauth_at) if reauth_fresh(&verified.row, verified.now) => Ok(FreshReauth {
+                sid: verified.row.sid,
+                reauth_at,
+            }),
             _ => Err(ApiError::coded("reauth_required")),
         }
     }

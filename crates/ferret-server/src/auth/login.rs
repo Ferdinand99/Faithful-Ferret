@@ -101,7 +101,7 @@ use vole_kit::db::{sign_in_codes, users};
 use crate::auth::session::{
     ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, REAUTH_SECS, RESET_SESSION_ABSOLUTE_SECS,
     SessionRow, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS, clear_cookies, insert_session, lookup,
-    mark_reauth, new_session, reauth_fresh, revoke, session_cookies, still_valid,
+    mark_reauth, new_session, reauth_fresh, revoke, scoped_session_cookies, still_valid,
 };
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
@@ -1135,7 +1135,10 @@ pub(crate) async fn open_session(
         Origin::Vault => state.origins.vault_is_https(),
         Origin::Admin => state.origins.admin_is_https(),
     };
-    Ok((session_cookies(jar, &secret, &claims, secure), sid))
+    Ok((
+        scoped_session_cookies(jar, &secret, &claims, secure, scope),
+        sid,
+    ))
 }
 
 /// The facts of the row [`open_session_tx`] inserts.

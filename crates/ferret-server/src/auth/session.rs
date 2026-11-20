@@ -236,13 +236,35 @@ pub fn insert_session(conn: &Connection, s: &NewSession) -> rusqlite::Result<()>
 ///
 /// `secure` is the kit's flag for its own cookies. The session id cookie is
 /// always `Secure`: its `__Host-` prefix means a browser drops it otherwise.
+///
+/// Both cookies live as long as the kit's session cookie. For a session of
+/// another scope than `full` use [`scoped_session_cookies`].
 pub fn session_cookies(
     jar: SignedCookieJar,
     sid: &SessionSecret,
     claims: &SessionClaims,
     secure: bool,
 ) -> SignedCookieJar {
-    let kit_cookie = kit_session::session_cookie(claims, secure);
+    scoped_session_cookies(jar, sid, claims, secure, SessionScope::Full)
+}
+
+/// [`session_cookies`] for a session of `scope`: a session of the scope
+/// `account_reset` gets cookies that live [`RESET_SESSION_ABSOLUTE_SECS`] at
+/// most, the same as the session itself, so a browser stops sending them when
+/// the server stops taking them.
+pub fn scoped_session_cookies(
+    jar: SignedCookieJar,
+    sid: &SessionSecret,
+    claims: &SessionClaims,
+    secure: bool,
+    scope: SessionScope,
+) -> SignedCookieJar {
+    let mut kit_cookie = kit_session::session_cookie(claims, secure);
+    if scope == SessionScope::AccountReset {
+        let cap = time::Duration::seconds(RESET_SESSION_ABSOLUTE_SECS);
+        let max_age = kit_cookie.max_age().map_or(cap, |kit| kit.min(cap));
+        kit_cookie.set_max_age(max_age);
+    }
     let max_age = kit_cookie.max_age();
 
     let mut sid_cookie = Cookie::new(product::SID_COOKIE, sid.to_cookie());
@@ -359,6 +381,10 @@ pub fn mark_reauth(conn: &Connection, sid: &SidHash, now: i64) -> rusqlite::Resu
 /// (`session_revoked`) after the commit, and not before: a stream that wakes
 /// up must find its row ended.
 ///
+/// The user's pending sign-in codes are revoked too: each caller settles how
+/// the user signs in, and the kit's rule is that such a change ends a code
+/// made before it.
+///
 /// Used after a change of the master password, a recovery and a redeemed
 /// sign-in code. Device tokens, once the server has them, end here too.
 ///
@@ -369,6 +395,7 @@ pub fn end_all_credentials(
     keep: Option<&SidHash>,
     now: i64,
 ) -> rusqlite::Result<Vec<SidHash>> {
+    vole_kit::db::sign_in_codes::revoke_for_user(tx, user_id)?;
     let keep: Option<&[u8]> = keep.map(|sid| sid.0.as_slice());
     let mut ended = returning_sids(
         tx,

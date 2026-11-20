@@ -13,7 +13,7 @@ use ferret_server::auth::login::{PURGE_MARGIN_SECS, purge_sessions};
 use ferret_server::auth::session::{
     NewSession, Origin, RESET_SESSION_ABSOLUTE_SECS, RestoreSweep, SessionRow, end_all_credentials,
     end_everything_after_restore, insert_session, limits, lookup, new_session, revoke,
-    revoke_all_for_user, session_cookies, set_parent, within_limits,
+    revoke_all_for_user, scoped_session_cookies, session_cookies, set_parent, within_limits,
 };
 use ferret_server::ids::SidHash;
 use ferret_server::product::{SESSION_COOKIE, SID_COOKIE};
@@ -968,8 +968,25 @@ async fn end_all_credentials_ends_both_origins_and_children_and_keeps_the_given_
     let orphan = issue(&app, other.user_id, Origin::Admin, SessionScope::Full, 8).await;
     parent(&app, orphan.sid, old.sid).await;
     let untouched = issue(&app, other.user_id, Origin::Vault, SessionScope::Full, 9).await;
+    let code = code_for(&app, uid, 1).await;
+    code_for(&app, other.user_id, 2).await;
 
     end_all(&app, uid, Some(kept.sid)).await;
+
+    // The user's pending sign-in code is revoked with the sessions; another
+    // user's is not.
+    let pending = |user_id: i64| {
+        db(&app, move |c| {
+            vole_kit::db::sign_in_codes::count_pending(c, user_id)
+        })
+    };
+    assert_eq!(pending(uid).await, 0);
+    assert_eq!(pending(other.user_id).await, 1);
+    let redeemed = db(&app, move |c| {
+        vole_kit::db::sign_in_codes::redeem(c, &code, uid, None)
+    })
+    .await;
+    assert_eq!(redeemed, None);
 
     assert!(!is_revoked(&app, kept.sid).await, "the kept session");
     assert_eq!(status(&router, &kept.jar, "/vault").await, StatusCode::OK);
@@ -1338,4 +1355,54 @@ async fn a_reset_session_ends_after_30_minutes() {
     assert!(db(&app, move |c| lookup(c, &reset_sid)).await.is_none());
     let full_sid = full.sid;
     assert!(db(&app, move |c| lookup(c, &full_sid)).await.is_some());
+}
+
+/// The `Max-Age` of the cookie `name` among `set_cookies`.
+fn max_age(set_cookies: &[String], name: &str) -> i64 {
+    let cookie = set_cookies
+        .iter()
+        .find(|c| c.starts_with(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("no Set-Cookie for {name}: {set_cookies:?}"));
+    cookie
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("Max-Age="))
+        .unwrap_or_else(|| panic!("no Max-Age: {cookie}"))
+        .parse()
+        .expect("a number")
+}
+
+#[tokio::test]
+async fn a_reset_sessions_cookies_live_30_minutes() {
+    let (app, _router, user) = setup().await;
+    let cookies_of = |scope: SessionScope| {
+        let (secret, _, claims) = new_session(
+            &mut OsRng,
+            now(&app),
+            user.user_id,
+            1,
+            Origin::Vault,
+            session::device(1),
+            "Test browser",
+            scope,
+        );
+        let jar = SignedCookieJar::new(app.state.core.session_key.clone());
+        let response = axum::response::IntoResponse::into_response(scoped_session_cookies(
+            jar, &secret, &claims, true, scope,
+        ));
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let reset = cookies_of(SessionScope::AccountReset);
+    for name in [SID_COOKIE, SESSION_COOKIE] {
+        assert_eq!(max_age(&reset, name), RESET_SESSION_ABSOLUTE_SECS, "{name}");
+    }
+    // A full session keeps the kit's lifetime, the same on both cookies.
+    let full = cookies_of(SessionScope::Full);
+    let kit = max_age(&full, SESSION_COOKIE);
+    assert!(kit > RESET_SESSION_ABSOLUTE_SECS, "{kit}");
+    assert_eq!(max_age(&full, SID_COOKIE), kit);
 }
