@@ -37,6 +37,7 @@ export default {
       exportEncrypted: (args) => session.exportEncrypted(args),
       exportPlain: (args) => session.exportPlain(args),
       readiness: () => refreshReadiness(vault.engine),
+      nameOf: (id) => vault.engine.list().find((/** @type {{ id: string }} */ item) => item.id === id)?.name ?? null,
       skRequired: status?.skBit === true && status.skStored !== true,
       lastExportAt,
       locale: ctx.i18n.lang,

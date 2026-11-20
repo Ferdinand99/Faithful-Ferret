@@ -122,7 +122,7 @@ test("progress_is_shown_while_the_key_is_stretched", async () => {
 test("an_export_with_unsent_writes_or_behind_the_top_warns_first", async () => {
   const engine = (items, health = { halted: null, warnings: [] }) => ({ list: () => items, health: () => health });
   const idle = [{ id: "a", pending: false, blocked: false, conflict: false, missingOnServer: false }];
-  assert.deepEqual(exportReadiness(engine(idle)), { pendingWrites: 0, atTop: true });
+  assert.deepEqual(exportReadiness(engine(idle)), { pendingWrites: 0, atTop: true, damaged: 0 });
   // Items with something the server has not accepted: waiting, refused, in conflict, being uploaded again.
   const unsent = [
     { id: "a", pending: true },
@@ -132,6 +132,9 @@ test("an_export_with_unsent_writes_or_behind_the_top_warns_first", async () => {
     { id: "e", pending: false },
   ];
   assert.equal(exportReadiness(engine(unsent)).pendingWrites, 4);
+  // An item whose newest row did not open, or whose deletion could not be checked, is counted on its own line.
+  const marked = [{ id: "a", damaged: true }, { id: "b", quarantined: true }, { id: "c" }];
+  assert.deepEqual(exportReadiness(engine(marked)), { pendingWrites: 0, atTop: true, damaged: 2 });
   // Behind the top: a stop, a standing warning, or a last pass that did not end well.
   assert.equal(exportReadiness(engine(idle, { halted: "server_restored", warnings: [] })).atTop, false);
   assert.equal(exportReadiness(engine(idle, { halted: null, warnings: ["verify_deferred"] })).atTop, false);
@@ -158,7 +161,7 @@ test("an_export_with_unsent_writes_or_behind_the_top_warns_first", async () => {
     };
   };
   const good = live("idle");
-  assert.deepEqual(await refreshReadiness(good), { pendingWrites: 0, atTop: true });
+  assert.deepEqual(await refreshReadiness(good), { pendingWrites: 0, atTop: true, damaged: 0 });
   assert.equal(good.listeners.size, 0, "the listener is gone");
   const off = live("offline");
   assert.equal((await refreshReadiness(off)).atTop, false);
@@ -228,7 +231,10 @@ test("an_item_that_does_not_open_stops_the_export_and_leaves_no_file", async () 
   const { files, download } = recordingDownload();
   await assert.rejects(w.session.exportEncrypted({ ...args(), download }), (error) => error.code === "export_item_unreadable");
   assert.equal(files.length, 0);
-  assert.equal(w.core.aborted, 0, "no draft was begun");
+  assert.equal(w.core.aborted, 1, "the draft that finding the item began is dropped");
+  // The refusal names the item that does not open (the others open one by one), and no more.
+  const refusal = await w.session.exportEncrypted({ ...args(), download }).catch((error) => error);
+  assert.deepEqual(refusal.details.ids, ["55".repeat(16)]);
   // A wrong master password is `decrypt`; an unreadable item is not mistaken for it.
 });
 
@@ -239,6 +245,18 @@ test("an_empty_vault_is_not_exported_and_costs_no_sign_in", async () => {
   await assert.rejects(w.session.exportEncrypted({ ...args(), download }), (error) => error.code === "nothing_to_export");
   assert.equal(w.requests.length, 0);
   assert.equal(files.length, 0);
+});
+
+test("an_export_that_went_ahead_past_the_warning_does_not_reset_the_reminder", async () => {
+  const w = await exportWorld();
+  const { download } = recordingDownload();
+  const status = () => w.store.exportReminder.status(w.db, w.session.serverUrl, w.scope.accountId, Date.now());
+  assert.equal((await status()).lastExportAt, null);
+  const done = await w.session.exportEncrypted({ ...args(), incomplete: true, download });
+  assert.equal(done.items, 3, "the file is made");
+  assert.equal((await status()).lastExportAt, null, "but the reminder is not reset");
+  await w.session.exportEncrypted({ ...args(), incomplete: false, download });
+  assert.notEqual((await status()).lastExportAt, null);
 });
 
 test("the_reminder_date_is_kept_by_an_encrypted_export_and_not_by_a_plain_one", async () => {

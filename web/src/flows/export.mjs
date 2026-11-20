@@ -51,14 +51,44 @@ export const FORM_ERRORS = Object.freeze(["password_required", "password_mismatc
  * @template T
  * @param {() => Promise<T>} use
  * @returns {Promise<T>}
+ * @param {() => Promise<string[]>} [unreadable] names the rows that do not open (item ids)
  */
-async function opening(use) {
+async function opening(use, unreadable = async () => /** @type {string[]} */ ([])) {
   try {
     return await use();
   } catch (error) {
-    if (/** @type {any} */ (error)?.code === "decrypt") throw new AccountError("export_item_unreadable");
+    if (/** @type {any} */ (error)?.code === "decrypt") throw new AccountError("export_item_unreadable", { ids: await unreadable() });
     throw error;
   }
+}
+
+/** The most items named in the refusal; the rest are only counted by "and more" in the page's list. */
+const MAX_NAMED = 20;
+
+/**
+ * Which rows do not open: each is tried alone with `export_begin` (the core opens it and keeps a draft, which is dropped at the end).
+ * Best effort; a call that fails for another reason ends the search.
+ * @param {Env} env
+ * @param {Array<{ item_id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }>} rows
+ * @returns {Promise<string[]>} item ids (32 hex characters)
+ */
+async function findUnreadable(env, rows) {
+  /** @type {string[]} */
+  const ids = [];
+  try {
+    for (const row of rows) {
+      if (ids.length >= MAX_NAMED) break;
+      try {
+        await env.client.vault.export_begin([row], env.now(), EXPORT_KDF);
+      } catch (error) {
+        if (/** @type {any} */ (error)?.code === "decrypt") ids.push(hex16.encode(row.item_id));
+        else break;
+      }
+    }
+  } finally {
+    await Promise.resolve(env.client.vault.export_abort()).catch(() => undefined);
+  }
+  return ids;
 }
 
 /**
@@ -96,16 +126,17 @@ function checkScope(scope) {
  *
  * `onProgress({ phase })` says where it is: `checking` (the sign-in), `reading` (the rows are opened), `stretching`
  * (the key is made: seconds, 256 MiB), `sealing`, `saving`. The password is never in it.
+ * With `incomplete: true` (the user went on past the warning that the file may miss changes) the 30-day reminder is not reset.
  * @param {Env} env
  * @param {{
  *   masterPassword: string, exportPassword: string, exportPasswordAgain: string, skCode?: string,
- *   scope: VaultScope,
+ *   scope: VaultScope, incomplete?: boolean,
  *   onProgress?: (progress: { phase: "checking" | "reading" | "stretching" | "sealing" | "saving", items?: number }) => void,
  *   download?: typeof downloadBlob,
  * }} args `scope` is the open vault (`session.current()`); `download` is for tests.
  * @returns {Promise<{ items: number }>}
  */
-export async function encryptedExport(env, { masterPassword, exportPassword, exportPasswordAgain, skCode, scope, onProgress = () => {}, download = downloadBlob }) {
+export async function encryptedExport(env, { masterPassword, exportPassword, exportPasswordAgain, skCode, scope, incomplete = false, onProgress = () => {}, download = downloadBlob }) {
   checkScope(scope);
   // What the page can see is wrong stops here, before the slow sign-in.
   if (typeof masterPassword !== "string" || masterPassword === "" || typeof exportPassword !== "string" || exportPassword === "") {
@@ -132,7 +163,7 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
   let gone = false;
   try {
     onProgress({ phase: "reading", items: rows.length });
-    const begun = await opening(() => client.vault.export_begin(rows, env.now(), EXPORT_KDF));
+    const begun = await opening(() => client.vault.export_begin(rows, env.now(), EXPORT_KDF), () => findUnreadable(env, rows));
     draft = true;
     // The cost is the core's to keep; this makes a change of its default visible here instead of in a weaker file.
     if (!begun?.kdf || begun.kdf.m_kib < EXPORT_KDF.m_kib || begun.kdf.t < EXPORT_KDF.t || begun.kdf.p < EXPORT_KDF.p) {
@@ -159,7 +190,8 @@ export async function encryptedExport(env, { masterPassword, exportPassword, exp
     // A draft that was begun and not sealed is dropped (not by calling a worker that a lock has ended: that would start a new one).
     if (draft && !gone) await Promise.resolve(client.vault.export_abort()).catch(() => undefined);
   }
-  // The reminder counts from now. A store that cannot keep the date does not undo the export.
+  // The reminder counts from now, unless the file is known to be incomplete. A store that cannot keep the date does not undo the export.
+  if (incomplete === true) return { items: rows.length };
   try {
     await env.store.exportReminder.mark(await env.store.open(), env.server, scope.accountId, env.now());
   } catch {
@@ -199,7 +231,7 @@ export async function plainExport(env, { masterPassword, format, includePasskeys
   try {
     // The core leaves passkey keys out of CSV whatever is asked; nothing is asked of it that CSV cannot have.
     const withPasskeys = format === "json" && includePasskeys === true;
-    const text = await opening(() => client.vault.reveal_plain_export(rows, format, withPasskeys, grant, env.now()));
+    const text = await opening(() => client.vault.reveal_plain_export(rows, format, withPasskeys, grant, env.now()), () => findUnreadable(env, rows));
     bytes = new TextEncoder().encode(text);
     download(bytes, `ferret-plain-export-${dayOf(env.now())}.${format}`, format === "json" ? "application/json" : "text/csv");
   } finally {
@@ -216,13 +248,16 @@ export async function plainExport(env, { masterPassword, format, includePasskeys
  * (`idle` after a pass that ended well); without it only what `health()` knows is used.
  * @param {{ list(): Array<Record<string, any>>, health(): { halted: string | null, warnings: string[] } }} engine
  * @param {{ lastState?: string | null }} [options]
- * @returns {{ pendingWrites: number, atTop: boolean }}
+ * `damaged` counts the items whose newest row did not open or whose deletion could not be checked: the file has their last readable version, or misses them.
+ * @returns {{ pendingWrites: number, atTop: boolean, damaged: number }}
  */
 export function exportReadiness(engine, { lastState } = {}) {
-  const pendingWrites = engine.list().filter((item) => item.pending === true || item.blocked === true || item.conflict === true || item.missingOnServer === true).length;
+  const items = engine.list();
+  const pendingWrites = items.filter((item) => item.pending === true || item.blocked === true || item.conflict === true || item.missingOnServer === true).length;
+  const damaged = items.filter((item) => item.damaged === true || item.quarantined === true).length;
   const health = engine.health();
   const behind = health.halted !== null || health.warnings.length > 0 || (typeof lastState === "string" && lastState !== "idle");
-  return { pendingWrites, atTop: !behind };
+  return { pendingWrites, atTop: !behind, damaged };
 }
 
 /**
@@ -230,7 +265,7 @@ export function exportReadiness(engine, { lastState } = {}) {
  * within `timeoutMs` counts as not at the top. The engine's own events are only listened to for the length of the pass.
  * @param {{ list(): Array<Record<string, any>>, health(): { halted: string | null, warnings: string[] }, syncNow(): Promise<void>, on(event: string, fn: (payload: any) => void): () => void }} engine
  * @param {{ timeoutMs?: number }} [options]
- * @returns {Promise<{ pendingWrites: number, atTop: boolean }>}
+ * @returns {Promise<{ pendingWrites: number, atTop: boolean, damaged: number }>}
  */
 export async function refreshReadiness(engine, { timeoutMs = 15_000 } = {}) {
   /** @type {string | null} */

@@ -154,6 +154,68 @@ test("the_encrypted_form_checks_what_it_can_and_clears_the_fields_before_the_slo
   });
 });
 
+test("an_acknowledged_incomplete_export_says_so_and_asks_for_no_reset", async () => {
+  await withDom(async () => {
+    const seen = [];
+    const { root } = page({
+      readiness: async () => ({ pendingWrites: 1, atTop: true, damaged: 2 }),
+      exportEncrypted: async (args) => {
+        seen.push(args);
+        return { items: 4 };
+      },
+    });
+    await settle();
+    assert.match(textOf(find(root, "readiness-damaged")), /2 item\(s\) could not be read/);
+    find(root, "readiness-ack").checked = true;
+    await fire(find(root, "readiness-ack"), "change");
+    type(root, { "master-password": MASTER, "export-password": EXPORT_PW, "export-password-again": EXPORT_PW });
+    const before = textOf(find(root, "export-last"));
+    await submit(root, "encrypted-form");
+    assert.equal(seen[0].incomplete, true);
+    assert.match(textOf(find(root, "done-incomplete")), /file is incomplete/);
+    assert.match(textOf(find(root, "done-incomplete")), /not reset/);
+    assert.equal(textOf(find(root, "export-last")), before, "the page does not claim a new export date");
+  });
+  await withDom(async () => {
+    // A clean export has no such line and does not ask for it.
+    const seen = [];
+    const { root } = page({ exportEncrypted: async (args) => (seen.push(args), { items: 4 }) });
+    await settle();
+    type(root, { "master-password": MASTER, "export-password": EXPORT_PW, "export-password-again": EXPORT_PW });
+    await submit(root, "encrypted-form");
+    assert.ok(!("incomplete" in seen[0]));
+    assert.equal(find(root, "done-incomplete"), null);
+  });
+});
+
+test("the_export_password_fields_do_not_let_the_browser_overwrite_the_saved_master_password", async () => {
+  await withDom(async () => {
+    const { root } = page({ skRequired: true });
+    await settle();
+    await click(find(root, "plain-open"));
+    assert.equal(find(root, "master-password").getAttribute("autocomplete"), "current-password");
+    assert.equal(find(root, "plain-master-password").getAttribute("autocomplete"), "current-password");
+    assert.equal(find(root, "export-password").getAttribute("autocomplete"), "off");
+    assert.equal(find(root, "export-password-again").getAttribute("autocomplete"), "off");
+    for (const node of [...(function* walk(n) { yield n; for (const c of n.childNodes ?? []) yield* walk(c); })(root)]) {
+      assert.notEqual(node.getAttribute?.("autocomplete"), "new-password");
+    }
+  });
+});
+
+test("an_unreadable_item_is_named_as_the_list_shows_it", async () => {
+  await withDom(async () => {
+    const t = i18n("en").t;
+    const error = Object.assign(new Error("x"), { code: "export_item_unreadable", details: { ids: ["aa".repeat(16), "bb".repeat(16)] } });
+    const names = { [`${"aa".repeat(16)}`]: "Mail" };
+    const text = exportErrorText(t, error, (id) => names[id] ?? null);
+    assert.match(text, /Mail, bbbbbbbb/);
+    assert.match(text, /Reload the page/);
+    // No ids at all: an honest fallback, never an empty list.
+    assert.match(exportErrorText(t, Object.assign(new Error("x"), { code: "export_item_unreadable" })), /whose name is not known/);
+  });
+});
+
 test("progress_is_shown_on_the_page_while_the_key_is_stretched", async () => {
   await withDom(async () => {
     let release;
@@ -203,7 +265,7 @@ test("an_error_is_shown_by_its_code_and_the_form_stays_usable", async () => {
     // An unknown code gets the general text, with the code and never the message.
     assert.match(exportErrorText(t, coded("something_new")), /something_new/);
     assert.ok(!exportErrorText(t, new Error(`typed ${EXPORT_PW}`)).includes(EXPORT_PW));
-    for (const code of EXPORT_ERRORS) assert.equal(exportErrorText(t, coded(code)), t(`export.error.${code}`));
+    for (const code of EXPORT_ERRORS.filter((c) => c !== "export_item_unreadable")) assert.equal(exportErrorText(t, coded(code)), t(`export.error.${code}`));
     // The sign-in's codes keep their texts.
     assert.equal(exportErrorText(t, coded("reauth_required")), t("security.error.reauth_required"));
   });

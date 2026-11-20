@@ -27,10 +27,17 @@ export const EXPORT_ERRORS = Object.freeze([
 /**
  * @param {Translate} t
  * @param {unknown} error
+ * @param {(id: string) => string | null} [nameOf] the name the list shows for an item id
  * @returns {string}
  */
-export function exportErrorText(t, error) {
+export function exportErrorText(t, error, nameOf = () => null) {
   const code = /** @type {any} */ (error)?.code;
+  if (code === "export_item_unreadable") {
+    // The items are named as the list shows them (an item the list has not got is named by the start of its id).
+    const ids = /** @type {any} */ (error)?.details?.ids;
+    const names = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === "string").map((id) => nameOf(id) || id.slice(0, 8));
+    return t("export.error.export_item_unreadable", { names: names.length > 0 ? names.join(", ") : t("export.error.unreadable_unknown") });
+  }
   if (typeof code === "string" && EXPORT_ERRORS.includes(code)) return t(`export.error.${code}`);
   return securityErrorText(t, error);
 }
@@ -40,7 +47,8 @@ export function exportErrorText(t, error) {
  *   t: Translate,
  *   exportEncrypted: (args: { masterPassword: string, exportPassword: string, exportPasswordAgain: string, skCode?: string, onProgress: (progress: { phase: string, items?: number }) => void }) => Promise<{ items: number }>,
  *   exportPlain: (args: { masterPassword: string, format: "json" | "csv", includePasskeys: boolean, confirmed: boolean, skCode?: string }) => Promise<void>,
- *   readiness: () => Promise<{ pendingWrites: number, atTop: boolean }>,
+ *   readiness: () => Promise<{ pendingWrites: number, atTop: boolean, damaged?: number }>,
+ *   nameOf?: (id: string) => string | null,
  *   skRequired?: boolean,
  *   lastExportAt?: number | null,
  *   locale?: string,
@@ -50,7 +58,7 @@ export function exportErrorText(t, error) {
  * encrypted export was made here (ms since 1970), if known.
  * @returns {HTMLElement}
  */
-export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequired = false, lastExportAt = null, locale, scope }) {
+export function exportView({ t, exportEncrypted, exportPlain, readiness, nameOf = () => null, skRequired = false, lastExportAt = null, locale, scope }) {
   const root = el("section", { class: "card account export-page", "data-role": "export-page" });
 
   // ----------------------------------------------------------- readiness
@@ -71,7 +79,7 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequi
     recheck.disabled = true;
     warning.hidden = true;
     mount(checking, document.createTextNode(t("export.readiness.checking")));
-    /** @type {{ pendingWrites: number, atTop: boolean }} */
+    /** @type {{ pendingWrites: number, atTop: boolean, damaged?: number }} */
     let state = { pendingWrites: 0, atTop: false };
     try {
       state = await readiness();
@@ -79,11 +87,12 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequi
       state = { pendingWrites: 0, atTop: false };
     }
     recheck.disabled = false;
-    warned = state.pendingWrites > 0 || !state.atTop;
+    warned = state.pendingWrites > 0 || !state.atTop || (state.damaged ?? 0) > 0;
     ack.input.checked = false;
     if (warned) {
       const lines = [];
       if (state.pendingWrites > 0) lines.push(el("p", { "data-role": "readiness-pending" }, t("export.readiness.pending", { count: state.pendingWrites })));
+      if ((state.damaged ?? 0) > 0) lines.push(el("p", { "data-role": "readiness-damaged" }, t("export.readiness.damaged", { count: state.damaged ?? 0 })));
       if (!state.atTop) lines.push(el("p", { "data-role": "readiness-behind" }, t("export.readiness.behind")));
       mount(warning, el("h2", null, t("export.readiness.warning_heading")), ...lines, el("div", { class: "actions" }, recheck), ack.row);
       warning.hidden = false;
@@ -96,8 +105,8 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequi
 
   // ----------------------------------------------------------- encrypted
   const master = field(t, { id: "export-master", role: "master-password", label: "export.encrypted.master", type: "password", autocomplete: "current-password", help: "export.encrypted.master_help" });
-  const password = field(t, { id: "export-password", role: "export-password", label: "export.encrypted.password", type: "password", autocomplete: "new-password", help: "export.encrypted.password_help" });
-  const again = field(t, { id: "export-password-again", role: "export-password-again", label: "export.encrypted.again", type: "password", autocomplete: "new-password" });
+  const password = field(t, { id: "export-password", role: "export-password", label: "export.encrypted.password", type: "password", autocomplete: "off", help: "export.encrypted.password_help" });
+  const again = field(t, { id: "export-password-again", role: "export-password-again", label: "export.encrypted.again", type: "password", autocomplete: "off" });
   const sk = field(t, { id: "export-sk", role: "secret-key", label: "export.encrypted.secret_key", autocomplete: "off", secret: true, help: "export.encrypted.secret_key_help" });
   const skRow = el("div", { "data-role": "sk-slot" });
   if (skRequired) mount(skRow, sk.row);
@@ -152,25 +161,28 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequi
         setText(encStatus, t(`export.progress.${progress.phase}`, { items: progress.items ?? 0 }));
       };
       try {
-        const done = await exportEncrypted({ ...args, ...(skTyped === "" ? {} : { skCode: skTyped }), onProgress });
+        const incomplete = warned;
+        const done = await exportEncrypted({ ...args, ...(skTyped === "" ? {} : { skCode: skTyped }), ...(incomplete ? { incomplete } : {}), onProgress });
         encBusy.set(false);
         applyGates();
         encForm.hidden = true;
-        showLast(Date.now());
-        mount(encDone,
+        if (!incomplete) showLast(Date.now());
+        mount(encDone, ...[
           el("h2", null, t("export.done.heading")),
+          incomplete ? el("p", { class: "notice notice-warning", role: "note", "data-role": "done-incomplete" }, t("export.done.incomplete")) : null,
           el("p", { "data-role": "done-items" }, t("export.done.items", { count: done.items })),
           el("p", null, t("export.done.saved")),
           el("p", { "data-role": "done-password" }, t("export.done.password")),
           el("p", null, t("export.done.master")),
-          el("div", { class: "actions" }, makeAgainButton()));
+          el("div", { class: "actions" }, makeAgainButton()),
+        ].filter((node) => node !== null));
         encDone.hidden = false;
       } catch (error) {
         encBusy.set(false);
         applyGates();
         const code = /** @type {any} */ (error)?.code;
         if (code === "sk_required" && !skRequired) mount(skRow, sk.row);
-        showEncError(exportErrorText(t, error));
+        showEncError(exportErrorText(t, error, nameOf));
       }
     },
   },
@@ -285,7 +297,7 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, skRequi
         applyGates();
         const code = /** @type {any} */ (error)?.code;
         if (code === "sk_required" && !skRequired) mount(plainSkRow, plainSk.row);
-        showPlainError(exportErrorText(t, error));
+        showPlainError(exportErrorText(t, error, nameOf));
       }
     },
   },
