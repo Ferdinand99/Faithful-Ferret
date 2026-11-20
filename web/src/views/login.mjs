@@ -17,6 +17,14 @@
 // does not start before the user has confirmed that address for the text that is in the
 // field. The sheet's secret key bit answers the question about the secret key. Without a
 // sheet the page says that the first sign-in trusts the server the first time.
+//
+// "Forgot your master password?" leads to the recovery page (`#/recover`). A refusal of an
+// older password after the server was restored from a backup (the sign-in flow attaches
+// `recoveryOffer`, see `pinnedRefusalAction`) gets its own text: with the recovery key the
+// server holds, the page offers "Use the recovery key"; when that key was renewed after the
+// backup too, it names the older sheet and the way out ("Forget this server on this device").
+// Without a raised restore epoch the refusal keeps the text that it can be an attack. No offer
+// lowers a floor: the page only picks the text and the link.
 import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { forgetServer } from "../flows/forgetServer.mjs";
@@ -57,6 +65,9 @@ export function loginView(deps) {
   // After `pinned_elsewhere`: the way out is to forget the other server first.
   const otherBox = el("div", { class: "stack", "data-role": "pinned-elsewhere" });
   otherBox.hidden = true;
+  // After a refusal of an older password on a restored server: the recovery key, or the way out.
+  const offerBox = el("div", { class: "actions", "data-role": "recovery-offer" });
+  offerBox.hidden = true;
 
   /** The e-mail the last sign-in was tried with: after a refusal it names the account whose restore note to look for. @type {string | null} */
   let triedEmail = null;
@@ -102,8 +113,28 @@ export function loginView(deps) {
     });
   }
 
+  /**
+   * The offer after a refusal of an older password on a server that was restored from a backup.
+   * @param {"recover" | "old_sheet"} offer
+   */
+  function showOffer(offer) {
+    const action = offer === "recover"
+      ? el("button", { type: "button", class: "btn btn-primary", "data-role": "use-recovery-key" }, t("recover.offer.use_key"))
+      : el("a", { href: "#/forget", class: "btn btn-secondary", "data-role": "offer-forget" }, t("syncwarnings.forget.link"));
+    if (offer === "recover") action.addEventListener("click", () => go("/recover"));
+    mount(offerBox, action);
+    offerBox.hidden = false;
+    setText(errorBox, t(`recover.offer.${offer}`));
+    errorBox.hidden = false;
+  }
+
   /** @param {unknown} error */
   async function showError(error) {
+    const offer = /** @type {any} */ (error)?.recoveryOffer;
+    if (codeOf(error) === "pinned_kek_generation" && (offer === "recover" || offer === "old_sheet")) {
+      showOffer(offer);
+      return;
+    }
     const elsewhere = /** @type {any} */ (error)?.details;
     if (codeOf(error) === "pinned_elsewhere" && deps.store && typeof elsewhere?.server === "string" && typeof elsewhere?.accountId === "string") {
       offerForgetOther({ server: elsewhere.server, accountId: elsewhere.accountId });
@@ -122,6 +153,7 @@ export function loginView(deps) {
   }
   function clearError() {
     otherBox.hidden = true;
+    offerBox.hidden = true;
     errorBox.hidden = true;
     setText(errorBox, "");
     okBox.hidden = true;
@@ -414,6 +446,11 @@ export function loginView(deps) {
     okBox,
     errorBox,
     otherBox,
+    offerBox,
+    // While the vault is not open here: the recovery page, for a forgotten master password.
+    !reauthPage && (info === null || session.current() === null)
+      ? el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link")))
+      : null,
     !reauthPage && info === null ? el("p", null, el("a", { href: "#/setup" }, t("account.login.setup_link"))) : null,
     !reauthPage ? el("p", null, el("a", { href: "#/forget", "data-role": "forget-link" }, t("syncwarnings.forget.link"))) : null,
     trust,

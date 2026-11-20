@@ -22,8 +22,9 @@
 //! files `0600`, never served over HTTP, never logged with their contents, and
 //! out of the machine only encrypted.
 //!
-//! The restore itself ([`restore::restore`] and [`restore::abort`]) is not built
-//! yet; everything else here is.
+//! A restore ([`restore::restore`], undone by [`restore::abort`]) puts a set
+//! back so that a kill at any step leaves the old data or the new data, and a
+//! server that does not start in between.
 
 pub mod push;
 pub mod restore;

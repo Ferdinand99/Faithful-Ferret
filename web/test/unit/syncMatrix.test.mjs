@@ -6,11 +6,12 @@
 // `FERRET_MATRIX_RUNS` sets how many seeded runs the randomised tests make (500 by default, 5000 at the gate); a failing run names its
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
-// What the model does not assert, because it is reported: nothing. `KNOWN_GAPS` in `syncModel.mjs` is empty, so every run is strict. The one
-// gap there was, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does the
-// same, `purgeTombstones`), and the engine holds a tombstone the server has purged and counts a deletion of its own that was purged before it was
-// read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`). `FERRET_MATRIX_STRICT=1`
-// and `FERRET_MATRIX_TOLERATE=<gap>` stay for the next gap.
+// What the model does not assert: nothing. `KNOWN_GAPS` in `syncModel.mjs` is empty, so every run is strict. The gaps there were are closed: the
+// server purges only what its checkpoint covers (the model does the same, `purgeTombstones`), the engine holds a tombstone the server has purged
+// (an older one too) and counts a deletion of its own that was purged before it was read back as done, and an item that is brought back from the
+// trash over a purged tombstone becomes a copy under a new id (`matrix_passes_strict_without_tolerating_purge`, and the tests of
+// `engineHeldTombstones.test.mjs`). `FERRET_MATRIX_STRICT=1` tolerates none, and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are let through.
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
@@ -1505,6 +1506,7 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   } finally {
     if (was.strict === undefined) delete process.env.FERRET_MATRIX_STRICT;
     else process.env.FERRET_MATRIX_STRICT = was.strict;
-    if (was.tolerate !== undefined) process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
+    if (was.tolerate === undefined) delete process.env.FERRET_MATRIX_TOLERATE;
+    else process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
   }
 });

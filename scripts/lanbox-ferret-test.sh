@@ -23,6 +23,12 @@
 #                                          restore epoch (`restore-epoch bump --yes`), start it
 #                                          Both stop the app for a short while and replace data: they
 #                                          are run after an explicit yes, never by a test run.
+#   scripts/lanbox-ferret-test.sh label-data --yes-ferret-test
+#                                          the data volume carries the label owner=ferret-test (`up` refuses a
+#                                          volume that was made without it). Docker cannot add a label to a volume,
+#                                          so this stops the app, copies the data to a temporary labelled volume
+#                                          (checked file by file), replaces the data volume by a labelled one, copies
+#                                          the data back, and removes the temporary volume. `up` starts the app again.
 #
 # The end-to-end stack (compose project ferret-e2e: its own app with the test clock,
 # a TLS terminator and the test host names vault-e2e.test and admin-e2e.test on a
@@ -662,7 +668,10 @@ e2e_runner_image() {
 }
 
 # Runs the Playwright tests of web/ in a throwaway container on the stack's
-# network, so the test hosts resolve and no port is published. The web/ folder is
+# network, so the test hosts resolve and no port is published. The network of the stack
+# has no way out, so the packages are installed first, in a container of its own on the
+# default network (npm ci, the only step that needs the internet), and the tests run in a
+# container on the stack's network only. The web/ folder is
 # streamed in as a tar archive (no bind mounts from this PC). The test CA is
 # trusted by the system store (WebKit), by Node and by Chromium (an NSS database made
 # with certutil, which the runner image docker/e2e-runner.Dockerfile has). Firefox has its own list: web/playwright.e2e.config.mjs lets it accept the
@@ -673,14 +682,28 @@ e2e_runner_image() {
 # (name, then the JSON) on stdout; the exit code is the tests' one.
 e2e_run() {
   e2e_require_running
-  local inner pem token
-  e2e_runner_image
+  local pem token
   pem="$(e2e_ca)"
   token="$(e2e_token)"
+  PW_NETWORK="$e2e_network" PW_NAME=ferret-e2e-playwright PW_LABEL="$e2e_label" \
+    PW_VAULT_URL=https://vault-e2e.test PW_ADMIN_URL=https://admin-e2e.test PW_EVIL_URL="http://$e2e_evil:9000" \
+    PW_TOKEN="$token" PW_CA_PEM="$pem" PW_HOSTS="" \
+    playwright_run "$@"
+}
+
+# The runner itself, for a stack that is reached over a docker network (the e2e stack) or on
+# the host's loopback (the drill stack of scripts/ferret-home.sh). The caller gives, in the
+# environment: PW_NETWORK (a docker network, or host), PW_NAME and PW_LABEL (the container),
+# PW_VAULT_URL, PW_ADMIN_URL, PW_EVIL_URL, PW_TOKEN (the setup token), PW_CA_PEM (the test
+# CA) and PW_HOSTS (space separated name=address pairs for the runner's hosts file).
+playwright_run() {
+  local inner hosts=() pair
+  e2e_runner_image
+  for pair in ${PW_HOSTS:-}; do hosts+=(--add-host "${pair%%=*}:${pair#*=}"); done
   # The script for the container is in single quotes on purpose.
   # shellcheck disable=SC2016
   inner='set -e
-tar -x -C /work
+tar -x -i -C /work
 printf "%s\n" "$FERRET_E2E_CA_PEM" > /work/e2e-ca.crt
 cp /work/e2e-ca.crt /usr/local/share/ca-certificates/ferret-e2e.crt
 update-ca-certificates >&2
@@ -692,7 +715,6 @@ export NODE_EXTRA_CA_CERTS=/work/e2e-ca.crt
 mkdir -p /work/out
 export FERRET_E2E_OUT=/work/out
 cd /work/web
-npm ci --no-audit --no-fund --ignore-scripts >&2
 set +e
 if [ "$#" -eq 0 ] || ! printf "%s\n" "$@" | grep -q "^--config"; then
   set -- --config playwright.e2e.config.mjs "$@"
@@ -716,18 +738,38 @@ for f in /work/out/*.json; do
   echo
 done
 exit $status'
+  # The packages are installed first, in a container of its own on the default network (the only
+  # step that needs the internet); node_modules comes out as a tar. The tests then run in a
+  # container on the stack's network only, which has no way out.
+  local deps
+  deps="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$deps'" RETURN
   tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web \
     | dk run --rm -i --init \
-        --name ferret-e2e-playwright \
-        --label "$e2e_label" \
-        --network "$e2e_network" \
+        --name "$PW_NAME-install" \
+        --label "$PW_LABEL" \
+        --network bridge \
+        --cpus 2 --memory 2g \
+        --tmpfs /work:exec,size=1g \
+        --tmpfs /root/.npm:size=512m \
+        -w /work \
+        "$runner_image" \
+        sh -c 'tar -x -C /work && cd /work/web && npm ci --no-audit --no-fund --ignore-scripts >&2 && tar -c -C /work web/node_modules' > "$deps"
+  { tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web; cat "$deps"; } \
+    | {
+      dk create --rm -i --init \
+        --name "$PW_NAME" \
+        --label "$PW_LABEL" \
+        --network "$PW_NETWORK" \
+        "${hosts[@]}" \
         --cpus 4 --memory 8g --shm-size 2g \
         -e CI=1 \
-        -e FERRET_E2E_VAULT_URL=https://vault-e2e.test \
-        -e FERRET_E2E_ADMIN_URL=https://admin-e2e.test \
-        -e FERRET_E2E_EVIL_URL=http://$e2e_evil:9000 \
-        -e FERRET_E2E_SETUP_TOKEN="$token" \
-        -e FERRET_E2E_CA_PEM="$pem" \
+        -e FERRET_E2E_VAULT_URL="$PW_VAULT_URL" \
+        -e FERRET_E2E_ADMIN_URL="$PW_ADMIN_URL" \
+        -e FERRET_E2E_EVIL_URL="$PW_EVIL_URL" \
+        -e FERRET_E2E_SETUP_TOKEN="$PW_TOKEN" \
+        -e FERRET_E2E_CA_PEM="$PW_CA_PEM" \
         -e FERRET_E2E_STATE="${FERRET_E2E_STATE:-}" \
         -e FERRET_E2E_PHASE="${FERRET_E2E_PHASE:-}" \
         --tmpfs /work:exec,size=2g \
@@ -735,7 +777,9 @@ exit $status'
         --tmpfs /tmp:exec,size=2g \
         -w /work \
         "$runner_image" \
-        sh -c "$inner" sh "$@"
+        sh -c "$inner" sh "$@" > /dev/null
+      dk start -a -i "$PW_NAME"
+    }
 }
 
 # --- Snapshot and restore of the stack behind Pangolin ---------------------------
@@ -783,12 +827,77 @@ test_restore_snapshot() {
   echo "restore-snapshot: $container runs on the snapshot, with a higher restore epoch"
 }
 
+# The data volume must carry the label of the stack (a volume made before the label was
+# there has none: `reset` and every listing by label would miss it). It also refuses while the
+# temporary volume of an unfinished label-data exists: that volume may hold the only copy of
+# the data, and the data volume may be empty or half filled, so the app must not start.
+relabel_tmp=ferret-test-data-relabel
+data_volume_label() { dk volume inspect -f '{{index .Labels "owner"}}' "$volume" 2>/dev/null || true; }
+refuse_unfinished_relabel() {
+  dk volume inspect "$relabel_tmp" >/dev/null 2>&1 || return 0
+  echo "lanbox-ferret-test: the volume $relabel_tmp exists: an earlier label-data did not finish." >&2
+  echo "It may hold the only copy of the data, and $volume may be empty or half filled: DO NOT run up." >&2
+  echo "Look at both volumes. Copy $relabel_tmp into $volume by hand (or remove $volume and run label-data again), and remove $relabel_tmp only when the data is back and checked." >&2
+  return 1
+}
+require_data_label() {
+  refuse_unfinished_relabel || return 1
+  dk volume inspect "$volume" >/dev/null 2>&1 || return 0
+  [ "$(data_volume_label)" = "${label#*=}" ] && return 0
+  echo "lanbox-ferret-test: the data volume $volume has no label $label (it was made before the label was added)." >&2
+  echo "Take a second copy first: $0 snapshot --yes-ferret-test" >&2
+  echo "Then run: $0 label-data --yes-ferret-test    (it keeps the data; run up afterwards to start the app)" >&2
+  return 1
+}
+
+# Gives the data volume its label by copying the data: the app is stopped, the data goes into a
+# temporary labelled volume and is checked there (and checked again before anything is removed),
+# the old volume is replaced by a labelled one, and the data goes back. The temporary volume is
+# removed only when the copy back is done and checked. Every step after the first copy that
+# fails stops the script with "do not run up": the data is in the temporary volume, and `up`
+# refuses to start until that volume is gone.
+relabel_stuck() { # step text
+  echo "label-data: $1" >&2
+  echo "The data is in the volume $relabel_tmp. DO NOT run up, and do not remove that volume." >&2
+  echo "$volume may be missing, empty or half filled: copy $relabel_tmp into it by hand and check it." >&2
+  exit 1
+}
+test_label_data() {
+  require_yes_ferret_test "$@"
+  [ -f "$envfile" ] || { echo "no $envfile: nothing to relabel" >&2; exit 1; }
+  # An unfinished earlier run comes first, whatever the label says.
+  refuse_unfinished_relabel || exit 1
+  dk volume inspect "$volume" >/dev/null 2>&1 || { echo "label-data: there is no volume $volume" >&2; exit 1; }
+  if [ "$(data_volume_label)" = "${label#*=}" ]; then
+    echo "label-data: $volume already has the label $label"
+    return 0
+  fi
+  dk volume create --label "$label" "$relabel_tmp" >/dev/null || { echo "label-data: cannot make the temporary volume; nothing was changed" >&2; exit 1; }
+  test_stop_app || { dk volume rm "$relabel_tmp" >/dev/null 2>&1 || true; echo "label-data: cannot stop the app; nothing was changed" >&2; exit 1; }
+  if ! volume_job make "$volume" "$relabel_tmp" "$label" ferret-test-relabel-copy; then
+    dk volume rm "$relabel_tmp" >/dev/null 2>&1 || true
+    echo "label-data: the copy failed; $volume is untouched (the app is stopped: run up)" >&2
+    exit 1
+  fi
+  # The copy is checked once more before the old volume is touched.
+  volume_job verify "$relabel_tmp" - "$label" ferret-test-relabel-verify \
+    || relabel_stuck "the copy could not be checked again; $volume has NOT been removed, so the data is in both volumes."
+  dc down >/dev/null || relabel_stuck "the stack could not be taken down; nothing was removed."
+  dk volume rm "$volume" >/dev/null || relabel_stuck "the old volume could not be removed."
+  dk volume create --label "$label" "$volume" >/dev/null || relabel_stuck "the new volume could not be made."
+  volume_job restore "$relabel_tmp" "$volume" "$label" ferret-test-relabel-back \
+    || relabel_stuck "copying the data back failed."
+  dk volume rm "$relabel_tmp" >/dev/null || { echo "label-data: the data is back and checked, but $relabel_tmp could not be removed: remove it by hand before run up." >&2; exit 1; }
+  echo "label-data: $volume has the label $label, with the same data; run up to start the app"
+}
+
 main() {
 case "${1:-}" in
   up | redeploy)
     first_deploy=0
     make_env
     require_tunnel
+    require_data_label
     check_ports
     dc up -d --build
     print_addresses
@@ -849,6 +958,10 @@ case "${1:-}" in
     ;;
   e2e-restore-snapshot)
     e2e_restore_snapshot
+    ;;
+  label-data)
+    shift
+    test_label_data "$@"
     ;;
   snapshot)
     shift

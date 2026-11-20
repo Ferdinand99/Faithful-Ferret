@@ -1,0 +1,330 @@
+# The drill stack: the same stack as docker/compose.ferret-home.yml (same image, same
+# hardening, same loopback publishing, same trust of the gateway, same copy container),
+# thrown away after every run. It rehearses a backup, the encrypted copy to a target, a
+# restore from that copy, and signing in again, with test data only.
+#
+# Differences from the stack for real data, and only these:
+#
+#  * Own names, own volumes and a network of its own, all labelled owner=ferret-drill, and
+#    other loopback ports (13040, 13041), so it can run beside other stacks. `down -v` removes
+#    everything.
+#  * Caddy with `tls internal` stands in for the proxy of the host: it runs on the host network,
+#    listens on 127.0.0.1:18443 only, and forwards to the loopback ports, exactly the way of the
+#    real proxy, so the server sees the gateway of the network as the peer.
+#  * The copy goes to a test target (an SFTP server, in a container of this stack) with a test
+#    SSH key, encrypted to a test age key. The test keys are made by the keys service, in
+#    volumes; the private age key is in a volume of its own that only the keys service and the
+#    decrypt service mount, never the copy container.
+#  * No messages to a monitor.
+#
+# Use scripts/ferret-home.sh drill. It builds the images, makes the keys, starts the stack
+# and runs the whole drill, then removes everything.
+name: ferret-drill
+
+services:
+  ferret-drill-keys:
+    image: ferret-drill-copy:latest
+    container_name: ferret-drill-keys
+    restart: "no"
+    profiles: ["tools"]
+    labels:
+      owner: ferret-drill
+    mem_limit: 128m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    network_mode: none
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # Makes the test keys once: the SSH key of the copy container, the host key and the
+    # authorized key of the target, and the age key pair. Only the PUBLIC age key goes
+    # where the copy container can read it.
+    command:
+      - |
+        set -eu
+        umask 077
+        if [ ! -s /client/id_ed25519 ]; then
+          ssh-keygen -q -t ed25519 -N '' -C ferret-drill -f /client/id_ed25519
+          ssh-keygen -q -t ed25519 -N '' -C ferret-drill-host -f /host/ssh_host_ed25519_key
+          cp /client/id_ed25519.pub /host/authorized_keys
+          age-keygen -o /age/key.txt 2>/dev/null
+          age-keygen -y /age/key.txt > /client/recipient.txt
+        fi
+        chown -R 1000:1000 /client /age /restore-in
+        chmod 755 /client /host
+        chmod 644 /host/authorized_keys /host/ssh_host_ed25519_key.pub
+        chmod 600 /host/ssh_host_ed25519_key
+        chmod 700 /age /restore-in
+    volumes:
+      - ferret-drill-client:/client
+      - ferret-drill-host:/host
+      - ferret-drill-age:/age
+      - ferret-drill-restore-in:/restore-in
+
+  ferret-drill-app:
+    image: ${FERRET_IMAGE:?start the drill with scripts/ferret-home.sh drill}
+    container_name: ferret-drill-app
+    restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      owner: ferret-drill
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    ports:
+      - "127.0.0.1:13040:3040"
+      - "127.0.0.1:13041:3041"
+    networks:
+      ferret-drill-net:
+        ipv4_address: 172.30.252.2
+    volumes:
+      - ferret-drill-data:/data
+      - ferret-drill-backups:/backups
+    environment:
+      FERRET_DATA_DIR: /data
+      FERRET_BACKUP_DIR: /backups
+      FERRET_VAULT_URL: https://vault-drill.test:18443
+      FERRET_ADMIN_URL: https://admin-drill.test:18443
+      # The gateway of the network ferret-drill-net, and nothing else.
+      FERRET_TRUSTED_PROXIES: 172.30.252.14
+      FERRET_TRUST_PROXY: "1"
+      FERRET_LOG_PEERS: "1"
+      # Made up by the script for every run.
+      FERRET_SETUP_TOKEN: ${FERRET_DRILL_SETUP_TOKEN:?start the drill with scripts/ferret-home.sh drill}
+
+  ferret-drill-target:
+    image: ferret-drill-target:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: backup-copy.Dockerfile
+      target: test-target
+      labels:
+        owner: ferret-drill
+    container_name: ferret-drill-target
+    restart: "no"
+    mem_limit: 128m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      owner: ferret-drill
+    # sshd needs these to keep the login apart from the files and to lock the account into its folder.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - SYS_CHROOT
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      ferret-drill-net:
+        ipv4_address: 172.30.252.4
+    volumes:
+      - ferret-drill-target:/srv/target
+      - ferret-drill-host:/host-key:ro
+
+  ferret-drill-copy:
+    image: ferret-drill-copy:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: backup-copy.Dockerfile
+      target: copy
+      labels:
+        owner: ferret-drill
+    container_name: ferret-drill-copy
+    restart: "no"
+    profiles: ["tools"]
+    init: true
+    mem_limit: 1g
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      owner: ferret-drill
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /work:size=768m,uid=1000,gid=1000,mode=0700
+      - /tmp:size=16m
+    networks:
+      ferret-drill-net:
+        ipv4_address: 172.30.252.3
+    volumes:
+      - ferret-drill-backups:/backups:ro
+      # The SSH key and the PUBLIC age key. The private age key is in another volume.
+      - ferret-drill-client:/client:ro
+    environment:
+      FERRET_COPY_BACKUPS_DIR: /backups
+      FERRET_BACKUP_AGE_RECIPIENT_FILE: /client/recipient.txt
+      FERRET_COPY_SFTP_HOST: 172.30.252.4
+      FERRET_COPY_SFTP_PORT: "2222"
+      FERRET_COPY_SFTP_USER: backup
+      FERRET_COPY_SFTP_DIR: ferret
+      FERRET_COPY_SFTP_KEY_FILE: /client/id_ed25519
+      # FERRET_COPY_SFTP_HOST_KEY is read from the keys by the script and given to the run.
+
+  # Opens a copy with the test key, for the drill only: the private key is mounted here and
+  # in the keys service, nowhere else.
+  ferret-drill-decrypt:
+    image: ferret-drill-copy:latest
+    container_name: ferret-drill-decrypt
+    restart: "no"
+    profiles: ["tools"]
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      owner: ferret-drill
+    user: "1000:1000"
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    entrypoint: ["/bin/sh", "-c"]
+    volumes:
+      - ferret-drill-target:/target:ro
+      - ferret-drill-age:/age:ro
+      - ferret-drill-restore-in:/restore-in
+
+  ferret-drill-tls:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    container_name: ferret-drill-tls
+    restart: "no"
+    mem_limit: 128m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      owner: ferret-drill
+    cap_drop:
+      - ALL
+    # The caddy binary carries a file capability (it may bind low ports); without this capability
+    # in the container the kernel refuses to run it, although it listens on a high port here.
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # The image declares /data and /config as volumes; tmpfs mounts keep Docker from making
+    # anonymous volumes (and keep the test CA out of any volume).
+    tmpfs:
+      - /tmp:size=8m
+      - /data:size=16m
+      - /config:size=8m
+    # The host network, like the proxy of the real host: it connects to the loopback ports,
+    # so the server sees the gateway of its network as the peer. It listens on 127.0.0.1 only.
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+      - printf '%s\n' "$$CADDYFILE" > /tmp/Caddyfile && exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    environment:
+      CADDYFILE: |
+        {
+          admin off
+          auto_https disable_redirects
+          skip_install_trust
+        }
+        https://vault-drill.test:18443 {
+          bind 127.0.0.1
+          tls internal
+          reverse_proxy 127.0.0.1:13041
+        }
+        https://admin-drill.test:18443 {
+          bind 127.0.0.1
+          tls internal
+          reverse_proxy 127.0.0.1:13040
+        }
+
+volumes:
+  ferret-drill-data:
+    name: ferret-drill-data
+    labels:
+      owner: ferret-drill
+  ferret-drill-backups:
+    name: ferret-drill-backups
+    labels:
+      owner: ferret-drill
+  ferret-drill-target:
+    name: ferret-drill-target
+    labels:
+      owner: ferret-drill
+  ferret-drill-client:
+    name: ferret-drill-client
+    labels:
+      owner: ferret-drill
+  ferret-drill-host:
+    name: ferret-drill-host
+    labels:
+      owner: ferret-drill
+  ferret-drill-age:
+    name: ferret-drill-age
+    labels:
+      owner: ferret-drill
+  ferret-drill-restore-in:
+    name: ferret-drill-restore-in
+    labels:
+      owner: ferret-drill
+
+networks:
+  ferret-drill-net:
+    name: ferret-drill-net
+    labels:
+      owner: ferret-drill
+    ipam:
+      config:
+        - subnet: 172.30.252.0/28
+          gateway: 172.30.252.14

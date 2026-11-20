@@ -1750,12 +1750,18 @@ async fn register_bytes_never_reach_the_log() {
         .collect();
     assert!(!cookie_values.is_empty());
 
+    tracing::info!("register canary self-test");
     let logged = String::from_utf8_lossy(
         &log.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     )
     .into_owned();
-    assert!(!logged.is_empty(), "the log was collected");
+    // The server logs nothing for a refused registration step, so the control
+    // is a line of the test's own: it only counts if the log was collected.
+    assert!(
+        logged.contains("register canary self-test"),
+        "the log was not collected: {logged}"
+    );
     let mut secrets = vec![
         email.to_string(),
         "canary.mail".to_string(),

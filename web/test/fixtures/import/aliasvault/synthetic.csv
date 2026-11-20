@@ -1,0 +1,10 @@
+ServiceName,FolderPath,ServiceUrl,Username,CurrentPassword,AliasEmail,TwoFactorSecret,AliasGender,AliasFirstName,AliasLastName,AliasBirthDate,CardholderName,CardNumber,CardExpiryMonth,CardExpiryYear,CardCvv,CardPin,Notes,CreatedAt,UpdatedAt
+Mail login,,"https://mail.example.test/login,https://accounts.example.test",alice@example.test,synthetic-password-1,,GEZDGNBVGY3TQOJQ,,,,,,,,,,,Notes for the mail login with æøå,01/02/2026 03:04:05,01/02/2026 03:04:06
+Alias with address,Work/Sub,"app.example.test,androidapp://net.example.synthetic,javascript:alert(1),http://old.example.test",bob.synthetic,synthetic-password-2,bob.synthetic@alias.example.test,,Male,Bob,Syntetisk,12/31/1990 00:00:00,,,,,,,,01/02/2026 03:04:05,01/02/2026 03:04:06
+Synthetic card,,,,,,,,,,,Alice Synthetic,0000000000000000,12,2031,000,0000,,01/02/2026 03:04:05,01/02/2026 03:04:06
+A secure note,,,,,,,,,,,,,,,,,Line one,01/02/2026 03:04:05,01/02/2026 03:04:06
+Code as address,,,carol,synthetic-password-3,,otpauth://totp/Example:carol?secret=GEZDGNBVGY3TQOJQ&issuer=Example&algorithm=SHA256&digits=8&period=60,,,,,,,,,,,,01/02/2026 03:04:05,01/02/2026 03:04:06
+Quoted notes,,,dave,synthetic-password-4,,,,,,,,,,,,,"Line one, with a comma
+and a second line with ""quotes""",01/02/2026 03:04:05,01/02/2026 03:04:06
+Not a base32 secret,,,erin,synthetic-password-5,,not base32 !!,,,,,,,,,,,,01/02/2026 03:04:05,01/02/2026 03:04:06
+Card and login,,,frank,synthetic-password-6,,,,,,,Frank Synthetic,0000000000000001,01,2032,111,1111,,01/02/2026 03:04:05,01/02/2026 03:04:06

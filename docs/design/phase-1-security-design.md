@@ -502,7 +502,7 @@ body     [24 nonce ‖ ciphertext ‖ 16 tag]
 - **Reading:** upper-case letters; `O` becomes `0`, `I` and `L` become `1`; hyphens and spaces are removed. Reject if the four spare bits are not zero (canonical encoding) or the checksum does not match ("typo"). The checksum is checked before any KDF.
 - **Use:** `KEK_rk` and `seed_r` (§ 4.3, 4.5). RK has full entropy, so Argon2id is not needed.
 - **Emergency sheet (F-21):** a PDF created locally in the client, as two sheets. Nothing is sent to the server.
-  - **Sheet 1:** server URL, e-mail, `account_id`, `ksf_profile`, SK (if on) and a QR with the server URL, `account_id`, `ksf_profile` and "SK: yes/no". *Clarified 2026-10-30:* the QR also carries the server's public OPAQUE key (U19). The format is `ferret-setup:v1?u=…&a=…&k=…&s=…&o=…` with percent-encoding and at most 512 bytes of URL (U17). This closes trust on first use on a new device (F-01 point 6).
+  - **Sheet 1:** server URL, e-mail, `account_id`, `ksf_profile`, SK (if on) and a QR with the server URL, `account_id`, `ksf_profile` and "SK: yes/no". *Clarified 2026-10-30:* the QR also carries the server's public OPAQUE key (U19). The format is `ferret-setup:v1?u=…&a=…&k=…&s=…&o=…` with percent-encoding and at most 512 bytes of URL (U17). This closes trust on first use on a new device (F-01 point 6). *Clarified 2026-11-20:* a writer puts the server's canonical origin in `u` (scheme, lower-case host, the port only when it is not the default, no path). A reader compares `u` with the server as an origin, at sign-in and at recovery alike; the web vault hands the core's `recover` the same text rebuilt with the canonical origin, because the core compares the address as an exact string.
   - **Sheet 2:** RK only. Labelled to say that it opens the vault on its own and must be stored apart from sheet 1.
   - No saving to synced folders by default. Print it, or "save as file" with a warning. PDF buffers are zeroized after use.
   - Optional: the RK sheet encrypted with a passphrase (same KDF as the export format, § 6.4) for those who store the kit digitally.
@@ -782,7 +782,11 @@ These are written down on purpose. None of them loses a stored item silently. Wh
 - The sync engine runs in one tab per server and account in a browser. A second tab shows "the vault is open in another tab" with "Use here".
 - After "Use here" takes the lock, there is no fence for an old tab that is alive but not answering. It can still send writes for a short time; the server's checks on every write still apply.
 - A standby tab unlocks the account keys into its own worker even though it syncs nothing.
-- An edit that is not saved in the old tab is lost when the user presses "Use here". Locking or signing out while "Use here" is going on can leave no syncing tab until the page is reloaded. Standby behaviour across two accounts in one browser, which existed before this release, is not handled either.
+- "Use here" first asks the tab that holds the vault whether it has changes that are not saved (a yes or a no over the tabs' channel; nothing of the form is sent). A yes, or no answer within a second, shows a warning with "Use here anyway". If the user goes on, the old tab keeps the form on screen, read-only, with "Take back"; nothing is saved from it until the vault is taken back, and a lock wipes it. The form lives in the page only: it is never written to IndexedDB, web storage or a URL.
+- A tab that is unlocked and waits stands in the queue of the lock. When the tab that holds the vault locks, signs out or closes, the first waiting tab gets the lock and starts the engine, but only when it is in view (a tab out of view lets the lock go on and asks again when it comes into view).
+- Locking or signing out in a tab while "Use here" is going on hands the vault to a waiting tab that is in view; when no waiting tab is in view, no tab syncs until one is.
+- A tab that goes out of view leaves the queue, so a background tab that the browser has frozen cannot sit at the head of it.
+- Standby behaviour across two accounts in one browser, which existed before this release, is not handled.
 - The sync tests exercise handovers between tabs, not two engines writing at the very same time.
 
 **Server and operations**

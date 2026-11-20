@@ -33,7 +33,7 @@ export function changed({ skBit = true } = {}) {
  * dropped, so a test sees only what it did itself. `reauthUntil` (seconds) is what the session answer says.
  * @param {object} [options]
  */
-export async function signedInWorld({ skBit = true, forgetKey = false, handlers: extraHandlers = {}, overrides: extraOverrides = {}, reauthUntil = null, putStatus = 200, putBody } = {}) {
+export async function signedInWorld({ skBit = true, forgetKey = false, handlers: extraHandlers = {}, overrides: extraOverrides = {}, reauthUntil = null, putStatus = 200, putBody, createImportWorker } = {}) {
   /** The signed PUTs the fake server received: `{ headers, bytes }`. */
   const puts = [];
   // The test's own handlers and answers are put in after the sign-in, which must go through as the defaults make it.
@@ -55,7 +55,7 @@ export async function signedInWorld({ skBit = true, forgetKey = false, handlers:
       return putStatus === 200 ? answer(200, putBody ?? { kek_generation: 2, seq: 12 }) : answer(putStatus, putBody ?? { error: "write_conflict" });
     },
   };
-  const world = await scenario({ skBit, handlers, overrides });
+  const world = await scenario({ skBit, handlers, overrides, createImportWorker });
   world.puts = puts;
   await world.session.signIn({ email: EMAIL, password: PASSWORD, skBit, skCode: skBit ? SK_CODE : undefined, rememberSk: skBit });
   if (forgetKey) await world.session.forgetSecretKey(ACCOUNT);

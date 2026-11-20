@@ -14,8 +14,10 @@
     [
       "The web vault has no runtime npm packages. It embeds a Latin subset of the Inter font and one",
       "file from another project, the QR code generator of Project Nayuki; both are listed after the",
-      "Rust crates. The container image is based on Alpine Linux; the packages that Alpine installs",
-      "keep their own licence information in the image (/lib/apk/db/installed)."
+      "Rust crates. Three parts of its source were written from other projects (the CSV reader and the",
+      "readers of the Bitwarden and AliasVault export formats); they are listed last. The container image is based on",
+      "Alpine Linux; the packages that Alpine installs keep their own licence information in the image",
+      "(/lib/apk/db/installed)."
     ]
   ],
   "fontLicenseFile": "web/fonts/Inter-LICENSE.txt",
@@ -29,6 +31,38 @@
       "file": "web/vendor/qrcodegen/qrcodegen.mjs",
       "licenseFile": "web/vendor/qrcodegen/LICENSE",
       "note": "Modified by Faithful Ferret: compiled from typescript-javascript/qrcodegen.ts (tag v1.8.0) with TypeScript 7.0.2, plus one added line that exports it as an ES module; nothing else is changed. It draws the QR code of the emergency sheet."
+    }
+  ],
+  "adapted": [
+    {
+      "name": "AliasVault CSV parser",
+      "origin": "https://github.com/aliasvault/aliasvault",
+      "source": "core/client/src/transfer/import/readers/CsvParser.ts (commit 7e7cd6f3141c94f884ddd1666987aec3ffcdcdf3)",
+      "license": "AGPL-3.0-only",
+      "licenseFile": "LICENSE",
+      "copyright": "Copyright (c) aliasvault. All rights reserved. (the holder line in the file headers of the project; CsvParser.ts itself has no copyright line)",
+      "files": ["web/src/import/csv.mjs"],
+      "note": "Modified by Faithful Ferret: ported to JavaScript; RFC 4180 quoting that is strict, an error that names the line, bounds on rows, columns and field size, and ImportError. It reads the CSV export of another password manager in the import worker."
+    },
+    {
+      "name": "AliasVault export formats",
+      "origin": "https://github.com/aliasvault/aliasvault",
+      "source": "core/client/src/transfer/{export/AvuxManifest.ts,export/AliasVaultCsvExportService.ts,import/importers/aliasvault/} and core/models/src/vault/FieldKey.ts (commit 7e7cd6f3141c94f884ddd1666987aec3ffcdcdf3)",
+      "license": "AGPL-3.0-only",
+      "licenseFile": "LICENSE",
+      "copyright": "Copyright (c) aliasvault. All rights reserved. (the holder line in the file headers of the project; these TypeScript files carry no copyright line)",
+      "files": ["web/src/import/aliasvault.mjs", "web/test/fixtures/import/aliasvault/NOTICE.txt"],
+      "note": "Modified by Faithful Ferret: the reader of the AliasVault .avux manifest and CSV export is adapted from the readers of those formats (key names and columns, system field keys, matching names without regard to case, the one manifest version that is read, the otpauth address of a code). It is bounded and strict, returns Faithful Ferret's item drafts and a report, and counts and leaves out attachments, passkeys, folders, tags and the earlier values of a field. The test files are made-up data of the same shape."
+    },
+    {
+      "name": "Bitwarden export formats",
+      "origin": "https://github.com/bitwarden/sdk-internal and https://github.com/bitwarden/clients",
+      "source": "crates/bitwarden-exporters/src/{json,csv}.rs and crates/bitwarden-vault/src/cipher/ of sdk-internal; libs/importer/src/importers/ of clients",
+      "license": "GPL-3.0-only",
+      "licenseFile": "LICENSES/GPL-3.0.txt",
+      "copyright": "Bitwarden Inc.",
+      "files": ["web/src/import/bitwarden.mjs", "web/test/fixtures/import/bitwarden/NOTICE.txt"],
+      "note": "Modified by Faithful Ferret: the reader of the Bitwarden JSON and CSV exports was written from the formats in those sources (key names, item types, field types, address match rules, CSV columns); the test files are made-up data of the same shape. web/src/import/bitwarden.mjs is derived from GPL-3.0 sources and so stays GPL-3.0-only (its SPDX line says so); the GNU AGPL v3 of the rest of Faithful Ferret allows this combination (GPL v3 section 13)."
     }
   ],
   "copyright": []

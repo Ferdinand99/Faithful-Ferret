@@ -147,11 +147,15 @@ export class FakeChannels {
   }
 }
 
-/** Waits (real time, in turns of the event loop) until `condition()` is true. */
+/**
+ * Waits until `condition()` is true, at most 20 seconds of real time. Work that waits for the thread pool (the hashes of WebCrypto) finishes in real
+ * time, not in turns of the event loop, so a wait that counted only turns would end early on a busy machine; every few turns a millisecond is given.
+ */
 export async function until(condition, what = "condition") {
-  for (let turn = 0; turn < 3000; turn += 1) {
+  const started = Date.now();
+  for (let turn = 0; Date.now() - started < 20_000; turn += 1) {
     if (await condition()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => (turn % 16 === 15 ? setTimeout(resolve, 1) : setImmediate(resolve)));
   }
   throw new Error(`timed out waiting for ${what}`);
 }
@@ -539,9 +543,11 @@ export function createFakeApi(model, { order = [] } = {}) {
 
 /** A failure the way the worker client reports it. */
 export class FakeFerretError extends Error {
-  constructor(code) {
+  /** @param {string} code @param {string[]} [ids] the items a refusal of a checkpoint is about (none: about the checkpoint, or the memory, as a whole) */
+  constructor(code, ids = []) {
     super(code);
     this.code = code;
+    this.ids = ids;
   }
 }
 
@@ -630,6 +636,17 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }
       return sealed;
     },
+    /** The same body under a new item key, sealed at revision 1 (the copy is not opened); an item with a passkey is not copied. */
+    async copy_item(handle, newId, nowMs, deviceName) {
+      const open = handles.get(handle);
+      if (!open) throw new FakeFerretError("invalid_handle");
+      calls.push(["copy_item", hex16.encode(newId), open.id]);
+      if (open.body.passkey) throw new FakeFerretError("invalid_state");
+      if (hex16.encode(newId) === open.id || hex16.encode(newId) === "00000000000000000000000000000000") throw new FakeFerretError("invalid_input");
+      const body = { ...open.body, modified: nowMs, ...(deviceName === undefined ? {} : { device: deviceName }) };
+      const sealed = seal(newId, 1, body);
+      return { rev: 1, envelope: sealed.envelope, tag: sealed.tag };
+    },
     async make_tombstone(id, rev) {
       calls.push(["make_tombstone", hex16.encode(id), rev]);
       return { rev, tomb: new Uint8Array(Buffer.concat([mac(Buffer.from("tomb"), id, rev8(rev)), mac(Buffer.from("tomb2"), id).subarray(0, 8)])) };
@@ -689,7 +706,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     if (topSeq < memory.maxSeq) throw new FakeFerretError("checkpoint_top_seq_below_remembered");
     for (const row of rows) {
       const known = memory.revs[hex16.encode(row.item_id)];
-      if (known !== undefined && row.rev < known) throw new FakeFerretError("checkpoint_rev_below_remembered");
+      if (known !== undefined && row.rev < known) throw new FakeFerretError("checkpoint_rev_below_remembered", [hex16.encode(row.item_id)]);
     }
   }
   function record(memory, rows, topSeq, checkpointSeq) {
@@ -718,12 +735,12 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       const row = byId.get(entry.id);
       const tombstone = entry.hash.equals(zero);
       if (!row) {
-        if (!tombstone) throw new FakeFerretError("checkpoint_hidden_or_rolled_back");
+        if (!tombstone) throw new FakeFerretError("checkpoint_hidden_or_rolled_back", [entry.id]);
       } else if (row.rev < entry.rev) {
-        throw new FakeFerretError(row.state === "live" && tombstone ? "checkpoint_live_behind_tombstone" : "checkpoint_lower_rev");
+        throw new FakeFerretError(row.state === "live" && tombstone ? "checkpoint_live_behind_tombstone" : "checkpoint_lower_rev", [entry.id]);
       } else if (row.rev === entry.rev) {
         const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
-        if (!hash.equals(entry.hash)) throw new FakeFerretError("checkpoint_same_rev_different_hash");
+        if (!hash.equals(entry.hash)) throw new FakeFerretError("checkpoint_same_rev_different_hash", [entry.id]);
       }
     }
     if (topSeq === checkpoint.seq) {
@@ -732,7 +749,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       for (const [id, row] of byId) {
         const entry = listed.get(id);
         const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
-        if (!entry || entry.rev !== row.rev || !entry.hash.equals(hash)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+        if (!entry || entry.rev !== row.rev || !entry.hash.equals(hash)) throw new FakeFerretError("checkpoint_top_digest_mismatch", [id]);
       }
     }
   }

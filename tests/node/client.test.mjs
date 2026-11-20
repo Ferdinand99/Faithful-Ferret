@@ -506,6 +506,38 @@ test("a_plaintext_export_through_the_client_needs_a_fresh_sign_in", async () => 
   await client.lock();
 });
 
+test("an_encrypted_export_through_the_client_needs_a_fresh_sign_in", async () => {
+  const { client } = setup();
+  const server = new wasm.TestServer(enc.encode("client-enc-export"));
+  const request = await client.vault.register_start(enc.encode(PASSWORD), { kind: "generate" });
+  const registration = await client.vault.register_finish(server.register_response(IDS.account_id, request), 1);
+  const created = await client.vault.create_account(URL_, IDS);
+  const sk = await client.vault.reveal_secret_key_code();
+  const NOW = 1_700_000_000_000;
+  const id = fill(16, 3);
+  const sealed = await client.vault.encrypt_item(id, 1, { item_type: "note", name: "n", notes: "plain note text" }, undefined, NOW);
+  const rows = [{ item_id: id, rev: sealed.rev, envelope: sealed.envelope, tag: sealed.tag }];
+  const grant = async () => {
+    const ke1 = await client.vault.login_start(enc.encode(PASSWORD), sk);
+    await client.vault.login_finish(server.login_start(registration.record, IDS.account_id, ke1), 1, { kind: "pinned", record: created.pinned });
+    return client.vault.reauth_grant(created.wraps[0], NOW);
+  };
+  // No token and a made-up one: reauth_required. An all-zero token is a wiped array, never a token.
+  assert.equal((await rejection(client.vault.export_begin(rows, NOW))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.export_begin(rows, NOW, undefined, fill(32, 7)))).code, "reauth_required");
+  assert.equal((await rejection(client.vault.export_begin(rows, NOW, undefined, new Uint8Array(32)))).code, "input_all_zero");
+  // A fresh sign-in makes the token; it is wiped on the page once sent, and good for one use.
+  const token = await grant();
+  const copy = token.slice();
+  const started = await client.vault.export_begin(rows, NOW + 100, undefined, token);
+  assert.equal(started.salt.length, 16);
+  assert.ok(token.every((b) => b === 0), "the token is wiped on the page once it is sent");
+  assert.equal((await rejection(client.vault.export_begin(rows, NOW + 100, undefined, copy))).code, "reauth_required");
+  // Five minutes and no more.
+  assert.equal((await rejection(client.vault.export_begin(rows, NOW + 300_001, undefined, await grant()))).code, "reauth_required");
+  await client.lock();
+});
+
 test("the_rollback_memory_is_a_required_argument", async () => {
   const { client, made } = echoClient();
   const checkpoint = { seq: 1, digest: fill(32, 1), mac: fill(32, 2), entries: new Uint8Array(0) };

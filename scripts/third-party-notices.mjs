@@ -18,6 +18,10 @@
 // and the two lists must agree; the licence text is read from the file the entry names. A file that is
 // taken from another project keeps its header, and the entry says what was changed ("Modified by
 // Faithful Ferret").
+//
+// Source that was written from other projects (a port of a parser, a reader of another product's file
+// format, test data of the same shape) is listed under `adapted`: the origin, the licence, the files,
+// and what was changed. Each listed file starts with an SPDX line and "Modified by Faithful Ferret".
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -127,6 +131,62 @@ export function vendoredEntries(extra, manifest, readText) {
   }
   for (const name of listed.keys()) {
     if (!seen.has(name)) problems.push(`${name}: web/vendor/MANIFEST.json lists a file that notices-extra.json has no entry for`);
+  }
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  return entries;
+}
+
+/** The terms of a GNU licence text without the how-to-apply appendix (which has a `<year>` template in it). */
+export function licenceTerms(text) {
+  const end = text.indexOf("END OF TERMS AND CONDITIONS");
+  return end < 0 ? text : text.slice(0, end + "END OF TERMS AND CONDITIONS".length).trim();
+}
+
+/**
+ * The adapted source of `extra.adapted`: files of this repository that were written from, or taken and changed
+ * from, another project (its code, its formats, its test shapes). Each entry names the origin, the licence and
+ * the files; each file must exist and start with an SPDX line and "Modified by Faithful Ferret"; the licence
+ * text is read from `licenseFile`. Throws when an entry is incomplete, a file lacks its header, or the note does
+ * not say what was changed.
+ * @param {{ adapted?: any[] }} extra
+ * @param {(path: string) => string} readText
+ */
+export function adaptedEntries(extra, readText) {
+  const problems = [];
+  const entries = [];
+  for (const a of extra.adapted ?? []) {
+    const label = a.name ?? "(no name)";
+    const given = (key) => typeof a[key] === "string" && a[key].trim() !== "";
+    if (!["name", "origin", "source", "license", "licenseFile", "copyright", "note"].every(given) || !Array.isArray(a.files) || a.files.length === 0) {
+      problems.push(`${label}: an adapted entry needs name, origin, source, license, licenseFile, copyright, note and files`);
+      continue;
+    }
+    if (!a.note.includes("Modified by Faithful Ferret")) {
+      problems.push(`${label}: the note must say what was changed, starting from "Modified by Faithful Ferret"`);
+      continue;
+    }
+    let broken = false;
+    for (const file of a.files) {
+      let head;
+      try {
+        head = readText(file).slice(0, 4000);
+      } catch {
+        problems.push(`${label}: ${file} is listed and does not exist`);
+        broken = true;
+        continue;
+      }
+      if (!/SPDX-License-Identifier:\s*\S+/.test(head) || !head.includes("Modified by Faithful Ferret")) {
+        problems.push(`${label}: ${file} must start with an SPDX-License-Identifier line and "Modified by Faithful Ferret"`);
+        broken = true;
+      }
+    }
+    if (broken) continue;
+    const terms = licenceTerms(clean(readText(a.licenseFile)));
+    if (terms === "" || hasPlaceholder(terms)) {
+      problems.push(`${label}: ${a.licenseFile} is empty or has a licence template placeholder`);
+      continue;
+    }
+    entries.push({ licenseId: a.license, text: terms, label, origin: a.origin, source: a.source, copyright: a.copyright, files: a.files, note: a.note });
   }
   if (problems.length > 0) throw new Error(problems.join("\n"));
   return entries;
@@ -300,7 +360,7 @@ function section(title, groups) {
 const block = (title, lines, text) => [RULE, title, RULE, "", ...lines, "", text, "", ""].join("\n");
 
 /** The whole file. Same input, same text: no dates, no paths. */
-export function render({ product, intro = [], rust, npm = [], vendored = [], fontLicense }) {
+export function render({ product, intro = [], rust, npm = [], vendored = [], fontLicense, adapted = [] }) {
   const head = [
     "THIRD-PARTY NOTICES",
     "",
@@ -334,6 +394,20 @@ export function render({ product, intro = [], rust, npm = [], vendored = [], fon
         clean(fontLicense),
       ),
     );
+  }
+  if (adapted.length > 0) {
+    const lines = [RULE, `Source written from other projects (${adapted.length} ${adapted.length === 1 ? "entry" : "entries"})`, RULE, ""];
+    for (const a of adapted) {
+      lines.push(a.label, `  Origin: ${a.origin}`, `  Source: ${a.source}`, `  Licence: ${a.licenseId}`, `  Copyright: ${a.copyright}`, `  Files: ${a.files.join(", ")}`, `  ${a.note}`, "");
+    }
+    // Each licence text once, in the order the entries name them.
+    const seen = new Set();
+    for (const a of adapted) {
+      if (seen.has(a.licenseId)) continue;
+      seen.add(a.licenseId);
+      lines.push(`--- ${a.licenseId} ---`, "", a.text, "", "");
+    }
+    parts.push(lines.join("\n"));
   }
   const text = parts.join("").replace(/\n+$/, "\n");
   if (hasPlaceholder(text)) throw new Error("THIRD-PARTY-NOTICES would contain an unfilled licence template (<year>, <owner> or <copyright holders>).");
@@ -369,6 +443,7 @@ function main() {
     npm: lockText ? npmEntries(JSON.parse(lockText), accepted, join(root, "web")) : [],
     vendored: vendoredEntries(extra, JSON.parse(optional("web/vendor/MANIFEST.json") ?? '{"files":[]}'), (path) => readFileSync(join(root, path), "utf8")),
     fontLicense,
+    adapted: adaptedEntries(extra, (path) => readFileSync(join(root, path), "utf8")),
   });
   const target = join(root, options.out ?? "THIRD-PARTY-NOTICES");
   if (options.check) {

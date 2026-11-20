@@ -18,7 +18,8 @@
 #    about the sync answers of the vault host (web/test/e2e-stack/evil). The app
 #    trusts that proxy and nothing else as its proxy: FERRET_TRUSTED_PROXIES is
 #    its address alone. It never goes through Pangolin and never reaches the app
-#    or the data of the other stack.
+#    or the data of the other stack. The network is `internal: true`: nothing in the
+#    stack can reach the internet, and nothing outside can reach the stack.
 #  * a second volume, ferret-e2e-snapshot, that `e2e-snapshot` makes and fills with
 #    a copy of the data. No service mounts it (compose would not make a volume
 #    that nothing uses), so the script makes it, with the label owner=ferret-e2e
@@ -183,6 +184,11 @@ networks:
     name: ferret-e2e-net
     labels:
       owner: ferret-e2e
+    # No way out of the network: nothing in the stack needs the internet (the terminator makes
+    # its own certificates, the app sends no message), so a compromised container cannot
+    # call out. The test runner runs on this network only; its packages are installed first in a
+    # container on the default network (scripts/lanbox-ferret-test.sh e2e-run).
+    internal: true
     ipam:
       config:
         - subnet: 172.30.250.0/28

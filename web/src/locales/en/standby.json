@@ -1,7 +1,15 @@
 {
   "standby.body": "Sync runs in one tab at a time, so that no change is lost or mixed up. Nothing from the vault is shown in this tab.",
+  "standby.cancel": "Cancel",
+  "standby.checking": "Asking the other tab…",
   "standby.error": "The vault could not be moved to this tab. Try again.",
+  "standby.take_back": "Take back",
   "standby.title": "The vault is open in another tab",
+  "standby.unsaved_body": "The vault was moved to another tab. The changes you had not saved are still shown below, but they are read-only here and cannot be saved from this tab. Take the vault back to go on editing, or copy what you need first.",
+  "standby.unsaved_title": "The vault was moved to another tab",
+  "standby.use_anyway": "Use here anyway",
   "standby.use_here": "Use here",
+  "standby.warn_no_answer": "The other tab did not answer. It may be busy, or hold changes you have not saved. If you use the vault here, anything it has not saved stays visible there, read-only, and cannot be saved from there unless you take the vault back.",
+  "standby.warn_unsaved": "The other tab has changes that are not saved. If you use the vault here, they stay visible there, read-only, and cannot be saved from there unless you take the vault back.",
   "standby.working": "Moving the vault to this tab…"
 }

@@ -65,6 +65,7 @@ pub fn admin_router(state: FerretState) -> Router {
     let core = state.core.clone();
     let kit_protected: Router<FerretState> = Router::new()
         .merge(kit_pages::router())
+        .merge(admin::protected_routes())
         .route_layer(from_fn_with_state(core.clone(), guard::require_auth))
         .route_layer(from_fn_with_state(
             state.clone(),

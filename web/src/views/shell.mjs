@@ -9,7 +9,7 @@
 import { el, mount } from "../dom.mjs";
 import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
-import { createWipeScope, describeError, listenWhileShown } from "./common.mjs";
+import { createWipeScope, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 import { menuRoutes } from "./account.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
@@ -34,14 +34,20 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {{ go(path: string): void }} [router] where the actions of the sync banner lead
  * @property {readonly string[]} [accountPaths] the addresses of the pages the account page lists (routes that say `menu: "account"`); the account link is marked on them and on `/account`
  * @property {StandbySource} [standby] where the tab is told that another tab took the vault; without it the frame never shows the standby notice
+ * @property {ExportReminder | null} [reminder] the reminder to take a new encrypted export; without it the frame never shows one
  *
  * @typedef {object} LiveSource
  * @property {() => string} state
  * @property {(event: "state", fn: (state: string) => void) => () => void} on
  *
+ * @typedef {object} ExportReminder
+ * @property {() => Promise<{ due: boolean, lastExportAt: number | null }>} check whether the reminder is due now
+ * @property {() => Promise<void>} snooze keeps it away for a while ("Remind me later")
+ *
  * @typedef {object} StandbySource
  * @property {(fn: (standby: boolean) => void) => () => void} onStandby
- * @property {() => ReturnType<typeof standbyView>} card makes the notice
+ * @property {(options?: { unsaved?: boolean }) => ReturnType<typeof standbyView>} card makes the notice; `unsaved` when a form is kept below it
+ * @property {() => boolean} [freeze] makes the forms with edits that are not saved read-only and keeps them; answers whether there was one
  */
 
 /** More conflicts than this are shown as one banner with the count. */
@@ -107,7 +113,7 @@ function trackLock(session, screen) {
  * banners are cleared and the unlock screen takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -254,6 +260,39 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     scope.add(listenWhileShown(root, live, "state", onLive));
   }
 
+  // The reminder to take a new encrypted export (spec Fase 1 § 6.4: every 30 days): one notice, with the way to the export page.
+  // It is a date check and nothing else; a store that cannot answer shows no reminder.
+  if (reminder) {
+    let alive = true;
+    scope.add(() => {
+      alive = false;
+    });
+    void (async () => {
+      try {
+        const { due, lastExportAt } = await reminder.check();
+        const onExport = String(win?.location?.hash ?? "").replace(/^#/, "") === "/export";
+        if (!alive || !due || onExport) return;
+        const date = lastExportAt === null ? null : formatMoment(lastExportAt, undefined);
+        const node = el("p", { class: "banner banner-info", role: "status", "aria-label": t("export.reminder.label"), "data-role": "export-reminder" },
+          date === null ? t("export.reminder.never") : t("export.reminder.text", { date }), " ",
+          el("a", { href: "#/export", "data-role": "export-reminder-link" }, t("export.reminder.link")), " ");
+        const later = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "export-reminder-later" }, t("export.reminder.later"));
+        later.addEventListener("click", async () => {
+          node.remove();
+          try {
+            await reminder.snooze();
+          } catch {
+            // Not kept: the reminder comes back at the next page, which is the safe way to fail.
+          }
+        });
+        node.appendChild(later);
+        banners.appendChild(node);
+      } catch {
+        // No answer from the store: no reminder.
+      }
+    })();
+  }
+
   // A frame built while the engine is stopped says so from the start.
   if (warnings !== null && engine.health().halted !== null) onState({ kind: "halted", code: engine.health().halted });
   listenWhileShown(root, engine, "state", onState);
@@ -279,6 +318,15 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   if (standby) {
     listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
       if (on !== true) return;
+      // A form with edits that are not saved stays on screen, read-only, under the notice (with "Take back"); the lock wipes it.
+      // Anything else on the screen goes, as before.
+      if (standby.freeze?.() === true) {
+        const card = standby.card({ unsaved: true });
+        const kept = [...main.childNodes];
+        mount(main, card.root, ...kept);
+        card.focus();
+        return;
+      }
       scope.run();
       shown.clear();
       const card = standby.card();
@@ -286,6 +334,16 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       card.focus();
     });
   }
+
+  // An item that was restored over one the server had purged is a copy under a new id now (the engine's `copied`): the screen of
+  // the old one moves to the copy, and the user is told once. An edit screen follows by itself (it keeps what was typed).
+  listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
+    const from = payload?.from;
+    const to = payload?.to;
+    if (typeof from !== "string" || typeof to !== "string") return;
+    if (String(win?.location?.hash ?? "").replace(/^#/, "") === `/items/${from}`) router.go(`/items/${to}`);
+    banner(`copied:${to}`, "info", t("vault.banner.copied"));
+  });
 
   lockButton.addEventListener("click", async () => {
     await lock();
@@ -330,8 +388,8 @@ export async function enterVault(ctx) {
   if (!autoLock.running()) autoLock.start();
 
   // Another tab holds the vault: this tab has no engine and shows nothing from it, only the way to move it here.
-  const standbyCard = () => standbyView({
-    t, sync, onTaken: () => go(path), lock: () => autoLock.lock(), touch: () => autoLock.touch(),
+  const standbyCard = (/** @type {{ unsaved?: boolean }} */ options = {}) => standbyView({
+    t, sync, onTaken: () => go(path), lock: () => autoLock.lock(), touch: () => autoLock.touch(), unsaved: options.unsaved === true,
   });
   const standbyScreen = () => {
     const card = standbyCard();
@@ -374,9 +432,37 @@ export async function enterVault(ctx) {
       if (!session.current?.()) return lockedScreen();
       return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
         accountPaths: menuRoutes(ctx.routes ?? []).map((route) => route.path),
-        standby: typeof sync.onStandby === "function" ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard } : undefined,
+        reminder: reminderOf(services.store, session.serverUrl, open.accountId),
+        standby: typeof sync.onStandby === "function"
+          ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard, freeze: typeof sync.freezeUnsaved === "function" ? () => sync.freezeUnsaved() : undefined }
+          : undefined,
       });
     },
+  };
+}
+
+/**
+ * The sync service as the edit screen's tracker of unsaved edits, or undefined where it has none (a stand-in).
+ * @param {any} sync
+ * @returns {{ trackUnsaved(form: import("./edit.mjs").UnsavedForm): () => void, takeFrozen(key: string): import("./edit.mjs").UnsavedForm | null } | undefined}
+ */
+export function trackerOf(sync) {
+  return typeof sync?.trackUnsaved === "function" && typeof sync?.takeFrozen === "function" ? sync : undefined;
+}
+
+/**
+ * The export reminder of an account, over the store service; null where the store has none (a stand-in).
+ * @param {any} store the store service
+ * @param {string} serverUrl
+ * @param {string} accountId
+ * @returns {ExportReminder | null}
+ */
+function reminderOf(store, serverUrl, accountId) {
+  const tools = store?.exportReminder;
+  if (!tools || typeof store.open !== "function") return null;
+  return {
+    check: async () => tools.status(await store.open(), serverUrl, accountId, Date.now()),
+    snooze: async () => tools.snooze(await store.open(), serverUrl, accountId, Date.now()),
   };
 }
 

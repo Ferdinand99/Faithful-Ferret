@@ -5,6 +5,7 @@
 // store, because a miss by e-mail alone looks like a first use. The one exception
 // is `pinHintForEmail`, an early guard for the core's `login_finish` (see below).
 import { cache } from "../store/cache.mjs";
+import { exportReminder } from "../store/exportReminder.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
 import { forgetServer, pendingWrites, sharedAccount } from "../store/forget.mjs";
@@ -57,8 +58,10 @@ export default {
       loadSyncState,
       saveSyncState,
       trash,
-      // The note that an older server state was accepted (not secret; it only picks a text, see store/restoreNote.mjs).
+      // The note that an older server state was accepted (not secret; it picks a text and gates the reapply, see store/restoreNote.mjs).
       restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
+      // The date of the last encrypted export and the reminder to take another (not secret; see store/exportReminder.mjs).
+      exportReminder,
       forgetServer,
       pendingWrites,
       sharedAccount,

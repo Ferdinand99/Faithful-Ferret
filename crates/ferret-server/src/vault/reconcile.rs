@@ -21,7 +21,8 @@
 //!
 //! Also here: `restore_epoch`, the counter that tells clients the server was
 //! restored from an older copy (spec § 8.6, "Legitimate rollbacks"). Only the
-//! command `ferret restore-epoch bump` raises it. The same command records
+//! commands `ferret restore-epoch bump` and `ferret backup restore` raise it,
+//! both with the rule of [`bump`]. The same bump records
 //! `restore_seq` (the `seq` of the vault at the bump) and freezes one row for
 //! each item the vault then had (`item_id`, `rev`, `seq`, SHA-256 of the
 //! envelope, NULL for a tombstone). `GET /api/sync/restore-rows` pages that
@@ -202,8 +203,16 @@ pub struct Bumped {
     pub restore_epoch: u64,
 }
 
-/// Raises the restore epoch of every vault by one, in one transaction, and
-/// says how many vaults it was and what the highest epoch is now.
+/// Raises the restore epoch of every vault in one transaction, with the rule
+/// that `ferret restore-epoch bump` and `ferret backup restore` share, and says
+/// how many vaults it was and what the highest epoch is now.
+///
+/// Every vault gets `max(stored + 1, now, at_least)`: one more than it had, at
+/// least the time in Unix seconds, and at least `at_least` when the caller asks
+/// for more. A restore brings back the older, lower epoch of its backup; with
+/// the time in the rule the new epoch is still above every epoch a client was
+/// shown before, unless a clock ran ahead, which is what `at_least` is for. A
+/// `now` below zero counts as zero.
 ///
 /// In the same transaction each vault records `restore_seq` (its `seq` at the
 /// bump) and the frozen rows of the previous bump are replaced by one row for
@@ -211,14 +220,37 @@ pub struct Bumped {
 /// the envelope)`, with a NULL hash for a tombstone. Nothing is signed: the
 /// server has no key. Writes after the bump never touch the frozen rows.
 ///
-/// A vault that already holds the largest number a JSON integer can carry
-/// refuses the whole bump (nothing changes).
+/// An `at_least` or a `now` above the largest number a JSON integer can carry,
+/// or a vault that already holds that number, refuses the whole bump with
+/// [`StoreError::Invalid`] (nothing changes).
 ///
 /// Spec: Fase 1 § 8.6, "Legitimate rollbacks": after a restore the
 /// administrator sets `restore_epoch` higher, and clients that remember a lower
 /// one say that the server was restored.
-pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
+pub fn bump(conn: &mut Connection, at_least: Option<u64>, now: i64) -> Result<Bumped, StoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let bumped = bump_in(&tx, at_least, now)?;
+    tx.commit()?;
+    Ok(bumped)
+}
+
+/// [`bump`] inside the caller's write transaction, so that a restore raises the
+/// epoch and ends every session in one commit. The rule is the same.
+///
+/// Spec: Fase 1 § 8.6, "Legitimate rollbacks".
+pub(crate) fn bump_in(
+    tx: &rusqlite::Transaction<'_>,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<Bumped, StoreError> {
+    let lowest = at_least.unwrap_or(0).max(u64::try_from(now).unwrap_or(0));
+    if lowest > MAX_JSON_INT {
+        return Err(StoreError::Invalid(
+            "the lowest restore_epoch is above the largest JSON integer",
+        ));
+    }
+    let lowest = i64::try_from(lowest)
+        .map_err(|_| StoreError::Invalid("the lowest restore_epoch is out of range"))?;
     let max_json = i64::try_from(MAX_JSON_INT).unwrap_or(i64::MAX);
     let at_the_limit: i64 = tx.query_row(
         "SELECT COUNT(*) FROM ferret_vaults WHERE restore_epoch >= ?1",
@@ -231,17 +263,17 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
     // `restore_seq` takes the `seq` the row has now, before the same statement
     // is done, and the frozen rows below are read in this same transaction.
     let vaults = tx.execute(
-        "UPDATE ferret_vaults SET restore_epoch = restore_epoch + 1, restore_seq = seq",
-        [],
+        "UPDATE ferret_vaults \
+         SET restore_epoch = MAX(restore_epoch + 1, ?1), restore_seq = seq",
+        [lowest],
     )?;
     tx.execute("DELETE FROM ferret_restore_rows", [])?;
-    freeze_rows(&tx)?;
+    freeze_rows(tx)?;
     let highest: i64 = tx.query_row(
         "SELECT COALESCE(MAX(restore_epoch), 0) FROM ferret_vaults",
         [],
         |row| row.get(0),
     )?;
-    tx.commit()?;
     Ok(Bumped {
         vaults: u64::try_from(vaults).unwrap_or(u64::MAX),
         restore_epoch: u64::try_from(highest)
@@ -249,30 +281,9 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
     })
 }
 
-/// Raises the restore epoch of every vault, with the signature that the
-/// commands and the restore use: `at_least` is the lowest epoch the caller
-/// wants and `now` the time in Unix seconds.
-///
-/// Spec: Fase 1 § 8.6, "Legitimate rollbacks": the restore epoch goes up when
-/// the server is restored from a backup.
-///
-/// The rule is still [`bump_all_vaults`]'s (one more than the stored epoch):
-/// `now` is not used yet, and an `at_least` is refused with
-/// [`StoreError::Invalid`] instead of being ignored, so no command can say it
-/// raised the epoch to a number it did not.
-pub fn bump(conn: &mut Connection, at_least: Option<u64>, now: i64) -> Result<Bumped, StoreError> {
-    let _ = now;
-    if at_least.is_some() {
-        return Err(StoreError::Invalid(
-            "a lowest restore epoch is not supported yet",
-        ));
-    }
-    bump_all_vaults(conn)
-}
-
 /// Raises the restore epoch (the counter that tells clients the server was
 /// restored) of every vault in one transaction and returns the highest value
-/// now. See [`bump`].
+/// now. See [`bump`] for the rule.
 pub fn bump_restore_epoch(
     conn: &mut Connection,
     at_least: Option<u64>,

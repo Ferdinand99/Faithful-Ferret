@@ -1,4 +1,5 @@
 {
+  "vault.banner.copied": "An item you restored had been removed from the server for good, so it was saved again as a new copy.",
   "vault.banner.dismiss": "Dismiss",
   "vault.banner.item": "{name}: {message}",
   "vault.banner.sign_in_again": "Your sign-in has ended. Sign in again to keep your changes in sync.",
