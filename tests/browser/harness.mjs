@@ -562,7 +562,7 @@ async function leakRun() {
   const kekPwRecovered = kekPassword(exportKeyRecovered);
   add("export key (recovered)", exportKeyRecovered);
   add("KEK_pw (recovered)", kekPwRecovered);
-  const recovered = await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr);
+  const recovered = await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, firstUse(true), qr);
   const rkNewCode = await client.vault.reveal_recovery_code();
   texts["recovery key code (recovered)"] = rkNewCode;
   const rkNew = op(wasm, "recovery_key_decode", "code.rk.decode", { code: rkNewCode }).key;
