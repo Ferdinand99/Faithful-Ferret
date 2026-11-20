@@ -9,15 +9,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use ferret_core::{AccountId, ItemId};
-use ferret_server::auth::session::{Origin, lookup, revoke};
+use ferret_core::{AccountId, ItemId, RecoveryKey, TestRng, recovery_public_key};
+use ferret_server::auth::session::{Origin, lookup, revoke, set_parent};
 use ferret_server::error::ApiError;
 use ferret_server::ids::SidHash;
 use ferret_server::vault::unlock_write::{
     Applied, Authorized, BACKUP_REASON, UnlockChange, Writer, after_commit, apply,
+    is_recovery_public_key,
 };
 use ferret_server::wire::SealedRowJson;
-use ferret_server_auth::{Clock as _, ScopeEffect, SessionScope};
+use ferret_server_auth::{Clock as _, ScopeEffect, SessionScope, WriteBasis};
 use support::TestApp;
 use support::accounts::{
     Client, Snapshot, client_account, client_session, snapshot, stored_record,
@@ -58,12 +59,23 @@ fn now(app: &TestApp) -> i64 {
     i64::try_from(app.clock.now_unix()).expect("a time")
 }
 
+/// What the stand-in for the proof check gives back.
+struct Planned {
+    change: UnlockChange,
+    manifest: SealedRowJson,
+    session_effect: ScopeEffect,
+    /// Added to the epoch of the snapshot the "permit" names: anything but 0
+    /// is a permit for another row than the one `apply` read.
+    other_epoch: u64,
+}
+
 /// Runs `apply` on the app's database with an `authorize` that gives
-/// `authorized` without a proof, and says whether `authorize` ran.
+/// `planned` without a proof (its snapshot is the row handed to it, as a
+/// permit's is), and says whether `authorize` ran.
 async fn run(
     app: &TestApp,
     writer: Writer,
-    authorized: Result<Authorized, ApiError>,
+    planned: Result<Planned, ApiError>,
 ) -> (Result<Applied, ApiError>, bool) {
     let ran = Arc::new(AtomicBool::new(false));
     let flag = ran.clone();
@@ -76,7 +88,20 @@ async fn run(
                 flag.store(true, Ordering::SeqCst);
                 assert_eq!(state.account.account_id, writer.account);
                 assert_eq!(state.account.row_version, 0);
-                authorized
+                let planned = planned?;
+                let read = state.account;
+                Ok(Authorized {
+                    change: planned.change,
+                    manifest: planned.manifest,
+                    session_effect: planned.session_effect,
+                    basis: WriteBasis {
+                        account_id: read.account_id,
+                        vk_epoch: read.vk_epoch + planned.other_epoch,
+                        pk_a: read.pk_a,
+                        pk_r: read.pk_r,
+                        row_version: read.row_version,
+                    },
+                })
             }))
         })
         .await
@@ -84,12 +109,38 @@ async fn run(
     (result, ran.load(Ordering::SeqCst))
 }
 
-fn authorized(change: UnlockChange, manifest: SealedRowJson) -> Result<Authorized, ApiError> {
-    Ok(Authorized {
+fn authorized(change: UnlockChange, manifest: SealedRowJson) -> Result<Planned, ApiError> {
+    Ok(Planned {
         change,
         manifest,
         session_effect: ScopeEffect::Keep,
+        other_epoch: 0,
     })
+}
+
+/// A real `pk_r`, from a recovery key drawn from `seed`.
+fn new_pk_r(client: &Client, seed: &str) -> [u8; 32] {
+    let rk = RecoveryKey::generate(&mut TestRng::new(seed.as_bytes()));
+    recovery_public_key(&rk, &client.ids.account_id).expect("a key")
+}
+
+/// Hands a new admin session of `client`'s user over from `parent`.
+async fn handed_over(app: &TestApp, client: &Client, parent: SidHash, device: u8) -> SidHash {
+    let child = issue(
+        app,
+        client.ids.user_id,
+        Origin::Admin,
+        SessionScope::Full,
+        device,
+    )
+    .await
+    .sid;
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(set_parent(conn, &child, &parent)?))
+        .await
+        .expect("a parent");
+    child
 }
 
 async fn is_ended(app: &TestApp, sid: SidHash) -> bool {
@@ -244,10 +295,55 @@ async fn a_new_recovery_key_replaces_the_recovery_wrap_and_pk_r_and_ends_no_sess
     assert_eq!(result.expect_err("refused").code, "malformed_recovery_key");
     unchanged(&app, &client, &before).await;
 
+    // Nor a key that could never check a proof: no point, a point of small
+    // order, or a point in a non-canonical encoding.
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    let mut identity_negative = identity;
+    identity_negative[31] = 0x80;
+    // y = -1 (p - 1): a point of order 2.
+    let mut order_two = [0xff; 32];
+    order_two[0] = 0xec;
+    order_two[31] = 0x7f;
+    // y = 2 + p: never the canonical spelling of a point.
+    let mut non_canonical = [0xff; 32];
+    non_canonical[0] = 0xef;
+    non_canonical[31] = 0x7f;
+    for (what, bad) in [
+        ("the identity", identity),
+        ("the identity with the sign bit", identity_negative),
+        ("a point of order 2", order_two),
+        ("y = 2 + p", non_canonical),
+        ("all ones (y = 18 + p)", [0xff; 32]),
+    ] {
+        assert!(!is_recovery_public_key(&bad), "{what}");
+        let change = UnlockChange::Recovery {
+            wrap: vec![0x66; 72],
+            generation: 2,
+            pk_r: bad,
+        };
+        let (result, _) = run(
+            &app,
+            writer(&app, &client, this.sid, true).await,
+            authorized(change, manifest(&client, 2)),
+        )
+        .await;
+        assert_eq!(
+            result.expect_err("refused").code,
+            "malformed_recovery_key",
+            "{what}"
+        );
+        unchanged(&app, &client, &before).await;
+    }
+    assert!(is_recovery_public_key(&new_pk_r(&client, "renewed")));
+
+    // A half-way sign-in is not touched by a new recovery key.
+    insert_login_state(&app).await;
+
     let change = UnlockChange::Recovery {
         wrap: vec![0x66; 72],
         generation: 2,
-        pk_r: [0x99; 32],
+        pk_r: new_pk_r(&client, "renewed"),
     };
     let (result, _) = run(
         &app,
@@ -264,7 +360,7 @@ async fn a_new_recovery_key_replaces_the_recovery_wrap_and_pk_r_and_ends_no_sess
         }
     );
     let after = snapshot(&app, &client).await;
-    assert_eq!(after.pk_r, vec![0x99; 32]);
+    assert_eq!(after.pk_r, new_pk_r(&client, "renewed").to_vec());
     assert_eq!(after.record, before.record, "the record is kept");
     assert_eq!(after.wraps[0], before.wraps[0], "the password wrap is kept");
     assert_eq!(after.wraps[1].1, before.wraps[1].1, "the same method id");
@@ -272,6 +368,7 @@ async fn a_new_recovery_key_replaces_the_recovery_wrap_and_pk_r_and_ends_no_sess
     assert_eq!((after.manifest_rev, after.manifest_seq), (2, 2));
     assert!(!is_ended(&app, other.sid).await);
     assert!(!is_ended(&app, this.sid).await);
+    assert_eq!(login_states(&app).await, 1);
 }
 
 #[tokio::test]
@@ -295,7 +392,7 @@ async fn a_recovery_writes_the_record_both_wraps_and_pk_r_and_a_reset_session_en
         pw_generation,
         rk_wrap: vec![0x72; 72],
         rk_generation,
-        pk_r: [0x98; 32],
+        pk_r: new_pk_r(&client, "recovered"),
     };
     // Both generations must rise; one that does not refuses the whole change.
     for (pw, rk) in [(1, 2), (2, 1)] {
@@ -312,10 +409,11 @@ async fn a_recovery_writes_the_record_both_wraps_and_pk_r_and_a_reset_session_en
     let (result, _) = run(
         &app,
         writer(&app, &client, reset.sid, false).await,
-        Ok(Authorized {
+        Ok(Planned {
             change: recover(5, 7),
             manifest: manifest(&client, 2),
             session_effect: ScopeEffect::EndSession,
+            other_epoch: 0,
         }),
     )
     .await;
@@ -326,7 +424,7 @@ async fn a_recovery_writes_the_record_both_wraps_and_pk_r_and_a_reset_session_en
     assert_eq!(applied.ended, expected, "every session, the asking one too");
     let after = snapshot(&app, &client).await;
     assert_eq!(after.record, stored_record().record.as_bytes());
-    assert_eq!(after.pk_r, vec![0x98; 32]);
+    assert_eq!(after.pk_r, new_pk_r(&client, "recovered").to_vec());
     assert_eq!(after.pk_a, before.pk_a);
     assert_eq!((after.wraps[0].2, after.wraps[1].2), (5, 7));
     assert_eq!(after.wraps[0].1, before.wraps[0].1);
@@ -347,6 +445,10 @@ async fn a_full_session_that_recovers_goes_on() {
         2,
     )
     .await;
+    // The admin session handed over from the asking one ends too (it fails
+    // safe), and so does every half-way sign-in.
+    let child = handed_over(&app, &client, this.sid, 3).await;
+    insert_login_state(&app).await;
     let (result, _) = run(
         &app,
         writer(&app, &client, this.sid, true).await,
@@ -358,14 +460,67 @@ async fn a_full_session_that_recovers_goes_on() {
                 pw_generation: 2,
                 rk_wrap: vec![0x72; 72],
                 rk_generation: 2,
-                pk_r: [0x97; 32],
+                pk_r: new_pk_r(&client, "recovered"),
             },
             manifest(&client, 2),
         ),
     )
     .await;
-    assert_eq!(result.expect("applied").ended, vec![other.sid]);
+    let mut expected = vec![other.sid, child];
+    expected.sort_unstable_by_key(|sid| sid.0);
+    assert_eq!(result.expect("applied").ended, expected);
     assert!(!is_ended(&app, this.sid).await);
+    assert!(is_ended(&app, child).await);
+    assert_eq!(login_states(&app).await, 0);
+}
+
+#[tokio::test]
+async fn a_permit_for_another_row_than_the_one_read_is_refused() {
+    let app = TestApp::new().await;
+    let client = client_account(&app, 9).await;
+    let this = client_session(&app, &client, SessionScope::Full, 1).await;
+    let before = snapshot(&app, &client).await;
+    let (result, ran) = run(
+        &app,
+        writer(&app, &client, this.sid, true).await,
+        Ok(Planned {
+            change: password(2),
+            manifest: manifest(&client, 2),
+            session_effect: ScopeEffect::Keep,
+            other_epoch: 1,
+        }),
+    )
+    .await;
+    assert!(ran);
+    assert_eq!(result.expect_err("refused").code, "internal");
+    unchanged(&app, &client, &before).await;
+}
+
+/// A pending sign-in's state, as `login/start` leaves one.
+async fn insert_login_state(app: &TestApp) {
+    let expires = now(app) + 60;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO ferret_login_states (key, sealed, expires_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![vec![0x4c_u8; 32], vec![0x53_u8; 64], expires],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a login state");
+}
+
+/// How many pending sign-in states the server holds.
+async fn login_states(app: &TestApp) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            Ok(conn.query_row("SELECT COUNT(*) FROM ferret_login_states", [], |r| r.get(0))?)
+        })
+        .await
+        .expect("a count")
 }
 
 #[tokio::test]

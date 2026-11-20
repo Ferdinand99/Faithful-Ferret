@@ -16,12 +16,24 @@
 //!    write that finds the row changed is `409 write_conflict` and never a
 //!    silent success;
 //! 6. for a new master password and a recovery, ends every other session of
-//!    the user on both origins and the user's pending sign-in codes; and the
-//!    asking session when the permit says so (a recovery in a reset session).
-//!    A new recovery key ends no session.
+//!    the user on both origins and the user's pending sign-in codes, the
+//!    sessions handed over from the asking session too (its admin session:
+//!    it fails safe, the user signs in to the admin pages again), and every
+//!    sign-in that is still half-way; and the asking session when the permit
+//!    says so (a recovery in a reset session). A new recovery key ends no
+//!    session.
 //!
 //! Either all of it is in, or none of it. [`after_commit`] then tells the
 //! streams about the new `seq` and the ended sessions, and asks for a backup.
+//! The route calls it on the database thread right after the commit, so a
+//! request whose client has gone away still announces what it committed.
+//!
+//! **Half-way sign-ins.** A sign-in that started with the old password keeps
+//! what it needs to finish in its sealed login state, and finishing it does
+//! not read the record again. Its row is not keyed by user, so a change of the
+//! master password or a recovery removes every pending login state on the
+//! server, in the same transaction: such a sign-in cannot finish afterwards.
+//! A sign-in of another user that was half-way through has to start again.
 //!
 //! Nothing else writes these rows. The manifest row is written here with SQL
 //! of its own: the item store refuses the manifest (a change to it needs a
@@ -32,10 +44,11 @@
 
 use std::fmt;
 
+use ed25519_dalek::VerifyingKey;
 use ferret_core::envelope::{KIND_MANIFEST, parse_envelope};
 use ferret_core::{AuthPublicKey, Error as CoreError, RecoveryPublicKey};
 use ferret_server_auth::{
-    AccountAuthState, ScopeEffect, SignedAccount, StoredRecord, ValidatedRecord,
+    AccountAuthState, ScopeEffect, SignedAccount, StoredRecord, ValidatedRecord, WriteBasis,
 };
 use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
 
@@ -146,6 +159,11 @@ pub struct Authorized {
     pub manifest: SealedRowJson,
     /// The permit's effect on the asking session.
     pub session_effect: ScopeEffect,
+    /// The snapshot of the account the permit was checked against
+    /// (`permit.basis`). Only the OPAQUE library makes one (a vault module
+    /// may not build it), so a value here means a proof was checked; `apply`
+    /// also compares it with the row it handed to `authorize`.
+    pub basis: WriteBasis,
 }
 
 impl fmt::Debug for Authorized {
@@ -205,7 +223,9 @@ struct StoredAccount {
 /// * a manifest `rev` that is not the current one plus 1, a generation that
 ///   is not above the stored one, or a row that is not what was read: `409
 ///   write_conflict`;
-/// * a new `pk_r` equal to the stored one: `400 malformed_recovery_key`.
+/// * a new `pk_r` equal to the stored one, or not a usable Ed25519 key: `400
+///   malformed_recovery_key`;
+/// * a permit whose snapshot is not the row that was read: `500 internal`.
 ///
 /// Spec: Fase 1 § 4.3 (changing MP: `kek_generation + 1`; the manifest is
 /// updated in the same request as a change to wraps), § 4.6 (the proof; all
@@ -237,6 +257,7 @@ where
         current: &account.record,
     };
     let authorized = authorize(&state)?;
+    check_basis(&authorized.basis, &state.account)?;
 
     check_manifest_envelope(&authorized.manifest.envelope)?;
     let manifest = read_manifest(&tx, &account.vault)?;
@@ -251,11 +272,19 @@ where
     let keeps_asking = writer.keep_session && authorized.session_effect == ScopeEffect::Keep;
     let mut ended = if authorized.change.ends_other_sessions() {
         let keep = keeps_asking.then_some(&writer.sid);
-        end_all_credentials(&tx, writer.user_id, keep, now).map_err(sql)?
+        let mut ended = end_all_credentials(&tx, writer.user_id, keep, now).map_err(sql)?;
+        if keeps_asking {
+            // The asking session goes on; what was handed over from it (its
+            // admin session) does not.
+            ended.extend(revoke(&tx, &writer.sid, now, Revoke::HandedOver)?);
+        }
+        tx.execute("DELETE FROM ferret_login_states", [])
+            .map_err(sql)?;
+        ended
     } else if keeps_asking {
         Vec::new()
     } else {
-        revoke_one(&tx, &writer.sid, now)?
+        revoke(&tx, &writer.sid, now, Revoke::WithHandedOver)?
     };
     ended.sort_unstable_by_key(|sid| sid.0);
     ended.dedup();
@@ -443,11 +472,41 @@ fn check_generation(stored: u32, new: u32) -> Result<(), ApiError> {
 /// the OPAQUE library answers a recovery that keeps its key.
 ///
 /// Spec: Fase 1 § 4.6 and § 6.3 (step 4: a new `pk_r`).
+///
+/// The key must also be one that can ever check a proof: the canonical
+/// encoding of an Ed25519 point that is not of small order. Proofs are
+/// verified strictly, so another key forges nothing, but it would leave the
+/// account with a recovery key that never works.
 fn check_new_recovery_key(account: &StoredAccount, pk_r: &[u8; 32]) -> Result<(), ApiError> {
-    if *pk_r == account.pk_r {
+    if *pk_r == account.pk_r || !is_recovery_public_key(pk_r) {
         Err(ApiError::coded("malformed_recovery_key"))
     } else {
         Ok(())
+    }
+}
+
+/// A canonically encoded Ed25519 point that is not of small order.
+///
+/// Spec: Fase 1 § 4.5 (`pk_r` is an Ed25519 public key).
+pub fn is_recovery_public_key(bytes: &[u8; 32]) -> bool {
+    VerifyingKey::from_bytes(bytes)
+        .is_ok_and(|key| !key.is_weak() && key.to_edwards().compress().to_bytes() == *bytes)
+}
+
+/// The permit's snapshot is the row `apply` read and handed to `authorize`.
+/// Another one is a mistake of the route (`500 internal`), never something a
+/// client chose.
+fn check_basis(basis: &WriteBasis, read: &SignedAccount) -> Result<(), ApiError> {
+    if basis.account_id == read.account_id
+        && basis.pk_a == read.pk_a
+        && basis.pk_r == read.pk_r
+        && basis.vk_epoch == read.vk_epoch
+        && basis.row_version == read.row_version
+    {
+        Ok(())
+    } else {
+        tracing::error!("a change was authorized against another row than the one read");
+        Err(ApiError::internal())
     }
 }
 
@@ -613,18 +672,35 @@ fn write_manifest(
     u64::try_from(seq).map_err(|_| ApiError::internal())
 }
 
-/// Ends the asking session alone, and the sessions handed over from it, for a
-/// change that ends no other session but whose permit ends the asking one.
-fn revoke_one(tx: &Transaction<'_>, sid: &SidHash, now: i64) -> Result<Vec<SidHash>, ApiError> {
+/// Which sessions [`revoke`] ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Revoke {
+    /// Only the sessions handed over from the session (its admin session).
+    HandedOver,
+    /// The session itself and the sessions handed over from it.
+    WithHandedOver,
+}
+
+/// Ends the sessions handed over from `sid` (and `sid` itself for
+/// [`Revoke::WithHandedOver`]) that are still live, and gives their ids.
+fn revoke(
+    tx: &Transaction<'_>,
+    sid: &SidHash,
+    now: i64,
+    which: Revoke,
+) -> Result<Vec<SidHash>, ApiError> {
+    let with_self = which == Revoke::WithHandedOver;
     let mut stmt = tx
         .prepare(
             "UPDATE ferret_sessions SET revoked_at = ?2
-             WHERE (sid_hash = ?1 OR parent_sid = ?1) AND revoked_at IS NULL
+             WHERE ((?3 AND sid_hash = ?1) OR parent_sid = ?1) AND revoked_at IS NULL
              RETURNING sid_hash",
         )
         .map_err(sql)?;
     let rows = stmt
-        .query_map(params![sid.0.as_slice(), now], |r| r.get::<_, Vec<u8>>(0))
+        .query_map(params![sid.0.as_slice(), now, with_self], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })
         .map_err(sql)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(sql)?;

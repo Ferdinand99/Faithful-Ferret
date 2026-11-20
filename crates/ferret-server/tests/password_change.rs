@@ -13,12 +13,12 @@ use std::time::Duration;
 use axum::http::{Method, StatusCode};
 use ferret_core::testing::opaque::{TestKsf, login_finish_with};
 use ferret_core::{OPAQUE_CONTEXT, OsRng, PinState, opaque_login_start};
-use ferret_server::auth::session::{Origin, lookup};
+use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
 use ferret_server::wire::b64url;
-use ferret_server_auth::SessionScope;
 use ferret_server_auth::testing::SMALL;
+use ferret_server_auth::{Outcome, RetryAfter, SessionScope, Stage, Throttle, ThrottleKey};
 use serde_json::{Value, json};
 use support::accounts::{
     Client, PASSWORD_PATH, Snapshot, body_bytes, client_account, client_session, opaque_input,
@@ -70,9 +70,17 @@ fn vault_post(path: &str, body: &Value) -> Req {
         .json(body)
 }
 
-/// A whole sign-in of `email` with `password` from a new browser. `None` when
-/// the client cannot finish (the password is not the one of the record).
-async fn sign_in(app: &TestApp, email: &str, password: &str) -> Option<Res> {
+/// A sign-in half-way: the server answered `login/start` and the client has
+/// made its third message. `None` when the client cannot finish (the password
+/// is not the one of the record).
+struct HalfWay {
+    jar: Jar,
+    login_id: Value,
+    ke3: Vec<u8>,
+}
+
+/// The first half of a sign-in of `email` with `password` from a new browser.
+async fn start_sign_in(app: &TestApp, email: &str, password: &str) -> Option<HalfWay> {
     let input = opaque_input(password);
     let mut jar = Jar::default();
     let (ke1, state) = opaque_login_start(&mut OsRng, &input).expect("a start");
@@ -100,22 +108,51 @@ async fn sign_in(app: &TestApp, email: &str, password: &str) -> Option<Res> {
     .ok()?
     .finished
     .ke3;
-    Some(
-        send(
-            app,
-            &mut jar,
-            vault_post(
-                "/api/auth/opaque/login/finish",
-                &json!({
-                    "login_id": answer["login_id"],
-                    "ke3": b64url::encode(&ke3),
-                    "device_id": "07".repeat(16),
-                    "device_name": "Test browser",
-                }),
-            ),
-        )
-        .await,
+    Some(HalfWay {
+        jar,
+        login_id: answer["login_id"].clone(),
+        ke3,
+    })
+}
+
+/// The second half: `login/finish`.
+async fn finish_sign_in(app: &TestApp, mut half: HalfWay) -> Res {
+    send(
+        app,
+        &mut half.jar,
+        vault_post(
+            "/api/auth/opaque/login/finish",
+            &json!({
+                "login_id": half.login_id,
+                "ke3": b64url::encode(&half.ke3),
+                "device_id": "07".repeat(16),
+                "device_name": "Test browser",
+            }),
+        ),
     )
+    .await
+}
+
+/// A whole sign-in of `email` with `password` from a new browser. `None` when
+/// the client cannot finish (the password is not the one of the record).
+async fn sign_in(app: &TestApp, email: &str, password: &str) -> Option<Res> {
+    let half = start_sign_in(app, email, password).await?;
+    Some(finish_sign_in(app, half).await)
+}
+
+/// How many live sessions the user has.
+async fn live_sessions(app: &TestApp, user_id: i64) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM ferret_sessions WHERE user_id = ?1 AND revoked_at IS NULL",
+                [user_id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("a count")
 }
 
 fn email(client: &Client) -> String {
@@ -553,6 +590,21 @@ async fn every_other_session_of_both_origins_ends_and_its_stream_closes_at_once(
 #[tokio::test]
 async fn this_session_survives() {
     let (app, mut client, jar, this) = setup(13).await;
+    // An admin session handed over from this one.
+    let child = issue(
+        &app,
+        client.ids.user_id,
+        Origin::Admin,
+        SessionScope::Full,
+        2,
+    )
+    .await
+    .sid;
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(set_parent(conn, &child, &this)?))
+        .await
+        .expect("a parent");
     let mut stream = app.events(&jar).await;
     stream.event("hello", SECOND).await;
     let change = password_change(&app, &jar, &mut client, NEW_PASSWORD).await;
@@ -563,6 +615,11 @@ async fn this_session_survives() {
     let sync = stream.event("sync", SECOND).await;
     assert_eq!(sync["seq"], json!(2), "{sync}");
     assert!(!ended(&app, this).await);
+    // What was handed over from it does not: it fails safe.
+    assert!(
+        ended(&app, child).await,
+        "the handed-over admin session ends"
+    );
     let res = vault_get(&app, &jar, "/api/vault/unlock-methods").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     // It is still fresh (a change does not use the re-authentication up),
@@ -571,6 +628,111 @@ async fn this_session_survives() {
     let again = password_change(&app, &jar, &mut client, "yet another horse battery").await;
     let res = put_password(&app, &jar, &client, &again).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+#[tokio::test]
+async fn a_sign_in_started_with_the_old_password_cannot_finish_after_the_change() {
+    let (app, mut client, jar, _) = setup(18).await;
+    // Half-way with the old password, before the change: the server's state
+    // holds what finishing needs.
+    let half = start_sign_in(&app, &email(&client), &client.password)
+        .await
+        .expect("the old password opens the old record");
+    let change = password_change(&app, &jar, &mut client, NEW_PASSWORD).await;
+    let res = put_password(&app, &jar, &client, &change).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let live = live_sessions(&app, client.ids.user_id).await;
+
+    let res = finish_sign_in(&app, half).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(error_of(&res), "denied");
+    assert_eq!(live_sessions(&app, client.ids.user_id).await, live);
+
+    // A sign-in with the new password, started after it, finishes.
+    let res = sign_in(&app, &email(&client), NEW_PASSWORD)
+        .await
+        .expect("the new password");
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+/// A throttle that admits everything. On the first proof check of a record
+/// replacement it says so on its channel and holds the check for 800 ms.
+struct SlowProofCheck(Mutex<Option<std::sync::mpsc::Sender<()>>>);
+
+impl Throttle for SlowProofCheck {
+    fn admit(&self, stage: Stage, _keys: &[ThrottleKey], _now: u64) -> Result<(), RetryAfter> {
+        if stage == Stage::Replace {
+            let first = self.0.lock().expect("the channel").take();
+            if let Some(entered) = first {
+                entered.send(()).expect("the test listens");
+                std::thread::sleep(Duration::from_millis(800));
+            }
+        }
+        Ok(())
+    }
+
+    fn record(&self, _stage: Stage, _keys: &[ThrottleKey], _outcome: Outcome, _now: u64) {}
+}
+
+#[tokio::test]
+async fn a_change_committed_after_its_client_went_away_still_announces_and_asks_for_a_backup() {
+    // A throttle that says when the proof check of the change has started
+    // (inside the write transaction, on the database thread) and then holds
+    // it there for a moment.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let throttle = Arc::new(SlowProofCheck(Mutex::new(Some(entered_tx))));
+    let proxies =
+        ProxyList::parse(&[PEER.split(':').next().unwrap().to_string()]).expect("a proxy list");
+    let app = TestApp::builder()
+        .proxies(proxies)
+        .throttle(throttle as Arc<dyn Throttle>)
+        .build()
+        .await;
+    let mut client = client_account(&app, 19).await;
+    let jar = client_session(&app, &client, SessionScope::Full, 1)
+        .await
+        .jar;
+    let other = issue(
+        &app,
+        client.ids.user_id,
+        Origin::Vault,
+        SessionScope::Full,
+        2,
+    )
+    .await;
+    let change = password_change(&app, &jar, &mut client, NEW_PASSWORD).await;
+    let body = body_bytes(&password_put_req(&change));
+    let nonce = nonce_for(&app, &jar).await;
+    let proof = change.sign(&client.vault, &nonce, &body).expect("a proof");
+    let mut revocations = app.sync_events().subscribe_revocations();
+
+    // The client goes away (the request's future is dropped) once the change
+    // is inside its transaction, before it commits.
+    {
+        let request = send_signed(&app, &jar, Method::PUT, PASSWORD_PATH, &nonce, &proof, body);
+        tokio::pin!(request);
+        let entered = tokio::task::spawn_blocking(move || entered_rx.recv());
+        tokio::select! {
+            res = &mut request => panic!("the request ended first: {res:?}"),
+            entered = entered => entered.expect("a thread").expect("the check started"),
+        }
+    }
+    assert!(
+        !app.backup_status().has_request(),
+        "nothing is committed yet"
+    );
+
+    // The change commits on its own, and still announces what it did.
+    support::events::wait_until(Duration::from_secs(5), || app.backup_status().has_request()).await;
+    assert_eq!(app.backup_status().take_request(), Some("unlock_methods"));
+    let revoked = tokio::time::timeout(SECOND, revocations.recv())
+        .await
+        .expect("in time")
+        .expect("a revocation");
+    assert_eq!(revoked, other.sid);
+    let after = snapshot(&app, &client).await;
+    assert_eq!(after.record, change.registration_record);
+    assert_eq!(after.vault_seq, 2);
 }
 
 #[tokio::test]

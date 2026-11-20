@@ -21,9 +21,12 @@
 //!    generation (`409 write_conflict`), then the writes.
 //!
 //! Every other session of the user ends, on both origins (there is no opting
-//! out), and so do the user's pending sign-in codes. This session goes on.
-//! After the commit the ended sessions' streams close, the vault's streams
-//! hear of the new `seq`, and a backup is asked for.
+//! out), and so do the user's pending sign-in codes and every sign-in that is
+//! still half-way. This session goes on, but the admin session handed over
+//! from it ends too (it fails safe). Right after the commit, on the database
+//! thread (so a client that went away cannot stop it), the ended sessions'
+//! streams close, the vault's streams hear of the new `seq`, and a backup is
+//! asked for.
 //!
 //! The answer is `200 {kek_generation, seq}`. Nothing of the request is
 //! logged.
@@ -122,9 +125,17 @@ async fn change_password(
         keep_session: true,
     };
     let vault = facts.vault();
-    let proofs = handles.proofs;
-    let (applied, generation) = handles
-        .db
+    let Handles {
+        proofs,
+        db,
+        events,
+        backup,
+        ..
+    } = handles;
+    // The announcements run on the database thread right after the commit,
+    // so a request whose client went away (its future dropped) still sends
+    // them and asks for the backup.
+    let (applied, generation) = db
         .with_conn(move |conn| {
             let mut generation = 0;
             let applied = unlock_write::apply(conn, &writer, now, |state| {
@@ -133,10 +144,12 @@ async fn change_password(
                 generation = new_generation;
                 Ok(authorized)
             });
+            if let Ok(applied) = &applied {
+                unlock_write::after_commit(applied, &events, &backup, &vault);
+            }
             Ok(applied.map(|applied| (applied, generation)))
         })
         .await??;
-    unlock_write::after_commit(&applied, &handles.events, &handles.backup, &vault);
     Ok(Json(PasswordPutRes {
         kek_generation: generation,
         seq: applied.seq,
@@ -209,6 +222,7 @@ fn authorize(
             },
             manifest,
             session_effect: permit.session_effect,
+            basis: permit.basis,
         },
         kek_generation,
     ))
