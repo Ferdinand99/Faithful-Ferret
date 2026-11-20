@@ -244,7 +244,9 @@ async fn a_signed_change_with_fresh_reauth_replaces_record_wrap_and_manifest_in_
         "the old password does not open the new record"
     );
 
-    // A second change goes on from the first: generation 3, revision 3.
+    // A second change, a minute later, goes on from the first: generation 3,
+    // revision 3.
+    app.clock.advance(60);
     client.took_password(&change, NEW_PASSWORD);
     let again = password_change(&app, &jar, &mut client, "yet another horse battery").await;
     let res = put_password(&app, &jar, &client, &again).await;
@@ -367,7 +369,8 @@ async fn a_generation_not_above_the_stored_is_409_write_conflict() {
     let res = put_password_bytes(&app, &jar, &client, &change, body_bytes(&req)).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     assert_eq!(snapshot(&app, &client).await.wraps[0].2, u32::MAX);
-    // Nothing is above it.
+    // Nothing is above it (a minute later, past the wait between changes).
+    app.clock.advance(60);
     let mut req = password_put_req(&change);
     req.kek_generation = u32::MAX;
     req.manifest.rev = 3;
@@ -470,7 +473,7 @@ async fn a_lower_profile_is_refused() {
 }
 
 #[tokio::test]
-async fn two_concurrent_changes_give_one_winner_and_one_write_conflict() {
+async fn two_concurrent_changes_give_one_winner_and_one_refusal() {
     let (app, mut client, jar, _) = setup(9).await;
     // Two changes made from the same state: both at generation 2 and
     // revision 2.
@@ -508,13 +511,18 @@ async fn two_concurrent_changes_give_one_winner_and_one_write_conflict() {
     );
     let mut statuses = [a.status.as_u16(), b.status.as_u16()];
     statuses.sort_unstable();
-    assert_eq!(statuses, [200, 409], "{a:?} {b:?}");
+    // The second waits for the first's write lock, then finds the change it
+    // made a moment ago: the wait between changes refuses it (`429`) before
+    // its proof is checked. Without the wait it would be a `409
+    // write_conflict` (the revision and the generation moved), which the
+    // tests of the revision and the generation show.
+    assert_eq!(statuses, [200, 429], "{a:?} {b:?}");
     let (winner, loser) = if a.status == StatusCode::OK {
         (&first, &b)
     } else {
         (&second, &a)
     };
-    assert_eq!(error_of(loser), "write_conflict");
+    assert_eq!(error_of(loser), "throttled");
     let after = snapshot(&app, &client).await;
     assert_eq!(after.record, winner.registration_record);
     assert_eq!(after.wraps[0].3, winner.wrap.wrap);
@@ -623,7 +631,8 @@ async fn this_session_survives() {
     let res = vault_get(&app, &jar, "/api/vault/unlock-methods").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     // It is still fresh (a change does not use the re-authentication up),
-    // so the next change needs no new sign-in.
+    // so the next change, a minute later, needs no new sign-in.
+    app.clock.advance(60);
     client.took_password(&change, NEW_PASSWORD);
     let again = password_change(&app, &jar, &mut client, "yet another horse battery").await;
     let res = put_password(&app, &jar, &client, &again).await;
@@ -940,4 +949,44 @@ async fn request_bytes_never_reach_the_log() {
         assert!(!text.contains(&canary), "the log holds {canary:.40}");
     }
     assert!(!text.contains(String::from_utf8_lossy(&body).as_ref()));
+}
+
+#[tokio::test]
+async fn a_second_change_within_a_minute_is_429_and_keeps_its_nonce() {
+    let (app, mut client, jar, _) = setup(20).await;
+    let first = password_change(&app, &jar, &mut client, NEW_PASSWORD).await;
+    let res = put_password(&app, &jar, &client, &first).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    client.took_password(&first, NEW_PASSWORD);
+
+    // One second later, a second change: refused before its proof is
+    // checked, with the seconds left.
+    app.clock.advance(1);
+    app.backup_status().take_request();
+    let before = snapshot(&app, &client).await;
+    let second = password_change(&app, &jar, &mut client, "yet another horse battery").await;
+    let body = body_bytes(&password_put_req(&second));
+    let nonce = nonce_for(&app, &jar).await;
+    let proof = second.sign(&client.vault, &nonce, &body).expect("a proof");
+    let res = send_signed(
+        &app,
+        &jar,
+        Method::PUT,
+        PASSWORD_PATH,
+        &nonce,
+        &proof,
+        body.clone(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.text());
+    assert_eq!(error_of(&res), "throttled");
+    assert_eq!(res.header("retry-after"), "59");
+    nothing_changed(&app, &client, &before).await;
+
+    // A minute after the first, the same request (the same nonce) goes
+    // through: the refusal did not use the nonce up.
+    app.clock.advance(59);
+    let res = send_signed(&app, &jar, Method::PUT, PASSWORD_PATH, &nonce, &proof, body).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json(), json!({"kek_generation": 3, "seq": 3}));
 }

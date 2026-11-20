@@ -14,8 +14,8 @@ use ferret_server::auth::session::{Origin, lookup, revoke, set_parent};
 use ferret_server::error::ApiError;
 use ferret_server::ids::SidHash;
 use ferret_server::vault::unlock_write::{
-    Applied, Authorized, BACKUP_REASON, UnlockChange, Writer, after_commit, apply,
-    is_recovery_public_key,
+    Applied, Authorized, BACKUP_REASON, COOLDOWN_SECS, ChangeKind, UnlockChange, Writer,
+    after_commit, apply, is_recovery_public_key,
 };
 use ferret_server::wire::SealedRowJson;
 use ferret_server_auth::{Clock as _, ScopeEffect, SessionScope, WriteBasis};
@@ -52,6 +52,8 @@ async fn writer(app: &TestApp, client: &Client, sid: SidHash, keep_session: bool
         sid,
         session_version: session_version(app, client.ids.user_id).await,
         keep_session,
+        // `run` sets the kind of the change it is given.
+        kind: ChangeKind::Recovery,
     }
 }
 
@@ -67,6 +69,8 @@ struct Planned {
     /// Added to the epoch of the snapshot the "permit" names: anything but 0
     /// is a permit for another row than the one `apply` read.
     other_epoch: u64,
+    /// The kind the route names, when it is not the change's own.
+    named: Option<ChangeKind>,
 }
 
 /// Runs `apply` on the app's database with an `authorize` that gives
@@ -77,6 +81,10 @@ async fn run(
     writer: Writer,
     planned: Result<Planned, ApiError>,
 ) -> (Result<Applied, ApiError>, bool) {
+    let mut writer = writer;
+    if let Ok(planned) = &planned {
+        writer.kind = planned.named.unwrap_or(planned.change.kind());
+    }
     let ran = Arc::new(AtomicBool::new(false));
     let flag = ran.clone();
     let at = now(app);
@@ -115,6 +123,7 @@ fn authorized(change: UnlockChange, manifest: SealedRowJson) -> Result<Planned, 
         manifest,
         session_effect: ScopeEffect::Keep,
         other_epoch: 0,
+        named: None,
     })
 }
 
@@ -414,6 +423,7 @@ async fn a_recovery_writes_the_record_both_wraps_and_pk_r_and_a_reset_session_en
             manifest: manifest(&client, 2),
             session_effect: ScopeEffect::EndSession,
             other_epoch: 0,
+            named: None,
         }),
     )
     .await;
@@ -488,6 +498,7 @@ async fn a_permit_for_another_row_than_the_one_read_is_refused() {
             manifest: manifest(&client, 2),
             session_effect: ScopeEffect::Keep,
             other_epoch: 1,
+            named: None,
         }),
     )
     .await;
@@ -585,4 +596,97 @@ async fn the_manifest_row_is_the_only_item_written() {
         rows,
         vec![(ItemId::from_bytes([0; 16]).as_bytes().to_vec(), 2, 2)]
     );
+}
+
+#[tokio::test]
+async fn a_new_password_or_recovery_waits_a_minute_after_the_last_change() {
+    let app = TestApp::new().await;
+    let client = client_account(&app, 10).await;
+    let this = client_session(&app, &client, SessionScope::Full, 1).await;
+    let (result, _) = run(
+        &app,
+        writer(&app, &client, this.sid, true).await,
+        authorized(password(2), manifest(&client, 2)),
+    )
+    .await;
+    result.expect("the first change");
+    let before = snapshot(&app, &client).await;
+
+    // A second password change and a recovery, at once and 59 s later: 429
+    // before the proof is checked.
+    for wait in [0, COOLDOWN_SECS - 1] {
+        app.clock
+            .set(app.clock.now_unix() + u64::try_from(wait).unwrap());
+        let recover = UnlockChange::Recover {
+            record: stored_record().record,
+            profile: 1,
+            pw_wrap: vec![0x71; 104],
+            pw_generation: 3,
+            rk_wrap: vec![0x72; 72],
+            rk_generation: 2,
+            pk_r: new_pk_r(&client, "recovered"),
+        };
+        for change in [password(3), recover] {
+            let (result, ran) = run(
+                &app,
+                writer(&app, &client, this.sid, true).await,
+                authorized(change, manifest(&client, 3)),
+            )
+            .await;
+            let refused = result.expect_err("too soon");
+            assert_eq!(refused.code, "throttled");
+            assert!(refused.retry_after.is_some_and(|secs| secs >= 1));
+            assert!(!ran, "the proof is never checked, so its nonce is kept");
+            unchanged(&app, &client, &before).await;
+        }
+    }
+    // A new recovery key does not wait.
+    let (result, _) = run(
+        &app,
+        writer(&app, &client, this.sid, true).await,
+        authorized(
+            UnlockChange::Recovery {
+                wrap: vec![0x66; 72],
+                generation: 2,
+                pk_r: new_pk_r(&client, "renewed"),
+            },
+            manifest(&client, 3),
+        ),
+    )
+    .await;
+    result.expect("a new recovery key");
+
+    // A minute after the last change, a new password goes through.
+    app.clock
+        .set(app.clock.now_unix() + u64::try_from(COOLDOWN_SECS).unwrap());
+    let (result, _) = run(
+        &app,
+        writer(&app, &client, this.sid, true).await,
+        authorized(password(3), manifest(&client, 4)),
+    )
+    .await;
+    assert_eq!(result.expect("after the wait").seq, 4);
+}
+
+#[tokio::test]
+async fn a_change_of_another_kind_than_the_route_named_is_refused() {
+    let app = TestApp::new().await;
+    let client = client_account(&app, 11).await;
+    let this = client_session(&app, &client, SessionScope::Full, 1).await;
+    let before = snapshot(&app, &client).await;
+    let (result, ran) = run(
+        &app,
+        writer(&app, &client, this.sid, true).await,
+        Ok(Planned {
+            change: password(2),
+            manifest: manifest(&client, 2),
+            session_effect: ScopeEffect::Keep,
+            other_epoch: 0,
+            named: Some(ChangeKind::Recovery),
+        }),
+    )
+    .await;
+    assert!(ran);
+    assert_eq!(result.expect_err("refused").code, "internal");
+    unchanged(&app, &client, &before).await;
 }

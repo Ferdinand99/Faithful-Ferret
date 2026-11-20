@@ -34,6 +34,10 @@
 //! master password or a recovery removes every pending login state on the
 //! server, in the same transaction: such a sign-in cannot finish afterwards.
 //! A sign-in of another user that was half-way through has to start again.
+//! So that one account cannot do this over and over, a new master password
+//! or a recovery waits a minute after the last change (`429`). A sign-in that
+//! reads the old record just before the commit and saves its state just after
+//! it is not caught; see `check_cooldown`.
 //!
 //! Nothing else writes these rows. The manifest row is written here with SQL
 //! of its own: the item store refuses the manifest (a change to it needs a
@@ -67,6 +71,12 @@ const TYPE_RECOVERY: u8 = 2;
 /// The reason a backup is asked for after a change of unlock methods.
 pub const BACKUP_REASON: &str = "unlock_methods";
 
+/// How long, in seconds, a new master password or a recovery waits after the
+/// last change of the account's unlock methods (the manifest row's
+/// `changed_at`). It is the lifetime of a half-way sign-in, so one account
+/// can drop the server's pending sign-ins at most once per lifetime.
+pub const COOLDOWN_SECS: i64 = 60;
+
 /// The session that asks for a change, as its extractor read it.
 #[derive(Clone, Copy, Debug)]
 pub struct Writer {
@@ -81,6 +91,31 @@ pub struct Writer {
     /// Whether the session goes on after the change. It still ends when the
     /// permit says so ([`ScopeEffect::EndSession`]).
     pub keep_session: bool,
+    /// The kind of change the route makes. `authorize` must give a change of
+    /// this kind; it is known before the proof is checked, so the cooldown can
+    /// refuse without using up the nonce.
+    pub kind: ChangeKind,
+}
+
+/// The kinds of [`UnlockChange`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// A new master password.
+    Password,
+    /// A new recovery key.
+    Recovery,
+    /// A recovery with the recovery key.
+    Recover,
+}
+
+impl ChangeKind {
+    /// Whether a change of this kind waits [`COOLDOWN_SECS`] after the last
+    /// change of the account's unlock methods: a new master password and a
+    /// recovery do, because each one drops every half-way sign-in on the
+    /// server.
+    pub fn has_cooldown(self) -> bool {
+        matches!(self, ChangeKind::Password | ChangeKind::Recover)
+    }
 }
 
 /// What a change writes, besides the manifest.
@@ -125,6 +160,15 @@ pub enum UnlockChange {
 }
 
 impl UnlockChange {
+    /// The kind of the change.
+    pub fn kind(&self) -> ChangeKind {
+        match self {
+            UnlockChange::Password { .. } => ChangeKind::Password,
+            UnlockChange::Recovery { .. } => ChangeKind::Recovery,
+            UnlockChange::Recover { .. } => ChangeKind::Recover,
+        }
+    }
+
     /// Whether the change ends the user's other sessions: a new master
     /// password and a recovery do (with the user's pending sign-in codes); a
     /// new recovery key does not, since it changes nothing about how the user
@@ -214,6 +258,9 @@ struct StoredAccount {
 ///
 /// Answers, besides those of `authorize`:
 ///
+/// * a new master password or a recovery within [`COOLDOWN_SECS`] of the
+///   last change: `429 throttled`, before `authorize` runs (the nonce is
+///   kept);
 /// * the asking session ended, its user was disabled or signed out
 ///   everywhere, or it has no account any more: `401 unauthorized`, before
 ///   `authorize` runs (the nonce is kept);
@@ -246,6 +293,9 @@ where
         return Err(ApiError::unauthorized());
     }
     let account = read_account(&tx, writer)?.ok_or_else(ApiError::unauthorized)?;
+    if writer.kind.has_cooldown() {
+        check_cooldown(&tx, &account.vault, now)?;
+    }
     let state = AccountAuthState {
         account: SignedAccount {
             account_id: writer.account,
@@ -258,6 +308,10 @@ where
     };
     let authorized = authorize(&state)?;
     check_basis(&authorized.basis, &state.account)?;
+    if authorized.change.kind() != writer.kind {
+        tracing::error!("a route authorized another kind of change than it named");
+        return Err(ApiError::internal());
+    }
 
     check_manifest_envelope(&authorized.manifest.envelope)?;
     let manifest = read_manifest(&tx, &account.vault)?;
@@ -452,6 +506,44 @@ fn check_manifest_envelope(envelope: &[u8]) -> Result<(), ApiError> {
         // which.
         _ => Err(ApiError::coded("unsupported_envelope")),
     }
+}
+
+/// A new master password or a recovery within [`COOLDOWN_SECS`] of the last
+/// change of the account's unlock methods (the manifest row's `changed_at`,
+/// which only this path and account creation write) is `429 throttled`, with
+/// the seconds left as `Retry-After`. It runs before the proof is checked, so
+/// the nonce is kept. A manifest still at its first revision (no change since
+/// the account was made) and a clock that reads before the last change do not
+/// refuse.
+///
+/// Each such change drops every half-way sign-in on the server; without the
+/// wait, one account could keep every other user from signing in.
+///
+/// What it does not close: a sign-in that reads the old record just before
+/// the change commits and saves its login state just after the commit can
+/// still finish with the old password (the delete has run by then). The
+/// proper fix binds the login state to the registration record it was made
+/// from, in the OPAQUE library and the sign-in route, so `finish` refuses a
+/// record that has since been replaced; it follows as a change of its own,
+/// before the recovery route relies on "every sign-in ends".
+fn check_cooldown(tx: &Transaction<'_>, vault: &VaultId, now: i64) -> Result<(), ApiError> {
+    let row: Option<(i64, i64)> = tx
+        .query_row(
+            "SELECT rev, changed_at FROM ferret_items WHERE vault_id = ?1 AND item_id = ?2",
+            params![vault.as_bytes(), MANIFEST_ITEM_ID.as_bytes()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql)?;
+    let changed_at = row.filter(|(rev, _)| *rev > 1).map(|(_, at)| at);
+    let Some(age) = changed_at.and_then(|at| now.checked_sub(at)) else {
+        return Ok(());
+    };
+    if (0..COOLDOWN_SECS).contains(&age) {
+        let left = COOLDOWN_SECS.checked_sub(age).unwrap_or(COOLDOWN_SECS);
+        return Err(ApiError::throttled(u32::try_from(left).unwrap_or(u32::MAX)));
+    }
+    Ok(())
 }
 
 /// A generation goes only up: the new one must be strictly above the stored

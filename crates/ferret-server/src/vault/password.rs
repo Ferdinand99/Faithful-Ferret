@@ -12,7 +12,8 @@
 //! 3. the nonce and the proof headers and the raw body (`400` for a header
 //!    of the wrong shape, which burns no nonce);
 //! 4. inside the write transaction, against the account as it is read there:
-//!    the library uses up the nonce, checks the proof of
+//!    no other new password or recovery of the account in the last minute
+//!    (`429 throttled`, before the nonce is used up); then the library uses up the nonce, checks the proof of
 //!    `unlock-method.password.put` by `sk_a` over the exact body (`401
 //!    denied` otherwise, and the nonce is gone), and only then is the body
 //!    read; the record must be well formed and its profile not below the
@@ -44,7 +45,7 @@ use axum::{Json, Router};
 use ferret_server_auth::{AuthError, Clock, Malformed, ReplaceFields};
 
 use super::notify::SyncEvents;
-use super::unlock_write::{self, Authorized, UnlockChange, Writer};
+use super::unlock_write::{self, Authorized, ChangeKind, UnlockChange, Writer};
 use crate::auth::throttle::caller_from;
 use crate::error::ApiError;
 use crate::http::extract::{FreshReauth, ScopedSession, SessionAuth, SignedBody, caps};
@@ -123,6 +124,7 @@ async fn change_password(
         sid: facts.sid(),
         session_version: facts.session_version(),
         keep_session: true,
+        kind: ChangeKind::Password,
     };
     let vault = facts.vault();
     let Handles {
