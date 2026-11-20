@@ -205,6 +205,26 @@ export function checkpointBody(checkpoint, restoreEpoch = null) {
 }
 
 /**
+ * The entries of a checkpoint by item id: the revision and the hash of the envelope (null for a tombstone). Null when the entries cannot
+ * be read. The MAC and the digest have been accepted by the core before this is asked.
+ * @param {Uint8Array} entries
+ * @returns {Map<string, { rev: number, hash: Uint8Array | null }> | null}
+ */
+export function entryMap(entries) {
+  if (entries.length % ENTRY_LEN !== 0) return null;
+  /** @type {Map<string, { rev: number, hash: Uint8Array | null }>} */
+  const listed = new Map();
+  const view = new DataView(entries.buffer, entries.byteOffset, entries.byteLength);
+  for (let at = 0; at < entries.length; at += ENTRY_LEN) {
+    const id = hex16.encode(entries.subarray(at, at + 16));
+    const rev = Number(view.getBigUint64(at + 16));
+    const hash = entries.subarray(at + 24, at + ENTRY_LEN);
+    listed.set(id, { rev, hash: hash.every((n) => n === 0) ? null : hash });
+  }
+  return listed;
+}
+
+/**
  * The ids a checkpoint does not agree with, read from its entries against the rows
  * of this device, with the core's rules for an entry and a row (no new crypto: the
  * MAC and the digest have been accepted by the core before this is asked, and the
@@ -219,16 +239,8 @@ export function checkpointBody(checkpoint, restoreEpoch = null) {
  * @returns {Promise<Set<string> | null>}
  */
 export async function failingIds(entries, rows, atTop) {
-  if (entries.length % ENTRY_LEN !== 0) return null;
-  /** @type {Map<string, { rev: number, hash: Uint8Array | null }>} */
-  const listed = new Map();
-  const view = new DataView(entries.buffer, entries.byteOffset, entries.byteLength);
-  for (let at = 0; at < entries.length; at += ENTRY_LEN) {
-    const id = hex16.encode(entries.subarray(at, at + 16));
-    const rev = Number(view.getBigUint64(at + 16));
-    const hash = entries.subarray(at + 24, at + ENTRY_LEN);
-    listed.set(id, { rev, hash: hash.every((n) => n === 0) ? null : hash });
-  }
+  const listed = entryMap(entries);
+  if (listed === null) return null;
   /** @param {CachedRow} row */
   const hashOf = async (row) => (row.deleted ? null : await sha256(/** @type {Uint8Array} */ (row.envelope)));
   /** @param {Uint8Array | null} a @param {Uint8Array | null} b */
