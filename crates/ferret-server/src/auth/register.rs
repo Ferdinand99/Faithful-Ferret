@@ -47,6 +47,30 @@
 //!    registrations that were still waiting are removed in the same
 //!    transaction: no further registration is possible, and the rows hold login
 //!    names.
+//!
+//! # `reregister/start`
+//!
+//! `POST /api/auth/opaque/reregister/start` is the first step of a new OPAQUE
+//! registration inside a session: a change of the master password, or a
+//! recovery. Its second step is not a route of its own: the new record goes
+//! up in the signed request that replaces the old one (`PUT
+//! /api/vault/unlock-methods/password`, `POST /api/vault/recover`), where the
+//! OPAQUE library checks it.
+//!
+//! 1. A vault session whose scope allows `OpaqueRegisterStart`, a full session
+//!    or a reset session (`401` without one, `403` for another scope), before
+//!    the body is read.
+//! 2. The body is `{registration_request}`: 32 bytes.
+//! 3. `ferret_server_auth::register_start` with
+//!    `RegistrationAuthority::Session`: the credential is the session's own
+//!    account, taken from the session and never from the request, so a
+//!    session never gets an answer under another account's key. The library
+//!    asks the throttle (`RegisterStart`, per address) before any other work.
+//!
+//! Nothing is stored: the answer follows from the server's keys, the account
+//! and the request alone.
+//!
+//! Spec: Fase 1 § 4.2 ("Registrering"), § 4.3 (changing MP) and § 6.3 step 1.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -55,7 +79,9 @@ use std::sync::LazyLock;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRef, FromRequest, Request, State};
+use axum::extract::{
+    ConnectInfo, DefaultBodyLimit, FromRef, FromRequest, FromRequestParts as _, Request, State,
+};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::IntoResponse as _;
@@ -84,13 +110,14 @@ use vole_kit::db::{settings, users};
 use crate::auth::session::{Origin, insert_session, new_session, session_cookies};
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
+use crate::http::extract::{ScopedSession, caps};
 use crate::http::proxy_guard::request_is_https;
 use crate::ids::{AccountId, DeviceId, MANIFEST_ITEM_ID, MethodId, SessionSecret, VaultId};
 use crate::state::FerretState;
 use crate::vault::store::{CheckpointIn, ManifestIn, MethodRow, NewAccountRows, create_account};
 use crate::wire::{
-    RegisterFinishReq, RegisterFinishRes, RegisterStartReq, RegisterStartRes, WrapJson,
-    refusal_code,
+    RegisterFinishReq, RegisterFinishRes, RegisterStartReq, RegisterStartRes, ReregisterStartReq,
+    ReregisterStartRes, WrapJson, refusal_code,
 };
 
 /// How long a registration waits for its second step, in seconds. It is valid
@@ -150,6 +177,7 @@ where
             "/api/auth/opaque/register/finish",
             post(register_finish_step),
         )
+        .route("/api/auth/opaque/reregister/start", post(reregister_start))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
 }
 
@@ -731,5 +759,53 @@ async fn register_finish_step(
                 vault_id: ids.1,
             }),
         ),
+    ))
+}
+
+// -------------------------------------------------------------- reregister
+
+/// The answer to `reregister/start`: `no-store`.
+type ReregisterAnswer = ([(HeaderName, HeaderValue); 1], Json<ReregisterStartRes>);
+
+/// `POST /api/auth/opaque/reregister/start`: the first step of a new
+/// registration in a session, for the session's own account only.
+async fn reregister_start(
+    State(state): State<FerretState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+) -> Result<ReregisterAnswer, ApiError> {
+    // The session comes before the body: a request without one is refused
+    // for that, whatever its body is.
+    let (mut parts, body) = request.into_parts();
+    let scoped =
+        ScopedSession::<caps::OpaqueRegisterStart>::from_request_parts(&mut parts, &state).await?;
+    let caller = caller_from(&parts.headers, Some(peer));
+    let request = Request::from_parts(parts, body);
+    let ApiJson(req) = ApiJson::<ReregisterStartReq>::from_request(request, &state).await?;
+    let (now, _) = now_of(&state)?;
+
+    // The credential is the session's account, in both places the library
+    // compares: the authority and the id the answer is made under.
+    let account = CredentialId::from(&scoped.session().account());
+    let response = library_register_start(
+        &state.secrets.keys,
+        state.throttle.as_ref(),
+        now,
+        &RegisterStartRequest {
+            caller,
+            authority: RegistrationAuthority::Session {
+                scope: scoped.scope(),
+                account,
+            },
+            credential: account,
+            request: &req.registration_request,
+        },
+    )
+    .map_err(auth_error)?;
+    Ok((
+        [(CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(ReregisterStartRes {
+            registration_response: response,
+        }),
     ))
 }
