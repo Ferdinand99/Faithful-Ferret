@@ -7,7 +7,8 @@
 // reverse. What goes: the pinned record, the sync state, the cached rows, the
 // queued writes, the trash, the sync flags in the settings (`sync.flags.<account>.…`),
 // the note about an accepted restore (`restore.note.<server>.<account>`, one per
-// server, so it goes even when the other records are shared) and the device
+// server, so it goes even when the other records are shared), the date of the last
+// export (`export.reminder.<server>.<account>`, likewise) and the device
 // secrets. What stays: this browser's device id, and everything
 // that belongs to another account or another server.
 //
@@ -22,6 +23,7 @@
 // Callers run `forgetServer` inside the Web Lock `ferret-sync-memory:<server>:<account>`,
 // like every other write of the sync state, so no tab is saving it meanwhile.
 import { hex16 } from "../b64.mjs";
+import { exportReminderKey } from "./exportReminder.mjs";
 import { req, run, serverKey } from "./idb.mjs";
 import { restoreNoteKey } from "./restoreNote.mjs";
 
@@ -51,6 +53,7 @@ export async function forgetServer(store, serverUrl, accountId) {
   const flags = `sync.flags.${accountId}.`;
   const ofFlags = store.keyRange.bound(flags, `${flags}\uffff`);
   const noteKey = restoreNoteKey(serverUrl, accountId);
+  const reminderKey = exportReminderKey(serverUrl, accountId);
 
   return run(store, FORGET_STORES, "readwrite", async ([pinned, syncState, rows, outbox, trash, settings, secrets]) => {
     /** @type {Record<string, number>} */
@@ -84,6 +87,11 @@ export async function forgetServer(store, serverUrl, accountId) {
     // The restore note belongs to this server alone, shared account or not.
     if ((await req(settings.getKey(noteKey))) !== undefined) {
       await req(settings.delete(noteKey));
+      removed.settings += 1;
+    }
+    // So does the date of the last export (it drives the reminder to take another): it is about this server's vault.
+    if ((await req(settings.getKey(reminderKey))) !== undefined) {
+      await req(settings.delete(reminderKey));
       removed.settings += 1;
     }
     // The outbox is keyed by a counter; its entries of the account are found by the scope index.
