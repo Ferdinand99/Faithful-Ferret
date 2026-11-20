@@ -297,22 +297,28 @@ function isRecordOf(row, publicJwk) {
  * the token has the wrong form; then nothing changes. With `publicJwk`, the
  * stored record must be that key's (`device_key_missing` otherwise), so a
  * renewal of a replaced device never writes into the newer device's record.
+ * With `replaces`, the token is written only while the stored one is still
+ * exactly `replaces` (compare and swap in the same transaction): a renewal
+ * whose answer comes after another context has moved the record on leaves
+ * the newer token in place.
  * @param {import("../store/idb.mjs").Store} store
  * @param {string} serverUrl
  * @param {string} refreshToken
- * @param {{ publicJwk?: PublicJwk }} [options]
- * @returns {Promise<void>}
+ * @param {{ publicJwk?: PublicJwk, replaces?: string }} [options]
+ * @returns {Promise<boolean>} whether the token was written
  */
-export async function saveRefreshToken(store, serverUrl, refreshToken, { publicJwk } = {}) {
+export async function saveRefreshToken(store, serverUrl, refreshToken, { publicJwk, replaces } = {}) {
   const server = serverKey(serverUrl);
   if (!isToken(refreshToken)) throw new StoreError("device_key_malformed", "refreshToken is a token");
-  await run(store, ["device_keys"], "readwrite", async ([table]) => {
+  return run(store, ["device_keys"], "readwrite", async ([table]) => {
     const row = await req(table.get(server));
     if (row === undefined || (publicJwk !== undefined && !isRecordOf(row, publicJwk))) {
       throw new StoreError("device_key_missing", "there is no device key of this key for this server");
     }
     const record = checkRecord(row);
+    if (replaces !== undefined && record.refreshToken !== replaces) return false;
     await req(table.put({ ...record, refreshToken }));
+    return true;
   });
 }
 

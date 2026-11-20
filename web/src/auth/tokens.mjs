@@ -9,14 +9,21 @@
 // localStorage, sessionStorage, the console or an error.
 //
 // The rules:
-// - One renewal at a time. The new refresh token is written to the record
-//   before the new access token is used, so a renewal whose answer is lost is
-//   sent again with the same refresh token (the server's grace gives the same
-//   successor for 60 seconds).
+// - One renewal at a time, across every context that shares the record (the
+//   pages and workers of an extension or of an origin): each renewal holds an
+//   exclusive Web Lock named after the server and reads the stored refresh
+//   token inside it, so it always sends the newest one. The new refresh token
+//   is written to the record before the new access token is used, and only
+//   while the stored token is still the one that was sent (compare and swap in
+//   one transaction), so a late answer never rolls the record back to a used
+//   token, also in an engine without Web Locks. A renewal whose answer is lost
+//   is sent again with the same refresh token (the server's grace gives the
+//   same successor for 60 seconds).
 // - `device_revoked` and `token_reused` are final: the tokens are forgotten and
 //   the state is "revoked". `token_expired` on the renewal itself means the
-//   refresh token is dead too: the tokens are forgotten and the state is
-//   "signed_out" (the master password signs the device in again).
+//   refresh token is dead too: the device is signed out at the server when it
+//   can be (so it leaves the device quota), the tokens are forgotten and the
+//   state is "signed_out" (the master password signs the device in again).
 // - The clock follows the server only from a `401 dpop_invalid` answer of the
 //   server itself (not redirected, `no-store`): once per refused request, then
 //   the request is sent once more with a new proof.
@@ -35,6 +42,13 @@ export const REVOKE_PATH = "/api/auth/token/revoke";
 
 /** The codes after which a device's tokens are never used again. */
 const FINAL_CODES = Object.freeze(["device_revoked", "token_reused"]);
+
+/**
+ * The name of the Web Lock that a renewal of a server's tokens holds, in every
+ * context of the origin.
+ * @param {string} serverUrl
+ */
+export const renewLockName = (serverUrl) => `ferret-device-renew ${serverKey(serverUrl)}`;
 
 /** The `no-store` directive in a `Cache-Control` header. */
 const NO_STORE = /(^|,)\s*no-store\s*(,|$)/i;
@@ -84,9 +98,19 @@ function originOf(url) {
  * @param {import("./dpop.mjs").Clock} options.clock the server's clock
  * @param {typeof fetch} [options.fetchImpl]
  * @param {Pick<Crypto, "getRandomValues">} [options.rand] the source of the proofs' `jti`
+ * @param {Pick<LockManager, "request"> | null} [options.locks] the Web Locks of the origin (`navigator.locks`); without
+ *   them, renewals are one at a time in this context only, and the compare and swap of the record keeps it right
  * @returns {TokenAuth}
  */
-export function createTokenAuth({ serverUrl, store, key, clock, fetchImpl = fetch, rand = crypto }) {
+export function createTokenAuth({
+  serverUrl,
+  store,
+  key,
+  clock,
+  fetchImpl = fetch,
+  rand = crypto,
+  locks = globalThis.navigator?.locks ?? null,
+}) {
   const server = serverKey(serverUrl);
   if (key === null || typeof key !== "object" || key.serverUrl !== server) throw new TypeError("the device key is this server's");
   if (clock === null || typeof clock !== "object" || typeof clock.resync !== "function") throw new TypeError("the tokens need the server's clock");
@@ -131,7 +155,7 @@ export function createTokenAuth({ serverUrl, store, key, clock, fetchImpl = fetc
   function observe(response) {
     if (response === null || typeof response !== "object" || response.status !== 401) return;
     if (response.redirected || response.type === "opaqueredirect") return;
-    if (response.url !== "" && originOf(response.url) !== server) return;
+    if (originOf(response.url) !== server) return;
     if (!NO_STORE.test(response.headers.get("cache-control") ?? "")) return;
     clock.resync(response.headers.get("date"));
   }
@@ -165,7 +189,8 @@ export function createTokenAuth({ serverUrl, store, key, clock, fetchImpl = fetc
       record = await loadDeviceKey(store, server);
     } catch (error) {
       if (!(error instanceof StoreError) || error.code !== "device_key_malformed") throw error;
-      await deleteDeviceKey(store, server);
+      // Removed only when it is this key's: a record this code cannot read may be another key's.
+      await deleteDeviceKey(store, server, { publicJwk: key.publicJwk });
       return null;
     }
     return record !== null && sameKey(record.publicJwk, key.publicJwk) ? record : null;
@@ -178,21 +203,30 @@ export function createTokenAuth({ serverUrl, store, key, clock, fetchImpl = fetc
       await end("signed_out", at);
       throw withoutTokens();
     }
+    const sent = record.refreshToken;
     /** @type {{ access_token: string, refresh_token: string }} */
     let answer;
     try {
-      answer = await proofOnly(key).post(REFRESH_PATH, { refresh_token: record.refreshToken }, { shape: "token_res" });
+      answer = await proofOnly(key).post(REFRESH_PATH, { refresh_token: sent }, { shape: "token_res" });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        if (error.code === "token_expired") await end("signed_out", at);
-        else if (FINAL_CODES.includes(error.code)) await end("revoked", at);
+        if (error.code === "token_expired") {
+          // The server may still count the device (a token it lost in a restart): sign it out with the same token, so it
+          // leaves the device quota. Best effort; the answer is 204 whatever the server knows.
+          await proofOnly(key).post(REVOKE_PATH, { refresh_token: sent }).catch(() => {});
+          await end("signed_out", at);
+        } else if (FINAL_CODES.includes(error.code)) {
+          await end("revoked", at);
+        }
       }
       throw error;
     }
     if (epoch !== at) throw withoutTokens();
-    // The new refresh token is in the record before the new access token is used.
+    // The new refresh token is in the record before the new access token is used, and only in place of the token that
+    // was sent: when another context has moved the record on already, its newer token stays (the new access token is
+    // valid all the same).
     try {
-      await saveRefreshToken(store, server, answer.refresh_token, { publicJwk: key.publicJwk });
+      await saveRefreshToken(store, server, answer.refresh_token, { publicJwk: key.publicJwk, replaces: sent });
     } catch (error) {
       if (error instanceof StoreError && error.code === "device_key_missing") await end("signed_out", at);
       throw error;
@@ -206,7 +240,12 @@ export function createTokenAuth({ serverUrl, store, key, clock, fetchImpl = fetc
     if (state !== "ok") throw withoutTokens();
     if (used !== null && access !== null && used.Authorization !== `DPoP ${access}`) return;
     if (renewing === null) {
-      renewing = renew().finally(() => {
+      // Inside the lock the record is read afresh, so a context that waited sends the token the one before it stored.
+      const once =
+        locks === null
+          ? renew()
+          : /** @type {Promise<void>} */ (locks.request(renewLockName(server), { mode: "exclusive" }, () => renew()));
+      renewing = once.finally(() => {
         renewing = null;
       });
     }

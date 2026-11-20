@@ -96,7 +96,10 @@ export function fakeServer() {
         body: typeof init.body === "string" ? JSON.parse(init.body) : init.body,
       };
       calls.push(call);
-      return server.handle(call);
+      const response = await server.handle(call);
+      // A real answer carries the URL it came from; a constructed Response has "".
+      Object.defineProperty(response, "url", { value: call.url });
+      return response;
     },
     /** The calls to one path. */
     to: (/** @type {string} */ path) => calls.filter((call) => call.path === path),
@@ -105,18 +108,40 @@ export function fakeServer() {
 }
 
 /**
+ * Web Locks shared by the contexts of one test: one exclusive lock per name,
+ * granted in the order asked. `names` lists every name asked for.
+ */
+export function fakeLocks() {
+  /** @type {Map<string, Promise<unknown>>} */
+  const tails = new Map();
+  /** @type {string[]} */
+  const names = [];
+  return {
+    names,
+    /** @type {(name: string, options: object, callback: (lock: null) => Promise<unknown>) => Promise<any>} */
+    request(name, options, callback) {
+      assert.deepEqual(options, { mode: "exclusive" });
+      names.push(name);
+      const held = (tails.get(name) ?? Promise.resolve()).then(() => callback(null));
+      tails.set(name, held.catch(() => {}));
+      return held;
+    },
+  };
+}
+
+/**
  * A device signed in to a fake server: the sign-in answer gave it the access
  * token `tok(1)` and the refresh token `tok(2)`.
- * @param {{ now?: () => number }} [options] the local clock in milliseconds
+ * @param {{ now?: () => number, locks?: any }} [options] the local clock in milliseconds, and the Web Locks
  */
-export async function signedInDevice({ now = () => LOCAL_MS } = {}) {
+export async function signedInDevice({ now = () => LOCAL_MS, locks = fakeLocks() } = {}) {
   const db = await freshStore();
   const clock = createClock({ now });
   const key = await generateDeviceKey(SERVER);
   const server = fakeServer();
-  const auth = createTokenAuth({ serverUrl: SERVER, store: db.store, key, clock, fetchImpl: server.fetchImpl });
+  const auth = createTokenAuth({ serverUrl: SERVER, store: db.store, key, clock, fetchImpl: server.fetchImpl, locks });
   await auth.accept(loginRes());
   assert.equal(server.calls.length, 0, "a first sign-in on a server has no older device to sign out");
   const api = createApi({ base: SERVER, fetchImpl: server.fetchImpl, auth });
-  return { db, clock, key, server, auth, api };
+  return { db, clock, key, server, auth, api, locks };
 }

@@ -4,12 +4,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError, createApi } from "../../src/api.mjs";
-import { generateDeviceKey, loadDeviceKey, saveDeviceKey } from "../../src/auth/deviceKey.mjs";
+import { generateDeviceKey, loadDeviceKey, saveDeviceKey, saveRefreshToken } from "../../src/auth/deviceKey.mjs";
 import { createClock } from "../../src/auth/dpop.mjs";
-import { createTokenAuth, REFRESH_PATH, REVOKE_PATH } from "../../src/auth/tokens.mjs";
+import { createTokenAuth, REFRESH_PATH, renewLockName, REVOKE_PATH } from "../../src/auth/tokens.mjs";
+import { req, run } from "../../src/store/idb.mjs";
 import { freshStore } from "./idbHelpers.mjs";
 import {
-  ACCOUNT, answer, claimsOf, DEVICE, fakeServer, headerOf, LOCAL_MS, loginRes, refusal, SERVER, signedInDevice, tok, tokenRes,
+  ACCOUNT, answer, claimsOf, DEVICE, fakeServer, headerOf, LOCAL_MS, loginRes, refusal, SERVER, signedInDevice, tok,
+  tokenRes,
   verifies,
 } from "./tokenHelpers.mjs";
 
@@ -159,13 +161,29 @@ test("device_revoked_and_token_reused_are_terminal_and_clear_the_tokens", async 
 });
 
 test("token_expired_on_refresh_signs_out", async () => {
-  const { db, server, auth, api } = await signedInDevice();
-  server.handle = () => refusal("token_expired");
+  const { db, key, server, auth, api } = await signedInDevice();
+  server.handle = (call) => (call.path === REVOKE_PATH ? answer(204, null) : refusal("token_expired"));
   const error = await failure(api.get(CHANGES));
   assert.equal(error.code, "token_expired");
   assert.equal(auth.state, "signed_out");
   assert.equal(await loadDeviceKey(db.store, SERVER), null);
-  assert.deepEqual(server.calls.map((c) => c.path), [CHANGES, REFRESH_PATH], "one renewal, no second one");
+  assert.deepEqual(server.calls.map((c) => c.path), [CHANGES, REFRESH_PATH, REVOKE_PATH], "one renewal, no second one");
+  // The server may still count the device: it is signed out with the same token before the token is forgotten.
+  const [, renewal, signOut] = server.calls;
+  assert.deepEqual(signOut.body, { refresh_token: tok(2) });
+  assert.deepEqual(signOut.body, renewal.body);
+  assert.equal(signOut.headers.Authorization, undefined);
+  assert.equal(await verifies(signOut.headers.DPoP, key.publicJwk), true);
+
+  // The sign-out is best effort: when it fails, the device is signed out here all the same.
+  const offline = await signedInDevice();
+  offline.server.handle = (call) => {
+    if (call.path === REVOKE_PATH) throw new TypeError("offline");
+    return refusal("token_expired");
+  };
+  assert.equal((await failure(offline.api.get(CHANGES))).code, "token_expired");
+  assert.equal(offline.auth.state, "signed_out");
+  assert.equal(offline.server.to(REVOKE_PATH).length, 1);
 
   const sent = server.calls.length;
   assert.equal((await failure(api.get(CHANGES))).code, "signed_out");
@@ -311,16 +329,19 @@ test("the_clock_follows_only_a_401_answer_of_the_server_itself", async () => {
     for (const [name, value] of Object.entries(props)) Object.defineProperty(response, name, { value });
     return response;
   };
+  const own = { url: `${SERVER}/api/sync/changes` };
   const before = clock.nowSeconds();
   const ignored = [
-    answer(200, {}, { date: at(100) }),
-    answer(204, null, { date: at(100) }),
-    answer(400, { error: "bad_request" }, { date: at(100) }),
-    refusal("dpop_invalid", { date: at(100), headers: { "cache-control": "max-age=60" } }),
-    refusal("dpop_invalid", { date: at(100), headers: { "cache-control": "no-cache" } }),
-    shifted(refusal("dpop_invalid", { date: at(100) }), { redirected: true }),
+    shifted(answer(200, {}, { date: at(100) }), own),
+    shifted(answer(204, null, { date: at(100) }), own),
+    shifted(answer(400, { error: "bad_request" }, { date: at(100) }), own),
+    shifted(refusal("dpop_invalid", { date: at(100), headers: { "cache-control": "max-age=60" } }), own),
+    shifted(refusal("dpop_invalid", { date: at(100), headers: { "cache-control": "no-cache" } }), own),
+    shifted(refusal("dpop_invalid", { date: at(100) }), { ...own, redirected: true }),
     shifted(refusal("dpop_invalid", { date: at(100) }), { url: "https://proxy.example/api/sync/changes" }),
-    shifted(refusal("dpop_invalid", { date: at(100) }), { type: "opaqueredirect" }),
+    shifted(refusal("dpop_invalid", { date: at(100) }), { ...own, type: "opaqueredirect" }),
+    // A constructed answer with no URL (a service worker, a wrapping fetch) is not the server's own.
+    refusal("dpop_invalid", { date: at(100) }),
   ];
   for (const response of ignored) {
     auth.observe(response);
@@ -328,9 +349,9 @@ test("the_clock_follows_only_a_401_answer_of_the_server_itself", async () => {
   }
   assert.deepEqual(offsets, ignored.map(() => 0));
 
-  auth.observe(shifted(refusal("dpop_invalid", { date: at(100) }), { url: `${SERVER}/api/sync/changes` }));
+  auth.observe(shifted(refusal("dpop_invalid", { date: at(100) }), own));
   assert.equal(clock.nowSeconds() - before, 100);
-  auth.observe(refusal("dpop_invalid", { date: at(-30), headers: { "cache-control": "private, no-store" } }));
+  auth.observe(shifted(refusal("dpop_invalid", { date: at(-30), headers: { "cache-control": "private, no-store" } }), own));
   assert.equal(clock.nowSeconds() - before, -30, "each 401 of the server resyncs");
 });
 
@@ -349,4 +370,150 @@ test("the_token_auth_shows_no_token", async () => {
   assert.equal(JSON.stringify(auth), '{"state":"ok"}');
   assert.ok(Object.isFrozen(auth));
   for (const name of Object.keys(auth)) assert.ok(!String(Reflect.get(auth, name)).includes(tok(1)));
+});
+
+/**
+ * A server that rotates refresh tokens the way the real one does: the token
+ * sent must be the newest; the one before it gets the same successor while
+ * that successor is unused (the grace store holds one entry per key); any
+ * other used token is reuse, and reuse revokes the device for good.
+ */
+function rotatingServer(server, first = tok(2)) {
+  let next = 20;
+  const model = {
+    newest: first,
+    /** @type {Map<string, string>} the successor of each used token */
+    successors: new Map(),
+    /** @type {{ old: string, successor: string } | null} */
+    grace: null,
+    revoked: false,
+    /** @type {Array<{ sent: string, newest: string }>} */
+    renewals: [],
+  };
+  server.handle = async (call) => {
+    if (call.path === REVOKE_PATH) return answer(204, null);
+    if (call.path !== REFRESH_PATH) return answer(200, changes);
+    // Let the other contexts run between the request and the answer.
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const sent = call.body.refresh_token;
+    model.renewals.push({ sent, newest: model.newest });
+    if (model.revoked) return refusal("device_revoked");
+    const access = tok(next++);
+    if (sent === model.newest) {
+      const successor = tok(next++);
+      model.successors.set(sent, successor);
+      model.grace = { old: sent, successor };
+      model.newest = successor;
+      return answer(200, tokenRes(access, successor));
+    }
+    if (model.grace?.old === sent && model.grace.successor === model.newest) {
+      return answer(200, tokenRes(access, model.grace.successor));
+    }
+    if (model.successors.has(sent)) {
+      model.revoked = true;
+      return refusal("token_reused");
+    }
+    return refusal("token_expired");
+  };
+  return model;
+}
+
+test("contexts_renewing_at_once_never_send_a_superseded_token", async () => {
+  const { db, clock, server, locks } = await signedInDevice();
+  const model = rotatingServer(server);
+  const loaded = await loadDeviceKey(db.store, SERVER);
+  assert.ok(loaded);
+  // Four contexts of one origin (background, popup, options, a worker) start together: none has an access token.
+  const contexts = [0, 1, 2, 3].map(() =>
+    createTokenAuth({ serverUrl: SERVER, store: db.store, key: loaded, clock, fetchImpl: server.fetchImpl, locks }),
+  );
+  const headers = await Promise.all(contexts.map((auth) => auth.prepare("GET", `${SERVER}${CHANGES}`)));
+
+  assert.equal(model.renewals.length, 4);
+  for (const { sent, newest } of model.renewals) assert.equal(sent, newest, "every renewal sends the newest token");
+  assert.equal(model.revoked, false);
+  assert.ok(contexts.every((auth) => auth.state === "ok"));
+  assert.equal(new Set(headers.map((h) => h.Authorization)).size, 4, "each context has its own access token");
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, model.newest);
+  assert.ok(locks.names.length >= 4);
+  assert.ok(locks.names.every((name) => name === renewLockName(SERVER)));
+  assert.equal(renewLockName(`${SERVER}/some/path`), "ferret-device-renew https://vault.example");
+
+  // Each context renews again later (its access token expired): still no superseded token, no reuse.
+  for (const auth of contexts) await auth.refresh();
+  for (const { sent, newest } of model.renewals) assert.equal(sent, newest);
+  assert.equal(model.revoked, false);
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, model.newest);
+});
+
+test("a_late_save_never_overwrites_a_newer_token", async () => {
+  // No Web Locks: each context renews on its own, and only the compare and swap of the record keeps it right.
+  const { db, clock, key, server } = await signedInDevice({ locks: null });
+  const model = rotatingServer(server);
+  const [a, b, c] = [0, 1, 2].map(() =>
+    createTokenAuth({ serverUrl: SERVER, store: db.store, key: { ...key, refreshToken: tok(2) }, clock, fetchImpl: server.fetchImpl, locks: null }),
+  );
+  // A's answer is held back until B and C have both renewed and saved.
+  /** @type {() => void} */
+  let releaseA = () => {};
+  const heldA = new Promise((resolve) => {
+    releaseA = () => resolve(undefined);
+  });
+  const handle = server.handle;
+  let first = true;
+  server.handle = async (call) => {
+    const response = await handle(call);
+    if (first && call.path === REFRESH_PATH) {
+      first = false;
+      await heldA;
+    }
+    return response;
+  };
+  const renewA = a.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await b.refresh(); // R1 again, inside grace: the same successor R2, saved
+  await c.refresh(); // R2 → R3, saved
+  const newest = model.newest;
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, newest);
+  releaseA();
+  await renewA; // A's answer (R2) comes last
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, newest, "the late answer does not roll the record back");
+  assert.equal(a.state, "ok", "the late context keeps its valid access token");
+
+  // The next renewal of any context sends the newest token: no reuse.
+  await a.refresh();
+  assert.equal(model.revoked, false);
+  assert.equal(model.renewals.at(-1)?.sent, newest);
+
+  // The compare and swap itself.
+  const stored = /** @type {string} */ ((await loadDeviceKey(db.store, SERVER))?.refreshToken);
+  assert.equal(await saveRefreshToken(db.store, SERVER, tok(99), { publicJwk: key.publicJwk, replaces: tok(98) }), false);
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, stored);
+  assert.equal(await saveRefreshToken(db.store, SERVER, tok(99), { publicJwk: key.publicJwk, replaces: stored }), true);
+  assert.equal((await loadDeviceKey(db.store, SERVER))?.refreshToken, tok(99));
+});
+
+test("a_damaged_record_is_removed_only_when_it_is_this_keys", async () => {
+  const { db, key, server, auth } = await signedInDevice();
+  const other = await generateDeviceKey(SERVER);
+  const put = (row) => run(db.store, ["device_keys"], "readwrite", ([table]) => req(table.put(row)));
+  const raw = () => run(db.store, ["device_keys"], "readonly", ([table]) => req(table.get(SERVER)));
+  server.handle = () => assert.fail("nothing is sent for a record that cannot be read");
+
+  // Another key's record that this code cannot read (a newer client version wrote it): left alone.
+  await put({ serverUrl: SERVER, privateKey: other.privateKey, publicJwk: other.publicJwk, deviceId: DEVICE, accountId: ACCOUNT, refreshToken: "newer form" });
+  assert.equal((await failure(auth.refresh())).code, "signed_out");
+  assert.equal(auth.state, "signed_out");
+  assert.equal((await raw())?.refreshToken, "newer form");
+
+  // This key's damaged record: removed.
+  const mine = await signedInDevice();
+  mine.server.handle = server.handle;
+  await run(mine.db.store, ["device_keys"], "readwrite", async ([table]) => {
+    const row = await req(table.get(SERVER));
+    await req(table.put({ ...row, refreshToken: "damaged" }));
+  });
+  assert.equal((await failure(mine.auth.refresh())).code, "signed_out");
+  assert.equal(await run(mine.db.store, ["device_keys"], "readonly", ([table]) => req(table.get(SERVER))), undefined);
+  assert.notDeepEqual(key.publicJwk, other.publicJwk);
 });
