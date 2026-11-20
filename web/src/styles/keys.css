@@ -1,0 +1,58 @@
+/* The key pages of the account: a new recovery key (with the emergency sheet's page 2 inside),
+   the secret key shown again, and page 1 of the sheet again. Colours and components come from
+   base.css; the sheet itself is styled by sheet.css. */
+
+.keys-page > h2,
+.keys-reapply > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+/* The new page 2 sits in the page as the sheet's own card; the page gives it room. */
+.keys-sheet:not(:empty) {
+  margin-block: var(--sp-4);
+}
+
+.keys-sheet > .sheet {
+  max-width: none;
+}
+
+.keys-reapply {
+  margin-block: var(--sp-4);
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.keys-secret:not(:empty) {
+  margin-block: var(--sp-3);
+}
+
+.keys-code {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 1rem;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.keys-qr {
+  display: block;
+  width: 14rem;
+  max-width: 100%;
+  height: auto;
+  /* A QR code is read as dark on light, in any theme. */
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+/* The secret key is never put on paper from this page. */
+@media print {
+  .keys-secret {
+    display: none;
+  }
+}
