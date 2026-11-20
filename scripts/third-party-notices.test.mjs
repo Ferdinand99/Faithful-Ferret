@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "./test-support.mjs";
 import {
   acceptedLicenses,
+  adaptedEntries,
   fillLines,
   fillTemplate,
   group,
   hasPlaceholder,
+  licenceTerms,
   licenseAllowed,
   npmEntries,
   render,
@@ -306,6 +308,54 @@ describe("vendoredEntries", () => {
     const manifest = JSON.parse(read2("web/vendor/MANIFEST.json"));
     const entries = vendoredEntries(extra, manifest, read2);
     expect(entries.map((e) => e.packages[0].label)).toContain("qrcodegen 1.8.0");
+  });
+});
+
+describe("adaptedEntries", () => {
+  const files = {
+    "a/x.mjs": "// SPDX-License-Identifier: AGPL-3.0-only\n// Modified by Faithful Ferret: ported.\n",
+    "a/plain.mjs": "export const x = 1;\n",
+    LIC: "Terms of the licence.\nEND OF TERMS AND CONDITIONS\n\nHow to apply\n    Copyright (C) <year>  <name of author>\n",
+  };
+  const readFile = (path) => {
+    if (!(path in files)) throw new Error("no such file");
+    return files[path];
+  };
+  const entry = {
+    name: "X parser", origin: "https://x.test/x", source: "src/x.ts (commit abc)", license: "AGPL-3.0-only", licenseFile: "LIC",
+    copyright: "The X authors", files: ["a/x.mjs"], note: "Modified by Faithful Ferret: ported.",
+  };
+  it("gives the entry with the terms of the licence and without the how-to-apply appendix", () => {
+    const [a] = adaptedEntries({ adapted: [entry] }, readFile);
+    expect(a.licenseId).toBe("AGPL-3.0-only");
+    expect(a.text).toBe("Terms of the licence.\nEND OF TERMS AND CONDITIONS");
+    expect(a.files[0]).toBe("a/x.mjs");
+    expect(adaptedEntries({}, readFile)).toHaveLength(0);
+    expect(licenceTerms("no end line")).toBe("no end line");
+  });
+  it("fails for an incomplete entry, a note without the change, a missing file or a file without its header", () => {
+    expect(() => adaptedEntries({ adapted: [{ ...entry, origin: "" }] }, readFile)).toThrow(/needs name/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: [] }] }, readFile)).toThrow(/needs name/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, note: "ported" }] }, readFile)).toThrow(/Modified by Faithful Ferret/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: ["a/none.mjs"] }] }, readFile)).toThrow(/does not exist/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: ["a/plain.mjs"] }] }, readFile)).toThrow(/SPDX-License-Identifier/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, licenseFile: "NONE" }] }, readFile)).toThrow(/no such file/);
+  });
+  it("is rendered with each licence text once", () => {
+    const rust = rustEntries([{ licenses: [{ id: "MIT", text: "MIT text", used_by: [{ crate: { name: "a", version: "1.0.0" } }] }] }]);
+    const adapted = adaptedEntries({ adapted: [entry, { ...entry, name: "Y parser" }] }, readFile);
+    const text = render({ product: "P", rust, npm: [], fontLicense: "OFL text", adapted });
+    expect(text).toContain("Source written from other projects (2 entries)");
+    expect(text).toContain("X parser\n  Origin: https://x.test/x");
+    expect(text).toContain("Y parser");
+    expect(text.split("Terms of the licence.").length).toBe(2);
+    expect(text.indexOf("OFL text") < text.indexOf("Source written from other projects")).toBe(true);
+  });
+  it("lists the real entries, and their files and licence texts are in the repository", () => {
+    const entries = adaptedEntries(JSON.parse(read2("notices-extra.json")), read2);
+    expect(entries.map((e) => e.label).join(" | ")).toContain("AliasVault CSV parser");
+    expect(entries.map((e) => e.label).join(" | ")).toContain("Bitwarden export formats");
+    for (const e of entries) expect(e.text).toContain("END OF TERMS AND CONDITIONS");
   });
 });
 

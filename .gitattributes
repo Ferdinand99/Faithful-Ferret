@@ -34,3 +34,5 @@
 THIRD-PARTY-NOTICES text eol=lf
 LICENSE text eol=lf
 /web/vendor/** text eol=lf
+/web/test/fixtures/import/** text eol=lf
+/LICENSES/** text eol=lf
