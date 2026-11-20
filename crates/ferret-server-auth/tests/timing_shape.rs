@@ -236,7 +236,7 @@ fn login_finish_has_the_same_outside_effects_for_every_lookup() {
             ke3: &[5u8; 64],
             current_session: None,
         };
-        let error = login_finish(&f.cx(), &store, &finish).unwrap_err();
+        let error = login_finish(&f.cx(), &store, &f.records, &finish).unwrap_err();
         assert_eq!(error, AuthError::Denied(DenyReason::Ke3));
         assert_eq!(error.public_code(), "denied");
         shapes.push((effects.take(), throttle_shape(&f)));
@@ -288,8 +288,8 @@ fn the_documented_draws_and_lifetime() {
             Effect::Draw(16),
             Effect::Draw(24),
             Effect::Put {
-                // version 1 + nonce 24 + plaintext 203 + tag 16
-                sealed_len: 244,
+                // version 1 + nonce 24 + plaintext 235 + tag 16
+                sealed_len: 276,
                 lifetime: 60,
             },
         ]
@@ -332,7 +332,7 @@ fn finish_with<S: LoginStateStore>(
         ke3,
         current_session,
     };
-    let error = login_finish(&f.cx(), store, &request).unwrap_err();
+    let error = login_finish(&f.cx(), store, &f.records, &request).unwrap_err();
     (error, throttle_shape(f))
 }
 
@@ -430,7 +430,7 @@ fn a_refusing_limiter_decides_a_finish_whose_store_fails() {
         ke3: &[5u8; 64],
         current_session: None,
     };
-    let error = login_finish(&f.cx(), &FailingTake, &request).unwrap_err();
+    let error = login_finish(&f.cx(), &FailingTake, &f.records, &request).unwrap_err();
     assert_eq!(
         error,
         AuthError::Throttled {
