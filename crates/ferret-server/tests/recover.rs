@@ -22,7 +22,7 @@ use ferret_core::{
 use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
-use ferret_server::product::{SESSION_COOKIE, SID_COOKIE};
+use ferret_server::product::{PENDING_2FA_COOKIE, SESSION_COOKIE, SID_COOKIE};
 use ferret_server::wire::{RecoveryRes, b64url};
 use ferret_server_auth::SessionScope;
 use ferret_server_auth::testing::SMALL;
@@ -679,6 +679,62 @@ async fn a_reset_session_ends_after_recover_and_its_cookies_are_cleared() {
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     let res = challenge_with(&app, &old_jar).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+}
+
+/// The names of the cookies that `set_cookies` removes, sorted.
+fn removed_names<'a>(set_cookies: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut names: Vec<String> = set_cookies
+        .into_iter()
+        .filter(|c| {
+            c.to_ascii_lowercase().contains("max-age=0")
+                || c.split(';').next().is_some_and(|p| p.ends_with('='))
+        })
+        .map(|c| c.split('=').next().expect("a name").to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn a_recovery_clears_the_same_cookies_as_a_sign_out() {
+    use axum::response::IntoResponse as _;
+    use axum_extra::extract::cookie::{Cookie, SignedCookieJar};
+
+    let (app, mut client, mut jar, _) = setup(17).await;
+    let recovered = recovery_of(&app, &jar, &mut client, NEW_PASSWORD, false).await;
+    // The browser also holds a pending second factor and a re-auth grant, so
+    // every cookie a sign-out clears is there to be cleared. They are signed:
+    // a signed jar reads only cookies that verify.
+    let key = app.state.core.session_key.clone();
+    let extra = SignedCookieJar::new(key.clone())
+        .add(Cookie::new(PENDING_2FA_COOKIE, "x"))
+        .add(Cookie::new(vole_kit::auth::reauth::cookie_name(), "x"))
+        .into_response();
+    jar.absorb(extra.headers());
+
+    let res = post_recover(&app, &jar, &recovered).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json()["session_ended"], json!(true));
+    let by_recovery = removed_names(res.set_cookies().iter().map(String::as_str));
+
+    // What the session module clears for the same request.
+    let mut request = axum::http::HeaderMap::new();
+    request.insert(
+        axum::http::header::COOKIE,
+        axum::http::HeaderValue::from_str(&jar.header().expect("cookies")).expect("a header"),
+    );
+    let cleared =
+        ferret_server::auth::session::clear_cookies(SignedCookieJar::from_headers(&request, key))
+            .into_response();
+    let by_sign_out = removed_names(
+        cleared
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("text")),
+    );
+    assert_eq!(by_sign_out.len(), 4, "{by_sign_out:?}");
+    assert_eq!(by_recovery, by_sign_out);
 }
 
 #[tokio::test]
