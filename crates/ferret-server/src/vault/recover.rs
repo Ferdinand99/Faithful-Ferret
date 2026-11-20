@@ -18,10 +18,8 @@
 //!   2. the nonce and the proof headers and the raw body (`400` for a header
 //!      of the wrong shape, which burns no nonce);
 //!   3. inside the write transaction, against the account as it is read
-//!      there: the asking session is still one (`401`), and no other new
-//!      password or recovery of the account in the last minute (`429
-//!      throttled`), both before the nonce is used up; then the library uses
-//!      up the nonce and checks the proof of `recover` by `sk_r` against the
+//!      there: the asking session is still one (`401`, before the nonce is
+//!      used up); then the library uses up the nonce and checks the proof of `recover` by `sk_r` against the
 //!      stored `pk_r`, the server's key epoch and the exact body (`401
 //!      denied` otherwise, and the nonce is gone); only then is the body
 //!      read. The record must be well formed, its profile one the server's
@@ -33,7 +31,8 @@
 //!      malformed_recovery_key`), then the writes.
 //!
 //!   Every other session of the user ends, on both origins, and so do the
-//!   user's pending sign-in codes and every sign-in that is still half-way. A
+//!   user's pending sign-in codes. A sign-in of the user that is still
+//!   half-way cannot finish: its login state is bound to the old record. A
 //!   reset session ends with the recovery, and the answer clears its cookies;
 //!   a full session goes on, but the admin session handed over from it ends.
 //!   Right after the commit, on the database thread (so a client that went

@@ -425,9 +425,8 @@ async fn a_recover_signed_with_the_old_recovery_key_replaces_record_wraps_pk_r_a
     );
 
     // The new recovery key is the one that works now: a second recovery, in
-    // a new reset session a minute later, signs with it and goes on from the
+    // a new reset session right after, signs with it and goes on from the
     // first (generation 3, revision 3).
-    app.clock.advance(60);
     took_recovery(&mut client, recovered, NEW_PASSWORD);
     let reset = client_session(&app, &client, SessionScope::AccountReset, 2).await;
     let again =
@@ -847,6 +846,40 @@ async fn every_other_session_ends_and_its_stream_closes() {
 }
 
 #[tokio::test]
+async fn a_sign_in_started_before_the_recovery_cannot_finish_after_it() {
+    let (app, mut client, jar, _) = setup(18).await;
+    let other = client_account(&app, 19).await;
+    // Half-way with the old password, before the recovery: the server's
+    // state holds what finishing needs. Another user is half-way too.
+    let half = start_sign_in(&app, &email(&client), &client.password)
+        .await
+        .expect("the old password opens the old record");
+    let bystander = start_sign_in(&app, &email(&other), &other.password)
+        .await
+        .expect("the other user's password");
+    let recovered = recovery_of(&app, &jar, &mut client, NEW_PASSWORD, false).await;
+    let res = post_recover(&app, &jar, &recovered).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    // The state was made from the record the recovery replaced: refused, and
+    // no session is opened.
+    let res = finish_sign_in(&app, half).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(error_of(&res), "denied");
+    assert_eq!(live_sessions(&app, client.ids.user_id).await, 0);
+
+    // The other user's sign-in is not touched by it.
+    let res = finish_sign_in(&app, bystander).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    // A sign-in with the new password, started after it, finishes.
+    let res = sign_in(&app, &email(&client), NEW_PASSWORD)
+        .await
+        .expect("the new password");
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+#[tokio::test]
 async fn a_committed_recover_asks_for_a_backup() {
     let (app, mut client, jar, _) = setup(12).await;
     let recovered = recovery_of(&app, &jar, &mut client, NEW_PASSWORD, false).await;
@@ -931,10 +964,9 @@ async fn a_replayed_body_with_a_new_nonce_is_401() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     let after = snapshot(&app, &client).await;
 
-    // A minute later: the same bytes again, with their own nonce (gone), and
+    // Right after: the same bytes again, with their own nonce (gone), and
     // with a new nonce signed again by the old recovery key (no longer the
     // server's `pk_r`).
-    app.clock.advance(60);
     let res = send_signed(
         &app,
         &jar,
@@ -1015,19 +1047,16 @@ async fn concurrent_recover_and_password_change_give_one_winner() {
         ),
     );
     // The second waits for the first's write lock. Then its session has
-    // ended (the first ended every other session: 401), or the account was
-    // changed a moment ago (429), or what it read moved (409). It never
-    // writes over the first.
+    // ended (the first ended every other session: 401), or what it read
+    // moved (409). It never writes over the first, and no wait between
+    // changes stands in for either.
     let winners = [a.status, b.status]
         .iter()
         .filter(|s| **s == StatusCode::OK)
         .count();
     assert_eq!(winners, 1, "{a:?} {b:?}");
     let loser = if a.status == StatusCode::OK { &b } else { &a };
-    assert!(
-        matches!(loser.status.as_u16(), 401 | 409 | 429),
-        "{loser:?}"
-    );
+    assert!(matches!(loser.status.as_u16(), 401 | 409), "{loser:?}");
     let after = snapshot(&app, &client).await;
     if a.status == StatusCode::OK {
         assert_eq!(after.record, change.registration_record);
