@@ -31,7 +31,7 @@ test("renewal_needs_fresh_reauth_shows_the_new_sheet_and_sends_only_after_the_ke
     assert.deepEqual(sheet, { access: null, recoveryKeyCode: RK_CODE });
     sentBeforeTyping = writes(world).length;
     // A typo and the old key are refused by the check; the page asks again and nothing goes out meanwhile.
-    await assert.rejects(verify("FFR1-TYPO"), { code: "checksum" });
+    await assert.rejects(verify("FFR2-TYPO"), { code: "checksum" });
     await assert.rejects(verify(OLD_RK_CODE), { code: "decrypt" });
     assert.equal(writes(world).length, 0);
     await verify(RK_CODE);
