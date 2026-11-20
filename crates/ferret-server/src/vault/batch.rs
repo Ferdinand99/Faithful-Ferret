@@ -9,18 +9,23 @@
 //! 2. the size of the body, at most 6 MiB (`413`);
 //! 3. the JSON, with the same strictness as a single write (`400`);
 //! 4. one to 100 operations, and no item id twice (`400`, nothing is written);
-//! 5. the rate limits, which count the batch as one operation per item and its
-//!    body in bytes (`429` with `Retry-After`);
-//! 6. one place in the write queue for the whole batch (`503 busy` with
+//! 5. the import window, if the batch names one (`import_window`): the batch
+//!    holds one operation of the window for each item (`409
+//!    import_window_invalid` when the window is not this device's, has ended,
+//!    or has too few operations left; nothing is written);
+//! 6. the rate limits. A batch without a window counts as one operation per
+//!    item and its body in bytes. A batch with a window counts its body in
+//!    bytes only: the window has its operations (`429` with `Retry-After`);
+//! 7. one place in the write queue for the whole batch (`503 busy` with
 //!    `Retry-After` when the queue is full);
-//! 7. each operation in turn, in its own transaction: the manifest id is
+//! 8. each operation in turn, in its own transaction: the manifest id is
 //!    `403`, an envelope or tombstone that is not stored here is `422` (or
 //!    `413`), anything else goes to [`store::put_item`], which checks the
 //!    idempotency record, then the `restore_epoch` the operation names (another
 //!    one than the vault's is `409 restore_epoch_changed` in its place), then
 //!    `base_rev`. A refusal or a conflict of one operation does not stop the
 //!    others;
-//! 8. one notification for the batch, with the highest `seq` it wrote, sent
+//! 9. one notification for the batch, with the highest `seq` it wrote, sent
 //!    after the last operation has committed.
 //!
 //! The answer is `200` with one result for each operation, in the order of
@@ -35,6 +40,11 @@
 //!
 //! The write turn is held for the whole run of the writes, also when the
 //! request is dropped half way (see the comment in the handler).
+//!
+//! The operations a window holds for a batch are taken for good only for the
+//! writes that stored something new. A repeat of an earlier `idem` (`replayed`),
+//! a conflict and a refusal take nothing, so the retry of a batch whose answer
+//! was lost does not use the window up twice.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -52,6 +62,7 @@ use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 
 use super::events::EventStreams;
+use super::import::refused as window_refused;
 use super::notify::SyncEvents;
 use super::quota::Limits;
 use super::rate::{SyncLimits, WriteGate, busy, throttled};
@@ -60,7 +71,7 @@ use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError};
 use crate::http::extract::{SessionAuth, VaultSession};
 use crate::ids::{DeviceId, MANIFEST_ITEM_ID, VaultId};
-use crate::state::VaultDb;
+use crate::state::{ImportWindows, VaultDb};
 use crate::wire::{
     BatchOpForm, BatchOpJson, BatchReq, BatchRes, BatchResultJson, ConflictRes, MAX_BATCH_BYTES,
     MAX_BATCH_OPS, refusal_code,
@@ -79,6 +90,7 @@ where
     Arc<SyncLimits>: FromRef<S>,
     WriteGate: FromRef<S>,
     Arc<EventStreams>: FromRef<S>,
+    ImportWindows: FromRef<S>,
 {
     Router::new().route(
         "/api/sync/batch",
@@ -126,6 +138,8 @@ pub(crate) struct PreparedOp {
 struct Parsed {
     ops: Vec<BatchOpJson>,
     bad_tomb: Vec<bool>,
+    /// The import window the batch names, if it does.
+    import_window: Option<[u8; 16]>,
 }
 
 /// An operation with only an id, in the place of one that did not parse. It
@@ -144,7 +158,8 @@ fn blank(id: [u8; 16]) -> BatchOpJson {
     }
 }
 
-/// The batch in the raw body: one to 100 operations. An operation that does
+/// The batch in the raw body: one to 100 operations and the optional import
+/// window. An operation that does
 /// not parse refuses the whole request, with the code of the failure, as a
 /// single write does; except a tombstone of the wrong size, which is only that
 /// operation's own `422`.
@@ -153,6 +168,8 @@ fn parse_body(raw: &[u8]) -> Result<Parsed, ApiError> {
     #[serde(deny_unknown_fields)]
     struct Envelope {
         ops: Vec<Box<RawValue>>,
+        #[serde(default, with = "crate::wire::serde_hex16_opt")]
+        import_window: Option<[u8; 16]>,
     }
     #[derive(Deserialize)]
     struct IdOnly {
@@ -184,7 +201,11 @@ fn parse_body(raw: &[u8]) -> Result<Parsed, ApiError> {
             Err(e) => return Err(ApiError::coded(refusal_code(&e.to_string()))),
         }
     }
-    Ok(Parsed { ops, bad_tomb })
+    Ok(Parsed {
+        ops,
+        bad_tomb,
+        import_window: envelope.import_window,
+    })
 }
 
 /// Checks the batch and each of its operations.
@@ -253,14 +274,19 @@ fn prepare_op(op: &BatchOpJson) -> Result<PreparedOp, &'static str> {
     })
 }
 
+/// The operations of a batch, each checked or refused, and the import window
+/// the batch names.
+type Prepared = (Vec<Result<PreparedOp, &'static str>>, Option<[u8; 16]>);
+
 /// The body of the request, checked: [`parse_body`] and [`prepare_ops`], with
 /// the `422` of an operation with a tombstone of the wrong size in its place.
-fn prepare_body(raw: &[u8]) -> Result<Vec<Result<PreparedOp, &'static str>>, ApiError> {
-    let Parsed { ops, bad_tomb } = parse_body(raw)?;
-    let mut prepared = prepare_ops(&BatchReq {
+fn prepare_body(raw: &[u8]) -> Result<Prepared, ApiError> {
+    let Parsed {
         ops,
-        import_window: None,
-    })?;
+        bad_tomb,
+        import_window,
+    } = parse_body(raw)?;
+    let mut prepared = prepare_ops(&BatchReq { ops, import_window })?;
     for (slot, bad) in prepared.iter_mut().zip(bad_tomb) {
         // A blank is refused as `bad_request` (or as the manifest, which comes
         // first): that is the place of the tombstone's own code.
@@ -268,7 +294,7 @@ fn prepare_body(raw: &[u8]) -> Result<Vec<Result<PreparedOp, &'static str>>, Api
             *slot = Err("tombstone_invalid");
         }
     }
-    Ok(prepared)
+    Ok((prepared, import_window))
 }
 
 /// Runs the operations in order, each in its own transaction, and returns one
@@ -342,6 +368,7 @@ async fn post_batch(
     State(limits): State<Arc<SyncLimits>>,
     State(gate): State<WriteGate>,
     State(events): State<SyncEvents>,
+    State(windows): State<ImportWindows>,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<BatchRes>, ApiError> {
     let raw = body.map_err(|rejection| {
@@ -352,7 +379,7 @@ async fn post_batch(
         }
     })?;
     let body_len = u64::try_from(raw.len()).unwrap_or(u64::MAX);
-    let ops = prepare_body(&raw).inspect_err(|e| {
+    let (ops, import_window) = prepare_body(&raw).inspect_err(|e| {
         tracing::info!(
             status = e.status.as_u16(),
             code = e.code,
@@ -362,12 +389,25 @@ async fn post_batch(
     drop(raw);
 
     let count = u32::try_from(ops.len()).unwrap_or(u32::MAX);
-    limits
-        .admit(&session.vault, &session.device, count, body_len)
-        .map_err(|refused| {
-            tracing::info!(ops = count, "batch write throttled");
-            throttled(refused)
+    // A batch of an import holds its operations in the window; it is held
+    // before the limits are asked and given back if they, or the queue, turn
+    // the batch away (the reservation is dropped with the request).
+    let reservation = import_window
+        .map(|id| windows.reserve(&session.vault, &session.device, &id, count, session.now))
+        .transpose()
+        .map_err(|why| {
+            tracing::info!(ops = count, "batch write refused, import window not usable");
+            window_refused(why)
         })?;
+    let admitted = if reservation.is_some() {
+        limits.admit_bytes(&session.vault, &session.device, body_len)
+    } else {
+        limits.admit(&session.vault, &session.device, count, body_len)
+    };
+    admitted.map_err(|refused| {
+        tracing::info!(ops = count, "batch write throttled");
+        throttled(refused)
+    })?;
     let permit = gate.enter().await.map_err(|full| {
         tracing::info!(ops = count, "batch write turned away, queue full");
         busy(full)
@@ -386,6 +426,16 @@ async fn post_batch(
         .with_conn(move |conn| {
             let _turn = permit;
             let results = run_batch(conn, &vault, &device, &ops, &Limits::DEFAULT, now);
+            // The window pays for what was stored new: not for repeats of an
+            // earlier `idem`, conflicts or refusals. Done here, with the turn,
+            // so a dropped request cannot lose it.
+            if let Some(reservation) = reservation {
+                let stored = results
+                    .iter()
+                    .filter(|r| r.status == 200 && r.replayed == Some(false))
+                    .count();
+                reservation.commit(u32::try_from(stored).unwrap_or(u32::MAX));
+            }
             // One wake-up for the batch: the highest `seq` it wrote. A batch
             // that only repeated earlier writes changed nothing.
             let highest = results
