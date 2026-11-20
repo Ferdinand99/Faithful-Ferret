@@ -1,0 +1,32 @@
+/* The export page and the reminder to take an export. Colours and components come
+   from base.css. No inline style is used anywhere. */
+
+.export-page > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.export-page [data-role="encrypted-done"] > h2,
+.export-page [data-role="plain-done"] > h2,
+.export-page [data-role="readiness-warning"] > h2 {
+  margin-top: 0;
+  font-size: 1.0625rem;
+}
+
+.export-page [data-role="plain-form"] legend {
+  margin-bottom: var(--sp-2);
+  font-weight: 600;
+}
+
+.export-page [data-role="plain-open"] {
+  align-self: flex-start;
+}
+
+.export-page [data-role="readiness-warning"] .actions {
+  margin-block: var(--sp-3);
+}
+
+/* The reminder sits in the banner strip of the vault frame. */
+.vault-ui .banner [data-role="export-reminder-link"] {
+  font-weight: 600;
+}
