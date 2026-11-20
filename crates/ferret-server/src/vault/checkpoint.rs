@@ -8,8 +8,8 @@
 //! `seq` (and its `entries`), and clients verify what they fetch.
 //!
 //! `PUT` is checked in this order, and nothing reads or writes the database
-//! before the write itself (after the session, which the extractor checks
-//! first):
+//! before the write itself (after the caller, a session or a device token,
+//! which the extractor checks first):
 //!
 //! 1. the size of the body, at most 4 MiB (`413 too_large`);
 //! 2. the JSON (unknown, repeated and mistyped fields are refused, `400`);
@@ -50,7 +50,7 @@ use super::notify::SyncEvents;
 use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, CheckpointOutcome, StoredCheckpoint};
 use crate::error::ApiError;
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::state::VaultDb;
 use crate::wire::{
     CHECKPOINT_ENTRY_LEN, CheckpointJson, CheckpointPutReq, CheckpointPutRes, CheckpointStaleRes,
@@ -109,9 +109,9 @@ pub(crate) fn check_structure(cp: &CheckpointPutReq) -> Result<(), &'static str>
     Ok(())
 }
 
-/// Stores the checkpoint of the session vault, if it is newer than the stored one.
+/// Stores the checkpoint of the caller's vault, if it is newer than the stored one.
 async fn put_checkpoint(
-    session: VaultSession,
+    caller: VaultCaller,
     State(db): State<VaultDb>,
     State(limits): State<Arc<SyncLimits>>,
     State(gate): State<WriteGate>,
@@ -133,8 +133,8 @@ async fn put_checkpoint(
         .map_err(ApiError::coded)
         .inspect_err(refused)?;
 
-    let vault = session.vault;
-    let device = session.device;
+    let vault = caller.vault();
+    let device = caller.device();
     // An upload that the store will refuse costs the device its bucket too.
     limits
         .admit(
@@ -218,12 +218,12 @@ fn refused(error: &ApiError) {
     );
 }
 
-/// The stored checkpoint of the session vault, with its entries.
+/// The stored checkpoint of the caller's vault, with its entries.
 async fn get_checkpoint(
-    session: VaultSession,
+    caller: VaultCaller,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
-    let vault = session.vault;
+    let vault = caller.vault();
     let stored = db
         .with_conn(move |conn| store::get_checkpoint(conn, &vault))
         .await?;

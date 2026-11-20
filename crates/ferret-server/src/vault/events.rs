@@ -21,6 +21,22 @@
 //! * The stream ends after [`LIFETIME`]; the client opens a new one, which is
 //!   authorised again.
 //!
+//! A device opens the stream with its access token and a DPoP proof, as for
+//! the other sync routes (`VaultCaller`). Its stream follows the same rules,
+//! and also:
+//!
+//! * it ends when its access token expires, if that comes before
+//!   [`LIFETIME`] (at most 15 minutes);
+//! * at each heartbeat the token's row and the device are read again: a
+//!   revoked or no longer valid device, or a token that expired, closes it;
+//! * revoking the device closes its streams at once;
+//! * `Sec-Fetch-Site` is not checked on it. A browser sends `none` or a
+//!   cross-site value for a request of an extension, and the check guards
+//!   against a cookie that a page of another site makes the browser send; a
+//!   token request carries no cookie (the `Origin` guard refuses one with a
+//!   cookie), and a page cannot add a token header without a pre-flight that
+//!   Ferret never allows.
+//!
 //! Places ([`EventStreams`]): 2 per (vault, device), 40 per vault and 256 on
 //! the server. A new stream beyond a limit is refused with `429 throttled` and
 //! `Retry-After: 30`, rather than the oldest stream being cut: a client that
@@ -49,9 +65,8 @@ use vole_kit::http::live::Changes;
 
 use super::notify::{Revoked, SyncEvents, VaultChange};
 use super::rate::{SyncLimits, WriteGate};
-use crate::auth::session::{Origin, still_valid};
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::http::origin_guard::{PROTOCOL_HEADER, PROTOCOL_VERSION};
 use crate::ids::{DeviceId, VaultId};
 use crate::state::VaultDb;
@@ -212,12 +227,19 @@ fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<Option<&'a st
 }
 
 /// The checks of a stream, which is a `GET` and so not seen by the `Origin`
-/// guard: the protocol header, and a browser that says the request is from
-/// another site is refused.
-fn check_request(headers: &HeaderMap) -> Result<(), ApiError> {
+/// check of mutations: the protocol header; and, for a session (`device` is
+/// false), a browser that says the request is from another site is refused.
+/// A device's stream has a token and no cookie, so `Sec-Fetch-Site` is not
+/// read for it (see the module documentation).
+///
+/// Spec: Fase 1 § 8.2.
+fn check_request(headers: &HeaderMap, device: bool) -> Result<(), ApiError> {
     let protocol = single(headers, &HeaderName::from_static(PROTOCOL_HEADER));
     if protocol != Ok(Some(PROTOCOL_VERSION)) {
         return Err(ApiError::bad_request("protocol_header_missing"));
+    }
+    if device {
+        return Ok(());
     }
     match single(headers, &HeaderName::from_static("sec-fetch-site")) {
         Ok(None | Some("same-origin")) => Ok(()),
@@ -237,37 +259,51 @@ struct Open {
     /// `true` when the server stops.
     stop: watch::Receiver<bool>,
     db: VaultDb,
-    session: VaultSession,
+    caller: VaultCaller,
     /// The place; freed when the task ends.
     _slot: StreamSlot,
 }
 
 type Wanted = Box<dyn Fn(&VaultChange) -> bool + Send>;
 
+/// How long a stream of `caller` may live: [`LIFETIME`], or less when its
+/// access token expires sooner.
+///
+/// Spec: Fase 1 § 7.6 (short-lived access tokens).
+fn lifetime_of(caller: &VaultCaller) -> Duration {
+    match caller.ends_at() {
+        None => LIFETIME,
+        Some(ends_at) => {
+            let left = u64::try_from(ends_at.saturating_sub(caller.now())).unwrap_or(0);
+            LIFETIME.min(Duration::from_secs(left))
+        }
+    }
+}
+
 /// `GET /api/sync/events`.
 async fn get_events(
-    session: VaultSession,
+    caller: VaultCaller,
     headers: HeaderMap,
     State(db): State<VaultDb>,
     State(events): State<SyncEvents>,
     State(streams): State<Arc<EventStreams>>,
 ) -> Result<Response, ApiError> {
-    check_request(&headers)?;
+    check_request(&headers, caller.is_device())?;
     let slot = streams
-        .acquire(&session.vault, &session.device)
+        .acquire(&caller.vault(), &caller.device())
         .ok_or(ApiError::throttled(RETRY_AFTER_SECS))?;
 
-    // Listening starts before the sequence number is read and the session is
-    // checked once more, so neither a change nor a sign-out can fall in
-    // between.
-    let vault = session.vault;
+    // Listening starts before the sequence number is read and the caller is
+    // checked once more, so neither a change nor a sign-out or a revocation
+    // can fall in between.
+    let vault = caller.vault();
     let wanted: Wanted = Box::new(move |change| change.vault == vault);
     let changes = Changes::new(events.subscribe(), wanted)
         .quiet(QUIET)
-        .lifetime(LIFETIME);
+        .lifetime(lifetime_of(&caller));
     let revocations = events.subscribe_revocations();
 
-    let (still, seq) = check(&db, &session).await?;
+    let (still, seq) = check(&db, &caller).await?;
     if !still {
         return Err(ApiError::unauthorized());
     }
@@ -280,7 +316,7 @@ async fn get_events(
         tx,
         stop: streams.stop_signal(),
         db,
-        session,
+        caller,
         _slot: slot,
     };
     tokio::spawn(run(open, changes, revocations));
@@ -309,17 +345,18 @@ async fn get_events(
 }
 
 /// Reads, on a connection from the pool that goes back at once, whether the
-/// session still counts and the sequence number of the vault.
-async fn check(db: &VaultDb, session: &VaultSession) -> Result<(bool, u64), ApiError> {
+/// caller still counts (`VaultCaller::still_valid`: the session, or the device
+/// and its access token) and the sequence number of the vault.
+async fn check(db: &VaultDb, caller: &VaultCaller) -> Result<(bool, u64), ApiError> {
     // A clock that failed makes nothing valid.
-    let Some(now) = session.clock.now() else {
+    let Some(now) = caller.clock().now() else {
         return Ok((false, 0));
     };
-    let (sid, version, vault) = (session.sid, session.session_version, session.vault);
+    let caller = caller.clone();
     Ok(db
         .with_conn(move |conn| {
-            let still = still_valid(conn, &sid, Origin::Vault, version, now)?;
-            let seq = vault_seq(conn, &vault)?;
+            let still = caller.still_valid(conn, now)?;
+            let seq = vault_seq(conn, &caller.vault())?;
             Ok((still, seq))
         })
         .await?)
@@ -364,14 +401,14 @@ impl Open {
         }
     }
 
-    /// Whether the session still counts. A database that fails closes the
+    /// Whether the caller still counts. A database that fails closes the
     /// stream: the client opens a new one, which is checked again.
-    async fn session_holds(&self) -> bool {
-        matches!(check(&self.db, &self.session).await, Ok((true, _)))
+    async fn caller_holds(&self) -> bool {
+        matches!(check(&self.db, &self.caller).await, Ok((true, _)))
     }
 }
 
-/// The task of one stream. It ends when the client is gone, the session is
+/// The task of one stream. It ends when the client is gone, the caller is
 /// over, the lifetime is out or anything fails; the place is freed then.
 async fn run(
     open: Open,
@@ -396,18 +433,18 @@ async fn run(
                 () = stopped(&mut stop) => return,
                 () = open.tx.closed() => return,
                 revoked = revocations.recv() => match revoked {
-                    Ok(Revoked::Session(sid)) if sid == open.session.sid => return,
+                    Ok(revoked) if open.caller.is_revoked_by(&revoked) => return,
                     Ok(_) => {}
                     // Some were missed: the database knows if this one ended.
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        if !open.session_holds().await {
+                        if !open.caller_holds().await {
                             return;
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
                 },
                 _ = heartbeat.tick() => {
-                    if !open.session_holds().await
+                    if !open.caller_holds().await
                         || !open.send(Bytes::from_static(b": \n\n")).await
                     {
                         return;
@@ -423,7 +460,7 @@ async fn run(
         }
         // The hint carries the sequence number of now, read for the event,
         // never a number a notification brought.
-        let seq = match check(&open.db, &open.session).await {
+        let seq = match check(&open.db, &open.caller).await {
             Ok((true, seq)) => seq,
             _ => return,
         };

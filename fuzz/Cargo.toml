@@ -19,6 +19,13 @@ ferret-core = { path = "../crates/ferret-core", features = ["test-support"] }
 # `fuzz_server_*` targets; `test-support` gives the fixed server, the state
 # internals and the reference JSON parser of the replacement body.
 ferret-server-auth = { path = "../crates/ferret-server-auth", features = ["test-support"] }
+# The server's own proof reader (`crates/ferret-server/src/auth/dpop/proof.rs`) is
+# taken in by `fuzz_dpop_proof` as a single file with `#[path]`; it uses only
+# these four crates, in the versions of the server, and nothing else of the server.
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.1"
 
 # Not a member of the root workspace (cargo-fuzz builds it with its own flags).
 [workspace]
@@ -152,6 +159,13 @@ bench = false
 [[bin]]
 name = "fuzz_server_replace_body"
 path = "fuzz_targets/fuzz_server_replace_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_dpop_proof"
+path = "fuzz_targets/fuzz_dpop_proof.rs"
 test = false
 doc = false
 bench = false
