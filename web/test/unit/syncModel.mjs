@@ -250,7 +250,10 @@ export class Sim {
       try {
         return await verify(...args);
       } catch (error) {
-        this.refusals.push({ code: error.code, ids: error.ids ?? [], step: this.step });
+        // Routine: a refusal of the kind that the engine answers by holding a purged tombstone, about rows that are all deleted rows given to this call.
+        const deletedHere = new Set(args[1].filter((row) => row.state === "deleted").map((row) => hex16.encode(row.item_id)));
+        const routine = ROUTINE_REFUSALS.has(error.code) && (error.ids ?? []).length > 0 && error.ids.every((id) => deletedHere.has(id));
+        this.refusals.push({ code: error.code, ids: error.ids ?? [], routine, step: this.step });
         const listed = new Set();
         for (let at = 0; at < args[0].entries.length; at += 56) listed.add(Buffer.from(args[0].entries.subarray(at, at + 16)).toString("hex"));
         const unlisted = args[1].map((row) => hex16.encode(row.item_id)).filter((id) => !listed.has(id)).map((id) => {
@@ -965,10 +968,10 @@ export class Sim {
       // A warning about an item is let through only for an item that was brought back over a purged tombstone; one about a checkpoint only when
       // every refusal of a checkpoint in the run was about such items. Anything else is a fault.
       const tolerant = this.tolerates("reupload_after_purge") && this.reuploaded.size > 0;
-      // (A refusal for a row without an entry, or for an older tombstone, is the one the engine answers by holding the purged tombstone: it is
-      // routine, whatever the item, and not what a warning is about.)
+      // (A refusal for a deleted row without an entry, or for an older tombstone, is the one the engine answers by holding the purged tombstone: it
+      // is routine, and not what a warning is about. One about a live row or a live entry is not.)
       const scoped = tolerant && this.refusals.some((one) => one.ids.length > 0 && one.ids.every((id) => this.reuploaded.has(id))) &&
-        this.refusals.every((one) => ROUTINE_REFUSALS.has(one.code) || (one.ids.length > 0 && one.ids.every((id) => this.reuploaded.has(id))));
+        this.refusals.every((one) => one.routine || (one.ids.length > 0 && one.ids.every((id) => this.reuploaded.has(id))));
       const let_through = (event) => tolerant && (
         (REUPLOAD_ITEM_WARNINGS.has(event.code) && this.reuploaded.has(event.id)) || (REUPLOAD_CHECKPOINT_WARNINGS.has(event.code) && scoped));
       for (const warning of health.warnings) if (!let_through({ code: warning })) this.fail(`${dev.label} shows a warning: ${warning}`);
@@ -1089,10 +1092,12 @@ export class Sim {
   async checkReuploaded() {
     if (!this.tolerates("reupload_after_purge")) return;
     for (const id of this.reuploaded) {
-      const deleted = this.writes.some((write) => write.id === id && write.kind === "remove");
-      if (deleted || this.server.items.has(id)) continue;
+      if (this.server.items.has(id)) continue;
       for (const label of this.restoredBy.get(id) ?? []) {
         if (!this.devices.some((one) => one.label === label)) continue;
+        // A deletion that the user made after the restore ends it; the one that put the item in the trash does not.
+        const restoredAt = Math.max(...this.writes.filter((write) => write.id === id && write.dev === label && write.kind === "restore").map((write) => write.step));
+        if (this.writes.some((write) => write.id === id && write.kind === "remove" && write.step > restoredAt)) continue;
         if (!(await this.queuedIds(label)).has(id)) this.fail(`${short(id)} was brought back by ${label} over a purged tombstone and is neither on the server nor a draft there`);
       }
     }

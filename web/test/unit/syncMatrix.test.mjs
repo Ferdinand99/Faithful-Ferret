@@ -723,6 +723,14 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
     await sim.stopAll();
 
     sim = await tolerant();
+    // A refusal of the routine kind that is about a live row or a live entry is not routine.
+    sim.refusals.push({ code: "checkpoint_top_digest_mismatch", ids: [other], routine: false });
+    warn(sim, { code: "server_shows_older_state" });
+    sim.checkHealthy();
+    complains(sim, "server_shows_older_state");
+    await sim.stopAll();
+
+    sim = await tolerant();
     sim.refusals.push({ code: "checkpoint_seq_below_remembered", ids: [] });
     warn(sim, { code: "checkpoint_rolled_back" });
     sim.checkHealthy();
@@ -737,8 +745,14 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
     const id = "ab".repeat(16);
     sim.reuploaded.add(id);
     sim.restoredBy.set(id, new Set([a.label]));
+    // The removal that put the item in the trash came before the restore: it does not excuse the loss. A removal after the restore does.
+    sim.writes.push({ dev: a.label, id, kind: "remove", marker: null, step: 1 }, { dev: a.label, id, kind: "restore", marker: "x", step: 2 });
     await sim.checkReuploaded();
     complains(sim, "neither on the server nor a draft");
+    sim.problems.length = 0;
+    sim.writes.push({ dev: a.label, id, kind: "remove", marker: null, step: 3 });
+    await sim.checkReuploaded();
+    assert.deepEqual(sim.problems, [], "deleted by the user after the restore");
     await sim.stopAll();
   });
 
