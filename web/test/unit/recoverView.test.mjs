@@ -189,18 +189,18 @@ test("a_wrong_code_shows_the_single_failure_text", async () => {
     for (const [lang, text] of texts) assert.equal(text, (lang === "en" ? EN : NB)["recover.error.code_refused"]);
     assert.match(EN["recover.error.code_refused"], /wait five minutes/);
   });
-  // The page explains that someone guessing codes for the address can hold a right code back for a while.
+  // The page has no note that a stranger can hold a right code back: the server counts failures per address.
   await withDom(async () => {
-    for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+    for (const lang of ["en", "nb"]) {
       const { root } = page({ recover: async () => "recovered", lang });
-      assert.equal(textOf(byRole(root, "code-limit")).trim(), catalog["recover.code_limit"]);
+      assert.equal(byRole(root, "code-limit"), null);
     }
-    assert.match(EN["recover.code_limit"], /a correct code can be refused for a few minutes/);
+    assert.equal(EN["recover.code_limit"], undefined);
+    assert.equal(NB["recover.code_limit"], undefined);
     // With a full session there is no code to type.
     const { root } = page({ recover: async () => "recovered", info: { accountId: "aa".repeat(16), email: EMAIL } });
     assert.equal(byRole(root, "code").parentNode.hidden, true);
     assert.equal(byRole(root, "email").parentNode.hidden, true);
-    assert.equal(byRole(root, "code-limit").hidden, true);
     assert.ok(textOf(byRole(root, "signed-in")).includes(EMAIL));
   });
 });
