@@ -333,11 +333,26 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     return picked;
   }
 
-  /** How many writes of an import are left in the lanes (not done, whether blocked or not). */
+  /** Writes of an import that the server has answered and that the runner has not yet reported as done (taken out of their lanes first). */
+  let settling = 0;
+
+  /**
+   * How many writes of an import can still be sent (answered ones that are not yet reported count too), and how many the server has
+   * refused for good (their lane is blocked; a lane that waits for the user to sign in again is not refused).
+   */
+  function importCounts() {
+    let sendable = settling;
+    let refused = 0;
+    for (const lane of lanes.values()) {
+      const gone = lane.blocked !== null && lane.blocked !== "unauthorized";
+      for (const entry of lane.entries) if (entry.import !== undefined) (gone ? refused++ : sendable++);
+    }
+    return { sendable, refused };
+  }
+
+  /** How many writes of an import can still be sent. */
   function importEntriesLeft() {
-    let count = 0;
-    for (const lane of lanes.values()) for (const entry of lane.entries) if (entry.import !== undefined) count += 1;
-    return count;
+    return importCounts().sendable;
   }
 
   /** The batches of an import, one at a time, until none is left to send or something stops them. */
@@ -440,17 +455,32 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
         hooks.onBlocked?.(entry, err, kind);
       }
     }
-    for (const { lane, entry } of done) if (lane.entries[0] === entry) lane.entries.shift();
-    if (done.length > 0) {
-      try {
-        const db = await store.open();
-        await store.outbox.removeMany(db, scope, done.map((one) => one.entry.idem));
-      } catch (error) {
-        // The writes are on the server. Entries that stay in the store are sent once more after a restart and come back as replays.
-        hooks.onStorageError?.(error);
+    const reported = done.filter(({ entry }) => entry.import !== undefined).length;
+    // Taken out of the lanes now and reported below: the count of what is left counts them until then, so `sent` and `queued` agree at every point.
+    settling += reported;
+    let unreported = reported;
+    try {
+      for (const { lane, entry } of done) if (lane.entries[0] === entry) lane.entries.shift();
+      if (done.length > 0) {
+        try {
+          const db = await store.open();
+          await store.outbox.removeMany(db, scope, done.map((one) => one.entry.idem));
+        } catch (error) {
+          // The writes are on the server. Entries that stay in the store are sent once more after a restart and come back as replays.
+          hooks.onStorageError?.(error);
+        }
       }
+      for (const { entry, answer: one } of done) {
+        hooks.onDone?.(entry, one);
+        if (entry.import !== undefined) {
+          settling -= 1;
+          unreported -= 1;
+        }
+      }
+    } finally {
+      // What a throwing hook left unreported does not stay in the count.
+      settling -= unreported;
     }
-    for (const { entry, answer: one } of done) hooks.onDone?.(entry, one);
     if (retry !== null && !stopped) {
       batchAttempt += 1;
       const delay = backoffMs(batchAttempt - 1, retry.error.retryAfter);
@@ -538,9 +568,13 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
       return idems.length;
     },
 
-    /** How the import stands: the writes of it that are queued, and whether the server refused the window. */
+    /**
+     * How the import stands: `queued` writes of it can still be sent (answered ones not yet reported are counted, so this agrees with
+     * what `onDone` has reported), `refused` were refused by the server for good and stay as drafts, and whether the server refused the window.
+     */
     importState() {
-      return { queued: importEntriesLeft(), windowClosed: batchStop === "window" };
+      const { sendable, refused } = importCounts();
+      return { queued: sendable, refused, windowClosed: batchStop === "window" };
     },
 
     /** Sends everything that is waiting for a first try (after `load`) or was not blocked. */

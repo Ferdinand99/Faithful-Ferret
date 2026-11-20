@@ -503,7 +503,8 @@ test("continue_import_after_a_closed_window_needs_reauth_and_sends_only_the_rest
   assert.ok(firstFinish < firstWindow && secondFinish > firstWindow && secondFinish < secondWindow, "the second window follows the second sign-in");
 
   await until(() => model.items.size === 150, "the rest arrives");
-  assert.equal(d.engine.importStatus().queued, 0);
+  await until(() => d.engine.importStatus().queued === 0, "the rest is reported");
+  assert.equal(d.engine.importStatus().sent, 150, "the count is right at the moment nothing is left");
   // Only the rest was sent with the new window, under keys the entries had; nothing went twice.
   const second = [...model.importWindows.keys()][1];
   const resent = d.api.batches.filter((batch) => batch.window === second);
@@ -551,4 +552,42 @@ test("the_import_sources_keep_nothing_in_storage_the_console_or_the_address", ()
   // The flow never opens an item or reads a field: it only moves ciphertext, ids and counts.
   const flow = readFileSync(join(web, "src", "flows", "import.mjs"), "utf8");
   assert.doesNotMatch(flow, /open_item|item_view|reveal_|encrypt_item|import_view|JSON\.parse|\.text\(\)/);
+});
+
+test("a_new_import_beside_an_unfinished_one_asks_for_a_window_for_both", async () => {
+  const w = await importWorld();
+  // Seven writes of an earlier import can still be sent; the engine moves them onto the new window with the two new items.
+  const engine = fakeImportEngine({ status: { queued: 7 }, log: w.log });
+  const preview = await w.session.importPreview(fixtureFile("small.json"), { engine });
+  await w.session.importRun(preview, { masterPassword: PASSWORD, engine });
+  assert.deepEqual(w.windows, [{ ops: 9 }]);
+});
+
+test("the_page_ending_the_preview_ends_the_worker_and_keeps_nothing", async () => {
+  const w = await importWorld({ mode: "silent" });
+  const engine = fakeImportEngine();
+  const controller = new AbortController();
+  const outcome = assert.rejects(w.session.importPreview(fixtureFile("small.json"), { engine, signal: controller.signal }), (e) => e.code === "locked");
+  await settle();
+  assert.equal(w.workers.made[0].terminated, false, "it is waiting for the worker");
+  controller.abort();
+  await outcome;
+  assert.equal(w.workers.made[0].terminated, true, "leaving the page ended the worker");
+  assert.ok(w.ports[0].closed);
+  // A signal that is aborted already starts no worker.
+  const late = new AbortController();
+  late.abort();
+  await assert.rejects(w.session.importPreview(fixtureFile("small.json"), { engine, signal: late.signal }), (e) => e.code === "locked");
+  assert.equal(w.workers.made.length, 1);
+
+  // A preview that has arrived is not touched by a later abort of the reading; the page lets go of it with importDiscard.
+  const x = await importWorld();
+  const reading = new AbortController();
+  const held = await x.session.importPreview(fixtureFile("small.json"), { engine, signal: reading.signal });
+  reading.abort();
+  assert.deepEqual(await x.session.importRun(held, { masterPassword: PASSWORD, engine }), { queued: 2 });
+  // And one that was let go of cannot be imported.
+  const gone = await x.session.importPreview(fixtureFile("small.json"), { engine });
+  x.session.importDiscard(gone);
+  await assert.rejects(x.session.importRun(gone, { masterPassword: PASSWORD, engine }), (e) => e.code === "import_preview_gone");
 });

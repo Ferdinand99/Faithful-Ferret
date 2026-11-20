@@ -3779,13 +3779,15 @@ export function createSyncEngine({
 
     /**
      * How an import stands, for the page that shows it (also after a reload, when the import carries on from the outbox): `queued` writes of
-     * the import are not done yet, `sent` went through since this engine started or the import began, `total` is the size of the import, `failed`
-     * is how many the server refused, and `windowClosed` says that the server refused the window (the page offers "Continue import").
-     * @returns {{ queued: number, sent: number, total: number, failed: number, windowClosed: boolean }}
+     * the import can still be sent, `refused` were refused by the server for good and stay as drafts (also after a reload: it is read from the
+     * blocked lanes), `sent` went through and `failed` were refused since this engine started or the import began, `total` is the size of the
+     * import (after a reload: what was left), and `windowClosed` says that the server refused the window (the page offers "Continue import").
+     * `queued` counts an answered batch until its writes are reported, so `sent + queued` never drops below what is done.
+     * @returns {{ queued: number, refused: number, sent: number, total: number, failed: number, windowClosed: boolean }}
      */
     importStatus() {
-      const { queued, windowClosed } = runner.importState();
-      return { queued, sent: importCount.sent, total: importCount.total, failed: importCount.failed, windowClosed };
+      const { queued, refused, windowClosed } = runner.importState();
+      return { queued, refused, sent: importCount.sent, total: importCount.total, failed: importCount.failed, windowClosed };
     },
 
     /**

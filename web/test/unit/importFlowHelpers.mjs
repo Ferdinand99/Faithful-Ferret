@@ -73,7 +73,7 @@ export function sealingPort(client) {
 /**
  * An engine that records what it is given. `used` is how many items the vault shows; `status` is what `importStatus` says.
  * With `log`, every call is also put in that list as `engine.<name>`, so a test can see its place among the requests.
- * @param {{ used?: number, status?: Partial<{ queued: number, sent: number, total: number, failed: number, windowClosed: boolean }>, failImport?: any, log?: string[] }} [options]
+ * @param {{ used?: number, status?: Partial<{ queued: number, refused: number, sent: number, total: number, failed: number, windowClosed: boolean }>, failImport?: any, log?: string[] }} [options]
  */
 export function fakeImportEngine({ used = 0, status = {}, failImport = null, log = [] } = {}) {
   /** @type {Record<string, Set<(payload: any) => void>>} */
@@ -83,7 +83,7 @@ export function fakeImportEngine({ used = 0, status = {}, failImport = null, log
     calls: /** @type {string[]} */ ([]),
     imported: /** @type {Array<{ items: any[], windowId: string }>} */ ([]),
     resumed: /** @type {string[]} */ ([]),
-    status: { queued: 0, sent: 0, total: 0, failed: 0, windowClosed: false, ...status },
+    status: { queued: 0, refused: 0, sent: 0, total: 0, failed: 0, windowClosed: false, ...status },
     list: () => Array.from({ length: engine.used }, (_, n) => ({ id: n })),
     importStatus: () => engine.status,
     async importItems(/** @type {any[]} */ items, /** @type {{ windowId: string }} */ { windowId }) {

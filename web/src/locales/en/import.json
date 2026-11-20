@@ -42,6 +42,7 @@
   "import.error.import_zip_entry_missing": "The ZIP file lacks the file that the export is read from.",
   "import.error.locked": "The vault was locked. Nothing was imported.",
   "import.error.quota_exceeded": "The vault has no room for this many items. Nothing was imported.",
+  "import.error.quota_exceeded_continue": "The vault has no room for the items that are left. The ones that were already sent are kept. Make room, then continue.",
   "import.error.unsupported": "The part of the page that reads the file could not take this request.",
   "import.file.help": "Choose a .ferretexport, .json or .csv file. It is read on this device and is not uploaded.",
   "import.file.label": "File to import",

@@ -57,7 +57,7 @@ const states = new WeakMap();
 /**
  * @typedef {{ id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }} Sealed
  * @typedef {{
- *   file: Blob,
+ *   file: Blob | null,
  *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv",
  *   sealed: Sealed[] | null,
  *   header: { salt: Uint8Array, kdf: Record<string, number> } | null,
@@ -319,7 +319,8 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     warningsDropped: report.warningsDropped,
     free, used, vaultEmpty: used === 0, fits: sealed.length <= free, createdAt: null,
   });
-  states.set(preview, { file, kind, sealed, header: null, running: false, gone: false });
+  // Only an export of Ferret's is read again; a plain file is not kept once it has been parsed.
+  states.set(preview, { file: null, kind, sealed, header: null, running: false, gone: false });
   return preview;
 }
 
@@ -332,6 +333,7 @@ export function discardImport(preview) {
   if (!state) return;
   state.sealed = null;
   state.header = null;
+  state.file = null;
   state.gone = true;
   states.delete(preview);
 }
@@ -371,6 +373,7 @@ async function openAndSeal(env, state, exportPassword, { free, onProgress, signa
   const { client } = env;
   const header = state.header;
   if (header === null) throw new AccountError("import_preview_gone");
+  if (state.file === null) throw new AccountError("import_preview_gone");
   const bytes = new Uint8Array(await state.file.arrayBuffer());
   /** @type {Uint8Array | null} */
   let key = null;
@@ -434,7 +437,7 @@ const toItems = (sealed) => sealed.map(({ id, rev, envelope, tag }) => ({ id: he
  * @param {Preview} preview what `previewImport` gave
  * @param {{
  *   masterPassword: string, exportPassword?: string, skCode?: string,
- *   engine: { list(): unknown[], importItems(items: any[], options: { windowId: string }): Promise<{ queued: number }> },
+ *   engine: { list(): unknown[], importStatus?(): { queued: number }, importItems(items: any[], options: { windowId: string }): Promise<{ queued: number }> },
  *   onProgress?: (progress: { phase: string, items?: number }) => void, signal?: AbortSignal,
  * }} args
  * @returns {Promise<{ queued: number }>}
@@ -465,7 +468,9 @@ export async function runImport(env, preview, { masterPassword, exportPassword, 
     const sealed = state.sealed;
     if (state.gone) throw new AccountError("import_preview_gone");
     onProgress({ phase: "window", items: sealed.length });
-    const windowId = await openWindow(env, sealed.length);
+    // An import that is not finished goes on under this window with the new items (the engine moves it), so the window is for both.
+    const carried = typeof engine.importStatus === "function" ? engine.importStatus().queued : 0;
+    const windowId = await openWindow(env, sealed.length + carried);
     onProgress({ phase: "queueing", items: sealed.length });
     const result = await engine.importItems(toItems(sealed), { windowId });
     // Spent: the sealed items are in the outbox now.

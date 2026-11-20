@@ -42,6 +42,7 @@
   "import.error.import_zip_entry_missing": "ZIP-filen mangler filen som eksporten leses fra.",
   "import.error.locked": "Hvelvet ble låst. Ingenting ble importert.",
   "import.error.quota_exceeded": "Hvelvet har ikke plass til så mange elementer. Ingenting ble importert.",
+  "import.error.quota_exceeded_continue": "Hvelvet har ikke plass til elementene som er igjen. De som allerede er sendt, beholdes. Lag plass og fortsett.",
   "import.error.unsupported": "Den delen av siden som leser filen, kunne ikke ta denne forespørselen.",
   "import.file.help": "Velg en .ferretexport-, .json- eller .csv-fil. Den leses på denne enheten og lastes ikke opp.",
   "import.file.label": "Fil som skal importeres",

@@ -42,7 +42,7 @@ export default {
     const t = ctx.i18n.t;
     return vault.page(importView({
       t,
-      previewFile: (file) => session.importPreview(file, { engine, labels: labelsOf(t) }),
+      previewFile: (file, options) => session.importPreview(file, { engine, labels: labelsOf(t), ...options }),
       runImport: (preview, args) => session.importRun(preview, { ...args, engine }),
       continueImport: (args) => session.importContinue({ ...args, engine }),
       discard: (preview) => session.importDiscard(preview),

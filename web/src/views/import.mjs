@@ -53,10 +53,13 @@ const PLAIN_KINDS = Object.freeze(["bitwarden_json", "bitwarden_csv"]);
  * codes of the sign-in and the re-authentication have theirs. A line number (a CSV file) is added where there is one.
  * @param {Translate} t
  * @param {unknown} error
+ * @param {{ continuing?: boolean }} [where] `continuing`: the error is the answer to "Continue import", part-way through an import
  * @returns {string}
  */
-export function importErrorText(t, error) {
+export function importErrorText(t, error, { continuing = false } = {}) {
   const code = codeOf(error);
+  // In the middle of an import "nothing was imported" would be wrong: what was sent stays.
+  if (continuing && code === "quota_exceeded") return t("import.error.quota_exceeded_continue");
   if (!IMPORT_ERRORS.includes(code)) return securityErrorText(t, error);
   const text = t(`import.error.${code}`);
   const line = /** @type {any} */ (error)?.details?.line;
@@ -70,13 +73,13 @@ export function importErrorText(t, error) {
  *   free: number, used: number, vaultEmpty: boolean, fits: boolean, createdAt: number | null,
  * }} Preview
  *
- * @typedef {{ queued: number, sent: number, total: number, failed: number, windowClosed: boolean }} ImportStatus
+ * @typedef {{ queued: number, refused: number, sent: number, total: number, failed: number, windowClosed: boolean }} ImportStatus
  */
 
 /**
  * @param {{
  *   t: Translate,
- *   previewFile: (file: File) => Promise<Preview>,
+ *   previewFile: (file: File, options: { signal: AbortSignal }) => Promise<Preview>,
  *   runImport: (preview: Preview, args: { masterPassword: string, exportPassword?: string, skCode?: string, onProgress: (progress: { phase: string, items?: number }) => void }) => Promise<{ queued: number }>,
  *   continueImport: (args: { masterPassword: string, skCode?: string, onProgress: (progress: { phase: string, items?: number }) => void }) => Promise<unknown>,
  *   discard: (preview: Preview) => void,
@@ -84,12 +87,13 @@ export function importErrorText(t, error) {
  *   on: (event: "import" | "import_window_closed", fn: (payload: any) => void) => () => void,
  *   skRequired?: boolean,
  *   locale?: string,
+ *   leavePollMs?: number,
  *   scope?: { add(fn: () => void): () => void },
- * }} options `previewFile`, `runImport`, `continueImport` and `discard` are the session's, `status` and `on` the engine's. `skRequired`: the account has a
+ * }} options `leavePollMs`: how often the page looks whether the user has left it while a file is being read or a preview is held. `previewFile`, `runImport`, `continueImport` and `discard` are the session's, `status` and `on` the engine's. `skRequired`: the account has a
  * secret key that this device does not hold.
  * @returns {HTMLElement}
  */
-export function importView({ t, previewFile, runImport, continueImport, discard, status, on, skRequired = false, locale, scope }) {
+export function importView({ t, previewFile, runImport, continueImport, discard, status, on, skRequired = false, locale, leavePollMs = 500, scope }) {
   const root = el("section", { class: "card account import-page", "data-role": "import-page" });
 
   /** The preview that is on the page now, or null. @type {Preview | null} */
@@ -100,6 +104,43 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   let importedKind = null;
   /** How many items this page queued. */
   let queuedHere = 0;
+  /** The import itself is running (the preview is spent when it ends, not before). */
+  let running = false;
+  /** Ends the reading of the file when the user leaves the page. @type {AbortController | null} */
+  let previewAbort = null;
+  /** The timer that looks whether the page has been left. @type {any} */
+  let watch = null;
+  /** The page has been in the document (a page that was never shown cannot have been left). */
+  let wasShown = false;
+
+  /**
+   * The user left the page (the router put another one in its place): the worker that reads the file is ended and a preview that is
+   * held is let go of, as for a lock. An import that is running is not touched.
+   */
+  function left() {
+    stopWatch();
+    previewAbort?.abort();
+    previewAbort = null;
+    if (preview !== null && !running) {
+      discard(preview);
+      preview = null;
+    }
+  }
+  function look() {
+    const connected = /** @type {any} */ (root).isConnected;
+    if (connected === true) wasShown = true;
+    else if (connected === false && wasShown) left();
+  }
+  function startWatch() {
+    if (watch !== null) return;
+    watch = setInterval(look, leavePollMs);
+    // A timer must not keep a process alive (the tests); the handle of a browser is a number.
+    watch?.unref?.();
+  }
+  function stopWatch() {
+    if (watch !== null) clearInterval(watch);
+    watch = null;
+  }
 
   // ------------------------------------------------------------- the file
   const fileInput = /** @type {HTMLInputElement} */ (el("input", {
@@ -219,6 +260,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   function resetFile() {
     if (preview !== null) discard(preview);
     preview = null;
+    stopWatch();
     previewBox.hidden = true;
     mount(previewBox);
     wipeForm();
@@ -229,6 +271,8 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   scope?.add(() => {
     wipeForm();
     wipeContinue();
+    stopWatch();
+    previewAbort?.abort();
     if (preview !== null) discard(preview);
     preview = null;
   });
@@ -246,11 +290,20 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     if (!file) return;
     fileInput.disabled = true;
     setText(fileStatus, t("import.file.reading"));
+    const controller = new AbortController();
+    previewAbort = controller;
+    startWatch();
     try {
-      const shown = await previewFile(file);
+      const shown = await previewFile(file, { signal: controller.signal });
       setText(fileStatus, "");
+      // The user left the page while the file was read: nothing is shown and nothing is kept.
+      if (controller.signal.aborted) {
+        discard(shown);
+        return;
+      }
       showPreview(shown);
     } catch (error) {
+      stopWatch();
       setText(fileStatus, "");
       showFileError(importErrorText(t, error));
       fileInput.value = "";
@@ -274,6 +327,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     // Out of the fields before the slow calls: a failed attempt leaves nothing on the page.
     wipeForm();
     busy.set(true);
+    running = true;
     try {
       const done = await runImport(shown, {
         masterPassword: typed,
@@ -282,6 +336,8 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
         onProgress,
       });
       busy.set(false);
+      running = false;
+      stopWatch();
       preview = null;
       previewBox.hidden = true;
       mount(previewBox);
@@ -292,6 +348,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
       renderTracker();
     } catch (error) {
       busy.set(false);
+      running = false;
       const code = codeOf(error);
       // The file was let go of, or the vault locked: there is nothing to try again, and the page goes back to choosing a file.
       if (code === "import_preview_gone" || code === "locked") {
@@ -360,7 +417,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
           return;
         }
         if (code === "sk_required" && !skRequired) mount(continueSkRow, continueSk.row);
-        showContinueError(importErrorText(t, error));
+        showContinueError(importErrorText(t, error, { continuing: true }));
       }
     },
   }, continueMaster.row, continueSkRow, continueStatus, continueError, el("div", { class: "actions" }, continueSubmit));
@@ -376,7 +433,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     try {
       now = status();
     } catch {
-      now = { queued: 0, sent: 0, total: 0, failed: 0, windowClosed: false };
+      now = { queued: 0, refused: 0, sent: 0, total: 0, failed: 0, windowClosed: false };
     }
     tracker.hidden = false;
     if (now.queued > 0 && now.windowClosed) {
@@ -399,9 +456,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     }
     // Nothing is left to send.
     tracking = false;
-    // What the engine counted since it started or the import began; after a reload the size of what was left is the better number.
-    const counted = Math.max(now.sent, now.total - now.failed);
-    const count = counted > 0 ? counted : queuedHere;
+    const count = now.sent > 0 ? now.sent : queuedHere;
     const plain = importedKind === null || PLAIN_KINDS.includes(importedKind);
     const again = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary", "data-role": "import-again" }, t("import.done.again")));
     again.addEventListener("click", () => {
@@ -413,7 +468,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     mount(tracker,
       el("h2", null, t("import.done.heading")),
       el("p", { "data-role": "done-items" }, t("import.done.items", { count })),
-      ...(now.failed > 0 ? [el("p", { class: "notice notice-warning", role: "alert", "data-role": "done-failed" }, t("import.done.failed", { count: now.failed }))] : []),
+      ...(now.refused > 0 ? [el("p", { class: "notice notice-warning", role: "alert", "data-role": "done-failed" }, t("import.done.failed", { count: now.refused }))] : []),
       el("p", { "data-role": "done-next" }, t("import.done.next")),
       ...(plain ? [el("p", { class: "notice notice-warning", role: "note", "data-role": "plain-file-after" }, t("import.plain.after"))] : []),
       el("div", { class: "actions" }, again, el("a", { class: "btn btn-primary", href: "#/", "data-role": "done-list" }, t("import.done.list"))));

@@ -65,13 +65,15 @@ const submit = (root, form = "import-form") => fire(find(root, form), "submit");
 
 /** The page over fakes. `calls` records what the page asked of the session. */
 function page(options = {}) {
-  const calls = { previews: [], runs: [], continues: [], discards: [] };
+  const calls = { previews: [], signals: [], runs: [], continues: [], discards: [] };
   const engine = options.engine ?? fakeImportEngine();
   const scope = createWipeScope();
   const root = importView({
     t: i18n("en").t,
-    previewFile: async (file) => {
+    previewFile: async (file, { signal }) => {
       calls.previews.push(file.name);
+      calls.signals.push(signal);
+      if (options.previewGate) await options.previewGate;
       if (options.previewError) throw options.previewError;
       return options.preview ?? bitwarden();
     },
@@ -439,10 +441,12 @@ test("items_the_server_refused_are_counted_when_the_import_ends", async () => {
     await choose(root);
     type(root, { "master-password": MASTER });
     await submit(root);
-    engine.status = { queued: 0, total: 12, sent: 10, failed: 2, windowClosed: false };
+    // The engine's own picture: two items were refused and stay as drafts, nothing is waiting to be sent, so the import is over.
+    engine.status = { queued: 0, refused: 2, total: 12, sent: 10, failed: 2, windowClosed: false };
     engine.emit("import", { sent: 10, total: 12, failed: 2 });
     assert.match(textOf(find(root, "done-items")), /Items sent to the server: 10\./);
     assert.match(textOf(find(root, "done-failed")), /2 item\(s\) were refused by the server/);
+    assert.equal(find(root, "tracker-sending"), null);
   });
 });
 
@@ -675,5 +679,43 @@ test("the_import_route_is_an_account_page_in_the_vault_frame_and_passes_the_page
     } finally {
       asking.done();
     }
+  });
+});
+
+// ------------------------------------------------------------- leaving the page
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("leaving_the_page_ends_the_reading_and_lets_go_of_a_held_preview", async () => {
+  await withDom(async () => {
+    // While the file is read: the signal handed to the session is aborted, and what comes back afterwards is dropped.
+    /** @type {() => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const reading = page({ previewGate: gate, view: { leavePollMs: 5 } });
+    reading.root.isConnected = true;
+    find(reading.root, "file").files = [{ name: "x.json" }];
+    const pending = fire(find(reading.root, "file"), "change");
+    await pause(30);
+    assert.equal(reading.calls.signals[0].aborted, false, "the page is still shown");
+    reading.root.isConnected = false;
+    await pause(30);
+    assert.equal(reading.calls.signals[0].aborted, true, "the page was left");
+    release();
+    await pending;
+    assert.equal(reading.calls.discards.length, 1, "the preview that arrived is let go of");
+    assert.equal(find(reading.root, "preview").hidden, true);
+
+    // A preview that is held is let go of when the page is left.
+    const held = page({ view: { leavePollMs: 5 } });
+    held.root.isConnected = true;
+    await choose(held.root);
+    await pause(30);
+    assert.equal(held.calls.discards.length, 0);
+    held.root.isConnected = false;
+    await pause(30);
+    assert.equal(held.calls.discards.length, 1);
   });
 });

@@ -229,17 +229,21 @@ export function createCryptoSession({
     /**
      * Reads an import file and says what is in it (see `flows/import.mjs`). The import worker reads a JSON or CSV file and
      * the vault seals what it makes; the plain text never reaches this thread. A lock of the vault ends the worker and drops
-     * the preview. `engine` is the sync engine of the open vault.
+     * the preview. `engine` is the sync engine of the open vault. `signal`: the page that asked has gone (the user left it); the worker is
+     * ended and nothing is kept, as for a lock.
      * @param {Blob & { name?: string }} file
-     * @param {{ engine: any, labels?: unknown, timeoutMs?: number }} options
+     * @param {{ engine: any, labels?: unknown, timeoutMs?: number, signal?: AbortSignal }} options
      */
     async importPreview(file, options) {
       if (current === null) throw new AccountError("session_ended");
+      const { signal: given, ...rest } = options;
       const controller = new AbortController();
       const stop = () => controller.abort();
+      if (given?.aborted) throw new AccountError("locked");
+      given?.addEventListener("abort", stop, { once: true });
       lockListeners.add(stop);
       try {
-        const preview = await previewImport(env, file, { ...options, signal: controller.signal });
+        const preview = await previewImport(env, file, { ...rest, signal: controller.signal });
         // A lock that came while the worker was running leaves nothing behind.
         if (controller.signal.aborted || current === null) {
           discardImport(preview);
@@ -249,6 +253,7 @@ export function createCryptoSession({
         return preview;
       } finally {
         lockListeners.delete(stop);
+        given?.removeEventListener("abort", stop);
       }
     },
 

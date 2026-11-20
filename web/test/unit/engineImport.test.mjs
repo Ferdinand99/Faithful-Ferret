@@ -198,6 +198,64 @@ test("an_import_item_that_the_server_refuses_is_counted_as_failed_and_stays_as_a
   const shown = d.engine.list().find((item) => item.id === items[1].id);
   assert.equal(shown.blocked, true);
   assert.equal(shown.blockedReason, "unsupported_envelope");
+  // What the server refused is not waiting to be sent: the import is over for the page, with one refused item that stays as a draft.
+  assert.deepEqual(d.engine.importStatus(), { queued: 0, refused: 1, sent: 2, total: 3, failed: 1, windowClosed: false });
+  d.engine.stop();
+});
+
+test("a_refused_import_item_is_not_sent_again_with_a_new_window_and_is_still_refused_after_a_reload", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  const first = await started({ model, client });
+  const window = model.openImportWindow(100);
+  const items = await sealed(client, 150);
+  const real = model.batch.bind(model);
+  model.batch = (body) => {
+    const answer = real(body);
+    // The first item of the first batch is refused for good.
+    if (answer.results.length === 100 && answer.results[0].status === 200 && !model.refusedOnce) {
+      model.refusedOnce = true;
+      answer.results[0] = { status: 422, error: "unsupported_envelope" };
+    }
+    return answer;
+  };
+  model.closeImportWindow(window); // the window is closed from the start: nothing is stored under it
+  await first.engine.importItems(items, { windowId: window });
+  await until(() => first.closed.length === 1, "the server refuses the window");
+  const next = model.openImportWindow(150);
+  await first.engine.resumeImport({ windowId: next });
+  await until(() => first.engine.importStatus().queued === 0, "nothing is left to send");
+  // (The model stored the refused item; only the answer was changed. What matters is what the engine counts.)
+  const status = first.engine.importStatus();
+  assert.deepEqual([status.queued, status.refused, status.sent, status.windowClosed], [0, 1, 149, false]);
+  first.engine.stop();
+
+  // After a reload the refused item is still counted as refused and not as waiting.
+  const second = await started({ model, client, db: first.store.database, locks: first.locks });
+  const again = second.engine.importStatus();
+  assert.deepEqual([again.queued, again.refused], [0, 1]);
+  second.engine.stop();
+});
+
+test("a_new_import_beside_a_refused_draft_still_goes_through", async () => {
+  const d = await started();
+  const window = d.model.openImportWindow(10);
+  const items = await sealed(d.client, 4);
+  const real = d.model.batch.bind(d.model);
+  d.model.batch = (body) => {
+    const answer = real(body);
+    answer.results[0] = { status: 422, error: "unsupported_envelope" };
+    return answer;
+  };
+  await d.engine.importItems(items, { windowId: window });
+  await until(() => d.engine.importStatus().queued === 0 && d.engine.importStatus().refused === 1);
+  d.model.batch = real;
+  d.model.closeImportWindow(window);
+  // A new import while the refused one is a draft: the window it needs is for the new items only.
+  const more = await sealed(d.client, 2, 100);
+  await d.engine.importItems(more, { windowId: d.model.openImportWindow(2) });
+  await until(() => d.model.items.size === 6);
+  assert.equal(d.engine.importStatus().refused, 1);
   d.engine.stop();
 });
 
@@ -249,21 +307,20 @@ test("the_page_can_ask_how_an_import_stands_also_after_a_reload", async () => {
   const model = new Model();
   const client = createFakeClient();
   const first = await started({ model, client });
-  assert.deepEqual(first.engine.importStatus(), { queued: 0, sent: 0, total: 0, failed: 0, windowClosed: false });
+  assert.deepEqual(first.engine.importStatus(), { queued: 0, refused: 0, sent: 0, total: 0, failed: 0, windowClosed: false });
   const window = model.openImportWindow(100);
   await first.engine.importItems(await sealed(client, 150), { windowId: window });
   await until(() => first.closed.length === 1, "the window closes after 100");
-  assert.deepEqual(first.engine.importStatus(), { queued: 50, sent: 100, total: 150, failed: 0, windowClosed: true });
+  assert.deepEqual(first.engine.importStatus(), { queued: 50, refused: 0, sent: 100, total: 150, failed: 0, windowClosed: true });
   first.engine.stop();
 
   // After a reload the engine finds the rest in the outbox and says that the window is closed once the server has said so again.
   const second = await started({ model, client, db: first.store.database, locks: first.locks });
   await until(() => second.closed.length === 1, "the old window is refused again");
-  assert.deepEqual(second.engine.importStatus(), { queued: 50, sent: 0, total: 50, failed: 0, windowClosed: true });
+  assert.deepEqual(second.engine.importStatus(), { queued: 50, refused: 0, sent: 0, total: 50, failed: 0, windowClosed: true });
   await second.engine.resumeImport({ windowId: model.openImportWindow(50) });
   await until(() => model.items.size === 150, "the rest");
   await until(() => second.engine.importStatus().queued === 0);
-  const done = second.engine.importStatus();
-  assert.deepEqual([done.queued, done.total, done.failed, done.windowClosed], [0, 50, 0, false]);
+  assert.deepEqual(second.engine.importStatus(), { queued: 0, refused: 0, sent: 50, total: 50, failed: 0, windowClosed: false });
   second.engine.stop();
 });
