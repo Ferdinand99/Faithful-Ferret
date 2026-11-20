@@ -20,6 +20,7 @@ use ferret_core::{
 use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
+use ferret_server::vault::unlock_write::MAX_GENERATION_STEP;
 use ferret_server::wire::b64url;
 use ferret_server_auth::SessionScope;
 use ferret_server_auth::testing::SMALL;
@@ -271,8 +272,8 @@ async fn a_signed_renewal_with_fresh_reauth_replaces_wrap_pk_r_and_manifest() {
         json!(b64url::encode(&renewed.manifest.envelope))
     );
 
-    // A second renewal right away goes on from the first (a new recovery key
-    // does not wait a minute): generation 3, revision 3.
+    // A second renewal right away goes on from the first (there is no wait
+    // between changes): generation 3, revision 3.
     took_recovery(&mut client, renewed);
     let again = renewed_recovery(&mut client);
     let res = put_recovery(&app, &jar, &client, &again).await;
@@ -367,7 +368,9 @@ async fn a_generation_not_above_is_409() {
     let (app, mut client, jar, _) = setup(4).await;
     let before = snapshot(&app, &client).await;
     let renewed = renewed_recovery(&mut client);
-    for generation in [1, 0] {
+    // Not above the stored one, or so far above it that it would use up the
+    // generations for good (the top of the range among them).
+    for generation in [1, 0, u32::MAX, 2 + MAX_GENERATION_STEP] {
         let mut req = recovery_put_req(&renewed);
         req.kek_generation = generation;
         let res = put_recovery_bytes(&app, &jar, &client, &renewed, body_bytes(&req)).await;
@@ -553,10 +556,9 @@ async fn no_session_ends() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
 
     // This session is still fresh (a renewal does not use the
-    // re-authentication up): a password change a minute later (the wait
-    // after any change of unlock methods) needs no new sign-in.
+    // re-authentication up), and there is no wait after the renewal: a
+    // password change right after it needs no new sign-in and goes through.
     took_recovery(&mut client, renewed);
-    app.clock.advance(60);
     let change = password_change(&app, &jar, &mut client, "a brand new horse battery").await;
     let res = put_password(&app, &jar, &client, &change).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());

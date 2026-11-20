@@ -42,6 +42,16 @@
 //! After a proof the account is read again. A user who was disabled during the
 //! sixty seconds between the steps gets nothing.
 //!
+//! The login state is bound to the OPAQUE record it was made from. The library
+//! reads the account's record when the login finishes (on the request's own
+//! connection, after the throttle) and refuses a state made from a record that
+//! has since been replaced (a new master password, a recovery, a restore) with
+//! the same `denied` and after the same work as a wrong password. The
+//! transaction that writes the session, or marks a re-authentication, compares
+//! the record once more: a change that commits between the library's read and
+//! that transaction is caught there, and a session written before the change
+//! commits is one the change ends.
+//!
 //! # Sessions
 //!
 //! An ordinary sign-in makes a new session row and its two cookies
@@ -88,10 +98,10 @@ use axum::routing::{get, post};
 use axum_extra::extract::cookie::SignedCookieJar;
 use ferret_core::{KsfProfile, OsRng};
 use ferret_server_auth::{
-    AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId, DenyReason,
-    LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginVerified, NormalizedLoginName,
-    PreloginPolicy, ProfileRules, SessionBinding, SessionScope, StoredRecord, ValidatedRecord,
-    login_finish, login_start, normalize_login_name,
+    AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId, CurrentRecord, DenyReason,
+    InternalKind, LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginVerified,
+    NormalizedLoginName, PreloginPolicy, ProfileRules, RecordBinding, SessionBinding, SessionScope,
+    StoredRecord, ValidatedRecord, login_finish, login_start, normalize_login_name,
 };
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
@@ -103,6 +113,7 @@ use crate::auth::session::{
     SessionRow, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS, clear_cookies, insert_session, lookup,
     mark_reauth, new_session, reauth_fresh, revoke, scoped_session_cookies, still_valid,
 };
+use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
 use crate::http::extract::{AdminSession, ScopedSession, VaultSession, caps, session_binding};
@@ -859,9 +870,63 @@ fn presented_sid(jar: &SignedCookieJar) -> Option<SidHash> {
         .map(|secret| secret.hash())
 }
 
-/// The library's `login_finish`: it takes and opens the sealed state once,
-/// against the purpose the request names, and asks the throttle with the
-/// account of the state before any OPAQUE work.
+/// The OPAQUE record each account has now, as the library's `login_finish`
+/// reads it, by the credential id of the state (the account id, or the made-up
+/// id of a name without an account).
+///
+/// `login_finish` runs on a blocking thread, outside the vault pool: it waits
+/// for the login-state store (its mutex, and the SQLite write lock for
+/// `take`). The record is read on that same thread, through the store's own
+/// connection ([`SqliteLoginStateStore::account_record`]): a finish takes no
+/// pooled connection and no second blocking thread, so a flood of finishes,
+/// which need no account, can neither starve the pool nor use up the blocking
+/// threads that the pool's own work needs. The read happens only for a state
+/// that opened and that the throttle let through.
+///
+/// A credential with no row hashes the stand-in record, so a real and a
+/// made-up account cost the same here apart from the primary-key lookup, which
+/// finds a row or not as the lookup of `login/start` does.
+struct StoredRecords<'s>(&'s SqliteLoginStateStore);
+
+impl CurrentRecord for StoredRecords<'_> {
+    fn current_record(
+        &self,
+        credential: &CredentialId,
+    ) -> Result<Option<RecordBinding>, AuthError> {
+        let found = self
+            .0
+            .account_record(credential.as_bytes())
+            .map_err(|_| AuthError::Internal(InternalKind::Storage))?;
+        let binding = match &found {
+            Some(stored) => RecordBinding::of(stored),
+            None => RecordBinding::of(stand_in_record()),
+        };
+        Ok(found.map(|_| binding))
+    }
+}
+
+/// Whether `binding` is the record `account` has now, read in the caller's
+/// transaction. An account that is gone has no record.
+fn record_is_current(
+    conn: &Connection,
+    account: &AccountId,
+    binding: &RecordBinding,
+) -> rusqlite::Result<bool> {
+    let found: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
+            params![account.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some_and(|stored| binding.same_as(&RecordBinding::of(&stored))))
+}
+
+/// The library's `login_finish`, on a blocking thread: it takes and opens the
+/// sealed state once, against the purpose the request names, asks the
+/// throttle with the account of the state, and then reads the account's
+/// record (on the store's connection, see `StoredRecords`) and checks the
+/// proof.
 fn finish_blocking(
     state: &FerretState,
     caller: Caller,
@@ -874,6 +939,7 @@ fn finish_blocking(
     login_finish(
         &cx,
         state.login_states.as_ref(),
+        &StoredRecords(state.login_states.as_ref()),
         &LoginFinishRequest {
             caller,
             login_id: login_id.as_bytes(),
@@ -955,6 +1021,8 @@ async fn login_finish_route(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
     let worker = state.clone();
+    // On a blocking thread, as the store needs, and outside the pool: see
+    // `StoredRecords`.
     let verified = tokio::task::spawn_blocking(move || {
         finish_blocking(&worker, caller, &login_id, &ke3, current_session)
     })
@@ -967,25 +1035,36 @@ async fn login_finish_route(
         LoginPurpose::Reauth { .. } => {
             let session = reauth_session.ok_or_else(ApiError::internal)?;
             let (sid, user_id, version) = (session.sid, session.user_id, session.session_version);
-            // The check of the session and the mark are one write transaction:
-            // a session that ended, or whose user was signed out everywhere,
-            // while the proof ran is not made fresh.
+            let account = session.account;
+            let record = verified.record;
+            // The check of the session, of the record and the mark are one
+            // write transaction: a session that ended, or whose user was
+            // signed out everywhere, while the proof ran is not made fresh,
+            // and neither is one whose master password changed meanwhile.
             let marked = state
                 .vault_db
                 .with_conn(move |conn| {
                     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    if !still_valid(&tx, &sid, Origin::Vault, version, now)?
-                        || !mark_reauth(&tx, &sid, now)?
-                    {
-                        return Ok(false);
+                    if !still_valid(&tx, &sid, Origin::Vault, version, now)? {
+                        return Ok(Marked::SessionGone);
+                    }
+                    if !record_is_current(&tx, &account, &record)? {
+                        return Ok(Marked::RecordChanged);
+                    }
+                    if !mark_reauth(&tx, &sid, now)? {
+                        return Ok(Marked::SessionGone);
                     }
                     sign_in_codes::revoke_for_user(&tx, user_id)?;
                     tx.commit()?;
-                    Ok(true)
+                    Ok(Marked::Fresh)
                 })
                 .await?;
-            if !marked {
-                return Err(ApiError::unauthorized());
+            match marked {
+                Marked::Fresh => {}
+                Marked::SessionGone => return Err(ApiError::unauthorized()),
+                Marked::RecordChanged => {
+                    return Err(auth_refusal(AuthError::Denied(DenyReason::RecordChanged)));
+                }
             }
             let jar = reauth::grant(jar, &state.core.session_key, state.origins.vault_is_https());
             Ok(no_store(
@@ -1007,16 +1086,19 @@ async fn login_finish_route(
                 .with_conn(move |conn| read_proven_account(conn, account_bytes))
                 .await?
                 .ok_or_else(|| auth_refusal(AuthError::Denied(DenyReason::StateInvalid)))?;
-            let (jar, _) = open_session(
+            let (jar, _) = open_session_proven(
                 &state,
                 jar,
-                proven.user_id,
-                Origin::Vault,
-                SessionScope::Full,
-                proven.session_version,
-                device,
-                &device_name,
-                now,
+                &NewSession {
+                    user_id: proven.user_id,
+                    origin: Origin::Vault,
+                    scope: SessionScope::Full,
+                    session_version: proven.session_version,
+                    device,
+                    device_name: &device_name,
+                    now,
+                },
+                Some((proven.account, verified.record)),
             )
             .await?;
             Ok(no_store(
@@ -1032,6 +1114,17 @@ async fn login_finish_route(
             ))
         }
     }
+}
+
+/// How the transaction of a re-authentication ended.
+enum Marked {
+    /// The session is fresh now.
+    Fresh,
+    /// The session ended, or its user was signed out everywhere, while the
+    /// proof ran.
+    SessionGone,
+    /// The account's record is not the one the proof was checked against.
+    RecordChanged,
 }
 
 /// How the database side of opening a session ended.
@@ -1051,6 +1144,9 @@ enum Opened {
     /// The kit's second factor is on for the user and this server cannot ask
     /// for it yet.
     SecondFactor,
+    /// The account's record is not the one the proof was checked against: a
+    /// new master password or a recovery committed after the library read it.
+    RecordChanged,
 }
 
 /// Opens a session for `user_id` on `origin` with `scope`, after a proof (an
@@ -1074,6 +1170,13 @@ enum Opened {
 ///
 /// After the commit, the ended session is announced (`session_revoked`), so
 /// its event stream closes at once.
+///
+/// This form checks no OPAQUE record: it is only for a session that no
+/// OPAQUE proof backs (a redeemed sign-in code). A session issued after
+/// `login_finish` must go through `open_session_proven` with the account and
+/// `LoginVerified::record`, so the record is checked again in the session's
+/// transaction; without that check a new master password that commits between
+/// the proof and the session write would not stop the session.
 #[allow(
     clippy::too_many_arguments,
     reason = "each argument is a different fact of the sign-in; a struct would only rename them"
@@ -1089,8 +1192,48 @@ pub(crate) async fn open_session(
     device_name: &str,
     now: i64,
 ) -> Result<(SignedCookieJar, SidHash), ApiError> {
+    let new = NewSession {
+        user_id,
+        origin,
+        scope,
+        session_version,
+        device,
+        device_name,
+        now,
+    };
+    open_session_proven(state, jar, &new, None).await
+}
+
+/// The facts of a session to open, as [`open_session`] takes them.
+struct NewSession<'a> {
+    user_id: i64,
+    origin: Origin,
+    scope: SessionScope,
+    session_version: i64,
+    device: DeviceId,
+    device_name: &'a str,
+    now: i64,
+}
+
+/// [`open_session`] after an OPAQUE proof: `proven` is the account and the
+/// record the proof was checked against, and the transaction refuses (`401
+/// denied`) when the account's record is another one by then.
+async fn open_session_proven(
+    state: &FerretState,
+    jar: SignedCookieJar,
+    new: &NewSession<'_>,
+    proven: Option<(AccountId, RecordBinding)>,
+) -> Result<(SignedCookieJar, SidHash), ApiError> {
     let presented = presented_sid(&jar);
-    let device_name = device_name.to_string();
+    let device_name = new.device_name.to_string();
+    let (user_id, origin, scope, session_version, device, now) = (
+        new.user_id,
+        new.origin,
+        new.scope,
+        new.session_version,
+        new.device,
+        new.now,
+    );
     let opened = state
         .vault_db
         .with_conn(move |conn| {
@@ -1104,6 +1247,7 @@ pub(crate) async fn open_session(
                     device,
                     device_name: &device_name,
                     now,
+                    proven,
                 },
                 presented,
             )
@@ -1130,6 +1274,9 @@ pub(crate) async fn open_session(
             tracing::info!("sign-in refused: the kit's second factor is on");
             return Err(ApiError::coded("forbidden"));
         }
+        Opened::RecordChanged => {
+            return Err(auth_refusal(AuthError::Denied(DenyReason::RecordChanged)));
+        }
     };
     let secure = match origin {
         Origin::Vault => state.origins.vault_is_https(),
@@ -1150,6 +1297,9 @@ struct NewRow<'a> {
     device: DeviceId,
     device_name: &'a str,
     now: i64,
+    /// The account and the record of an OPAQUE proof, checked against the
+    /// account's record in the transaction.
+    proven: Option<(AccountId, RecordBinding)>,
 }
 
 /// The database side of [`open_session`], in one write transaction.
@@ -1172,6 +1322,11 @@ fn open_session_tx(
     };
     if totp {
         return Ok(Opened::SecondFactor);
+    }
+    if let Some((account, record)) = &new.proven
+        && !record_is_current(&tx, account, record)?
+    {
+        return Ok(Opened::RecordChanged);
     }
     if new.origin == Origin::Vault {
         let has_vault: Option<i64> = tx

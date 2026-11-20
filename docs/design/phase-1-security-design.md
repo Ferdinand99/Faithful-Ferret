@@ -283,6 +283,8 @@ graph TD
 3. The response gives `account_id`, `vault_id` and a session. If 2FA is on for the account, the session is **partial** until 2FA is complete. A partial session may not fetch wraps or changes (§ 4.6).
 4. `export_key` is used to create `KEK_pw` (§ 4.3). The session key from 3DH is used for nothing else.
 
+The sealed login state the server keeps between `start` and `finish` is bound to a hash of the registration record it was made from, and `finish` refuses, with the same answer as a wrong password, a sign-in whose record was replaced in between (a new MP, a recovery or a restore).
+
 **Pinning and the SK bit (F-01, F-02):**
 - After the first successful unlock, the device stores a non-secret record: `(server_url, account_id, ksf_profile, kek_generation_max, vk_epoch_max, sk_bit, pk_a)`. See also § 8.6. *Clarified 2026-10-30:* the full record is the one in § 8.6. It also has `vault_id` and the server's public OPAQUE key (U19). `kek_generation_max` is kept per method type (password, recovery) and per passkey, not one for the whole account.
 - The server cannot change any of these. A mismatch gives a loud error, not "wrong password".

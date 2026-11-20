@@ -12,9 +12,14 @@ use core::fmt;
 use ferret_core::KsfProfile;
 use ferret_core::opaque::server_suite::opaque_ke::RegistrationUpload;
 use ferret_core::opaque::server_suite::{FerretSuite, REGISTRATION_RECORD_LEN};
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
+use crate::ct::ct_eq;
 use crate::error::{AuthError, Malformed};
+
+/// Label of the hash that ties a login state to a record.
+const RECORD_BINDING_LABEL: &[u8] = b"ferret/v1/server/login-record";
 
 /// A record that is well formed: exactly 192 bytes, with a client public key
 /// that is a valid ristretto255 element. The one exception is the stand-in
@@ -60,6 +65,56 @@ impl ValidatedRecord {
 impl fmt::Debug for ValidatedRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ValidatedRecord([redacted])")
+    }
+}
+
+/// The record a login was started from, as a hash:
+/// `SHA-256("ferret/v1/server/login-record" ‖ record)`.
+///
+/// `login_start` seals the binding of the record it answered from into the
+/// login state, and `login_finish` compares it with the binding of the record
+/// the account has when the login finishes ([`crate::login::CurrentRecord`]).
+/// A password change, a recovery and a restore each put another record in
+/// place, so a login that was started before one of them cannot finish after
+/// it, even with the password that was right when it started.
+///
+/// The record is a fixed 192 bytes after a fixed label, so the input is not
+/// ambiguous. The comparison is in constant time ([`RecordBinding::same_as`]);
+/// there is no `PartialEq`.
+///
+/// Spec: Fase 1 § 4.2 ("Innlogging").
+#[derive(Clone)]
+pub struct RecordBinding([u8; 32]);
+
+impl RecordBinding {
+    /// The binding of the stored bytes of a record. The server passes the
+    /// bytes it has stored for the account, as they are.
+    pub fn of(record: &[u8]) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(RECORD_BINDING_LABEL);
+        hash.update(record);
+        Self(hash.finalize().into())
+    }
+
+    /// Whether the two are the binding of the same record, in constant time.
+    pub fn same_as(&self, other: &RecordBinding) -> bool {
+        ct_eq(&self.0, &other.0)
+    }
+
+    /// The 32 bytes, for the sealed state.
+    pub(crate) const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// A binding read back from a sealed state.
+    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl fmt::Debug for RecordBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RecordBinding([redacted])")
     }
 }
 
@@ -193,5 +248,43 @@ impl ProfileRules {
 impl fmt::Debug for ProfileRules {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ProfileRules { .. }")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// `SHA-256("ferret/v1/server/login-record" ‖ record)`, worked out
+    /// outside this crate.
+    #[test]
+    fn the_binding_is_the_labelled_hash_of_the_record() {
+        let zeros = [0u8; REGISTRATION_RECORD_LEN];
+        assert_eq!(
+            hex(RecordBinding::of(&zeros).as_bytes()),
+            "70d4b55003f855b1c9fe6aca050ab75a07b8461d89bc5487a01a6604e6e2060b"
+        );
+        let counting: Vec<u8> = (0..=191u8).collect();
+        assert_eq!(
+            hex(RecordBinding::of(&counting).as_bytes()),
+            "ef6fb30e13c04f9ff3894fc0647dd9878c94b4e718794d1791b12029fffd1bdb"
+        );
+    }
+
+    #[test]
+    fn one_changed_byte_is_another_record() {
+        let record: Vec<u8> = (0..=191u8).collect();
+        let binding = RecordBinding::of(&record);
+        assert!(binding.same_as(&RecordBinding::of(&record)));
+        for at in [0, 95, 191] {
+            let mut other = record.clone();
+            other[at] ^= 1;
+            assert!(!binding.same_as(&RecordBinding::of(&other)), "byte {at}");
+        }
+        assert_eq!(format!("{binding:?}"), "RecordBinding([redacted])");
     }
 }

@@ -12,8 +12,7 @@
 //! 3. the nonce and the proof headers and the raw body (`400` for a header
 //!    of the wrong shape, which burns no nonce);
 //! 4. inside the write transaction, against the account as it is read there:
-//!    no other new password or recovery of the account in the last minute
-//!    (`429 throttled`, before the nonce is used up); then the library uses up the nonce, checks the proof of
+//!    the library uses up the nonce, checks the proof of
 //!    `unlock-method.password.put` by `sk_a` over the exact body (`401
 //!    denied` otherwise, and the nonce is gone), and only then is the body
 //!    read; the record must be well formed and its profile not below the
@@ -22,8 +21,9 @@
 //!    generation (`409 write_conflict`), then the writes.
 //!
 //! Every other session of the user ends, on both origins (there is no opting
-//! out), and so do the user's pending sign-in codes and every sign-in that is
-//! still half-way. This session goes on, but the admin session handed over
+//! out), and so do the user's pending sign-in codes. A sign-in of the user
+//! that is still half-way cannot finish: its login state is bound to the old
+//! record. This session goes on, but the admin session handed over
 //! from it ends too (it fails safe). Right after the commit, on the database
 //! thread (so a client that went away cannot stop it), the ended sessions'
 //! streams close, the vault's streams hear of the new `seq`, and a backup is

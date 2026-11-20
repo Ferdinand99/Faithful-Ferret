@@ -15,7 +15,7 @@
 //! "ferret/v1/state-seal")`: there is no third secret file. A state lives for
 //! a minute, so a leaked key gives nothing that the holder of
 //! `prelogin_secret` does not already have. The blob is
-//! `version (0x01) ‖ nonce (24) ‖ ciphertext ‖ tag (16)`, 244 bytes. The
+//! `version (0x02) ‖ nonce (24) ‖ ciphertext ‖ tag (16)`, 276 bytes. The
 //! plaintext is
 //!
 //! ```text
@@ -23,16 +23,19 @@
 //! purpose     u8               1   0 login, 1 re-authentication
 //! binding     flag u8 ‖ 48     49  session (32) and account (16) of a re-authentication, else zero
 //! credential  16               16
+//! record      32               32  RecordBinding of the record login_start answered from
 //! ksf_profile u8               1
 //! ServerLogin                  128
 //! ```
 //!
+//! Version 1 had no record binding; a blob of version 1 does not open.
+//!
 //! The associated data is a `Tlv` with the label `ferret/v1/server/login-state`,
-//! the version, the suite and the login id. The credential, the purpose and
-//! the session binding are inside the sealed bytes, so they are covered by the
-//! tag without being in the associated data: the reader of a blob does not
-//! know them before it has opened it, and the login id that the blob was
-//! sealed for must be the one the reader holds.
+//! the version, the suite and the login id. The credential, the purpose, the
+//! session binding and the record binding are inside the sealed bytes, so
+//! they are covered by the tag without being in the associated data: the
+//! reader of a blob does not know them before it has opened it, and the login
+//! id that the blob was sealed for must be the one the reader holds.
 //!
 //! `open_state` does not hand a state to its caller before it has checked
 //! that the purpose and the session are the ones the request expects (a
@@ -75,6 +78,7 @@ use crate::ct::ct_eq;
 use crate::error::{AuthError, DenyReason, InternalKind};
 use crate::ids::{CredentialId, LoginId, SessionBinding, StateKey};
 use crate::keys::PreloginSecret;
+use crate::record::RecordBinding;
 
 /// Info of the key derivation.
 ///
@@ -84,8 +88,9 @@ const STATE_SEAL_INFO: &[u8] = b"ferret/v1/state-seal";
 /// Label of the associated data.
 const STATE_AAD_LABEL: &str = "ferret/v1/server/login-state";
 
-/// Version of the blob and of the plaintext.
-const BLOB_VERSION: u8 = 1;
+/// Version of the blob and of the plaintext. Version 2 added the record
+/// binding.
+const BLOB_VERSION: u8 = 2;
 
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -95,8 +100,12 @@ const TAG_LEN: usize = 16;
 pub(crate) const SERVER_LOGIN_LEN: usize = 128;
 
 /// `expires_at (8) ‖ purpose (1) ‖ binding (1 + 48) ‖ credential (16) ‖
-/// ksf_profile (1) ‖ ServerLogin (128)`.
-pub(crate) const PLAIN_LEN: usize = 8 + 1 + 1 + BINDING_LEN + 16 + 1 + SERVER_LOGIN_LEN;
+/// record (32) ‖ ksf_profile (1) ‖ ServerLogin (128)`.
+pub(crate) const PLAIN_LEN: usize =
+    8 + 1 + 1 + BINDING_LEN + 16 + RECORD_BINDING_LEN + 1 + SERVER_LOGIN_LEN;
+
+/// The [`RecordBinding`] of the record the login was started from.
+const RECORD_BINDING_LEN: usize = 32;
 
 /// The session binding (32) and the account (16) of a re-authentication.
 const BINDING_LEN: usize = 32 + 16;
@@ -265,6 +274,10 @@ impl fmt::Debug for LoginPurpose {
 pub(crate) struct StatePlain {
     /// The account the login is for (a made-up one for an unknown name).
     pub credential: CredentialId,
+    /// The record `login_start` answered from (the made-up one for an
+    /// unknown name). `login_finish` compares it with the account's record
+    /// at that time.
+    pub record: RecordBinding,
     /// What the login is for.
     pub purpose: LoginPurpose,
     /// The second at which the state stops being valid: valid while `now <
@@ -305,6 +318,7 @@ impl StatePlain {
         )));
         out.extend_from_slice(self.purpose.binding().as_slice());
         out.extend_from_slice(self.credential.as_bytes());
+        out.extend_from_slice(self.record.as_bytes());
         out.push(self.ksf_profile);
         out.extend_from_slice(self.server_login.as_slice());
         out
@@ -323,6 +337,8 @@ impl StatePlain {
         let [flag] = *take::<1>(&mut rest).ok_or(invalid)?;
         let mut binding = *take::<BINDING_LEN>(&mut rest).ok_or(invalid)?;
         let credential = CredentialId::from_bytes(*take::<16>(&mut rest).ok_or(invalid)?);
+        let record =
+            RecordBinding::from_bytes(*take::<RECORD_BINDING_LEN>(&mut rest).ok_or(invalid)?);
         let [ksf_profile] = *take::<1>(&mut rest).ok_or(invalid)?;
         let login = take::<SERVER_LOGIN_LEN>(&mut rest).ok_or(invalid)?;
         let purpose = match (code, flag) {
@@ -351,6 +367,7 @@ impl StatePlain {
         }
         Ok(Self {
             credential,
+            record,
             purpose,
             expires_at,
             ksf_profile,
@@ -761,6 +778,7 @@ mod tests {
     fn plain(purpose: LoginPurpose) -> StatePlain {
         StatePlain {
             credential: CredentialId::from_bytes([0x31; 16]),
+            record: RecordBinding::from_bytes([0x5c; 32]),
             purpose,
             expires_at: 1_700_000_060,
             ksf_profile: 2,
@@ -794,6 +812,7 @@ mod tests {
 
     fn assert_same(a: &StatePlain, b: &StatePlain) {
         assert_eq!(a.credential, b.credential);
+        assert!(a.record.same_as(&b.record));
         assert!(a.purpose.same_as(&b.purpose));
         assert_eq!(a.expires_at, b.expires_at);
         assert_eq!(a.ksf_profile, b.ksf_profile);
@@ -810,8 +829,8 @@ mod tests {
 
     #[test]
     fn sizes_add_up() {
-        assert_eq!(PLAIN_LEN, 203);
-        assert_eq!(BLOB_LEN, 244);
+        assert_eq!(PLAIN_LEN, 235);
+        assert_eq!(BLOB_LEN, 276);
         let state = plain(LoginPurpose::Login);
         assert_eq!(state.encode().len(), PLAIN_LEN);
         assert_eq!(seal(&seal_key(), &id(), &state).as_bytes().len(), BLOB_LEN);
@@ -892,12 +911,15 @@ mod tests {
     #[test]
     fn a_blob_of_another_version_is_rejected() {
         let sealed = seal(&seal_key(), &id(), &plain(LoginPurpose::Login));
-        let mut blob = sealed.as_bytes().to_vec();
-        blob[0] = 2;
-        assert_eq!(
-            open(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
-            Some(invalid())
-        );
+        for version in [0u8, 1, 3, 0xff] {
+            let mut blob = sealed.as_bytes().to_vec();
+            blob[0] = version;
+            assert_eq!(
+                open(&seal_key(), &id(), &SealedState::from_bytes(blob)).err(),
+                Some(invalid()),
+                "version {version}"
+            );
+        }
     }
 
     /// The credential, the purpose and the session are inside the sealed bytes,
@@ -965,6 +987,7 @@ mod tests {
         }
         assert!(!blob.windows(16).any(|w| w == [0x31; 16]));
         assert!(!blob.windows(32).any(|w| w == [0x77; 32]));
+        assert!(!blob.windows(32).any(|w| w == [0x5c; 32]));
         // The plaintext does hold them: the check is not vacuous.
         let plaintext = state.encode();
         assert!(plaintext.windows(SERVER_LOGIN_LEN).any(|w| w == login));
@@ -1038,6 +1061,7 @@ mod tests {
         expected.extend_from_slice(&[0x77; 32]);
         expected.extend_from_slice(&[0x77; 16]);
         expected.extend_from_slice(&[0x31; 16]);
+        expected.extend_from_slice(&[0x5c; 32]);
         expected.push(2);
         expected.extend_from_slice(&login_bytes());
         assert_eq!(state.encode().as_slice(), expected.as_slice());
@@ -1065,15 +1089,15 @@ mod tests {
         let sealed = seal_state(&key, &mut rng, &id(), &state, NOW).unwrap();
         rng.finish().unwrap();
         let blob = sealed.as_bytes();
-        assert_eq!(blob.len(), 244);
-        assert_eq!(blob.first(), Some(&1));
+        assert_eq!(blob.len(), 276);
+        assert_eq!(blob.first(), Some(&2));
         assert_eq!(blob.get(1..25), Some(nonce.as_slice()));
 
-        // The associated data, written out: label, version 1, suite 1, login id.
+        // The associated data, written out: label, version 2, suite 1, login id.
         let mut aad = vec![0x01, 0x00, 0x1c];
         aad.extend_from_slice(b"ferret/v1/server/login-state");
         aad.extend_from_slice(&[
-            0x02, 0x00, 0x01, 0x01, 0x03, 0x00, 0x01, 0x01, 0x33, 0x00, 0x10,
+            0x02, 0x00, 0x01, 0x02, 0x03, 0x00, 0x01, 0x01, 0x33, 0x00, 0x10,
         ]);
         aad.extend_from_slice(&(0u8..16).collect::<Vec<u8>>());
         assert_eq!(associated_data(&id()).unwrap(), aad);
@@ -1092,7 +1116,7 @@ mod tests {
     /// The blob of `key_and_blob_match_hand_written_bytes` as the cipher made it:
     /// a change to the layout, the associated data or the key derivation changes
     /// these bytes.
-    const PINNED_BLOB: &str = "01a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b76e4601b113792795161aaad60ed40cd956412efbe9df317d45dbcd46565bad7c6f4f4f5a440fc97a713abd9cb601a62ec117d6f439e7e31214890f33690398cecaccd8275daf4a3f3186651d6277ca92aafed8122480aff7a8255b4f335453db28258c92cb25621f9b6d6e33e9dbaaac39dee3e2fa4d1679d6d4b2caca95f72c9bacbc7537b9286a3f8025918d7963ed4d27f083c5a356a5a342e7d467c9ae346a4e7ef4712e64819664faa6194a54469f8957ddfa00bb49deed11d06db7278e92877f0cd3c03351c953f42bd1ddfc27674bc4ef05eceae7a61c14";
+    const PINNED_BLOB: &str = "02a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b76e4601b113792795161aaad60ed40cd956412efbe9df317d45dbcd46565bad7c6f4f4f5a440fc97a713abd9cb601a62ec117d6f439e7e31214890f33690398cecaccd8275daf4a3f31863b42343a8ed1d08fb0753a95a3fcaa1c6b6015898708e2e4746525c0fe8409e4b0d3093b4a4c19fec3c29a2d7619b6f492eaea7517cc7b4c9c551799480a5fe045b1ad5943cdadc71063e5837685832287b407e98e144a6e9e1491ce44a1b644dac6792a3426bfa977fd1ae05ba93ecd31f04dd747eef2e75f2cf3e0d3b129b3147671b894c9a3764ce55ad4865d20127b4b22db35d670b64a592129b7154ed8821da569b7ed692e8ebe75453f624b107e";
 
     #[test]
     fn derived_keys_depend_on_the_secret() {

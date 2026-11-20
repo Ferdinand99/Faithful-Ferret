@@ -33,7 +33,7 @@ use crate::{
     decode_secret_file, encode_secret_file, login_finish, login_start, normalize_login_name,
     register_start,
 };
-use crate::{fake_credential_id, fake_prelogin};
+use crate::{RecordBinding, fake_credential_id, fake_prelogin};
 
 /// The answer of an operation: the `expect` value, or the error code.
 pub type Outcome = Result<Value, String>;
@@ -67,6 +67,7 @@ fn dispatch(op: &str, input: &Value, rng: &mut ReplayRng) -> Outcome {
         "server.fake_prelogin" => fake_prelogin_answer(input),
         "server.fake_record" => fake_record(input),
         "server.challenge_key" => challenge_key(input),
+        "server.record_binding" => record_binding(input),
         "server.state_seal" => state_seal(input, rng),
         "server.state_open" => state_open(input),
         "server.login_start" => login_start_op(input, rng),
@@ -321,6 +322,12 @@ fn challenge_key(input: &Value) -> Outcome {
     Ok(json!({ "key": hex_encode(key.as_bytes()) }))
 }
 
+/// The binding of a record that a login state holds.
+fn record_binding(input: &Value) -> Outcome {
+    let binding = RecordBinding::of(&bytes(input, "record")?);
+    Ok(json!({ "binding": hex_encode(binding.as_bytes()) }))
+}
+
 // ------------------------------------------------------------- the state
 
 fn login_id_of(v: &Value) -> Result<LoginId, String> {
@@ -332,6 +339,7 @@ fn state_json(state: &StatePlain) -> Value {
         "expires_at": state.expires_at.to_string(),
         "purpose": purpose_json(&state.purpose),
         "credential": hex_encode(state.credential.as_bytes()),
+        "record": hex_encode(state.record.as_bytes()),
         "ksf_profile": state.ksf_profile,
         "server_login": hex_encode(state.server_login.as_slice()),
     })
@@ -342,6 +350,7 @@ fn state_seal(input: &Value, rng: &mut ReplayRng) -> Outcome {
     let plain = field(input, "state")?;
     let state = StatePlain {
         credential: credential_of(plain, "credential")?,
+        record: RecordBinding::from_bytes(array::<32>(plain, "record")?),
         purpose: purpose_of(field(plain, "purpose")?)?,
         expires_at: number(plain, "expires_at")?,
         ksf_profile: u8::try_from(small(plain, "ksf_profile")?)
@@ -491,9 +500,16 @@ fn login_finish_op(input: &Value) -> Outcome {
         )),
     };
     let ke3 = bytes(input, "ke3")?;
+    // The record the account has now: `null` for no account.
+    let current = match input.get("current_record") {
+        Some(Value::Null) => None,
+        Some(_) => Some(RecordBinding::of(&bytes(input, "current_record")?)),
+        None => return Err("current_record is missing".to_string()),
+    };
     let verified = login_finish(
         &env.cx(),
         &env.store,
+        &|_: &CredentialId| Ok(current.clone()),
         &LoginFinishRequest {
             caller: caller(),
             login_id: login_id.as_bytes(),
