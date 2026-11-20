@@ -602,6 +602,38 @@ export function createOutboxRunner({ api, store, scope, timers, hooks = {} }) {
     },
 
     /**
+     * Takes every queued write of an item out and queues `entry`, the first write of another item, in its place, in one transaction: the item
+     * and its copy are never both in the store, and the store never lacks both. With `expect` (the keys of the writes the caller has looked at) it
+     * throws `SyncError("outbox_changed")` and changes nothing when the store holds other writes of the item than those. Nothing is sent
+     * while the runner is held.
+     * @param {string} itemId the item whose writes go
+     * @param {string[]} expect
+     * @param {OutboxEntry} entry the write that takes their place (its `itemId` is another item)
+     * @returns {Promise<string[]>} the idempotency keys of the writes that were taken out
+     */
+    async moveItem(itemId, expect, entry) {
+      if (entry.itemId === itemId) throw new TypeError("the write that takes their place is for another item");
+      await this.whenIdle();
+      const db = await store.open();
+      try {
+        await store.outbox.swap(db, scope, expect, [entry], { itemId, keys: expect });
+      } catch (error) {
+        if (/** @type {any} */ (error)?.code === "outbox_changed") throw new SyncError("outbox_changed");
+        throw error;
+      }
+      if (stopped) return [];
+      const lane = lanes.get(itemId);
+      if (lane) {
+        cancelWait(lane);
+        lane.entries.length = 0;
+        lanes.delete(itemId);
+      }
+      laneOf(entry.itemId).entries.push(entry);
+      wake(entry.itemId);
+      return [...expect];
+    },
+
+    /**
      * Puts new entries in the place of the queued writes of an item, one for one and in the same order (the same writes made again,
      * for example with a new idempotency key and a new restore epoch). Only for writes the server has certainly not stored (it
      * refused them with `restore_epoch_changed`) or that were never sent. The old entries leave the store and the new ones enter it
