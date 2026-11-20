@@ -166,6 +166,8 @@ export function renewRecoveryView({ t, renew, offer, reapply, scope, win = globa
   reapplySlot.hidden = true;
   /** @type {HTMLButtonElement | null} */
   let reapplyButton = null;
+  /** Whether the reapply part was put on the page (it comes back after a failure). */
+  let reapplyShown = false;
 
   const done = el("div", { class: "stack", "data-role": "renew-done" },
     el("h2", null, t("keys.recovery.done_heading")),
@@ -227,7 +229,7 @@ export function renewRecoveryView({ t, renew, offer, reapply, scope, win = globa
       setText(status, "");
       clear(sheetHost);
       startRow.hidden = false;
-      reapplySlot.hidden = reapplyButton === null;
+      reapplySlot.hidden = !reapplyShown;
       if (codeOf(error) === "cancelled") {
         setText(note, t("keys.error.cancelled"));
         note.hidden = false;
@@ -288,6 +290,7 @@ export function renewRecoveryView({ t, renew, offer, reapply, scope, win = globa
           el("p", null, el("a", { href: "#/password", "data-role": "reapply-password-link" }, t("keys.reapply.password_link"))));
       }
       mount(reapplySlot, ...parts);
+      reapplyShown = true;
       reapplySlot.hidden = false;
     })();
   }
