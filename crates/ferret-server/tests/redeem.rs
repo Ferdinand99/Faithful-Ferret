@@ -524,6 +524,37 @@ async fn unknown_email_takes_as_long_as_a_known_one() {
             took
         }
     };
+    // The key the test clears is the kit's own key for the name. Pinned here:
+    // eleven failures without clearing put the name in back-off under exactly
+    // that key, and clearing it ends the back-off. If the kit changes the
+    // format, this fails instead of the loop below quietly timing the throttle.
+    let key = format!("code:{known}");
+    for n in 0..11 {
+        let from = format!("10.9.0.{}", n + 1);
+        let res = redeem_from(&app, &known, &wrong, &from).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    }
+    let limits = &app.state.core.limits;
+    assert!(
+        limits
+            .code_account
+            .retry_after(&key, Instant::now())
+            .is_some(),
+        "the kit's key for a name is code:<name>"
+    );
+    limits.code_account.clear(&key);
+    assert!(
+        limits
+            .code_account
+            .retry_after(&key, Instant::now())
+            .is_none()
+    );
+
+    // What the comparison can catch: a coarse branch on whether the account
+    // exists (a lookup, a key derivation or a second statement for one kind
+    // of name only), measured in-process in a debug build with a tolerance of
+    // 300 µs or a quarter. It cannot see the microseconds of decoding a found
+    // row, which network jitter and the limits hide anyway.
     for n in 0..20 {
         attempt(&known, n, 0).await;
         attempt(&unknown, n, 1).await;
@@ -691,13 +722,24 @@ async fn the_code_never_reaches_the_log() {
         );
     }
     assert_eq!(last, Some(StatusCode::TOO_MANY_REQUESTS));
+    drop(guard);
+    let refusals = log.text();
+    assert!(refusals.contains("sign-in code was refused"), "{refusals}");
+
+    // The success, in a capture of its own. Whether a line is written is
+    // cached per call site for the whole process, and the tests of this file
+    // run in parallel threads with and without a subscriber; rebuilding the
+    // cache once this thread's subscriber is in place makes the line reach it.
+    let (log, guard) = capture_log();
+    tracing::callsite::rebuild_interest_cache();
     let spelled = code.to_lowercase().replace('-', " ");
     let res = redeem_from(&app, &email(1), &spelled, "203.0.113.61").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     drop(guard);
+    let success = log.text();
+    assert!(success.contains("recovery session opened"), "{success}");
 
-    let text = log.text();
-    assert!(text.contains("sign-in code was refused"), "{text}");
+    let text = format!("{refusals}{success}");
     let plain = code.replace('-', "");
     for secret in [
         code.as_str(),
