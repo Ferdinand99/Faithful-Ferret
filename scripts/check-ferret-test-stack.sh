@@ -74,7 +74,7 @@ if (!(mem > 0)) fail("a memory limit is required");
 
 # The end-to-end stack, and that it shares nothing with the owner's stack.
 e2e_file=docker/compose.ferret-e2e.yml
-e2e_config="$(FERRET_E2E_SETUP_TOKEN=e2echeck docker compose -f "$e2e_file" config --format json)"
+e2e_config="$(FERRET_E2E_SETUP_TOKEN=e2echeck FERRET_E2E_PUSH_TOKEN=e2epush docker compose -f "$e2e_file" config --format json)"
 if grep -qi 'e2e' "$file"; then
   echo "check-ferret-test-stack: $file must not mention the end-to-end stack" >&2
   exit 1
@@ -83,9 +83,13 @@ if grep -qiE 'evil|snapshot' "$file"; then
   echo "check-ferret-test-stack: $file must not mention the malicious server or a snapshot" >&2
   exit 1
 fi
-# Without the token that `e2e-up` makes, the stack does not start.
+# Without the tokens that `e2e-up` makes, the stack does not start.
 if docker compose -f "$e2e_file" config >/dev/null 2>&1; then
-  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_SETUP_TOKEN" >&2
+  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_SETUP_TOKEN and FERRET_E2E_PUSH_TOKEN" >&2
+  exit 1
+fi
+if FERRET_E2E_SETUP_TOKEN=e2echeck docker compose -f "$e2e_file" config >/dev/null 2>&1; then
+  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_PUSH_TOKEN" >&2
   exit 1
 fi
 
