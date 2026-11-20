@@ -59,6 +59,13 @@
 // * PRF results depend on user verification (two seeds, spec § 9.3): the same
 //   salt gives different outputs with and without it.
 //
+// Encrypted export: `export_begin(rows, now_ms, kdf, token)` needs the same
+// one-time token as the plaintext export (the file holds every secret of the
+// vault, passkey keys and PRF seeds included); `now_ms` is the caller's clock
+// and the time the token is checked against. Without a valid token it is
+// `reauth_required`; `export_finish` needs none (only a draft that
+// `export_begin` made can be finished).
+//
 // Plaintext export: `reveal_plain_export(rows, format, include_passkeys,
 // token, now_ms)` needs a one-time token from
 // `ferret.vault.reauth_grant(wrap, now_ms)` made right after a fresh
