@@ -19,6 +19,8 @@ on:
     paths:
       - "crates/ferret-core/**"
       - "crates/ferret-server-auth/**"
+      - "crates/ferret-server/src/auth/dpop/proof.rs"
+      - "crates/ferret-server/tests/fixtures/dpop/js_proofs.json"
       - "ct/harness/**"
       - "fuzz/**"
       - "scripts/fuzz-run.sh"
