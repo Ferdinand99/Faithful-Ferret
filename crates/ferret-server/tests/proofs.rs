@@ -9,7 +9,7 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::State;
@@ -29,12 +29,13 @@ use ferret_server::state::{Proofs, VaultDb};
 use ferret_server::wire::b64url;
 use ferret_server_auth::testing::made_up_record;
 use ferret_server_auth::{
-    AccountAuthState, AuthError, Clock as _, CredentialId, Malformed, ReplaceFields, SessionScope,
-    StoredRecord,
+    AccountAuthState, AuthError, Clock as _, CredentialId, Malformed, ManualClock, ReplaceFields,
+    SessionScope, StoredRecord,
 };
 use serde_json::{Value, json};
 use support::session::{
-    Issued, SIGNER_EPOCH, Seeded, issue, make_fresh, nonce_for, seed_signer, sign, signed_account,
+    Issued, SIGNER_EPOCH, Seeded, issue, make_fresh, nonce_for, seed_signer, set_reauth_at, sign,
+    signed_account,
 };
 use support::{Jar, Res, TestApp, Which};
 use tower::ServiceExt as _;
@@ -51,10 +52,26 @@ struct Opts {
     op: MutationOp,
     /// Another account than the session's, in place of the stored one.
     account: Option<AccountId>,
-    /// A re-authentication time in place of the one the extractor read.
-    reauth_at: Option<i64>,
+    /// A time the clock is set to after the extractors ran and before the
+    /// handle is asked: the re-authentication goes stale in between. (A
+    /// `FreshReauth` cannot be made or changed outside its extractor.)
+    clock_at: Option<u64>,
+    /// The app's clock, for `clock_at`.
+    clock: Arc<ManualClock>,
+    /// A slot that keeps the first request's `FreshReauth` and hands it to
+    /// every later request in place of its own: a route that mixes up two
+    /// requests.
+    kept: Option<Arc<Mutex<Option<FreshReauth>>>>,
     /// The record stored for the account now.
     current: Arc<StoredRecord>,
+}
+
+/// `fresh`, or the one an earlier request left in `opts.kept`.
+fn kept_or(opts: &Opts, fresh: FreshReauth) -> FreshReauth {
+    let Some(slot) = &opts.kept else {
+        return fresh;
+    };
+    *slot.lock().expect("the slot").get_or_insert(fresh)
 }
 
 async fn signed_route(
@@ -66,13 +83,14 @@ async fn signed_route(
     fresh: FreshReauth,
     body: SignedBody,
 ) -> Result<Response, ApiError> {
-    let mut account = signed_account(&db, session.session.account).await?;
+    let mut account = signed_account(&db, session.session().account()).await?;
     if let Some(other) = opts.account {
         account.account_id = other;
     }
-    let fresh = opts
-        .reauth_at
-        .map_or(fresh, |reauth_at| FreshReauth { reauth_at });
+    if let Some(at) = opts.clock_at {
+        opts.clock.set(at);
+    }
+    let fresh = kept_or(&opts, fresh);
     let permit = proofs.signed(
         &session,
         &fresh,
@@ -99,13 +117,14 @@ async fn password_route(
     fresh: FreshReauth,
     body: SignedBody,
 ) -> Result<Response, ApiError> {
-    let mut account = signed_account(&db, session.session.account).await?;
+    let mut account = signed_account(&db, session.session().account()).await?;
     if let Some(other) = opts.account {
         account.account_id = other;
     }
-    let fresh = opts
-        .reauth_at
-        .map_or(fresh, |reauth_at| FreshReauth { reauth_at });
+    if let Some(at) = opts.clock_at {
+        opts.clock.set(at);
+    }
+    let fresh = kept_or(&opts, fresh);
     let caller = caller_from(&headers, None);
     let permit = db
         .with_conn(move |_conn| {
@@ -127,7 +146,7 @@ async fn recover_route(
     session: ScopedSession<caps::Recover>,
     body: SignedBody,
 ) -> Result<Response, ApiError> {
-    let mut account = signed_account(&db, session.session.account).await?;
+    let mut account = signed_account(&db, session.session().account()).await?;
     if let Some(other) = opts.account {
         account.account_id = other;
     }
@@ -284,7 +303,9 @@ impl Setup {
         Opts {
             op: MutationOp::UnlockMethodRecoveryPut,
             account: None,
-            reauth_at: None,
+            clock_at: None,
+            clock: self.app.clock.clone(),
+            kept: None,
             current: Arc::new(self.record(1, 1)),
         }
     }
@@ -393,26 +414,58 @@ async fn signed_gives_the_permit_of_its_op_to_a_fresh_session() {
 }
 
 #[tokio::test]
+async fn a_reauth_of_another_session_is_refused_and_keeps_the_nonce() {
+    let setup = Setup::new().await;
+    let first = setup.full(1, true).await;
+    let second = setup.full(2, true).await;
+    let router = setup.router(Opts {
+        kept: Some(Arc::new(Mutex::new(None))),
+        ..setup.opts()
+    });
+    // The first request goes through and leaves its re-authentication behind.
+    let nonce = nonce_for(&setup.app, &first.jar).await;
+    let proof = sign(AuthOp::UnlockMethodRecoveryPut, &nonce, BODY);
+    let res = call(&router, SIGNED, &first.jar, &nonce, &proof, BODY).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    // The second session is fresh itself, but is handed the first one's.
+    let nonce = nonce_for(&setup.app, &second.jar).await;
+    let proof = sign(AuthOp::UnlockMethodRecoveryPut, &nonce, BODY);
+    let res = call(&router, SIGNED, &second.jar, &nonce, &proof, BODY).await;
+    assert_code(&res, StatusCode::INTERNAL_SERVER_ERROR, "internal");
+    assert_eq!(setup.stored_nonces(), 1, "the nonce is still there");
+
+    let body = setup.replacement(1, None);
+    let nonce = nonce_for(&setup.app, &second.jar).await;
+    let proof = sign(AuthOp::UnlockMethodPasswordPut, &nonce, &body);
+    let res = call(&router, PASSWORD, &second.jar, &nonce, &proof, &body).await;
+    assert_code(&res, StatusCode::INTERNAL_SERVER_ERROR, "internal");
+    assert_eq!(setup.stored_nonces(), 2, "both nonces are still there");
+}
+
+#[tokio::test]
 async fn signed_refuses_a_reauth_that_is_not_fresh_now_and_keeps_the_nonce() {
     let setup = Setup::new().await;
     let session = setup.full(1, true).await;
     let nonce = nonce_for(&setup.app, &session.jar).await;
     let proof = sign(AuthOp::UnlockMethodRecoveryPut, &nonce, BODY);
     let now = setup.now();
-    for reauth_at in [now - 301, now + 1, i64::MIN] {
+    let start = u64::try_from(now).expect("a time");
+    // Fresh when the extractor looked; 301 seconds old, or not yet made, by
+    // the time the handle looks.
+    for at in [start + 301, start - 1] {
         let router = setup.router(Opts {
-            reauth_at: Some(reauth_at),
+            clock_at: Some(at),
             ..setup.opts()
         });
         let res = call(&router, SIGNED, &session.jar, &nonce, &proof, BODY).await;
+        setup.app.clock.set(start);
         assert_code(&res, StatusCode::FORBIDDEN, "reauth_required");
         assert_eq!(setup.stored_nonces(), 1, "the nonce is still there");
     }
     // Exactly 300 seconds old is still fresh, and the same nonce works.
-    let router = setup.router(Opts {
-        reauth_at: Some(now - 300),
-        ..setup.opts()
-    });
+    set_reauth_at(&setup.app, session.sid, Some(now - 300)).await;
+    let router = setup.router(setup.opts());
     let res = call(&router, SIGNED, &session.jar, &nonce, &proof, BODY).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
 }
@@ -496,11 +549,13 @@ async fn password_put_refuses_a_reauth_that_is_not_fresh_now_and_keeps_the_nonce
     let body = setup.replacement(1, None);
     let nonce = nonce_for(&setup.app, &session.jar).await;
     let proof = sign(AuthOp::UnlockMethodPasswordPut, &nonce, &body);
+    let start = u64::try_from(setup.now()).expect("a time");
     let router = setup.router(Opts {
-        reauth_at: Some(setup.now() - 301),
+        clock_at: Some(start + 301),
         ..setup.opts()
     });
     let res = call(&router, PASSWORD, &session.jar, &nonce, &proof, &body).await;
+    setup.app.clock.set(start);
     assert_code(&res, StatusCode::FORBIDDEN, "reauth_required");
     assert_eq!(setup.stored_nonces(), 1);
 

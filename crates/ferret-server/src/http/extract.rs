@@ -113,6 +113,10 @@ impl fmt::Debug for SessionClock {
 }
 
 /// A signed-in session on the vault listener, with its account and vault.
+///
+/// The fields are the facts of the request's `full` session: read them, never
+/// rebind or write them. They become private with getters when this file is
+/// next opened, as the fields of [`SessionFacts`] are.
 #[derive(Debug, Clone)]
 pub struct VaultSession {
     pub sid: SidHash,
@@ -384,22 +388,108 @@ pub mod caps {
 /// The facts of a vault session of any scope, as a [`ScopedSession`] carries
 /// them. Unlike a [`VaultSession`] it is no proof of a `full` session: it has
 /// no extractor, and it cannot be passed where a `VaultSession` is expected.
+///
+/// The fields are private and only the extractor makes one, so a route can
+/// read which session, user and account a request belongs to but cannot point
+/// it at another one (the library takes the scope, the session binding and
+/// the account from here):
+///
+/// ```
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn account(s: &ScopedSession<caps::Challenge>) -> ferret_server::ids::AccountId {
+///     s.session().account()
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn retarget(s: &mut ScopedSession<caps::Challenge>, other: ferret_server::ids::AccountId) {
+///     s.session.account = other;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use ferret_server::http::extract::SessionFacts;
+/// fn retarget(f: &mut SessionFacts, other: ferret_server::ids::SidHash) {
+///     f.sid = other;
+/// }
+/// ```
+///
+/// Nor can it widen the scope, which decides what using a capability does to
+/// the session (a reset session's recovery ends it):
+///
+/// ```
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn scope(s: &ScopedSession<caps::Recover>) -> ferret_server_auth::SessionScope {
+///     s.scope()
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use ferret_server::http::extract::{ScopedSession, caps};
+/// fn widen(s: &mut ScopedSession<caps::Recover>) {
+///     s.scope = s.scope();
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct SessionFacts {
-    pub sid: SidHash,
-    pub user_id: i64,
-    pub issued_at: i64,
-    /// The time the request was checked at (Unix seconds).
-    pub now: i64,
-    pub device: DeviceId,
-    pub account: AccountId,
-    pub vault: VaultId,
-    pub vk_epoch: u64,
-    /// The kit's `session_version` of the user, as checked against its cookie.
-    pub session_version: i64,
+    sid: SidHash,
+    user_id: i64,
+    issued_at: i64,
+    now: i64,
+    device: DeviceId,
+    account: AccountId,
+    vault: VaultId,
+    vk_epoch: u64,
+    session_version: i64,
 }
 
 impl SessionFacts {
+    /// The hash of the session id: the key of the session's row.
+    pub fn sid(&self) -> SidHash {
+        self.sid
+    }
+
+    /// The kit user.
+    pub fn user_id(&self) -> i64 {
+        self.user_id
+    }
+
+    /// The sign-in time of the session.
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+
+    /// The time the request was checked at (Unix seconds).
+    pub fn now(&self) -> i64 {
+        self.now
+    }
+
+    /// The device that signed in.
+    pub fn device(&self) -> DeviceId {
+        self.device
+    }
+
+    /// The account of the session's user.
+    pub fn account(&self) -> AccountId {
+        self.account
+    }
+
+    /// The vault of that account.
+    pub fn vault(&self) -> VaultId {
+        self.vault
+    }
+
+    /// The vault key epoch of the account.
+    pub fn vk_epoch(&self) -> u64 {
+        self.vk_epoch
+    }
+
+    /// The kit's `session_version` of the user, as checked against its cookie.
+    pub fn session_version(&self) -> i64 {
+        self.session_version
+    }
+
     /// The facts of a verified request; 401 when it has no account.
     fn of(verified: &Verified) -> Result<Self, ApiError> {
         let (account, vault, vk_epoch) = verified.account.ok_or_else(ApiError::unauthorized)?;
@@ -430,15 +520,23 @@ impl SessionFacts {
 ///
 /// Spec: Fase 1 § 4.6 (partial session) and § 6.3 (reset account).
 pub struct ScopedSession<C: Cap> {
-    /// The session, its account and its vault. The scope may be other than
-    /// `full`.
-    pub session: SessionFacts,
-    /// The scope of the session, read from its row.
-    pub scope: SessionScope,
+    session: SessionFacts,
+    scope: SessionScope,
     _cap: PhantomData<C>,
 }
 
 impl<C: Cap> ScopedSession<C> {
+    /// The session, its account and its vault. The scope may be other than
+    /// `full`.
+    pub fn session(&self) -> &SessionFacts {
+        &self.session
+    }
+
+    /// The scope of the session, read from its row.
+    pub fn scope(&self) -> SessionScope {
+        self.scope
+    }
+
     /// The binding of this session for the OPAQUE library: the nonces of the
     /// session are bound to it.
     pub fn binding(&self) -> SessionBinding {
@@ -521,11 +619,44 @@ pub fn session_binding(sid: &SidHash) -> SessionBinding {
 /// server (`admin::guard`). A kit upgrade that adds another second factor must
 /// be added to this check.
 ///
+/// Only the extractor makes one: the fields are private, so a route can
+/// neither build a `FreshReauth` nor change the time in one it was given. It
+/// names the session it was read for, and `Proofs` refuses it for any other
+/// session.
+///
+/// ```
+/// fn when(fresh: &ferret_server::http::extract::FreshReauth) -> i64 {
+///     fresh.reauth_at()
+/// }
+/// ```
+///
+/// ```compile_fail
+/// let _ = ferret_server::http::extract::FreshReauth { reauth_at: 0 };
+/// ```
+///
+/// ```compile_fail
+/// fn renew(fresh: &mut ferret_server::http::extract::FreshReauth, now: i64) {
+///     fresh.reauth_at = now;
+/// }
+/// ```
+///
 /// Spec: Fase 1 § 4.6 (a) and (b).
 #[derive(Debug, Clone, Copy)]
 pub struct FreshReauth {
+    sid: SidHash,
+    reauth_at: i64,
+}
+
+impl FreshReauth {
     /// When the session proved the master password again (Unix seconds).
-    pub reauth_at: i64,
+    pub fn reauth_at(&self) -> i64 {
+        self.reauth_at
+    }
+
+    /// The session whose row said it was fresh.
+    pub(crate) fn sid(&self) -> SidHash {
+        self.sid
+    }
 }
 
 impl<S> FromRequestParts<S> for FreshReauth
@@ -547,9 +678,10 @@ where
             return Err(ApiError::coded("second_factor_required"));
         }
         match verified.row.reauth_at {
-            Some(reauth_at) if reauth_fresh(&verified.row, verified.now) => {
-                Ok(FreshReauth { reauth_at })
-            }
+            Some(reauth_at) if reauth_fresh(&verified.row, verified.now) => Ok(FreshReauth {
+                sid: verified.row.sid,
+                reauth_at,
+            }),
             _ => Err(ApiError::coded("reauth_required")),
         }
     }
@@ -563,14 +695,23 @@ where
 /// bytes first, and [`SignedBody::parse`] reads them only for a permit of the
 /// library that covers them. Nothing of the request is printed by `Debug`.
 ///
+/// The fields are private: only the extractor makes one from the request, and
+/// nothing changes the nonce, the proof or the bytes after that.
+///
+/// ```compile_fail
+/// fn swap(body: &mut ferret_server::http::extract::SignedBody) {
+///     body.bytes = Default::default();
+/// }
+/// ```
+///
 /// Spec: Fase 1 § 4.6 (the proof is bound to the exact body).
 pub struct SignedBody {
     /// `Ferret-Nonce`: the nonce of `POST /api/auth/challenge`.
-    pub nonce: [u8; NONCE_LEN],
+    nonce: [u8; NONCE_LEN],
     /// `Ferret-Proof`: the Ed25519 signature.
-    pub proof: [u8; PROOF_LEN],
+    proof: [u8; PROOF_LEN],
     /// The body, byte for byte as it was received.
-    pub bytes: Bytes,
+    bytes: Bytes,
 }
 
 impl fmt::Debug for SignedBody {
@@ -792,6 +933,41 @@ mod tests {
         assert_ne!(a.0, b.0);
         assert_ne!(a.0, [1; 32]);
         assert_eq!(a.0, session_binding(&SidHash([1; 32])).0);
+    }
+
+    #[test]
+    fn parse_takes_only_a_permit_for_exactly_these_bytes() {
+        use ferret_core::{AccountId, AuthPublicKey, RecoveryPublicKey};
+        use ferret_server_auth::{ScopeEffect, WriteBasis};
+
+        const BODY: &[u8] = br#"{"n":7}"#;
+        let signed = SignedBody {
+            nonce: [1; NONCE_LEN],
+            proof: [2; PROOF_LEN],
+            bytes: Bytes::from_static(BODY),
+        };
+        let permit_for = |body: &[u8]| {
+            let account_id = AccountId::from_bytes([3; 16]);
+            SignedPermit {
+                account_id,
+                op: MutationOp::UnlockMethodRecoveryPut,
+                body_sha256: Sha256::digest(body).into(),
+                session_effect: ScopeEffect::Keep,
+                basis: WriteBasis {
+                    account_id,
+                    vk_epoch: 1,
+                    pk_a: AuthPublicKey::new([0; 32]),
+                    pk_r: RecoveryPublicKey::new([0; 32]),
+                    row_version: 0,
+                },
+            }
+        };
+        let other = signed
+            .parse::<serde_json::Value>(&permit_for(br#"{"n":8}"#))
+            .expect_err("a permit for other bytes");
+        assert_eq!(other.status.as_u16(), 500);
+        let parsed: serde_json::Value = signed.parse(&permit_for(BODY)).expect("its own permit");
+        assert_eq!(parsed["n"], 7);
     }
 
     #[test]

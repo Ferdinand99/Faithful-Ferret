@@ -355,7 +355,7 @@ pub fn signed_probe(app: &TestApp) -> Router {
         fresh: FreshReauth,
         signed: SignedBody,
     ) -> Result<Response, ApiError> {
-        let account = signed_account(&db, scoped.session.account).await?;
+        let account = signed_account(&db, scoped.session().account()).await?;
         let permit = proofs.signed(
             &scoped,
             &fresh,
@@ -452,4 +452,25 @@ pub async fn set_reauth_at(app: &TestApp, sid: SidHash, reauth_at: Option<i64>) 
 pub async fn make_fresh(app: &TestApp, sid: SidHash) {
     let now = i64::try_from(app.clock.now_unix()).expect("a time");
     set_reauth_at(app, sid, Some(now)).await;
+}
+
+/// The signer ([`seed_signer`]) with a `full` session on the vault listener
+/// that proved the master password again just now: the row is marked with
+/// `auth::session::mark_reauth` at the clock's time, as a sign-in with
+/// `purpose: "reauth"` leaves it, so the session is fresh for 300 seconds. Its
+/// cookies become the vault jar of `app`. Call it once per app.
+pub async fn reauth(app: &TestApp) -> (Seeded, Issued) {
+    let seeded = seed_signer(app).await;
+    let issued = issue(app, seeded.user_id, Origin::Vault, SessionScope::Full, 1).await;
+    let now = i64::try_from(app.clock.now_unix()).expect("a time");
+    let sid = issued.sid;
+    let marked = app
+        .state
+        .vault_db
+        .with_conn(move |conn| Ok(ferret_server::auth::session::mark_reauth(conn, &sid, now)?))
+        .await
+        .expect("mark the re-authentication");
+    assert!(marked, "a live full session is marked");
+    app.set_jar(Which::Vault, issued.jar.clone());
+    (seeded, issued)
 }

@@ -44,7 +44,7 @@ use ferret_server_auth::{
 use crate::auth::secrets::Secrets;
 use crate::auth::session::REAUTH_SECS;
 use crate::error::ApiError;
-use crate::http::extract::{Cap, FreshReauth, ScopedSession, SignedBody, caps};
+use crate::http::extract::{Cap, FreshReauth, ScopedSession, SessionFacts, SignedBody, caps};
 use crate::ids::AccountId;
 use crate::state::{Challenges, FerretState};
 
@@ -89,8 +89,9 @@ impl Proofs {
     ///   (`500 internal` otherwise: the route asked for the wrong one);
     /// * `account` must be the session's own account (`500 internal`
     ///   otherwise);
-    /// * the re-authentication must still be fresh now (`403
-    ///   reauth_required`), not only when the request came in.
+    /// * the re-authentication must be this session's (`500 internal`
+    ///   otherwise) and still be fresh now (`403 reauth_required`), not only
+    ///   when the request came in.
     ///
     /// Then the library: scope, clock, throttle, the nonce used up, the proof
     /// of `op` over the account, the server's epoch and the exact body. A
@@ -114,7 +115,7 @@ impl Proofs {
             return Err(ApiError::internal());
         }
         own_account(session, &account.account_id)?;
-        self.still_fresh(fresh)?;
+        self.still_fresh(session.session(), fresh)?;
         let request = body.signed_request(session, caller, op);
         self.with_context(|cx| authorize_signed(cx, self.challenges.store(), account, &request))
             .map_err(refused)
@@ -124,8 +125,9 @@ impl Proofs {
     /// gives the library's permit for it.
     ///
     /// Before the library: `state` must be the session's own account (`500
-    /// internal` otherwise), and the re-authentication must still be fresh now
-    /// (`403 reauth_required`). Then the library: scope, clock, throttle, the
+    /// internal` otherwise), and the re-authentication must be this session's
+    /// (`500 internal` otherwise) and still be fresh now (`403
+    /// reauth_required`). Then the library: scope, clock, throttle, the
     /// nonce used up, the proof of `unlock-method.password.put` by `sk_a`,
     /// and only then `parse` over the proven bytes, the record and the profile
     /// (never lower than the stored one).
@@ -141,7 +143,7 @@ impl Proofs {
         parse: impl FnOnce(&[u8]) -> Result<ReplaceFields, AuthError>,
     ) -> Result<ReplacePermit, ApiError> {
         own_account(session, &state.account.account_id)?;
-        self.still_fresh(fresh)?;
+        self.still_fresh(session.session(), fresh)?;
         let request = body.replace_request(session, caller, ReplaceKind::PasswordPut);
         self.with_context(|cx| {
             authorize_replacement(cx, self.challenges.store(), state, &request, parse)
@@ -195,15 +197,20 @@ impl Proofs {
         f(&cx)
     }
 
-    /// The re-authentication is still fresh at the clock's time.
-    fn still_fresh(&self, fresh: &FreshReauth) -> Result<(), ApiError> {
+    /// The re-authentication belongs to `session` (`500 internal` otherwise:
+    /// a route mixed up two requests) and is still fresh at the clock's time.
+    fn still_fresh(&self, session: &SessionFacts, fresh: &FreshReauth) -> Result<(), ApiError> {
+        if fresh.sid() != session.sid() {
+            tracing::error!("a re-authentication was used for another session");
+            return Err(ApiError::internal());
+        }
         let now = self.clock.now_unix();
         if now == u64::MAX {
             tracing::error!("the clock failed; no signed request is checked");
             return Err(ApiError::internal());
         }
         let now = i64::try_from(now).map_err(|_| ApiError::internal())?;
-        if fresh_at(fresh.reauth_at, now) {
+        if fresh_at(fresh.reauth_at(), now) {
             Ok(())
         } else {
             Err(ApiError::coded("reauth_required"))
@@ -240,7 +247,7 @@ fn fresh_at(reauth_at: i64, now: i64) -> bool {
 /// The account a route read must be the one of the session. Another one is a
 /// mistake of the route, never something a client chose.
 fn own_account<C: Cap>(session: &ScopedSession<C>, account: &AccountId) -> Result<(), ApiError> {
-    if session.session.account == *account {
+    if session.session().account() == *account {
         Ok(())
     } else {
         tracing::error!("a signed request was checked against another account than the session's");
