@@ -1,0 +1,52 @@
+{
+  "format": "ferret-stored-golden/1",
+  "dbVersion": 2,
+  "store": "outbox",
+  "comment": "Writes of an import (version 2 of the database, as written by the code that added the import mark): the same entry as an ordinary write, with the field `import`, the id of the import window the write counts against. Such an entry is a write of a new item (base_rev 0, a live row) and is sent in a batch; an entry without the field is an ordinary write and is sent with PUT (see outbox.json). The mark is added to an entry and never changes the bytes or the key of it.",
+  "records": [
+    {
+      "value": {
+        "accountId": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "vaultId": "f9e8d7c6b5a4938271605f4e3d2c1b0a",
+        "vkEpoch": 2,
+        "idem": "aaaa1111aaaa1111aaaa1111aaaa1111",
+        "itemId": "e1e2e3e4e5e6e7e8e9eaebecedeeeff0",
+        "baseRev": 0,
+        "body": {
+          "blob": {
+            "$bytes": "303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030"
+          },
+          "tag": {
+            "$bytes": "9494949494949494949494949494949494949494949494949494949494949494"
+          }
+        },
+        "bytes": {
+          "$bytes": "7b22626173655f726576223a302c22626c6f62223a224d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d4441774d444177222c22746167223a226c4a53556c4a53556c4a53556c4a53556c4a53556c4a53556c4a53556c4a53556c4a53556c4a53556c4a51222c226964656d223a226161616131313131616161613131313161616161313131316161616131313131222c22726573746f72655f65706f6368223a313730303030303030307d"
+        },
+        "import": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      }
+    },
+    {
+      "value": {
+        "accountId": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "vaultId": "f9e8d7c6b5a4938271605f4e3d2c1b0a",
+        "vkEpoch": 2,
+        "idem": "bbbb2222bbbb2222bbbb2222bbbb2222",
+        "itemId": "f1f2f3f4f5f6f7f8f9fafbfcfdfeff00",
+        "baseRev": 0,
+        "body": {
+          "blob": {
+            "$bytes": "505050505050505050505050505050505050505050505050505050505050505050505050505050505050505050505050"
+          },
+          "tag": {
+            "$bytes": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
+          }
+        },
+        "bytes": {
+          "$bytes": "7b22626173655f726576223a302c22626c6f62223a2255464251554642515546425155464251554642515546425155464251554642515546425155464251554642515546425155464251554642515546425155464251222c22746167223a22744c5330744c5330744c5330744c5330744c5330744c5330744c5330744c5330744c5330744c5330744c51222c226964656d223a226262626232323232626262623232323262626262323232326262626232323232222c22726573746f72655f65706f6368223a313730303030303030307d"
+        },
+        "import": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      }
+    }
+  ]
+}

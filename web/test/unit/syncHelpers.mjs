@@ -244,6 +244,8 @@ export class Model {
     this.checkpoint = "auto";
     this.signKey = Buffer.alloc(32, 7);
     this.hidden = new Set(); // ids the listing leaves out (the feed and the item routes still show them)
+    this.importWindows = new Map(); // window id -> { ops, used, open }: the windows of an import that the server has given out
+    this.windowCount = 0;
     this.checkpointPuts = []; // the body of every checkpoint the server stored
   }
 
@@ -355,6 +357,54 @@ export class Model {
     return result;
   }
 
+  /** `POST /api/sync/import`: a window for `ops` operations. Returns its id. */
+  openImportWindow(ops) {
+    this.windowCount += 1;
+    const id = this.windowCount.toString(16).padStart(32, "0");
+    this.importWindows.set(id, { ops, used: 0, open: true });
+    return id;
+  }
+
+  /** The window ran out, or the server started again: the next batch for it is `409 import_window_invalid`. */
+  closeImportWindow(id) {
+    const window = this.importWindows.get(id);
+    if (window) window.open = false;
+  }
+
+  /**
+   * The server side of `POST /api/sync/batch` for the exact body text: the operations in order, each as its own write (the key text is the
+   * text of the operation, so the same key in a single write is `idem_reuse`, as on the real server); one result for each. A window that is
+   * not open, or an operation that would take more than the window has left, is `409 import_window_invalid` for the whole batch before
+   * anything is written; two operations on one item are `400 bad_request`. Only operations that are stored (not replays) use the window.
+   */
+  batch(body) {
+    const request = JSON.parse(body);
+    if (!Array.isArray(request.ops) || request.ops.length < 1 || request.ops.length > 100) throw new ApiError(400, "bad_request");
+    if (new Set(request.ops.map((op) => op.id)).size !== request.ops.length) throw new ApiError(400, "bad_request");
+    let window = null;
+    if (request.import_window !== undefined) {
+      window = this.importWindows.get(request.import_window);
+      if (!window || !window.open) throw new ApiError(409, "import_window_invalid", null, { error: "import_window_invalid" });
+    }
+    if (window) {
+      const fresh = request.ops.filter((op) => !this.idems.has(op.idem)).length;
+      if (window.used + fresh > window.ops) throw new ApiError(409, "import_window_invalid", null, { error: "import_window_invalid" });
+    }
+    const results = request.ops.map((op) => {
+      try {
+        const stored = this.put(op.id, JSON.stringify(op));
+        if (window && !stored.replayed) window.used += 1;
+        return { status: 200, ...stored };
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        if (error.code === "conflict") return { status: 409, ...error.body };
+        if (error.code === "restore_epoch_changed") return { status: 409, error: "restore_epoch_changed", restore_epoch: error.body.restore_epoch };
+        return { status: error.status, error: error.code };
+      }
+    });
+    return { results };
+  }
+
   /** Sets a row directly (an honest write from another device, or a lie). */
   set(id, { rev, deleted = false, blob = null, tag = null, tomb = null, seq = null }) {
     this.seq = seq ?? this.seq + 1;
@@ -416,6 +466,8 @@ export function createFakeApi(model, { order = [] } = {}) {
     checkpointFaults: [], // failures for the next checkpoint reads (`{ kind: "network" | "status", status, code }`)
     checkpointPutFaults: [], // and for the next uploads (`{ kind: "network" | "status", status, code, retryAfter }`)
     puts: [], // { id, bytes, text } of every write request, faults included
+    batches: [], // { text, window, ids } of every batch request, faults included
+    batchFaults: [], // failures for the next batches: `{ kind: "network" | "lost" | "status", status, code, retryAfter, body }`
     failFeed: null, // an ApiError to throw on the next feed calls (count in failFeedTimes)
     failFeedTimes: 0,
     async get(path) {
@@ -446,6 +498,19 @@ export function createFakeApi(model, { order = [] } = {}) {
       }
       if (url.pathname === "/api/sync/items") return model.listItems(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
       return model.changes(Number(url.searchParams.get("since")), Number(url.searchParams.get("limit")));
+    },
+    async post(path, body) {
+      if (path !== "/api/sync/batch") throw new ApiError(404, "not_found");
+      const sent = body instanceof Uint8Array ? text(body) : String(body);
+      const parsed = JSON.parse(sent);
+      api.batches.push({ text: sent, bytes: sent.length, window: parsed.import_window ?? null, ids: parsed.ops.map((op) => op.id) });
+      order.push("batch");
+      const fault = api.batchFaults.shift();
+      if (fault?.kind === "network") throw new ApiError(0, "network");
+      if (fault?.kind === "status") throw new ApiError(fault.status, fault.code, fault.retryAfter ?? null, fault.body ?? null);
+      const result = model.batch(sent);
+      if (fault?.kind === "lost") throw new ApiError(0, "network");
+      return result;
     },
     async put(path, body) {
       if (path === "/api/sync/checkpoint") {
@@ -662,8 +727,13 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }
     }
     if (topSeq === checkpoint.seq) {
-      const listed = new Set(entries.map((entry) => entry.id));
-      for (const id of byId.keys()) if (!listed.has(id)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+      // At the top every row is an entry with the same revision and hash (or both deleted), as in the core.
+      const listed = new Map(entries.map((entry) => [entry.id, entry]));
+      for (const [id, row] of byId) {
+        const entry = listed.get(id);
+        const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
+        if (!entry || entry.rev !== row.rev || !entry.hash.equals(hash)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+      }
     }
   }
   /** A sealed row for the model, as the wire has it (base64url). */
@@ -750,6 +820,13 @@ export async function createFakeStore({ order = [], db = null } = {}) {
           throw new Error("the disk is full");
         }
         return outbox.remove(store, scope, idem);
+      },
+      removeMany: async (store, scope, idems) => {
+        if (service.failRemove > 0) {
+          service.failRemove -= 1;
+          throw new Error("the disk is full");
+        }
+        return outbox.removeMany(store, scope, idems);
       },
       swap: async (store, scope, remove, entries, only = null) => {
         if (service.failEnqueue > 0) {
