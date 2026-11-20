@@ -17,9 +17,9 @@
 // The worker makes the item ids (random, 16 bytes), sends every draft over the port as
 // `{ id, method: "encrypt_item", args: [itemId, 1, draft, "no_existing", nowMs] }` (the only message
 // the vault worker takes from an import port) and waits for `{ id, ok, value | code }`. A draft
-// whose one-time password the vault's strict parser refuses is sent again with the address in a
-// hidden field; a draft that is too large to seal is left out with a warning; any other refusal
-// stops the import. One import per worker: a second request is `unsupported`.
+// whose one-time password the vault refuses (`malformed_otpauth`, or `invalid_input` for an address
+// it cannot normalise, such as a bad `%` escape) is sent again with the address in a hidden field;
+// a draft that is too large to seal is left out with a warning; any other refusal stops the import. One import per worker: a second request is `unsupported`.
 
 import { parseCsv } from "../import/csv.mjs";
 import { fromBitwardenCsv, fromBitwardenJson } from "../import/bitwarden.mjs";
@@ -181,11 +181,12 @@ function sealAll(drafts, report, port, labels, deps) {
       if (m.ok === true && value && value.envelope instanceof Uint8Array && value.tag instanceof Uint8Array && typeof value.rev === "number") {
         results[entry.index] = { id: entry.itemId, rev: value.rev, envelope: value.envelope, tag: value.tag };
         settled++;
-      } else if (m.ok === false && m.code === "malformed_otpauth" && !entry.retried && entry.draft.totp) {
-        // The core's strict parser refused the one-time password: keep it as a hidden field.
+      } else if (m.ok === false && (m.code === "malformed_otpauth" || m.code === "invalid_input") && !entry.retried && entry.draft.totp) {
+        // The core refused the one-time password (its strict parser, or a bad escape in the address that
+        // its normalisation does not take): keep it as a hidden field.
         const fallback = withTotpAsHidden(entry.draft, labels.totp);
         if (fallback === null) {
-          finish(new ImportError("import_seal_failed", { reason: "malformed_otpauth" }));
+          finish(new ImportError("import_seal_failed", { reason: String(m.code) }));
           return;
         }
         warn(report, "totp_invalid", entry.index);

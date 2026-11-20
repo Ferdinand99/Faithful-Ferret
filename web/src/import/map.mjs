@@ -10,8 +10,8 @@
 //   and the rest), and one that has whitespace or control characters in it, goes to a text field and
 //   never to `urls`, so it can never be matched against a page.
 // * A match rule never gets wider: `host` stays `host`, `exact` stays `exact`, `domain` stays
-//   `domain`, no rule is `host`, `startsWith` and a regular expression become `exact` with a warning,
-//   and `never` puts the address in a text field.
+//   `domain`, no rule is `host`, `startsWith` becomes `exact` with a warning, and `never` or a
+//   regular expression puts the address in a text field (a regular expression is no address).
 // * A one-time password is read as `otpauth://totp/`; a bare base32 secret becomes
 //   `otpauth://totp/?secret=...`; `steam://` and everything that does not read go to a hidden field
 //   with a warning. The core's strict parser has the last word when the item is sealed.
@@ -88,6 +88,7 @@ export function resolveLabels(custom) {
  *   skipped: {
  *     passkeys: number, folders: number, collections: number, linked: number,
  *     unknownKeys: number, otherTypes: number, trashed: number, tooLarge: number,
+ *     passwordHistory: number, reprompt: number,
  *   },
  *   warnings: { code: string, index: number }[],
  *   warningsDropped: number,
@@ -101,7 +102,7 @@ export function resolveLabels(custom) {
 export function createReport() {
   return {
     counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0 },
-    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0 },
+    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0 },
     warnings: [],
     warningsDropped: 0,
   };
@@ -176,9 +177,9 @@ export function mapTotp(raw) {
 
 /**
  * The draft of an item whose one-time password the core did not accept: the address moves to a
- * hidden field as it was in the file, and the draft has no `totp` any more. The vault's parser is
- * stricter than a first look, so this is how an item survives it. Returns `null` when the draft has
- * no `totp`.
+ * hidden field as it was in the file (a bare secret without its white space), and the draft has no
+ * `totp` any more. The vault's parser is stricter than a first look, so this is how an item survives
+ * it. Returns `null` when the draft has no `totp`.
  * @param {ItemDraft} draft
  * @param {string} label the label of the hidden field
  * @returns {ItemDraft | null}
@@ -194,7 +195,7 @@ export function withTotpAsHidden(draft, label) {
 /**
  * Splits a Bitwarden match number into a Ferret rule.
  * @param {unknown} match the `match` of an address (null when the file has none)
- * @returns {{ matching: string, warning?: string, never?: boolean, defaulted?: boolean }}
+ * @returns {{ matching: string, warning?: string, never?: boolean, text?: boolean, defaulted?: boolean }}
  */
 export function mapMatch(match) {
   if (match === null || match === undefined) return { matching: "host", defaulted: true };
@@ -208,7 +209,8 @@ export function mapMatch(match) {
     case 2:
       return { matching: "exact", warning: "match_starts_with" };
     case 4:
-      return { matching: "exact", warning: "match_regex" };
+      // A regular expression is not an address: it is kept as text and never matched.
+      return { matching: "exact", warning: "match_regex", text: true };
     case 5:
       return { matching: "host", never: true, warning: "match_never" };
     default:
@@ -291,6 +293,12 @@ function addAddresses(draft, uris, { report, index, labels }) {
     const address = typeof entry?.uri === "string" ? wellFormed(entry.uri).trim() : "";
     if (address === "") continue;
     const rule = mapMatch(entry.match);
+    if (rule.text) {
+      // A rule that is not an address (a regular expression): the text of the file, as it was.
+      warn(report, rule.warning ?? "match_regex", index);
+      toText(address);
+      continue;
+    }
     const where = classifyAddress(address);
     if (where.kind === "text") {
       toText(address);

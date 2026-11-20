@@ -1,7 +1,7 @@
 // The first look at an import file (depth and size before JSON.parse) and the safe parse.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ImportError, MAX_DEPTH, MAX_FIELD_BYTES, MAX_ITEMS } from "../../src/import/limits.mjs";
+import { ImportError, MAX_DEPTH, MAX_FIELD_BYTES, MAX_ITEMS, MAX_NODES } from "../../src/import/limits.mjs";
 import { prescan, safeJsonParse } from "../../src/import/prescan.mjs";
 import { fixture } from "./importHelpers.mjs";
 
@@ -40,6 +40,14 @@ test("depth_and_item_count_are_refused_by_the_prescan_before_json_parse", () => 
   }
   // Not one of those texts reached JSON.parse.
   assert.equal(parsed, 0);
+});
+
+test("the_bound_on_values_holds_where_it_is_and_one_more_is_refused", () => {
+  // MAX_ITEMS arrays of k values each, in an array: 10 000 + 10 000 k values for the prescan.
+  const arrays = (k) => `[${Array.from({ length: MAX_ITEMS }, () => `[${"0,".repeat(k - 1)}0]`).join(",")}]`;
+  const k = MAX_NODES / MAX_ITEMS - 1;
+  assert.deepEqual(prescan(arrays(k)).nodes, MAX_NODES);
+  assert.throws(() => prescan(arrays(k + 1)), refusal("import_too_many"));
 });
 
 test("the_prescan_does_not_count_brackets_and_commas_inside_strings", () => {

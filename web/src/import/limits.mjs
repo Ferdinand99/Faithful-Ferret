@@ -13,8 +13,15 @@ export const MAX_ITEMS = 10_000;
 export const MAX_FIELD_BYTES = 64 * 1024;
 /** The deepest nesting of objects and arrays in a JSON file. A real export is 6 deep. */
 export const MAX_DEPTH = 16;
-/** The most values (scalars, arrays and objects together) in one JSON file. */
-export const MAX_NODES = 2_000_000;
+/**
+ * The most values (scalars, arrays and objects together) in one JSON file: 60 for each of the most
+ * items (a login with its addresses and a few custom fields is about 35 values; an identity about
+ * 45). The bound is what keeps a worker's memory down, as the parsed tree and its copy in objects
+ * without a prototype cost about 300 bytes a value: the worst file it lets through (10 000 items of
+ * 29 empty objects each, 590 000 values) took about 90 MiB to parse and copy, so two million values
+ * would have been over 300 MiB on top of the text of the file.
+ */
+export const MAX_NODES = MAX_ITEMS * 60;
 /** The most columns in a CSV file. */
 export const MAX_COLUMNS = 256;
 /** The most entries in the central directory of a ZIP file. */

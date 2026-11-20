@@ -68,9 +68,9 @@ test("bitwarden_json_maps_every_type_and_field_kind", () => {
   // Counts and skips: what was read and what was left out, by name.
   assert.deepEqual(report.counts, {
     items: 8, login: 5, note: 1, card: 1, identity: 1,
-    urls: 8, totp: 2, customFields: 4, matchNull: 2, http: 1, textAddresses: 1, sealed: 0,
+    urls: 7, totp: 2, customFields: 4, matchNull: 2, http: 1, textAddresses: 2, sealed: 0,
   });
-  assert.deepEqual(report.skipped, { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0 });
+  assert.deepEqual(report.skipped, { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0 });
 });
 
 test("passkeys_folders_linked_fields_and_unknown_keys_are_counted_and_skipped", () => {
@@ -149,12 +149,12 @@ test("match_rules_never_get_wider", () => {
   const rules = drafts[1];
   assert.deepEqual(rules.urls, [
     { url: "https://starts.example.test/app", matching: "exact" },
-    { url: "https://regex.example.test/.*", matching: "exact" },
     { url: "https://odd.example.test", matching: "exact" },
     { url: "http://plain.example.test", matching: "host" },
   ]);
   // The address whose match was "never" is a text field, not a match.
-  assert.deepEqual(rules.fields.filter((f) => f.id.startsWith("address")).map((f) => f.value), ["https://never.example.test"]);
+  // The regular expression is no address either: it is text, as it was in the file.
+  assert.deepEqual(rules.fields.filter((f) => f.id.startsWith("address")).map((f) => f.value), ["https://regex.example.test/.*", "https://never.example.test"]);
   assert.deepEqual(warnings(report, "match_starts_with"), [1]);
   assert.deepEqual(warnings(report, "match_regex"), [1]);
   assert.deepEqual(warnings(report, "match_never"), [1]);
@@ -246,8 +246,8 @@ test("bitwarden_csv_maps_logins_and_notes", () => {
     { id: "username", label: "User name", kind: "text", value: "alice@example.test" },
     { id: "password", label: "Password", kind: "password", value: "synthetic-password-1" },
     { id: "address-1", label: "Address", kind: "text", value: "androidapp://example.test.app" },
-    { id: "custom-1", label: "Pin", kind: "text", value: "0000" },
-    { id: "custom-2", label: "Memo", kind: "text", value: "none" },
+    { id: "custom-1", label: "Pin", kind: "hidden", value: "0000" },
+    { id: "custom-2", label: "Memo", kind: "hidden", value: "none" },
   ]);
   assert.deepEqual(login.urls, [{ url: "https://www.example.test/login", matching: "host" }]);
   assert.deepEqual(login.totp, { uri: "otpauth://totp/?secret=GEZDGNBVGY3TQOJQ" });
@@ -287,7 +287,9 @@ test("bitwarden_csv_reads_short_names_odd_types_and_refuses_a_bad_shape", () => 
   const many = csv('name,login_uri,fields\nA,"https://a.example.test,https://b.example.test","no delimiter\nk: v"\n');
   assert.equal(many.drafts[0].urls.length, 2);
   assert.deepEqual(warnings(many.report, "field_unreadable"), [0]);
-  assert.deepEqual(many.drafts[0].fields, [{ id: "custom-1", label: "k", kind: "text", value: "v" }]);
+  assert.deepEqual(many.drafts[0].fields, [{ id: "custom-1", label: "k", kind: "hidden", value: "v" }]);
+  // The CSV does not say what kind a custom field is: none of them is kept as visible text.
+  assert.ok(csv('name,fields\nA,"a: 1\nb: 2"\n').drafts[0].fields.every((f) => f.kind === "hidden"));
   // A missing name column is not a Bitwarden export; a header alone is empty.
   assert.throws(() => csv("a,b\n1,2\n"), refusal("import_bad_format"));
   assert.throws(() => csv("name,type\n"), refusal("import_empty"));
@@ -308,4 +310,34 @@ test("the_labels_a_page_passes_are_the_labels_of_the_fields", () => {
   const { drafts } = json("every-type.json", { labels });
   assert.deepEqual(drafts[0].fields.slice(0, 2).map((f) => f.label), ["Brukernavn", "Passord"]);
   assert.equal(drafts[7].fields.at(-1).label, "Engangskode");
+});
+
+test("old_passwords_and_the_reprompt_flag_are_counted_as_not_imported", () => {
+  const items = [
+    { type: 1, name: "A", reprompt: 1, passwordHistory: [{ password: "old-1" }, { password: "old-2" }], login: { username: "u" } },
+    { type: 2, name: "B", reprompt: 1 },
+    { type: 2, name: "C", reprompt: 0, passwordHistory: [{ password: "old-3" }] },
+  ];
+  const { drafts, report } = fromBitwardenJson(safeJsonParse(JSON.stringify({ encrypted: false, items })));
+  assert.equal(report.skipped.passwordHistory, 3);
+  assert.equal(report.skipped.reprompt, 2);
+  assert.ok(!JSON.stringify(drafts).includes("old-"));
+  // The CSV has the flag too, not the history.
+  const rows = csv("name,reprompt\nA,1\nB,0\nC,1\n");
+  assert.equal(rows.report.skipped.reprompt, 2);
+  assert.equal(rows.report.skipped.passwordHistory, 0);
+});
+
+test("the_unknown_keys_of_an_item_that_is_skipped_as_a_whole_are_not_counted", () => {
+  const items = [
+    { type: 5, name: "ssh", sshKey: {}, extraA: 1 },
+    { type: 6, name: "bank", bankAccount: {}, extraB: 1 },
+    { type: 2, name: "trash", deletedDate: "2026-01-01T00:00:00.000Z", extraC: 1 },
+    { type: 99, name: "odd", extraD: 1 },
+    { type: 2, name: "kept", extraE: 1 },
+  ];
+  const { report } = fromBitwardenJson(safeJsonParse(JSON.stringify({ encrypted: false, items })));
+  assert.equal(report.skipped.unknownKeys, 1);
+  assert.equal(report.skipped.otherTypes, 3);
+  assert.equal(report.skipped.trashed, 1);
 });

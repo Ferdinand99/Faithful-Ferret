@@ -11,7 +11,8 @@
 // encrypted entry (any entry), a file in several parts, ZIP64, a method other than stored and
 // deflate, a name with a `..` part, a leading `/`, a backslash or a control character, two entries
 // with the same name, a local header that does not agree with the directory, and a checksum that is
-// wrong. Nothing about the file is put in an error but its code.
+// wrong. An entry whose name is not UTF-8 is left out (it cannot be read) and the others are read as
+// usual. Nothing about the file is put in an error but its code.
 
 import { ImportError, MAX_FILE_BYTES, MAX_ZIP_ENTRIES, MAX_ZIP_RATIO } from "./limits.mjs";
 
@@ -122,11 +123,16 @@ async function readDirectory(blob) {
     if (flags & 0x2041) throw new ImportError("import_zip_encrypted");
     if (diskStart !== 0) throw bad();
     if (compressed === 0xffffffff || unpacked === 0xffffffff || offset === 0xffffffff) throw bad();
+    /** @type {string} */
     let name;
     try {
       name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(p + 46, p + 46 + nameLength));
     } catch {
-      throw bad();
+      // A name that is not UTF-8 (an old tool wrote it in a code page) is the name of an entry that no
+      // caller asks for, as every name asked for is text. The entry is left out of the list, so it
+      // cannot be read; the rest of the file is read as usual.
+      p = next;
+      continue;
     }
     if (!safeName(name) || names.has(name)) throw bad();
     names.add(name);

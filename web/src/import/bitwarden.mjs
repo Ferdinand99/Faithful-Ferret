@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: GPL-3.0-only
 // Modified by Faithful Ferret: written for Faithful Ferret from the export formats of Bitwarden. The
 // formats (the names of the keys, the numbers of the item types, of the field types and of the address
 // match rules, the columns of the CSV export and how a CSV cell holds the custom fields and addresses of
@@ -6,8 +6,10 @@
 // crates/bitwarden-vault/src/cipher/{login,cipher}.rs, GNU GPL v3) and from the Bitwarden clients
 // (libs/importer/src/importers/bitwarden/bitwarden-csv-importer.ts and base-importer.ts, GNU GPL v3).
 // The reader is bounded and strict, which those importers are not, and maps to Ferret's item drafts
-// (see map.mjs). Faithful Ferret is under the GNU Affero General Public License v3, which GPL v3
-// section 13 allows to be combined with the GPL v3 files named above.
+// (see map.mjs). The reader is derived from those GPL v3 sources, so this file is GPL-3.0-only, as
+// the entry for it in notices-extra.json and THIRD-PARTY-NOTICES says. The rest of Faithful Ferret
+// is under the GNU Affero General Public License v3, which GPL v3 section 13 allows to be combined
+// with it.
 //
 // Reads a Bitwarden export, either the unencrypted JSON of the web vault, the apps and the CLI, or the
 // CSV, and returns item drafts and a report. It reads; it stores nothing and calls nothing.
@@ -105,9 +107,7 @@ export function fromBitwardenJson(data, options = {}) {
     const item = asObject(entry);
     if (item === null) throw new ImportError("import_bad_format");
     const context = { report, index, labels };
-    report.skipped.unknownKeys += unknownKeys(item, KNOWN_ITEM);
     const fields = asArray(item.fields).map(asObject).filter((f) => f !== null);
-    for (const f of fields) report.skipped.unknownKeys += unknownKeys(f, KNOWN_FIELD);
 
     if (item.deletedDate !== null && item.deletedDate !== undefined && item.deletedDate !== "") {
       report.skipped.trashed++;
@@ -120,6 +120,19 @@ export function fromBitwardenJson(data, options = {}) {
       warn(report, /** @type {string} */ (SKIPPED_TYPES.get(type)), index);
       return;
     }
+    if (type !== 1 && type !== 2 && type !== 3 && type !== 4) {
+      report.skipped.otherTypes++;
+      warn(report, "type_unknown", index);
+      return;
+    }
+    // Only the items that are read count for what is left behind in them (an item that is skipped as
+    // a whole is counted once, by its type).
+    report.skipped.unknownKeys += unknownKeys(item, KNOWN_ITEM);
+    for (const f of fields) report.skipped.unknownKeys += unknownKeys(f, KNOWN_FIELD);
+    // Not imported, and said so in the report: the old passwords of an item, and the flag that asks
+    // for the master password before the item is shown.
+    report.skipped.passwordHistory += asArray(item.passwordHistory).length;
+    if (item.reprompt === 1) report.skipped.reprompt++;
     const common = { name: item.name, notes: item.notes, favorite: item.favorite, fields };
     switch (type) {
       case 1: {
@@ -150,9 +163,6 @@ export function fromBitwardenJson(data, options = {}) {
         drafts.push(identityDraft({ ...common, identity }, context));
         return;
       }
-      default:
-        report.skipped.otherTypes++;
-        warn(report, "type_unknown", index);
     }
   });
   return { drafts, report };
@@ -223,8 +233,10 @@ export function fromBitwardenCsv(rows, options = {}) {
         warn(report, "field_unreadable", index);
         continue;
       }
-      fields.push({ name: text.slice(0, at), value: text.slice(at + 2), type: 0 });
+      // The CSV does not say what kind a custom field is, so it is kept hidden (the user can show it).
+      fields.push({ name: text.slice(0, at), value: text.slice(at + 2), type: 1 });
     }
+    if (scalar(row.reprompt).trim() === "1" && (type === "note" || type === "login" || type === "")) report.skipped.reprompt++;
     const common = { name: row.name, notes: row.notes, favorite: cell(row, "favorite") !== "" && row.favorite !== "0", fields };
     if (type === "note") {
       drafts.push(noteDraft(common, context));

@@ -10,7 +10,8 @@ test("the_bounds_are_the_ones_of_the_design", () => {
   assert.equal(MAX_ITEMS, 10_000);
   assert.equal(MAX_FIELD_BYTES, 64 * 1024);
   assert.equal(MAX_DEPTH, 16);
-  assert.ok(MAX_NODES >= MAX_ITEMS * 100, "a real export is far below the bound on values");
+  assert.ok(MAX_NODES >= MAX_ITEMS * 50, "a real export (about 45 values an item) is below the bound on values");
+  assert.ok(MAX_NODES <= MAX_ITEMS * 100, "the bound on values keeps the memory of a worker down");
   assert.ok(MAX_COLUMNS >= 16 && MAX_ZIP_ENTRIES >= 100 && MAX_ZIP_RATIO >= 10);
 });
 

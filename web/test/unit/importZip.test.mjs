@@ -6,8 +6,10 @@ import { ImportError, MAX_FILE_BYTES, MAX_ZIP_ENTRIES } from "../../src/import/l
 import { crc32, readZipEntry } from "../../src/import/zip.mjs";
 
 /**
- * A ZIP file. An entry is `{ name, data, method?, flags?, crc?, size?, packed?, localName? }`: `data` is the
- * unpacked bytes, and the rest overrides what is written, to make files that lie.
+ * A ZIP file. An entry is `{ name, data, method?, flags?, crc?, size?, packed?, localName?, nameBytes?, descriptor? }`: `data` is the
+ * unpacked bytes, and the rest overrides what is written, to make files that lie. `nameBytes` are the bytes
+ * of the name, as written; `descriptor` writes the entry as a streaming tool does: bit 3 set, no size
+ * or checksum in the local header, and a data descriptor after the data.
  * @param {any[]} entries
  * @param {{ comment?: string, locator?: boolean, disks?: number, count?: number, truncateDirectory?: number }} [options]
  */
@@ -19,21 +21,30 @@ function zip(entries, { comment = "", locator = false, disks = 0, count, truncat
     const data = Buffer.from(e.data);
     const method = e.method ?? 8;
     const packed = e.packed ?? (method === 8 ? deflateRawSync(data) : data);
-    const name = Buffer.from(e.name);
-    const localName = Buffer.from(e.localName ?? e.name);
+    const name = Buffer.from(e.nameBytes ?? e.name);
+    const localName = Buffer.from(e.nameBytes ?? e.localName ?? e.name);
     const crc = e.crc ?? crc32(data);
     const size = e.size ?? data.length;
-    const flags = e.flags ?? 0x0800;
+    const flags = (e.flags ?? 0x0800) | (e.descriptor ? 0x0008 : 0);
+    const descriptor = e.descriptor ? Buffer.alloc(16) : Buffer.alloc(0);
+    if (e.descriptor) {
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(crc, 4);
+      descriptor.writeUInt32LE(packed.length, 8);
+      descriptor.writeUInt32LE(size, 12);
+    }
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(e.localMethod ?? method, 8);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(packed.length, 18);
-    local.writeUInt32LE(size, 22);
+    if (!e.descriptor) {
+      local.writeUInt32LE(crc, 14);
+      local.writeUInt32LE(packed.length, 18);
+      local.writeUInt32LE(size, 22);
+    }
     local.writeUInt16LE(localName.length, 26);
-    parts.push(local, localName, packed);
+    parts.push(local, localName, packed, descriptor);
     const c = Buffer.alloc(46);
     c.writeUInt32LE(0x02014b50, 0);
     c.writeUInt16LE(20, 4);
@@ -46,7 +57,7 @@ function zip(entries, { comment = "", locator = false, disks = 0, count, truncat
     c.writeUInt16LE(name.length, 28);
     c.writeUInt32LE(offset, 42);
     central.push(c, name);
-    offset += 30 + localName.length + packed.length;
+    offset += 30 + localName.length + packed.length + descriptor.length;
   }
   let directory = Buffer.concat(central);
   if (truncateDirectory) directory = directory.subarray(0, directory.length - truncateDirectory);
@@ -170,4 +181,31 @@ test("zip_refuses_a_file_that_is_not_one_it_reads", async () => {
     throw new Error("read");
   };
   await assert.rejects(readZipEntry(big, "manifest.json"), refusal("import_too_large"));
+});
+
+test("zip_reads_an_entry_written_with_a_data_descriptor", async () => {
+  // The local header has no sizes and no checksum (bit 3); they are in the directory and after the data.
+  const file = zip([
+    { name: "first.bin", data: Buffer.alloc(300, 3), descriptor: true },
+    { name: "manifest.json", data: manifest, descriptor: true },
+    { name: "last.bin", data: "tail", method: 0, descriptor: true },
+  ]);
+  assert.equal(text(await readZipEntry(file, "manifest.json")), manifest);
+  assert.equal((await readZipEntry(file, "first.bin")).length, 300);
+  assert.equal(text(await readZipEntry(file, "last.bin")), "tail");
+  // The sizes come from the directory only: a wrong checksum is still caught.
+  await assert.rejects(readZipEntry(zip([{ name: "manifest.json", data: manifest, descriptor: true, crc: 5 }]), "manifest.json"), refusal("import_bad_zip"));
+});
+
+test("zip_leaves_out_an_entry_whose_name_is_not_utf8_and_reads_the_others", async () => {
+  // A name in an old code page (0x82 is e-acute in CP437) is not UTF-8: that entry cannot be asked for.
+  const odd = { nameBytes: Buffer.from([0x63, 0x61, 0x66, 0x82, 0x2e, 0x74, 0x78, 0x74]), data: "x", flags: 0 };
+  const file = zip([odd, { name: "manifest.json", data: manifest }]);
+  assert.equal(text(await readZipEntry(file, "manifest.json")), manifest);
+  // The entry with the odd name is missing, not a reason to refuse the whole archive.
+  await assert.rejects(readZipEntry(zip([odd]), "manifest.json"), refusal("import_zip_entry_missing"));
+  // The other rules still hold for the entries that can be named: an unsafe name is refused.
+  await assert.rejects(readZipEntry(zip([odd, { name: "../x", data: "x" }, { name: "manifest.json", data: manifest }]), "manifest.json"), refusal("import_bad_zip"));
+  // And an encrypted entry with an odd name is still refused: the flags are checked before the name.
+  await assert.rejects(readZipEntry(zip([{ ...odd, flags: 0x0001 }, { name: "manifest.json", data: manifest }]), "manifest.json"), refusal("import_zip_encrypted"));
 });

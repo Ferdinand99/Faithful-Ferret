@@ -42,7 +42,7 @@ test("match_rules_never_get_wider", () => {
   assert.deepEqual(mapMatch(1), { matching: "host" });
   assert.deepEqual(mapMatch(3), { matching: "exact" });
   assert.deepEqual(mapMatch(2), { matching: "exact", warning: "match_starts_with" });
-  assert.deepEqual(mapMatch(4), { matching: "exact", warning: "match_regex" });
+  assert.deepEqual(mapMatch(4), { matching: "exact", warning: "match_regex", text: true });
   assert.deepEqual(mapMatch(5), { matching: "host", never: true, warning: "match_never" });
   for (const odd of [6, 99, -1, "1", "host", true, {}, [], 1.5, NaN]) {
     assert.deepEqual(mapMatch(odd), { matching: "exact", warning: "match_unknown" }, String(odd));
@@ -69,10 +69,13 @@ test("match_rules_never_get_wider", () => {
   );
   assert.deepEqual(draft.urls, [
     { url: "https://a.example.test", matching: "exact" },
-    { url: "https://b.example.test", matching: "exact" },
     { url: "https://d.example.test", matching: "domain" },
   ]);
-  assert.deepEqual(draft.fields, [{ id: "address-1", label: "Address", kind: "text", value: "https://c.example.test" }]);
+  // A regular expression is no address and the "never" address must not match: both are text.
+  assert.deepEqual(draft.fields, [
+    { id: "address-1", label: "Address", kind: "text", value: "https://b.example.test" },
+    { id: "address-2", label: "Address", kind: "text", value: "https://c.example.test" },
+  ]);
   assert.deepEqual(c.report.warnings.map((w) => w.code), ["match_starts_with", "match_regex", "match_never"]);
 });
 
@@ -179,7 +182,7 @@ test("a_draft_has_the_shape_the_vault_takes_and_nothing_else", () => {
 test("the_report_counts_and_keeps_a_code_and_a_position_only", () => {
   const report = createReport();
   assert.deepEqual(Object.keys(report), ["counts", "skipped", "warnings", "warningsDropped"]);
-  assert.deepEqual(Object.keys(report.skipped).sort(), ["collections", "folders", "linked", "otherTypes", "passkeys", "tooLarge", "trashed", "unknownKeys"]);
+  assert.deepEqual(Object.keys(report.skipped).sort(), ["collections", "folders", "linked", "otherTypes", "passkeys", "passwordHistory", "reprompt", "tooLarge", "trashed", "unknownKeys"]);
   warn(report, "x", 4);
   assert.deepEqual(report.warnings, [{ code: "x", index: 4 }]);
   for (let i = 0; i < MAX_WARNINGS + 5; i++) warn(report, "y", i);

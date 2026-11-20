@@ -207,6 +207,31 @@ test("an_otpauth_address_the_core_refuses_is_sent_again_as_a_hidden_field_with_a
   assert.equal(reply.report.counts.sealed, 2);
 });
 
+test("an_otpauth_address_the_core_cannot_normalise_is_kept_as_a_hidden_field_and_does_not_stop_the_import", async () => {
+  // A bad percent escape in the issuer: the vault answers invalid_input, not malformed_otpauth.
+  const address = "otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQ&issuer=50%off";
+  const text = JSON.stringify({ encrypted: false, items: [{ type: 1, name: "A", login: { totp: address } }, { type: 1, name: "B", login: { totp: "GEZDGNBVGY3TQOJQ" } }] });
+  const port = vaultPort({
+    reply: (message) => (message.args[2].totp?.uri.includes("%off") ? { id: message.id, ok: false, code: "invalid_input" } : { id: message.id, ok: true, value: sealedValue(message.id) }),
+  });
+  const reply = await handler()(request(textFile(text), port));
+  assert.equal(reply.ok, true);
+  assert.equal(reply.sealed.length, 2);
+  const a = port.sent.filter((m) => m.args[2].name === "A");
+  assert.equal(a.length, 2);
+  assert.equal(a[1].args[2].totp, undefined);
+  assert.deepEqual(a[1].args[2].fields.at(-1), { id: "totp", label: "One-time password", kind: "hidden", value: address });
+  // The same item id, so no item twice.
+  assert.deepEqual([...a[0].args[0]], [...a[1].args[0]]);
+  assert.deepEqual(reply.report.warnings, [{ code: "totp_invalid", index: 0 }]);
+  assert.equal(reply.report.counts.totp, 1);
+  assert.equal(reply.report.counts.sealed, 2);
+  // Only once: when the second try is refused too, the import stops as for any other refusal.
+  const stubborn = vaultPort({ reply: (message) => (message.args[2].name === "A" ? { id: message.id, ok: false, code: "invalid_input" } : { id: message.id, ok: true, value: sealedValue(message.id) }) });
+  assert.deepEqual(await handler()(request(textFile(text), stubborn)), { id: 7, ok: false, error: "import_seal_failed" });
+  assert.equal(stubborn.sent.filter((m) => m.args[2].name === "A").length, 2);
+});
+
 test("an_item_that_is_too_large_is_left_out_with_a_warning_and_the_rest_is_stored", async () => {
   const text = JSON.stringify({ encrypted: false, items: [{ type: 2, name: "small" }, { type: 2, name: "huge" }, { type: 2, name: "small 2" }] });
   const port = vaultPort({ reply: (message) => (message.args[2].name === "huge" ? { id: message.id, ok: false, code: "too_large" } : { id: message.id, ok: true, value: sealedValue(message.id) }) });
