@@ -16,6 +16,7 @@ use ferret_core::{OPAQUE_CONTEXT, OsRng, PinState, opaque_login_start};
 use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
+use ferret_server::vault::unlock_write::MAX_GENERATION_STEP;
 use ferret_server::wire::b64url;
 use ferret_server_auth::testing::SMALL;
 use ferret_server_auth::{Outcome, RetryAfter, SessionScope, Stage, Throttle, ThrottleKey};
@@ -361,21 +362,30 @@ async fn a_generation_not_above_the_stored_is_409_write_conflict() {
         assert_eq!(error_of(&res), "write_conflict");
         nothing_changed(&app, &client, &before).await;
     }
-    // The top of the range is above the stored one and is taken.
+    // A step above the bound, the top of the range among them, would use up
+    // the generations for good: refused.
+    for generation in [u32::MAX, 2 + MAX_GENERATION_STEP] {
+        let mut req = password_put_req(&change);
+        req.kek_generation = generation;
+        let res = put_password_bytes(&app, &jar, &client, &change, body_bytes(&req)).await;
+        assert_eq!(
+            res.status,
+            StatusCode::CONFLICT,
+            "{generation}: {}",
+            res.text()
+        );
+        assert_eq!(error_of(&res), "write_conflict");
+        nothing_changed(&app, &client, &before).await;
+    }
+    // The largest step is taken.
     let mut req = password_put_req(&change);
-    req.kek_generation = u32::MAX;
+    req.kek_generation = 1 + MAX_GENERATION_STEP;
     let res = put_password_bytes(&app, &jar, &client, &change, body_bytes(&req)).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    assert_eq!(snapshot(&app, &client).await.wraps[0].2, u32::MAX);
-    // Nothing is above it.
-    let mut req = password_put_req(&change);
-    req.kek_generation = u32::MAX;
-    req.manifest.rev = 3;
-    let before = snapshot(&app, &client).await;
-    app.backup_status().take_request();
-    let res = put_password_bytes(&app, &jar, &client, &change, body_bytes(&req)).await;
-    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.text());
-    nothing_changed(&app, &client, &before).await;
+    assert_eq!(
+        snapshot(&app, &client).await.wraps[0].2,
+        1 + MAX_GENERATION_STEP
+    );
 }
 
 #[tokio::test]

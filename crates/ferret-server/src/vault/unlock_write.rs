@@ -10,7 +10,7 @@
 //!    (the OPAQUE library, through `Proofs`) and parse the proven body;
 //! 4. checks the content: the manifest envelope, the manifest's `rev` (the
 //!    current one plus 1) and each new generation (strictly above the stored
-//!    one, at most `u32::MAX`);
+//!    one, by at most `MAX_GENERATION_STEP`);
 //! 5. writes the account, each wrap under its stored `method_id`, the manifest
 //!    row and the vault's `seq`, each with a condition on what was read, so a
 //!    write that finds the row changed is `409 write_conflict` and never a
@@ -480,16 +480,25 @@ fn check_manifest_envelope(envelope: &[u8]) -> Result<(), ApiError> {
     }
 }
 
-/// A generation goes only up: the new one must be strictly above the stored
-/// one. A `u32` cannot pass `u32::MAX`, so the ceiling holds by its type.
+/// How far one change may move a generation. An honest client moves it by
+/// one, a few more after changes whose answers it never saw, and after a
+/// restore of an older backup by the number of changes since that backup.
+/// Without a bound, one request (a compromised session, a client bug) could
+/// set `u32::MAX` and leave no generation for any later change, the recovery
+/// path included.
+pub const MAX_GENERATION_STEP: u32 = 1 << 16;
+
+/// A generation goes only up, and by at most [`MAX_GENERATION_STEP`]: the new
+/// one must be strictly above the stored one and not more than the step
+/// above it (`409 write_conflict` otherwise). A `u32` cannot pass `u32::MAX`,
+/// so the ceiling holds by its type.
 ///
 /// Spec: Fase 1 § 4.3 (`kek_generation + 1`; the client rejects a lower one,
 /// so the server never stores one).
 fn check_generation(stored: u32, new: u32) -> Result<(), ApiError> {
-    if new > stored {
-        Ok(())
-    } else {
-        Err(write_conflict())
+    match new.checked_sub(stored) {
+        Some(step) if (1..=MAX_GENERATION_STEP).contains(&step) => Ok(()),
+        _ => Err(write_conflict()),
     }
 }
 
@@ -766,12 +775,21 @@ mod tests {
     use ferret_core::envelope::MAX_ENVELOPE_LEN;
 
     #[test]
-    fn a_generation_must_rise() {
+    fn a_generation_must_rise_by_a_bounded_step() {
         assert!(check_generation(1, 2).is_ok());
-        assert!(check_generation(1, u32::MAX).is_ok());
-        for (stored, new) in [(2, 2), (2, 1), (u32::MAX, u32::MAX), (5, 0)] {
-            let refused = check_generation(stored, new).expect_err("not above");
-            assert_eq!(refused.code, "write_conflict");
+        assert!(check_generation(1, 1 + MAX_GENERATION_STEP).is_ok());
+        assert!(check_generation(u32::MAX - 1, u32::MAX).is_ok());
+        for (stored, new) in [
+            (2, 2),
+            (2, 1),
+            (u32::MAX, u32::MAX),
+            (5, 0),
+            (1, 2 + MAX_GENERATION_STEP),
+            (1, u32::MAX),
+            (0, u32::MAX),
+        ] {
+            let refused = check_generation(stored, new).expect_err("refused");
+            assert_eq!(refused.code, "write_conflict", "{stored} -> {new}");
         }
     }
 

@@ -22,14 +22,18 @@
 //!    then the manifest envelope (`422`), the manifest's `rev` and the new
 //!    generation (`409 write_conflict`), then the writes.
 //!
-//! The new generation only has to be above the stored one. The client picks
-//! it from its pinned floor, the manifest and the server's wrap, so after a
-//! restore of an older backup it may jump well above the server's: that is
-//! taken, and nothing here can lower a generation.
+//! The new generation only has to be above the stored one, by at most
+//! `unlock_write::MAX_GENERATION_STEP`. The client picks it from its pinned
+//! floor, the manifest and the server's wrap, so after a restore of an older
+//! backup it may jump above the server's: that is taken, and nothing here can
+//! lower a generation.
 //!
 //! A new recovery key ends no session and leaves every sign-in alone: it
 //! changes nothing about how the user signs in, only which key can recover.
-//! There is no wait after an earlier change either. Right after the commit,
+//! It writes the OPAQUE record back unchanged, and a half-way sign-in is bound
+//! to the bytes of the record, not to the row, so it still finishes. There is
+//! no wait between changes of unlock methods, before or after this one: a
+//! new master password or a recovery right after a renewal goes through. Right after the commit,
 //! on the database thread (so a client that went away cannot stop it), the
 //! vault's streams hear of the new `seq`, and a backup is asked for, so the
 //! newest set holds the new recovery wrap.
