@@ -1493,7 +1493,11 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   delete process.env.FERRET_MATRIX_TOLERATE;
   try {
     assert.deepEqual([...KNOWN_GAPS], [], "no gap is tolerated");
-    const total = await runSeeds(seedsOf(fewer()), (seed) => randomRun(seed));
+    // `FERRET_MATRIX_PURGE_HEAVY=1`: more deletions and purges than the usual mix (it finds shapes that the usual mix meets rarely).
+    const actions = process.env.FERRET_MATRIX_PURGE_HEAVY === "1"
+      ? ACTIONS.map(([name, weight]) => [name, name === "purge" ? 6 : name === "remove" ? 12 : weight])
+      : ACTIONS;
+    const total = await runSeeds(seedsOf(fewer()), (seed) => randomRun(seed, { actions }));
     if (ONLY === null) {
       assert.ok((total.tombstones_purged ?? 0) > 0, "the runs purged tombstones");
       assert.ok((total.listings ?? 0) > 0, "and devices that were behind the purge listed the vault");
