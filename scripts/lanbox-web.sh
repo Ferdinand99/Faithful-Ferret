@@ -8,7 +8,7 @@
 #   scripts/lanbox-web.sh --lock              refresh web/package-lock.json (npm install --package-lock-only)
 #
 # The web/ tree, the licence notices that the web tests read (THIRD-PARTY-NOTICES,
-# notices-extra.json) and, when it exists, the server's wire fixtures are streamed
+# notices-extra.json) and, when they exist, the server's wire and DPoP fixtures are streamed
 # into the container as a tar archive (no bind mounts from the PC), the locked
 # packages are installed with `npm ci --ignore-scripts`, and the build fetches
 # the published WASM package named in web/wasm.lock.json and checks its SHA-256.
@@ -118,8 +118,10 @@ run=(docker "${docker_args[@]}" run --rm -i --init
 
 pack() {
   local fixtures=crates/ferret-server/tests/fixtures/wire
+  local dpop=crates/ferret-server/tests/fixtures/dpop
   local extra=(THIRD-PARTY-NOTICES notices-extra.json)
   [ -d "$fixtures" ] && extra+=("$fixtures")
+  [ -d "$dpop" ] && extra+=("$dpop")
   tar -c \
     --exclude='web/node_modules' \
     --exclude='web/dist' \
