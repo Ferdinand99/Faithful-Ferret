@@ -329,19 +329,23 @@ impl Listed {
     }
 }
 
-/// The list of devices of `user_id` at `now`, for the browser `current`
-/// (the device id of the session that asks):
+/// The list of devices of `user_id` at `now`, for the session `current`
+/// (the session that asks):
 ///
 /// * every device with tokens that the quota counts: not revoked, signed in
 ///   under the user's `session_version` of now and less than
 ///   [`ABSOLUTE_SECS`] ago (so the list shows exactly what holds a place of
 ///   the [`MAX_DEVICES`]);
-/// * every browser with a live session of the vault origin, once per device
-///   id, with the name of its newest session, the time of its first live
-///   session and the last time any of them was seen.
+/// * the session that asks, alone, as "this browser" (`current`);
+/// * every other browser with a live session of the vault origin, once per
+///   device id, with the name of its newest session, the time of its first
+///   live session and the last time any of them was seen. The other sessions
+///   that carry the asking session's device id form a row of their own with
+///   that id: a browser chooses its device id, so another one may claim this
+///   browser's, and it must not hide in "this browser".
 ///
-/// The order is fixed: the browser that asks first, then the devices with
-/// tokens, then the other browsers, each newest seen first. At most
+/// The order is fixed: this browser first, then the devices with tokens,
+/// then the other browsers, each newest seen first. At most
 /// [`MAX_DEVICE_LIST`] rows; `more` says how many were left out. Nothing of a
 /// token or a key is read.
 ///
@@ -349,7 +353,7 @@ impl Listed {
 pub fn list(
     conn: &Connection,
     user_id: i64,
-    current: &DeviceId,
+    current: &SidHash,
     now: i64,
 ) -> rusqlite::Result<DevicesRes> {
     let mut statement = conn.prepare(
@@ -416,22 +420,26 @@ pub fn list(
     })
 }
 
-/// The live sessions grouped by browser (device id).
-fn browsers(sessions: &[SessionRow], current: &DeviceId) -> Vec<Listed> {
-    let mut by_device: BTreeMap<[u8; 16], Listed> = BTreeMap::new();
+/// The live sessions as rows: the asking session `current` alone, every
+/// other session grouped by browser (device id).
+fn browsers(sessions: &[SessionRow], current: &SidHash) -> Vec<Listed> {
+    let mut by_device: BTreeMap<([u8; 16], bool), Listed> = BTreeMap::new();
     // The newest session last, so its name wins.
     let mut sessions: Vec<&SessionRow> = sessions.iter().collect();
     sessions.sort_by(|a, b| a.issued_at.cmp(&b.issued_at).then(a.sid.0.cmp(&b.sid.0)));
     for row in sessions {
-        let entry = by_device.entry(row.device.0).or_insert_with(|| Listed {
-            id: row.device.0,
-            kind: DeviceKindJson::Web,
-            name: String::new(),
-            platform: None,
-            created_at: row.issued_at,
-            last_seen: row.last_seen,
-            current: row.device == *current,
-        });
+        let asking = row.sid == *current;
+        let entry = by_device
+            .entry((row.device.0, asking))
+            .or_insert_with(|| Listed {
+                id: row.device.0,
+                kind: DeviceKindJson::Web,
+                name: String::new(),
+                platform: None,
+                created_at: row.issued_at,
+                last_seen: row.last_seen,
+                current: asking,
+            });
         entry.name.clone_from(&row.device_name);
         entry.created_at = entry.created_at.min(row.issued_at);
         entry.last_seen = entry.last_seen.max(row.last_seen);
@@ -445,15 +453,18 @@ fn browsers(sessions: &[SessionRow], current: &DeviceId) -> Vec<Listed> {
 /// * `GET /api/auth/devices`: the list ([`list`]), with a full session;
 /// * `DELETE /api/auth/devices/{id}`: revokes the device with tokens `id`, or
 ///   ends every session of the browser `id` and what was handed over from
-///   them; never the browser that asks (`400 bad_request`: it signs out
-///   instead); `404 not_found` for an id the user has neither as a device nor
-///   as a browser (another user's included);
+///   them, but never the session that asks. With the asking session's own
+///   device id it ends the other sessions that carry that id (another
+///   browser may have claimed it), and is `400 bad_request` when there are
+///   none (to end this browser, sign out); `404 not_found` for an id the user
+///   has neither as a device nor as a browser (another user's included);
 /// * `POST /api/auth/devices/revoke-all`: with the master password again
 ///   (`ScopedSession<DeviceManage>` and `FreshReauth`), ends every other
 ///   session and revokes every device with tokens (`end_all_credentials`,
 ///   which also revokes a pending sign-in code: someone who suspects a
-///   stolen device wants that gone too); this browser stays, with what was
-///   handed over from it;
+///   stolen device wants that gone too). This browser's vault session
+///   stays; its admin session ends, as after a password change (it fails
+///   safe: the user opens the admin pages again);
 /// * `POST /api/auth/devices/forget-old`: revokes the devices with tokens not
 ///   seen for [`FORGET_OLD_SECS`] ([`forget_old`]).
 ///
@@ -482,7 +493,7 @@ enum Change {
     Ended(Ended),
     /// The asking session ended in between: nothing was changed.
     SessionGone,
-    /// The id is the browser that asks.
+    /// The id is the browser that asks, and no other session carries it.
     OwnBrowser,
     /// The user has no such device or browser.
     Unknown,
@@ -527,10 +538,10 @@ async fn list_route(
     mut parts: Parts,
 ) -> Result<Response, ApiError> {
     let session = VaultSession::from_request_parts(&mut parts, &state).await?;
-    let (user_id, device, now) = (session.user_id, session.device, session.now);
+    let (user_id, sid, now) = (session.user_id, session.sid, session.now);
     let res = state
         .vault_db
-        .with_conn(move |conn| Ok(list(conn, user_id, &device, now)?))
+        .with_conn(move |conn| Ok(list(conn, user_id, &sid, now)?))
         .await?;
     Ok(no_store(Json(res).into_response()))
 }
@@ -562,12 +573,15 @@ async fn revoke_route(
                 devices: vec![id],
             }));
         }
-        if id == own {
-            return Ok(Change::OwnBrowser);
-        }
-        let sessions = session::end_device_sessions(tx, user_id, &id, now)?;
+        // The asking session is never ended here (it signs out instead); any
+        // other session of that browser id is, this browser's id included.
+        let sessions = session::end_device_sessions(tx, user_id, &id, Some(&sid), now)?;
         if sessions.is_empty() {
-            return Ok(Change::Unknown);
+            return Ok(if id == own {
+                Change::OwnBrowser
+            } else {
+                Change::Unknown
+            });
         }
         Ok(Change::Ended(Ended {
             sessions,

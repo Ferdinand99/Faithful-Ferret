@@ -472,9 +472,10 @@ pub fn end_all_credentials(
 }
 
 /// Ends every live session of `user_id` from the browser `device` (on both
-/// origins) at `now`, and every session handed over from one of them (its
-/// admin sessions), in the caller's transaction. Returns the ids of the
-/// sessions it ended, each once, for the caller to announce after the commit.
+/// origins) at `now`, except the session `keep` if given, and every session
+/// handed over from one of the others (their admin sessions), in the caller's
+/// transaction. Returns the ids of the sessions it ended, each once, for the
+/// caller to announce after the commit.
 ///
 /// A browser is a device of the list through its sessions: they all carry the
 /// `device_id` the browser chose. Only the sessions of `user_id` are touched,
@@ -485,25 +486,29 @@ pub fn end_device_sessions(
     tx: &Transaction<'_>,
     user_id: i64,
     device: &DeviceId,
+    keep: Option<&SidHash>,
     now: i64,
 ) -> rusqlite::Result<Vec<SidHash>> {
+    let keep: Option<&[u8]> = keep.map(|sid| sid.0.as_slice());
     let mut ended = returning_sids(
         tx,
         "UPDATE ferret_sessions SET revoked_at = ?3
          WHERE user_id = ?1 AND device_id = ?2 AND revoked_at IS NULL
+           AND (?4 IS NULL OR sid_hash <> ?4)
          RETURNING sid_hash",
-        params![user_id, device.0.as_slice(), now],
+        params![user_id, device.0.as_slice(), now, keep],
     )?;
-    // The children of every session of that browser, also of one that had
-    // ended before: a child must never outlive its parent.
+    // The children of every other session of that browser, also of one that
+    // had ended before: a child must never outlive its parent.
     let children = returning_sids(
         tx,
         "UPDATE ferret_sessions SET revoked_at = ?3
-         WHERE revoked_at IS NULL
+         WHERE revoked_at IS NULL AND (?4 IS NULL OR sid_hash <> ?4)
            AND parent_sid IN (
-               SELECT sid_hash FROM ferret_sessions WHERE user_id = ?1 AND device_id = ?2)
+               SELECT sid_hash FROM ferret_sessions
+               WHERE user_id = ?1 AND device_id = ?2 AND (?4 IS NULL OR sid_hash <> ?4))
          RETURNING sid_hash",
-        params![user_id, device.0.as_slice(), now],
+        params![user_id, device.0.as_slice(), now, keep],
     )?;
     ended.extend(children);
     ended.sort_unstable_by_key(|sid| sid.0);

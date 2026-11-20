@@ -60,3 +60,8 @@
   --status-text: var(--info-text);
   --status-fill: var(--info-fill);
 }
+
+/* A session that claims this browser's id: said in words, tinted as a warning. */
+.devices-shares-id {
+  color: var(--warn-text);
+}

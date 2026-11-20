@@ -33,6 +33,11 @@ function serverList() {
   };
 }
 
+/** Another session that signed in with this browser's device id. */
+function claimed() {
+  return { id: BROWSER_ID, kind: "web", name: "Test browser", created_at: AT - 60, last_seen: AT - 30, current: false };
+}
+
 /** A page over fake calls that record what they were asked. */
 function page({ t = keyT, list = serverList(), reauthAnswer = "ok", calls = [], overrides = {} } = {}) {
   const view = devicesView({
@@ -209,7 +214,7 @@ test("devices_texts_exist_in_both_languages", async () => {
   for (const lang of ["en", "nb"]) {
     const { t, missing } = i18n(lang);
     await withDom(async () => {
-      const { view } = page({ t, list: { ...serverList(), more: 2 } });
+      const { view } = page({ t, list: { devices: [...serverList().devices, claimed()], more: 2 } });
       await settle();
       const pending = click(find(all(view, "devices-row")[1], "devices-revoke"));
       await settle();
@@ -283,4 +288,28 @@ test("revoking_one_is_a_delete_of_the_web_vault_with_its_cookie", async () => {
   // A path that would leave the origin is refused before anything is sent.
   await assert.rejects(api.del("//evil.example/x"), TypeError);
   assert.equal(seen.length, 1);
+});
+
+test("a_session_with_this_browsers_id_shows_as_its_own_row_and_can_be_revoked", async () => {
+  await withDom(async () => {
+    const calls = [];
+    const { view } = page({ calls, list: { devices: [serverList().devices[0], claimed()] } });
+    await settle();
+    const rows = all(view, "devices-row");
+    assert.equal(rows.length, 2);
+    // This browser: no button. The other session with the same id: said so, with a button.
+    assert.equal(find(rows[0], "devices-revoke"), null);
+    assert.equal(find(rows[0], "devices-shares-id"), null);
+    assert.equal(rows[1].getAttribute("data-current"), "false");
+    assert.equal(textOf(find(rows[1], "devices-shares-id")).trim(), "devices.shares_id");
+    const pending = click(find(rows[1], "devices-revoke"));
+    await settle();
+    await click(find(view, "dialog-confirm"));
+    await pending;
+    assert.deepEqual(calls.slice(0, 2), ["load", `revoke ${BROWSER_ID}`]);
+    // Any other browser has no such note.
+    const plain = page();
+    await settle();
+    assert.equal(all(plain.view, "devices-shares-id").length, 0);
+  });
 });

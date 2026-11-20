@@ -41,6 +41,7 @@
   "devices.revoke_all.heading": "Tilbakekall alle",
   "devices.seen": "Sist sett {time}",
   "devices.seen_unknown": "Sist sett på et ukjent tidspunkt",
+  "devices.shares_id": "Denne økten bruker samme nettleser-id som denne nettleseren, men er en annen økt. Tilbakekall den hvis du ikke kjenner den igjen.",
   "devices.since": "logget inn {time}",
   "devices.title": "Enheter",
   "devices.unnamed": "Nettleser uten navn",

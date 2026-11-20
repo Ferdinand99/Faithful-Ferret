@@ -41,6 +41,7 @@
   "devices.revoke_all.heading": "Revoke all",
   "devices.seen": "Last seen {time}",
   "devices.seen_unknown": "Last seen at an unknown time",
+  "devices.shares_id": "This session uses the same browser id as this browser, but it is a different session. If you do not recognise it, revoke it.",
   "devices.since": "signed in {time}",
   "devices.title": "Devices",
   "devices.unnamed": "Unnamed browser",

@@ -534,21 +534,13 @@ async fn revoking_a_browser_ends_its_sessions_and_their_admin_children() {
 #[tokio::test]
 async fn the_own_browser_cannot_be_revoked_from_the_list() {
     let app = device_app().await;
-    let (client, browser) = account(&app, 1).await;
-    // A second session of this same browser.
-    let again = issue(
-        &app,
-        client.ids.user_id,
-        Origin::Vault,
-        SessionScope::Full,
-        1,
-    )
-    .await;
+    let (_client, browser) = account(&app, 1).await;
+    let mut revocations = app.sync_events().subscribe_revocations();
     let res = delete(&app, &browser.jar, &support::session::device(1).0).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
     assert_eq!(error_of(&res), "bad_request");
     assert!(!session_ended(&app, browser.sid).await);
-    assert!(!session_ended(&app, again.sid).await);
+    assert!(heard(&mut revocations).is_empty());
     // A malformed id is refused as well, and changes nothing.
     for bad in ["xyz", "00112233445566778899AABBCCDDEEFF", "0011"] {
         let res = app
@@ -560,6 +552,161 @@ async fn the_own_browser_cannot_be_revoked_from_the_list() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
     }
     assert!(!session_ended(&app, browser.sid).await);
+}
+
+#[tokio::test]
+async fn a_session_with_this_browsers_id_is_listed_apart_and_can_be_revoked() {
+    let app = device_app().await;
+    let (client, victim) = account(&app, 1).await;
+    let uid = client.ids.user_id;
+    // Someone with the password signs in again with the victim browser's id
+    // (a browser chooses its id), names it like the victim's, and opens the
+    // admin pages from it.
+    app.clock.advance(60);
+    let intruder = issue(&app, uid, Origin::Vault, SessionScope::Full, 1).await;
+    let intruder_admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 9).await;
+    let (child, parent, sid) = (intruder_admin.sid, intruder.sid, intruder.sid);
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            set_parent(conn, &child, &parent)?;
+            conn.execute(
+                "UPDATE ferret_sessions SET device_name = 'Firefox on the laptop' WHERE sid_hash = ?1",
+                [sid.0.as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("the intruder's rows");
+
+    // The victim sees this browser alone as "this browser", and the other
+    // session as a row of its own with the same id, which can be revoked.
+    let rows = list(&app, &victim.jar).await.devices;
+    let own = support::session::device(1).0;
+    let webs: Vec<_> = rows.iter().filter(|row| row.id == own).collect();
+    assert_eq!(webs.len(), 2, "two rows with this browser's id");
+    assert!(webs[0].current);
+    assert_eq!(
+        webs[0].name, "Test browser",
+        "the asking session's own name"
+    );
+    assert!(!webs[1].current);
+    assert_eq!(webs[1].name, "Firefox on the laptop");
+    // The intruder's own list marks the intruder's session as current, not
+    // the victim's.
+    let theirs = list(&app, &intruder.jar).await.devices;
+    assert_eq!(theirs.iter().filter(|row| row.current).count(), 1);
+    assert_eq!(theirs[0].name, "Firefox on the laptop");
+
+    let mut revocations = app.sync_events().subscribe_revocations();
+    let res = delete(&app, &victim.jar, &own).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    assert!(session_ended(&app, intruder.sid).await);
+    assert!(session_ended(&app, intruder_admin.sid).await);
+    assert!(
+        !session_ended(&app, victim.sid).await,
+        "the asking session stays"
+    );
+    assert_eq!(
+        sorted(heard(&mut revocations)),
+        sorted(vec![
+            Revoked::Session(intruder.sid),
+            Revoked::Session(intruder_admin.sid),
+        ])
+    );
+    let res = app
+        .call_raw(
+            Which::Vault,
+            page(Method::GET, "/api/auth/session", &intruder.jar).build(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    // Now only this browser carries the id: a second call is refused.
+    let res = delete(&app, &victim.jar, &own).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let rows = list(&app, &victim.jar).await.devices;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].current);
+}
+
+#[tokio::test]
+async fn the_three_changes_refuse_a_request_from_another_site() {
+    let app = device_app().await;
+    let (client, browser) = account(&app, 1).await;
+    let device = signed_in(&app, 1, 1).await;
+    let laptop = issue(
+        &app,
+        client.ids.user_id,
+        Origin::Vault,
+        SessionScope::Full,
+        2,
+    )
+    .await;
+    // Old enough for "forget old devices".
+    app.clock
+        .advance(u64::try_from(FORGET_OLD_SECS).expect("secs"));
+    let fresh = client_session(&app, &client, SessionScope::Full, 1).await;
+    let mut revocations = app.sync_events().subscribe_revocations();
+    let cookie = fresh.jar.header().expect("cookies");
+    let paths = [
+        (
+            Method::DELETE,
+            format!("{DEVICES}/{}", hex(&id_of(&device))),
+        ),
+        (Method::POST, REVOKE_ALL.to_string()),
+        (Method::POST, FORGET_OLD.to_string()),
+    ];
+    for (method, path) in &paths {
+        // No protocol header.
+        let res = app
+            .call_raw(
+                Which::Vault,
+                Req::new(method.clone(), path)
+                    .header("origin", support::VAULT_URL)
+                    .header("x-forwarded-proto", "https")
+                    .header("cookie", &cookie)
+                    .build(),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{method} {path}");
+        assert_eq!(error_of(&res), "protocol_header_missing");
+        // The browser says another site sent it.
+        let res = app
+            .call_raw(
+                Which::Vault,
+                Req::new(method.clone(), path)
+                    .page_fetch(Which::Vault)
+                    .header("x-forwarded-proto", "https")
+                    .header("sec-fetch-site", "cross-site")
+                    .header("cookie", &cookie)
+                    .build(),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(error_of(&res), "forbidden_origin");
+        // Another origin.
+        let res = app
+            .call_raw(
+                Which::Vault,
+                Req::new(method.clone(), path)
+                    .header("origin", "https://evil.example")
+                    .header("ferret-protocol", "1")
+                    .header("x-forwarded-proto", "https")
+                    .header("cookie", &cookie)
+                    .build(),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(error_of(&res), "forbidden_origin");
+    }
+    // Nothing was revoked, ended or announced.
+    assert!(!is_revoked(&app, &device).await);
+    assert!(!session_ended(&app, laptop.sid).await);
+    assert!(heard(&mut revocations).is_empty());
+    // The same requests from the page itself go through.
+    let res = post(&app, &fresh.jar, FORGET_OLD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    drop(browser);
 }
 
 #[tokio::test]
@@ -669,20 +816,30 @@ async fn revoke_all_keeps_this_session_and_ends_every_other_and_every_device() {
     let second = signed_in(&app, 1, 2).await;
     let laptop = issue(&app, uid, Origin::Vault, SessionScope::Full, 2).await;
     let admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 3).await;
+    // This browser's own admin session, handed over from it.
+    let own_admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 1).await;
+    let (child, parent) = (own_admin.sid, browser.sid);
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(set_parent(conn, &child, &parent)?))
+        .await
+        .expect("a hand-over");
     let (_other, other_browser) = account(&app, 2).await;
     let theirs = signed_in(&app, 2, 3).await;
     let mut revocations = app.sync_events().subscribe_revocations();
 
     let res = post(&app, &browser.jar, REVOKE_ALL).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    assert_eq!(res.json(), json!({"revoked": 4}));
+    assert_eq!(res.json(), json!({"revoked": 5}));
     assert_eq!(res.header("cache-control"), "no-store");
 
     assert!(
         !session_ended(&app, browser.sid).await,
         "this browser stays"
     );
-    for sid in [laptop.sid, admin.sid] {
+    // This browser's admin session ends too, as after a password change: it
+    // fails safe, and the admin pages are opened again.
+    for sid in [laptop.sid, admin.sid, own_admin.sid] {
         assert!(session_ended(&app, sid).await);
     }
     for device in [&first, &second] {
@@ -694,6 +851,7 @@ async fn revoke_all_keeps_this_session_and_ends_every_other_and_every_device() {
         sorted(vec![
             Revoked::Session(laptop.sid),
             Revoked::Session(admin.sid),
+            Revoked::Session(own_admin.sid),
             Revoked::Device(DeviceId(id_of(&first))),
             Revoked::Device(DeviceId(id_of(&second))),
         ])

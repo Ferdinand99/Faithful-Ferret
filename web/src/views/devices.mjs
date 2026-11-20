@@ -91,8 +91,11 @@ export function devicesView({ t, load, revoke, revokeAll, forgetOld, reauth, loc
     done.hidden = false;
   }
 
-  /** @param {DeviceRow} row */
-  function rowView(row) {
+  /**
+   * @param {DeviceRow} row
+   * @param {string | null} ownId the device id of this browser's own row
+   */
+  function rowView(row, ownId) {
     const isDevice = row.kind === "device";
     const name = row.name === "" ? t("devices.unnamed") : row.name;
     const kind = t(isDevice ? "devices.kind.device" : "devices.kind.web");
@@ -111,6 +114,10 @@ export function devicesView({ t, load, revoke, revokeAll, forgetOld, reauth, loc
     if (row.current) {
       item.appendChild(el("p", { class: "help", "data-role": "devices-current-help" }, t("devices.current_help")));
       return item;
+    }
+    // Another session that carries this browser's device id: a browser chooses its id, so another one can claim it.
+    if (row.kind === "web" && row.id === ownId) {
+      item.appendChild(el("p", { class: "help devices-shares-id", "data-role": "devices-shares-id" }, t("devices.shares_id")));
     }
     const button = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary", "data-role": "devices-revoke" }, t("devices.revoke.button")));
     button.addEventListener("click", async () => {
@@ -148,7 +155,8 @@ export function devicesView({ t, load, revoke, revokeAll, forgetOld, reauth, loc
     }
     mount(status, document.createTextNode(""));
     rowButtons = [];
-    mount(list, ...answer.devices.map(rowView));
+    const ownId = answer.devices.find((row) => row.current)?.id ?? null;
+    mount(list, ...answer.devices.map((row) => rowView(row, ownId)));
     if (answer.devices.length === 0) list.appendChild(el("li", { class: "help", "data-role": "devices-empty" }, t("devices.empty")));
     if (typeof answer.more === "number" && answer.more > 0) {
       mount(more, document.createTextNode(t("devices.more", { count: answer.more })));
