@@ -106,7 +106,10 @@ fn js_proofs_verify_in_rust() {
         assert_eq!(verified.jti().len(), 22, "{name}");
         // Each proof has its own `jti`: recording one never refuses another.
         cache.record(&verified, 1, NOW).expect("a new jti");
-        assert!(matches!(cache.record(&verified, 1, NOW), Err(DpopError::Replay)));
+        assert!(matches!(
+            cache.record(&verified, 1, NOW),
+            Err(DpopError::Replay)
+        ));
 
         // The header is exactly what the server's strict reader takes.
         let (header, _, signature) = segments(proof);
@@ -147,19 +150,40 @@ fn js_proofs_are_refused_for_another_request() {
         } else {
             Method::GET
         };
-        assert!(refused(&other_method, &vault_htu(path), access, NOW), "{name}: htm");
-        assert!(refused(&good_method, &vault_htu("/api/sync/other"), access, NOW), "{name}: htu");
-        assert!(refused(&good_method, &vault_htu(path), access, NOW + 61), "{name}: iat, late");
-        assert!(refused(&good_method, &vault_htu(path), access, NOW - 61), "{name}: iat, early");
+        assert!(
+            refused(&other_method, &vault_htu(path), access, NOW),
+            "{name}: htm"
+        );
+        assert!(
+            refused(&good_method, &vault_htu("/api/sync/other"), access, NOW),
+            "{name}: htu"
+        );
+        assert!(
+            refused(&good_method, &vault_htu(path), access, NOW + 61),
+            "{name}: iat, late"
+        );
+        assert!(
+            refused(&good_method, &vault_htu(path), access, NOW - 61),
+            "{name}: iat, early"
+        );
         assert!(
             !refused(&good_method, &vault_htu(path), access, NOW + 60),
             "{name}: 60 seconds is still within the window"
         );
         if with_token {
-            assert!(refused(&good_method, &vault_htu(path), None, NOW), "{name}: ath without a token");
-            assert!(refused(&good_method, &vault_htu(path), Some(&other), NOW), "{name}: ath of another token");
+            assert!(
+                refused(&good_method, &vault_htu(path), None, NOW),
+                "{name}: ath without a token"
+            );
+            assert!(
+                refused(&good_method, &vault_htu(path), Some(&other), NOW),
+                "{name}: ath of another token"
+            );
         } else {
-            assert!(refused(&good_method, &vault_htu(path), Some(&token), NOW), "{name}: a token without ath");
+            assert!(
+                refused(&good_method, &vault_htu(path), Some(&token), NOW),
+                "{name}: a token without ath"
+            );
         }
     }
 }
@@ -229,8 +253,14 @@ fn rfc9449_example_proofs_verify_in_rust() {
             .unwrap_or_else(|e| panic!("Figure {figure}: the server accepts the example ({e:?})"));
         assert_eq!(b64(verified.jkt()), text(&wire, "jkt"), "Figure {figure}");
         assert_eq!(verified.iat(), iat);
-        assert!(check(proof, &m, &htu, None, iat + 61).is_err(), "Figure {figure}: too late");
-        assert!(check(proof, &m, &auth.htu("/token2"), None, iat).is_err(), "Figure {figure}: htu");
+        assert!(
+            check(proof, &m, &htu, None, iat + 61).is_err(),
+            "Figure {figure}: too late"
+        );
+        assert!(
+            check(proof, &m, &auth.htu("/token2"), None, iat).is_err(),
+            "Figure {figure}: htu"
+        );
     }
 }
 
