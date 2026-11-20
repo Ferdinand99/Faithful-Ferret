@@ -17,6 +17,7 @@
 // A proof is a secret for as long as it can be used: it is sent in the `DPoP`
 // header and never stored or logged.
 import { b64u } from "../b64.mjs";
+import { isToken } from "./deviceKey.mjs";
 
 /** The `typ` of a DPoP proof. */
 export const DPOP_TYP = "dpop+jwt";
@@ -24,8 +25,6 @@ export const DPOP_TYP = "dpop+jwt";
 export const DPOP_ALG = "ES256";
 /** The random bytes of a `jti`. */
 export const JTI_BYTES = 16;
-/** The length of a token on the wire: 32 bytes as base64url without padding. */
-const TOKEN_CHARS = 43;
 
 /**
  * The server's clock as the client sees it.
@@ -35,15 +34,24 @@ const TOKEN_CHARS = 43;
  * @property {(dateHeader: string | null) => void} resync takes the server's time from this answer, replacing what was taken before
  */
 
+/** The one form of `Date` a server sends: IMF-fixdate (RFC 9110 § 5.6.7). */
+const IMF_FIXDATE = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+/** The end of the year 9999, in milliseconds since the Unix epoch. */
+const LATEST_DATE_MS = 253_402_300_799_000;
+
 /**
- * Parses an HTTP `Date` header (RFC 9110 § 5.6.7) to milliseconds, or null.
+ * Parses an HTTP `Date` header to milliseconds, or null. Only IMF-fixdate is
+ * read (the lenient forms `Date.parse` also takes, such as `"1"` or an ISO time
+ * without a zone, are not), and only a time from 1970 to the end of the year
+ * 9999: a time before 1970 would make every proof refuse to be made, so no
+ * request would be sent and no answer could set the clock right again.
  * @param {unknown} dateHeader
  * @returns {number | null}
  */
 function dateOf(dateHeader) {
-  if (typeof dateHeader !== "string" || dateHeader === "") return null;
+  if (typeof dateHeader !== "string" || !IMF_FIXDATE.test(dateHeader)) return null;
   const at = Date.parse(dateHeader);
-  return Number.isFinite(at) ? at : null;
+  return Number.isFinite(at) && at >= 0 && at <= LATEST_DATE_MS ? at : null;
 }
 
 /**
@@ -98,16 +106,6 @@ export async function accessTokenHash(accessToken) {
   }
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(accessToken));
   return b64u.encode(new Uint8Array(digest));
-}
-
-/** @param {unknown} token */
-function isToken(token) {
-  if (typeof token !== "string" || token.length !== TOKEN_CHARS) return false;
-  try {
-    return b64u.decode(token).length === 32;
-  } catch {
-    return false;
-  }
 }
 
 /** @param {object} value */

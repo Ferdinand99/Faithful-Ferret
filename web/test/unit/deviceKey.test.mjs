@@ -139,6 +139,28 @@ test("a_key_is_stored_only_after_a_successful_login", async () => {
   assert.deepEqual((await loadDeviceKey(db.store, SERVER))?.publicJwk, key.publicJwk);
 });
 
+test("a_private_key_and_a_public_jwk_of_two_pairs_are_never_stored", async () => {
+  const db = await freshStore();
+  const first = await generateDeviceKey(SERVER);
+  const second = await generateDeviceKey(SERVER);
+  // The key of one sign-in with the JWK of another (a retried sign-in mixed up) is refused, and nothing is stored.
+  await assert.rejects(
+    saveDeviceKey(db.store, { ...first, publicJwk: second.publicJwk }, signedIn(1)),
+    (e) => e.code === "device_key_malformed" && /one key pair/.test(e.message),
+  );
+  // A JWK that is a valid point of P-256 but of no key the record holds: the RFC 9449 example key.
+  const { jwk } = JSON.parse(readFileSync(join(WIRE, "dpop_jwk.json"), "utf8"));
+  await assert.rejects(saveDeviceKey(db.store, { ...first, publicJwk: jwk }, signedIn(1)), (e) => e.code === "device_key_malformed");
+  assert.deepEqual(await rawRecords(db.store), []);
+  // An older record stays when the new one is refused.
+  await saveDeviceKey(db.store, first, signedIn(1));
+  await assert.rejects(saveDeviceKey(db.store, { ...second, publicJwk: first.publicJwk }, signedIn(2)), (e) => e.code === "device_key_malformed");
+  const loaded = await loadDeviceKey(db.store, SERVER);
+  assert.deepEqual(loaded?.publicJwk, first.publicJwk);
+  assert.equal(loaded?.refreshToken, token(1));
+  assert.equal(await signsFor(loaded), true);
+});
+
 test("the_refresh_token_is_replaced_in_the_stored_record_only", async () => {
   const db = await freshStore();
   await assert.rejects(saveRefreshToken(db.store, SERVER, token(5)), (e) => e.code === "device_key_missing");

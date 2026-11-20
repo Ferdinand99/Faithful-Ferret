@@ -144,8 +144,16 @@ test("iat_uses_the_server_clock_offset", async () => {
   const clock = createClock({ now: () => local });
   // Before an answer is seen, the local clock.
   assert.equal(clock.nowSeconds(), 1_700_000_000);
-  // A missing or unreadable Date header changes nothing.
-  for (const header of [null, "", "yesterday", "Thu, 99 Xyz 2026 00:00:00 GMT"]) {
+  // A missing or unreadable Date header changes nothing. Only IMF-fixdate is read: not the forms Date.parse also
+  // takes ("1" is a year, an ISO time without a zone is local time, the obsolete RFC 850 and asctime forms), and not a
+  // time before 1970, which would make every proof refuse to be made (and so no answer could set the clock right).
+  for (const header of [
+    null, "", "yesterday", "Thu, 99 Xyz 2026 00:00:00 GMT", "1", "2026-11-20T10:00:00", "2026-11-20T10:00:00Z",
+    "Wed, 31 Dec 1969 23:00:00 GMT", "Mon, 01 Jan 1900 00:00:00 GMT", "Tue, 1 Nov 2026 00:00:00 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994", "Tue, 01 Nov 2026 00:00:00 +0000",
+    "tue, 01 nov 2026 00:00:00 gmt", " Tue, 01 Nov 2026 00:00:00 GMT", "Tue, 01 Nov 2026 00:00:00 GMT\n",
+    "Sat, 01 Jan 10000 00:00:00 GMT", "+275760-09-13T00:00:00Z",
+  ]) {
     clock.observe(header);
     assert.equal(clock.nowSeconds(), 1_700_000_000, String(header));
   }
@@ -163,6 +171,11 @@ test("iat_uses_the_server_clock_offset", async () => {
   assert.equal(clock.nowSeconds(), 1_700_003_610);
   clock.resync(new Date((1_700_000_010 - 120) * 1000).toUTCString());
   assert.equal(clock.nowSeconds(), 1_700_000_010 - 120);
+  // A bad Date in a later answer does not move it either.
+  for (const header of ["Wed, 31 Dec 1969 23:59:59 GMT", "1", "1969-12-31T00:00:00Z"]) {
+    clock.resync(header);
+    assert.equal(clock.nowSeconds(), 1_700_000_010 - 120, header);
+  }
 
   // The proof carries the server's time, not the local one.
   const key = await generateDeviceKey(SERVER);
@@ -171,6 +184,26 @@ test("iat_uses_the_server_clock_offset", async () => {
   // Without options, the local clock of the platform.
   const real = createClock();
   assert.ok(Math.abs(real.nowSeconds() - Math.floor(Date.now() / 1000)) <= 1);
+});
+
+test("a_bad_first_date_never_stops_the_client_from_making_proofs", async () => {
+  // A broken proxy or a stale answer whose Date is before 1970 (or lenient, or far in the future) is ignored, so the
+  // first proof is still made and its answer can set the clock.
+  const key = await generateDeviceKey(SERVER);
+  const local = 1_793_491_200_000;
+  for (const header of ["Thu, 01 Jan 1960 00:00:00 GMT", "1", "Fri, 31 Dec 9999 23:59:60 GMT", "+275760-09-13T00:00:00Z"]) {
+    const clock = createClock({ now: () => local });
+    clock.observe(header);
+    assert.equal(clock.nowSeconds(), local / 1000, header);
+    const proof = await createProof(key, { method: "GET", url: `${SERVER}/api/sync/changes`, clock });
+    assert.equal(parts(proof).claims.iat, local / 1000, header);
+  }
+  // The edges: the start of 1970 and the end of 9999 are readable times.
+  const clock = createClock({ now: () => local });
+  clock.observe("Thu, 01 Jan 1970 00:00:00 GMT");
+  assert.equal(clock.nowSeconds(), 0);
+  clock.resync("Fri, 31 Dec 9999 23:59:59 GMT");
+  assert.equal(clock.nowSeconds(), 253_402_300_799);
 });
 
 test("the_examples_of_rfc_9449_verify_under_webcrypto", async () => {

@@ -18,9 +18,7 @@
 // needs the master password.
 import { b64u, hex16 } from "../b64.mjs";
 import { req, run, serverKey, StoreError } from "../store/idb.mjs";
-
-/** The length of a token on the wire: 32 bytes as base64url without padding. */
-const TOKEN_CHARS = 43;
+import { TOKEN_CHARS } from "../wire.mjs";
 /** The length of a P-256 coordinate as base64url without padding (32 bytes). */
 const COORD_CHARS = 43;
 
@@ -109,8 +107,13 @@ function isOrigin(value) {
   }
 }
 
-/** @param {unknown} token */
-function isToken(token) {
+/**
+ * Whether `token` has the form of a device token on the wire: 43 characters of
+ * strict base64url that decode to 32 bytes.
+ * @param {unknown} token
+ * @returns {token is string}
+ */
+export function isToken(token) {
   if (typeof token !== "string" || token.length !== TOKEN_CHARS) return false;
   try {
     return b64u.decode(token).length === 32;
@@ -201,9 +204,33 @@ export async function saveDeviceKey(store, key, { deviceId, accountId, refreshTo
     accountId,
     refreshToken,
   });
+  if (!(await isPair(record.privateKey, record.publicJwk))) {
+    throw new StoreError("device_key_malformed", "privateKey and publicJwk are not one key pair");
+  }
   await run(store, ["device_keys"], "readwrite", async ([table]) => {
     await req(table.put(record));
   });
+}
+
+/** The bytes a key pair signs to show that its two halves belong together. */
+const PAIR_PROBE = new TextEncoder().encode("ferret device key pair check");
+
+/**
+ * Whether `publicJwk` verifies what `privateKey` signs: the two halves are one
+ * key pair, so the stored key signs proofs for the key the server bound.
+ * @param {CryptoKey} privateKey
+ * @param {PublicJwk} publicJwk
+ * @returns {Promise<boolean>}
+ */
+async function isPair(privateKey, publicJwk) {
+  const algorithm = { name: "ECDSA", hash: "SHA-256" };
+  try {
+    const signature = await crypto.subtle.sign(algorithm, privateKey, PAIR_PROBE);
+    const verifier = await crypto.subtle.importKey("jwk", publicJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    return await crypto.subtle.verify(algorithm, verifier, signature, PAIR_PROBE);
+  } catch {
+    return false;
+  }
 }
 
 /**
