@@ -1,8 +1,11 @@
 //! The file that reads a DPoP proof (`src/auth/dpop/proof.rs`) stands alone, so
 //! the fuzz target can take it in as it is and run the code of the release
-//! build: it names no item of the server, includes no other file, and uses
-//! only the crates the fuzz target has. The fuzz crate itself has no
-//! dependency on the server, so nothing else of the server is in its lock.
+//! build: it names no item of the server, includes no other file, and has
+//! `use` lines for the crates the fuzz target has only. (A path in code that
+//! names another crate without a `use` is not scanned for; the fuzz crate would
+//! not compile with it, and CI builds the fuzz crate.) The fuzz crate itself
+//! has no dependency on the server, so nothing else of the server is in its
+//! lock.
 //! Spec: Fase 1 § 7.6 (the one reader of a proof).
 
 use std::path::PathBuf;
@@ -56,8 +59,8 @@ impl Isolation {
         self.problems.push(what.into());
     }
 
-    /// A word of an item that leaves the file: `crate`, `super` or `self`
-    /// anywhere in a path.
+    /// A word of an item that leaves the file: `crate` or `super` anywhere in
+    /// a path (`self` stays in the file and is allowed).
     fn check_segment(&mut self, name: &str) {
         if name == "crate" || name == "super" {
             self.hit(format!("names `{name}::`"));
@@ -191,6 +194,27 @@ fn problems_in(source: &str) -> Vec<String> {
     }
 }
 
+/// Whether a line of a manifest names the package `ferret-server`, as a key
+/// (`ferret-server = ..`, `ferret-server.workspace = ..`, `[dependencies.ferret-server]`)
+/// or as a renamed package (`package = "ferret-server"`). `ferret-server-auth`
+/// is another package and does not count.
+fn names_server_dependency(line: &str) -> bool {
+    let line = line.trim();
+    if line.contains("\"ferret-server\"") {
+        return true;
+    }
+    let key = line.trim_start_matches('[');
+    let key = key
+        .rsplit_once("dependencies.")
+        .map_or(key, |(_, name)| name);
+    key.strip_prefix("ferret-server").is_some_and(|rest| {
+        matches!(
+            rest.trim_start().chars().next(),
+            None | Some('=' | '.' | ']')
+        )
+    })
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -300,8 +324,7 @@ fn the_fuzz_target_takes_in_proof_rs_and_nothing_else_of_the_server() {
         .filter(|l| !l.trim_start().starts_with('#'))
     {
         assert!(
-            !line.trim_start().starts_with("ferret-server =")
-                && !line.contains("crates/ferret-server\""),
+            !names_server_dependency(line) && !line.contains("crates/ferret-server\""),
             "the fuzz crate depends on the server: {line}"
         );
     }
@@ -310,4 +333,26 @@ fn the_fuzz_target_takes_in_proof_rs_and_nothing_else_of_the_server() {
         !lock.lines().any(|l| l == "name = \"ferret-server\""),
         "the server is in the lock of the fuzz crate"
     );
+}
+
+#[test]
+fn the_manifest_scan_sees_every_way_to_name_the_server() {
+    for planted in [
+        "ferret-server = { path = \"../crates/ferret-server\" }",
+        "ferret-server={ path = \"x\" }",
+        "ferret-server.workspace = true",
+        "[dependencies.ferret-server]",
+        "server = { package = \"ferret-server\", path = \"x\" }",
+        "  ferret-server = \"1\"",
+    ] {
+        assert!(names_server_dependency(planted), "not caught: {planted}");
+    }
+    for clean in [
+        "ferret-server-auth = { path = \"../crates/ferret-server-auth\", features = [\"test-support\"] }",
+        "[dependencies.ferret-server-auth]",
+        "ferret-core = { path = \"../crates/ferret-core\" }",
+        "name = \"fuzz_dpop_proof\"",
+    ] {
+        assert!(!names_server_dependency(clean), "wrongly caught: {clean}");
+    }
 }

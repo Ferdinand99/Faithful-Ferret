@@ -21,7 +21,8 @@
 //! * `split` never panics and never accepts a proof of more than 4 096 bytes.
 //! * What `split` accepts has every segment in canonical base64url, a header
 //!   with exactly the members `typ`, `alg` and `jwk` and a `jwk` with exactly
-//!   `kty`, `crv`, `x` and `y` (so no private member), and the one accepted
+//!   `kty`, `crv`, `x` and `y` (so no private member, and no member twice, also
+//!   not under a unicode escape), and the one accepted
 //!   words and sizes; the signing input and the signature segment are the
 //!   proof cut at its last dot.
 //! * `jkt` gives the same value twice, equals the SHA-256 of the RFC 7638
@@ -44,11 +45,21 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use libfuzzer_sys::fuzz_target;
 use proof::{
-    DpopClaims, DpopHeader, IAT_WINDOW_SECS, MAX_PROOF_LEN, Parts, ProofError, PublicJwk,
-    check_claims, claims, jkt, signature_b64, signing_input, split,
+    DpopClaims, DpopHeader, Parts, ProofError, PublicJwk, check_claims, claims, jkt, signature_b64,
+    signing_input, split,
 };
+use serde::Deserialize;
+use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+
+/// The longest proof, in bytes. Written out here and not taken from the code
+/// under test, so a change of the limit there is a finding.
+const MAX_LEN: usize = 4_096;
+
+/// How far `iat` may be from the time, either way, in seconds. Written out
+/// here for the same reason.
+const WINDOW: i64 = 60;
 
 /// The signature of a proof that has none in the input: 64 bytes, which `split`
 /// takes for a signature (the signature itself is never checked here).
@@ -77,7 +88,7 @@ fuzz_target!(|data: &[u8]| {
 /// Runs `split` on `text` and, if it accepts it, everything that follows.
 fn proof_text(text: &str) {
     let result = split(text);
-    if text.len() > MAX_PROOF_LEN {
+    if text.len() > MAX_LEN {
         assert_eq!(
             result.err(),
             Some(ProofError::TooLong),
@@ -89,7 +100,7 @@ fn proof_text(text: &str) {
         return;
     };
     assert!(
-        text.len() <= MAX_PROOF_LEN,
+        text.len() <= MAX_LEN,
         "a proof over 4 096 bytes was accepted"
     );
     header_shape(&parts);
@@ -153,6 +164,7 @@ fn header_shape(parts: &Parts<'_>) {
     );
 
     let header_bytes = URL_SAFE_NO_PAD.decode(segments[0]).expect("checked above");
+    no_duplicate_members(&header_bytes);
     let value: Value = serde_json::from_slice(&header_bytes).expect("an accepted header is JSON");
     let object = value.as_object().expect("an accepted header is an object");
     assert_eq!(
@@ -238,6 +250,7 @@ fn claims_shape(parts: &Parts<'_>, read: &DpopClaims) {
     let bytes = URL_SAFE_NO_PAD
         .decode(segment)
         .expect("the claims segment decodes");
+    no_duplicate_members(&bytes);
     let value: Value = serde_json::from_slice(&bytes).expect("accepted claims are JSON");
     let object = value.as_object().expect("accepted claims are an object");
     for name in object.keys() {
@@ -288,7 +301,7 @@ fn expected_verdict(
         (Some(hash), Some(text)) => URL_SAFE_NO_PAD.encode(hash) == text,
         _ => false,
     };
-    let in_window = (i128::from(c.iat) - i128::from(now)).abs() <= i128::from(IAT_WINDOW_SECS);
+    let in_window = (i128::from(c.iat) - i128::from(now)).abs() <= i128::from(WINDOW);
     let rest = jti && c.htm == method && c.htu == htu && ath;
     (rest && in_window, rest)
 }
@@ -338,10 +351,10 @@ fn every_check(c: &DpopClaims) {
     let other_method = if c.htm == "GET" { "POST" } else { "GET" };
     let times = [
         c.iat,
-        c.iat.saturating_sub(IAT_WINDOW_SECS),
-        c.iat.saturating_add(IAT_WINDOW_SECS),
-        c.iat.saturating_sub(IAT_WINDOW_SECS + 1),
-        c.iat.saturating_add(IAT_WINDOW_SECS + 1),
+        c.iat.saturating_sub(WINDOW),
+        c.iat.saturating_add(WINDOW),
+        c.iat.saturating_sub(WINDOW + 1),
+        c.iat.saturating_add(WINDOW + 1),
         0,
         i64::MIN,
         i64::MAX,
@@ -414,4 +427,60 @@ fn claims_alone(body: &[u8]) {
     };
     one_check(&read, method, htu, token, now);
     every_check(&read);
+}
+
+// -------------------------------------------------- duplicate members
+
+/// The member names of one JSON object, in order, with the ones of a `jwk`
+/// object inside it. Read with a visitor, so a name that comes twice (also
+/// through a `\u` escape, which is unescaped first) is seen twice; a `Value`
+/// would keep the last one and hide it.
+#[derive(Default)]
+struct Members {
+    names: Vec<String>,
+    jwk: Option<Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for Members {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Reader;
+
+        impl<'de> Visitor<'de> for Reader {
+            type Value = Members;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Members, A::Error> {
+                let mut members = Members::default();
+                while let Some(name) = map.next_key::<String>()? {
+                    if name == "jwk" {
+                        members.jwk = Some(map.next_value::<Members>()?.names);
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                    members.names.push(name);
+                }
+                Ok(members)
+            }
+        }
+
+        deserializer.deserialize_map(Reader)
+    }
+}
+
+/// An accepted header or claims object names no member twice.
+fn no_duplicate_members(bytes: &[u8]) {
+    let members: Members = serde_json::from_slice(bytes).expect("an accepted object is JSON");
+    for names in std::iter::once(&members.names).chain(members.jwk.iter()) {
+        let mut sorted = names.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            names.len(),
+            "an accepted object has a member twice"
+        );
+    }
 }

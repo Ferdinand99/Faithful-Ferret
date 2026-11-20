@@ -356,6 +356,31 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
   // Text of a proof that is not three canonical segments of base64url.
   const { proof: first } = good[0];
   const [h0, c0, s0] = first.split('.');
+
+  // Proofs of exactly N bytes around the limit. The claims are valid JSON with
+  // a padded `htu`, so every segment is canonical and only the size differs.
+  // (No claims segment has 4m + 1 characters, so a total in the range may have
+  // no proof.)
+  const tokenSeed = good.find((g) => g.token);
+  const [tokenHeader, tokenClaims, tokenSig] = parts(tokenSeed.proof);
+  const [th, , ts] = tokenSeed.proof.split('.');
+  const sized = (total) => {
+    const cl = JSON.parse(tokenClaims.toString('utf8'));
+    for (let k = 0; k < 4000; k++) {
+      const claims = Buffer.from(JSON.stringify({ ...cl, htu: `${cl.htu}${'a'.repeat(k)}` }));
+      const length = th.length + claims.toString('base64url').length + ts.length + 2;
+      if (length === total) return { claims, text: `${th}.${claims.toString('base64url')}.${ts}` };
+      if (length > total) return null;
+    }
+    return null;
+  };
+  for (const total of [4094, 4095, 4096, 4097, 4098, 4099, 4100]) {
+    const p = sized(total);
+    if (!p) continue;
+    add(dp, withSelect(0, text(p.text)));
+    add(dp, withSelect(1, tokenHeader, nul, p.claims, nul, tokenSig));
+  }
+
   for (const text0 of [
     `${first}=`,
     `${first}.AAAA`,
@@ -367,8 +392,6 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
     `${h0}.${c0}.${s0}A`,
     `${h0} .${c0}.${s0}`,
     `${h0}.${c0}.${s0.replace(/[A-Za-z0-9]$/, '+')}`,
-    `${h0}.${'A'.repeat(4096 - h0.length - s0.length - 2)}.${s0}`,
-    `${h0}.${'A'.repeat(4097 - h0.length - s0.length - 2)}.${s0}`,
     `${h0}.${'A'.repeat(4096)}.${s0}`,
     `${'A'.repeat(4000)}.${c0}.${s0}`,
     'a.b.c',
@@ -403,8 +426,7 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
     withHeader({ x5c: ['AAAA'] }),
     JSON.stringify({ jwk: baseHeader.jwk, alg: 'ES256', typ: 'dpop+jwt' }),
     JSON.stringify(baseHeader, null, 2),
-    `{"typ":"dpop+jwt",${raw.slice(1)}`,
-    `{"t\u0079p":"dpop+jwt",${raw.slice(1)}`,
+    `{"t\\u0079p":"dpop+jwt",${raw.slice(1)}`,
     raw.replace('"kty":"EC"', '"kty":"EC","kty":"EC"'),
     `${raw} `,
     `${raw}{}`,
@@ -430,6 +452,10 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
     JSON.stringify({ ...claimsBase, nonce: 'n' }),
     JSON.stringify({ ...claimsBase, jti: 'short' }),
     JSON.stringify({ ...claimsBase, jti: 'j'.repeat(65) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(64) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(16) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(15) }),
+    rawClaims.replace('"iat"', '"i\\u0061t":1,"iat"'),
     JSON.stringify({ ...claimsBase, jti: 'a b'.padEnd(20, 'c') }),
     JSON.stringify({ ...claimsBase, htm: 'post' }),
     JSON.stringify({ ...claimsBase, htu: `${claimsBase.htu}#top` }),
