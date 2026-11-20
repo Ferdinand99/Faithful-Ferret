@@ -2,12 +2,12 @@
 //! background job that removes the older ones. Spec: Fase 1 § 8.4 and § 8.6.
 //!
 //! * A tombstone is kept for 400 days, and it is purged only if it is also at or
-//!   below the `seq` of the checkpoint the vault stores: a tombstone above
-//!   it is in no checkpoint yet, and without it a client that saw the item as
-//!   live would find the item gone without a trace. Removing tombstones raises
-//!   the feed floor of the vault (`min_valid_since`) to the highest `seq` purged,
-//!   so a client that has not been seen since then gets `410` and lists the
-//!   vault again (`reconcile`).
+//!   below the `seq` of the checkpoint the vault stores: a tombstone above it is
+//!   in no checkpoint yet, and without it a client that saw the item as live
+//!   would find the item gone without a trace. Removing tombstones raises the
+//!   feed floor of the vault (`min_valid_since`) to the highest `seq` purged, so
+//!   a client that has not been seen since then gets `410` and lists the vault
+//!   again (`reconcile`).
 //! * An idempotency record is kept for 30 days, and for one device only the
 //!   newest 1 000 of them stay.
 //!
@@ -128,9 +128,12 @@ fn purge_vault(
     idem_before: i64,
     report: &mut RetentionReport,
 ) -> Result<(), StoreError> {
-    // A stored checkpoint is only replaced by one with a higher `seq`, so the
-    // `seq` read here is never above the one stored when the purge runs. A vault
-    // without a checkpoint row keeps all its tombstones (no row has a `seq` of 0).
+    // The `seq` is read before the purge transaction. That is safe as long as a
+    // stored checkpoint is replaced only by one with a higher `seq`, which holds
+    // today (`put_checkpoint_if`). A later change that replaces it regardless of
+    // `seq` (a rekey) must read the head inside the purge transaction instead.
+    // A vault without a checkpoint row keeps all its tombstones (no row has a
+    // `seq` of 0).
     let max_seq = store::checkpoint_head(conn, vault)?.map_or(0, |head| head.0);
     if has_tombstones_before(conn, vault, tombstones_before, max_seq)? {
         let purged = store::purge_tombstones(conn, vault, tombstones_before, max_seq)?;

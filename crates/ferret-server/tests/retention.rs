@@ -436,8 +436,8 @@ fn the_retention_run_still_continues_per_vault() {
         put(&mut conn, who, &live(item(1), 0, 1), NOW);
         put(&mut conn, who, &tomb(item(1), 1, 2), NOW);
     }
-    // `b` never uploaded a checkpoint, so it has nothing to purge. The purge of
-    // the first of `a` and `c` in the order of the pass fails.
+    // `b` has only its registration checkpoint, so it has nothing to purge. The
+    // purge of the first of `a` and `c` in the order of the pass fails.
     checkpoint_at_top(&mut conn, &a);
     checkpoint_at_top(&mut conn, &c);
     let (first, second) = if a.vault_id.as_bytes() < c.vault_id.as_bytes() {
@@ -457,7 +457,7 @@ fn the_retention_run_still_continues_per_vault() {
     assert_eq!(
         tombstone_seqs(&conn, &b),
         vec![3],
-        "no checkpoint, no purge"
+        "only the registration checkpoint, no purge"
     );
 
     conn.execute_batch("DROP TRIGGER block_one_vault;")
