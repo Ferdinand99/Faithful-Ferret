@@ -65,8 +65,12 @@ impl DeviceAuth {
     }
 
     /// The same handle with another cache of used `jti` values: the database,
-    /// the clock, the successors and the origin stay shared. For tests and
-    /// tools that need a cache with other limits than the server's.
+    /// the clock, the successors and the origin stay shared.
+    ///
+    /// Tests only: the server has one cache for the whole process, and a
+    /// route with a cache of its own would not see the proofs the others
+    /// took. No file under `src/` calls it (checked by a test).
+    #[doc(hidden)]
     pub fn with_replay(&self, replay: JtiCache) -> Self {
         Self {
             replay: Arc::new(replay),

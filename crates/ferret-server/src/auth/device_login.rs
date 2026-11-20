@@ -10,8 +10,9 @@
 //!
 //! The order:
 //!
-//! 1. The transport and the clock, as for the web vault; the body was read
-//!    already.
+//! 1. The route checked the transport and the clock before it read the body;
+//!    the clock is read once more here, and that time is the one the proof
+//!    and everything after it are checked against.
 //! 2. The proof (`htm` `POST`, `htu` the configured vault origin and this
 //!    path, no `ath`), before the sign-in state is taken and before any
 //!    account is read. Every refusal of it is the one `401 dpop_invalid`, the
@@ -54,7 +55,7 @@ use crate::auth::devices::{self, DeviceInsertError, NewDevice};
 use crate::auth::dpop::{self, DpopError, Expect, VerifiedProof};
 use crate::auth::login::{
     ProvenAccount, auth_refusal, clock_now, finish_blocking, no_store, read_proven_account,
-    record_is_current, require_transport, to_i64,
+    record_is_current, to_i64,
 };
 use crate::auth::throttle::caller_from;
 use crate::auth::tokens::{DeviceAuth, IssuedTokens, issue_for_new_device, with_server_date};
@@ -75,7 +76,8 @@ pub(crate) async fn finish(
     peer: SocketAddr,
     req: DeviceLoginFinishReq,
 ) -> Result<Response, ApiError> {
-    require_transport(state, &parts.headers, peer)?;
+    // The route refused a request without the transport before the body;
+    // this read is the time of the sign-in.
     let now = to_i64(clock_now(state)?)?;
     let answer = match finish_at(state, parts, peer, req, now).await {
         Ok(response) => response,

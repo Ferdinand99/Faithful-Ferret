@@ -483,6 +483,32 @@ async fn the_21st_device_is_refused_with_quota_exceeded() {
         .await;
     assert_eq!(status_and_code(&res), (413, "quota_exceeded".to_string()));
 
+    // Nor does a device that signed in ninety days ago or more: no token of
+    // its sign-in lives that long, and `still_valid` refuses it.
+    let second = devices[1].device_id.expect("an id");
+    let aged = now(&app) - ABSOLUTE_SECS;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "UPDATE ferret_devices SET created_at = ?2, last_seen = ?2 WHERE device_id = ?1",
+                rusqlite::params![second.as_slice(), aged],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("an aged device");
+    assert!(!valid(&app, second, now(&app)).await);
+    assert!(valid(&app, second, now(&app) - 1).await, "a second younger");
+    let res = DeviceClient::new(22)
+        .sign_in(&app, &email(1), CLIENT_PASSWORD)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let res = DeviceClient::new(23)
+        .sign_in(&app, &email(1), CLIENT_PASSWORD)
+        .await;
+    assert_eq!(status_and_code(&res), (413, "quota_exceeded".to_string()));
+
     // Nor does a device of an older `session_version` (signed out
     // everywhere), which can never be used again.
     exec(
@@ -491,7 +517,7 @@ async fn the_21st_device_is_refused_with_quota_exceeded() {
         client.ids.user_id,
     )
     .await;
-    let res = DeviceClient::new(22)
+    let res = DeviceClient::new(23)
         .sign_in(&app, &email(1), CLIENT_PASSWORD)
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
@@ -1179,4 +1205,102 @@ async fn the_proof_names_the_configured_origin_whatever_the_host_header_says() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     device.keep(&res);
     assert!(device.access.is_some());
+}
+
+// ------------------------------------------------------- who may call what
+
+/// The source files of the server.
+fn server_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("a directory") {
+        let path = entry.expect("an entry").path();
+        if path.is_dir() {
+            server_sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// How often `text` names the identifier `name` in code (not in comments).
+fn named_in_code(text: &str, name: &str) -> usize {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.lines()
+        .map(|line| {
+            let code = line.split("//").next().unwrap_or("");
+            code.match_indices(name)
+                .filter(|(at, _)| {
+                    let before = code[..*at].chars().last();
+                    let after = code[at + name.len()..].chars().next();
+                    !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+                })
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn only_the_two_sign_ins_finish_a_login_and_no_route_swaps_the_jti_cache() {
+    // `finish_blocking` gives a proof checked against a record that may be
+    // replaced before the credential is written: only the two sign-ins call
+    // it, and both check the record again in their write transaction
+    // (`record_is_current`). `with_replay` gives a handle with a cache of its
+    // own: only tests use it; the server has one cache.
+    let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    server_sources(&src, &mut files);
+    assert!(files.len() > 40, "the sources were found");
+    let finishers = [src.join("auth/login.rs"), src.join("auth/device_login.rs")];
+    let tokens = src.join("auth/tokens.rs");
+    let mut problems = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).expect("a source file");
+        if !finishers.contains(file) && named_in_code(&text, "finish_blocking") > 0 {
+            problems.push(format!("{}: finish_blocking", file.display()));
+        }
+        let allowed = usize::from(*file == tokens);
+        if named_in_code(&text, "with_replay") > allowed {
+            problems.push(format!("{}: with_replay", file.display()));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "{}",
+        problems.join(
+            "
+"
+        )
+    );
+    for file in &finishers {
+        let text = std::fs::read_to_string(file).expect("a source file");
+        assert!(named_in_code(&text, "finish_blocking") > 0);
+        assert!(
+            named_in_code(&text, "record_is_current") > 0,
+            "{}",
+            file.display()
+        );
+    }
+
+    // The rule catches what it is for, and not prose or longer names.
+    for planted in [
+        "fn f() { let v = finish_blocking(&s, c, &l, &k, None); }",
+        "use crate::auth::login::{finish_blocking, no_store};",
+        "fn f() { crate::auth::login::finish_blocking(s, c, l, k, None) }",
+    ] {
+        assert_eq!(named_in_code(planted, "finish_blocking"), 1, "{planted}");
+    }
+    for planted in [
+        "let auth = state.device_auth.with_replay(JtiCache::new(1, 1, 1));",
+        "fn f(a: &DeviceAuth) -> DeviceAuth { DeviceAuth::with_replay(a, c) }",
+    ] {
+        assert_eq!(named_in_code(planted, "with_replay"), 1, "{planted}");
+    }
+    for clean in [
+        "// finish_blocking is called by the two sign-ins only",
+        "fn finish_blocking_later() {}",
+        "let with_replay_cache = 1;",
+        "/// with_replay is for tests",
+    ] {
+        assert_eq!(named_in_code(clean, "finish_blocking"), 0, "{clean}");
+        assert_eq!(named_in_code(clean, "with_replay"), 0, "{clean}");
+    }
 }

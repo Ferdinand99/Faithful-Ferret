@@ -943,6 +943,11 @@ pub(crate) fn record_is_current(
 /// throttle with the account of the state, and then reads the account's
 /// record (on the store's connection, see `StoredRecords`) and checks the
 /// proof.
+///
+/// Every caller that writes a credential after it must call
+/// [`record_is_current`] with `LoginVerified::record` in that write
+/// transaction. Only this module and `auth::device_login` call it (checked by
+/// a test).
 pub(crate) fn finish_blocking(
     state: &FerretState,
     caller: Caller,

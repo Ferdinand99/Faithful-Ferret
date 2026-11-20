@@ -86,10 +86,11 @@ pub const TOUCH_EVERY_SECS: i64 = 60;
 ///   revoked, is refused ([`DeviceInsertError::KeyInUse`]): a client makes a
 ///   new key for every sign-in.
 /// * An account with [`MAX_DEVICES`] live devices is refused
-///   ([`DeviceInsertError::Quota`]). Live means not revoked and signed in
-///   under the user's `session_version` of now (`new.session_version`); a
-///   device of an older version can never be used again and does not count.
-///   Browsers (sessions) do not count either.
+///   ([`DeviceInsertError::Quota`]). Live means what [`still_valid`] accepts:
+///   not revoked, signed in under the user's `session_version` of now
+///   (`new.session_version`) and less than [`ABSOLUTE_SECS`] ago. A device
+///   that can never be used again does not count. Browsers (sessions) do not
+///   count either.
 ///
 /// Spec: Fase 1 § 7.6 (the device registry), § 8.2 (20 devices per account).
 pub fn insert<R: SecureRng>(
@@ -111,8 +112,13 @@ pub fn insert<R: SecureRng>(
     let live: i64 = tx
         .query_row(
             "SELECT COUNT(*) FROM ferret_devices
-             WHERE user_id = ?1 AND revoked_at IS NULL AND session_version = ?2",
-            params![new.user_id, new.session_version],
+             WHERE user_id = ?1 AND revoked_at IS NULL AND session_version = ?2
+               AND created_at > ?3",
+            params![
+                new.user_id,
+                new.session_version,
+                new.now.saturating_sub(ABSOLUTE_SECS)
+            ],
             |r| r.get(0),
         )
         .map_err(DeviceInsertError::Store)?;
