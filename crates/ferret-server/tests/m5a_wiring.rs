@@ -106,11 +106,11 @@ fn the_limits_are_the_ones_of_the_design() {
     // DPoP (RFC 9449 § 4.3, § 11.1).
     assert_eq!(IAT_WINDOW_SECS, 60);
     assert_eq!(JTI_TTL_SECS, 300);
-    assert!(JTI_TTL_SECS > 2 * IAT_WINDOW_SECS);
+    const { assert!(JTI_TTL_SECS > 2 * IAT_WINDOW_SECS) };
     assert_eq!(JTI_CAPACITY, 65_536);
     assert_eq!(JTI_PER_KEY, 1_024);
     assert_eq!(JTI_PER_USER, 4_096);
-    assert!(JTI_PER_KEY < JTI_PER_USER && JTI_PER_USER < JTI_CAPACITY);
+    const { assert!(JTI_PER_KEY < JTI_PER_USER && JTI_PER_USER < JTI_CAPACITY) };
     assert_eq!(MAX_PROOF_LEN, 4_096);
     // Refresh tokens (Spec: Fase 1 § 7.6).
     assert_eq!(GRACE_SECS, 60);
