@@ -362,7 +362,7 @@ fn now_unix() -> Result<i64, StartError> {
 
 /// Opens the database of `data_dir` for a command that reads or changes it: it
 /// must be there and have every migration of this build, and none is made.
-fn open_migrated(data_dir: &Path) -> Result<Connection, StartError> {
+pub(crate) fn open_migrated(data_dir: &Path) -> Result<Connection, StartError> {
     let db_path = data_dir.join(DB_FILE);
     if !db_path.is_file() {
         return Err(format!(
