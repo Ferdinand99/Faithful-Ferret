@@ -751,6 +751,14 @@ async fn the_code_never_reaches_the_log() {
     // the good one in another spelling.
     assert_denied(&redeem(&app, &code, &code).await, "code as e-mail");
     assert_denied(&redeem(&app, &email(1), &wrong).await, "a wrong code");
+    // The two refusals above are two lines, and the throttled tries have not
+    // started yet: the capture holds exactly the lines of these two calls.
+    let first_two = log.text();
+    assert_eq!(
+        first_two.matches("a sign-in code was refused").count(),
+        2,
+        "the refusals of the first two calls were not captured: {first_two}"
+    );
     let mut last = None;
     for _ in 0..6 {
         last = Some(
@@ -765,8 +773,8 @@ async fn the_code_never_reaches_the_log() {
     // The capture only counts if it holds the lines these calls make: the
     // refusals of the first two, and the throttled tries.
     assert!(
-        refusals.matches("a sign-in code was refused").count() >= 2,
-        "the refusals were not captured: {refusals}"
+        refusals.matches("a sign-in code was refused").count() > 2,
+        "the refusals of the throttled tries were not captured: {refusals}"
     );
     assert!(
         refusals.contains("a sign-in code redeem was throttled"),
