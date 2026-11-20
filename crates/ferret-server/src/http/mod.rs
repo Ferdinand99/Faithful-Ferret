@@ -53,16 +53,26 @@ fn header_list() -> Arc<Vec<(HeaderName, HeaderValue)>> {
 }
 
 /// Puts the headers of Spec: Fase 1 § 12 on every response of the vault
-/// listener, replacing any value a handler set.
+/// listener, replacing any value a handler set. The two files of the import
+/// worker get a stricter policy (`headers::IMPORT_WORKER_CSP`: the same list
+/// with `connect-src 'none'`), because a worker keeps the policy of its own
+/// script and the import worker reads files that must not leave the browser.
 async fn vault_headers(
     State(list): State<Arc<Vec<(HeaderName, HeaderValue)>>>,
     request: Request,
     next: Next,
 ) -> Response {
+    let import_worker = headers::IMPORT_WORKER_PATHS.contains(&request.uri().path());
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     for (name, value) in list.iter() {
         headers.insert(name.clone(), value.clone());
+    }
+    if import_worker {
+        headers.insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(headers::IMPORT_WORKER_CSP),
+        );
     }
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     response

@@ -532,6 +532,24 @@ test("no_reply_holds_key_material", () => {
   assert.ok(plain.includes("hunter2-secret") && plain.includes("example.com"));
   assert.equal(refuse(token2), "reauth_required", "one use");
 
+  // ---- the encrypted export has the same gate: its file holds every secret too (passkey keys included)
+  const refuseBegin = (token) => {
+    try {
+      vault.export_begin(rows, NOW, undefined, token);
+    } catch (e) {
+      return e.code;
+    }
+    return "returned";
+  };
+  assert.equal(refuseBegin(undefined), "reauth_required", "no token, no encrypted export");
+  assert.equal(refuseBegin(fill(32, 1)), "reauth_required", "a made-up token");
+  const g3 = grantJob.login_start(enc.encode(PASSWORD), skCode);
+  grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g3), 1, pinned(plan.pinned));
+  const token3 = grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"), NOW);
+  assert.equal(refuseBegin(token3.slice()), "returned", "a fresh grant opens it");
+  vault.export_abort();
+  assert.equal(refuseBegin(token3), "reauth_required", "one use");
+
   // ---- the walk, over every reply and every secret known at the end
   assert.ok(secrets.size >= 25, `${secrets.size} secrets`);
   const seen = [...checkAll()].sort();

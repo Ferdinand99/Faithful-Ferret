@@ -1,6 +1,6 @@
 // The place of the import worker: the Trusted Types policy lists exactly three workers, the build writes
-// the worker's entry where the policy points, and the worker answers `unsupported` until the import task
-// replaces it.
+// the worker's entry where the policy points, and the real import worker answers `unsupported` to everything
+// that is not an import request.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -87,7 +87,7 @@ test("import_worker_entry_is_built_where_the_policy_points_and_loads_the_workers
   await assert.rejects(build({ root: odd.root, out: odd.out, wasmTar: odd.tarPath }), /expected <name>\.worker\.mjs/);
 });
 
-test("import_worker_stub_answers_unsupported", () => {
+test("import_worker_answers_unsupported_to_what_is_not_an_import_request", () => {
   assert.deepEqual(answer({ id: 7, type: "import", file: "x" }), { id: 7, ok: false, error: "unsupported" });
   assert.deepEqual(answer({ id: "abc" }), { id: "abc", ok: false, error: "unsupported" });
   for (const message of [undefined, null, 5, "text", [], {}, { id: {} }, { id: null }, { id: Symbol.iterator }, new Uint8Array(4)]) {
@@ -104,8 +104,8 @@ test("import_worker_stub_answers_unsupported", () => {
     globalThis.postMessage = (m) => sent.push(m);
     await import(process.argv[1]);
     if (typeof globalThis.onmessage !== "function") throw new Error("no onmessage");
-    globalThis.onmessage({ data: { id: 3, file: "x" } });
-    globalThis.onmessage({ data: null });
+    await globalThis.onmessage({ data: { id: 3, file: "x" } });
+    await globalThis.onmessage({ data: null });
     console.log(JSON.stringify(sent));
   `;
   const url = new URL("../../src/workers/import.worker.mjs", import.meta.url).href;

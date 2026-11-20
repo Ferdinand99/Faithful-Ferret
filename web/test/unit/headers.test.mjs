@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SERVER_HEADERS_JSON, headersFile, loadHeaders, validateHeaders } from "../serve.mjs";
+import { IMPORT_WORKER_PATHS, SERVER_HEADERS_JSON, headersFile, importWorkerHeaders, loadHeaders, validateHeaders } from "../serve.mjs";
 
 const good = () => structuredClone(loadHeaders(SERVER_HEADERS_JSON));
 const csp = (text) => ({ ...good(), "Content-Security-Policy": text });
@@ -77,4 +77,20 @@ test("header_file_is_the_server_fixture_and_a_missing_one_stops", () => {
   assert.equal(headersFile({ repoDir }), real);
   // And a bad fixture is not served.
   assert.throws(() => loadHeaders(real), /headers:/);
+});
+
+test("import_worker_headers_allow_no_connection_and_fail_closed", () => {
+  const page = good();
+  const worker = importWorkerHeaders(page);
+  // One directive differs, and the list stays valid.
+  assert.equal(worker["Content-Security-Policy"], page["Content-Security-Policy"].replace("connect-src 'self';", "connect-src 'none';"));
+  assert.match(worker["Content-Security-Policy"], /connect-src 'none';/);
+  assert.doesNotMatch(worker["Content-Security-Policy"], /connect-src 'self'/);
+  assert.deepEqual({ ...worker, "Content-Security-Policy": "" }, { ...page, "Content-Security-Policy": "" });
+  assert.doesNotThrow(() => validateHeaders(worker));
+  assert.deepEqual([...IMPORT_WORKER_PATHS], ["/js/import.worker.mjs", "/app/workers/import.worker.mjs"]);
+  // The page's own list is not changed.
+  assert.match(page["Content-Security-Policy"], /connect-src 'self';/);
+  // A list without the directive to tighten stops the server.
+  assert.throws(() => importWorkerHeaders(csp("default-src 'none'; connect-src https://x.test;")), /connect-src/);
 });
