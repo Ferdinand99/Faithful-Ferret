@@ -324,6 +324,20 @@ impl<'a> MakeWriter<'a> for Sink {
 
 #[tokio::test]
 async fn peer_log_prints_each_new_peer_once_and_nothing_else() {
+    // Whether a log call site is live is cached per call site for the whole
+    // process; with a process-wide subscriber in place every call site is
+    // cached as listened to, so the scoped one below always gets the lines of
+    // this thread, whatever the other tests of this file do in parallel.
+    static PIN: std::sync::Once = std::sync::Once::new();
+    PIN.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_writer(io::sink)
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .finish(),
+        );
+    });
     let sink = Sink::default();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(sink.clone())

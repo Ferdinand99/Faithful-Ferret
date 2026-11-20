@@ -214,11 +214,40 @@ impl<'a> MakeWriter<'a> for LogBuffer {
     }
 }
 
+/// Installs, once per test binary, a process-wide subscriber that enables every
+/// event and writes nowhere.
+///
+/// Whether a log call site is live is cached per call site for the whole
+/// process. Without a process-wide subscriber, a call site first reached by a
+/// test thread that has no scoped subscriber of its own is cached as "nobody
+/// listens", and a test running in parallel that later sets its scoped
+/// subscriber can lose the events of that call site (or all of them). With this
+/// one in place every call site is cached as "listened to" from the first hit
+/// on, and a scoped subscriber, which takes the events of its own thread ahead
+/// of it, always gets them.
+pub fn pin_log_call_sites() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(std::io::sink)
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+        // An error means a process-wide subscriber is already there, which
+        // pins the call sites just as well.
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    });
+}
+
 /// Captures every log line of this thread (at any level) until the guard is
 /// dropped. A current-thread runtime keeps its tasks on this thread, so the
 /// lines of an async test are caught; the lines of a blocking pool thread are
 /// not, so a test that needs them calls the code on its own thread.
+///
+/// A test that asserts a secret is absent must also assert that a line it
+/// expects is present: an empty capture proves nothing.
 pub fn capture_log() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    pin_log_call_sites();
     let buffer = LogBuffer::default();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(buffer.clone())

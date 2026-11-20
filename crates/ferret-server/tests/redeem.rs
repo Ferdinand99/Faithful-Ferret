@@ -724,19 +724,28 @@ async fn the_code_never_reaches_the_log() {
     assert_eq!(last, Some(StatusCode::TOO_MANY_REQUESTS));
     drop(guard);
     let refusals = log.text();
-    assert!(refusals.contains("sign-in code was refused"), "{refusals}");
+    // The capture only counts if it holds the lines these calls make: the
+    // refusals of the first two, and the throttled tries.
+    assert!(
+        refusals.matches("a sign-in code was refused").count() >= 2,
+        "the refusals were not captured: {refusals}"
+    );
+    assert!(
+        refusals.contains("a sign-in code redeem was throttled"),
+        "the throttled tries were not captured: {refusals}"
+    );
 
-    // The success, in a capture of its own. Its line is not asserted: whether
-    // a line is written is cached per call site for the whole process, and
-    // with the other tests of this file running in parallel threads the line
-    // is sometimes not delivered to this thread's subscriber, even after the
-    // cache is rebuilt. Whatever does arrive is checked below.
+    // The success, in a capture of its own.
     let (log, guard) = capture_log();
     let spelled = code.to_lowercase().replace('-', " ");
     let res = redeem_from(&app, &email(1), &spelled, "203.0.113.61").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     drop(guard);
     let success = log.text();
+    assert!(
+        success.contains("a sign-in code was redeemed: recovery session opened"),
+        "the success was not captured: {success}"
+    );
 
     let text = format!("{refusals}{success}");
     let plain = code.replace('-', "");
