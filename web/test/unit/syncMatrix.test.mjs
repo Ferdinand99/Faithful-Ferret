@@ -6,11 +6,13 @@
 // `FERRET_MATRIX_RUNS` sets how many seeded runs the randomised tests make (500 by default, 5000 at the gate); a failing run names its
 // seed, and `FERRET_MATRIX_SEED=<seed>[,<seed>...]` runs the named seeds of the randomised tests alone.
 //
-// What the model does not assert, because it is reported: nothing. `KNOWN_GAPS` in `syncModel.mjs` is empty, so every run is strict. The one
-// gap there was, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does the
-// same, `purgeTombstones`), and the engine holds a tombstone the server has purged and counts a deletion of its own that was purged before it was
-// read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`). `FERRET_MATRIX_STRICT=1`
-// and `FERRET_MATRIX_TOLERATE=<gap>` stay for the next gap.
+// What the model does not assert: one documented limit, `reupload_after_purge` in `KNOWN_GAPS` of `syncModel.mjs` (section 8.8 of the design). An
+// item that is brought back from the trash over a tombstone the server has purged is uploaded again under its id at revision 1, and a device
+// that holds the item at a higher revision refuses that copy with a warning; the checks leave those items, and those warnings, alone. The gap that
+// there was before, a purged tombstone that looked like a rollback, is closed: the server purges only what its checkpoint covers (the model does
+// the same, `purgeTombstones`), and the engine holds a tombstone the server has purged (an older one too) and counts a deletion of its own that
+// was purged before it was read back as done (`matrix_passes_strict_without_tolerating_purge`, and the tests of `engineHeldTombstones.test.mjs`).
+// `FERRET_MATRIX_STRICT=1` tolerates none, and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are let through.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
@@ -376,6 +378,7 @@ async function check(sim) {
   await sim.checkConverged();
   sim.checkOwners();
   await sim.checkWrites();
+  await sim.checkReuploaded();
   sim.checkResurrections();
   await sim.checkFloorsCoverRows();
   await sim.checkCheckpointLive();
@@ -680,6 +683,76 @@ test("the_invariant_checks_find_what_they_look_for", async (t) => {
     sim.writes.push({ dev: sim.devices[0].label, id, kind: "update", marker: "SECRET-never-sent", step: 1 });
     await sim.checkWrites();
     complains(sim, "is not on the server");
+    await sim.stopAll();
+  });
+
+  await t.test("a warning that the known gap does not cover", async () => {
+    // The gap `reupload_after_purge` lets through what other devices show about an item that was brought back over a purged tombstone, and about
+    // a checkpoint only when every refusal of a checkpoint was about such items. A warning about another item, or about a checkpoint that was
+    // refused for another item, or as a whole, is still a fault.
+    const restored = "ab".repeat(16);
+    const other = "cd".repeat(16);
+    const tolerant = async () => {
+      const sim = await fresh();
+      sim.tolerated = new Set(["reupload_after_purge"]);
+      sim.reuploaded.add(restored);
+      return sim;
+    };
+    const warn = (sim, event) => sim.devices[0].d.events.state.push({ kind: "warning", ...event });
+    let sim = await tolerant();
+    warn(sim, { code: "rev_lower_than_local", id: restored });
+    sim.refusals.push({ code: "checkpoint_hidden_or_rolled_back", ids: [restored] });
+    warn(sim, { code: "server_shows_older_state" });
+    sim.checkHealthy();
+    assert.deepEqual(sim.problems, [], "about the restored item: let through");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    warn(sim, { code: "rev_lower_than_local", id: other });
+    sim.checkHealthy();
+    complains(sim, "rev_lower_than_local");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    sim.refusals.push({ code: "checkpoint_hidden_or_rolled_back", ids: [restored] }, { code: "checkpoint_hidden_or_rolled_back", ids: [other] });
+    warn(sim, { code: "server_shows_older_state" });
+    warn(sim, { code: "checkpoint_rolled_back" });
+    sim.checkHealthy();
+    complains(sim, "server_shows_older_state");
+    complains(sim, "checkpoint_rolled_back");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    // A refusal of the routine kind that is about a live row or a live entry is not routine.
+    sim.refusals.push({ code: "checkpoint_top_digest_mismatch", ids: [other], routine: false });
+    warn(sim, { code: "server_shows_older_state" });
+    sim.checkHealthy();
+    complains(sim, "server_shows_older_state");
+    await sim.stopAll();
+
+    sim = await tolerant();
+    sim.refusals.push({ code: "checkpoint_seq_below_remembered", ids: [] });
+    warn(sim, { code: "checkpoint_rolled_back" });
+    sim.checkHealthy();
+    complains(sim, "checkpoint_rolled_back");
+    await sim.stopAll();
+  });
+
+  await t.test("an item that was brought back over a purged tombstone and is gone", async () => {
+    const sim = await fresh();
+    sim.tolerated = new Set(["reupload_after_purge"]);
+    const [a] = sim.devices;
+    const id = "ab".repeat(16);
+    sim.reuploaded.add(id);
+    sim.restoredBy.set(id, new Set([a.label]));
+    // The removal that put the item in the trash came before the restore: it does not excuse the loss. A removal after the restore does.
+    sim.writes.push({ dev: a.label, id, kind: "remove", marker: null, step: 1 }, { dev: a.label, id, kind: "restore", marker: "x", step: 2 });
+    await sim.checkReuploaded();
+    complains(sim, "neither on the server nor a draft");
+    sim.problems.length = 0;
+    sim.writes.push({ dev: a.label, id, kind: "remove", marker: null, step: 3 });
+    await sim.checkReuploaded();
+    assert.deepEqual(sim.problems, [], "deleted by the user after the restore");
     await sim.stopAll();
   });
 
@@ -1490,9 +1563,9 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   // that no device has seen, with a floor above the cursor of the devices that are behind. Every invariant of the matrix holds all the same.
   const was = { strict: process.env.FERRET_MATRIX_STRICT, tolerate: process.env.FERRET_MATRIX_TOLERATE };
   process.env.FERRET_MATRIX_STRICT = "1";
-  delete process.env.FERRET_MATRIX_TOLERATE;
+  process.env.FERRET_MATRIX_TOLERATE = "reupload_after_purge"; // the one documented limit, and nothing about purged tombstones
   try {
-    assert.deepEqual([...KNOWN_GAPS], [], "no gap is tolerated");
+    assert.deepEqual([...KNOWN_GAPS], ["reupload_after_purge"], "the only gap is the documented limit of uploading an item again; none is about purging");
     // `FERRET_MATRIX_PURGE_HEAVY=1`: more deletions and purges than the usual mix (it finds shapes that the usual mix meets rarely).
     const actions = process.env.FERRET_MATRIX_PURGE_HEAVY === "1"
       ? ACTIONS.map(([name, weight]) => [name, name === "purge" ? 6 : name === "remove" ? 12 : weight])
@@ -1505,6 +1578,7 @@ test("matrix_passes_strict_without_tolerating_purge", async () => {
   } finally {
     if (was.strict === undefined) delete process.env.FERRET_MATRIX_STRICT;
     else process.env.FERRET_MATRIX_STRICT = was.strict;
-    if (was.tolerate !== undefined) process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
+    if (was.tolerate === undefined) delete process.env.FERRET_MATRIX_TOLERATE;
+    else process.env.FERRET_MATRIX_TOLERATE = was.tolerate;
   }
 });

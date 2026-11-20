@@ -907,7 +907,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": null,
         "policy": "with_secret_key",
@@ -933,9 +932,9 @@
       },
       "expect": {
         "manifest": {
-          "envelope": "010102f52f74aa57c70540676885a70a4fb207ac348c2921b39c7cecd5a4fdf12d247d738a5eb6119d96a5f5ec1628ce870f019b125731302abd684f1beec8af96c4e1f2a8f756e8ca01a4ae1200ed1ad5110b48349f07cc497ce12e66ac11dc74d53ef94b399db3dee80102175b01e0b2af27d260556431f6f49d151203e122aa7be48f69b541838e07eef92c91c0bc7cde24fc16c8ca521d5b4d75a0933d682f9968cf738ec20623c2bb960b7b7cf6355abd4298019d364700fe4ef4d16c435c5ec63585ff29ef2cb5c8b3d1ff8ae228f9234865dab69f76f1c18f5483b2a88b2b734b39a7522d8b73e8ba712690e4b4f4cc686519fc75fcd1a8e9493553968ace57494dcd4cedb991c79a8cd7713fb07389e1ee165ff8aaa0143d182e55e82e7d264110a72ee0c09c3e",
+          "envelope": "010102f52f74aa57c70540676885a70a4fb207ac348c2921b39c7cecd5a4fdf12d247d738a5eb6119d96a5f5ec1628ce870f019b125731302abd684f1beec8af96c4e1f2a8f756e8ca01a4ae1200ed1ad5110b48349d05ce4b7ee32c64ae13de76d73cfb49399db3dee80102175b01e0b2af27d260556431f6f49d151203e122aa7be48f69b541838e07eef92c91c0bc7cde24fc16c8ca521d5b4d75a0933d682f9968cf738ec20623c2bb960b7b7cf6355abd4298019d364700fe4ef4d16c435c5ec63585ff29ef2cb5c8b3d1ff8ae228f9234865dab69f76f1c18f5483b2a88b2b734b39a7522d8b73e8ba712690e4b4f4cc686519fc75fcd1a8e9493553968ace57494dcd4cedb991c79a8cd7713fb07389e1ee165ff8aaa0144a877704f5f4dfc5d523c35989fc8222",
           "rev": "2",
-          "tag": "49daa311a79450999124a349ade4bdf316a55a07b35d837bb568bc6bf94058c8"
+          "tag": "c61175a7438ddb42e4daffbf227efa511144274af4b30d558415cb2b68989e6c"
         },
         "password_wrap": {
           "kek_generation": "2",
@@ -948,8 +947,8 @@
         "recovery_key": "5ed2b87280d5c3242159bd4b918a603e3c2b217c4a575eb2356638a9f9f9153d",
         "recovery_wrap": {
           "kek_generation": "2",
-          "method_id": "73737373737373737373737373737373",
-          "wrap": "84a348137c62a201fe142b5647ec476aceb54c015be60030adf3753fd4e149ccffb0e8481752b1f19a922ad2b16e9686316fcce19f6ff455d31192e7c164267bd75345e010851a64"
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "84a348137c62a201fe142b5647ec476aceb54c015be60030adf3753fd4e149ccffb0e8481752b1f19a922ad2b16e9686316fcce19f6ff45597f61a84e2ced1cc7243068dfea411d8"
         },
         "registration_record": "0441591df9c3189109aa71e407d15c244ea28637cc2f09ae69bb6b56843c9409430a3d009fb5230e55f3824076099d1e683f5728f5d80601fb4ea97bae0dac44a52e4d7cab998cd4203a033bd3ebd4e0ea5e0ed2cabd56109d8e1acfa68f5b32aca874e9e71f0c990b3f9834b946233d0e38bafb5bfb316b5a27c3808422378254843b310a654db12759b64883090b53537b0fde10cd947e0b97999d5a75112134035b8b4d219234fcb3520d41a7fe2e302997c089a4d416ec8c502e33a83906",
         "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
@@ -980,7 +979,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1012,9 +1010,9 @@
       },
       "expect": {
         "manifest": {
-          "envelope": "010102ec84a7dac2f582d05c844bdc6daeaad2f21511b5208965dead554977aa5a6afc9b541a56b3b351e229891e4545caed08bf8b5371417114457cc5a8da94b4649a83c7306c753f232365c5b1aecea93b651e64a87b2f4eca0b32caa0e26a6f9d734498c158b9c086161dfbe445c93ab9ea82cb28dfa919d3635507578c54aa9a30b7e432aded0b78cc36a0be4403c6c3d89ca44a52a8197549b5d1e6fe60e22619b996f6b4c2079ec1403c09fd62326e1f8c687ce0f00034b47fd4c963a60fb9fbdee04e138efb88b1b37f074876fadf5846c08e075227c6510adb92d5922e53c1351bd6b9cb74ac5cae98c7b1f2586e59ab3bcbd60bab0ae2e97476ccbfcf1c67f8646a3303fb6979876afa60b6e544102929b50798d2d08a3d59287f058ce7f5a5a86a717354497f",
+          "envelope": "010102ec84a7dac2f582d05c844bdc6daeaad2f21511b5208965dead554977aa5a6afc9b541a56b3b351e229891e4545caed08bf8b5371417114457cc5a8da94b4649a83c7306c753f232365c5b1aecea93b651e64aa792d4cc80930c8a2e0686d9f71469ac158b9c086161dfbe445c93ab9ea82cb28dfa919d3635507578c54aa9a30b7e432aded0b78cc36a0be4403c6c3d89ca44a52a8197549b5d1e6fe60e22619b996f6b4c2079ec1403c09fd62326e1f8c687ce0f00034b47fd4c963a60fb9fbdee04e138efb88b1b37f074876fadf5846c08e075227c6510adb92d5922e53c1351bd6b9cb74ac5cae98c7b1f2586e59ab3bcbd60bab0ae2e97476ccbfcf1c67f8646a3303fb6979876afa60b6e544102929b50798d2d08abcab95a5bf2c87f9a22cb3f875966883",
           "rev": "2",
-          "tag": "444857b5813c1a14c1f5356eacfd5382c37a9f3f388132b8165ed24485074b1a"
+          "tag": "5efda027ecdd274315d33a68db9a095174c40ae976e7a6e85b679c53d9ed9986"
         },
         "password_wrap": {
           "kek_generation": "2",
@@ -1025,8 +1023,8 @@
         "recovery_key": "6952056a7c0777538efa954db4cb42d11da75ea491f7e4ad638dffe6605b9725",
         "recovery_wrap": {
           "kek_generation": "2",
-          "method_id": "73737373737373737373737373737373",
-          "wrap": "c070fa3d7cb24af16e964dd783ee500e25ca9d0f2ed6e1ac79ef0f7bfa90aea13ec8028238df1a7af0473bd0859fd65b9e8c5fb8ab4f8347ca6661dda1a2a38f4fd97b0283ac8da3"
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "c070fa3d7cb24af16e964dd783ee500e25ca9d0f2ed6e1ac79ef0f7bfa90aea13ec8028238df1a7af0473bd0859fd65b9e8c5fb8ab4f8347806af949dcbb28c09b720ecbeae03409"
         },
         "registration_record": "0441591df9c3189109aa71e407d15c244ea28637cc2f09ae69bb6b56843c9409430a3d009fb5230e55f3824076099d1e683f5728f5d80601fb4ea97bae0dac44a52e4d7cab998cd4203a033bd3ebd4e0ea5e0ed2cabd56109d8e1acfa68f5b32aca874e9e71f0c990b3f9834b946233d0e38bafb5bfb316b5a27c3808422378254843b310a654db12759b64883090b53537b0fde10cd947e0b97999d5a75112134035b8b4d219234fcb3520d41a7fe2e302997c089a4d416ec8c502e33a83906",
         "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
@@ -1057,7 +1055,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1089,9 +1086,9 @@
       },
       "expect": {
         "manifest": {
-          "envelope": "01010228f6ecb334db4ff787a1e1acae5bf8224937d38ac4a06526f52634054ec337bd963d72b18b195811470cbc60bfc916f4929c51eb565a82bef194597b9d05fcb2ccb862c27d54b9b592439d2cee0cef73b0f8d274b807f739bd7ac8134dbbc70cda3452957b270dfd18438542c2cdf0deaaf26199185d8622b410050332d14c31c6abd87ce08141cb0b50a38f3698f93c187634197f463fd97d8c1131f4a618e1b52195b0ab5f8014ff682335db86fba26304990b991f618bc6878529e2be47e8b551372efc3dc4e68e8672499d626600b58a1e81f281e4b005f3262f2d71db63206b0ef8390ae8c009050b931ce99cab5b6b219f2c3fd1f30bae24c6a1cdd9b50b14341907a2df3b51c7642ba68ee70c13734f53e2520dc4ee15c76d8a7f60f00b56d6dee5441293",
+          "envelope": "01010228f6ecb334db4ff787a1e1acae5bf8224937d38ac4a06526f52634054ec337bd963d72b18b195811470cbc60bfc916f4929c51eb565a82bef194597b9d05fcb2ccb862c27d54b9b592439d2cee0cef73b0f8d076ba05f53bbf78ca114fb9c50ed83652957b270dfd18438542c2cdf0deaaf26199185d8622b410050332d14c31c6abd87ce08141cb0b50a38f3698f93c187634197f463fd97d8c1131f4a618e1b52195b0ab5f8014ff682335db86fba26304990b991f618bc6878529e2be47e8b551372efc3dc4e68e8672499d626600b58a1e81f281e4b005f3262f2d71db63206b0ef8390ae8c009050b931ce99cab5b6b219f2c3fd1f30bae24c6a1cdd9b50b14341907a2df3b51c7642ba68ee70c13734f53e2520dc4ad6a7fce2fb03538744bab1093a9a257",
           "rev": "2",
-          "tag": "40ed23263c3941c3fdff73fb9dbd2815e36275bb4ba0883dfe617161b154aeee"
+          "tag": "70f5db523223536c3b35152fe520f6dbd68785a9ae7a1236d5e1bbd74cf3ac02"
         },
         "password_wrap": {
           "kek_generation": "6",
@@ -1102,8 +1099,8 @@
         "recovery_key": "d5fbabab3d51fe06a030bca201f802f8ec4197d2b7765eb80b615e3afbe51daa",
         "recovery_wrap": {
           "kek_generation": "2",
-          "method_id": "73737373737373737373737373737373",
-          "wrap": "915f15e783773d57e1179aa70c4169ad7c9eeb8354a7ebbd3ea30129437b1ab6f942910fec47d338c253c76929e9b1510cdf4cc8f6b0659e39a3fb3fa17570150611680dec9662a8"
+          "method_id": "71717171717171717171717171717171",
+          "wrap": "915f15e783773d57e1179aa70c4169ad7c9eeb8354a7ebbd3ea30129437b1ab6f942910fec47d338c253c76929e9b1510cdf4cc8f6b0659ec695d879f7e6449ebefd892a04a5072a"
         },
         "registration_record": "0441591df9c3189109aa71e407d15c244ea28637cc2f09ae69bb6b56843c9409430a3d009fb5230e55f3824076099d1e683f5728f5d80601fb4ea97bae0dac44a52e4d7cab998cd4203a033bd3ebd4e0ea5e0ed2cabd56109d8e1acfa68f5b32aca874e9e71f0c990b3f9834b946233d0e38bafb5bfb316b5a27c3808422378254843b310a654db12759b64883090b53537b0fde10cd947e0b97999d5a75112134035b8b4d219234fcb3520d41a7fe2e302997c089a4d416ec8c502e33a83906",
         "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
@@ -1129,7 +1126,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": null,
         "policy": "with_secret_key",
@@ -1169,7 +1165,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": null,
         "policy": "with_secret_key",
@@ -1209,7 +1204,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1258,7 +1252,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1307,7 +1300,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1356,7 +1348,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": null,
         "policy": "unlock",
@@ -1396,7 +1387,6 @@
           "rev": "1",
           "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
         },
-        "new_recovery_method_id": "73737373737373737373737373737373",
         "password": "tr0ub4dor and three more words",
         "pinned": {
           "ksf_profile": 1,
@@ -1430,7 +1420,7 @@
     },
     {
       "id": "account/recover/011",
-      "title": "the new recovery wrap would get the id of the password wrap",
+      "title": "the password entry has the id of the recovery wrap, which the new wrap keeps",
       "op": "account.recover",
       "status": "invalid",
       "tags": [],
@@ -1441,11 +1431,10 @@
         "input_secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
         "ksf_profile": 1,
         "manifest": {
-          "envelope": "010102a9d0538f01186958875bb34c2e62f5983326a397099dabd4d90987fff618bbceea0d75bd2c9ab20fb0fddc39475a787c0874d0d53f072c2fd1a8d6432be0fc139617efd0db972319bdfc34757d6e66bd08f49de4f095724ecbc0be26f862fec38c71dab08621dd5e1ad721c99a1c0665c687bb43f1175e164a9711f59a07d4f8cdc0661a5843584c9bc5cfe88624219b868ff556440cd95b7d0cca487c6a9dbcd8d60a26d8e82192990359305866b4781743506283e65ae36c63d8080008bf098861c4a446d551127a8715c091c2ce7ec9b4d3fed32bcb1378451dd363a84f6c4938de3c4553d88a7ec118f6589a162c9cdfb4103fa451e1553c35f807c08587e87d19f6d54f6eecd7af2a644acbf7e3ff2da46636302e5152561e692284c1e388d5d7f5975a80a4",
+          "envelope": "010102bd77b1c9e5d77ad88ab54e4f1c7f67b365d3e00bbdea64eb5b64da768b55319f48bdeb752c310a945bc2b81941757a33f78cf8e4fb1e76c5e51e5d1fcfabfe97e57eb18965ab8117cb333c23046bd4d92b6560275abb24b43c4afaf89e735434863911389a7c609b29760d65256bf3d96f4e92eedf507e91f3bf76457e906ee5c4df51a49f9ad44480ee0af0ef2c71fb1ab419d2942ced851f93f0a06bd61e3151b16aeec8c15d32755db944962c73110bbb451955be7b81db1f61fb55d8058b922f18529067e33de7c0405cfd6180c6d6d7390650f6aa078bd12a4b45b740b0ad09592f37af7764dc3b054fae4614a6f39709e48b6d698c8057ee20bf9f2b3bb57125be6818c192fff181db484337bb747e1cf29b71bd063059f63fc3d294610670b3c3124aa5e9",
           "rev": "1",
-          "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
+          "tag": "72120df2e3e462ffb7a9575035a5c12b9d3529ac031c67688fd943351b513238"
         },
-        "new_recovery_method_id": "70707070707070707070707070707070",
         "password": "tr0ub4dor and three more words",
         "pinned": null,
         "policy": "with_secret_key",

@@ -566,7 +566,6 @@ pub async fn recovered(
                 envelope: &client.manifest.envelope,
                 tag: &client.manifest.tag,
             },
-            new_recovery_method_id: client.recovery_wrap.method_id,
         },
         NewPassword {
             input: &input,

@@ -426,7 +426,7 @@ test("the_pin_state_is_always_required", () => {
   const job2 = new wasm.UnlockJob();
   assert.equal(code(() => job2.pin_unlock(enc.encode("123456"), undefined, created.wraps[0], null)), "invalid_input");
   assert.equal(code(() => job2.unlock_recovery(URL_, CTX, "FFR1-", created.wraps[1], undefined)), "invalid_input");
-  assert.equal(code(() => job2.recover(URL_, CTX, "x", created.wraps[1], created.manifest, fill(16, 0x73), undefined, null)), "invalid_input");
+  assert.equal(code(() => job2.recover(URL_, CTX, "x", created.wraps[1], created.manifest, undefined, null)), "invalid_input");
 });
 
 test("sign_in_checks_the_pins_and_returns_the_record", () => {
@@ -582,14 +582,13 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   const { server, created, vault } = newAccount("recover");
   const rk = vault.reveal_recovery_code();
   const sk = vault.reveal_secret_key_code();
-  const newRecoveryId = fill(16, 0x73);
   // The text of a scanned QR code for this account.
   const qrOf = (key, url = URL_, account = IDS.account_id) => wasm.setup_qr_build(url, account, 1, true, key);
   const recoverWith = (pin, qr, text = rk) => {
     const job = new wasm.UnlockJob();
     const request = job.register_start(enc.encode(PASSWORD_2), { kind: "code", code: sk });
     job.register_finish(server.register_response(IDS.account_id, request), 1);
-    return { job, call: () => job.recover(URL_, CTX, text, created.wraps[1], created.manifest, newRecoveryId, pin, qr) };
+    return { job, call: () => job.recover(URL_, CTX, text, created.wraps[1], created.manifest, pin, qr) };
   };
 
   // A new device needs the value of the scanned QR code.
@@ -617,6 +616,9 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   assert.equal(out.sk_bit, true);
   assert.equal(out.password_wrap.kek_generation, 2);
   assert.equal(out.recovery_wrap.kek_generation, 2);
+  // Both wraps keep the ids the server stores them under.
+  assert.deepEqual(out.password_wrap.method_id, created.wraps[0].method_id);
+  assert.deepEqual(out.recovery_wrap.method_id, created.wraps[1].method_id);
   assert.deepEqual(out.pinned.server_public_key, created.server_public_key);
   assert.equal(out.pinned.server_url, URL_);
   assert.deepEqual(out.pinned.kek_generation_max.map((f) => f.generation), [2, 2]);
@@ -633,6 +635,14 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   // The new record unlocks with the new password wrap.
   const next = signIn(server, out.registration_record, PASSWORD_2, sk, pinned(out.pinned), out.password_wrap);
   assert.deepEqual(next.vault.auth_public_key(), created.pk_a);
+  // The new recovery key opens the new recovery wrap, which a renewal then
+  // replaces under the same id.
+  const again = new wasm.UnlockJob();
+  const reopened = again.unlock_recovery(URL_, CTX, newRk, out.recovery_wrap, pinned(out.pinned, { server_public_key: out.pinned.server_public_key }));
+  assert.deepEqual(reopened.vault.auth_public_key(), created.pk_a);
+  const renewed = out.vault.renew_recovery(out.pinned, out.recovery_wrap, out.manifest);
+  assert.deepEqual(renewed.wrap.method_id, created.wraps[1].method_id);
+  assert.equal(renewed.wrap.kek_generation, 3);
 
   // A device with the record compares with it, and gets the raised floors.
   const known = recoverWith(pinned(created.pinned), null).call();
@@ -1601,7 +1611,7 @@ test("the_full_sheet_is_refused_after_renew_and_recover_for_an_account_with_a_se
   const request = job.register_start(enc.encode(PASSWORD_2), { kind: "code", code: sk });
   job.register_finish(acct.server.register_response(IDS.account_id, request), 1);
   const recovered = job.recover(
-    URL_, CTX, rkCode, acct.created.wraps[1], acct.created.manifest, fill(16, 0x73), pinned(acct.created.pinned),
+    URL_, CTX, rkCode, acct.created.wraps[1], acct.created.manifest, pinned(acct.created.pinned),
   );
   assert.equal(recovered.sk_bit, true);
   assert.equal(code(() => recovered.vault.reveal_emergency_sheet(URL_, "alice@example.com")), "secret_key_not_held");
