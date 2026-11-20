@@ -7,33 +7,38 @@
 //! the server does not start on anything in between:
 //!
 //! 1. The lock of the data directory (`data_lock`): a running server holds it,
-//!    so the restore refuses while one runs. The set is checked
-//!    ([`set::verify`]) before anything is written.
+//!    so the restore refuses while one runs. The command must run as the user
+//!    that owns the data directory. The set is checked ([`set::verify`]: no
+//!    triggers or views, among the rest) before anything is written.
 //! 2. The marker [`RESTORE_MARKER`] (JSON: the set, the step, the two folders)
 //!    is written and synced before anything moves. While it is there the
 //!    server, `ferret restore-epoch bump` and `ferret backup create` refuse to
 //!    start ([`refuse_if_in_progress`]).
-//! 3. The set is copied into `<data>/.restore-<time>/` (staged), checked again
-//!    there with [`set::verify`] (the copy is what gets used, so the copy is
-//!    what is checked), given the migrations of this build, and then one
-//!    transaction raises the restore epoch ([`reconcile::bump`]'s rule) and
-//!    ends every session, hand-over, sign-in state, pending registration and
-//!    sign-in code and raises every user's session version
+//! 3. With room for twice the set, the set is copied into
+//!    `<data>/.restore-<time>/` (staged), checked again there with
+//!    [`set::verify`] (the copy is what gets used, so the copy is what is
+//!    checked), given the migrations of this build and compared with the schema
+//!    this build makes, and then one transaction raises the restore epoch
+//!    ([`reconcile::bump`]'s rule, above the epoch of the data that is there)
+//!    and ends every session, hand-over, sign-in state, pending registration
+//!    and sign-in code and raises every user's session version
 //!    ([`end_everything_after_restore`]).
 //! 4. The database of the data directory with its `-wal`, `-shm` and
 //!    `-journal`, and the three secret files, are moved with `rename` into
 //!    `<data>/pre-restore-<time>/`. The command never deletes them.
 //! 5. The staged database and secret files are moved into place with `rename`.
-//! 6. The staged folder and, last of all, the marker are removed.
+//! 6. The staged folder and, last of all, the marker are removed, once the
+//!    restored files are all in place.
 //!
 //! The marker records each step once it is done and synced. Run again with the
 //! marker there, the command goes on: before step 4 nothing in the data
 //! directory has changed, so it stages the set again from the start; from step
 //! 4 on it finishes the moves that are left. `ferret backup restore --abort
-//! --yes` puts the moved files back and removes the staged folder and the
-//! marker. A step that fails before anything in the data directory has moved
-//! cleans up after itself; one that fails later leaves the marker for a second
-//! run or an abort.
+//! --yes` puts the moved files back ([`abort`]); it records in the marker that
+//! it has started, so it can be run again after a kill and a restore does not
+//! go on after it. A step that fails before anything in the data directory has
+//! moved cleans up after itself; one that fails later leaves the marker for a
+//! second run or an abort.
 //!
 //! The database of a set is only ever opened through [`set::verify`] until it
 //! has passed that check in the staged folder.
@@ -49,7 +54,9 @@ use ferret_server_auth::{OPAQUE_SETUP_FILE, PRELOGIN_SECRET_FILE};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
-use super::set::{self, COMPLETE_FILE, MANIFEST_FILE, SECRET_FILES, SESSION_KEY_FILE};
+use super::set::{
+    self, COMPLETE_FILE, MANIFEST_FILE, Platform as _, SECRET_FILES, SESSION_KEY_FILE,
+};
 use super::{BackupError, RESTORE_MARKER};
 use crate::auth::session::end_everything_after_restore;
 use crate::data_lock::{self, DataDirLock};
@@ -84,6 +91,13 @@ pub const RESTORE_STEPS: [&str; 7] = [
     "moved_aside",
     "placed",
 ];
+
+/// The points an abort records or reaches, in order: the restored files are
+/// back in the staged folder and the marker says the abort is under way
+/// (`undoing`), the old files are back in the data directory (`old_back`), the
+/// marker is gone (`unmarked`). A test can stop an abort after any of them
+/// ([`abort_until`]).
+pub const ABORT_STEPS: [&str; 3] = ["undoing", "old_back", "unmarked"];
 
 /// The steps of a restore. The marker records the last one that is done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -167,6 +181,12 @@ pub struct RestoreReport {
     pub sessions_ended: u64,
     /// Where the files that were in the data directory before went.
     pub moved_aside: PathBuf,
+    /// Whether the restore epoch of the data that was in the data directory
+    /// could not be read (no database, or not a readable one). The new epoch is
+    /// then above the backup's and the time, but not checked against what that
+    /// data had: an epoch a client saw that was once above the clock (an
+    /// earlier `--at-least`) needs `restore-epoch bump --at-least`.
+    pub seen_epoch_unknown: bool,
 }
 
 /// Restores the set in `from` into `data_dir`, with a restore epoch of at least
@@ -201,35 +221,74 @@ pub fn restore_until(
 }
 
 /// Undoes a restore that did not finish: puts the files that were moved aside
-/// back, removes the staged folder and then the marker. Refuses while the
+/// back and removes the marker, then the staged folder. Refuses while the
 /// server runs and when no restore is in progress.
+///
+/// An abort that is cut off can be run again, and a restore does not go on
+/// after one has started:
+///
+/// 1. Unless the marker already says `undoing`: from `moved_aside` on, every
+///    file of the live data in the data directory is a restored one (the old
+///    ones were all moved before the marker said so), and goes back into the
+///    staged folder. Then the marker is written with `undoing`, so a second run
+///    never takes the old files, once they are back, for restored ones.
+/// 2. The files in the moved-aside folder go back into the data directory; one
+///    that is back already is skipped.
+/// 3. The marker goes, and only then the copies: the staged folder and the
+///    moved-aside folder if it is empty.
 pub fn abort(data_dir: &Path) -> Result<(), BackupError> {
+    abort_with(data_dir, None)
+}
+
+/// [`abort`] that stops right after the point named `stop_after` (one of
+/// [`ABORT_STEPS`]), as a kill there would. For the tests of an abort that is
+/// cut off; the command never calls it.
+#[doc(hidden)]
+pub fn abort_until(data_dir: &Path, stop_after: &str) -> Result<(), BackupError> {
+    if !ABORT_STEPS.contains(&stop_after) {
+        return Err(BackupError::Refused("no such step"));
+    }
+    abort_with(data_dir, Some(stop_after))
+}
+
+fn abort_with(data_dir: &Path, stop: Option<&str>) -> Result<(), BackupError> {
     let _lock = lock(data_dir)?;
-    let marker = read_marker(data_dir)?.ok_or(BackupError::Refused("no restore is in progress"))?;
+    let mut marker =
+        read_marker(data_dir)?.ok_or(BackupError::Refused("no restore is in progress"))?;
     let step = marker.step()?;
     let staging = data_dir.join(&marker.staging);
     let aside = data_dir.join(&marker.moved_aside);
 
-    // From `moved_aside` on, every file of the live set in the data directory
-    // is a restored one: the old ones were all moved before the marker said so.
-    if step >= RestoreStep::MovedAside {
-        make_private_dir(&staging)?;
-        for name in live_files() {
-            let live = data_dir.join(&name);
-            if there(&live)? {
-                if there(&staging.join(&name))? {
-                    return Err(BackupError::Refused(
-                        "a restored file is both in the data directory and in the staged folder",
-                    ));
+    if !marker.undoing {
+        if step >= RestoreStep::MovedAside {
+            make_private_dir(&staging)?;
+            for name in live_files() {
+                let live = data_dir.join(&name);
+                if there(&live)? {
+                    if there(&staging.join(&name))? {
+                        return Err(BackupError::Refused(
+                            "a restored file is both in the data directory and in the staged \
+                             folder",
+                        ));
+                    }
+                    rename(&live, &staging.join(&name))?;
                 }
-                rename(&live, &staging.join(&name))?;
             }
+            sync_dir(&staging)?;
         }
+        marker.undoing = true;
+        write_marker(data_dir, &marker)?;
     }
+    tracing::info!("undoing a restore");
+    if stop == Some("undoing") {
+        return Ok(());
+    }
+
     if there(&aside)? {
         for name in live_files() {
             let moved = aside.join(&name);
             if !there(&moved)? {
+                // Not moved aside, or back already.
                 continue;
             }
             let live = data_dir.join(&name);
@@ -241,11 +300,19 @@ pub fn abort(data_dir: &Path) -> Result<(), BackupError> {
             rename(&moved, &live)?;
         }
         sync_dir(data_dir)?;
-        // Only an empty folder goes; anything else in it stays for a person.
-        let _ = std::fs::remove_dir(&aside);
     }
-    remove_tree(&staging);
+    if stop == Some("old_back") {
+        return Ok(());
+    }
+
+    // The marker first: what is left after it are copies.
     remove_marker(data_dir)?;
+    if stop == Some("unmarked") {
+        return Ok(());
+    }
+    // Only an empty folder goes; anything else in it stays for a person.
+    let _ = std::fs::remove_dir(&aside);
+    remove_tree(&staging);
     tracing::info!("restore undone: the old files are back");
     Ok(())
 }
@@ -276,8 +343,16 @@ struct Marker {
     /// The highest restore epoch of the data that was in the data directory
     /// when the restore started (0 when there was none, or it could not be read).
     seen_epoch: u64,
+    /// Whether that epoch could not be read.
+    #[serde(default)]
+    seen_epoch_unknown: bool,
     /// What the bump did, once it is done.
     done: Option<Done>,
+    /// Whether an abort has started: the restore does not go on after that,
+    /// and a second abort does not move the files of the data directory into
+    /// the staged folder again.
+    #[serde(default)]
+    undoing: bool,
 }
 
 /// What the transaction of the bump did.
@@ -336,11 +411,28 @@ fn run(
     run.go(step, now)
 }
 
-/// The data directory must be there, and no other process may hold its lock.
+/// The data directory must be there, the command must run as the user that
+/// owns it, and no other process may hold its lock.
 fn lock(data_dir: &Path) -> Result<DataDirLock, BackupError> {
-    if !std::fs::metadata(data_dir).is_ok_and(|meta| meta.is_dir()) {
-        return Err(BackupError::Refused("the data directory does not exist"));
+    let meta = std::fs::metadata(data_dir)
+        .ok()
+        .filter(std::fs::Metadata::is_dir)
+        .ok_or(BackupError::Refused("the data directory does not exist"))?;
+    // The server checks that its secret files belong to the user it runs as:
+    // files restored by another user (root, say) would stop it from starting.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if rustix::process::geteuid().as_raw() != meta.uid() {
+            return Err(BackupError::Refused(
+                "run the command as the user that owns the data directory (the server's user, \
+                 for example with `docker compose run --rm <service> ...`), not as root or \
+                 another user",
+            ));
+        }
     }
+    #[cfg(not(unix))]
+    let _ = meta;
     data_lock::acquire_existing(data_dir).map_err(|error| {
         tracing::warn!(%error, "the data directory could not be locked");
         BackupError::Refused(
@@ -368,6 +460,7 @@ fn start(
         .ok_or(BackupError::Refused("the path of the set is not UTF-8"))?
         .to_string();
     let (staging, moved_aside) = free_names(data_dir, now)?;
+    let seen = highest_epoch_there(data_dir);
     let marker = Marker {
         format: MARKER_FORMAT.to_string(),
         step: RestoreStep::Marker.name().to_string(),
@@ -376,8 +469,10 @@ fn start(
         moved_aside,
         started_at: now,
         at_least,
-        seen_epoch: highest_epoch_there(data_dir),
+        seen_epoch: seen.unwrap_or(0),
+        seen_epoch_unknown: seen.is_none(),
         done: None,
+        undoing: false,
     };
     write_marker(data_dir, &marker)?;
     tracing::info!(step = RestoreStep::Marker.name(), "restore step done");
@@ -393,6 +488,12 @@ fn resume(
     at_least: Option<u64>,
 ) -> Result<(Marker, RestoreStep), BackupError> {
     let step = marker.step()?;
+    if marker.undoing {
+        return Err(BackupError::Refused(
+            "an abort of this restore is under way: run `ferret backup restore --abort --yes` \
+             again to finish it",
+        ));
+    }
     let given = std::fs::canonicalize(from)
         .or_else(|_| std::path::absolute(from))
         .map_err(io_err("the set can not be found"))?;
@@ -410,6 +511,16 @@ fn resume(
             (a, b) => a.or(b),
         };
         return Ok((marker, RestoreStep::Marker));
+    }
+    // The bump is done: a higher epoch than it gave can not be had from this
+    // run, and is never dropped without a word.
+    let raised = marker.done.map_or(0, |done| done.restore_epoch);
+    if at_least.is_some_and(|wanted| wanted > raised) {
+        return Err(BackupError::Refused(
+            "the restore epoch was already raised, below the --at-least asked for now: run the \
+             restore again without --at-least to finish it, then `ferret restore-epoch bump \
+             --yes --at-least <n>`",
+        ));
     }
     Ok((marker, step))
 }
@@ -444,7 +555,9 @@ impl Run<'_> {
                 return Err(self.failed(step, error));
             }
             self.marker.step = step.name().to_string();
-            write_marker(self.data_dir, &self.marker)?;
+            if let Err(error) = write_marker(self.data_dir, &self.marker) {
+                return Err(self.failed(step, error));
+            }
             tracing::info!(step = step.name(), "restore step done");
             done = step;
             if self.stop == Some(step) {
@@ -556,6 +669,16 @@ impl Run<'_> {
         let done = self.marker.done.ok_or(BackupError::Io(
             "the restore marker lacks what the bump did",
         ))?;
+        // Nothing is removed unless the restored database and secret files are
+        // all in place: a cut-off abort can have taken some of them back.
+        for name in placed_files() {
+            if !std::fs::symlink_metadata(self.data_dir.join(name)).is_ok_and(|m| m.is_file()) {
+                return Err(BackupError::Refused(
+                    "the restored files are not all in the data directory: undo the restore with \
+                     `ferret backup restore --abort --yes`",
+                ));
+            }
+        }
         remove_tree(&self.staging());
         remove_marker(self.data_dir)?;
         tracing::info!(
@@ -569,6 +692,7 @@ impl Run<'_> {
             vaults: done.vaults,
             sessions_ended: done.sessions_ended,
             moved_aside: self.aside(),
+            seen_epoch_unknown: self.marker.seen_epoch_unknown,
         })
     }
 }
@@ -586,24 +710,68 @@ fn stage(source: &Path, staging: &Path) -> Result<(), BackupError> {
             "the staged folder of an earlier run can not be removed",
         ));
     }
-    make_private_dir(staging)?;
-    for name in [DB_FILE, MANIFEST_FILE, COMPLETE_FILE]
+    let names: Vec<&str> = [DB_FILE, MANIFEST_FILE, COMPLETE_FILE]
         .into_iter()
         .chain(SECRET_FILES)
-    {
+        .collect();
+    // Spec: Fase 1 § 11, the rule of the backups: free space for twice what is
+    // written, or the step stops before it writes anything.
+    let size = names
+        .iter()
+        .map(|name| std::fs::symlink_metadata(source.join(name)).map_or(0, |m| m.len()))
+        .fold(0u64, u64::saturating_add);
+    let parent = staging.parent().unwrap_or(staging);
+    if !enough_space(set::RealPlatform.free_bytes(parent), size) {
+        return Err(BackupError::NoSpace);
+    }
+    make_private_dir(staging)?;
+    for name in names {
         copy_file(&source.join(name), &staging.join(name))?;
     }
     sync_dir(staging)
 }
 
-/// Copies a plain file (never a link) into a new `0600` file and syncs it.
-fn copy_file(from: &Path, to: &Path) -> Result<(), BackupError> {
-    let meta = std::fs::symlink_metadata(from).map_err(io_err("a file of the set is missing"))?;
+/// Whether `free` bytes (unknown counts as enough) hold twice `size`.
+fn enough_space(free: Option<u64>, size: u64) -> bool {
+    free.is_none_or(|free| free >= size.saturating_mul(2))
+}
+
+/// Opens a file of the set for reading: never through a link (the open itself
+/// refuses one, so it can not be swapped in after a check), and only a plain
+/// file.
+fn open_plain(path: &Path) -> Result<std::fs::File, BackupError> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags};
+        let fd = rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|error| io_err("a file of the set can not be read")(error.into()))?;
+        std::fs::File::from(fd)
+    };
+    #[cfg(not(unix))]
+    let file = {
+        let meta =
+            std::fs::symlink_metadata(path).map_err(io_err("a file of the set is missing"))?;
+        if !meta.is_file() {
+            return Err(BackupError::Verify("a set file is not a plain file"));
+        }
+        std::fs::File::open(path).map_err(io_err("a file of the set can not be read"))?
+    };
+    let meta = file
+        .metadata()
+        .map_err(io_err("a file of the set can not be read"))?;
     if !meta.is_file() {
         return Err(BackupError::Verify("a set file is not a plain file"));
     }
-    let mut input =
-        std::fs::File::open(from).map_err(io_err("a file of the set can not be read"))?;
+    Ok(file)
+}
+
+/// Copies a plain file (never a link) into a new `0600` file and syncs it.
+fn copy_file(from: &Path, to: &Path) -> Result<(), BackupError> {
+    let mut input = open_plain(from)?;
     let mut output = new_private_file(to).map_err(io_err("could not write the staged copy"))?;
     // File to file: the kernel copies it, without a buffer in this process.
     io::copy(&mut input, &mut output).map_err(io_err("could not write the staged copy"))?;
@@ -627,8 +795,10 @@ fn open_staged(db: &Path) -> Result<Connection, BackupError> {
     .map_err(bad)?;
     conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
         .map_err(bad)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
-        .map_err(bad)?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF; PRAGMA cell_size_check = ON;",
+    )
+    .map_err(bad)?;
     let mode: String = conn
         .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
         .map_err(bad)?;
@@ -670,7 +840,70 @@ fn migrate(db: &Path) -> Result<(), BackupError> {
         BackupError::Refused("the set could not be migrated to this build")
     })?;
     tracing::info!(applied = applied.len(), "staged database migrated");
+    // The bump runs SQL against this database next, and the server after it:
+    // its schema must be the one this build makes, with nothing added (a
+    // trigger could undo the end of the sessions, say).
+    let staged = schema_of(&conn).map_err(|_| BackupError::Io("could not read the schema"))?;
+    if staged != expected_schema()? {
+        return Err(BackupError::Refused(
+            "the schema of the set is not the one this build makes",
+        ));
+    }
     close_staged(conn, db)
+}
+
+/// One object of a schema: type, name, table and its SQL with the spaces
+/// evened out (an `ALTER TABLE` writes the text it changes a little
+/// differently from a `CREATE TABLE`).
+type SchemaRow = (String, String, String, String);
+
+/// The schema of a database, without SQLite's own objects, in a fixed order.
+fn schema_of(conn: &Connection) -> rusqlite::Result<Vec<SchemaRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_schema \
+         WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            even_spaces(&row.get::<_, String>(3)?),
+        ))
+    })?;
+    rows.collect()
+}
+
+/// `sql` with every run of white space as one space, and none next to a
+/// parenthesis or a comma.
+fn even_spaces(sql: &str) -> String {
+    let collapsed = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::with_capacity(collapsed.len());
+    let mut chars = collapsed.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ' '
+            && (out.ends_with(['(', ')', ','])
+                || chars
+                    .peek()
+                    .is_some_and(|next| matches!(next, '(' | ')' | ',')))
+        {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The schema this build makes: every migration run on an empty database in
+/// memory.
+fn expected_schema() -> Result<Vec<SchemaRow>, BackupError> {
+    const FAILED: BackupError = BackupError::Io("could not make the schema of this build");
+    let mut conn = Connection::open_in_memory().map_err(|_| FAILED)?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|_| FAILED)?;
+    vole_kit::db::migrate::apply_migrations_with(&mut conn, &crate::db::MIGRATIONS)
+        .map_err(|_| FAILED)?;
+    schema_of(&conn).map_err(|_| FAILED)
 }
 
 /// Step 3, the last part: one transaction raises the restore epoch of every
@@ -713,44 +946,50 @@ fn bump(db: &Path, at_least: Option<u64>, now: i64) -> Result<Done, BackupError>
 }
 
 /// The highest restore epoch of the database that is in the data directory
-/// now, so that the restored one goes above it too. The database is opened
-/// read-only and `immutable` (it is not changed, and no `-wal` or `-shm` is
-/// made). A missing or unreadable database gives 0: the time in the rule still
-/// holds, and a broken database is what a restore is for.
-fn highest_epoch_there(data_dir: &Path) -> u64 {
+/// now, so that the restored one goes above it too, or `None` when there is no
+/// database or it can not be read.
+///
+/// The database is opened read-only, as it is (its WAL counts: the lock of the
+/// data directory is held, and a `-shm` this may make moves aside with it).
+/// When that fails it is read once more `immutable` (the main file only). A
+/// missing or unreadable database is not an error: a broken database is what a
+/// restore is for, and the time in the rule still holds; the report says so.
+fn highest_epoch_there(data_dir: &Path) -> Option<u64> {
     let db = data_dir.join(DB_FILE);
     if !std::fs::symlink_metadata(&db).is_ok_and(|meta| meta.is_file()) {
-        return 0;
+        tracing::warn!("there is no database in the data directory to read the restore epoch of");
+        return None;
     }
-    let read = || -> Result<u64, BackupError> {
-        let bad = |_: rusqlite::Error| BackupError::Io("unreadable");
-        let conn = Connection::open_with_flags(
-            set::immutable_uri(&db)?,
+    let read = |conn: Connection| -> rusqlite::Result<u64> {
+        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        conn.execute_batch("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;")?;
+        let highest: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(restore_epoch), 0) FROM ferret_vaults",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(u64::try_from(highest).unwrap_or(0))
+    };
+    let as_it_is = Connection::open_with_flags(
+        &db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .and_then(read);
+    let found = as_it_is.ok().or_else(|| {
+        let uri = set::immutable_uri(&db).ok()?;
+        Connection::open_with_flags(
+            uri,
             OpenFlags::SQLITE_OPEN_READ_ONLY
                 | OpenFlags::SQLITE_OPEN_URI
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .map_err(bad)?;
-        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
-            .map_err(bad)?;
-        conn.execute_batch("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;")
-            .map_err(bad)?;
-        let highest: i64 = conn
-            .query_row(
-                "SELECT COALESCE(MAX(restore_epoch), 0) FROM ferret_vaults",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(bad)?;
-        Ok(u64::try_from(highest).unwrap_or(0))
-    };
-    read().unwrap_or_else(|_| {
-        tracing::warn!(
-            "the restore epoch of the data that is there could not be read; the time still \
-             raises the restored one"
-        );
-        0
-    })
+        .and_then(read)
+        .ok()
+    });
+    if found.is_none() {
+        tracing::warn!("the restore epoch of the database in the data directory could not be read");
+    }
+    found
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,7 +1253,9 @@ mod tests {
             started_at: 1,
             at_least,
             seen_epoch,
+            seen_epoch_unknown: false,
             done: None,
+            undoing: false,
         }
     }
 
@@ -1060,5 +1301,36 @@ mod tests {
         assert_eq!(marker(None, 7).lowest_epoch(), Some(8));
         assert_eq!(marker(Some(20), 7).lowest_epoch(), Some(20));
         assert_eq!(marker(Some(3), 7).lowest_epoch(), Some(8));
+    }
+
+    #[test]
+    fn a_marker_from_before_the_undo_flag_reads_as_not_undoing() {
+        let dir = temp_dir("old-marker");
+        let mut json = serde_json::to_value(marker(None, 0)).expect("json");
+        let fields = json.as_object_mut().expect("an object");
+        fields.remove("undoing");
+        fields.remove("seen_epoch_unknown");
+        std::fs::write(dir.join(RESTORE_MARKER), json.to_string()).expect("a marker");
+        let read = read_marker(&dir).expect("readable").expect("there");
+        assert!(!read.undoing && !read.seen_epoch_unknown);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn there_must_be_room_for_twice_the_set() {
+        assert!(enough_space(Some(200), 100));
+        assert!(!enough_space(Some(199), 100));
+        assert!(enough_space(None, 100), "unknown is not a refusal");
+        assert!(!enough_space(Some(u64::MAX - 1), u64::MAX), "no wrap");
+    }
+
+    #[test]
+    fn spaces_are_evened_out_and_nothing_else() {
+        assert_eq!(
+            even_spaces("CREATE TABLE t (\n  a INTEGER ,\n  b TEXT\n)"),
+            "CREATE TABLE t(a INTEGER,b TEXT)"
+        );
+        assert_eq!(even_spaces("a  b"), "a b");
+        assert_ne!(even_spaces("CHECK (a >= 0)"), even_spaces("CHECK (a >= 1)"));
     }
 }

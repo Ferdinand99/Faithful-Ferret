@@ -459,6 +459,7 @@ async fn restore_puts_the_set_back_and_moves_the_current_data_aside() {
             vaults: 1,
             sessions_ended: 0,
             moved_aside: scene.aside(),
+            seen_epoch_unknown: false,
         }
     );
     scene.assert_restored("after the restore");
@@ -1188,8 +1189,9 @@ async fn the_server_starts_on_the_restored_data_and_a_client_sees_server_restore
 async fn the_wal_and_shm_of_the_current_data_never_mix_with_the_restored_file() {
     let scene = new_scene().await;
     // The server that wrote the data that is there was killed: a write sits in
-    // its WAL, not yet in the database file.
-    let conn = Connection::open(scene.data().join(DB_FILE)).expect("open");
+    // its WAL, not yet in the database file, and so does a bump of the restore
+    // epoch ahead of the clock.
+    let mut conn = Connection::open(scene.data().join(DB_FILE)).expect("open");
     let _: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
         .expect("WAL");
@@ -1198,6 +1200,8 @@ async fn the_wal_and_shm_of_the_current_data_never_mix_with_the_restored_file() 
          INSERT INTO ferret_meta (key, value) VALUES ('only_in_the_wal', x'01');",
     )
     .expect("a write");
+    let ahead = u64::try_from(NOW).unwrap() + 9000;
+    reconcile::bump(&mut conn, Some(ahead), NOW).expect("a bump");
     // No close: a close would fold the WAL into the file.
     std::mem::forget(conn);
     let wal = scene.data().join(format!("{DB_FILE}-wal"));
@@ -1205,17 +1209,28 @@ async fn the_wal_and_shm_of_the_current_data_never_mix_with_the_restored_file() 
     assert!(wal.exists() && shm.exists());
     let before = live_files(scene.data());
 
-    restore_scene(&scene, &scene.backup).expect("a restore");
+    let report = restore_scene(&scene, &scene.backup).expect("a restore");
+    // The epoch in the WAL counts.
+    assert_eq!(report.restore_epoch, ahead + 1);
+    assert!(!report.seen_epoch_unknown);
     assert!(
         !wal.exists() && !shm.exists(),
         "the old -wal and -shm are gone"
     );
     assert!(!scene.data().join(format!("{DB_FILE}-journal")).exists());
+    // They moved with their database. The `-shm` is moved too, but it is the
+    // index of the WAL that a reader of it updates (the restore read the epoch
+    // through it), not data: only that it went along is compared.
+    let without_shm = |mut files: BTreeMap<String, String>| {
+        files.remove(&format!("{DB_FILE}-shm"));
+        files
+    };
     assert_eq!(
-        live_files(&scene.aside()),
-        before,
+        without_shm(live_files(&scene.aside())),
+        without_shm(before),
         "they moved with their database"
     );
+    assert!(scene.aside().join(format!("{DB_FILE}-shm")).exists());
     let in_the_wal = "SELECT COUNT(*) FROM ferret_meta WHERE key = 'only_in_the_wal'";
     assert_eq!(count(&scene.data().join(DB_FILE), in_the_wal), 0);
 
@@ -1316,4 +1331,242 @@ async fn the_report_holds_no_secret() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------- an abort that is cut off
+
+/// The marker says that an abort is under way.
+fn undoing(dir: &Path) -> bool {
+    marker(dir)["undoing"] == Value::Bool(true)
+}
+
+#[tokio::test]
+async fn an_abort_cut_off_after_each_of_its_moves_finishes_when_run_again() {
+    for step in RESTORE_STEPS {
+        for cut in restore::ABORT_STEPS {
+            let why = format!("restore cut after {step}, abort cut after {cut}");
+            let scene = new_scene().await;
+            restore::restore_until(scene.data(), &scene.backup, None, NOW, step)
+                .unwrap_or_else(|e| panic!("{why}: {e}"));
+            restore::abort_until(scene.data(), cut).unwrap_or_else(|e| panic!("{why}: {e}"));
+            if cut == "unmarked" {
+                // The old data is back and the marker is gone: only copies are
+                // left, and the server starts on the old data.
+                assert_eq!(live_files(scene.data()), scene.before, "{why}");
+                assert!(!scene.data().join(RESTORE_MARKER).exists(), "{why}");
+                assert!(
+                    restore::abort(scene.data()).is_err(),
+                    "{why}: nothing to undo"
+                );
+                let state = start_on(scene.data()).await.expect("the server starts");
+                drop(state);
+                continue;
+            }
+            assert!(undoing(scene.data()), "{why}");
+            assert_start_refused(scene.data(), &why).await;
+            // The second abort finishes, and never takes the old files for
+            // restored ones.
+            restore::abort(scene.data()).unwrap_or_else(|e| panic!("{why}: {e}"));
+            scene.assert_untouched(&why);
+        }
+    }
+
+    // Cut off half way through taking the restored files back (the marker does
+    // not say `undoing` yet).
+    let scene = new_scene().await;
+    restore::restore_until(scene.data(), &scene.backup, None, NOW, "placed").expect("stopped");
+    std::fs::rename(scene.data().join(DB_FILE), scene.staging().join(DB_FILE)).expect("a move");
+    assert!(!undoing(scene.data()));
+    restore::abort(scene.data()).expect("undone");
+    scene.assert_untouched("half the restored files taken back");
+
+    // Cut off half way through putting the old files back.
+    let scene = new_scene().await;
+    restore::restore_until(scene.data(), &scene.backup, None, NOW, "placed").expect("stopped");
+    restore::abort_until(scene.data(), "undoing").expect("stopped");
+    std::fs::rename(scene.aside().join(DB_FILE), scene.data().join(DB_FILE)).expect("a move");
+    restore::abort(scene.data()).expect("undone");
+    scene.assert_untouched("half the old files put back");
+    let state = start_on(scene.data()).await.expect("the server starts");
+    let accounts: i64 = state
+        .vault_db
+        .with_conn(|conn| {
+            Ok(conn.query_row("SELECT COUNT(*) FROM ferret_accounts", [], |r| r.get(0))?)
+        })
+        .await
+        .expect("a count");
+    assert_eq!(accounts, 2, "the old data");
+}
+
+#[tokio::test]
+async fn a_restore_rerun_after_a_cut_off_abort_refuses() {
+    for cut in ["undoing", "old_back"] {
+        let scene = new_scene().await;
+        restore::restore_until(scene.data(), &scene.backup, None, NOW, "placed").expect("stopped");
+        restore::abort_until(scene.data(), cut).expect("stopped");
+        let before = live_files(scene.data());
+        let refused = restore_scene(&scene, &scene.backup).expect_err("an abort is under way");
+        assert!(refused.to_string().contains("--abort"), "{cut}: {refused}");
+        assert_eq!(live_files(scene.data()), before, "{cut}: nothing moved");
+        assert!(undoing(scene.data()), "{cut}");
+        restore::abort(scene.data()).expect("undone");
+        scene.assert_untouched(cut);
+    }
+
+    // An abort cut off before the marker said `undoing`, with a restored file
+    // already taken back: a rerun of the restore removes nothing and says to
+    // undo it.
+    let scene = new_scene().await;
+    restore::restore_until(scene.data(), &scene.backup, None, NOW, "placed").expect("stopped");
+    std::fs::rename(scene.data().join(DB_FILE), scene.staging().join(DB_FILE)).expect("a move");
+    let refused = restore_scene(&scene, &scene.backup).expect_err("files are missing");
+    assert!(refused.to_string().contains("--abort"), "{refused}");
+    assert!(
+        scene.staging().join(DB_FILE).exists(),
+        "the staged copy is kept"
+    );
+    assert!(scene.data().join(RESTORE_MARKER).exists());
+    restore::abort(scene.data()).expect("undone");
+    scene.assert_untouched("after the refused rerun");
+}
+
+// ---------------------------------------------------------------- what the operator is told
+
+#[tokio::test]
+async fn the_epoch_of_missing_or_broken_data_is_reported_as_unknown() {
+    let scene = new_scene().await;
+    // No database there at all (a new host).
+    let empty = Dir::new("empty-data");
+    let said = cli::run(Command::BackupRestore {
+        data_dir: empty.path().to_path_buf(),
+        from: scene.backup.clone(),
+        confirmed: true,
+        at_least: None,
+    })
+    .expect("a restore");
+    assert!(
+        said.contains("\nwarning: the restore epoch of the data that was there could not be read"),
+        "{said}"
+    );
+    assert!(said.contains("--at-least"), "{said}");
+
+    // A broken one.
+    let broken = Dir::new("broken-data");
+    std::fs::write(broken.path().join(DB_FILE), b"not a database").expect("junk");
+    let report = restore::restore(broken.path(), &scene.backup, None, NOW).expect("a restore");
+    assert!(report.seen_epoch_unknown);
+    assert_eq!(accounts(broken.path()), 1);
+
+    // A readable one: no warning.
+    let report = restore_scene(&scene, &scene.backup).expect("a restore");
+    assert!(!report.seen_epoch_unknown);
+}
+
+#[tokio::test]
+async fn a_higher_at_least_on_a_rerun_is_used_or_refused_never_dropped() {
+    // Before the bump: the higher one is used.
+    let scene = new_scene().await;
+    restore::restore_until(scene.data(), &scene.backup, None, NOW, "migrated").expect("stopped");
+    let wanted = u64::try_from(NOW).unwrap() + 4242;
+    let report =
+        restore::restore(scene.data(), &scene.backup, Some(wanted), NOW).expect("finished");
+    assert_eq!(report.restore_epoch, wanted);
+
+    // After the bump: refused, and nothing changes; without it the run ends.
+    let scene = new_scene().await;
+    restore::restore_until(scene.data(), &scene.backup, None, NOW, "bumped").expect("stopped");
+    let refused = restore::restore(scene.data(), &scene.backup, Some(wanted), NOW)
+        .expect_err("already raised");
+    assert!(
+        refused.to_string().contains("restore-epoch bump"),
+        "{refused}"
+    );
+    assert_eq!(marker(scene.data())["step"], "bumped");
+    // One at or below what the bump gave is fine.
+    let report = restore::restore(
+        scene.data(),
+        &scene.backup,
+        Some(u64::try_from(NOW).unwrap()),
+        NOW,
+    )
+    .expect("finished");
+    assert_eq!(report.restore_epoch, u64::try_from(NOW).unwrap());
+    scene.assert_restored("after the refused --at-least");
+}
+
+// ---------------------------------------------------------------- a set that was made by hand
+
+#[tokio::test]
+async fn a_set_with_a_trigger_or_an_object_this_build_does_not_make_is_refused() {
+    let scene = new_scene().await;
+
+    // A trigger that would undo the end of the sessions.
+    let (_trigger, trigger) = copy_of_backup(&scene, "trigger");
+    change_set(
+        &trigger,
+        "CREATE TRIGGER keep_sessions AFTER UPDATE ON ferret_sessions \
+         BEGIN UPDATE ferret_sessions SET revoked_at = NULL; END;",
+    );
+    let refused = restore_scene(&scene, &trigger).expect_err("a trigger");
+    assert_eq!(
+        refused,
+        BackupError::Verify("the database copy holds a trigger or a view")
+    );
+    set::verify(&trigger, &set::build_migrations()).expect_err("verify says it too");
+    scene.assert_untouched("a set with a trigger");
+
+    // A view.
+    let (_view, view) = copy_of_backup(&scene, "view");
+    change_set(
+        &view,
+        "CREATE VIEW everything AS SELECT * FROM ferret_items;",
+    );
+    let refused = restore_scene(&scene, &view).expect_err("a view");
+    assert!(matches!(refused, BackupError::Verify(_)), "{refused}");
+    scene.assert_untouched("a set with a view");
+
+    // A table and an index this build does not make: the schema is compared
+    // after the migrations, and the staged copy and the marker go.
+    for (name, sql) in [
+        ("extra-table", "CREATE TABLE extra (x);"),
+        (
+            "extra-index",
+            "CREATE INDEX extra_index ON ferret_items (size);",
+        ),
+    ] {
+        let (_odd, odd) = copy_of_backup(&scene, name);
+        change_set(&odd, sql);
+        set::verify(&odd, &set::build_migrations()).expect("a set that verifies");
+        let refused = restore_scene(&scene, &odd).expect_err("another schema");
+        assert_eq!(
+            refused,
+            BackupError::Refused("the schema of the set is not the one this build makes"),
+            "{name}"
+        );
+        scene.assert_untouched(name);
+    }
+
+    // The set as the server made it goes through.
+    restore_scene(&scene, &scene.backup).expect("a restore");
+    scene.assert_restored("the server's own set");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_command_runs_only_as_the_user_that_owns_the_data_directory() {
+    use std::os::unix::fs::MetadataExt as _;
+    let scene = new_scene().await;
+    let me = std::fs::metadata(scene.data()).expect("the folder").uid();
+    // Only a test run as root can give the folder to another user.
+    if rustix::process::geteuid().is_root() {
+        std::os::unix::fs::chown(scene.data(), Some(1000), None).expect("chown");
+        let refused = restore_scene(&scene, &scene.backup).expect_err("another user");
+        assert!(refused.to_string().contains("user that owns"), "{refused}");
+        let refused = restore::abort(scene.data()).expect_err("another user");
+        assert!(refused.to_string().contains("user that owns"), "{refused}");
+        scene.assert_untouched("as another user");
+        std::os::unix::fs::chown(scene.data(), Some(me), None).expect("chown back");
+    }
+    restore_scene(&scene, &scene.backup).expect("a restore");
+    scene.assert_restored("as the owner");
 }

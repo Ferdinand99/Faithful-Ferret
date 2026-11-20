@@ -302,7 +302,7 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             require_yes("backup restore changes the data directory", confirmed)?;
             let report = restore::restore(&data_dir, &from, at_least, now_unix()?)
                 .map_err(|error| restore_failed(&data_dir, error))?;
-            Ok(format!(
+            let mut said = format!(
                 "restored {} vault{}: restore epoch is now {}, {} session{} ended, the files \
                  that were there are in {}",
                 report.vaults,
@@ -311,7 +311,17 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
                 report.sessions_ended,
                 plural(report.sessions_ended),
                 report.moved_aside.display()
-            ))
+            );
+            if report.seen_epoch_unknown {
+                said.push_str(
+                    "\nwarning: the restore epoch of the data that was there could not be read \
+                     (no database, or a broken one). If clients may have seen a higher restore \
+                     epoch than this one (after an --at-least, or a clock that ran ahead), run \
+                     `ferret restore-epoch bump --yes --at-least <n>` above it before you start \
+                     the server",
+                );
+            }
+            Ok(said)
         }
         Command::BackupAbort {
             data_dir,
