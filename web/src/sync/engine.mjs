@@ -1606,7 +1606,9 @@ export function createSyncEngine({
   /**
    * The item that the user brought back over a purged tombstone becomes a copy under a new id (the core's `copy_item`: the same body under a
    * new item key, sealed inside the worker): the queued writes of the old item are swapped for the first write of the copy in one transaction,
-   * the old item stays deleted on the screen, and the copy shows as pending like any new item. Answers false, and changes nothing, for an item
+   * the old item stays deleted on the screen, and the copy shows as pending like any new item. Two devices that bring the same purged item back
+   * each make their own copy under their own id, so the vault ends with two items with the same content (nothing is lost, nothing is refused, and
+   * duplicates are not removed here). Answers false, and changes nothing, for an item
    * the core will not copy (`invalid_state` for a passkey, `read_only_schema` for a newer schema).
    * Spec: Fase 1 section 8.5 ("Keep both" creates a new item: a copy under a new item key) and section 8.4.
    * @param {string} id @param {import("../store/outbox.mjs").OutboxEntry} last the newest write that waits for the item (a live one)

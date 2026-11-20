@@ -21,8 +21,8 @@ const signedTombstone = (d, id, rev) => signCheckpoint(d.model.signKey, d.model.
 const signedLive = (d, id, rev) => signCheckpoint(d.model.signKey, d.model.seq, [{ item_id: hex16.decode(id), rev, hash: new Uint8Array(32).fill(1) }]);
 
 /** A started device, and a spy on the rows each call of the check of a checkpoint is given. */
-async function started({ model = new Model(), client = createFakeClient(), db = null, locks } = {}) {
-  const d = await syncDevice({ model, client, db, ...(locks ? { locks } : {}) });
+async function started({ model = new Model(), client = createFakeClient(), db = null, locks, seed = 1 } = {}) {
+  const d = await syncDevice({ model, client, db, seed, ...(locks ? { locks } : {}) });
   d.checked = [];
   const real = client.vault.verify_checkpoint;
   client.vault.verify_checkpoint = async (checkpoint, rows, top, memory) => {
@@ -583,4 +583,64 @@ test("a_copy_made_over_a_purged_tombstone_is_shown_after_a_restart_although_the_
   assert.ok(second.engine.list().some((item) => item.id === copyId), "the copy is shown after the restart");
   assert.ok(!second.engine.list().some((item) => item.id === id), "and the old id is not");
   second.engine.stop();
+});
+
+test("an_older_held_tombstone_is_no_alarm_against_the_entry_of_a_newer_tombstone", async () => {
+  // The item was deleted (rev 2), brought back (rev 3) and deleted again (rev 4); the newer tombstone was purged. The device holds the rev 2
+  // tombstone; the checkpoint that covers the purge lists the item as a tombstone at rev 4, and the server has no row and a floor above the seq.
+  const d = await started();
+  const id = await holdingATombstone(d);
+  d.model.items.delete(id);
+  d.model.seq += 4;
+  d.model.minValidSince = d.model.seq;
+  d.model.checkpoint = signedTombstone(d, id, 4);
+  d.api.gets.length = 0;
+  assert.equal(await d.engine.verifyNow(), "ok", "an honest server that purged the newer tombstone is no reason for an alarm");
+  assert.deepEqual(d.engine.health().warnings, []);
+  assert.equal((await rowsOf(d)).find((row) => row.itemId === id)?.rev, 2, "the older tombstone is kept");
+  // The same checkpoint with the item listed live above the tombstone's revision is still an alarm.
+  const e = await started();
+  const other = await holdingATombstone(e);
+  e.model.items.delete(other);
+  e.model.seq += 4;
+  e.model.minValidSince = e.model.seq;
+  e.model.checkpoint = signedLive(e, other, 4);
+  assert.equal(await e.engine.verifyNow(), "server_shows_older_state", "a live entry is never explained by a purge");
+  d.engine.stop();
+  e.engine.stop();
+});
+
+test("two_devices_that_restore_the_same_purged_item_at_once_each_make_a_copy_and_nothing_is_refused", async () => {
+  // Each device makes its own copy under its own random id, so the vault ends with two items with the same content. Nothing is lost, nothing stays
+  // stuck and no warning is raised (no removal of duplicates: the user sees two items and removes one).
+  const model = new Model();
+  const client = createFakeClient();
+  const a = await started({ model, client });
+  const b = await started({ model, client, seed: 2 }); // another source of ids: two devices do not draw the same ones
+  const id = await a.engine.create(draft("restored twice"));
+  await until(() => model.items.get(id)?.rev === 1);
+  await a.engine.syncNow();
+  await b.engine.syncNow(); // both hold the live row
+  await a.engine.remove(id);
+  await until(() => model.items.get(id)?.rev === 2);
+  await a.engine.syncNow();
+  await b.engine.syncNow(); // both hold the tombstone, and have the item in the trash
+  model.pinCheckpoint();
+  model.items.delete(id);
+  model.minValidSince = 2;
+  await Promise.all([a.engine.restoreFromTrash(id), b.engine.restoreFromTrash(id)]);
+  await until(() => [...model.items.keys()].filter((key) => key !== id).length === 2, "each device wrote its copy");
+  await settle(30);
+  const copies = [...model.items.keys()].filter((key) => key !== id);
+  assert.equal(copies.length, 2, "two items");
+  assert.ok(copies.every((key) => model.items.get(key).rev === 1 && !model.items.get(key).deleted));
+  await a.engine.syncNow();
+  await b.engine.syncNow();
+  for (const d of [a, b]) {
+    assert.deepEqual(d.engine.list().map((item) => item.name), ["restored twice", "restored twice"], "both are shown, with the same content");
+    assert.deepEqual(d.engine.health().warnings, []);
+    assert.equal(d.events.error.length, 0);
+  }
+  a.engine.stop();
+  b.engine.stop();
 });
