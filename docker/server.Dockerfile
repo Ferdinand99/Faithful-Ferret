@@ -85,6 +85,15 @@ COPY --from=build --chmod=755 /usr/local/bin/ferret /usr/local/bin/ferret
 COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/
 COPY --chmod=755 docker/ferret-entrypoint.sh /usr/local/bin/ferret-entrypoint.sh
 
+# What a release image says about itself: the version and the commit it was built from.
+# The deploy script of a stack with real data (scripts/ferret-home.sh) compares the
+# revision with the commit of the release tag and refuses an image that does not match.
+# Empty in a local build.
+ARG VERSION=""
+ARG REVISION=""
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+
 ENV FERRET_DATA_DIR=/data
 
 # No USER on purpose: the entrypoint starts as root only to fix the ownership
