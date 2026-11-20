@@ -538,3 +538,79 @@ async fn finishes_that_wait_hold_no_database_connection() {
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     }
 }
+
+#[test]
+fn a_flood_of_finishes_for_made_up_names_cannot_hang_the_database_routes() {
+    // A runtime with few blocking threads. Every finish of a state that opens
+    // (a made-up name has one) reads the record; if that read needed a pooled
+    // connection or a second blocking thread while the finish holds one, a
+    // flood larger than the blocking threads would leave none for the pool's
+    // own work, and every database route would hang.
+    const BLOCKING: usize = 6;
+    const FLOOD: usize = 48;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(BLOCKING)
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    runtime.block_on(async {
+        let app = app().await;
+        // Half-way sign-ins for names nobody has: each has a state that opens.
+        let mut halves = Vec::with_capacity(FLOOD);
+        for n in 0..FLOOD {
+            let (ke1, _) = opaque_login_start(&mut OsRng, &opaque_input("anything at all"))
+                .expect("a start");
+            let mut jar = Jar::default();
+            let started = send(
+                &app,
+                &mut jar,
+                vault_post(
+                    "/api/auth/opaque/login/start",
+                    &json!({"email": format!("nobody{n}@example.com"), "ke1": b64url::encode(&ke1)}),
+                ),
+            )
+            .await;
+            assert_eq!(started.status, StatusCode::OK, "{}", started.text());
+            halves.push(started.json()["login_id"].clone());
+        }
+        let flood = halves.into_iter().map(|login_id| {
+            let app = &app;
+            async move {
+                let mut jar = Jar::default();
+                send(
+                    app,
+                    &mut jar,
+                    vault_post(
+                        "/api/auth/opaque/login/finish",
+                        &json!({
+                            "login_id": login_id,
+                            "ke3": b64url::encode(&[5u8; 64]),
+                            "device_id": "07".repeat(16),
+                        }),
+                    ),
+                )
+                .await
+            }
+        });
+        let unrelated = async {
+            // Let the flood start, then use the pool.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            app.state
+                .vault_db
+                .with_conn(|conn| Ok(conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))?))
+                .await
+        };
+        let (answers, read) = tokio::time::timeout(
+            Duration::from_secs(60),
+            async { tokio::join!(futures_util::future::join_all(flood), unrelated) },
+        )
+        .await
+        .expect("nothing hangs");
+        assert_eq!(read.expect("a read"), 1);
+        for res in answers {
+            assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+            assert_eq!(res.json()["error"], json!("denied"));
+        }
+    });
+}

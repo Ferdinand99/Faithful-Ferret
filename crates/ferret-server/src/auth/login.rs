@@ -113,6 +113,7 @@ use crate::auth::session::{
     SessionRow, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS, clear_cookies, insert_session, lookup,
     mark_reauth, new_session, reauth_fresh, revoke, scoped_session_cookies, still_valid,
 };
+use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
 use crate::http::extract::{AdminSession, ScopedSession, VaultSession, caps, session_binding};
@@ -873,43 +874,29 @@ fn presented_sid(jar: &SignedCookieJar) -> Option<SidHash> {
 /// reads it, by the credential id of the state (the account id, or the made-up
 /// id of a name without an account).
 ///
-/// `login_finish` runs on a blocking thread, outside the pool: it waits for
-/// the login-state store (its mutex, and the SQLite write lock for `take`),
-/// and a request that held a pooled connection through that wait would let a
-/// flood of finishes, which need no account, starve every other route of the
-/// pool. This source takes a pooled connection for its one `SELECT` only, and
-/// only for a state that opened and that the throttle let through.
+/// `login_finish` runs on a blocking thread, outside the vault pool: it waits
+/// for the login-state store (its mutex, and the SQLite write lock for
+/// `take`). The record is read on that same thread, through the store's own
+/// connection ([`SqliteLoginStateStore::account_record`]): a finish takes no
+/// pooled connection and no second blocking thread, so a flood of finishes,
+/// which need no account, can neither starve the pool nor use up the blocking
+/// threads that the pool's own work needs. The read happens only for a state
+/// that opened and that the throttle let through.
 ///
 /// A credential with no row hashes the stand-in record, so a real and a
 /// made-up account cost the same here apart from the primary-key lookup, which
 /// finds a row or not as the lookup of `login/start` does.
-struct StoredRecords {
-    db: VaultDb,
-    runtime: tokio::runtime::Handle,
-}
+struct StoredRecords<'s>(&'s SqliteLoginStateStore);
 
-impl CurrentRecord for StoredRecords {
+impl CurrentRecord for StoredRecords<'_> {
     fn current_record(
         &self,
         credential: &CredentialId,
     ) -> Result<Option<RecordBinding>, AuthError> {
-        let account = *credential.as_bytes();
-        // A blocking thread of the runtime, so waiting on the pool is allowed.
-        let found: Option<Vec<u8>> = self
-            .runtime
-            .block_on(self.db.with_conn(move |conn| {
-                Ok(conn
-                    .query_row(
-                        "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
-                        params![account.as_slice()],
-                        |r| r.get(0),
-                    )
-                    .optional()?)
-            }))
-            .map_err(|error| {
-                tracing::error!(%error, "the record of a sign-in could not be read");
-                AuthError::Internal(InternalKind::Storage)
-            })?;
+        let found = self
+            .0
+            .account_record(credential.as_bytes())
+            .map_err(|_| AuthError::Internal(InternalKind::Storage))?;
         let binding = match &found {
             Some(stored) => RecordBinding::of(stored),
             None => RecordBinding::of(stand_in_record()),
@@ -938,10 +925,10 @@ fn record_is_current(
 /// The library's `login_finish`, on a blocking thread: it takes and opens the
 /// sealed state once, against the purpose the request names, asks the
 /// throttle with the account of the state, and then reads the account's
-/// record (one pooled `SELECT`) and checks the proof.
+/// record (on the store's connection, see `StoredRecords`) and checks the
+/// proof.
 fn finish_blocking(
     state: &FerretState,
-    runtime: tokio::runtime::Handle,
     caller: Caller,
     login_id: &str,
     ke3: &[u8],
@@ -952,10 +939,7 @@ fn finish_blocking(
     login_finish(
         &cx,
         state.login_states.as_ref(),
-        &StoredRecords {
-            db: state.vault_db.clone(),
-            runtime,
-        },
+        &StoredRecords(state.login_states.as_ref()),
         &LoginFinishRequest {
             caller,
             login_id: login_id.as_bytes(),
@@ -1037,11 +1021,10 @@ async fn login_finish_route(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
     let worker = state.clone();
-    let runtime = tokio::runtime::Handle::current();
     // On a blocking thread, as the store needs, and outside the pool: see
     // `StoredRecords`.
     let verified = tokio::task::spawn_blocking(move || {
-        finish_blocking(&worker, runtime, caller, &login_id, &ke3, current_session)
+        finish_blocking(&worker, caller, &login_id, &ke3, current_session)
     })
     .await
     .map_err(|_| ApiError::internal())?
