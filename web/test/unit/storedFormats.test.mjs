@@ -2,8 +2,8 @@
 // test/fixtures/stored/v2/. They are written into a database that has the version-2 schema (frozen in this
 // file), and then read by the code as it is now. A change to what a store holds, or to the schema, needs a
 // reader (or a migration) for these records and a new golden file for the new version; it never changes
-// these files. The outbox entries have no import mark: the field does not exist in version 2, and an entry
-// without it is an ordinary write.
+// these files. The outbox entries of outbox.json have no import mark: an entry without it is an ordinary write.
+// outbox-import.json has the entries of an import, which carry the mark (the id of the import window).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
@@ -33,6 +33,7 @@ const GOLDEN = join(web, "test", "fixtures", "stored", "v2");
 const GOLDEN_SHA256 = Object.freeze({
   "device_secrets.json": "e55b153ce47b04e7c1da23fd6e106c574f640b3787ca979ed54ecfbd1042daa1",
   "outbox.json": "55c454d52875a4bc7be14e7ec15f8f964131d535bbc408c749dc1c04cc2abd70",
+  "outbox-import.json": "3d9832f9defa296136f92dc18a1598cebc6e3a0c49ffa4d227cc1ee8c0c7cb44",
   "pinned.json": "b1fb260c4db127ef02a443170c8b8248d0a6cc55c6ee60e5c316a4bb1c8168fe",
   "rows.json": "6ea447b42bf3fb099c603a1b7e32f45854d0f0511bce72cb76f65282bee36448",
   "settings.json": "b22bff49c58473bc532c00a55b232e43dfd1f28030023c3677faaf58445bd3be",
@@ -170,7 +171,8 @@ const sortedKeys = (value) => Object.keys(value).sort();
 
 test("stored_records_of_version_2_are_read_by_the_current_code", async () => {
   // Every store of version 2 has a golden file, and the code still opens the same seven.
-  assert.deepEqual(readdirSync(GOLDEN).sort(), Object.keys(V2).map((n) => `${n}.json`).sort());
+  // (and the entries of an import, which have a file of their own: see the last test)
+  assert.deepEqual(readdirSync(GOLDEN).sort(), [...Object.keys(V2).map((n) => `${n}.json`), "outbox-import.json"].sort());
   for (const name of Object.keys(V2)) assert.ok(STORES.includes(name), `${name} is still a store`);
   assert.ok(DB_VERSION >= 2);
 
@@ -374,4 +376,69 @@ test("a_changed_stored_shape_without_a_reader_fails", async () => {
   // The rows and the trash refuse a field they do not hold when they are written, so a new field cannot slip in beside the old ones.
   await assert.rejects(cache.putRows(damaged, scope(2), [{ ...first("rows"), extra: 1 }]), (e) => e.code === "row_field");
   await assert.rejects(trash.put(damaged, scope(2), { ...entry, extra: 1 }), (e) => e.code === "trash_field");
+});
+
+// ------------------------------------------------------------------ the import mark of the outbox
+
+test("an_outbox_entry_with_the_import_mark_is_read_and_written_in_the_form_of_its_golden_record", async () => {
+  // The mark is a field that is added to an entry of version 2 of the database (the version does not change): the golden file has the entries
+  // of an import, and an entry without the field (outbox.json) stays an ordinary write.
+  const text = readFileSync(join(GOLDEN, "outbox-import.json"), "utf8");
+  assert.equal(createHash("sha256").update(text.replaceAll("\r\n", "\n")).digest("hex"), GOLDEN_SHA256["outbox-import.json"], "outbox-import.json is a frozen golden file");
+  const file = JSON.parse(text);
+  assert.equal(file.store, "outbox");
+  assert.equal(file.dbVersion, 2);
+  const records = await Promise.all(file.records.map(async ({ value }) => decode(value)));
+  assert.equal(records.length, 2);
+
+  // Written the way the code that added the mark wrote it, and read by the current code.
+  const store = await freshStore();
+  await run(store, ["outbox"], "readwrite", async ([table]) => {
+    for (const value of records) await req(table.add(value));
+  });
+  const queued = await outbox.all(store, scope(2));
+  assert.equal(queued.length, 2);
+  for (const [at, entry] of queued.entries()) {
+    assert.deepEqual(sortedKeys(entry), ["baseRev", "body", "bytes", "idem", "import", "itemId"]);
+    assert.equal(entry.import, records[at].import);
+    assert.ok(hex16.is(entry.import) && hex16.is(entry.idem) && hex16.is(entry.itemId));
+    assert.equal(entry.baseRev, 0);
+    assert.deepEqual(entry.body, records[at].body);
+    assert.deepEqual(entry.bytes, records[at].bytes);
+  }
+
+  // What the code writes today has the form of the golden records, and passes the checks of a queue.
+  const fresh = await freshStore();
+  await outbox.enqueueMany(fresh, scope(2), queued);
+  assert.deepEqual((await dump(fresh, "outbox")).map((r) => shapeOf(r.value)), records.map(shapeOf), "outbox, import mark");
+  assert.deepEqual(await outbox.all(fresh, scope(2)), queued, "in the order they were queued");
+
+  // A new window changes the mark of the entries that carry one, and nothing else: not the bytes, not the key, not the place in the queue.
+  const window = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+  assert.equal(await outbox.remark(fresh, scope(2), queued.map((e) => e.idem), window), 2);
+  const again = await outbox.all(fresh, scope(2));
+  assert.deepEqual(again.map((e) => ({ ...e, import: undefined })), queued.map((e) => ({ ...e, import: undefined })));
+  assert.deepEqual(again.map((e) => e.import), [window, window]);
+  assert.equal(await outbox.remark(fresh, scope(2), ["00000000000000000000000000000000"], window), 0, "a key that is not there is left alone");
+
+  // An entry without the mark is not given one, and a mark that cannot be right is refused.
+  /** The same write under another key (the key is in the bytes too). */
+  const rekeyed = (entry, idem, change = {}) => ({
+    ...entry, ...change, idem, bytes: new TextEncoder().encode(new TextDecoder().decode(entry.bytes).replace(entry.idem, idem)),
+  });
+  const plain = rekeyed(queued[0], "dddd4444dddd4444dddd4444dddd4444", { itemId: "0123456789abcdef0123456789abcdef" });
+  delete plain.import;
+  await outbox.enqueue(fresh, scope(2), plain);
+  assert.equal(await outbox.remark(fresh, scope(2), [plain.idem], window), 0, "an ordinary write is never made part of an import");
+  assert.equal(Object.hasOwn((await outbox.all(fresh, scope(2))).at(-1), "import"), false);
+  const key = "eeee5555eeee5555eeee5555eeee5555";
+  const refused = (entry, message) => assert.rejects(outbox.enqueue(fresh, scope(2), entry), (e) => e.code === "outbox_entry" && e.message.includes(message));
+  await refused(rekeyed(queued[0], key, { import: "not-a-window" }), "import is the id of a window");
+  await refused(rekeyed(queued[0], key, { import: 7 }), "import is the id of a window");
+  const later = JSON.stringify({ ...JSON.parse(new TextDecoder().decode(queued[0].bytes)), base_rev: 1, idem: key });
+  await refused({ ...queued[0], idem: key, baseRev: 1, bytes: new TextEncoder().encode(later) }, "an import writes a new item");
+
+  // Taken out many at a time.
+  await outbox.removeMany(fresh, scope(2), [...queued.map((e) => e.idem), "00000000000000000000000000000000"]);
+  assert.deepEqual((await outbox.all(fresh, scope(2))).map((e) => e.idem), [plain.idem]);
 });
