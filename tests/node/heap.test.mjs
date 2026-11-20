@@ -6,18 +6,19 @@
 // Run: node --test tests/node/heap.test.mjs   (about half a minute)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { NOW, PASSWORD, enc, fill, newAccount, row, wasm } from "./helpers.mjs";
+import { NOW, PASSWORD, enc, fill, newAccount, reauthToken, row, wasm } from "./helpers.mjs";
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 
 test("export_256mib_does_not_oom", () => {
-  const { vault } = newAccount("heap-export");
+  const account = newAccount("heap-export");
+  const { vault } = account;
   const id = fill(16, 0x41);
   const rows = [row(id, vault.encrypt_item(id, 1, { item_type: "note", name: "n", notes: "x".repeat(1000) }, undefined, NOW))];
   const before = wasm.test_memory_bytes();
   // The default: 256 MiB, 3 passes, 1 lane.
-  const started = vault.export_begin(rows, NOW);
+  const started = vault.export_begin(rows, NOW, undefined, reauthToken(account));
   assert.equal(started.kdf.m_kib, 262144);
   const key = wasm.argon2_export_key(enc.encode("export password for the heap"), started.salt, started.kdf, "write", enc.encode(PASSWORD));
   const file = vault.export_finish(key);
