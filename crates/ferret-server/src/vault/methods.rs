@@ -1,8 +1,9 @@
 //! `GET /api/vault/unlock-methods`: the wraps of the vault key, the public key
 //! `pk_a`, the key epoch and the manifest row. Spec: Fase 1 § 4.6.
 //!
-//! Only a full session reaches this route (the extractor refuses the others),
-//! and the account is the session's own: there is no id in the path.
+//! Only a full session or a device token reaches this route (the extractor
+//! refuses the others), and the account is the caller's own: there is no id in
+//! the path.
 
 use axum::extract::{FromRef, State};
 use axum::routing::get;
@@ -10,7 +11,7 @@ use axum::{Json, Router};
 
 use super::store::{self, MethodRow, MethodsView};
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::state::VaultDb;
 use crate::wire::{MethodsRes, SealedRowJson, WrapJson};
 
@@ -24,13 +25,13 @@ where
     Router::new().route("/api/vault/unlock-methods", get(get_methods))
 }
 
-/// The wraps, `pk_a`, the key epoch and the manifest row of the session's
+/// The wraps, `pk_a`, the key epoch and the manifest row of the caller's
 /// account.
 async fn get_methods(
-    session: VaultSession,
+    caller: VaultCaller,
     State(db): State<VaultDb>,
 ) -> Result<Json<MethodsRes>, ApiError> {
-    let account = session.account;
+    let account = caller.account();
     let view = db
         .with_conn(move |conn| store::methods_view(conn, &account))
         .await?;

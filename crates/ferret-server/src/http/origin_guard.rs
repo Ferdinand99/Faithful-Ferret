@@ -1,15 +1,37 @@
 //! The `Origin` and `Ferret-Protocol` check on every mutating request, the
-//! fetch-metadata check for requests with a cookie, and the rewriting of the
-//! cookies the kit sets.
+//! fetch-metadata check for requests with a cookie, the rules for requests
+//! with a device token, and the rewriting of the cookies the kit sets.
 //!
 //! Spec: Fase 1 § 8.2. The origin is compared with the configured public URL of
 //! the listener (`config::Origins`), never with the `Host` header. Ferret sends
 //! no CORS headers at all: a response never carries an `Access-Control-*`
 //! header, and a pre-flight request gets no `Access-Control-Allow-Origin`, so
 //! no other site can read an answer or send a request with the protocol header.
+//!
+//! # Device tokens
+//!
+//! A **token header** is an `Authorization` header whose scheme is `DPoP`
+//! (in any case) or a `DPoP` header (RFC 9449 § 4.1, § 7.1). Any other
+//! `Authorization` scheme, such as the `Basic` that a proxy in front of the
+//! server may ask for, is not one and changes nothing. On every method:
+//!
+//! * several `DPoP` headers, or several `Authorization` headers of which one
+//!   has the scheme `DPoP`, are `400 bad_request`;
+//! * a token header together with a cookie is `400 bad_request`, on both
+//!   listeners: a request is a session's or a device's, never both;
+//! * the admin listener takes no token: a token header there is
+//!   `400 bad_request`;
+//! * on the vault listener a request with a token header needs
+//!   `Ferret-Protocol: 1` on every method, `GET` included. It has no cookie,
+//!   so the `Origin` check of cookie requests does not apply to it; the
+//!   hand-over routes still need their `Origin`.
+//!
+//! A page of another site cannot send a token header: `Authorization` and
+//! `DPoP` are not CORS-safelisted, so the browser asks a pre-flight first, and
+//! Ferret allows none.
 
 use axum::extract::{Request, State};
-use axum::http::header::{COOKIE, ORIGIN, SET_COOKIE};
+use axum::http::header::{AUTHORIZATION, COOKIE, ORIGIN, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -39,22 +61,29 @@ pub struct ListenerOrigin {
     /// send a custom header; they are covered by the `Origin` check (and the
     /// kit's own CSRF guard). On the vault listener every mutation needs it.
     pub protocol_only_for_api: bool,
+    /// Whether the listener takes device tokens: the vault listener does, the
+    /// admin listener never does.
+    pub takes_tokens: bool,
 }
 
 impl ListenerOrigin {
-    /// The vault listener: the protocol header on every mutation.
+    /// The vault listener: the protocol header on every mutation, and device
+    /// tokens.
     pub fn vault(origin: &str) -> Self {
         Self {
             origin: origin.to_string(),
             protocol_only_for_api: false,
+            takes_tokens: true,
         }
     }
 
-    /// The admin listener: the protocol header on `/api/` mutations.
+    /// The admin listener: the protocol header on `/api/` mutations, and no
+    /// device tokens.
     pub fn admin(origin: &str) -> Self {
         Self {
             origin: origin.to_string(),
             protocol_only_for_api: true,
+            takes_tokens: false,
         }
     }
 
@@ -82,11 +111,86 @@ fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<Option<&'a st
 }
 
 /// Whether the request carries any cookie at all.
-fn has_cookie(headers: &HeaderMap) -> bool {
+pub(crate) fn has_cookie(headers: &HeaderMap) -> bool {
     headers
         .get_all(COOKIE)
         .iter()
         .any(|v| !v.as_bytes().iter().all(u8::is_ascii_whitespace))
+}
+
+/// The name of the header that carries a DPoP proof (RFC 9449 § 4.1).
+const DPOP_HEADER: &str = "dpop";
+
+/// What the token headers of a request are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TokenHeaders {
+    /// No `Authorization` with the scheme `DPoP` and no `DPoP` header.
+    Absent,
+    /// A token header, in a shape that reads one way only: at most one `DPoP`
+    /// header, and an `Authorization` with the scheme `DPoP` is the only
+    /// `Authorization` of the request.
+    Present,
+    /// Several `DPoP` headers, or several `Authorization` headers of which one
+    /// has the scheme `DPoP`.
+    Ambiguous,
+}
+
+/// Whether an `Authorization` value has the scheme `DPoP`, in any case. The
+/// scheme is the text before the first space, tab or comma, after leading
+/// white space; the bytes count, text or not, so nothing a client sends hides
+/// the scheme.
+///
+/// RFC 9110 § 11.4 (the scheme is case-insensitive); RFC 9449 § 7.1.
+pub(crate) fn is_dpop_scheme(value: &HeaderValue) -> bool {
+    let bytes = value.as_bytes();
+    let start = bytes
+        .iter()
+        .position(|b| !matches!(b, b' ' | b'\t'))
+        .unwrap_or(bytes.len());
+    let rest = bytes.get(start..).unwrap_or_default();
+    let end = rest
+        .iter()
+        .position(|b| matches!(b, b' ' | b'\t' | b','))
+        .unwrap_or(rest.len());
+    rest.get(..end)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"dpop"))
+}
+
+/// The token headers of a request: see [`TokenHeaders`].
+pub(crate) fn token_headers(headers: &HeaderMap) -> TokenHeaders {
+    let proofs = headers.get_all(DPOP_HEADER).iter().count();
+    let authorizations = headers.get_all(AUTHORIZATION).iter().count();
+    let dpop_authorizations = headers
+        .get_all(AUTHORIZATION)
+        .iter()
+        .filter(|value| is_dpop_scheme(value))
+        .count();
+    if proofs > 1 || (dpop_authorizations > 0 && authorizations > 1) {
+        TokenHeaders::Ambiguous
+    } else if proofs == 1 || dpop_authorizations == 1 {
+        TokenHeaders::Present
+    } else {
+        TokenHeaders::Absent
+    }
+}
+
+/// Decides the token headers of a request, on every method: `Ok` when it has
+/// none or one the listener may take, or the error to answer with.
+fn check_token_headers(listener: &ListenerOrigin, request: &Request) -> Result<(), ApiError> {
+    let headers = request.headers();
+    match token_headers(headers) {
+        TokenHeaders::Absent => return Ok(()),
+        TokenHeaders::Ambiguous => return Err(ApiError::coded("bad_request")),
+        TokenHeaders::Present => {}
+    }
+    if !listener.takes_tokens || has_cookie(headers) {
+        return Err(ApiError::coded("bad_request"));
+    }
+    let protocol = single(headers, &HeaderName::from_static(PROTOCOL_HEADER));
+    if protocol != Ok(Some(PROTOCOL_VERSION)) {
+        return Err(ApiError::bad_request("protocol_header_missing"));
+    }
+    Ok(())
 }
 
 /// Decides a mutating request: `Ok`, or the error to answer with.
@@ -129,10 +233,15 @@ fn check_mutation(listener: &ListenerOrigin, request: &Request) -> Result<(), Ap
     Ok(())
 }
 
-/// The `Origin` and protocol check of one listener, and the end of every
-/// `Access-Control-*` header.
+/// The `Origin` and protocol check of one listener, the rules for device
+/// tokens, and the end of every `Access-Control-*` header.
 ///
-/// On every method but `GET`, `HEAD` and `OPTIONS`:
+/// On every method, the token headers first (see the module documentation):
+/// several of them, one with a cookie, or one on the admin listener is
+/// `400 bad_request`; on the vault listener one needs `Ferret-Protocol: 1`
+/// (`400 protocol_header_missing`).
+///
+/// Then, on every method but `GET`, `HEAD` and `OPTIONS`:
 ///
 /// * `Ferret-Protocol: 1` is required (`400 protocol_header_missing`), on the
 ///   admin listener only below `/api/`;
@@ -142,15 +251,20 @@ fn check_mutation(listener: &ListenerOrigin, request: &Request) -> Result<(), Ap
 /// * `POST /api/auth/handoff` and `/api/auth/handoff/redeem` need the right
 ///   `Origin` with or without a cookie.
 ///
-/// Spec: Fase 1 § 8.2.
+/// Spec: Fase 1 § 8.2; RFC 9449 § 7.1.
 pub async fn origin_guard(
     State(listener): State<ListenerOrigin>,
     request: Request,
     next: Next,
 ) -> Response {
-    if is_unsafe(request.method())
-        && let Err(refusal) = check_mutation(&listener, &request)
-    {
+    let checked = check_token_headers(&listener, &request).and_then(|()| {
+        if is_unsafe(request.method()) {
+            check_mutation(&listener, &request)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(refusal) = checked {
         return refusal.into_response();
     }
     let mut response = next.run(request).await;
@@ -261,6 +375,72 @@ pub async fn strict_cookie(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dpop_scheme_is_read_in_any_case_and_only_as_the_scheme() {
+        for yes in [
+            "DPoP abc",
+            "dpop abc",
+            "DPOP",
+            "  DPoP abc",
+            "\tdpop abc",
+            "DPoP,x",
+            "DPoP\tabc",
+        ] {
+            assert!(is_dpop_scheme(&HeaderValue::from_static(yes)), "{yes:?}");
+        }
+        for no in [
+            "Basic dXNlcjpwYXNz",
+            "Bearer DPoP",
+            "DPoPx abc",
+            "xDPoP abc",
+            "",
+            "Digest dpop=1",
+        ] {
+            assert!(!is_dpop_scheme(&HeaderValue::from_static(no)), "{no:?}");
+        }
+        // Bytes that are not text still name a scheme.
+        let raw = HeaderValue::from_bytes(b"DPoP \xff").expect("a header value");
+        assert!(is_dpop_scheme(&raw));
+    }
+
+    #[test]
+    fn token_headers_are_absent_present_or_ambiguous() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (name, value) in pairs {
+                map.append(*name, HeaderValue::from_static(value));
+            }
+            map
+        };
+        assert_eq!(token_headers(&headers(&[])), TokenHeaders::Absent);
+        assert_eq!(
+            token_headers(&headers(&[("authorization", "Basic x")])),
+            TokenHeaders::Absent
+        );
+        assert_eq!(
+            token_headers(&headers(&[
+                ("authorization", "Basic x"),
+                ("authorization", "Bearer y")
+            ])),
+            TokenHeaders::Absent
+        );
+        for present in [
+            &[("authorization", "DPoP x")][..],
+            &[("dpop", "a.b.c")][..],
+            &[("authorization", "DPoP x"), ("dpop", "a.b.c")][..],
+            &[("authorization", "Basic x"), ("dpop", "a.b.c")][..],
+        ] {
+            assert_eq!(token_headers(&headers(present)), TokenHeaders::Present);
+        }
+        for ambiguous in [
+            &[("dpop", "a"), ("dpop", "b")][..],
+            &[("authorization", "DPoP x"), ("authorization", "Basic y")][..],
+            &[("authorization", "DPoP x"), ("authorization", "DPoP x")][..],
+        ] {
+            assert_eq!(token_headers(&headers(ambiguous)), TokenHeaders::Ambiguous);
+        }
+    }
 
     #[test]
     fn harden_replaces_or_adds_the_attributes() {

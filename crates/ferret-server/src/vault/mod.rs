@@ -66,8 +66,8 @@ async fn no_store(mut response: Response) -> Response {
 /// The vault API routes of the vault listener.
 ///
 /// The state needs only the database handle, the session handle that the
-/// `VaultSession` extractor reads (`SessionAuth: FromRef<S>` is the bound a
-/// route needs to take that extractor; nothing here calls it), and the handles
+/// `VaultSession` and `VaultCaller` extractors read (`SessionAuth: FromRef<S>`
+/// is the bound a route needs to take one; nothing here calls it), and the handles
 /// of the sync routes: the change notifications, the rate limits, the write
 /// gate and the event stream slots; and the handles of the routes that change
 /// the unlock methods and import: the proof checks of signed requests, the
