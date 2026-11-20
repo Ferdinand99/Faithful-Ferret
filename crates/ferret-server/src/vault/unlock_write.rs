@@ -16,14 +16,16 @@
 //!    write that finds the row changed is `409 write_conflict` and never a
 //!    silent success;
 //! 6. for a new master password and a recovery, ends every other session of
-//!    the user on both origins and the user's pending sign-in codes, the
+//!    the user on both origins, every device of the user with tokens and the
+//!    user's pending sign-in codes, the
 //!    sessions handed over from the asking session too (its admin session:
 //!    it fails safe, the user signs in to the admin pages again); and the
 //!    asking session when the permit says so (a recovery in a reset session).
 //!    A new recovery key ends no session.
 //!
 //! Either all of it is in, or none of it. [`after_commit`] then tells the
-//! streams about the new `seq` and the ended sessions, and asks for a backup.
+//! streams about the new `seq`, the ended sessions and the revoked devices,
+//! and asks for a backup.
 //! The route calls it on the database thread right after the commit, so a
 //! request whose client has gone away still announces what it committed.
 //!
@@ -54,7 +56,7 @@ use ferret_server_auth::{
 use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
 
 use super::notify::SyncEvents;
-use crate::auth::session::{Origin, end_all_credentials, lookup, within_limits};
+use crate::auth::session::{Ended, Origin, end_all_credentials, lookup, within_limits};
 use crate::error::{ApiError, StoreError};
 use crate::ids::{AccountId, MANIFEST_ITEM_ID, MethodId, SidHash, VaultId};
 use crate::state::BackupStatus;
@@ -201,9 +203,10 @@ impl fmt::Debug for Authorized {
 pub struct Applied {
     /// The vault's `seq` of the new manifest row.
     pub seq: u64,
-    /// Every session that ended, each once: the other sessions of the user,
-    /// their children, and the asking one when it ended too.
-    pub ended: Vec<SidHash>,
+    /// Every session that ended, each once (the other sessions of the user,
+    /// their children, and the asking one when it ended too), and every
+    /// device with tokens that was revoked.
+    pub ended: Ended,
 }
 
 /// One stored wrap, as the change reads it before it writes.
@@ -304,22 +307,27 @@ where
         if keeps_asking {
             // The asking session goes on; what was handed over from it (its
             // admin session) does not.
-            ended.extend(revoke(&tx, &writer.sid, now, Revoke::HandedOver)?);
+            ended
+                .sessions
+                .extend(revoke(&tx, &writer.sid, now, Revoke::HandedOver)?);
         }
         ended
     } else if keeps_asking {
-        Vec::new()
+        Ended::default()
     } else {
-        revoke(&tx, &writer.sid, now, Revoke::WithHandedOver)?
+        Ended {
+            sessions: revoke(&tx, &writer.sid, now, Revoke::WithHandedOver)?,
+            devices: Vec::new(),
+        }
     };
-    ended.sort_unstable_by_key(|sid| sid.0);
     ended.dedup();
     tx.commit().map_err(sql)?;
     Ok(Applied { seq, ended })
 }
 
 /// After the commit of [`apply`]: the streams of the vault hear of the new
-/// `seq`, every ended session's stream is closed, and a backup is asked for,
+/// `seq`, the streams of every ended session and revoked device are closed
+/// (`SyncEvents::announce_ended`), and a backup is asked for,
 /// so the newest set holds the newest wraps.
 ///
 /// Spec: Fase 1 § 7.6 and § 11.
@@ -330,9 +338,7 @@ pub fn after_commit(
     vault: &VaultId,
 ) {
     events.notify(*vault, applied.seq);
-    for sid in &applied.ended {
-        events.session_revoked(*sid);
-    }
+    events.announce_ended(&applied.ended);
     backup.request_run(BACKUP_REASON);
 }
 

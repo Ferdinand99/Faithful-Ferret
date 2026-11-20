@@ -10,9 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ferret_core::{AccountId, ItemId, RecoveryKey, TestRng, recovery_public_key};
-use ferret_server::auth::session::{Origin, lookup, revoke, set_parent};
+use ferret_server::auth::session::{Ended, Origin, lookup, revoke, set_parent};
 use ferret_server::error::ApiError;
-use ferret_server::ids::SidHash;
+use ferret_server::ids::{DeviceId, SidHash};
+use ferret_server::vault::notify::Revoked;
 use ferret_server::vault::unlock_write::{
     Applied, Authorized, BACKUP_REASON, ChangeKind, UnlockChange, Writer, after_commit, apply,
     is_recovery_public_key,
@@ -365,7 +366,7 @@ async fn a_new_recovery_key_replaces_the_recovery_wrap_and_pk_r_and_ends_no_sess
         applied,
         Applied {
             seq: 2,
-            ended: vec![]
+            ended: Ended::default()
         }
     );
     let after = snapshot(&app, &client).await;
@@ -431,7 +432,14 @@ async fn a_recovery_writes_the_record_both_wraps_and_pk_r_and_a_reset_session_en
     assert_eq!(applied.seq, 2);
     let mut expected = vec![reset.sid, other.sid];
     expected.sort_unstable_by_key(|sid| sid.0);
-    assert_eq!(applied.ended, expected, "every session, the asking one too");
+    assert_eq!(
+        applied.ended.sessions, expected,
+        "every session, the asking one too"
+    );
+    assert!(
+        applied.ended.devices.is_empty(),
+        "the account has no device"
+    );
     let after = snapshot(&app, &client).await;
     assert_eq!(after.record, stored_record().record.as_bytes());
     assert_eq!(after.pk_r, new_pk_r(&client, "recovered").to_vec());
@@ -479,7 +487,7 @@ async fn a_full_session_that_recovers_goes_on() {
     .await;
     let mut expected = vec![other.sid, child];
     expected.sort_unstable_by_key(|sid| sid.0);
-    assert_eq!(result.expect("applied").ended, expected);
+    assert_eq!(result.expect("applied").ended.sessions, expected);
     assert!(!is_ended(&app, this.sid).await);
     assert!(is_ended(&app, child).await);
     assert_eq!(login_states(&app).await, 1, "no sign-in state is removed");
@@ -536,14 +544,17 @@ async fn login_states(app: &TestApp) -> i64 {
 }
 
 #[tokio::test]
-async fn after_commit_announces_the_seq_and_every_ended_session_and_asks_for_a_backup() {
+async fn after_commit_announces_the_seq_and_every_ended_credential_and_asks_for_a_backup() {
     let app = TestApp::new().await;
     let events = app.sync_events();
     let mut changes = events.subscribe();
     let mut revocations = events.subscribe_revocations();
     let applied = Applied {
         seq: 42,
-        ended: vec![SidHash([1; 32]), SidHash([2; 32])],
+        ended: Ended {
+            sessions: vec![SidHash([1; 32]), SidHash([2; 32])],
+            devices: vec![DeviceId([7; 16])],
+        },
     };
     let vault = ferret_server::ids::VaultId::from_bytes([0xb7; 16]);
     assert!(!app.backup_status().has_request());
@@ -554,13 +565,23 @@ async fn after_commit_announces_the_seq_and_every_ended_session_and_asks_for_a_b
         .expect("in time")
         .expect("a change");
     assert_eq!((change.vault, change.seq), (vault, 42));
-    for sid in &applied.ended {
-        let revoked = tokio::time::timeout(Duration::from_secs(1), revocations.recv())
-            .await
-            .expect("in time")
-            .expect("a revocation");
-        assert_eq!(&revoked, sid);
+    let mut heard = Vec::new();
+    for _ in 0..applied.ended.len() {
+        heard.push(
+            tokio::time::timeout(Duration::from_secs(1), revocations.recv())
+                .await
+                .expect("in time")
+                .expect("a revocation"),
+        );
     }
+    assert_eq!(
+        heard,
+        vec![
+            Revoked::Session(SidHash([1; 32])),
+            Revoked::Session(SidHash([2; 32])),
+            Revoked::Device(DeviceId([7; 16])),
+        ]
+    );
     assert_eq!(app.backup_status().take_request(), Some(BACKUP_REASON));
     assert_eq!(BACKUP_REASON, "unlock_methods");
 }

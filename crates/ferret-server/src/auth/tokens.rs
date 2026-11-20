@@ -9,6 +9,9 @@
 //! device whose account changed its `session_version` (sign out everywhere, a
 //! disabled user, a restore) is stopped as well.
 //!
+//! A restore from a backup deletes every token row and revokes every device
+//! ([`invalidate_all_after_restore`]).
+//!
 //! Every token request answers with a `Date` header from the server's clock
 //! ([`with_server_date`]): a device sets the `iat` of its proofs by it, and
 //! syncs to it again after a `401 dpop_invalid`.
@@ -293,6 +296,33 @@ pub fn lookup_access(
         expires_at,
         session_version,
     }))
+}
+
+/// After the database was restored from a backup, in the caller's
+/// transaction: deletes every access token and every refresh token of every
+/// device, and revokes every device that was not revoked yet (`revoked_at` =
+/// `now`). Returns how many devices it revoked and how many token rows it
+/// deleted.
+///
+/// A backup holds the token hashes that were live when it was taken. Unlike a
+/// single revocation, which keeps the hashes so a later use of them answers
+/// `device_revoked`, a restore removes them all: a token that was used, renewed
+/// or revoked since the backup must not come back to life, and the rows of the
+/// backup say nothing true about the tokens of now. Every device signs in
+/// again with the master password.
+///
+/// Spec: Fase 1 § 7.6 and § 11 (backups).
+pub fn invalidate_all_after_restore(
+    tx: &Transaction<'_>,
+    now: i64,
+) -> rusqlite::Result<(usize, usize)> {
+    let access = tx.execute("DELETE FROM ferret_access", [])?;
+    let refresh = tx.execute("DELETE FROM ferret_refresh", [])?;
+    let devices = tx.execute(
+        "UPDATE ferret_devices SET revoked_at = ?1 WHERE revoked_at IS NULL",
+        params![now.max(0)],
+    )?;
+    Ok((devices, access.saturating_add(refresh)))
 }
 
 /// `response` with a `Date` header of the server's clock at `now` (Unix

@@ -89,6 +89,7 @@ function secondsOf(value) {
  * @property {(path: string, options?: CallOptions) => Promise<any>} get
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} post
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} put
+ * @property {(path: string, options?: CallOptions) => Promise<any>} del a `DELETE` without a body (a write: `Ferret-Protocol: 1`)
  * @property {(path: string, options?: { signal?: AbortSignal }) => Promise<ReadableStreamDefaultReader<Uint8Array>>} stream
  * @property {(method: "PUT" | "POST", path: string, bodyBytes: Uint8Array, proof: { nonce: Uint8Array, proof: Uint8Array }, options?: CallOptions) => Promise<any>} sendSigned
  *   a write that carries a proof (spec Fase 1 § 4.6): the exact bytes of `bodyBytes` are the body, the nonce and the proof go in
@@ -183,7 +184,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
     typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
 
   /**
-   * @param {"GET" | "POST" | "PUT"} method
+   * @param {"GET" | "POST" | "PUT" | "DELETE"} method
    * @param {string} path
    * @param {unknown} body a string or bytes are sent as they are; anything else as JSON
    * @param {CallOptions} options
@@ -332,6 +333,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
     get: (path, options = {}) => call("GET", path, undefined, options),
     post: (path, body, options = {}) => call("POST", path, body, options),
     put: (path, body, options = {}) => call("PUT", path, body, options),
+    del: (path, options = {}) => call("DELETE", path, undefined, options),
   };
 }
 

@@ -490,7 +490,10 @@ async fn a_second_factor_user_spends_the_code_and_gets_the_common_refusal() {
     let rows = sessions_of(&app, user.user_id).await;
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!((rows[0].1.as_str(), rows[0].4), ("full", Some(at)));
-    assert_eq!(revocations.try_recv().expect("announced"), full.sid);
+    assert_eq!(
+        revocations.try_recv().expect("announced"),
+        Revoked::Session(full.sid)
+    );
     assert!(revocations.try_recv().is_err());
     let res = get_vault(&app, &full.jar, "/api/auth/session").await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);

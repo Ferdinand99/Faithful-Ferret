@@ -35,9 +35,8 @@ const NOW: i64 = 1_793_491_200;
 
 #[tokio::test]
 async fn token_and_device_paths_are_404_on_the_admin_listener() {
-    // The routes are empty for now, so this holds trivially; it is the guard
-    // that the routes of tokens and devices, once they are served, are served
-    // on the vault listener only.
+    // The routes of tokens and devices are served on the vault listener only
+    // (`tests/refresh.rs` and `tests/devices.rs` drive them there).
     let app = TestApp::new().await;
     for (method, path) in [
         ("POST", "/api/auth/token/refresh"),

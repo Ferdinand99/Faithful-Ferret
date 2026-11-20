@@ -15,7 +15,7 @@ use ferret_server::auth::session::{
     end_everything_after_restore, insert_session, limits, lookup, new_session, revoke,
     revoke_all_for_user, scoped_session_cookies, session_cookies, set_parent, within_limits,
 };
-use ferret_server::ids::SidHash;
+use ferret_server::ids::{DeviceId, SidHash};
 use ferret_server::product::{SESSION_COOKIE, SID_COOKIE};
 use ferret_server_auth::{Clock as _, SessionScope};
 use sha2::{Digest as _, Sha256};
@@ -924,7 +924,7 @@ async fn end_all(app: &TestApp, user_id: i64, keep: Option<SidHash>) -> Vec<SidH
         let tx = c.transaction()?;
         let ended = end_all_credentials(&tx, user_id, keep.as_ref(), at)?;
         tx.commit()?;
-        Ok(ended)
+        Ok(ended.sessions)
     })
     .await
 }
@@ -1053,6 +1053,171 @@ async fn end_all_credentials_returns_every_ended_sid() {
     assert!(end_all(&app, uid, None).await.is_empty());
 }
 
+/// A device with tokens of `user_id`, written as a sign-in writes it: `n`
+/// makes the id and the key differ. `access` access rows and `refresh`
+/// refresh rows hang off it; `revoked_at` is set when given.
+async fn device_row(
+    app: &TestApp,
+    user_id: i64,
+    n: u8,
+    access: u8,
+    refresh: u8,
+    revoked_at: Option<i64>,
+) -> [u8; 16] {
+    let mut id = [0u8; 16];
+    id[0] = 0xde;
+    id[1] = n;
+    let at = now(app);
+    db(app, move |c| {
+        let version: i64 = c.query_row(
+            "SELECT session_version FROM users WHERE id = ?1",
+            [user_id],
+            |r| r.get(0),
+        )?;
+        c.execute(
+            "INSERT INTO ferret_devices
+               (device_id, user_id, jkt, name, platform, session_version, created_at, last_seen,
+                revoked_at)
+             VALUES (?1, ?2, ?3, 'A device', 'linux', ?4, ?5, ?5, ?6)",
+            rusqlite::params![
+                id.as_slice(),
+                user_id,
+                [n; 32].as_slice(),
+                version,
+                at,
+                revoked_at
+            ],
+        )?;
+        for k in 0..access {
+            c.execute(
+                "INSERT INTO ferret_access (token_hash, device_id, expires_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    [0xa0 ^ n, k, 1].repeat(11)[..32].to_vec(),
+                    id.as_slice(),
+                    at + 900
+                ],
+            )?;
+        }
+        for k in 0..refresh {
+            c.execute(
+                "INSERT INTO ferret_refresh
+                   (token_hash, device_id, issued_at, idle_expires_at, abs_expires_at)
+                 VALUES (?1, ?2, ?3, ?3, ?3)",
+                rusqlite::params![
+                    [0xb0 ^ n, k, 2].repeat(11)[..32].to_vec(),
+                    id.as_slice(),
+                    at
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .await;
+    id
+}
+
+/// `revoked_at` of a device row.
+async fn device_revoked_at(app: &TestApp, id: [u8; 16]) -> Option<i64> {
+    db(app, move |c| {
+        c.query_row(
+            "SELECT revoked_at FROM ferret_devices WHERE device_id = ?1",
+            [id.as_slice()],
+            |r| r.get(0),
+        )
+    })
+    .await
+}
+
+#[tokio::test]
+async fn end_all_credentials_revokes_every_device_of_the_user_and_no_other() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let kept = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 1).await;
+    let first = device_row(&app, user.user_id, 1, 1, 2, None).await;
+    let second = device_row(&app, user.user_id, 2, 0, 1, None).await;
+    let earlier = device_row(&app, user.user_id, 3, 0, 1, Some(now(&app) - 50)).await;
+    let theirs = device_row(&app, other.user_id, 4, 1, 1, None).await;
+    app.clock.advance(5);
+    let at = now(&app);
+    let uid = user.user_id;
+    let keep = kept.sid;
+    let ended = db(&app, move |c| {
+        let tx = c.transaction()?;
+        let ended = end_all_credentials(&tx, uid, Some(&keep), at)?;
+        tx.commit()?;
+        Ok(ended)
+    })
+    .await;
+    let mut expected = vec![DeviceId(first), DeviceId(second)];
+    expected.sort_unstable_by_key(|d| d.0);
+    assert_eq!(ended.devices, expected, "each live device once");
+    assert!(
+        ended.sessions.is_empty(),
+        "the kept session is the only one"
+    );
+    assert_eq!(ended.len(), 2);
+    assert!(!ended.contains(&kept.sid));
+    assert_eq!(device_revoked_at(&app, first).await, Some(at));
+    assert_eq!(device_revoked_at(&app, second).await, Some(at));
+    assert_eq!(
+        device_revoked_at(&app, earlier).await,
+        Some(at - 55),
+        "kept as it was"
+    );
+    assert_eq!(
+        device_revoked_at(&app, theirs).await,
+        None,
+        "another user's"
+    );
+    // The token rows stay (their hashes answer `device_revoked`) until the
+    // purge.
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_refresh").await, 5);
+    assert!(!is_revoked(&app, kept.sid).await);
+
+    // A rolled-back transaction revokes nothing.
+    let fourth = device_row(&app, user.user_id, 5, 0, 0, None).await;
+    db(&app, move |c| {
+        let tx = c.transaction()?;
+        end_all_credentials(&tx, uid, None, at)?;
+        tx.rollback()
+    })
+    .await;
+    assert_eq!(device_revoked_at(&app, fourth).await, None);
+}
+
+#[tokio::test]
+async fn the_restore_sweep_counts_devices_and_tokens() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let earlier = now(&app) - 100;
+    let a = device_row(&app, user.user_id, 1, 2, 3, None).await;
+    let b = device_row(&app, other.user_id, 2, 1, 1, None).await;
+    let c = device_row(&app, user.user_id, 3, 0, 2, Some(earlier)).await;
+    app.clock.advance(7);
+    let swept = sweep(&app).await;
+    assert_eq!(swept.devices, 2, "the live devices of every user");
+    assert_eq!(
+        swept.tokens,
+        2 + 3 + 1 + 1 + 2,
+        "every access and refresh row"
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_access").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_refresh").await, 0);
+    let at = now(&app);
+    assert_eq!(device_revoked_at(&app, a).await, Some(at));
+    assert_eq!(device_revoked_at(&app, b).await, Some(at));
+    assert_eq!(
+        device_revoked_at(&app, c).await,
+        Some(earlier),
+        "kept as it was"
+    );
+    // The rows of the devices stay, revoked: their keys never come back.
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_devices").await, 3);
+    // A second sweep finds nothing more.
+    let again = sweep(&app).await;
+    assert_eq!((again.devices, again.tokens), (0, 0));
+}
+
 /// Rows of every kind of pending sign-in step, one set per user in `users`.
 async fn pending_steps(app: &TestApp, users: &[i64], sid: SidHash) {
     let users = users.to_vec();
@@ -1144,6 +1309,8 @@ async fn end_everything_after_restore_ends_every_session_and_purges_states() {
             registrations: 2,
             sign_in_codes: 1,
             users: 2,
+            devices: 0,
+            tokens: 0,
         }
     );
     for sid in [a.sid, b.sid, c.sid, d.sid] {
