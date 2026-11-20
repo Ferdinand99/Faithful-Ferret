@@ -1568,5 +1568,5 @@ async fn the_command_runs_only_as_the_user_that_owns_the_data_directory() {
         std::os::unix::fs::chown(scene.data(), Some(me), None).expect("chown back");
     }
     restore_scene(&scene, &scene.backup).expect("a restore");
-    scene.assert_restored("as the owner");
+    scene.assert_restored("as the user of the data directory");
 }
