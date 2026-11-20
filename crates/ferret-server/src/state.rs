@@ -192,6 +192,7 @@ impl FromRef<FerretState> for SessionAuth {
             key: state.core.session_key.clone(),
             db: state.vault_db.clone(),
             clock: state.clock.clone(),
+            device: state.device_auth.clone(),
         }
     }
 }

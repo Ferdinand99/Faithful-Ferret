@@ -2,10 +2,10 @@
 //! Spec: Fase 1 § 8.2, § 8.3.
 //!
 //! The request is checked in this order, and nothing reads or writes the
-//! database before the write gate lets it in (after the session, which the
-//! extractor checks first):
+//! database before the write gate lets it in (after the caller, a session or a
+//! device token, which the extractor checks first):
 //!
-//! 1. the session;
+//! 1. the caller (`VaultCaller`);
 //! 2. the size of the body, at most 6 MiB (`413`);
 //! 3. the JSON, with the same strictness as a single write (`400`);
 //! 4. one to 100 operations, and no item id twice (`400`, nothing is written);
@@ -75,7 +75,7 @@ use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, PutBody, PutOutcome, PutRequest};
 use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::ids::{DeviceId, MANIFEST_ITEM_ID, VaultId};
 use crate::state::{ImportWindows, VaultDb};
 use crate::wire::{
@@ -387,9 +387,9 @@ fn count_new(
     Ok(new)
 }
 
-/// Writes up to 100 items of the session vault.
+/// Writes up to 100 items of the caller's vault.
 async fn post_batch(
-    session: VaultSession,
+    caller: VaultCaller,
     State(db): State<VaultDb>,
     State(limits): State<Arc<SyncLimits>>,
     State(gate): State<WriteGate>,
@@ -421,11 +421,11 @@ async fn post_batch(
     // device's, has ended or is spent counts its operations like any other, so
     // a made-up id is no way round the limit.
     let in_window = import_window
-        .is_some_and(|id| windows.usable(&session.vault, &session.device, &id, session.now));
+        .is_some_and(|id| windows.usable(&caller.vault(), &caller.device(), &id, caller.now()));
     let admitted = if in_window {
-        limits.admit_bytes(&session.vault, &session.device, body_len)
+        limits.admit_bytes(&caller.vault(), &caller.device(), body_len)
     } else {
-        limits.admit(&session.vault, &session.device, count, body_len)
+        limits.admit(&caller.vault(), &caller.device(), count, body_len)
     };
     admitted.map_err(|refused| {
         tracing::info!(ops = count, "batch write throttled");
@@ -436,9 +436,9 @@ async fn post_batch(
         busy(full)
     })?;
 
-    let vault = session.vault;
-    let device = session.device;
-    let now = session.now;
+    let vault = caller.vault();
+    let device = caller.device();
+    let now = caller.now();
     // The turn, the writes and the wake-up all live in the closure that runs on
     // the blocking thread. A request that is dropped (the client went away)
     // does not stop that closure, so the turn must not be freed with the

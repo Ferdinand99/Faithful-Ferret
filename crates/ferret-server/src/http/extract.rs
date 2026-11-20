@@ -45,15 +45,27 @@
 //!    library that covers exactly these bytes.
 //!
 //! Spec: Fase 1 § 4.6 and § 7.6.
+//!
+//! # Device tokens
+//!
+//! [`VaultCaller`] is the extractor of the sync routes, the only routes that
+//! take a device token besides a session: a full session as [`VaultSession`]
+//! reads it, or an access token with a DPoP proof of the device key. Every
+//! other route takes one of the session extractors above and so refuses a
+//! token (no cookie: `401 unauthorized`). See [`VaultCaller`].
+//!
+//! Spec: Fase 1 § 7.6, § 8.2; RFC 9449 § 4.3, § 7.
 
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
-use axum::extract::{FromRef, FromRequest, FromRequestParts, Request};
-use axum::http::HeaderMap;
+use axum::extract::{FromRef, FromRequest, FromRequestParts, OriginalUri, Request};
+use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, HeaderValue};
+use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use ferret_core::MutationOp;
 use ferret_server_auth::{
@@ -66,11 +78,16 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
 use vole_kit::auth::session::SessionClaims;
 
-use crate::auth::session::{Origin, SessionRow, lookup, reauth_fresh, within_limits};
+use crate::auth::devices;
+use crate::auth::dpop::{self, Expect, VerifiedProof};
+use crate::auth::session::{self, Origin, SessionRow, lookup, reauth_fresh, within_limits};
+use crate::auth::tokens::{AccessLookup, DeviceAuth, lookup_access, with_server_date};
 use crate::error::{ApiError, StoreError};
-use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, VaultId};
+use crate::http::origin_guard::{TokenHeaders, has_cookie, is_dpop_scheme, token_headers};
+use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, TokenHash, TokenSecret, VaultId};
 use crate::product;
 use crate::state::VaultDb;
+use crate::vault::notify::Revoked;
 use crate::wire::{MAX_SIGNED_BODY, NONCE_LEN, PROOF_LEN, b64url, refusal_code};
 
 /// `last_seen` is written when it is at least this many seconds old.
@@ -83,12 +100,16 @@ pub const NONCE_HEADER: &str = "ferret-nonce";
 pub const PROOF_HEADER: &str = "ferret-proof";
 
 /// What the session extractors need and nothing more: the key that opens the
-/// kit's cookie, the database and the clock.
+/// kit's cookie, the database and the clock; and the handle of device tokens,
+/// which only [`VaultCaller`] reads.
 #[derive(Clone)]
 pub struct SessionAuth {
     pub key: Key,
     pub db: VaultDb,
     pub clock: Arc<dyn Clock>,
+    /// The handle of device tokens, for [`VaultCaller`]: the cache of used
+    /// `jti` values and the vault origin that `htu` names.
+    pub device: DeviceAuth,
 }
 
 /// The clock of the state, handed to a route that must ask the time again
@@ -135,6 +156,38 @@ pub struct VaultSession {
     /// equal to the one in the kit's cookie. A long-lived stream asks for it
     /// again (`auth::session::still_valid`): a changed value ends the session.
     pub session_version: i64,
+}
+
+/// The account of a user with its vault and key epoch, or `None` when the
+/// user has no account with a vault (or the row holds what cannot be one).
+fn read_account(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+) -> Result<Option<(AccountId, VaultId, u64)>, StoreError> {
+    let found: Option<(Vec<u8>, Vec<u8>, i64)> = conn
+        .query_row(
+            "SELECT a.account_id, v.vault_id, a.vk_epoch
+             FROM ferret_accounts a
+             JOIN ferret_vaults v ON v.account_id = a.account_id
+             WHERE a.user_id = ?1",
+            params![user_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((account, vault, epoch)) = found else {
+        return Ok(None);
+    };
+    let ids = <[u8; 16]>::try_from(account)
+        .and_then(|a| <[u8; 16]>::try_from(vault).map(|v| (a, v)))
+        .ok()
+        .zip(u64::try_from(epoch).ok());
+    Ok(ids.map(|((account, vault), epoch)| {
+        (
+            AccountId::from_bytes(account),
+            VaultId::from_bytes(vault),
+            epoch,
+        )
+    }))
 }
 
 /// A signed-in session on the admin listener.
@@ -227,31 +280,10 @@ impl SessionAuth {
                     _ => return Ok(None),
                 };
                 let account = if origin == Origin::Vault {
-                    let found: Option<(Vec<u8>, Vec<u8>, i64)> = conn
-                        .query_row(
-                            "SELECT a.account_id, v.vault_id, a.vk_epoch
-                             FROM ferret_accounts a
-                             JOIN ferret_vaults v ON v.account_id = a.account_id
-                             WHERE a.user_id = ?1",
-                            params![row.user_id],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                        )
-                        .optional()?;
-                    let Some((account, vault, epoch)) = found else {
+                    let Some(account) = read_account(conn, row.user_id)? else {
                         return Ok(None);
                     };
-                    let ids = <[u8; 16]>::try_from(account)
-                        .and_then(|a| <[u8; 16]>::try_from(vault).map(|v| (a, v)))
-                        .ok()
-                        .zip(u64::try_from(epoch).ok());
-                    let Some(((account, vault), epoch)) = ids else {
-                        return Ok(None);
-                    };
-                    Some((
-                        AccountId::from_bytes(account),
-                        VaultId::from_bytes(vault),
-                        epoch,
-                    ))
+                    Some(account)
                 } else {
                     None
                 };
@@ -340,6 +372,423 @@ where
     }
 }
 
+// ------------------------------------------------------------ vault caller
+
+/// How a [`VaultCaller`] signed in: a full session of the web vault, or an
+/// access token of a device.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    /// The session cookie: the hash of the session id.
+    Cookie {
+        /// The key of the session's row.
+        sid: SidHash,
+    },
+    /// An access token with a DPoP proof of the device key.
+    Device {
+        /// The id the server gave the device.
+        device: DeviceId,
+        /// The key of the token's row.
+        access: TokenHash,
+        /// When the token expires (Unix seconds).
+        expires_at: i64,
+    },
+}
+
+impl fmt::Debug for Credential {
+    /// The kind and the device only: the row keys stay out of a log.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Credential::Cookie { .. } => f.write_str("Credential::Cookie"),
+            Credential::Device {
+                device, expires_at, ..
+            } => f
+                .debug_struct("Credential::Device")
+                .field("device", device)
+                .field("expires_at", expires_at)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+/// A request to a sync route: a full session of the web vault, or an access
+/// token of a device with a DPoP proof of its key. Only the sync routes take
+/// it (`GET /api/sync/changes`, `PUT /api/sync/items/{id}`,
+/// `POST /api/sync/batch`, `GET`/`PUT /api/sync/checkpoint`,
+/// `GET /api/sync/events` and `GET /api/vault/unlock-methods`); every other
+/// route takes a session extractor and refuses a token.
+///
+/// **Without a token** (no `Authorization` with the scheme `DPoP`): the same
+/// checks as [`VaultSession`]. An `Authorization` of another scheme (`Basic`
+/// from a proxy) is not looked at.
+///
+/// **With `Authorization: DPoP <token>`**, in this order:
+///
+/// 1. a token header next to a cookie, or token headers that read more than
+///    one way, are `400 bad_request` (the `Origin` guard refuses them first);
+/// 2. exactly one `Authorization` header with exactly one token of 43
+///    characters, else `401 unauthorized`;
+/// 3. the proof (`dpop::verify`): `htm` the method, `htu` the configured vault
+///    origin and the path of the request as the router got it (`OriginalUri`),
+///    `ath` the hash of the token; any refusal is `401 dpop_invalid`;
+/// 4. the token's row, through its device: none or expired is
+///    `401 token_expired`, a revoked device `401 device_revoked`;
+/// 5. the proof's key must be the device's (its `jkt`), else
+///    `401 dpop_invalid`, and nothing is revoked or recorded: a token seen in
+///    a log is no way to throw a device out;
+/// 6. the device must still be valid (`devices::still_valid`: not revoked, its
+///    user active with the same `session_version`, an account with a vault,
+///    younger than the longest life of a sign-in), else `401 device_revoked`;
+/// 7. the proof's `jti` is recorded now that its key is bound to the token,
+///    before the route runs (a replay is `401 dpop_invalid`, a busy key or
+///    account `429 throttled`, a full cache `503 busy`);
+/// 8. the device's `last_seen` is noted (at most once a minute).
+///
+/// Every refusal on that path carries a `Date` of the server's clock, so a
+/// device can set its proofs by it.
+///
+/// The fields are private and only the extractor makes one: a route reads who
+/// the caller is and cannot point it at another account, vault or device.
+///
+/// ```compile_fail
+/// fn retarget(c: &mut ferret_server::http::extract::VaultCaller, v: ferret_server::ids::VaultId) {
+///     c.vault = v;
+/// }
+/// ```
+///
+/// Spec: Fase 1 § 7.6, § 8.2; RFC 9449 § 4.3, § 7.1.
+#[derive(Clone)]
+pub struct VaultCaller {
+    credential: Credential,
+    user_id: i64,
+    now: i64,
+    clock: SessionClock,
+    device: DeviceId,
+    account: AccountId,
+    vault: VaultId,
+    vk_epoch: u64,
+    session_version: i64,
+}
+
+impl fmt::Debug for VaultCaller {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VaultCaller")
+            .field("credential", &self.credential)
+            .field("user_id", &self.user_id)
+            .field("now", &self.now)
+            .field("device", &self.device)
+            .field("account", &self.account)
+            .field("vault", &self.vault)
+            .field("vk_epoch", &self.vk_epoch)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VaultCaller {
+    /// The kit user.
+    pub fn user_id(&self) -> i64 {
+        self.user_id
+    }
+
+    /// The time the request was checked at (Unix seconds).
+    pub fn now(&self) -> i64 {
+        self.now
+    }
+
+    /// The clock of the state, for a route that outlives the request.
+    pub fn clock(&self) -> &SessionClock {
+        &self.clock
+    }
+
+    /// The device: the id a browser gave its session, or the id the server
+    /// gave a token device. Idempotency, rate limits and stream places count
+    /// by it.
+    pub fn device(&self) -> DeviceId {
+        self.device
+    }
+
+    /// The account of the caller's user.
+    pub fn account(&self) -> AccountId {
+        self.account
+    }
+
+    /// The vault of that account.
+    pub fn vault(&self) -> VaultId {
+        self.vault
+    }
+
+    /// The vault key epoch of the account when the request was checked.
+    pub fn vk_epoch(&self) -> u64 {
+        self.vk_epoch
+    }
+
+    /// The kit's `session_version` of the user, as the session cookie or the
+    /// device row had it.
+    pub fn session_version(&self) -> i64 {
+        self.session_version
+    }
+
+    /// How the caller signed in.
+    pub fn credential(&self) -> &Credential {
+        &self.credential
+    }
+
+    /// Whether the caller came with a device token rather than a session.
+    pub fn is_device(&self) -> bool {
+        matches!(self.credential, Credential::Device { .. })
+    }
+
+    /// Whether the caller may still be served at `now`, read again from the
+    /// database: a session as `auth::session::still_valid` says; a device
+    /// whose access token still has its live row and has not expired, and
+    /// that `devices::still_valid` accepts. A long-lived stream asks this at
+    /// every heartbeat.
+    ///
+    /// Spec: Fase 1 § 7.6, § 8.2.
+    pub fn still_valid(&self, conn: &rusqlite::Connection, now: i64) -> rusqlite::Result<bool> {
+        match self.credential {
+            Credential::Cookie { sid } => {
+                session::still_valid(conn, &sid, Origin::Vault, self.session_version, now)
+            }
+            Credential::Device { device, access, .. } => {
+                let live = matches!(
+                    lookup_access(conn, &access, now)?,
+                    AccessLookup::Live(row) if row.device == device
+                );
+                Ok(live && devices::still_valid(conn, &device, now)?)
+            }
+        }
+    }
+
+    /// Whether `revoked` ends this caller: the revocation of its session, or
+    /// of its token device. A browser is a session, so a device revocation
+    /// never ends a cookie caller, even one whose browser chose the same id.
+    ///
+    /// Spec: Fase 1 § 7.6 (revocation closes the streams of the device).
+    pub fn is_revoked_by(&self, revoked: &Revoked) -> bool {
+        match (&self.credential, revoked) {
+            (Credential::Cookie { sid }, Revoked::Session(ended)) => sid == ended,
+            (Credential::Device { device, .. }, Revoked::Device(ended)) => device == ended,
+            _ => false,
+        }
+    }
+
+    /// When the caller's access token expires (Unix seconds); `None` for a
+    /// session, whose limits `still_valid` checks.
+    pub fn ends_at(&self) -> Option<i64> {
+        match self.credential {
+            Credential::Cookie { .. } => None,
+            Credential::Device { expires_at, .. } => Some(expires_at),
+        }
+    }
+}
+
+/// The token of an `Authorization: DPoP <token>` value: the scheme `DPoP` in
+/// any case, one or more spaces, and exactly one token of 43 characters of
+/// base64url. `None` for anything else.
+///
+/// RFC 9449 § 7.1; RFC 9110 § 11.4.
+fn dpop_token(value: &HeaderValue) -> Option<TokenSecret> {
+    let text = value.to_str().ok()?;
+    let (scheme, rest) = text.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("dpop") {
+        return None;
+    }
+    TokenSecret::from_wire(rest.trim_start_matches(' ')).ok()
+}
+
+/// A refusal of a token request: the error, and the time of the server's
+/// clock for its `Date` when it is known.
+struct TokenRefusal {
+    error: ApiError,
+    now: Option<i64>,
+}
+
+/// The refusal of a token request with `error`, dated `now` when known.
+fn token_refusal(error: ApiError, now: Option<i64>) -> TokenRefusal {
+    TokenRefusal { error, now }
+}
+
+impl TokenRefusal {
+    /// The answer: the error, with a `Date` of the server's clock when the
+    /// time is known.
+    fn into_response(self) -> Response {
+        let response = self.error.into_response();
+        match self.now {
+            Some(now) => with_server_date(response, now),
+            None => response,
+        }
+    }
+}
+
+impl SessionAuth {
+    /// The token path of [`VaultCaller`] (steps 2 to 8 there).
+    async fn verify_token(&self, parts: &Parts) -> Result<VaultCaller, TokenRefusal> {
+        let mut values = parts.headers.get_all(AUTHORIZATION).iter();
+        let (Some(value), None) = (values.next(), values.next()) else {
+            return Err(token_refusal(ApiError::unauthorized(), None));
+        };
+        let Some(token) = dpop_token(value) else {
+            return Err(token_refusal(ApiError::unauthorized(), None));
+        };
+        // A clock that failed reads as the largest value; nothing is valid then.
+        let Ok(now) = i64::try_from(self.clock.now_unix()) else {
+            return Err(token_refusal(ApiError::unauthorized(), None));
+        };
+        // The path as the router got it: inside a nested router `parts.uri`
+        // has lost the prefix, and the proof names the whole URL.
+        let path = parts
+            .extensions
+            .get::<OriginalUri>()
+            .map_or_else(|| parts.uri.path(), |original| original.0.path());
+        let htu = self.device.htu(path);
+        let proof = dpop::verify(
+            &parts.headers,
+            &Expect {
+                method: &parts.method,
+                htu: &htu,
+                access: Some(&token),
+            },
+            now,
+        )
+        .map_err(|error| token_refusal(ApiError::from(error), Some(now)))?;
+        let access = token.hash();
+        drop(token);
+
+        let device_auth = self.device.clone();
+        let clock = SessionClock(self.clock.clone());
+        let bound = self
+            .db
+            .with_conn(move |conn| bind_token(conn, &device_auth, &access, &proof, now))
+            .await
+            .map_err(|error| token_refusal(ApiError::from(error), Some(now)))?;
+        let bound = bound.map_err(|error| token_refusal(error, Some(now)))?;
+        Ok(VaultCaller {
+            credential: Credential::Device {
+                device: bound.device,
+                access,
+                expires_at: bound.expires_at,
+            },
+            user_id: bound.user_id,
+            now,
+            clock,
+            device: bound.device,
+            account: bound.account,
+            vault: bound.vault,
+            vk_epoch: bound.vk_epoch,
+            session_version: bound.session_version,
+        })
+    }
+}
+
+/// A token found, bound to the proof's key and still valid.
+struct BoundToken {
+    device: DeviceId,
+    expires_at: i64,
+    user_id: i64,
+    session_version: i64,
+    account: AccountId,
+    vault: VaultId,
+    vk_epoch: u64,
+}
+
+/// Steps 4 to 8 of [`VaultCaller`], on one connection: the token's row, the
+/// binding of the proof's key, the device, the `jti`, and `last_seen`.
+fn bind_token(
+    conn: &rusqlite::Connection,
+    device_auth: &DeviceAuth,
+    access: &TokenHash,
+    proof: &VerifiedProof,
+    now: i64,
+) -> Result<Result<BoundToken, ApiError>, StoreError> {
+    let row = match lookup_access(conn, access, now)? {
+        AccessLookup::Live(row) => row,
+        AccessLookup::Expired => return Ok(Err(ApiError::coded("token_expired"))),
+        AccessLookup::DeviceRevoked => return Ok(Err(ApiError::coded("device_revoked"))),
+    };
+    // A proof of another key: refused, and nothing recorded or revoked.
+    if row.jkt != *proof.jkt() {
+        return Ok(Err(ApiError::coded("dpop_invalid")));
+    }
+    if !devices::still_valid(conn, &row.device, now)? {
+        return Ok(Err(ApiError::coded("device_revoked")));
+    }
+    let Some((account, vault, vk_epoch)) = read_account(conn, row.user_id)? else {
+        return Ok(Err(ApiError::coded("device_revoked")));
+    };
+    // The key is bound to the token now, so the proof's `jti` may take a
+    // place in the cache; the route has not run yet.
+    if let Err(error) = device_auth.replay().record(proof, row.user_id, now) {
+        return Ok(Err(ApiError::from(error)));
+    }
+    // A failed write only makes `last_seen` older.
+    if let Err(e) = devices::touch(conn, &row.device, now) {
+        tracing::warn!(error = %e, "could not record the use of a device");
+    }
+    Ok(Ok(BoundToken {
+        device: row.device,
+        expires_at: row.expires_at,
+        user_id: row.user_id,
+        session_version: row.session_version,
+        account,
+        vault,
+        vk_epoch,
+    }))
+}
+
+impl<S> FromRequestParts<S> for VaultCaller
+where
+    S: Send + Sync,
+    SessionAuth: FromRef<S>,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Response> {
+        let auth = SessionAuth::from_ref(state);
+        // A request is a session's or a device's, never both, and its token
+        // headers read one way only. The `Origin` guard refuses these first;
+        // the extractor does not count on it.
+        match token_headers(&parts.headers) {
+            TokenHeaders::Ambiguous => {
+                return Err(ApiError::coded("bad_request").into_response());
+            }
+            TokenHeaders::Present if has_cookie(&parts.headers) => {
+                return Err(ApiError::coded("bad_request").into_response());
+            }
+            TokenHeaders::Present | TokenHeaders::Absent => {}
+        }
+        let token = parts
+            .headers
+            .get_all(AUTHORIZATION)
+            .iter()
+            .any(is_dpop_scheme);
+        if token {
+            return auth
+                .verify_token(parts)
+                .await
+                .map_err(TokenRefusal::into_response);
+        }
+        let verified = auth
+            .verify(parts, Origin::Vault, Scopes::Full)
+            .await
+            .map_err(|e| ApiError::from(e).into_response())?
+            .ok_or_else(|| ApiError::unauthorized().into_response())?;
+        let session = auth
+            .vault_session(&verified)
+            .map_err(|e| e.into_response())?;
+        Ok(VaultCaller {
+            credential: Credential::Cookie { sid: session.sid },
+            user_id: session.user_id,
+            now: session.now,
+            clock: session.clock,
+            device: session.device,
+            account: session.account,
+            vault: session.vault,
+            vk_epoch: session.vk_epoch,
+            session_version: session.session_version,
+        })
+    }
+}
+
 // ------------------------------------------------------------- capabilities
 
 /// The capability a route needs, named by a type so that a route says it in
@@ -382,6 +831,8 @@ pub mod caps {
         UnlockMethodsWrite,
         /// Write sync data (the import window).
         SyncWrite,
+        /// Manage the devices of the account (revoke them all).
+        DeviceManage,
     }
 }
 
@@ -908,6 +1359,7 @@ mod tests {
             Capability::UnlockMethodsWrite
         );
         assert_eq!(caps::SyncWrite::CAP, Capability::SyncWrite);
+        assert_eq!(caps::DeviceManage::CAP, Capability::DeviceManage);
     }
 
     #[test]
