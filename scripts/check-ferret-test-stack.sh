@@ -138,7 +138,8 @@ if (env.FERRET_TRUST_PROXY !== "1") fail("FERRET_TRUST_PROXY");
 const net = e2e.networks?.["ferret-e2e-net"];
 if (!net || Object.keys(e2e.networks).length !== 1) fail("exactly the network ferret-e2e-net");
 if (net.name !== "ferret-e2e-net" || net.labels?.owner !== "ferret-e2e") fail("network name and label");
-if (net.internal === false || net.external) fail("the network is made here");
+if (net.external) fail("the network is made here");
+if (net.internal !== true) fail("e2e_network_is_internal: the network of the stack has no way out (internal: true)");
 const subnet = net.ipam?.config?.[0]?.subnet;
 if (subnet !== "172.30.250.0/28") fail("subnet");
 const tlsIp = tls.networks["ferret-e2e-net"].ipv4_address;
@@ -321,6 +322,7 @@ case "$*" in
       exit $?
     fi
     case "$*" in *MODE=verify*) exit "${STUB_VERIFY_RC:-0}" ;; esac
+    case "$*" in *MODE=restore*) [ -n "${STUB_RESTORE_RC:-}" ] && exit "$STUB_RESTORE_RC" ;; esac
     exit "${STUB_JOB_RC:-0}" ;;
 esac
 exit 0
@@ -346,7 +348,7 @@ guard_run() {
   : > "$guard_log"
   (
     export PATH="$PWD/$tmp/bin:$PATH" STUB_LOG="$guard_log" FERRET_DOCKER_ARGS="--context stub" FERRET_ENV_FILE="$tmp/plain.env"
-    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP STUB_CP_FAIL STUB_CP_CORRUPT STUB_REAL_CP="$real_cp"
+    export STUB_VOLUMES STUB_VERIFY_RC STUB_JOB_RC STUB_RESTORE_RC STUB_BUMP_RC STUB_RUNNING STUB_REAL_JOBS STUB_DATA STUB_NEW STUB_SNAP STUB_CP_FAIL STUB_CP_CORRUPT STUB_REAL_CP="$real_cp"
     # shellcheck disable=SC1091
     source scripts/lanbox-ferret-test.sh
     "$@"
@@ -487,6 +489,52 @@ STUB_RUNNING=false
 guard_run test_snapshot --yes-ferret-test || guard_fail "a snapshot of a stopped app failed"
 if logged " start ferret-test-app"; then guard_fail "a snapshot started an app that was stopped before"; fi
 unset STUB_RUNNING STUB_VOLUMES
+
+# ferret_test_data_has_its_label: the data volume of the ferret-test stack carries owner=ferret-test (the compose
+# file says so above), `up` refuses a volume that was made without the label, and `label-data` gives it the
+# label by copying the data: checked copy first, the old volume removed only after that, the new one made with
+# the label, the data copied back, the temporary volume removed last; a failure leaves the data in a volume.
+grep -qE '^    require_data_label$' scripts/lanbox-ferret-test.sh || guard_fail "up must call require_data_label"
+[ "$(grep -n 'require_data_label$' scripts/lanbox-ferret-test.sh | head -n 1 | cut -d: -f1)" -lt "$(grep -n 'dc up -d --build' scripts/lanbox-ferret-test.sh | head -n 1 | cut -d: -f1)" ] || guard_fail "require_data_label must come before the start"
+STUB_VOLUMES="ferret-test-data="
+if guard_run require_data_label; then guard_fail "ferret_test_data_has_its_label: a data volume without the label passed"; fi
+STUB_VOLUMES="ferret-test-data=somebody-else"
+if guard_run require_data_label; then guard_fail "ferret_test_data_has_its_label: a data volume with another label passed"; fi
+STUB_VOLUMES="ferret-test-data=ferret-test"
+guard_run require_data_label || guard_fail "ferret_test_data_has_its_label: a labelled data volume was refused"
+STUB_VOLUMES=""
+guard_run require_data_label || guard_fail "ferret_test_data_has_its_label: no data volume at all was refused"
+# label-data: refuses without --yes-ferret-test, does nothing when the label is there
+STUB_VOLUMES="ferret-test-data="
+if guard_run test_label_data; then guard_fail "label-data went on without --yes-ferret-test"; fi
+if logged "volume create|volume rm|MODE="; then guard_fail "label-data without a yes touched a volume"; fi
+STUB_VOLUMES="ferret-test-data=ferret-test"
+guard_run test_label_data --yes-ferret-test || guard_fail "label-data failed on a labelled volume"
+if logged "volume create|volume rm|MODE=| stop "; then guard_fail "label-data touched a volume that already had the label"; fi
+# a volume without the label: copy, check, replace, copy back, remove the temporary volume
+STUB_VOLUMES="ferret-test-data="
+guard_run test_label_data --yes-ferret-test || guard_fail "label-data failed"
+tmpcreate="$(first_line 'volume create --label owner=ferret-test ferret-test-data-relabel$')"; stop="$(first_line ' stop ')"; copy="$(first_line 'MODE=make')"
+down="$(first_line 'compose .* down')"; rm_old="$(first_line 'volume rm ferret-test-data$')"; new="$(first_line 'volume create --label owner=ferret-test ferret-test-data$')"
+back="$(first_line 'MODE=restore')"; rm_tmp="$(first_line 'volume rm ferret-test-data-relabel$')"
+{ [ -n "$tmpcreate" ] && [ -n "$stop" ] && [ -n "$copy" ] && [ -n "$down" ] && [ -n "$rm_old" ] && [ -n "$new" ] && [ -n "$back" ] && [ -n "$rm_tmp" ] \
+  && [ "$tmpcreate" -lt "$stop" ] && [ "$stop" -lt "$copy" ] && [ "$copy" -lt "$down" ] && [ "$down" -lt "$rm_old" ] && [ "$rm_old" -lt "$new" ] && [ "$new" -lt "$back" ] && [ "$back" -lt "$rm_tmp" ]; } \
+  || guard_fail "label-data: the order must be temporary volume, stop, checked copy, down, remove old, make labelled, copy back, remove temporary (got $tmpcreate $stop $copy $down $rm_old $new $back $rm_tmp)"
+# the copy fails: the data volume is untouched
+STUB_JOB_RC=4
+if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data went on after a failed copy"; fi
+if logged 'volume rm ferret-test-data$|compose .* down'; then guard_fail "label-data removed the data volume after a failed copy"; fi
+unset STUB_JOB_RC
+# the copy back fails: the temporary volume, which holds the data, is kept
+STUB_RESTORE_RC=4
+if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data went on after a failed copy back"; fi
+if logged 'volume rm ferret-test-data-relabel$'; then guard_fail "label-data removed the temporary volume although the data was not copied back"; fi
+unset STUB_RESTORE_RC
+# an earlier run that did not finish: nothing is stopped or removed
+STUB_VOLUMES="ferret-test-data= ferret-test-data-relabel=ferret-test"
+if guard_run test_label_data --yes-ferret-test; then guard_fail "label-data went on although an unfinished run left a volume"; fi
+if logged ' stop |volume rm|MODE='; then guard_fail "label-data touched volumes although an unfinished run left one"; fi
+unset STUB_VOLUMES
 
 # A tunnel client that runs outside Docker (since the move to Proxmox, Newt is a CT
 # that `docker inspect` cannot see). The real tunnel_lookup, reachable and

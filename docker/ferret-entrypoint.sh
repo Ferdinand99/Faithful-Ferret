@@ -2,7 +2,8 @@
 # Container entrypoint.
 #
 # Started as root (the default), it:
-#   1. hands the data directory to the uid/gid from PUID/PGID (default
+#   1. hands the data directory (and the folder of the backup sets, when
+#      FERRET_BACKUP_DIR names one) to the uid/gid from PUID/PGID (default
 #      1000:1000, the `ferret` user),
 # and then runs the server as that uid/gid.
 #
@@ -36,5 +37,13 @@ data_dir="${FERRET_DATA_DIR:-/data}"
 mkdir -p "$data_dir"
 chown -R "$uid:$gid" "$data_dir" 2>/dev/null \
     || echo "warning: could not chown $data_dir; make it writable for uid $uid" >&2
+
+# The folder of the backup sets, when it is not under the data directory (a volume of
+# its own on a stack with real data): the same uid.
+backup_dir="${FERRET_BACKUP_DIR:-}"
+if [ -n "$backup_dir" ]; then
+    mkdir -p "$backup_dir"
+    chown "$uid:$gid" "$backup_dir" 2>/dev/null         || echo "warning: could not chown $backup_dir; make it writable for uid $uid" >&2
+fi
 
 exec su-exec "$uid:$gid" "$app" "$@"

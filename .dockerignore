@@ -21,3 +21,6 @@ tools
 ct/dudect
 ct/results
 **/*.log
+docker/home.env
+docker/copy.env
+docker/secrets
