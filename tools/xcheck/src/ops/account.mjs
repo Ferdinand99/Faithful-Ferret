@@ -198,9 +198,8 @@ ops['account.recover'] = ({ input, rng }) => {
   const pwEntry = row.parsed.methods.find((m) => m.t === 1);
   const rkEntry = row.parsed.methods.find((m) => m.t === 2 && equal(m.id, rkMethodId));
   if (!pwEntry || !rkEntry) fail('malformed_entries');
-  const newRkId = unhex(input.new_recovery_method_id);
-  // the new id may not be the password wrap's, nor that of any entry but the old recovery entry
-  if (row.parsed.methods.some((m) => equal(m.id, newRkId) && m !== rkEntry)) fail('malformed_entries');
+  // no other entry may share the recovery wrap's id, which the new wrap keeps
+  if (row.parsed.methods.some((m) => equal(m.id, rkMethodId) && m !== rkEntry)) fail('malformed_entries');
 
   if (pwEntry.g >= GENERATION_LIMIT || rkEntry.g >= GENERATION_LIMIT || BigInt(w.kek_generation) >= GENERATION_LIMIT) fail('generation_exhausted');
   const genPw = max(floors.pw, pwEntry.g) + 1n;
@@ -208,14 +207,12 @@ ops['account.recover'] = ({ input, rng }) => {
 
   const pw = wrapSeal('password', { accountId, vaultId, methodId: pwEntry.id, vkEpoch: epoch, kekGeneration: genPw, ksfProfile: input.ksf_profile }, kekPassword(accountId, unhex(input.registration.export_key)), vk, rng.draw(24));
   const newRk = rng.draw(32);
-  const rkw = wrapSeal('recovery', { accountId, vaultId, methodId: newRkId, vkEpoch: epoch, kekGeneration: genRk }, kekRecovery(accountId, newRk), vk, rng.draw(24));
+  // the new recovery wrap keeps the stored method id; only the generation changes
+  const rkw = wrapSeal('recovery', { accountId, vaultId, methodId: rkMethodId, vkEpoch: epoch, kekGeneration: genRk }, kekRecovery(accountId, newRk), vk, rng.draw(24));
   const plain = rewriteManifest(row.parsed, (m) => {
     const e = entryOf(m);
     if (e.t === 1 && equal(e.id, pwEntry.id)) setKey(m, 'g', C.uint(genPw));
-    if (e.t === 2 && equal(e.id, rkMethodId)) {
-      setKey(m, 'id', C.bytes(newRkId));
-      setKey(m, 'g', C.uint(genRk));
-    }
+    if (e.t === 2 && equal(e.id, rkMethodId)) setKey(m, 'g', C.uint(genRk));
   });
   const manifest = sealNewManifest(keys, vk, vaultId, epoch, row.rev + 1n, plain, rng.draw(24));
   const out = {
@@ -223,7 +220,7 @@ ops['account.recover'] = ({ input, rng }) => {
     recovery_key: hex(newRk),
     pk_r: hex(recoveryKeypair(accountId, newRk).pk),
     password_wrap: { method_id: hex(pwEntry.id), kek_generation: String(genPw), wrap: hex(pw.wrap) },
-    recovery_wrap: { method_id: hex(newRkId), kek_generation: String(genRk), wrap: hex(rkw.wrap) },
+    recovery_wrap: { method_id: hex(rkMethodId), kek_generation: String(genRk), wrap: hex(rkw.wrap) },
     manifest,
     registration_record: input.registration.record,
     server_public_key: input.registration.server_public_key,

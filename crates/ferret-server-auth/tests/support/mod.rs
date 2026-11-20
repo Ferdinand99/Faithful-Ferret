@@ -559,7 +559,6 @@ impl Server {
                     envelope: &a.manifest.envelope,
                     tag: &a.manifest.tag,
                 },
-                new_recovery_method_id: MethodId::from_bytes([0x73; 16]),
             },
             NewPassword {
                 input,

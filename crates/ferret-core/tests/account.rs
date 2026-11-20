@@ -924,7 +924,6 @@ fn recover_with(
         rk_code: code,
         rk_wrap: &s.account.wraps[1],
         manifest: row(&s.account),
-        new_recovery_method_id: method_id(0x73),
     };
     recover(
         &mut rng(&format!("{seed}/recover")),
@@ -961,10 +960,10 @@ fn recover_rotates_recovery_key() {
         rec.pk_r,
         recovery_public_key(&rec.recovery_key, &account(0x11)).unwrap()
     );
-    // The new recovery wrap: new id, generation 2, opens with the new key
-    // and not with the old one.
+    // The new recovery wrap: the stored id, generation 2, opens with the new
+    // key and not with the old one.
     assert_eq!(rec.recovery_wrap.method, Method::Recovery);
-    assert_eq!(rec.recovery_wrap.method_id, method_id(0x73));
+    assert_eq!(rec.recovery_wrap.method_id, method_id(0x71));
     assert_eq!(rec.recovery_wrap.kek_generation, 2);
     let by_new = unwrap_vk(&ctx1(), &kek_rk(&rec.recovery_key), &rec.recovery_wrap).unwrap();
     assert!(by_new.same_vault_key(&a.vault));
@@ -992,7 +991,7 @@ fn recover_rotates_recovery_key() {
         .collect();
     assert_eq!(
         listed,
-        vec![(1, method_id(0x70), 2), (2, method_id(0x73), 2)]
+        vec![(1, method_id(0x70), 2), (2, method_id(0x71), 2)]
     );
     assert!(rec.sk_bit);
     assert_eq!(rec.ksf_profile, KsfProfile::P1);
@@ -1056,7 +1055,6 @@ fn recover_draws_in_the_documented_order() {
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: row(&s.account),
-            new_recovery_method_id: method_id(0x73),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::FirstUse,
@@ -1092,7 +1090,6 @@ fn recover_requires_valid_rk_code_checksum_first() {
                 rk_code: &typo,
                 rk_wrap: &wrong_wrap,
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1112,7 +1109,6 @@ fn recover_requires_valid_rk_code_checksum_first() {
                 rk_code: bad,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1154,7 +1150,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[0],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1176,7 +1171,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1203,7 +1197,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: sealed_row(&manifest),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1230,7 +1223,6 @@ fn recover_checks_the_pinned_record() {
         rk_code: &code,
         rk_wrap: &s.account.wraps[1],
         manifest: row(&s.account),
-        new_recovery_method_id: method_id(0x73),
     };
     assert_eq!(
         recover(
@@ -1341,7 +1333,6 @@ fn recover_needs_the_creation_floor() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&weak, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1399,7 +1390,6 @@ fn after_a_recovery_the_new_state_unlocks_and_the_old_does_not() {
             rk_code: &new_code,
             rk_wrap: &rec.recovery_wrap,
             manifest: sealed_row(&rec.manifest),
-            new_recovery_method_id: method_id(0x74),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::Pinned(&pinned),
@@ -1628,7 +1618,6 @@ fn recover_refuses_dropping_the_secret_key() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::Pinned(&pinned),
@@ -1639,31 +1628,21 @@ fn recover_refuses_dropping_the_secret_key() {
 }
 
 #[test]
-fn recover_needs_a_new_recovery_method_id() {
+fn recover_keeps_the_stored_method_ids() {
     let s = create("f3", true);
     let code = rk_code(&s);
     let key = sk(0x5a);
     let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
     let c = ctx1();
-    // A manifest with a passkey as well.
-    let manifest = sealed_manifest(
-        &s,
-        4,
-        vec![
-            ManifestEntry::new(1, method_id(0x70), 1),
-            ManifestEntry::passkey(method_id(0x75), 3, vec![1, 2, 3]),
-            ManifestEntry::new(2, method_id(0x71), 1),
-        ],
-        vec![],
-    );
-    let go = |new_id: u8, draws: bool| {
+    let entries = Error::Malformed(MalformedKind::Entries);
+    let go = |methods: Vec<ManifestEntry>, draws: bool| {
+        let manifest = sealed_manifest(&s, 4, methods, vec![]);
         let reg = register(&s.server, &input, "f3");
         let data = RecoveryInput {
             ctx: &c,
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: sealed_row(&manifest),
-            new_recovery_method_id: method_id(new_id),
         };
         if draws {
             recover(
@@ -1681,15 +1660,150 @@ fn recover_needs_a_new_recovery_method_id() {
             )
         }
     };
-    let entries = Error::Malformed(MalformedKind::Entries);
-    // The password wrap's id, and the passkey's.
-    assert_eq!(go(0x70, false).err(), Some(entries));
-    assert_eq!(go(0x75, false).err(), Some(entries));
-    // A fresh id, and the old recovery wrap's own id (it is replaced).
-    let fresh = go(0x73, true).unwrap();
-    assert_eq!(fresh.recovery_wrap.method_id, method_id(0x73));
-    let same = go(0x71, true).unwrap();
-    assert_eq!(same.recovery_wrap.method_id, method_id(0x71));
+    // A manifest with a passkey as well: every id stays.
+    let rec = go(
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::passkey(method_id(0x75), 3, vec![1, 2, 3]),
+            ManifestEntry::new(2, method_id(0x71), 1),
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(rec.password_wrap.method_id, method_id(0x70));
+    assert_eq!(rec.recovery_wrap.method_id, s.account.wraps[1].method_id);
+    let m = decrypt_manifest(
+        &rec.vault,
+        rec.manifest.rev,
+        &rec.manifest.envelope,
+        &rec.manifest.tag,
+    )
+    .unwrap();
+    let listed: Vec<(u8, MethodId)> = m
+        .methods
+        .iter()
+        .map(|e| (e.method_type, e.method_id))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (1, method_id(0x70)),
+            (3, method_id(0x75)),
+            (2, method_id(0x71))
+        ]
+    );
+    // Another entry with the recovery wrap's id is refused before anything
+    // is drawn: the password entry's, and a passkey's.
+    for shared in [
+        ManifestEntry::new(1, method_id(0x71), 1),
+        ManifestEntry::passkey(method_id(0x71), 3, vec![1, 2, 3]),
+    ] {
+        let mut methods = vec![shared.clone(), ManifestEntry::new(2, method_id(0x71), 1)];
+        if shared.method_type != 1 {
+            methods.insert(0, ManifestEntry::new(1, method_id(0x70), 1));
+        }
+        assert_eq!(go(methods, false).err(), Some(entries));
+    }
+}
+
+/// The server writes the wraps of a recovery under the ids it stores (the
+/// request names none). The new recovery key then opens what the server
+/// serves afterwards, and a renewal starts from it.
+#[test]
+fn after_a_recovery_the_new_key_unlocks_and_renews_the_stored_wrap() {
+    let s = create("f3b", true);
+    let code = rk_code(&s);
+    let key = sk(0x5a);
+    let old_record = pinned_of(&s);
+    let (rec, _) = recover_with(
+        &s,
+        &code,
+        PinState::Pinned(&old_record),
+        PASSWORD_2,
+        Some(&key),
+        "f3b",
+    )
+    .unwrap();
+    // What the server holds after the request: the stored recovery row, its
+    // id, with the new wrap and generation.
+    let stored = ferret_core::WrapRecord {
+        method_id: s.account.wraps[1].method_id,
+        kek_generation: rec.recovery_wrap.kek_generation,
+        method: Method::Recovery,
+        wrap: rec.recovery_wrap.wrap.clone(),
+    };
+    assert_eq!(stored, rec.recovery_wrap);
+    let mut record = rec.pinned(URL, Some(&old_record)).unwrap();
+
+    // The new recovery key opens the stored wrap through the device record.
+    let seen = view(&record);
+    let vault = record
+        .unlock_server(&seen, &stored, &kek_rk(&rec.recovery_key))
+        .unwrap();
+    assert!(vault.same_vault_key(&s.account.vault));
+    // So does a second recovery with it.
+    let new_code = encode_recovery_key(&rec.recovery_key).to_string();
+    let input = new_input(
+        "a third password, long",
+        MpPolicy::WithSecretKey,
+        Some(&key),
+    );
+    let reg = register(&s.server, &input, "f3b/again");
+    let c = ctx1();
+    let again = recover(
+        &mut rng("f3b/again"),
+        &RecoveryInput {
+            ctx: &c,
+            rk_code: &new_code,
+            rk_wrap: &stored,
+            manifest: sealed_row(&rec.manifest),
+        },
+        password(&input, reg, KsfProfile::P1),
+        PinState::Pinned(&record),
+    )
+    .unwrap();
+    assert_eq!(again.recovery_wrap.method_id, method_id(0x71));
+
+    // A renewal of the recovery key from the recovered state works and keeps
+    // the id; the renewed key opens the renewed wrap.
+    let renewed = ferret_core::renew_recovery(
+        &mut rng("f3b/renew"),
+        &vault,
+        &record,
+        &stored,
+        &sealed_row(&rec.manifest),
+    )
+    .unwrap();
+    assert_eq!(renewed.recovery_wrap.method_id, method_id(0x71));
+    assert_eq!(renewed.recovery_wrap.kek_generation, 3);
+    let opened = unwrap_vk(
+        &ctx1(),
+        &kek_rk(&renewed.recovery_key),
+        &renewed.recovery_wrap,
+    )
+    .unwrap();
+    assert!(opened.same_vault_key(&s.account.vault));
+    let m = decrypt_manifest(
+        &vault,
+        renewed.manifest.rev,
+        &renewed.manifest.envelope,
+        &renewed.manifest.tag,
+    )
+    .unwrap();
+    assert!(
+        m.methods
+            .iter()
+            .any(|e| e.method_type == 2 && e.method_id == method_id(0x71) && e.kek_generation == 3)
+    );
+    let mut record = renewed.pinned(&record).unwrap();
+    let seen = view(&record);
+    record
+        .unlock_server(
+            &seen,
+            &renewed.recovery_wrap,
+            &kek_rk(&renewed.recovery_key),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -1738,7 +1852,6 @@ fn a_manifest_without_exactly_one_password_and_recovery_entry_is_refused() {
                     rk_code: &code,
                     rk_wrap: &s.account.wraps[1],
                     manifest: sealed_row(&manifest),
-                    new_recovery_method_id: method_id(0x73),
                 },
                 password(&input, reg, KsfProfile::P1),
                 PinState::FirstUse,
@@ -1833,7 +1946,6 @@ fn the_other_manifest_entries_and_unknown_keys_survive_a_change_and_a_recovery()
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: sealed_row(&manifest),
-            new_recovery_method_id: method_id(0x73),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::FirstUse,
@@ -1850,7 +1962,6 @@ fn the_other_manifest_entries_and_unknown_keys_survive_a_change_and_a_recovery()
     let mut want_password = password_entry;
     want_password.kek_generation = 2;
     let mut want_recovery = recovery_entry;
-    want_recovery.method_id = method_id(0x73);
     want_recovery.kek_generation = 2;
     assert_eq!(after.methods, vec![want_password, passkey, want_recovery]);
 }
@@ -2508,7 +2619,6 @@ fn change_password_and_recover_pick_max_floor_manifest_server_plus_one() {
                     rk_code: &code,
                     rk_wrap,
                     manifest: m,
-                    new_recovery_method_id: method_id(0x73),
                 },
                 password(&input, reg, KsfProfile::P1),
                 pin,
@@ -2776,7 +2886,6 @@ fn a_server_value_at_the_largest_generation_is_generation_exhausted() {
                 rk_code: &code,
                 rk_wrap: &a.wraps[1],
                 manifest: sealed_row(&manifest_top),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
