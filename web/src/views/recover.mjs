@@ -87,13 +87,11 @@ export function recoverView(deps) {
   let needCode = info === null;
   const email = field(t, { id: "recover-email", role: "email", label: "recover.email", type: "email", autocomplete: "username", required: false });
   const code = field(t, { id: "recover-code", role: "code", label: "recover.code", help: "recover.code_help", secret: true, required: false });
-  const codeLimit = el("p", { class: "notice", role: "note", "data-role": "code-limit" }, t("recover.code_limit"));
   const resetOpen = el("p", { class: "notice", role: "note", "data-role": "reset-open" }, t("recover.reset_open"));
   const signedIn = info !== null ? el("p", { class: "notice", role: "note", "data-role": "signed-in" }, t("recover.signed_in", { email: info.email })) : null;
   function showCodeFields() {
     email.row.hidden = !needCode;
     code.row.hidden = !needCode;
-    codeLimit.hidden = !needCode;
     resetOpen.hidden = !(needCode && deps.resetOpen === true);
     if (signedIn) signedIn.hidden = needCode;
   }
@@ -291,7 +289,6 @@ export function recoverView(deps) {
       email.row,
       code.row,
       resetOpen,
-      codeLimit,
       qrText.row,
       el("div", { class: "actions" }, qrRead),
       qrBox,

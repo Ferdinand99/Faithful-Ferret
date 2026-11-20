@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use support::backup::capture_log;
 use support::session::{Seeded, get_with, issue, seed, session_version};
 use support::{Jar, PEER, Req, Res, TestApp, Which};
+use vole_kit::auth::rate_limit::CODE_CEILING_POLICY;
 use vole_kit::auth::sign_in_codes;
 
 /// The address requests come from unless a test says otherwise (behind the
@@ -502,10 +503,11 @@ async fn unknown_email_takes_as_long_as_a_known_one() {
     let known = email(1);
     let unknown = "nobody@example.com".to_string();
     let wrong = sign_in_codes::generate();
-    // The kit's own back-off per name would answer fast after ten failures;
-    // it is cleared before every attempt, for both names alike, so each
-    // attempt does the whole work. Every attempt comes from an address of its
-    // own, so the address limits never answer either.
+    // Past the kit's overall ceiling per name, a code that is not pending is
+    // refused after one cheap read, which would answer fast. The ceiling is
+    // cleared before every attempt, for both names alike, so each attempt does
+    // the whole work. Every attempt comes from an address of its own, so the
+    // per-network keys and the address limits never answer either.
     let attempt = |name: &str, n: usize, kind: usize| {
         let name = name.to_string();
         let wrong = wrong.clone();
@@ -524,13 +526,16 @@ async fn unknown_email_takes_as_long_as_a_known_one() {
             took
         }
     };
-    // The key the test clears is the kit's own key for the name. Pinned here:
-    // eleven failures without clearing put the name in back-off under exactly
-    // that key, and clearing it ends the back-off. If the kit changes the
-    // format, this fails instead of the loop below quietly timing the throttle.
+    // The key the test clears is the kit's own key for the name: the overall
+    // ceiling of all addresses together. Pinned here: failures from addresses
+    // of their own, one past the free failures of the ceiling, put the name
+    // under exactly that key, and clearing it ends the back-off. If the kit
+    // changes the format, this fails instead of the loop below quietly timing
+    // the ceiling.
     let key = format!("code:{known}");
-    for n in 0..11 {
-        let from = format!("10.9.0.{}", n + 1);
+    for n in 0..=CODE_CEILING_POLICY.free_failures + 1 {
+        let n = usize::try_from(n).expect("a count");
+        let from = format!("10.9.{}.{}", n / 200, n % 200 + 1);
         let res = redeem_from(&app, &known, &wrong, &from).await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     }
@@ -540,7 +545,7 @@ async fn unknown_email_takes_as_long_as_a_known_one() {
             .code_account
             .retry_after(&key, Instant::now())
             .is_some(),
-        "the kit's key for a name is code:<name>"
+        "the kit's ceiling key for a name is code:<name>"
     );
     limits.code_account.clear(&key);
     assert!(
@@ -583,6 +588,39 @@ async fn unknown_email_takes_as_long_as_a_known_one() {
         );
     }
     assert_eq!(pending(&app, user.user_id).await, 1);
+}
+
+#[tokio::test]
+async fn a_strangers_failures_from_other_networks_never_stop_the_right_code() {
+    let app = app().await;
+    let user = seed(&app, 1).await;
+    let code = code_for(&app, user.user_id).await;
+    let wrong = sign_in_codes::generate();
+
+    // Somebody who knows the address tries wrong codes from more networks than
+    // the kit's overall ceiling for the name allows free failures.
+    for n in 0..=CODE_CEILING_POLICY.free_failures + 1 {
+        let n = usize::try_from(n).expect("a count");
+        let from = format!("10.8.{}.{}", n / 200, n % 200 + 1);
+        let res = redeem_from(&app, &email(1), &wrong, &from).await;
+        assert_denied(&res, "a wrong code from another network");
+    }
+    assert!(
+        app.state
+            .core
+            .limits
+            .code_account
+            .retry_after(&format!("code:{}", email(1)), Instant::now())
+            .is_some(),
+        "the ceiling for the name is reached"
+    );
+
+    // The user, from their own address, is not held back and the code works.
+    assert_eq!(pending(&app, user.user_id).await, 1);
+    let res = redeem(&app, &email(1), &code).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json(), json!({ "scope": "account_reset" }));
+    assert_eq!(pending(&app, user.user_id).await, 0);
 }
 
 // ------------------------------------------------------------- throttle
