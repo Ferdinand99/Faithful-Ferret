@@ -1078,7 +1078,10 @@ async fn a_panic_clears_a_waiting_request_so_a_manual_run_can_be_asked_for_again
     assert_eq!(status.request_manual_run(), Ok(()));
     assert!(job.poll().await.is_none(), "the window is collecting");
     assert!(status.snapshot().waiting);
-    assert!(status.request_manual_run().is_err(), "refused while waiting");
+    assert!(
+        status.request_manual_run().is_err(),
+        "refused while waiting"
+    );
 
     // The job panics before the run starts: nothing is waiting any more.
     job.after_panic();
