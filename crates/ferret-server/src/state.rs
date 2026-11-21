@@ -295,7 +295,7 @@ pub async fn build_state(
         .await?;
     let throttle: Arc<dyn Throttle> = Arc::new(KitThrottle::new(clock.clone()));
     let limits = Arc::new(SyncLimits::new(RateConfig::DEFAULT, clock.clone()));
-    let device_auth = DeviceAuth::new(vault_db.clone(), clock.clone(), origins.vault());
+    let device_auth = DeviceAuth::new(origins.vault());
 
     Ok(FerretState {
         core,

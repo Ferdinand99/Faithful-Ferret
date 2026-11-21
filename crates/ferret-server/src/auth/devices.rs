@@ -567,15 +567,18 @@ async fn revoke_route(
         if !session_counts(tx, &sid, version, now)? {
             return Ok(Change::SessionGone);
         }
-        if revoke(tx, user_id, &id, now)? {
+        // A browser chooses its own id, so one may carry the id of a token
+        // device: one press ends the token device and every browser session
+        // that carries the id, in this transaction. The asking session is
+        // never ended here (it signs out instead); this browser's id included.
+        let revoked = revoke(tx, user_id, &id, now)?;
+        let sessions = session::end_device_sessions(tx, user_id, &id, Some(&sid), now)?;
+        if revoked {
             return Ok(Change::Ended(Ended {
-                sessions: Vec::new(),
+                sessions,
                 devices: vec![id],
             }));
         }
-        // The asking session is never ended here (it signs out instead); any
-        // other session of that browser id is, this browser's id included.
-        let sessions = session::end_device_sessions(tx, user_id, &id, Some(&sid), now)?;
         if sessions.is_empty() {
             return Ok(if id == own {
                 Change::OwnBrowser

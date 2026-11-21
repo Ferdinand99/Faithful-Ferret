@@ -4,8 +4,6 @@
 
 mod support;
 
-use std::sync::Arc;
-
 use axum::extract::FromRef;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::IntoResponse as _;
@@ -26,7 +24,6 @@ use ferret_server::error::ApiError;
 use ferret_server::ids::{DeviceId, TokenSecret};
 use ferret_server::state::VaultDb;
 use ferret_server::wire::PlatformJson;
-use ferret_server_auth::{Clock, ManualClock};
 use rusqlite::Connection;
 use support::{Req, TestApp, VAULT_URL, Which};
 use vole_kit::db::migrate::apply_migrations;
@@ -151,12 +148,9 @@ fn a_bare_or_broken_proof_is_refused_and_the_purge_purges_nothing_yet() {
     tx.commit().expect("commit");
 }
 
-#[tokio::test]
-async fn device_auth_names_the_vault_origin_in_htu_and_prints_nothing() {
-    let app = TestApp::new().await;
-    let db = VaultDb::from_ref(&app.state);
-    let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(1));
-    let auth = DeviceAuth::new(db.clone(), clock.clone(), VAULT_URL);
+#[test]
+fn device_auth_names_the_vault_origin_in_htu_and_prints_nothing() {
+    let auth = DeviceAuth::new(VAULT_URL);
     assert_eq!(
         auth.htu("/api/sync/changes").as_str(),
         "https://vault.ferret.test/api/sync/changes"
@@ -166,7 +160,7 @@ async fn device_auth_names_the_vault_origin_in_htu_and_prints_nothing() {
         format!("{VAULT_URL}/api/auth/token/refresh")
     );
     // A trailing `/` of the origin is not doubled.
-    let slashed = DeviceAuth::new(db, clock, &format!("{VAULT_URL}/"));
+    let slashed = DeviceAuth::new(&format!("{VAULT_URL}/"));
     assert_eq!(
         slashed.htu("/api/auth/devices"),
         auth.htu("/api/auth/devices")

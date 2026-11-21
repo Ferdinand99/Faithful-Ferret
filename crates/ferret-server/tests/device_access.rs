@@ -273,6 +273,106 @@ async fn a_token_request_answers_like_the_session_of_the_same_account() {
     }
 }
 
+/// The full listing and the frozen rows of a restore, the way a client leaves a
+/// `410` or a restore, answer a device exactly as they answer the session of
+/// the same account, and refuse a proof of another key and a revoked device.
+#[tokio::test]
+async fn the_listing_and_the_restore_rows_accept_a_device_token_with_a_proof() {
+    let app = device_app().await;
+    let client = client_account(&app, 1).await;
+    let session = client_session(&app, &client, SessionScope::Full, 1).await;
+    let path = format!("/api/sync/items/{}", hex_of(item(1)));
+    let res = app
+        .call_raw(
+            Which::Vault,
+            cookie_req(&session, Method::PUT, &path)
+                .json(&live_body(&client.vault, item(1), 0, "one", 1))
+                .build(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    // A restore freezes the rows (and ends every device: the device signs in
+    // after it, as a device does).
+    let at = now(&app);
+    app.state
+        .vault_db
+        .with_conn(move |conn| ferret_server::vault::reconcile::bump(conn, None, at))
+        .await
+        .expect("a bump");
+    let session = client_session(&app, &client, SessionScope::Full, 1).await;
+    let mut device = DeviceClient::new(1);
+    let res = device.sign_in(&app, &email(1), CLIENT_PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    for path in ["/api/sync/items", "/api/sync/restore-rows"] {
+        let by_token = device
+            .send(&app, device.token_req(&app, Method::GET, path))
+            .await;
+        let by_cookie = app
+            .call_raw(
+                Which::Vault,
+                cookie_req(&session, Method::GET, path).build(),
+            )
+            .await;
+        assert_eq!(
+            by_token.status,
+            StatusCode::OK,
+            "{path}: {}",
+            by_token.text()
+        );
+        assert_eq!(by_token.json(), by_cookie.json(), "{path}");
+        assert_eq!(by_token.header("cache-control"), "no-store", "{path}");
+    }
+    let listed = device
+        .send(&app, device.token_req(&app, Method::GET, "/api/sync/items"))
+        .await
+        .json();
+    let wanted = hex_of(item(1));
+    let holds = |rows: &Value| {
+        rows.as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["id"] == wanted.as_str()))
+    };
+    assert!(holds(&listed["items"]), "the listing holds the item");
+    let frozen = device
+        .send(
+            &app,
+            device.token_req(&app, Method::GET, "/api/sync/restore-rows"),
+        )
+        .await
+        .json();
+    assert!(holds(&frozen["rows"]), "the frozen rows hold the item");
+
+    // A proof of another key, and a device that was revoked.
+    let before = replay_len(&app);
+    for path in ["/api/sync/items", "/api/sync/restore-rows"] {
+        let res = device
+            .send(
+                &app,
+                req_signed_by(&app, &device, &DeviceKey::new(9), Method::GET, path),
+            )
+            .await;
+        assert_eq!(
+            status_and_code(&res),
+            (401, "dpop_invalid".into()),
+            "{path}: {}",
+            res.text()
+        );
+    }
+    assert_eq!(replay_len(&app), before, "a refused proof records nothing");
+    revoke_in_db(&app, device_id(&device)).await;
+    for path in ["/api/sync/items", "/api/sync/restore-rows"] {
+        let res = device
+            .send(&app, device.token_req(&app, Method::GET, path))
+            .await;
+        assert_eq!(
+            status_and_code(&res),
+            (401, "device_revoked".into()),
+            "{path}: {}",
+            res.text()
+        );
+    }
+}
+
 // ---------------------------------------------------------- the guard
 
 #[tokio::test]
@@ -732,8 +832,6 @@ async fn handoff_reauth_reconcile_and_sensitive_routes_refuse_a_token() {
         (Method::GET, "/api/vault/recovery", false),
         (Method::POST, "/api/vault/recover", false),
         (Method::POST, "/api/sync/import", false),
-        (Method::GET, "/api/sync/items", false),
-        (Method::GET, "/api/sync/restore-rows", false),
     ] {
         let mut req = device.token_req(&app, method.clone(), path);
         if origin {
@@ -905,9 +1003,11 @@ fn only_the_sync_routes_take_a_token() {
             "vault/events.rs::get_events",
             "vault/items.rs::put_item",
             "vault/methods.rs::get_methods",
+            "vault/reconcile.rs::get_items",
+            "vault/reconcile.rs::get_restore_rows",
         ]
     );
-    // The files whose code names `VaultCaller`: the extractor and the seven
+    // The files whose code names `VaultCaller`: the extractor and the nine
     // handlers. A handler that takes it through an alias, a wrapper extractor
     // or a macro is not found above, but it is found here, in a file that is
     // not in this list, and the list is then edited on purpose.
@@ -921,6 +1021,7 @@ fn only_the_sync_routes_take_a_token() {
             "vault/events.rs",
             "vault/items.rs",
             "vault/methods.rs",
+            "vault/reconcile.rs",
         ]
     );
 }

@@ -474,3 +474,31 @@ pub async fn reauth(app: &TestApp) -> (Seeded, Issued) {
     app.set_jar(Which::Vault, issued.jar.clone());
     (seeded, issued)
 }
+
+/// The restore epoch of every vault goes up (`reconcile::bump_restore_epoch`,
+/// whose transaction also ends every session and raises every user's session
+/// version), and then the sessions that were live and the session versions are
+/// put back: for the tests of the epoch and of the sync, whose sessions are
+/// meant to be the same ones after the bump. What a bump ends is tested where
+/// the bump is (`restore_epoch.rs`, `restore.rs`).
+pub fn bump_epoch_keeping_sessions(
+    conn: &mut rusqlite::Connection,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<u64, ferret_server::error::StoreError> {
+    let live: Vec<Vec<u8>> = conn
+        .prepare("SELECT sid_hash FROM ferret_sessions WHERE revoked_at IS NULL")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let epoch = ferret_server::vault::reconcile::bump_restore_epoch(conn, at_least, now)?;
+    let tx = conn.transaction()?;
+    tx.execute("UPDATE users SET session_version = session_version - 1", [])?;
+    for sid in live {
+        tx.execute(
+            "UPDATE ferret_sessions SET revoked_at = NULL WHERE sid_hash = ?1",
+            [sid],
+        )?;
+    }
+    tx.commit()?;
+    Ok(epoch)
+}

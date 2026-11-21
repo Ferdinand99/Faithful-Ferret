@@ -53,7 +53,6 @@ use clap::{Parser, Subcommand};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::admin::codes;
-use crate::auth::session::end_everything_after_restore;
 use crate::backup::{BackupConfig, restore, set};
 use crate::data_lock;
 use crate::error::StartError;
@@ -310,13 +309,15 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             let report = restore::restore(&data_dir, &from, at_least, now_unix()?)
                 .map_err(|error| restore_failed(&data_dir, error))?;
             let mut said = format!(
-                "restored {} vault{}: restore epoch is now {}, {} session{} ended, the files \
-                 that were there are in {}",
+                "restored {} vault{}: restore epoch is now {}, {} session{} ended, {} device{} signed \
+                 out, the files that were there are in {}",
                 report.vaults,
                 plural(report.vaults),
                 report.restore_epoch,
                 report.sessions_ended,
                 plural(report.sessions_ended),
+                report.devices_revoked,
+                plural(report.devices_revoked),
                 report.moved_aside.display()
             );
             if report.seen_epoch_unknown {
@@ -468,20 +469,26 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
     // bump ends them in its own transaction, as `backup restore` does.
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let bumped = reconcile::bump_in(&tx, at_least, now)?;
-    let swept = end_everything_after_restore(&tx, now)?;
     tx.commit()?;
     let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
-    let (sessions, codes) = (count(swept.sessions), count(swept.sign_in_codes));
+    let swept = bumped.swept;
+    let (sessions, codes, devices) = (
+        count(swept.sessions),
+        count(swept.sign_in_codes),
+        count(swept.devices),
+    );
     Ok(format!(
         "restore epoch is now {} ({} vault{} raised); {} session{} ended, {} sign-in code{} \
-         revoked",
+         revoked, {} device{} signed out",
         bumped.restore_epoch,
         bumped.vaults,
         plural(bumped.vaults),
         sessions,
         plural(sessions),
         codes,
-        plural(codes)
+        plural(codes),
+        devices,
+        plural(devices)
     ))
 }
 

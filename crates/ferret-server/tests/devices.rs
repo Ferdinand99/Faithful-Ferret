@@ -487,6 +487,56 @@ async fn revoking_a_device_stops_sync_at_once_and_its_refresh_fails() {
 }
 
 #[tokio::test]
+async fn a_browser_that_carries_a_token_devices_id_ends_with_it() {
+    let app = device_app().await;
+    let (client, victim) = account(&app, 1).await;
+    let uid = client.ids.user_id;
+    let device = signed_in(&app, 1, 1).await;
+    let id = id_of(&device);
+    // A browser chooses its own id: another session of the account takes the
+    // id of the token device, and opens an admin session from it.
+    let intruder = issue(&app, uid, Origin::Vault, SessionScope::Full, 5).await;
+    let intruder_admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 5).await;
+    let (child, parent) = (intruder_admin.sid, intruder.sid);
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            set_parent(conn, &child, &parent)?;
+            conn.execute(
+                "UPDATE ferret_sessions SET device_id = ?1 WHERE sid_hash IN (?2, ?3)",
+                rusqlite::params![id.as_slice(), parent.0.as_slice(), child.0.as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("the intruder's rows");
+    let mut revocations = app.sync_events().subscribe_revocations();
+
+    // One press ends the token device and the browser sessions that carry the id.
+    let res = delete(&app, &victim.jar, &id).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    assert!(is_revoked(&app, &device).await);
+    assert!(session_ended(&app, intruder.sid).await);
+    assert!(session_ended(&app, intruder_admin.sid).await);
+    assert!(
+        !session_ended(&app, victim.sid).await,
+        "the asking session stays"
+    );
+    assert_eq!(
+        sorted(heard(&mut revocations)),
+        sorted(vec![
+            Revoked::Device(DeviceId(id)),
+            Revoked::Session(intruder.sid),
+            Revoked::Session(intruder_admin.sid),
+        ])
+    );
+    assert_stopped(&app, &device, "device_revoked").await;
+    // Nothing is left under the id.
+    let res = delete(&app, &victim.jar, &id).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+}
+
+#[tokio::test]
 async fn revoking_a_browser_ends_its_sessions_and_their_admin_children() {
     let app = device_app().await;
     let (client, browser) = account(&app, 1).await;

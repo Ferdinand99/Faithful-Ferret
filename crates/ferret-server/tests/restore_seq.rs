@@ -558,7 +558,10 @@ async fn write(app: &TestApp, u: &User, n: u8, base_rev: u64, key: u8) {
 }
 
 async fn bump(app: &TestApp) -> u64 {
-    db(app, |conn| bump_restore_epoch(conn, None, COUNT_ONLY)).await
+    db(app, |conn| {
+        support::session::bump_epoch_keeping_sessions(conn, None, COUNT_ONLY)
+    })
+    .await
 }
 
 async fn changes(app: &TestApp, u: &User, query: &str) -> ChangesRes {
