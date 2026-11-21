@@ -10,7 +10,7 @@
     <title>Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)</title>
     <meta
       name="description"
-      content="Faithful Ferret is a self-hosted, zero-knowledge, open source password manager from the Hedgerow family: passkeys, one-time codes, a full web vault, browser extensions and iOS and Android apps. In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). Not ready for real passwords yet, and there has been no external security audit."
+      content="Faithful Ferret is a self-hosted, zero-knowledge, open source password manager from the Hedgerow family: passkeys, one-time codes, a full web vault, browser extensions and iOS and Android apps. In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. Not ready for real passwords yet, and there has been no external security audit."
     />
     <script>document.documentElement.classList.add("js");</script>
     <link rel="canonical" href="https://hedgerow.tools/Faithful-Ferret/" />
@@ -27,7 +27,7 @@
     <meta property="og:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)" />
     <meta
       property="og:description"
-      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). Not ready for real passwords yet, and there has been no external security audit."
+      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. Not ready for real passwords yet, and there has been no external security audit."
     />
     <meta property="og:image" content="https://hedgerow.tools/Faithful-Ferret/icon-512.png" />
     <meta property="og:image:type" content="image/png" />
@@ -38,7 +38,7 @@
     <meta name="twitter:title" content="Faithful Ferret — a self-hosted, zero-knowledge password manager (in development)" />
     <meta
       name="twitter:description"
-      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). Not ready for real passwords yet, and there has been no external security audit."
+      content="Your vault is encrypted on your own devices and the server only stores ciphertext. Open source, from the Hedgerow family. In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. Not ready for real passwords yet, and there has been no external security audit."
     />
     <meta name="twitter:image" content="https://hedgerow.tools/Faithful-Ferret/icon-512.png" />
     <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
@@ -48,7 +48,7 @@
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Faithful Ferret",
-        "description": "An in-development self-hosted, zero-knowledge, open source password manager: passwords, passkeys and one-time codes, a full web vault, browser extensions and iOS and Android apps. In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). Not ready for real passwords yet, and there has been no external security audit.",
+        "description": "An in-development self-hosted, zero-knowledge, open source password manager: passwords, passkeys and one-time codes, a full web vault, browser extensions and iOS and Android apps. In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. Not ready for real passwords yet, and there has been no external security audit.",
         "url": "https://hedgerow.tools/Faithful-Ferret/",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "Docker, Unraid (planned)",
@@ -81,6 +81,7 @@
 
         <nav class="topnav" id="topnav" aria-label="Main">
           <a class="topnav-link" href="#why">Why</a>
+          <a class="topnav-link" href="#today">Today</a>
           <a class="topnav-link" href="#features">Features</a>
           <a class="topnav-link" href="#security">Security</a>
           <a class="topnav-link" href="#platforms">Platforms</a>
@@ -104,7 +105,7 @@
             </div>
             <a class="live-pill" href="#roadmap">
               <span class="dot" aria-hidden="true"></span>
-              <span>In development · v0.3.0</span>
+              <span>In development · v0.5.0</span>
               <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-right"></use></svg>
             </a>
             <h1 class="display" id="hero-title">Your passwords.<br class="br-wide" /> Only yours.</h1>
@@ -114,7 +115,7 @@
               stores ciphertext. It will fill in logins, keep your passkeys and one-time codes, and work in your browser, on
               iOS and on Android.
             </p>
-            <p class="hero-fine">In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). The browser extension has started but is not usable yet. Not ready for real passwords yet, and there has been no external security audit.</p>
+            <p class="hero-fine">In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. The browser extension has started but is not usable yet. Ferret is a single-author project. Not ready for real passwords yet, and there has been no external security audit.</p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="https://github.com/Ferdinand99/Faithful-Ferret">
                 <svg class="gh-mark" aria-hidden="true"><use href="#gh"></use></svg>
@@ -211,15 +212,68 @@
         </div>
       </section>
 
+      <!-- Today =========================================================== -->
+      <section class="section section-alt" id="today" aria-labelledby="today-title">
+        <div class="wrap">
+          <header class="section-head reveal">
+            <p class="eyebrow">Works today</p>
+            <h2 class="headline" id="today-title">What v0.5.0 does.</h2>
+            <p class="sub">
+              These parts work end to end on a test instance. All of it is pre-1.0 and none of it has had
+              an external review. Ferret is not for real passwords yet.
+            </p>
+          </header>
+
+          <ul class="grid">
+            <li class="card feature reveal">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#archive"></use></svg></span>
+              <h3>Emergency sheet and recovery</h3>
+              <p>Setup makes a printable two-page sheet: the secret key and a QR code on page 1, the recovery key alone on page 2. If the master password is forgotten, a new browser recovers the account with the recovery key and both pages. Recovery makes a new recovery key, and the old one stops working on that server.</p>
+            </li>
+            <li class="card feature reveal d1">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
+              <h3>Master password and sign-in code</h3>
+              <p>One write path changes the master password and ends every other session. An administrator can issue a code that is good once, for 24 hours. It resets a sign-in only and never opens a vault.</p>
+            </li>
+            <li class="card feature reveal d2">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#upload"></use></svg></span>
+              <h3>Encrypted export</h3>
+              <p>You sign in again first, and the file is encrypted with a separate export password, so it does not open with the master password.</p>
+            </li>
+            <li class="card feature reveal">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#download"></use></svg></span>
+              <h3>Import</h3>
+              <p>From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted <span class="mono">.avux</span> and CSV). Duplicates are not removed, and passkeys, folders, tags and attachments are not imported.</p>
+            </li>
+            <li class="card feature reveal d1">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#refresh"></use></svg></span>
+              <h3>Sync and tabs</h3>
+              <p>Changes sync between devices and browser tabs, and a conflict keeps both versions. The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the first tab instead of dropping them.</p>
+            </li>
+            <li class="card feature reveal d2">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#server"></use></svg></span>
+              <h3>Backups and a hardened stack</h3>
+              <p>Checked backup sets every 24 hours and after every change to the unlock methods, with &ldquo;Take a backup now&rdquo; on the admin pages. An optional container encrypts each set with <span class="mono">age</span> and copies it to an SFTP target. A restore is one command that is safe to cut off. Ports are on loopback only, one proxy is trusted, and the amd64 and arm64 images are signed with cosign.</p>
+            </li>
+          </ul>
+
+          <p class="later reveal">
+            <strong>Coming next:</strong> devices with tokens that are bound to a device key, then the Firefox extension with autofill, then a password generator and a health check.
+            Running a server is described in
+            <a href="https://github.com/Ferdinand99/Faithful-Ferret/blob/main/docs/OPERATIONS.md">the operations guide</a>.
+          </p>
+        </div>
+      </section>
+
       <!-- Features ======================================================== -->
-      <section class="section section-alt" id="features" aria-labelledby="features-title">
+      <section class="section" id="features" aria-labelledby="features-title">
         <div class="wrap">
           <header class="section-head reveal">
             <p class="eyebrow">Planned for 1.0</p>
             <h2 class="headline" id="features-title">What Ferret will do.</h2>
             <p class="sub">
-              Everything on this list is a requirement for the first stable release. Nothing here
-              exists yet, and 1.0 doesn’t ship until all of it works.
+              Everything on this list is a requirement for the first stable release. Some of it works
+              today, as listed above, and 1.0 doesn’t ship until all of it works.
             </p>
           </header>
 
@@ -265,7 +319,7 @@
       </section>
 
       <!-- Security ======================================================== -->
-      <section class="section" id="security" aria-labelledby="security-title">
+      <section class="section section-alt" id="security" aria-labelledby="security-title">
         <div class="wrap">
           <header class="section-head reveal">
             <p class="eyebrow">Security approach</p>
@@ -290,7 +344,7 @@
             <li class="card feature reveal d2">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#archive"></use></svg></span>
               <h3>Recovery you control</h3>
-              <p>A recovery key and an encrypted export that you keep. There is <strong>no admin recovery</strong> of vaults: nobody, including whoever runs your server, can open it for you.</p>
+              <p>A recovery key on an emergency sheet and an encrypted export that you keep. There is <strong>no admin recovery</strong> of vaults: nobody, including whoever runs your server, can open it for you. An administrator can reset a sign-in with a one-time code, which never opens the vault.</p>
             </li>
           </ul>
 
@@ -330,12 +384,32 @@
                 off and use the extension and apps only.
               </p>
             </div>
+            <div class="callout status-info reveal d2">
+              <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#info"></use></svg>
+              <p>
+                <span class="callout-title">Recovery has limits</span>
+                A new browser needs both pages of the emergency sheet, and the secret key cannot be changed.
+                After a new recovery key, the old one works again only if the server is restored from a backup
+                made before it. The server sends no e-mail, accounts have no second factor yet, and there is no
+                full rekey.
+              </p>
+            </div>
+            <div class="callout status-info reveal d3">
+              <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#info"></use></svg>
+              <p>
+                <span class="callout-title">Backups need care from the operator</span>
+                A backup set together with its secret files lets whoever takes the machine guess master
+                passwords, so copies off the machine are always encrypted. The server and the copy container
+                can still delete their own sets and copies, so snapshots on the target are for the operator
+                to add.
+              </p>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- Platforms ======================================================= -->
-      <section class="section section-alt" id="platforms" aria-labelledby="platforms-title">
+      <section class="section" id="platforms" aria-labelledby="platforms-title">
         <div class="wrap">
           <header class="section-head reveal">
             <p class="eyebrow">Platforms</p>
@@ -371,13 +445,13 @@
 
           <p class="later reveal">
             <strong>Server:</strong> one container with SQLite, like the other Hedgerow apps, for
-            Docker and Unraid (planned).
+            Docker and Unraid (planned). The server image is built for amd64 and arm64 and signed with cosign.
           </p>
         </div>
       </section>
 
       <!-- Roadmap ========================================================= -->
-      <section class="section" id="roadmap" aria-labelledby="roadmap-title">
+      <section class="section section-alt" id="roadmap" aria-labelledby="roadmap-title">
         <div class="wrap">
           <header class="section-head reveal">
             <p class="eyebrow">Status</p>
@@ -427,15 +501,15 @@
               <div class="ms-body">
                 <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>First version done, work continues</span></p>
                 <h3>Web vault</h3>
-                <p>Unlocking and editing work now. The generator and one-time codes come next.</p>
+                <p>Setting up, unlocking, editing, sync, recovery, export and import work now. The password generator, a health check and one-time codes come later.</p>
               </div>
             </li>
             <li class="milestone is-now reveal">
               <span class="ms-marker" aria-hidden="true"><span class="dot is-live"></span></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Safe sync done, the rest in progress</span></p>
+                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Done in v0.5.0, devices next</span></p>
                 <h3>Safe sync, recovery and daily use</h3>
-                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, recovery from an older server state with checks, and matching saved addresses against a page. In progress: the recovery key, encrypted export and import from Bitwarden, Vaultwarden and AliasVault, automatic backups and an emergency sheet with a QR code.</p>
+                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, and recovery from an older server state with checks. Recovery is done (v0.5.0): an emergency sheet with a QR code, recovery on a new browser with the recovery key, a new recovery key, a master password change through one write path, a one-time sign-in code, encrypted export, import from Ferret, Bitwarden and AliasVault files, tab hand-over that keeps unsaved edits, and automatic backups with an encrypted off-machine copy and a safe restore. Coming next: devices and tokens bound to a device key.</p>
               </div>
             </li>
             <li class="milestone is-now reveal">
@@ -443,7 +517,7 @@
               <div class="ms-body">
                 <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Extension started, apps later</span></p>
                 <h3>Browser extension, iOS and Android</h3>
-                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The browser extension has started, Firefox first: its foundation and fill engine exist, but it is not usable yet. The iOS and Android apps come later.</p>
+                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The browser extension has started, Firefox first: its foundation and fill engine exist, but it is not usable yet. Autofill in the Firefox extension is the next step after devices. The iOS and Android apps come later.</p>
               </div>
             </li>
             <li class="milestone reveal">
@@ -459,7 +533,7 @@
       </section>
 
       <!-- FAQ ============================================================= -->
-      <section class="section section-alt" id="faq" aria-labelledby="faq-title">
+      <section class="section" id="faq" aria-labelledby="faq-title">
         <div class="wrap">
           <header class="section-head reveal">
             <h2 class="headline" id="faq-title">Questions.</h2>
@@ -470,7 +544,7 @@
                 <summary>When can I use it?<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-down"></use></svg></summary>
                 <div class="faq-body">
                   <p>
-                    Not yet. In development: the server and web vault work end to end in testing, including safe sync between devices and browser tabs (v0.3.0). Not ready for real passwords yet, and there has been no external security audit. <strong>Please don’t store
+                    Not yet. In development (v0.5.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import and automatic backups. Not ready for real passwords yet, and there has been no external security audit. <strong>Please don’t store
                     real passwords in it.</strong> There is no release date.
                     Watch or star the
                     <a href="https://github.com/Ferdinand99/Faithful-Ferret">repository</a> to hear about progress.
@@ -512,8 +586,9 @@
                 <summary>What if I forget my master password?<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-down"></use></svg></summary>
                 <div class="faq-body">
                   <p>
-                    You use your recovery key, or restore from the encrypted export you saved. Ferret
-                    will check during setup that you have kept them. There is no admin recovery: if you
+                    You use your recovery key from the emergency sheet that setup makes, or import the encrypted
+                    export you saved. Setup makes you type the keys back before the account is created. On a new
+                    browser, recovery needs both pages of the sheet. There is no admin recovery: if you
                     lose the master password, the recovery key and every export, the vault can’t be opened by anyone.
                   </p>
                 </div>
@@ -548,9 +623,12 @@
                 <summary>Will I be able to import my existing vault?<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#chevron-down"></use></svg></summary>
                 <div class="faq-body">
                   <p>
-                    Yes. Import from AliasVault and from Bitwarden or Vaultwarden is planned for 1.0,
-                    including one-time codes and passkeys where the export format contains them.
-                    Ferret will warn you when an export file holds secrets in plain text.
+                    Partly today. The web vault imports Ferret exports, unencrypted Bitwarden JSON and CSV
+                    files, and unencrypted AliasVault <span class="mono">.avux</span> and CSV files. It says what
+                    it found before it imports, and it reminds you to delete the plain file afterwards.
+                    Duplicates are not removed, and passkeys, folders, tags and attachments are not imported yet.
+                    Support for Vaultwarden, and for one-time codes and passkeys where the export format
+                    contains them, is planned for 1.0.
                   </p>
                 </div>
               </details>
