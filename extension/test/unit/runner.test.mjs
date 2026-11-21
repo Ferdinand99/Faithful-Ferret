@@ -47,6 +47,7 @@ function runExt(args) {
       "#!/usr/bin/env bash",
       'printf "%s\\n" "$1" >> "$STUB_STACK"',
       '[ "$1" = e2e-ca ] && printf "PEM\\n"',
+      '[ "$1" = e2e-token ] && printf "TOKEN\\n"',
       "exit 0",
       "",
     ].join("\n"));
@@ -102,12 +103,14 @@ test("firefox_steps_have_no_network_outside_the_test_networks", () => {
   // e2e: the only network of the test step is the stack's.
   const e2e = runExt(["e2e"]);
   assert.equal(e2e.status, 0, e2e.output);
-  assert.deepEqual(e2e.stack, ["e2e-up", "e2e-ca"]);
+  assert.deepEqual(e2e.stack, ["e2e-up", "e2e-ca", "e2e-token"]);
   const e2eRuns = e2e.calls.filter((call) => call.includes("run"));
   assert.equal(flagValue(e2eRuns[1], "--network"), "ferret-e2e-net");
   assert.ok(e2eRuns[1].includes("FERRET_E2E_CA_PEM=PEM"), "the stack's CA reaches the test step");
+  assert.ok(e2eRuns[1].includes("FERRET_E2E_SETUP_TOKEN=TOKEN"), "the stack's setup token reaches the test step");
+  assert.ok(runs[1].includes("FERRET_E2E_SETUP_TOKEN="), "and no token outside e2e");
   assert.equal(e2eRuns[0].includes("--network"), false);
-  assert.deepEqual(runExt(["e2e", "--no-up"]).stack, ["e2e-ca"], "--no-up leaves the stack alone");
+  assert.deepEqual(runExt(["e2e", "--no-up"]).stack, ["e2e-ca", "e2e-token"], "--no-up leaves the stack alone");
 
   // Nothing ever joins the host's network or another container's, or publishes a port.
   for (const call of [...firefox.calls, ...e2e.calls]) {

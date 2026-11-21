@@ -46,6 +46,20 @@ export function makeTar(files) {
   return gzipSync(Buffer.concat(blocks));
 }
 
+/**
+ * The sources that import a shared file, as empty modules: a test that builds
+ * with a list of its own (or none) plants these so the build finds no import
+ * outside the package.
+ * @type {Record<string, string>}
+ */
+export const WITHOUT_SHARED_IMPORTS = Object.freeze({
+  "src/pages/about.mjs": "export {};\n",
+  "src/pages/page.mjs": "export {};\n",
+  "src/pages/popup.mjs": "export {};\n",
+  "src/pages/signin.mjs": "export {};\n",
+  "src/background/session.mjs": "export {};\n",
+});
+
 /** The files of a fake WASM package. @returns {Record<string, string>} */
 export function wasmFiles() {
   return Object.fromEntries(WASM_FILES.map((p) => [p, `// fake ${p}\n`]));

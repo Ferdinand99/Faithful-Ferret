@@ -1,0 +1,6 @@
+{
+  "action": {
+    "default_popup": "pages/popup.html"
+  },
+  "optional_host_permissions": ["https://*/*"]
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Faithful Ferret</title>
+  <link rel="stylesheet" href="../assets/app.css">
+  <script type="module" src="popup.mjs"></script>
+</head>
+<body class="ff-page ff-popup">
+  <header class="ff-bar">
+    <span class="ff-mark" aria-hidden="true"></span>
+    <span class="ff-bar-title">Ferret</span>
+    <button type="button" class="ff-icon-button ff-bar-first" id="popout" data-role="popout" data-i18n-label="session.popout">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"></path></svg>
+    </button>
+    <button type="button" class="ff-icon-button" id="lock" data-role="lock" data-i18n-label="session.lock" hidden>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+    </button>
+    <span class="ff-avatar" id="avatar" data-role="avatar" role="img" hidden></span>
+  </header>
+  <main id="root" class="ff-popup-body" aria-live="polite"></main>
+</body>
+</html>

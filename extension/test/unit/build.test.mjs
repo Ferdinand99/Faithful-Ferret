@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readZip } from "../../scripts/lib/archive.mjs";
 import { build, MAX_FILE_BYTES, sha256, WASM_FILES } from "../../scripts/build.mjs";
-import { makeRoot, makeTar, repoRoot, wasmFiles } from "./buildHelpers.mjs";
+import { makeRoot, makeTar, repoRoot, wasmFiles, WITHOUT_SHARED_IMPORTS } from "./buildHelpers.mjs";
 
 /** @param {Record<string, string | null>} [extra] @param {Record<string, unknown>} [options] */
 async function buildIn(extra, options = {}) {
@@ -170,8 +170,8 @@ test("build_refuses_source_maps_big_files_and_unknown_file_types", async () => {
 
 test("build_refuses_a_manifest_that_names_a_missing_file", async () => {
   await assert.rejects(
-    buildIn({ "src/pages/about.html": null }),
-    /pages\/about\.html is not in the package/,
+    buildIn({ "src/pages/popup.html": null }),
+    /pages\/popup\.html is not in the package/,
   );
 });
 
@@ -213,7 +213,7 @@ test("mv3_build_has_no_background_page_and_mv2_build_has_it", async () => {
 });
 
 test("an_empty_shared_list_writes_no_shared_manifest", async () => {
-  const { env, result } = await buildIn({ "shared.json": "[]\n", "src/pages/about.mjs": "export {};\n" });
+  const { env, result } = await buildIn({ "shared.json": "[]\n", ...WITHOUT_SHARED_IMPORTS });
   try {
     assert.equal(result.files.has("shared/MANIFEST.json"), false);
     assert.equal(existsSync(join(result.dir, "shared", "MANIFEST.json")), false);
@@ -224,7 +224,7 @@ test("an_empty_shared_list_writes_no_shared_manifest", async () => {
 });
 
 test("shared_files_are_copied_from_web_with_their_hashes_and_never_over_a_source_file", async () => {
-  const env = makeRoot({ "shared.json": '["b.mjs", "dir/a.mjs", "dom.mjs"]\n' });
+  const env = makeRoot({ "shared.json": '["b.mjs", "dir/a.mjs", "dom.mjs"]\n', ...WITHOUT_SHARED_IMPORTS });
   try {
     mkdirSync(join(env.webRoot, "src", "dir"), { recursive: true });
     writeFileSync(join(env.webRoot, "src", "b.mjs"), "export const b = 1;\n");

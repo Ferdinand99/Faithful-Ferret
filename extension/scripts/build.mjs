@@ -16,7 +16,8 @@
 //    route or service file is on it. The release check compares every listed
 //    file in the package with its hash in MANIFEST.json.
 // 3. Merges manifest/base.json, the overlay of the chosen manifest version and
-//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A permission outside permissions.allow.json (its `release` section for the release variant) is a
+//    manifest/parts/*.json (and, for the test variant only, manifest/test-parts/*.json). A part writes
+//    the action as `action` (MV3); the MV2 build moves it into `browser_action`. A permission outside permissions.allow.json (its `release` section for the release variant) is a
 //    build error, and so is a key that is never allowed (content_scripts,
 //    web_accessible_resources, externally_connectable). The manifest declares
 //    data_collection_permissions required: ["authenticationInfo"]: the extension
@@ -260,6 +261,12 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
     if (key in merged) merged[key] = [...list].sort(compareText);
   }
   if (manifest === "mv2") {
+    // A part names the action as MV3 does (`action`); MV2 calls it `browser_action`.
+    if ("action" in merged) {
+      merged.browser_action ??= {};
+      mergeInto(merged.browser_action, merged.action, "manifest/parts (action)", "browser_action.");
+      delete merged.action;
+    }
     for (const [from, to] of [["host_permissions", "permissions"], ["optional_host_permissions", "optional_permissions"]]) {
       if (!(from in merged)) continue;
       merged[to] = [...(merged[to] ?? []), ...merged[from]].sort(compareText);

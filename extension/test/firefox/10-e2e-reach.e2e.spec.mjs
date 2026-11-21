@@ -16,7 +16,9 @@ test("the_e2e_ca_is_trusted_and_the_stack_hosts_load_over_https", async () => {
       for (const host of readHosts().e2e) {
         await session.navigate(`https://${host}/`);
         const where = await session.content(() => document.documentURI);
-        assert.ok(where.startsWith(`https://${host}/`), `${channel}: ${host} loaded, not an error page (${where})`);
+        // A fresh stack's admin origin sends the browser on to the vault's setup page: either host counts, an error page never.
+        const stack = readHosts().e2e.map((name) => `https://${name}/`);
+        assert.ok(stack.some((origin) => where.startsWith(origin)), `${channel}: ${host} loaded, not an error page (${where})`);
       }
     } finally {
       await session.quit();

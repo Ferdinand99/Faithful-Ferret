@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { build, packXpi, sha256, sharedProblems } from "../../scripts/build.mjs";
-import { extensionRoot, makeRoot, repoRoot } from "./buildHelpers.mjs";
+import { extensionRoot, makeRoot, repoRoot, WITHOUT_SHARED_IMPORTS } from "./buildHelpers.mjs";
 import { reach, readGraph } from "./importGraph.mjs";
 
 const WEB_SRC = join(repoRoot, "web", "src");
@@ -250,7 +250,7 @@ test("shared_imports_resolve_inside_the_list", async () => {
   ];
   for (const [label, source, message] of cases) {
     const name = label === "a file above the folder" ? "d/a.mjs" : "a.mjs";
-    const env = makeRoot({ "shared.json": `["${name}"]\n`, "src/pages/about.mjs": "export {};\n" });
+    const env = makeRoot({ "shared.json": `["${name}"]\n`, ...WITHOUT_SHARED_IMPORTS });
     try {
       mkdirSync(join(env.webRoot, "src", dirname(name)), { recursive: true });
       writeFileSync(join(env.webRoot, "src", ...name.split("/")), source);

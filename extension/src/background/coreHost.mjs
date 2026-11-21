@@ -14,8 +14,10 @@
 // and fails on any other importer.
 //
 // Boundary: an op gets the raw client. Production ops therefore live in this
-// file; the only other code that passes ops in is the test build's hooks
-// (the test build only), which a release does not contain.
+// file or in a background module that only the entry (main.mjs) imports and
+// passes in as `ops`: the session's ops (session.mjs), which hold the account
+// session over the same client. The only other code that passes ops in is the
+// test build's hooks (the test build only), which a release does not contain.
 
 /** The reasons a lock can have. */
 export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_out", "restart", "worker_failed"]);
@@ -27,7 +29,7 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * passes their implementations in (`ops`); in a release they are refused like any
  * other name.
  */
-export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open"]);
+export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open", "server_check", "session_state", "sign_in", "unlock"]);
 
 /**
  * The codes that say the worker which holds the vault is gone or was ended:
@@ -51,9 +53,10 @@ export class CoreError extends Error {
 /**
  * @typedef {"timeout" | "idle" | "manual" | "sign_out" | "restart" | "worker_failed"} LockReason
  * @typedef {{ setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void }} Timers
- * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => void }} OpContext
- *   `setUnlocked` opens the host. It does nothing if a lock ran after the call
- *   started, and the call then fails with `vault_locked`.
+ * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => boolean }} OpContext
+ *   `setUnlocked` opens the host and answers true. It does nothing and answers
+ *   false if a lock ran after the call started, and the call then fails with
+ *   `vault_locked`.
  * @typedef {{
  *   vault: boolean,
  *   worker: "vault" | "job" | "none",
@@ -219,7 +222,7 @@ export function createCoreHost({
         setUnlocked: () => {
           if (epoch !== started) {
             refusedUnlock = true;
-            return;
+            return false;
           }
           current = "unlocked";
           // At once, in the same turn: an open vault never exists without a deadline.
@@ -230,6 +233,7 @@ export function createCoreHost({
               // A listener that fails must not undo the unlock.
             }
           }
+          return true;
         },
       };
       try {

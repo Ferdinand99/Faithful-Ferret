@@ -1,8 +1,7 @@
 {
   "manifest_version": 2,
   "browser_action": {
-    "default_title": "Faithful Ferret",
-    "default_popup": "pages/about.html"
+    "default_title": "Faithful Ferret"
   },
   "background": {
     "page": "background/background.html",

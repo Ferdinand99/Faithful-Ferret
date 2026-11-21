@@ -7,7 +7,8 @@
 //
 // - `types` are message types from the table of the channel (`UI_TYPES` for
 //   "ui", `CONTENT_TYPES` for "content") in `src/shared/protocol.mjs`.
-// - `handle` receives the checked body and a context that the router builds.
+// - `handle` receives the checked body and a context that the router builds
+//   (`ctx.type` is the message type, for a handler of several types).
 //   The router has already checked the sender and decoded the message.
 //
 // The router reads a generated register of these files. There is no central

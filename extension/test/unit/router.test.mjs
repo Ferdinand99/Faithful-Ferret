@@ -56,6 +56,7 @@ async function setup({ unlocked = false, handlers } = {}) {
       ctx.touch();
     }),
     record("settings", { lock_minutes: 15 }),
+    record("server_check", { ok: true }),
     record("candidates", { handles: [] }),
     record("search", { handles: [] }),
     record("frame_report", undefined),
@@ -78,6 +79,7 @@ const requests = {
   sign_in: () => encode("sign_in", { server: "https://vault.example", email: "a@b.c", mp: "typed" }),
   unlock: () => encode("unlock", { mp: "typed" }),
   settings: () => encode("settings", {}),
+  server_check: () => encode("server_check", { server: "https://vault.example" }),
   candidates: () => encode("candidates", { tab_id: 1, frame_id: 0 }),
   search: () => encode("search", { query: "x" }),
 };
@@ -235,7 +237,8 @@ test("the_handler_context_has_the_call_and_no_key_or_client", async () => {
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.candidates());
   const { ctx } = log[0];
-  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "lock", "sender", "setMinutes", "state", "touch"]);
+  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "lock", "sender", "setMinutes", "state", "touch", "type"]);
+  assert.equal(ctx.type, "candidates");
   assert.equal(Object.isFrozen(ctx), true);
   assert.equal(ctx.channel, "ui");
   // The host's list decides what it can call.
@@ -250,7 +253,7 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   assert.equal(await router.onMessage(report, sender), undefined);
   assert.deepEqual(log.map((e) => [e.type, e.ctx.channel, e.ctx.sender.tabId, e.ctx.sender.frameId]), [["frame_report", "content", 7, 2]]);
   // A report handler reads the state and nothing else: no call, no lock, no touch.
-  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["channel", "sender", "state"]);
+  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["channel", "sender", "state", "type"]);
 
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;

@@ -22,7 +22,8 @@
 // reply, not a refusal.
 //
 // Handlers come from `background/handlers/<feature>.handler.mjs`, collected by
-// the build into `handlers.gen.mjs`; see handlers/README.
+// the build into `handlers.gen.mjs`; see handlers/README. A handler of several
+// types reads which one it got from `ctx.type`.
 
 import { contentSender, isUiPort } from "../shared/origin.mjs";
 import {
@@ -40,6 +41,7 @@ import { LOCK_EXEMPT } from "./lock.mjs";
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
+ *   type: string,
  *   sender: any,
  *   lock?: (reason: import("./coreHost.mjs").LockReason) => Promise<void>,
  *   state: () => "locked" | "unlocked",
@@ -161,6 +163,7 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
     /** @type {HandlerContext} */
     const ctx = Object.freeze({
       channel: "ui",
+      type,
       sender: port.sender,
       call,
       lock: lockHost,
@@ -228,7 +231,7 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       if (!(await allowed(message.type))) return undefined;
       /** @type {HandlerContext} */
       // A report handler can read the state and nothing else: no call, no lock.
-      const ctx = Object.freeze({ channel: "content", sender: from, state });
+      const ctx = Object.freeze({ channel: "content", type: message.type, sender: from, state });
       try {
         await handler.handle(message.body, ctx);
       } catch {

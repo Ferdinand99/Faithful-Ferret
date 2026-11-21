@@ -131,7 +131,7 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
   }
   assert.deepEqual(
     [...seenTyped].sort(),
-    ["sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp"],
+    ["sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
   assert.deepEqual(FORBIDDEN_KEYS, ["password", "value", "secret", "totp_secret", "vk"]);
 
@@ -205,13 +205,14 @@ test("the checker copies what it keeps and refuses what it does not know", () =>
 
 test("every UI request and reply round-trips with a sample body", () => {
   const samples = {
-    state: [{}, { state: "unlocked", server: "https://vault.example", lock_at: 1_700_000_000_000 }],
+    state: [{}, { state: "unlocked", server: "https://vault.example", host: "vault.example", host_a_label: "vault.example", account: "a@example.com", lock_at: 1_700_000_000_000 }],
+    server_check: [{ server: "vault.example" }, { ok: true, server: "https://vault.example", host: "vault.example", host_a_label: "vault.example" }],
     lock: [{}, { ok: true }],
     sign_in: [
-      { server: "https://vault.example", email: "a@example.com", mp: "pw", sk: "A3-XXXX" },
-      { ok: false, reason: "bad_credentials" },
+      { server: "https://vault.example", email: "a@example.com", mp: "pw", sk: "A3-XXXX", sk_bit: true, remember_sk: false, qr_text: "ferret-setup:v1" },
+      { ok: true, account_email: "a@example.com", server: "https://vault.example" },
     ],
-    unlock: [{ mp: "pw" }, { ok: true }],
+    unlock: [{ mp: "pw", sk: "A3-XXXX" }, { ok: false, reason: "wrong_credentials" }],
     candidates: [
       { tab_id: 1, frame_id: 0 },
       { handles: [{ ref: "h1", name: "Example", username: "me", insecure: false }] },

@@ -257,12 +257,12 @@ test("the_handler_register_lists_every_handler_file_in_order_and_refuses_strays"
   });
   try {
     const text = /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
-    assert.deepEqual(importsOf(text).specifiers, ["./handlers/alpha.handler.mjs", "./handlers/zeta.handler.mjs"]);
-    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1\]\);/);
+    assert.deepEqual(importsOf(text).specifiers, ["./handlers/alpha.handler.mjs", "./handlers/session.handler.mjs", "./handlers/zeta.handler.mjs"]);
+    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2\]\);/);
   } finally {
     env.cleanup();
   }
-  const none = await built();
+  const none = await built({ extra: { "src/background/handlers/session.handler.mjs": null } });
   try {
     assert.match(/** @type {Buffer} */ (none.files.get("background/handlers.gen.mjs")).toString("utf8"), /export const HANDLERS = Object\.freeze\(\[\]\);/);
   } finally {
@@ -400,8 +400,8 @@ test("anything_in_a_test_only_folder_is_left_out_of_a_release_and_refused_by_the
     for (const path of Object.keys(extra)) assert.equal(test_.files.has(path.slice("src/".length)), true, path);
     // A test-only handler is registered in the test build and not in the release.
     const registerOf = (/** @type {Map<string, Buffer>} */ files) => /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
-    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, ["./handlers/test-only/probe.handler.mjs"]);
-    assert.deepEqual(importsOf(registerOf(release.files)).specifiers, []);
+    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, ["./handlers/session.handler.mjs", "./handlers/test-only/probe.handler.mjs"]);
+    assert.deepEqual(importsOf(registerOf(release.files)).specifiers, ["./handlers/session.handler.mjs"]);
     // The release check refuses such a path even if the build were bypassed.
     for (const path of ["background/test-only/x.mjs", "pages/test-only/x.html", "background/handlers/test-only/x.handler.mjs"]) {
       const problems = releaseProblems(new Map([...release.files, [path, Buffer.from("export {};\n")]]), readInternalHosts());
