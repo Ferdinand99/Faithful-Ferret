@@ -25,8 +25,21 @@ The matrix tolerates no known shape (`KNOWN_GAPS` is empty).
 
 ## Checks by hand on the test instance
 
-**You need:** the test instance at `https://vault.example.org` (the vault) and `https://admin.example.org` (the admin
-pages), running the build under test with an **empty data volume** (no account yet) and its setup token; two browsers
+**A fresh account needs a fresh server.** The emergency sheet only exists at the moment an account is set up, and a server
+makes exactly one account: after the first administrator exists, registration is closed (`registration_closed`) and
+invitations are off in this release. The admin pages' Users page cannot add a second account with a vault and a sheet
+either. So this test cannot add an account to the test instance that already holds data, and it must not wipe that data.
+The least destructive way is a **second, throwaway instance** of the same build, with a data volume of its own: a copy of
+the test stack's compose file with another project name, container name, volume and ports, behind a second pair of public
+names (below: `vault-2.example.org` and `admin-2.example.org`), and its own setup token. The first instance and its account
+are not touched. If a second instance is not possible, the fallback is to take a snapshot of the test instance's data
+(the stack's `snapshot` step), empty the data volume, run this script, and put the snapshot back with `restore-snapshot`;
+that ends every session on the old account and raises its restore epoch, and a mistake loses the old data if the
+snapshot was not checked first. **Do not start before one of the two is in place, and tell whoever runs the stack which.**
+
+**You need:** the second instance at `https://vault-2.example.org` (the vault) and `https://admin-2.example.org` (the admin
+pages), running the build under test with an **empty data volume** (no account yet) and its setup token; the old test
+instance and its account (called "the old account", with its password) left as they are; two browsers
 that have never been used with it (A and B, for example Firefox and Chromium), a third fresh profile for C; a PDF
 viewer; a folder on your own disk that is **not** synced to a cloud; shell access to the host of the test stack (for
 `backup list` and `sign-in-code`); and the repository checked out for the import files
@@ -94,7 +107,7 @@ before it still runs the old scripts.
    test@example.org --yes`, or on the Users page of the admin pages.
    *Expected:* a code and the time it is good until (24 hours from now).
 2. In C (a browser that has never seen the account) open the vault. Open the kit's own page for a sign-in code
-   (`https://admin.example.org/sign-in-code`) once to see where it leads.
+   (`https://admin-2.example.org/sign-in-code`) once to see where it leads.
    *Expected:* it ends on the vault's recovery page (`#/recover`), and the code was **not** spent there.
 3. On the recovery page, the heading is "Forgot your master password?". Fill in the e-mail address, the code, the text under the QR
    code (page 1), the secret key (page 1), RK1 (page 2) and a new master password MP3 twice. First type RK1 with one wrong character.
@@ -142,7 +155,7 @@ before it still runs the old scripts.
 4. **See the warning for unsent changes:** turn the network off in the browser's developer tools, change an item in A, and open Export before
    it syncs. *Expected:* a warning that the file may not hold your newest changes ("1 item(s) have changes that the server has not accepted yet"), with "Export anyway" and "Check again". Turn the network on again.
 
-### 7. Import the export into another browser, and the foreign files (C or D, about 15 minutes)
+### 7. Import the export into another browser and another account, and the foreign files (C or D, about 20 minutes)
 
 1. Sign in with MP4 in a fresh profile D. Open Account, "Import", choose the `.ferretexport`.
    *Expected:* a preview that says it is a Ferret export made on today's date and that the number of items is known once the export
@@ -158,7 +171,13 @@ before it still runs the old scripts.
 4. Try `bitwarden/encrypted.json` and `aliasvault/encrypted.avex`.
    *Expected:* refused with the text that the export is encrypted and how to export it again without encryption. Nothing is
    imported. A `.zip` file is refused too.
-5. Delete the plain files and the export from your disk. They hold secrets.
+5. **Another account.** In a browser that is signed in to the old account on the old instance, make an encrypted export (as in part 6;
+   it only reads the old account, and the only thing it changes there is that browser's "last export" date). Open the new account
+   on the second instance in browser D and import that file with its export password.
+   *Expected:* the preview shows a Ferret export made today; after the right password the old account's items appear in the new
+   account next to the ones already there (nothing of the new account is replaced, and nothing is removed from the old one).
+   This is the import into another account on another server; the old account and its instance are unchanged afterwards.
+6. Delete the plain files and the export from your disk. They hold secrets.
 
 ### 8. Two tabs with an unsaved edit (A, about 10 minutes)
 
@@ -219,4 +238,4 @@ The limits are in `docs/design/phase-1-security-design.md` § 8.8 ("Recovery, ex
 ## Operating the test instance
 
 The restore, bump, one-time code and backup steps are in `docs/OPERATIONS.md`. The data on the test instance is disposable and never becomes real data. Delete every file
-this test made on your disk (the PDFs, the export, the foreign files you imported) when you are done.
+this test made on your disk (the PDFs, the export, the foreign files you imported) when you are done, and remove the second instance (stop it and delete its data volume and its two public names) once the test is finished.
