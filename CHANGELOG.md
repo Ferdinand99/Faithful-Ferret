@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.4.0...v0.5.0) (2026-11-21)
+
+
+### Features
+
+* **deploy:** stack for real data, encrypted off-machine copy and drill stack ([#187](https://github.com/Ferdinand99/Faithful-Ferret/issues/187)) ([400c9c9](https://github.com/Ferdinand99/Faithful-Ferret/commit/400c9c9e3418388b8c87299e5917b99a976c3338))
+* milestone M3 — recovery, export, import and backup ([1797311](https://github.com/Ferdinand99/Faithful-Ferret/commit/179731143b3ebb3cbf4af85f0048de3dd3f43e22))
+* **server:** backup page and "Take a backup now" on the admin pages ([#184](https://github.com/Ferdinand99/Faithful-Ferret/issues/184)) ([84a42b8](https://github.com/Ferdinand99/Faithful-Ferret/commit/84a42b8be161604ab13cb17f9213781b554e515e))
+* **server:** restore a backup set safely, and raise the restore epoch above the time ([#186](https://github.com/Ferdinand99/Faithful-Ferret/issues/186)) ([b734bec](https://github.com/Ferdinand99/Faithful-Ferret/commit/b734bec7f5f403ecc609cdfd5f3805091f499a38))
+* **web:** keep unsaved edits and hand the vault over between tabs ([#185](https://github.com/Ferdinand99/Faithful-Ferret/issues/185)) ([f7c7101](https://github.com/Ferdinand99/Faithful-Ferret/commit/f7c71015e7269cf278ef2b394cfcc4e7b4e90d24))
+
+
+### Bug Fixes
+
+* end sessions and codes on restore-epoch bump, isolate the copy container ([#195](https://github.com/Ferdinand99/Faithful-Ferret/issues/195)) ([2bce2d0](https://github.com/Ferdinand99/Faithful-Ferret/commit/2bce2d0a83eb5a20d3a8ba714bf538252f983c15))
+
 ## [0.4.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.3.0...v0.4.0) (2026-11-20)
 
 
