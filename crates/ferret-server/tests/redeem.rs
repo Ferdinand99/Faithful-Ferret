@@ -21,6 +21,7 @@ use ferret_server::wire::b64url;
 use ferret_server_auth::{Clock as _, SessionScope};
 use serde_json::{Value, json};
 use support::backup::capture_log;
+use support::handoff::set_role;
 use support::session::{Seeded, get_with, issue, seed, session_version};
 use support::{Jar, PEER, Req, Res, TestApp, Which};
 use vole_kit::auth::rate_limit::CODE_CEILING_POLICY;
@@ -162,6 +163,8 @@ fn assert_denied(res: &Res, why: &str) {
 async fn a_valid_code_gives_an_account_reset_session_and_nothing_more() {
     let app = app().await;
     let user = seed(&app, 1).await;
+    // Even an administrator's reset session is told nothing of the role.
+    set_role(&app, user.user_id, "admin").await;
     let code = code_for(&app, user.user_id).await;
 
     let res = redeem(&app, &email(1), &code).await;
@@ -193,6 +196,7 @@ async fn a_valid_code_gives_an_account_reset_session_and_nothing_more() {
     assert_eq!(info["scope"], "account_reset");
     assert_eq!(info["email"], email(1));
     assert!(info.get("reauth_until").is_none(), "{info}");
+    assert!(info.get("admin").is_none(), "{info}");
     let res = app
         .call_raw(
             Which::Vault,

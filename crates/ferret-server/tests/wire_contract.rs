@@ -2317,6 +2317,31 @@ fn session_res_scope_is_one_of_the_four_scopes() {
     assert_eq!(session.reauth_until, Some(1_800_000_300));
     let admin: SessionRes = parse("session_res.admin.json");
     assert_eq!(admin.reauth_until, None);
+    // Whether the user is an administrator: true in the vault origin's answer,
+    // left out when false (and in the admin origin's answer).
+    assert_eq!(session.admin, Some(true));
+    assert_eq!(admin.admin, None);
+    // `null` is absent, as the web parser has it, and anything but a boolean is refused.
+    let mut null = base.clone();
+    null["admin"] = Value::Null;
+    assert_eq!(
+        serde_json::from_value::<SessionRes>(null).unwrap().admin,
+        None
+    );
+    for bad in [json!("true"), json!(1), json!([])] {
+        let mut changed = base.clone();
+        changed["admin"] = bad.clone();
+        assert!(
+            serde_json::from_value::<SessionRes>(changed).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(!serde_json::to_string(&admin).unwrap().contains("admin\":"));
+    assert!(
+        serde_json::to_string(&session)
+            .unwrap()
+            .contains("\"admin\":true")
+    );
     assert!(
         !serde_json::to_string(&admin)
             .unwrap()

@@ -890,15 +890,42 @@ async fn cli_refuses_while_another_process_holds_the_data_directory() {
     assert_bumped_to_the_time(&epochs(&copy.db()), NOW);
 }
 
-fn free_port() -> u16 {
-    let socket = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
-    socket.local_addr().expect("an address").port()
+/// Two different free ports. Both sockets are held until both ports are known,
+/// so the system cannot hand the same port out twice.
+fn free_ports() -> (u16, u16) {
+    let first = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let second = std::net::TcpListener::bind("127.0.0.1:0").expect("another free port");
+    let port = |socket: &std::net::TcpListener| socket.local_addr().expect("an address").port();
+    (port(&first), port(&second))
+}
+
+/// Whether the server on `port` answers `GET /healthz` with `200` and `ok`:
+/// an HTTP answer from this server, not just something that takes a connection.
+async fn healthz_ok(port: u16) -> bool {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+        return false;
+    };
+    let request = "GET /healthz HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+
+";
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut answer = Vec::new();
+    if stream.read_to_end(&mut answer).await.is_err() {
+        return false;
+    }
+    let answer = String::from_utf8_lossy(&answer);
+    answer.starts_with("HTTP/1.1 200") && answer.ends_with("ok")
 }
 
 #[tokio::test]
 async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
     let dir = Dir::new("live");
-    let (vault_port, admin_port) = (free_port(), free_port());
+    let (vault_port, admin_port) = free_ports();
     let config = Config {
         data_dir: dir.path().to_path_buf(),
         host: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
@@ -913,12 +940,9 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
         backup_push_url: None,
     };
     let server = tokio::spawn(ferret_server::server::run(config.clone()));
-    // Up when the vault port takes a connection.
+    // Up when the vault port answers `/healthz`.
     let started = Instant::now();
-    while tokio::net::TcpStream::connect(("127.0.0.1", vault_port))
-        .await
-        .is_err()
-    {
+    while !healthz_ok(vault_port).await {
         if server.is_finished() {
             panic!("the server ended: {:?}", server.await);
         }
@@ -952,9 +976,10 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
     );
 
     // A second server on the same directory is refused for the same reason.
+    let (vault_port, admin_port) = free_ports();
     let second = Config {
-        vault_port: free_port(),
-        admin_port: free_port(),
+        vault_port,
+        admin_port,
         ..config
     };
     let err = ferret_server::server::run(second)

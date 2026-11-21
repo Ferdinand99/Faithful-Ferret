@@ -976,6 +976,12 @@ pub struct SessionRes {
         deserialize_with = "u53_opt::deserialize"
     )]
     pub reauth_until: Option<u64>,
+    /// Whether the user is an active administrator, so the web vault knows to
+    /// offer the way to the admin pages. Only the vault origin's answer says it
+    /// (`true` or left out, like the other optional booleans, and left out in
+    /// the admin origin's answer and for a session that is not `full`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin: Option<bool>,
 }
 
 /// The origin a session belongs to.

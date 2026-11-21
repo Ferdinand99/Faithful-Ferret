@@ -269,6 +269,7 @@ export function fixtures() {
       scope: "full",
       origin: "vault",
       reauth_until: 1800000300,
+      admin: true,
     },
     "session_res.admin.json": {
       email: "ada@example.test",
@@ -1202,6 +1203,10 @@ export function invalidCases() {
   }
   for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800000300"], ["a fraction", 1.5]]) {
     parse(`session_res reauth_until ${name}`, "session_res", with_("session_res.json", { reauth_until: value }), "reauth_until is a whole number up to 2^53 - 1");
+  }
+  // Whether the user is an administrator is a boolean.
+  for (const [name, value] of [["a string", "true"], ["a number", 1], ["a list", []]]) {
+    parse(`session_res admin ${name}`, "session_res", with_("session_res.json", { admin: value }), "admin is true or false");
   }
 
   // The import window.

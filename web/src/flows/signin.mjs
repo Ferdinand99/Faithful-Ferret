@@ -73,13 +73,14 @@ function sameBytes(a, b) {
  * (`account_reset`, from a one-time code) can do nothing but recover the account, and one that waits for a second
  * factor can do nothing at all.
  * @param {Env} env
- * @returns {Promise<{ accountId: string, email: string } | null>}
+ * @returns {Promise<{ accountId: string, email: string, admin: boolean } | null>} `admin`: the server says the user is
+ *   an administrator (only then are the admin pages offered)
  */
 export async function sessionInfo(env) {
   try {
     const res = await env.api.get("/api/auth/session", { shape: "session_res" });
     if (res.origin !== "vault" || res.scope !== "full" || !hex16.is(res.account_id)) return null;
-    return { accountId: res.account_id, email: res.email };
+    return { accountId: res.account_id, email: res.email, admin: res.admin === true };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return null;
     throw error;
