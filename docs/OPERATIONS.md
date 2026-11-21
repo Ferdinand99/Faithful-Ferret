@@ -192,7 +192,7 @@ Do it with the server stopped:
    It uses the same rule as the restore (`--at-least <n>` works too) and ends everything that the copy brought back, exactly
    like `ferret backup restore`: every session, hand-over, login state and pending registration, every pending sign-in code,
    and a raised `session_version` for every user, all in the same transaction as the bump. It prints the new
-   epoch and what it ended, for example `restore epoch is now 1763640000 (1 vault raised); 4 sessions ended, 1 sign-in codes
+   epoch and what it ended, for example `restore epoch is now 1763640000 (1 vault raised); 4 sessions ended, 2 sign-in codes
    revoked`. Without `--yes` it changes nothing. After a restore by hand, a volume snapshot or a rollback (below), everyone
    therefore signs in again, and a sign-in code that was issued before has to be issued again. A bump right
    after `ferret backup restore` only logs everyone out once more, which is harmless.
@@ -299,6 +299,8 @@ old form. The server migrates its database when it starts.
   hand). **What was written after the deploy is lost**, and so is every change of master password or recovery key made
   since. Every session and every pending sign-in code ends, so everyone signs in again; devices will see the restore and
   offer the older state, and the unlock methods may be older than the ones a device has seen (the vault explains the way out).
+  **A rollback to a build older than this change** (0.4.x or earlier) runs a bump that does not end sessions and codes: the old
+  image only raises the epoch. After such a rollback end the sessions by hand, or bump again once you are back on a newer build.
 * **Before a deploy that migrates**, make a set ("Take a backup now", or `backup create` on a stopped server) and check
   that it is listed.
 
