@@ -96,6 +96,17 @@ export async function pace() {
 /** Every context that was made, for the whole-run check at the end. */
 const watched = [];
 
+/** The last network failures and page closes of the run, with their times (kept for the text of an uncaught error). */
+const trail = /** @type {string[]} */ ([]);
+const stamp = () => new Date().toISOString().slice(11, 23);
+const testTitle = () => {
+  try {
+    return `in ${test.info().title}, `;
+  } catch {
+    return "";
+  }
+};
+
 /** What the run collected (shared by all tests of the worker). */
 export const findings = {
   violations: /** @type {string[]} */ ([]),
@@ -137,7 +148,11 @@ export async function watch(context) {
   await context.addInitScript(watchScript());
   const onPage = (/** @type {import("@playwright/test").Page} */ page) => {
     findings.pages += 1;
-    page.on("pageerror", (e) => findings.pageErrors.push(String(e)));
+    // An uncaught error says which test it came in, what the page was doing, and the last things that went wrong on the network
+    // or closed before it, so that a failure of the whole-run check can be placed.
+    page.on("pageerror", (e) => findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`));
+    page.on("requestfailed", (request) => trail.push(`${stamp()} ${request.method()} ${request.url()} failed: ${request.failure()?.errorText ?? "?"}`));
+    page.on("close", () => trail.push(`${stamp()} page closed ${page.url()}`));
     page.on("console", (m) => {
       if (m.type() !== "error") return;
       const text = m.text();
