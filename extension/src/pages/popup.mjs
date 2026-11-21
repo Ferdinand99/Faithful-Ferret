@@ -249,18 +249,30 @@ async function main() {
         el("p", { class: "ff-hint" }, texts.t("session.popup.open_hint")),
       ),
     );
-    // The sync's part follows the background while the popup is open, unless the user is answering a question in it.
+    follow(view, note);
+  }
+
+  /**
+   * The sync's part follows the background while the popup is open: it is built again only when what the background
+   * says has changed, and not while the user answers the question of "Forget this server".
+   * @param {PopupView} view what is shown now
+   * @param {string | null} note
+   */
+  function follow(view, note) {
     const mine = setTimeout(async () => {
       if (refresh !== mine) return;
       refresh = null;
-      if (root.querySelector('[data-role="forget-confirm"]') !== null) return;
+      /** @type {PopupView | null} */
+      let next = null;
       try {
-        const next = await flow.load();
-        // Shown only when nothing else was shown meanwhile (an action of the user wins).
-        if (refresh === null && document.body.dataset.view === "unlocked") show(next, note);
+        if (root.querySelector('[data-role="forget-confirm"]') === null) next = await flow.load();
       } catch {
-        // The background is gone for a moment: the next action asks again.
+        // The background is gone for a moment: look again later.
       }
+      // Something else was shown meanwhile (an action of the user wins).
+      if (refresh !== null || document.body.dataset.view !== "unlocked") return;
+      if (next !== null && JSON.stringify(next) !== JSON.stringify(view)) show(next, note);
+      else follow(view, note);
     }, SYNC_REFRESH_MS);
     refresh = mine;
   }
