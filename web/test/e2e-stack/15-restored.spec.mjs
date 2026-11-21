@@ -1,9 +1,10 @@
 // A restored server. The host script takes a snapshot of the server's data and puts it back with a higher restore number,
 // while the two browsers stay open (scripts/lanbox-ferret-e2e-gate.sh m2 watches for the requests this file makes with
-// `hostStep`). Both browsers say the server was restored and offer to accept the older state. The first to accept sends
-// what the server lost without a conflict, over rows nobody changed since; the second gets a conflict where the first
-// wrote. A write saved while the server is restored is refused by the server, and nothing lands in silence.
-import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, shot, synced, syncBanner, test, useAccount } from "./support.mjs";
+// `hostStep`). The restore ends every session the snapshot holds (the bump that records it does), so both browsers sign in
+// again; then both say the server was restored and offer to accept the older state. The first to accept sends what the
+// server lost without a conflict, over rows nobody changed since; the second gets a conflict where the first wrote. A write
+// saved by a browser that has not heard of the restore is refused by the server, and nothing lands in silence.
+import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, shot, signInHere, synced, syncBanner, test, useAccount, vaultUrl } from "./support.mjs";
 
 const SEEN = 20_000;
 const WARNED = 150_000;
@@ -30,6 +31,17 @@ test.afterAll(async () => {
   await a?.context.close();
   await b?.context.close();
 });
+
+/**
+ * The session from before the restore is over: the browser signs in again on the same page (it knows the account and
+ * keeps its secret key, so the password is enough) and keeps what it holds.
+ * @param {Device} device
+ */
+async function signInAfterTheRestore(device) {
+  expect((await device.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "the session from before the restore is over").toBe(401);
+  await device.page.goto(`${vaultUrl}/vault/login`);
+  await signInHere(device.page);
+}
 
 /** @param {import("@playwright/test").Page} page */
 async function openRestoredPage(page) {
@@ -77,6 +89,7 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   await synced(b.page);
 
   await hostStep("restore");
+  for (const device of [a, b]) await signInAfterTheRestore(device);
 
   // Both browsers say that the server was restored, and nothing is gone from either list.
   await expect(syncBanner(a.page, "server_restored")).toBeVisible({ timeout: WARNED });
@@ -158,9 +171,11 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   const id = await itemIdOf(b.page, target);
   const rev = await serverRev(b.context, id);
 
-  // B is open and cannot read: it does not hear that the server is restored. It can still write.
+  // B cannot read: it does not hear that the server is restored. Its session ended with the restore; it signs in again
+  // (the sign-in does not read the restore number) and can still write.
   await b.page.route(/\/api\/sync\/(events|changes|checkpoint)|\/api\/sync\/items\?/, (route) => route.abort("failed"));
   await hostStep("restore");
+  await signInAfterTheRestore(b);
   const epochAfter = (await feedOf(b.context)).restore_epoch;
   const refused = b.page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/sync/items/"));
   await editItem(b.page, target, { name: `${target}-saved-during-restore`, username: "after" });

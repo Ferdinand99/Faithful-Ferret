@@ -20,7 +20,8 @@
 #                                          ferret-test-snapshot (label owner=ferret-test), start it
 #   scripts/lanbox-ferret-test.sh restore-snapshot --yes-ferret-test
 #                                          stop the app, copy the snapshot back, raise the
-#                                          restore epoch (`restore-epoch bump --yes`), start it
+#                                          restore epoch (`restore-epoch bump --yes`, which also ends every
+#                                          session and pending sign-in code of the snapshot), start it
 #                                          Both stop the app for a short while and replace data: they
 #                                          are run after an explicit yes, never by a test run.
 #   scripts/lanbox-ferret-test.sh label-data --yes-ferret-test
@@ -53,7 +54,8 @@
 #   scripts/lanbox-ferret-test.sh e2e-snapshot  stop the app, copy the volume ferret-e2e-data to the
 #                                          volume ferret-e2e-snapshot (label owner=ferret-e2e), start the app
 #   scripts/lanbox-ferret-test.sh e2e-restore-snapshot  stop the app, copy the snapshot back, raise the
-#                                          restore epoch, start the app (the clock offset is kept)
+#                                          restore epoch (every session of the snapshot ends), start the app
+#                                          (the clock offset is kept)
 #   scripts/lanbox-ferret-test.sh e2e-reset    stop the app, empty the data volume (and nothing else: the backup sets in
 #                                          ferret-e2e-backups stay), start the app: a new, empty server with a new server key
 #                                          (the clock offset is kept)

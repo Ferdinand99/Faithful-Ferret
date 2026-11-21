@@ -3,7 +3,8 @@
 //! * `ferret restore-epoch bump --yes [--at-least <n>] [--data-dir <dir>]` raises
 //!   the restore epoch of every vault in the database of the data directory, so
 //!   that every client that remembers a lower one sees that the server was
-//!   restored (Spec: Fase 1 § 8.6).
+//!   restored (Spec: Fase 1 § 8.6), and ends every session and pending
+//!   sign-in code the restored data holds (Spec: Fase 1 § 11).
 //! * `ferret backup create|list [--data-dir <dir>]` and `ferret backup verify
 //!   <set>`: make, list and check backup sets. They change nothing that exists,
 //!   so they need no `--yes`. `backup create` needs the server to be stopped
@@ -31,7 +32,11 @@
 //!   `--data-dir` falls back to `FERRET_DATA_DIR`, so a command run inside the
 //!   container of a live server would otherwise reach the live data;
 //! * `restore-epoch bump` and `backup restore` raise the restore epoch with the
-//!   same rule: `max(stored + 1, now, --at-least)` ([`reconcile::bump`]).
+//!   same rule: `max(stored + 1, now, --at-least)` ([`reconcile::bump`]), and in
+//!   the same transaction end every session, hand-over, pending sign-in state,
+//!   pending registration and pending sign-in code, and raise every user's
+//!   `session_version` (`end_everything_after_restore`): whatever way the old
+//!   data came back, nothing that was live in it is live after the bump.
 //!
 //! No listener is started and no URL setting is read.
 //!
@@ -45,9 +50,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::admin::codes;
+use crate::auth::session::end_everything_after_restore;
 use crate::backup::{BackupConfig, restore, set};
 use crate::data_lock;
 use crate::error::StartError;
@@ -58,7 +64,8 @@ use crate::wire::MAX_JSON_INT;
 /// A command that is not the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Raise the restore epoch of the database in `data_dir`.
+    /// Raise the restore epoch of the database in `data_dir`, and end what was
+    /// live in it (sessions, pending sign-in codes and the like).
     RestoreEpochBump {
         /// The data directory that holds the database.
         data_dir: PathBuf,
@@ -441,12 +448,28 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
     restore::refuse_if_in_progress(data_dir)?;
 
     let mut conn = open_migrated(data_dir)?;
-    let bumped = reconcile::bump(&mut conn, at_least, now_unix()?)?;
+    let now = now_unix()?;
+    // The bump is what says "this server was restored", by hand (a copy of the
+    // data directory put back), by a snapshot of the volume, or by going back
+    // to the copy from before a migration. The data that came back holds the
+    // sessions and sign-in codes that were live when it was copied, so the
+    // bump ends them in its own transaction, as `backup restore` does.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let bumped = reconcile::bump_in(&tx, at_least, now)?;
+    let swept = end_everything_after_restore(&tx, now)?;
+    tx.commit()?;
+    let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let (sessions, codes) = (count(swept.sessions), count(swept.sign_in_codes));
     Ok(format!(
-        "restore epoch is now {} ({} vault{} raised)",
+        "restore epoch is now {} ({} vault{} raised); {} session{} ended, {} sign-in code{} \
+         revoked",
         bumped.restore_epoch,
         bumped.vaults,
-        plural(bumped.vaults)
+        plural(bumped.vaults),
+        sessions,
+        plural(sessions),
+        codes,
+        plural(codes)
     ))
 }
 
