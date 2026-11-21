@@ -18,8 +18,11 @@
  * while the vault is locked (a user cannot unlock otherwise), and `lock` must
  * never be refused. `server_check` reads the address a user typed on the
  * sign-in page with a stateless function of the core, before any sign-in.
+ * `sync_state` reads the codes of the sync (no key; a poll of it must not move
+ * the deadline), and `forget_server` must work on a locked or signed-out device
+ * too (it needs no key: it revokes the device and removes local records).
  */
-export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check"]);
+export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_server"]);
 
 export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";

@@ -58,6 +58,7 @@ export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/pages/popup.mjs": "export {};\n",
   "src/pages/signin.mjs": "export {};\n",
   "src/background/session.mjs": "export {};\n",
+  "src/background/sync.mjs": "export {};\n",
 });
 
 /** The files of a fake WASM package. @returns {Record<string, string>} */

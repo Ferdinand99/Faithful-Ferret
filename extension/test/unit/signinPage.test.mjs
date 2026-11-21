@@ -239,13 +239,21 @@ test("the_ui_port_takes_only_the_answer_of_its_request", async () => {
 });
 
 test("the_popup_views_follow_the_state_of_the_background", async () => {
-  assert.deepEqual(viewOf({ state: "signed_out" }), { view: "signed_out", host: "", account: "" });
+  assert.deepEqual(viewOf({ state: "signed_out" }), { view: "signed_out", host: "", account: "", server: "", sync: null });
   assert.deepEqual(viewOf({ state: "locked", server: SERVER, host: "vault.example.com", host_a_label: "vault.example.com", account: "ola@example.com" }), {
     view: "locked",
     host: "vault.example.com",
     account: "ola@example.com",
+    server: SERVER,
+    sync: null,
   });
-  assert.deepEqual(viewOf({ state: "unlocked", server: SERVER }), { view: "unlocked", host: SERVER, account: "" });
+  assert.deepEqual(viewOf({ state: "unlocked", server: SERVER }), {
+    view: "unlocked",
+    host: SERVER,
+    account: "",
+    server: SERVER,
+    sync: { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [] },
+  });
   assert.equal(viewOf(/** @type {any} */ ({ state: "weird" })).view, "signed_out");
 
   let state = "unlocked";
@@ -256,6 +264,7 @@ test("the_popup_views_follow_the_state_of_the_background", async () => {
       return { ok: true };
     },
     unlock: () => ({ ok: false, reason: "wrong_credentials" }),
+    sync_state: () => ({ running: true, status: "idle", live: "live", warnings: [] }),
   });
   const popup = createPopupFlow(request);
   assert.equal((await popup.load()).view, "unlocked");
@@ -263,7 +272,7 @@ test("the_popup_views_follow_the_state_of_the_background", async () => {
   const { result, view } = await popup.unlock({ password: "pw" });
   assert.deepEqual(result, { ok: false, reason: "wrong_credentials" });
   assert.equal(view.view, "locked");
-  assert.deepEqual(sent.map(([type]) => type), ["state", "lock", "state", "unlock", "state"]);
+  assert.deepEqual(sent.map(([type]) => type), ["state", "sync_state", "lock", "state", "unlock", "state"]);
 });
 
 test("the_pages_show_the_host_and_the_account_initials", () => {

@@ -358,6 +358,137 @@ export function memoryStore(db) {
   };
 }
 
+// ------------------------------------------------------------------ the sync
+
+/**
+ * Web Locks with one holder per name at a time; `held` names the locks held now, `taken` every name asked for.
+ * Takes `request(name, callback)` and `request(name, options, callback)`.
+ */
+export function fakeLocks() {
+  /** @type {Map<string, Promise<unknown>>} */
+  const tails = new Map();
+  /** @type {Set<string>} */
+  const held = new Set();
+  /** @type {string[]} */
+  const taken = [];
+  return {
+    held,
+    taken,
+    request(/** @type {string} */ name, /** @type {any} */ optionsOrCallback, /** @type {any} */ maybeCallback) {
+      const callback = maybeCallback ?? optionsOrCallback;
+      taken.push(name);
+      const before = tails.get(name) ?? Promise.resolve();
+      const run = before.then(async () => {
+        held.add(name);
+        try {
+          return await callback({ name });
+        } finally {
+          held.delete(name);
+        }
+      });
+      tails.set(name, run.catch(() => {}));
+      return run;
+    },
+  };
+}
+
+/**
+ * A fake of the shared sync engine: it records what it was made with and what is asked of it, and a test makes
+ * it announce states (`emit`), stop (`halt`), go on (`clear`) and raise a standing warning (`stand`).
+ * `behaviour.start` runs in `start()`, `behaviour.resume` in `resumeAfterHalt()`.
+ * @param {{ start?: (engine: any) => unknown, resume?: (engine: any) => unknown }} [behaviour]
+ */
+export function fakeEngines(behaviour = {}) {
+  /** @type {any[]} */
+  const made = [];
+  /** @param {any} options */
+  const create = (options) => {
+    /** @type {Map<string, Set<(payload: any) => void>>} */
+    const listeners = new Map();
+    /** @type {string | null} */
+    let halted = null;
+    /** @type {string[]} */
+    const standing = [];
+    const engine = {
+      options,
+      started: false,
+      stopped: false,
+      syncs: 0,
+      resumes: 0,
+      lastStatus: "idle",
+      async start() {
+        engine.started = true;
+        await behaviour.start?.(engine);
+      },
+      stop() {
+        engine.stopped = true;
+        listeners.clear();
+      },
+      status: () => engine.lastStatus,
+      health: () => ({ halted, warnings: [...standing] }),
+      async resumeAfterHalt() {
+        engine.resumes += 1;
+        await behaviour.resume?.(engine);
+      },
+      async syncNow() {
+        engine.syncs += 1;
+      },
+      on(/** @type {string} */ event, /** @type {(payload: any) => void} */ fn) {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        /** @type {Set<(payload: any) => void>} */ (listeners.get(event)).add(fn);
+        return () => listeners.get(event)?.delete(fn);
+      },
+      emit(/** @type {string} */ event, /** @type {any} */ payload) {
+        for (const fn of [...(listeners.get(event) ?? [])]) fn(payload);
+      },
+      /** @param {string} code */
+      halt(code) {
+        halted = code;
+        engine.lastStatus = "halted";
+        engine.emit("state", { kind: "halted", code });
+      },
+      clear() {
+        halted = null;
+        engine.lastStatus = "syncing";
+        engine.emit("state", { kind: "syncing" });
+      },
+      /** @param {string} code */
+      stand(code) {
+        standing.push(code);
+        engine.emit("state", { kind: "warning", code });
+      },
+    };
+    made.push(engine);
+    return engine;
+  };
+  return { create, made };
+}
+
+/** A fake of the live channel: it records what it was made with and whether it runs. */
+export function fakeChannels() {
+  /** @type {any[]} */
+  const made = [];
+  /** @param {any} options */
+  const create = (options) => {
+    const channel = {
+      options,
+      running: false,
+      starts: 0,
+      start() {
+        channel.running = true;
+        channel.starts += 1;
+      },
+      stop() {
+        channel.running = false;
+      },
+      state: () => (channel.running ? "live" : "offline"),
+    };
+    made.push(channel);
+    return channel;
+  };
+  return { create, made };
+}
+
 // ------------------------------------------------------------------ the world
 
 /**
@@ -425,18 +556,22 @@ export function fakeSessions(behaviour = {}) {
  *   server?: string | null,
  *   os?: string,
  *   gate?: (label: string) => Promise<void>,
+ *   sync?: { createEngine?: (options: any) => any, createChannel?: (options: any) => any, locks?: any } | null,
  * }} [options] `gate` runs before every call to the local storage, the permissions and the platform (a test
- *   that locks at each await point passes one)
+ *   that locks at each await point passes one). `sync` wires the sync host (and its handler) as main.mjs does,
+ *   with the engine and the live channel it names (the shared ones when left out)
  */
-export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {} } = {}) {
+export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {}, sync = null } = {}) {
   const { load } = await pkg();
-  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui] = await Promise.all([
+  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler] = await Promise.all([
     load("background/session.mjs"),
     load("background/coreHost.mjs"),
     load("background/lock.mjs"),
     load("background/router.mjs"),
     load("background/handlers/session.handler.mjs"),
     load("pages/ui.mjs"),
+    load("background/sync.mjs"),
+    load("background/handlers/sync.handler.mjs"),
   ]);
   const fake = createFakeBrowser();
   const clock = createClock();
@@ -455,6 +590,10 @@ export async function sessionWorld({ createSession, client = coreClient(), store
         await gate("storage.local.set");
         return local.set(items);
       },
+      remove: async (/** @type {string} */ key) => {
+        await gate("storage.local.remove");
+        return local.remove(key);
+      },
     },
     permissions: {
       contains: async (/** @type {{ origins: string[] }} */ wanted) => {
@@ -472,11 +611,25 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     ...(store ? { store } : {}),
     ...(createSession ? { createSession } : {}),
   });
-  const coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: sessionHost.ops });
+  /** The host permissions the sync took back. @type {Array<{ origins: string[] }>} */
+  const removed = [];
+  const locks = sync?.locks ?? fakeLocks();
+  const syncHost = sync
+    ? createSyncHost({
+        sessionHost,
+        permissions: { remove: async (/** @type {{ origins: string[] }} */ gone) => { removed.push(gone); return true; } },
+        locks,
+        win: null,
+        ...(sync.createEngine ? { createEngine: sync.createEngine } : {}),
+        ...(sync.createChannel ? { createChannel: sync.createChannel } : {}),
+      })
+    : null;
+  const coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...sessionHost.ops, ...(syncHost?.ops ?? {}) } });
   sessionHost.attach(coreHost);
+  syncHost?.attach(coreHost);
   const events = createAlarmsAndIdle();
   const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, now: clock.now, coreHost });
-  const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default] });
+  const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default, ...(syncHost ? [syncHandler.default] : [])] });
   /** Every port a page opened. @type {ReturnType<typeof portPair>[]} */
   const ports = [];
   /** A page of the extension at `path`: its `runtime` for `connectUi`. */
@@ -500,6 +653,9 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     events,
     lock,
     sessionHost,
+    syncHost,
+    removed,
+    locks,
     handler: handlerModule,
     ui,
     ports,

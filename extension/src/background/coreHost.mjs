@@ -16,8 +16,14 @@
 // Boundary: an op gets the raw client. Production ops therefore live in this
 // file or in a background module that only the entry (main.mjs) imports and
 // passes in as `ops`: the session's ops (session.mjs), which hold the account
-// session over the same client. The only other code that passes ops in is the
-// test build's hooks (the test build only), which a release does not contain.
+// session over the same client, and the sync's ops (sync.mjs). The only other
+// code that passes ops in is the test build's hooks (the test build only),
+// which a release does not contain.
+//
+// The modules that work beside the ops (the account session and the sync
+// engine, which runs between the calls) never keep an op's client: they get a
+// client of their own from `liveClient`, which goes through the same lock and
+// worker rules on every call (see there).
 
 /** The reasons a lock can have. */
 export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_out", "restart", "worker_failed"]);
@@ -29,7 +35,18 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * passes their implementations in (`ops`); in a release they are refused like any
  * other name.
  */
-export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open", "server_check", "session_state", "sign_in", "unlock"]);
+export const CORE_OPS = Object.freeze([
+  "ping",
+  "argon2_bench",
+  "measure_open",
+  "server_check",
+  "session_state",
+  "sign_in",
+  "unlock",
+  "sync_state",
+  "sync_retry",
+  "forget_server",
+]);
 
 /**
  * The codes that say the worker which holds the vault is gone or was ended:
@@ -194,6 +211,64 @@ export function createCoreHost({
     }
   }
 
+  /**
+   * A client for the modules that work beside the ops (see the top of this
+   * file). Every call goes to the one WASM client, and:
+   *   - a failure of the vault worker (`worker_failed`, `internal`,
+   *     `kdf_out_of_memory`, `locked`, `vault_locked`) while the host is open
+   *     locks the host, whoever called: a worker that is gone never stays
+   *     "unlocked";
+   *   - with `open`, the client belongs to the vault that is open now: it is
+   *     made only while the host is open, and once a lock has come (the epoch
+   *     moved) every call is refused with `vault_locked` before it reaches the
+   *     client, and an answer that arrives after a lock is dropped. Such a client
+   *     never starts a new worker after a lock, so nothing it holds can reach a
+   *     vault that was opened later. The sync engine gets one per unlock.
+   * Without `open` (the account session, whose sign-in and unlock run on the
+   * worker before the vault opens) the calls go through while the host is
+   * locked; the epoch rules of `call` still decide whether the vault opens.
+   * Errors of the client are passed on unchanged, so a caller still reads the
+   * core's code.
+   *
+   * @param {{ open?: boolean }} [options]
+   * @returns {{ vault: any, job: any, lock: () => Promise<void> }}
+   */
+  function liveClient({ open = false } = {}) {
+    if (open && current !== "unlocked") throw new CoreError("vault_locked");
+    const made = epoch;
+    const usable = () => !open || (epoch === made && current === "unlocked");
+    /** @param {"vault" | "job"} worker */
+    const side = (worker) =>
+      new Proxy(
+        {},
+        {
+          get(_, method) {
+            // Not a method of the client: a promise check (`then`) or a symbol must not look like a call.
+            if (typeof method !== "string" || method === "then") return undefined;
+            return async (/** @type {unknown[]} */ ...args) => {
+              if (!usable()) throw new CoreError("vault_locked");
+              const real = await client();
+              if (!usable()) throw new CoreError("vault_locked");
+              const started = epoch;
+              try {
+                const value = await real[worker][method](...args);
+                // An answer that arrives after a lock belongs to a vault that is gone.
+                if (open && epoch !== started) throw new CoreError("vault_locked");
+                return value;
+              } catch (error) {
+                if (error instanceof CoreError) throw error;
+                if (worker === "vault" && WORKER_GONE.has(codeOf(error)) && current === "unlocked" && epoch === started) {
+                  await lock("worker_failed").catch(() => {});
+                }
+                throw error;
+              }
+            };
+          },
+        },
+      );
+    return Object.freeze({ vault: side("vault"), job: side("job"), lock: () => lock("manual") });
+  }
+
   return {
     /**
      * Runs one operation. Rejects with a `CoreError` (`unknown_core_op`,
@@ -290,6 +365,8 @@ export function createCoreHost({
 
     /** @returns {"locked" | "unlocked"} */
     state: () => current,
+
+    liveClient,
 
     /**
      * Adds the implementation of operations whose names are in the list. The

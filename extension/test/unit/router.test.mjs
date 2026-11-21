@@ -57,6 +57,8 @@ async function setup({ unlocked = false, handlers } = {}) {
     }),
     record("settings", { lock_minutes: 15 }),
     record("server_check", { ok: true }),
+    record("sync_state", { running: false, live: "offline", warnings: [] }),
+    record("forget_server", { ok: true }),
     record("candidates", { handles: [] }),
     record("search", { handles: [] }),
     record("frame_report", undefined),
@@ -80,6 +82,8 @@ const requests = {
   unlock: () => encode("unlock", { mp: "typed" }),
   settings: () => encode("settings", {}),
   server_check: () => encode("server_check", { server: "https://vault.example" }),
+  sync_state: () => encode("sync_state", {}),
+  forget_server: () => encode("forget_server", { server: "https://vault.example" }),
   candidates: () => encode("candidates", { tab_id: 1, frame_id: 0 }),
   search: () => encode("search", { query: "x" }),
 };
