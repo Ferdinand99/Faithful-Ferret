@@ -14,19 +14,24 @@
 //   - "cookie" (the default): the web vault. Its server is the page's own
 //     origin, and the sign-in ends in the vault session's cookie, as it always did.
 //   - "device": a device client, the browser extension. It names its server
-//     (`serverUrl` is required: the extension's own origin is no server) and
-//     brings its device key (`deviceKey`, a new one from `generateDeviceKey`)
-//     and the tokens of that key (`tokens`, `createTokenAuth`); `api` is
-//     `createApi({ base: serverUrl, auth: tokens })`. The sign-in sends the
-//     device body with a proof of the key, and the answer's tokens and device
-//     id are kept by the tokens. A key signs in once: the server binds it to the
-//     new device, so another sign-in (and so every unlock: a device has no
-//     re-authentication) needs a new key, new tokens and a new session.
+//     (`serverUrl` is required: the extension's own origin is no server), its
+//     name in the list of devices (`deviceName`, required) and its platform.
+//     The session keeps the device itself: the stored device key of the server
+//     and its tokens (`auth/deviceKey.mjs`, `auth/tokens.mjs`), read once from
+//     the local store, and its own API client over them (`session.api`, the
+//     one the sync engine takes; a caller's `api` is refused). A sign-in makes
+//     a new key and new tokens and signs the older device out; an unlock keeps
+//     the device and its tokens (see `flows/signin.mjs`); a lock revokes
+//     nothing; a sign-out signs the device out and forgets its tokens.
 //
 // The sync engine is reached through one small seam (`attachSync`): after an
 // unlock the session calls `sync.start({ accountId, vaultId, vkEpoch })`, and
 // on lock and sign-out `sync.stop()`. A sync that is not attached, or that
 // throws, never stops a sign-in.
+import { ApiError, createApi } from "../api.mjs";
+import { generateDeviceKey, loadDeviceKey } from "../auth/deviceKey.mjs";
+import { createClock } from "../auth/dpop.mjs";
+import { createTokenAuth } from "../auth/tokens.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
 import { readSetupQr } from "../flows/setupQr.mjs";
 import { DEVICE_NAME, deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
@@ -43,8 +48,6 @@ export const REAUTH_FRESH_MS = 60_000;
 /** The modes of a session. */
 export const SESSION_MODES = Object.freeze(["cookie", "device"]);
 
-/** The calls a device session needs of its tokens (`auth/tokens.mjs`). */
-const TOKEN_CALLS = Object.freeze(["startSignIn", "finishSignIn", "revoke", "prepare"]);
 
 /**
  * The seam to the sync engine: `{ start(scope), stop() }`, attached later.
@@ -75,18 +78,12 @@ function createSyncSeam() {
 }
 
 /**
- * Checks what a device session is given, before anything is sent: the tokens,
- * the key of this server, and a name and platform the sign-in body takes.
- * @param {string} server
- * @param {{ tokens: any, deviceKey: any, deviceName: unknown, platform: unknown }} device
+ * Checks what a device session is given, before anything is sent: a name and
+ * a platform the sign-in body takes.
+ * @param {{ deviceName: unknown, platform: unknown }} device
  */
-function checkDevice(server, { tokens, deviceKey, deviceName, platform }) {
-  if (tokens === null || typeof tokens !== "object" || !TOKEN_CALLS.every((name) => typeof Reflect.get(tokens, name) === "function")) {
-    throw new TypeError("a device session needs the tokens of its key");
-  }
-  if (deviceKey === null || typeof deviceKey !== "object" || deviceKey.serverUrl !== server || deviceKey.publicJwk === null || typeof deviceKey.publicJwk !== "object") {
-    throw new TypeError("a device session needs a device key of its server");
-  }
+function checkDevice({ deviceName, platform }) {
+  if (deviceName === undefined) throw new TypeError("a device session names its device");
   if (typeof platform !== "string" || !PLATFORMS.includes(platform)) throw new TypeError(`the platform is one of ${PLATFORMS.join(", ")}`);
   try {
     // The name by the rule of the sign-in body: 1 to 64 characters, no control or invisible character.
@@ -104,7 +101,7 @@ function checkDevice(server, { tokens, deviceKey, deviceName, platform }) {
  * @param {{
  *   client?: any,
  *   createClient?: () => any,
- *   api: import("../api.mjs").Api,
+ *   api?: import("../api.mjs").Api,
  *   store: any,
  *   serverUrl?: string,
  *   now?: () => number,
@@ -115,11 +112,12 @@ function checkDevice(server, { tokens, deviceKey, deviceName, platform }) {
  *   mode?: "cookie" | "device",
  *   deviceName?: string,
  *   platform?: string,
- *   tokens?: import("../auth/tokens.mjs").TokenAuth,
- *   deviceKey?: import("../auth/deviceKey.mjs").DeviceKey,
+ *   fetchImpl?: typeof fetch,
+ *   locks?: Pick<LockManager, "request"> | null,
  * }} options `createImportWorker` makes the import worker (the page's own file, started through the Trusted Types
- *   policy). `mode`, `deviceName`, `platform`, `tokens` and `deviceKey`: see the top of this file; `platform` is one of
- *   the wire's platforms (a device only)
+ *   policy). `mode`, `deviceName`, `platform`: see the top of this file; `platform` is one of the wire's platforms. A
+ *   device session makes its own API client with `fetchImpl` and renews its tokens under `locks` (the Web Locks; left
+ *   out: `navigator.locks`); the web vault's session takes `api`
  */
 export function createSessionCore({
   client: given,
@@ -133,25 +131,28 @@ export function createSessionCore({
   secrets,
   createImportWorker,
   mode = "cookie",
-  deviceName = DEVICE_NAME,
+  deviceName,
   platform = "other",
-  tokens,
-  deviceKey,
+  fetchImpl,
+  locks: webLocks,
 }) {
   if (!SESSION_MODES.includes(mode)) throw new TypeError(`the mode of a session is one of ${SESSION_MODES.join(", ")}`);
   const device = mode === "device";
   // A device names its server: the page it runs in is not one.
   if (device && serverUrl === undefined) throw new TypeError("a device session needs the address of its server");
-  if (!device && (tokens !== undefined || deviceKey !== undefined)) throw new TypeError("the web vault's session holds no device key and no tokens");
+  // A device's requests go through its own client, with its tokens; the web vault's through the one it is given.
+  if (device && api !== undefined) throw new TypeError("a device session makes its own API client");
+  if (!device && api === undefined) throw new TypeError("the web vault's session needs its API client");
   const client = given ?? createClient?.();
   if (!client) throw new TypeError("the crypto session needs a client");
   // One form of the address reaches the core and the store.
   const server = serverKey(serverUrl === undefined ? globalThis.location?.origin : serverUrl);
-  if (device) checkDevice(server, { tokens, deviceKey, deviceName, platform });
+  if (device) checkDevice({ deviceName, platform });
+  const slot = device ? createDeviceSlot({ server, store, now, fetchImpl: fetchImpl ?? ((input, init) => fetch(input, init)), locks: webLocks }) : null;
   /** @type {Env} */
   const env = {
     client,
-    api,
+    api: slot !== null ? slot.api : /** @type {import("../api.mjs").Api} */ (api),
     store,
     server,
     now,
@@ -160,10 +161,9 @@ export function createSessionCore({
     lock: () => lock(),
     createImportWorker,
     mode,
-    deviceName,
+    deviceName: deviceName ?? DEVICE_NAME,
     platform: device ? platform : undefined,
-    tokens: device ? tokens : undefined,
-    deviceKey: device ? deviceKey : undefined,
+    device: slot ?? undefined,
   };
 
   const seam = createSyncSeam();
@@ -214,6 +214,18 @@ export function createSessionCore({
     serverUrl: server,
     /** "cookie" (the web vault) or "device" (a device client). */
     mode,
+    /** The API client of this session: a device's carries its tokens (the sync engine takes it). */
+    api: env.api,
+
+    /**
+     * Whether a device is signed in at its server: "ok", "signed_out" or "revoked" (null in the web vault). A locked
+     * device with live tokens is "ok": its unlock needs only the password.
+     * @returns {Promise<"ok" | "signed_out" | "revoked" | null>}
+     */
+    async deviceState() {
+      if (slot === null) return null;
+      return (await slot.tokens())?.state ?? "signed_out";
+    },
 
     /** Hands the sync engine over (see the top of this file). */
     attachSync(/** @type {any} */ target) {
@@ -284,6 +296,8 @@ export function createSessionCore({
       /** @type {string | null} */
       let accountId = current ? current.accountId : null;
       if (accountId === null) accountId = (await sessionInfo(env).catch(() => null))?.accountId ?? null;
+      // A locked device knows its account from its stored record.
+      if (accountId === null && slot !== null) accountId = (await loadDeviceKey(await store.open(), server).catch(() => null))?.accountId ?? null;
       // Whatever else goes wrong, the device is wiped and the server is asked.
       try {
         await lock();
@@ -297,8 +311,8 @@ export function createSessionCore({
       }
       try {
         // A device's sign-out forgets its tokens whether or not the server answers.
-        if (device) await /** @type {import("../auth/tokens.mjs").TokenAuth} */ (tokens).revoke();
-        else await api.post("/api/auth/logout");
+        if (slot !== null) await (await slot.tokens())?.revoke();
+        else await env.api.post("/api/auth/logout");
       } catch {
         // The server session may still be live: say so.
         throw new AccountError("signout_incomplete");
@@ -336,6 +350,76 @@ export function createSessionCore({
     },
   };
   return { session, inner };
+}
+
+/**
+ * The device of a device session: the stored key of the server and its tokens (read once, on first use), a new key
+ * and new tokens for a sign-in, and one API client whose requests carry the tokens of the device in use.
+ * @param {{ server: string, store: any, now: () => number, fetchImpl: typeof fetch, locks?: Pick<LockManager, "request"> | null }} o
+ * @returns {import("./env.mjs").DeviceSlot & { api: import("../api.mjs").Api }}
+ */
+function createDeviceSlot({ server, store, now, fetchImpl, locks }) {
+  // One clock for every proof of this device: the offset a refusal taught stays.
+  const clock = createClock({ now });
+  /** The tokens in use, once read. @type {import("../auth/tokens.mjs").TokenAuth | null} */
+  let active = null;
+  /** @type {Promise<import("../auth/tokens.mjs").TokenAuth | null> | null} */
+  let loading = null;
+
+  /** @param {any} db @param {import("../auth/deviceKey.mjs").DeviceKey} key */
+  const tokensOf = (db, key) =>
+    createTokenAuth({ serverUrl: server, store: db, key, clock, fetchImpl, ...(locks === undefined ? {} : { locks }) });
+
+  /** The tokens of the stored device of the server, or null when there is none (or its record cannot be read). */
+  function tokens() {
+    loading ??= (async () => {
+      const db = await store.open();
+      /** @type {import("../auth/deviceKey.mjs").DeviceKey | null} */
+      let key = null;
+      try {
+        key = await loadDeviceKey(db, server);
+      } catch {
+        // A damaged record is no device: the next sign-in replaces it.
+      }
+      active = key !== null && key.refreshToken !== null ? tokensOf(db, key) : null;
+      return active;
+    })().catch((error) => {
+      loading = null;
+      throw error;
+    });
+    return loading;
+  }
+
+  /** The tokens of a sign-in: a new key, not stored until the sign-in has worked. */
+  async function fresh() {
+    const db = await store.open();
+    return tokensOf(db, await generateDeviceKey(server));
+  }
+
+  /** The tokens a sign-in has made are the device's from now on. @param {import("../auth/tokens.mjs").TokenAuth} next */
+  function use(next) {
+    active = next;
+    loading = Promise.resolve(next);
+  }
+
+  /** The tokens in use, or the refusal of a request made without any. */
+  async function inUse() {
+    const inPlace = await tokens();
+    if (inPlace === null) throw new ApiError(401, "signed_out");
+    return inPlace;
+  }
+
+  const api = createApi({
+    base: server,
+    fetchImpl,
+    auth: {
+      prepare: async (method, url) => (await inUse()).prepare(method, url),
+      observe: (response) => active?.observe(response),
+      refresh: async (used) => (await inUse()).refresh(used),
+      refused: async (code) => (await inUse()).refused(code),
+    },
+  });
+  return { tokens, fresh, use, api };
 }
 
 /**

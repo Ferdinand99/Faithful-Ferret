@@ -21,7 +21,11 @@
 // refused as before. Requests are written strictly on every client. A server
 // adds a field to an answer only when a client that ignores it stays right;
 // a change that an older client must not ignore takes a new `Ferret-Protocol`
-// value. The web vault comes from its own server and keeps refusing them.
+// value. A signal that ends or limits what a device may do (a revocation, a
+// restore, a rekey, a required upgrade) is a status code, a required field or
+// a new protocol value, never an optional answer field, and the server answers
+// each client in the protocol value it sent, or refuses it. The web vault
+// comes from its own server and keeps refusing unknown answer fields.
 import { b64u, hex16, WireError } from "./b64.mjs";
 
 export { WireError };

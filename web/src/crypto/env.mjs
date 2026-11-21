@@ -13,8 +13,7 @@
 //   mode     "cookie" (the web vault, the default) or "device" (a device client: the extension)
 //   deviceName  what the server calls this client in the list of devices
 //   platform    a device's platform, one of the wire's words (a device only)
-//   tokens   a device's tokens (`auth/tokens.mjs`): its sign-in, its sign-out (a device only)
-//   deviceKey   a device's key, new for this sign-in (`auth/deviceKey.mjs`; a device only)
+//   device   a device's key and tokens, kept by the session (a device only; see `DeviceSlot`)
 
 /**
  * @typedef {object} Env
@@ -30,8 +29,17 @@
  * @property {"cookie" | "device"} [mode] left out: "cookie"
  * @property {string} [deviceName] left out: the web vault's name
  * @property {string} [platform]
- * @property {import("../auth/tokens.mjs").TokenAuth} [tokens]
- * @property {import("../auth/deviceKey.mjs").DeviceKey} [deviceKey]
+ * @property {DeviceSlot} [device]
+ */
+
+/**
+ * The device of a device session.
+ * @typedef {object} DeviceSlot
+ * @property {() => Promise<import("../auth/tokens.mjs").TokenAuth | null>} tokens
+ *   the tokens of the device in use: the stored device of the server (read once), or the one a sign-in made; null when
+ *   there is none
+ * @property {() => Promise<import("../auth/tokens.mjs").TokenAuth>} fresh a new device key and its tokens, for a sign-in
+ * @property {(tokens: import("../auth/tokens.mjs").TokenAuth) => void} use makes the tokens of a sign-in the device's
  */
 
 /**
@@ -42,7 +50,8 @@
  * @property {string} email
  * @property {Record<string, any>} pinned
  * @property {"saved" | "unavailable" | "forgotten" | "unchanged"} [secretKey] what became of the remembered secret key
- * @property {"login" | "reauth"} [purpose] which kind of sign-in opened the vault
+ * @property {"login" | "reauth" | "unlock"} [purpose] which kind of sign-in opened the vault (`unlock`: a device's,
+ *   which keeps its device)
  */
 
 export {};

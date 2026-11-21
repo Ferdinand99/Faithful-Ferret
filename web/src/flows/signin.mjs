@@ -46,21 +46,31 @@
 // calls above, with the session cookie, byte for byte as they always were. A
 // device client (the browser extension) is "device": it signs in as a device
 // with its own tokens and no cookie.
-//   - `login/start` goes without a cookie, a token or a proof
-//     (`env.tokens.startSignIn`), with the purpose `login`; a device has no
-//     re-authentication, so its `unlock` is a new sign-in.
+//   - A sign-in makes a new device key and its tokens (`env.device.fresh`).
+//     `login/start` goes without a cookie, a token or a proof
+//     (`startSignIn`), with the purpose `login`.
 //   - `login/finish` sends `{ login_id, ke3, client: "device", device_name,
-//     platform }` with a DPoP proof of the new device key
-//     (`env.tokens.finishSignIn`). The key is the proof's `jwk`; the body
-//     carries no key and no id, and the server names the device in its answer.
-//     The answer's tokens and device id are stored by the tokens (the refresh
-//     token in the key's record, the access token in memory) and never reach
-//     this file's result.
-//   - Every later call (`unlock-methods`, the restore check) carries the token.
+//     platform }` with a DPoP proof of the new device key (`finishSignIn`,
+//     which signs the older device of the server out first). The key is the
+//     proof's `jwk`; the body carries no key and no id, and the server names
+//     the device in its answer. The answer's tokens and device id are stored
+//     by the tokens (the refresh token in the key's record, the access token
+//     in memory) and never reach this file's result.
+//   - Every later call (`unlock-methods`) carries the token.
 //   - A sign-in that does not open the vault signs the new device out
-//     (`env.tokens.revoke`, best effort), which forgets its tokens; there is no
-//     cookie session to end, and nothing is pinned.
+//     (`revoke`, best effort), which forgets its tokens; there is no cookie
+//     session to end, and nothing is pinned. A device is never offered the
+//     recovery: that runs in the web vault's session.
+//   - An unlock keeps the device (spec Fase 1 § 7.6): the device's token reads
+//     `unlock-methods` first (a device whose tokens have ended signs in again
+//     with the same password), then `login/start` and the client's side of the
+//     OPAQUE finish give the export key that opens the password wrap. KE3 is
+//     not posted, no device is made and no token is issued. The unlock needs
+//     the pinned record of the device's account: there is no first use at an
+//     unlock. A wrong password ends in the core and changes nothing on the
+//     server.
 import { ApiError } from "../api.mjs";
+import { loadDeviceKey } from "../auth/deviceKey.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { rowToCore, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
 import { AccountError, codeOf, withSkHint } from "../crypto/errors.mjs";
@@ -171,10 +181,10 @@ export async function decideSecretKey(env, db, record, args, qr = null) {
 async function open(env, p) {
   const { client, api, store, server } = env;
   const device = env.mode === "device";
-  if (device && p.purpose !== "login") throw new TypeError("a device has no re-authentication: it signs in again");
-  /** A device's tokens (the session checked them; unused in the web vault). */
-  const tokens = /** @type {import("../auth/tokens.mjs").TokenAuth} */ (env.tokens);
+  if (device && p.purpose !== "login") throw new TypeError("a device has no re-authentication: it unlocks or signs in");
   const db = await store.open();
+  /** A device's sign-in has a new key and its own tokens (unused in the web vault). */
+  const tokens = /** @type {import("../auth/tokens.mjs").TokenAuth} */ (device ? await deviceSlot(env).fresh() : null);
   // A browser names itself with an id of its own; the server names a device.
   const deviceId = device ? null : await store.deviceId(db, env.rand);
   const qr = p.qr ?? null;
@@ -242,6 +252,8 @@ async function open(env, p) {
     if (error instanceof ApiError && error.code === "forbidden") throw new AccountError("two_factor_unsupported");
     throw error;
   }
+  // The device of this sign-in is the session's device from now on (its API client carries the new token).
+  if (device) deviceSlot(env).use(tokens);
 
   // What the refusal of an older password is weighed against (see `pinnedRefusalAction`).
   /** @type {Record<string, any> | null} */
@@ -262,52 +274,176 @@ async function open(env, p) {
     const methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
     seenMethods = methods;
     if (methods.vk_epoch !== done.vk_epoch) throw new AccountError("epoch_mismatch");
-    const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
-    if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
-
-    // Accepted residual: when the e-mail was changed on another device, the early
-    // guard of `login_finish` was `first_use`, so a lower KSF profile than the pinned one
-    // is caught only here, after Argon2id has run. `unlock_password` still refuses it
-    // (`pinned_profile_downgrade`) and the sign-in ends. M1 has one profile, so none can be lower.
-    const pin = record ? { kind: "pinned", record } : { kind: "first_use", sk_bit: p.skBit };
-    const ctx = { account_id: hex16.decode(done.account_id), vault_id: hex16.decode(done.vault_id), vk_epoch: done.vk_epoch };
-    const opened = await client.vault.unlock_password(server, ctx, wrapToCore(passwordWraps[0], start.ksf_profile), pin);
-    const seeded = await client.vault.seed_pinned(opened.pinned, rowToCore(methods.manifest));
-    await client.vault.check_server_methods(rowToCore(methods.manifest), serverMethods(methods.methods));
-    // The account key the server lists must be the one the vault pins.
-    if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
-    await store.savePinned(db, server, done.account_id, p.email, seeded);
-
-    /** @type {Unlocked["secretKey"]} */
-    let secretKey = "unchanged";
-    if (p.purpose === "login" && p.rememberSk === false) {
-      await forgetSecretKey(db, server, done.account_id);
-      secretKey = "forgotten";
-    } else if (p.purpose === "login" && p.rememberSk === true && p.skBit && p.skCode) {
-      secretKey = await saveSecretKey(db, server, done.account_id, p.skCode, env.secrets);
-    }
-    return {
+    return await openWith(env, db, {
+      methods,
       accountId: done.account_id,
       vaultId: done.vault_id,
       vkEpoch: done.vk_epoch,
+      profile: start.ksf_profile,
+      record,
       email: p.email,
-      pinned: seeded,
-      secretKey,
+      skBit: p.skBit,
+      skCode: p.skCode,
+      rememberSk: p.rememberSk,
       purpose: p.purpose,
-    };
+    });
   } catch (error) {
     await Promise.resolve(env.lock()).catch(() => undefined);
-    // A refusal of an older password after a restore of the server can be answered with the recovery key.
-    const offer = codeOf(error) === "pinned_kek_generation" && seenRecord && seenMethods
+    // A refusal of an older password after a restore of the server can be answered with the recovery key (in the web
+    // vault's session only: a device is not offered it).
+    const offer = !device && codeOf(error) === "pinned_kek_generation" && seenRecord && seenMethods
       ? await pinnedRefusalAction(env, db, { accountId: done.account_id, record: seenRecord, methods: seenMethods }).catch(() => null)
       : null;
     if (offer !== null && error !== null && typeof error === "object") /** @type {any} */ (error).recoveryOffer = offer;
     // A sign-in that did not open the vault leaves no session behind; a
     // re-authentication must not end the session it was made for. The one
     // exception is the offer to recover: that recovery runs in this session.
-    // A device has no session for a recovery (that is the web vault's): its new tokens always go.
+    // A device's new tokens always go.
     if (device) await tokens.revoke().catch(() => undefined);
     else if (p.purpose === "login" && offer !== "recover") await api.post("/api/auth/logout").catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * The steps that open the vault once the server's account, wraps and manifest are known: the one password wrap, the
+ * core's unlock under the pin state, the generation floors, the server's list against the manifest, the account key,
+ * the pin, and what becomes of the remembered secret key. Shared by a sign-in, a re-authentication and a device's unlock.
+ * @param {Env} env
+ * @param {import("../store/idb.mjs").Store} db
+ * @param {{
+ *   methods: Record<string, any>,
+ *   accountId: string,
+ *   vaultId: string,
+ *   vkEpoch: number,
+ *   profile: number,
+ *   record: Record<string, any> | null,
+ *   email: string,
+ *   skBit: boolean,
+ *   skCode: string | null,
+ *   rememberSk?: boolean,
+ *   purpose: "login" | "reauth" | "unlock",
+ * }} o
+ * @returns {Promise<Unlocked>}
+ */
+async function openWith(env, db, o) {
+  const { client, store, server } = env;
+  const { methods } = o;
+  const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
+  if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
+
+  // Accepted residual: when the e-mail was changed on another device, the early
+  // guard of `login_finish` was `first_use`, so a lower KSF profile than the pinned one
+  // is caught only here, after Argon2id has run. `unlock_password` still refuses it
+  // (`pinned_profile_downgrade`) and the sign-in ends. M1 has one profile, so none can be lower.
+  const pin = o.record ? { kind: "pinned", record: o.record } : { kind: "first_use", sk_bit: o.skBit };
+  const ctx = { account_id: hex16.decode(o.accountId), vault_id: hex16.decode(o.vaultId), vk_epoch: o.vkEpoch };
+  const opened = await client.vault.unlock_password(server, ctx, wrapToCore(passwordWraps[0], o.profile), pin);
+  const seeded = await client.vault.seed_pinned(opened.pinned, rowToCore(methods.manifest));
+  await client.vault.check_server_methods(rowToCore(methods.manifest), serverMethods(methods.methods));
+  // The account key the server lists must be the one the vault pins.
+  if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
+  await store.savePinned(db, server, o.accountId, o.email, seeded);
+
+  /** @type {Unlocked["secretKey"]} */
+  let secretKey = "unchanged";
+  if (o.purpose === "login" && o.rememberSk === false) {
+    await forgetSecretKey(db, server, o.accountId);
+    secretKey = "forgotten";
+  } else if (o.purpose === "login" && o.rememberSk === true && o.skBit && o.skCode) {
+    secretKey = await saveSecretKey(db, server, o.accountId, o.skCode, env.secrets);
+  }
+  return {
+    accountId: o.accountId,
+    vaultId: o.vaultId,
+    vkEpoch: o.vkEpoch,
+    email: o.email,
+    pinned: seeded,
+    secretKey,
+    purpose: o.purpose,
+  };
+}
+
+/**
+ * The device of a device session (see `crypto/env.mjs`).
+ * @param {Env} env
+ * @returns {import("../crypto/env.mjs").DeviceSlot}
+ */
+function deviceSlot(env) {
+  if (env.mode !== "device" || !env.device) throw new TypeError("only a device session has a device");
+  return env.device;
+}
+
+/**
+ * The unlock of a device that keeps its device and tokens (see the top of this file). A device whose tokens have
+ * ended, or that has no pinned record for its account, signs in again with the same password.
+ * @param {Env} env
+ * @param {{ password: string, email?: string, skCode?: string, skBit?: boolean, rememberSk?: boolean }} args
+ * @returns {Promise<Unlocked>}
+ */
+async function unlockDevice(env, args) {
+  const { client, api, store, server } = env;
+  const tokens = await deviceSlot(env).tokens();
+  const db = await store.open();
+  /** A new sign-in with the password just typed (a new device key and new tokens). @param {string | null} email */
+  const signInAgain = (email) => {
+    if (email === null) throw new AccountError("session_ended");
+    return signIn(env, { ...args, email });
+  };
+  const stored = tokens !== null && tokens.state === "ok" ? await loadDeviceKey(db, server).catch(() => null) : null;
+  const accountId = stored?.accountId ?? null;
+  const known = accountId !== null ? (await store.loadPinnedAccount(db, server, accountId))?.email ?? null : null;
+  const email = nonEmpty(args.email) ?? known;
+  if (tokens === null || tokens.state !== "ok" || accountId === null || email === null) return signInAgain(email);
+  const record = await store.pinnedForSignIn(db, server, email, accountId);
+  // No first use at an unlock: the pin of the device's own account, or a sign-in.
+  if (!record || !(record.account_id instanceof Uint8Array) || hex16.encode(record.account_id) !== accountId) return signInAgain(email);
+
+  // The device's token first: a device that was signed out, revoked or replaced signs in again, before any password work.
+  /** @type {Record<string, any>} */
+  let methods;
+  try {
+    methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && tokens.state !== "ok") return signInAgain(email);
+    throw error;
+  }
+
+  const { skBit, skCode } = await decideSecretKey(env, db, record, args);
+  /** @type {Record<string, any>} */
+  let start;
+  try {
+    const ke1 = await withPassword(args.password, (mp) => client.vault.login_start(mp, skCode));
+    start = await tokens.startUnlock(encodeWire("login_start_req", { email, ke1: b64u.encode(ke1), purpose: "login" }));
+    try {
+      const finished = await client.vault.login_finish(b64u.decode(start.ke2), start.ksf_profile, { kind: "pinned", record });
+      // KE3 proves the password to the server; an unlock does not post it, so it is dropped here.
+      if (finished?.ke3 instanceof Uint8Array) finished.ke3.fill(0);
+    } catch (error) {
+      throw withSkHint(error, start.sk_hint);
+    }
+  } catch (error) {
+    // Nothing was opened: the job drops the password-derived state it holds.
+    await Promise.resolve(client.vault.clear()).catch(() => undefined);
+    throw error;
+  }
+
+  try {
+    return await openWith(env, db, {
+      methods,
+      accountId,
+      vaultId: hex16.encode(record.vault_id),
+      vkEpoch: methods.vk_epoch,
+      profile: start.ksf_profile,
+      record,
+      email,
+      skBit,
+      skCode,
+      purpose: "unlock",
+    });
+  } catch (error) {
+    // The device stays: a refusal of what the server lists is no reason to sign it out.
+    await Promise.resolve(env.lock()).catch(() => undefined);
     throw error;
   }
 }
@@ -412,11 +548,8 @@ export async function signIn(env, args) {
  * @returns {Promise<Unlocked>}
  */
 export async function unlock(env, args) {
-  // A device has no session to re-authenticate: opening its vault again is a new sign-in (a new key and new tokens).
-  if (env.mode === "device") {
-    if (nonEmpty(args.email) === null) throw new AccountError("session_ended");
-    return signIn(env, /** @type {any} */ (args));
-  }
+  // A device has no session to re-authenticate: it keeps its device and opens the vault with the password.
+  if (env.mode === "device") return unlockDevice(env, args);
   const info = await sessionInfo(env);
   if (info === null) {
     if (nonEmpty(args.email) === null) throw new AccountError("session_ended");

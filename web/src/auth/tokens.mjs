@@ -32,9 +32,15 @@
 // - The sign-in itself (`startSignIn`, `finishSignIn`): `login/start` carries
 //   no cookie, no token and no proof; `login/finish` carries the device body
 //   and a proof of this key without `ath` (the key goes in the proof's `jwk`,
-//   never in the body), and its answer is accepted once. A key is sent in one
+//   never in the body), and its answer is accepted once. The older device of
+//   the server is signed out before `login/finish` is posted, so a sign-in
+//   never needs a second place in the device quota. A key is sent in one
 //   sign-in only: the server binds its thumbprint to the new device, so a
 //   later sign-in makes a new key.
+// - The unlock of a device that holds live tokens (`startUnlock`): only
+//   `login/start`, with no cookie, no token and no proof. The client's side of
+//   the OPAQUE finish gives the export key; KE3 is never posted, so no device
+//   is made and no token is issued.
 import { ApiError, createApi } from "../api.mjs";
 import { serverKey, StoreError } from "../store/idb.mjs";
 import { SHAPES, shape } from "../wire.mjs";
@@ -77,6 +83,8 @@ const NO_STORE = /(^|,)\s*no-store\s*(,|$)/i;
  *   access token has changed since
  * @property {(deviceLoginRes: unknown) => Promise<void>} accept takes the answer of a device sign-in
  * @property {() => Promise<void>} revoke signs the device out at the server, then forgets its tokens
+ * @property {(body: string) => Promise<any>} startUnlock
+ *   posts `login/start` for the unlock of a device that keeps its tokens (state "ok"); no cookie, no token, no proof
  * @property {(body: string) => Promise<any>} startSignIn
  *   posts `login/start` (the text of a `login_start_req`) with no cookie, no token and no proof; gives the `login_start_res`
  * @property {(body: string) => Promise<{ account_id: string, vault_id: string, vk_epoch: number, device_id: string }>} finishSignIn
@@ -330,6 +338,14 @@ export function createTokenAuth({
 
   /** @param {unknown} deviceLoginRes */
   async function accept(deviceLoginRes) {
+    return acceptAnswer(deviceLoginRes, true);
+  }
+
+  /**
+   * @param {unknown} deviceLoginRes
+   * @param {boolean} olderFirst whether the older device of the server is signed out first (`finishSignIn` did that already)
+   */
+  async function acceptAnswer(deviceLoginRes, olderFirst) {
     if (deviceLoginRes === null || typeof deviceLoginRes !== "object") throw new TypeError("not the answer of a device sign-in");
     // Each field is read once, and the copy is what is checked and kept.
     const answer = /** @type {Record<string, any>} */ ({ ...deviceLoginRes });
@@ -340,7 +356,7 @@ export function createTokenAuth({
     }
     // The key is bound to a device now: it never signs in again.
     spent = true;
-    await signOutOlder();
+    if (olderFirst) await signOutOlder();
     const at = ++epoch;
     access = null;
     try {
@@ -373,10 +389,22 @@ export function createTokenAuth({
     if (typeof body !== "string") throw new TypeError("a sign-in sends the text of its body");
     if (state !== "signed_out" || spent) throw new TypeError("this device key has signed in already; a new sign-in makes a new key");
     spent = true;
+    // The older device goes first: the new one never needs a second place in the quota.
+    await signOutOlder();
     const answer = await proofOnly(key).post(LOGIN_FINISH_PATH, body, { shape: "login_finish_res_device" });
-    await accept(answer);
+    await acceptAnswer(answer, false);
     // The tokens stay here: the caller gets the account, the vault, the epoch and the device.
     return { account_id: answer.account_id, vault_id: answer.vault_id, vk_epoch: answer.vk_epoch, device_id: answer.device_id };
+  }
+
+  /**
+   * The first step of an unlock of this device, which keeps its tokens: `login/start` only (see the top of this file).
+   * @param {string} body the text of a `login_start_req`
+   */
+  async function startUnlock(body) {
+    if (typeof body !== "string") throw new TypeError("an unlock sends the text of its body");
+    if (state !== "ok") throw withoutTokens();
+    return anonymous().post(LOGIN_START_PATH, body, { shape: "login_start_res" });
   }
 
   async function revoke() {
@@ -400,6 +428,7 @@ export function createTokenAuth({
     refused,
     startSignIn,
     finishSignIn,
+    startUnlock,
     get state() {
       return state;
     },

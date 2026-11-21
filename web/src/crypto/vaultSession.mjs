@@ -18,7 +18,7 @@ import { AccountError } from "./errors.mjs";
 /**
  * The web vault's session: the session of `session.mjs` in its cookie mode,
  * with the web vault's own operations.
- * @param {Omit<Parameters<typeof createSessionCore>[0], "mode" | "tokens" | "deviceKey" | "platform">} options
+ * @param {Omit<Parameters<typeof createSessionCore>[0], "mode" | "platform" | "fetchImpl" | "locks">} options
  */
 export function createVaultSession(options) {
   const { session, inner } = createSessionCore({ ...options, mode: "cookie" });
