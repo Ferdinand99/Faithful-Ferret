@@ -130,8 +130,8 @@ pub use keys::{
     load_or_create,
 };
 pub use login::{
-    AccountLookup, AuthContext, LoginFinishRequest, LoginStartRequest, LoginStartResponse,
-    LoginVerified, login_finish, login_start,
+    AccountLookup, AuthContext, CurrentRecord, LoginFinishRequest, LoginStartRequest,
+    LoginStartResponse, LoginVerified, login_finish, login_start,
 };
 pub use name::{LOGIN_NAME_MAX_BYTES, NormalizedLoginName, normalize_login_name};
 #[cfg(feature = "test-support")]
@@ -139,7 +139,7 @@ pub use prelogin::resolve_credential;
 pub use prelogin::{
     PreloginAnswer, PreloginPolicy, fake_credential_id, fake_prelogin, prelogin_answer,
 };
-pub use record::{ProfileRules, RegistrationKind, StoredRecord, ValidatedRecord};
+pub use record::{ProfileRules, RecordBinding, RegistrationKind, StoredRecord, ValidatedRecord};
 pub use registration::{
     RegisterStartRequest, RegistrationAuthority, register_finish, register_start,
 };

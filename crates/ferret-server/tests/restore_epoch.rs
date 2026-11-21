@@ -8,31 +8,41 @@
 
 mod support;
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::extract::ConnectInfo;
+use axum::http::{Request, StatusCode, header};
+use axum::response::IntoResponse as _;
+use axum_extra::extract::cookie::SignedCookieJar;
 use ferret_core::{
     ItemBody, ItemType, OsRng, UnlockedVault, VaultContext, VaultKey, encrypt_item, make_tombstone,
 };
-use ferret_server::auth::session::Origin;
+use ferret_server::auth::session::{Origin, insert_session, new_session, session_cookies};
+use ferret_server::backup::set::SECRET_FILES;
 use ferret_server::cli::{self, Command as Cmd};
 use ferret_server::config::Config;
 use ferret_server::data_lock;
 use ferret_server::error::StoreError;
-use ferret_server::ids::ItemId;
-use ferret_server::product;
-use ferret_server::vault::reconcile::{bump_all_vaults, bump_restore_epoch};
+use ferret_server::ids::{DeviceId, ItemId};
+use ferret_server::product::{self, SESSION_COOKIE};
+use ferret_server::server;
+use ferret_server::state::FerretState;
+use ferret_server::vault::reconcile::{self, bump_restore_epoch};
 use ferret_server::wire::{BatchRes, BatchResultJson, MAX_JSON_INT, b64url, hex16};
-use ferret_server_auth::SessionScope;
+use ferret_server_auth::{ManualClock, SessionScope};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::accounts::{add_account, add_account_to_app};
+use support::accounts::{add_account, add_account_to_app, id16};
 use support::session::issue;
-use support::{ADMIN_URL, Res, TestApp, VAULT_URL, Which};
+use support::{ADMIN_URL, Jar, PEER, Res, START, TestApp, VAULT_URL, Which};
+use tower::ServiceExt as _;
 use vole_kit::db::migrate::apply_migrations;
 
 const BIN: &str = env!("CARGO_BIN_EXE_ferret");
@@ -68,20 +78,45 @@ fn set_epoch(conn: &Connection, n: u8, epoch: i64) {
 // ------------------------------------------------------------------ the bump
 
 #[test]
-fn bump_raises_every_vault_by_one_in_one_transaction() {
+fn bump_gives_every_vault_one_more_the_time_or_at_least_whichever_is_highest() {
     let mut conn = migrated();
     for n in 1..=3 {
         add_account(&mut conn, n, NOW);
     }
-    set_epoch(&conn, 2, 4);
-    assert_eq!(epochs(&conn), [0, 4, 0]);
+    let now = u64::try_from(NOW).unwrap();
+    set_epoch(&conn, 2, NOW + 10);
+    assert_eq!(epochs(&conn), [0, NOW + 10, 0]);
 
-    let bumped = bump_all_vaults(&mut conn).expect("a bump");
+    // The time lifts the vaults that are behind it; the one ahead of it goes
+    // up by one.
+    let bumped = reconcile::bump(&mut conn, None, NOW).expect("a bump");
     assert_eq!(bumped.vaults, 3);
-    assert_eq!(bumped.restore_epoch, 5, "the highest epoch now");
-    assert_eq!(epochs(&conn), [1, 5, 1]);
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 6);
-    assert_eq!(epochs(&conn), [2, 6, 2]);
+    assert_eq!(bumped.restore_epoch, now + 11, "the highest epoch now");
+    assert_eq!(epochs(&conn), [NOW, NOW + 11, NOW]);
+
+    // The same second again: one more than the stored epoch, never the same.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, NOW).expect("a bump"),
+        now + 12
+    );
+    assert_eq!(epochs(&conn), [NOW + 1, NOW + 12, NOW + 1]);
+
+    // `at_least` lifts every vault to it when it is the highest.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, Some(now + 100), NOW).expect("a bump"),
+        now + 100
+    );
+    assert_eq!(epochs(&conn), [NOW + 100, NOW + 100, NOW + 100]);
+    // A lower `at_least` and an older time do not lower anything.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, Some(5), 7).expect("a bump"),
+        now + 101
+    );
+    // A clock before 1970 counts as 0.
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, -5).expect("a bump"),
+        now + 102
+    );
 
     // One transaction: a failure on the last vault leaves every vault as it
     // was.
@@ -92,17 +127,19 @@ fn bump_raises_every_vault_by_one_in_one_transaction() {
     ))
     .expect("a trigger");
     let before = epochs(&conn);
-    assert!(bump_all_vaults(&mut conn).is_err());
+    assert!(reconcile::bump(&mut conn, None, NOW + 1000).is_err());
     assert_eq!(epochs(&conn), before, "nothing was raised");
     conn.execute_batch("DROP TRIGGER fail_one;").expect("drop");
-    assert_eq!(bump_restore_epoch(&mut conn).expect("a bump"), 7);
-    assert_eq!(epochs(&conn), [3, 7, 3]);
+    assert_eq!(
+        bump_restore_epoch(&mut conn, None, NOW + 1000).expect("a bump"),
+        now + 1000
+    );
 }
 
 #[test]
 fn a_bump_without_vaults_changes_nothing_and_says_zero() {
     let mut conn = migrated();
-    let bumped = bump_all_vaults(&mut conn).expect("a bump");
+    let bumped = reconcile::bump(&mut conn, Some(50), NOW).expect("a bump");
     assert_eq!((bumped.vaults, bumped.restore_epoch), (0, 0));
 }
 
@@ -111,13 +148,26 @@ fn a_vault_at_the_largest_json_integer_refuses_the_whole_bump() {
     let mut conn = migrated();
     add_account(&mut conn, 1, NOW);
     add_account(&mut conn, 2, NOW);
-    set_epoch(&conn, 2, i64::try_from(MAX_JSON_INT).unwrap());
-    let err = bump_all_vaults(&mut conn).expect_err("at the limit");
+    let max = i64::try_from(MAX_JSON_INT).unwrap();
+    set_epoch(&conn, 2, max);
+    let err = reconcile::bump(&mut conn, None, NOW).expect_err("at the limit");
     assert!(matches!(err, StoreError::Invalid(_)), "{err}");
+    assert_eq!(epochs(&conn), [0, max], "nothing changed");
+}
+
+#[test]
+fn an_at_least_or_a_time_above_the_largest_json_integer_is_refused() {
+    let mut conn = migrated();
+    add_account(&mut conn, 1, NOW);
+    for (at_least, now) in [(Some(MAX_JSON_INT + 1), NOW), (None, i64::MAX)] {
+        let err = reconcile::bump(&mut conn, at_least, now).expect_err("too large");
+        assert!(matches!(err, StoreError::Invalid(_)), "{err}");
+        assert_eq!(epochs(&conn), [0], "nothing changed");
+    }
+    // The largest one itself is fine.
     assert_eq!(
-        epochs(&conn),
-        [0, i64::try_from(MAX_JSON_INT).unwrap()],
-        "nothing changed"
+        bump_restore_epoch(&mut conn, Some(MAX_JSON_INT), NOW).expect("a bump"),
+        MAX_JSON_INT
     );
 }
 
@@ -155,15 +205,17 @@ async fn changes_and_listing_show_the_new_restore_epoch() {
     let bumped = app
         .state
         .vault_db
-        .with_conn(bump_restore_epoch)
+        .with_conn(|conn| bump_restore_epoch(conn, None, NOW))
         .await
         .expect("a bump");
-    assert_eq!(bumped, 1);
+    // The rule: one more than 0, or the time, whichever is higher.
+    let now = u64::try_from(NOW).unwrap();
+    assert_eq!(bumped, now);
 
     // Both calls, in both vaults.
     for jar in [&jar, &other_jar] {
-        assert_eq!(field(&read("/api/sync/changes", jar.clone()).await), 1);
-        assert_eq!(field(&read("/api/sync/items", jar.clone()).await), 1);
+        assert_eq!(field(&read("/api/sync/changes", jar.clone()).await), now);
+        assert_eq!(field(&read("/api/sync/items", jar.clone()).await), now);
     }
     // The epoch does not move `seq`: a bump is not a change of the feed.
     let changes = read("/api/sync/changes", jar.clone()).await;
@@ -179,16 +231,24 @@ async fn changes_and_listing_show_the_new_restore_epoch() {
 struct Dir(PathBuf);
 
 impl Dir {
+    /// A new, empty directory of its own. Tests run in parallel threads of one
+    /// process, so the name takes a number no other call in this process gets,
+    /// and `create_dir` fails rather than hand out a folder that is already
+    /// there (a leftover of an earlier run with the same process id is skipped).
     fn new(name: &str) -> Dir {
-        let path = std::env::temp_dir().join(format!(
-            "ferret-restore-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        std::fs::create_dir_all(&path).expect("a directory");
-        Dir(path)
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        loop {
+            let path = std::env::temp_dir().join(format!(
+                "ferret-restore-epoch-{name}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Dir(path),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => panic!("a directory: {e}"),
+            }
+        }
     }
 
     fn path(&self) -> &Path {
@@ -204,6 +264,42 @@ impl Drop for Dir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// The time of the machine in Unix seconds, which the command uses.
+fn wall_clock() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock")
+            .as_secs(),
+    )
+    .expect("a time")
+}
+
+/// Every vault got the epoch of one bump by the command at a time between
+/// `before` and now: the vaults were behind the time, so the time is the rule's
+/// highest term.
+fn assert_bumped_to_the_time(epochs: &[i64], before: i64) {
+    let after = wall_clock();
+    assert!(!epochs.is_empty());
+    for epoch in epochs {
+        assert!(
+            (before..=after).contains(epoch),
+            "{epoch} not in {before}..={after}"
+        );
+    }
+}
+
+/// The epoch in "restore epoch is now <n> (<rest>); <what the bump ended>".
+fn said_epoch(stdout: &str, rest: &str) -> i64 {
+    stdout
+        .trim()
+        .strip_prefix("restore epoch is now ")
+        .and_then(|tail| tail.split_once(' '))
+        .filter(|(_, after)| after.starts_with(&format!("({rest}); ")))
+        .and_then(|(n, _)| n.parse().ok())
+        .unwrap_or_else(|| panic!("an epoch line: {stdout}"))
 }
 
 /// What a run of the binary printed and how it ended.
@@ -271,6 +367,7 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
     assert_eq!(epochs(&copy.db()), [0, 0]);
 
     // With the flag, and with the variable the server also reads.
+    let before = wall_clock();
     let ran = ferret(
         &[
             "restore-epoch",
@@ -282,26 +379,26 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
         &[],
     );
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
-    assert_eq!(
-        ran.stdout.trim(),
-        "restore epoch is now 1 (2 vaults raised)"
-    );
+    // The command takes the time of the machine for the rule.
+    let epoch = said_epoch(&ran.stdout, "2 vaults raised");
+    assert_bumped_to_the_time(&epochs(&copy.db()), before);
+    assert_eq!(epochs(&copy.db()), [epoch, epoch]);
     assert!(
         !ran.stdout.contains("vault on") && !ran.stderr.contains("vault on"),
         "no server was started"
     );
-    assert_eq!(epochs(&copy.db()), [1, 1]);
 
     let ran = ferret(
-        &["restore-epoch", "bump", "--yes"],
+        &["restore-epoch", "bump", "--yes", "--at-least", "4000000000"],
         &[("FERRET_DATA_DIR", copy.path())],
     );
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
     assert_eq!(
         ran.stdout.trim(),
-        "restore epoch is now 2 (2 vaults raised)"
+        "restore epoch is now 4000000000 (2 vaults raised); 0 sessions ended, 0 sign-in codes \
+         revoked"
     );
-    assert_eq!(epochs(&copy.db()), [2, 2]);
+    assert_eq!(epochs(&copy.db()), [4_000_000_000, 4_000_000_000]);
 
     // The database the copy came from is not touched.
     let original: Vec<i64> = app
@@ -332,6 +429,276 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
     );
 }
 
+/// The database and the secret files of a running app, copied into a data
+/// directory of their own as a copy by hand would hold them (`0600`): what a
+/// stopped server leaves, put back.
+async fn copy_of_the_data_directory(app: &TestApp) -> Dir {
+    let copy = Dir::new("hand-copy");
+    let target = copy.path().join(product::DB_FILE);
+    let target_text = target.to_string_lossy().into_owned();
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute("VACUUM INTO ?1", [target_text])?;
+            Ok(())
+        })
+        .await
+        .expect("copy the database");
+    for name in SECRET_FILES {
+        std::fs::copy(app.dir.join(name), copy.path().join(name)).expect("copy a secret file");
+    }
+    #[cfg(unix)]
+    for name in [product::DB_FILE].into_iter().chain(SECRET_FILES) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            copy.path().join(name),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("private");
+    }
+    copy
+}
+
+/// One number out of the copy.
+fn one(dir: &Dir, sql: &str) -> i64 {
+    dir.db()
+        .query_row(sql, [], |row| row.get(0))
+        .expect("a number")
+}
+
+/// The server's start-up on a data directory, with its clock a minute after
+/// the sessions of the app were made: they would still be good by their age.
+async fn start_on(dir: &Dir) -> FerretState {
+    let config = Config {
+        data_dir: dir.path().to_path_buf(),
+        host: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        vault_port: 3041,
+        admin_port: 3040,
+        vault_url: VAULT_URL.to_string(),
+        admin_url: ADMIN_URL.to_string(),
+        trusted_proxies: Vec::new(),
+        backup_dir: None,
+        backup_every_hours: 24,
+        backup_keep_days: 30,
+        backup_push_url: None,
+    };
+    let clock = Arc::new(ManualClock::new(START + 60));
+    ferret_server::start(&config, clock)
+        .await
+        .expect("the server starts on the copy")
+}
+
+/// A new vault session for `user_id` on a started server, at the user's
+/// `session_version` now, and its cookies. It is made at [`START`], the second
+/// the sessions of the app were made, so a kit cookie of theirs differs from
+/// its own only in the version.
+async fn sign_in_on(state: &FerretState, user_id: i64) -> Jar {
+    let version: i64 = state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT session_version FROM users WHERE id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("a session version");
+    let (secret, session, claims) = new_session(
+        &mut OsRng,
+        i64::try_from(START).expect("a time"),
+        user_id,
+        version,
+        Origin::Vault,
+        DeviceId(id16(0xd7, 9)),
+        "Test browser",
+        SessionScope::Full,
+    );
+    state
+        .vault_db
+        .with_conn(move |conn| Ok(insert_session(conn, &session)?))
+        .await
+        .expect("a session");
+    let cookies = session_cookies(
+        SignedCookieJar::new(state.core.session_key.clone()),
+        &secret,
+        &claims,
+        true,
+    )
+    .into_response();
+    let mut jar = Jar::default();
+    jar.absorb(cookies.headers());
+    jar
+}
+
+/// A `GET` to the vault listener of a started server.
+async fn vault_get_on(state: &FerretState, jar: &Jar, uri: &str) -> StatusCode {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header(header::HOST, Which::Vault.host());
+    if let Some(cookie) = jar.header() {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    let mut request = builder.body(Body::empty()).expect("a request");
+    let peer: SocketAddr = PEER.parse().expect("a peer");
+    request.extensions_mut().insert(ConnectInfo(peer));
+    server::vault_router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response")
+        .status()
+}
+
+/// A copy of the data directory put back by hand, then `ferret restore-epoch
+/// bump`: the bump ends what was live in the copy, in the same transaction as
+/// the epoch, as `ferret backup restore` does. Spec: Fase 1 § 8.6 and § 11.
+#[tokio::test]
+async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy() {
+    let app = TestApp::new().await;
+    let account = add_account_to_app(&app, 1).await;
+    let user = account.user_id;
+    let vault = issue(&app, user, Origin::Vault, SessionScope::Full, 1).await;
+    let admin = issue(&app, user, Origin::Admin, SessionScope::Full, 2).await;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO sign_in_codes (user_id, code_hash, expires_at) \
+                 VALUES (?1, randomblob(32), datetime('now', '+1 day'))",
+                [user],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a pending code");
+    let version = support::session::session_version(&app, user).await;
+    // The sessions work when the copy is made.
+    let items = get("/api/sync/items", &vault.jar);
+    assert_eq!(
+        app.call_raw(Which::Vault, items).await.status,
+        StatusCode::OK
+    );
+
+    let copy = copy_of_the_data_directory(&app).await;
+    let live = "SELECT COUNT(*) FROM ferret_sessions WHERE revoked_at IS NULL";
+    let pending = "SELECT COUNT(*) FROM sign_in_codes WHERE used_at IS NULL AND revoked_at IS NULL";
+    assert_eq!(one(&copy, live), 2, "both sessions are live in the copy");
+    assert_eq!(one(&copy, pending), 1, "the code is pending in the copy");
+
+    let before = wall_clock();
+    let ran = ferret(
+        &[
+            "restore-epoch",
+            "bump",
+            "--yes",
+            "--data-dir",
+            copy.path().to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+    let epoch = said_epoch(&ran.stdout, "1 vault raised");
+    assert!(
+        ran.stdout
+            .trim()
+            .ends_with("; 2 sessions ended, 1 sign-in code revoked"),
+        "{}",
+        ran.stdout
+    );
+    // The epoch rule holds: the vault was behind the time.
+    assert_bumped_to_the_time(&epochs(&copy.db()), before);
+    assert_eq!(epochs(&copy.db()), [epoch]);
+
+    // In the copy: no live session, no pending code, the version one higher,
+    // and none of the half-done sign-ins and hand-overs.
+    assert_eq!(one(&copy, live), 0);
+    for sid in [vault.sid, admin.sid] {
+        let revoked: Option<i64> = copy
+            .db()
+            .query_row(
+                "SELECT revoked_at FROM ferret_sessions WHERE sid_hash = ?1",
+                [sid.0.as_slice()],
+                |row| row.get(0),
+            )
+            .expect("the row");
+        assert!(revoked.is_some(), "the session is revoked");
+    }
+    assert_eq!(one(&copy, pending), 0, "the pending code is revoked");
+    assert_eq!(
+        one(
+            &copy,
+            &format!("SELECT session_version FROM users WHERE id = {user}")
+        ),
+        version + 1
+    );
+    for table in [
+        "ferret_handoffs",
+        "ferret_login_states",
+        "ferret_registrations",
+    ] {
+        assert_eq!(
+            one(&copy, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table}"
+        );
+    }
+
+    // On a server started on the copy, the old cookies get nowhere.
+    let state = start_on(&copy).await;
+    assert_eq!(
+        vault_get_on(&state, &vault.jar, "/api/sync/items").await,
+        StatusCode::UNAUTHORIZED,
+        "the vault session of the copy"
+    );
+    // A new sign-in gets in; with the kit cookie of the copy in place of its
+    // own, it does not: the raised version ends that cookie by itself.
+    let mut fresh = sign_in_on(&state, user).await;
+    assert_eq!(
+        vault_get_on(&state, &fresh, "/api/sync/items").await,
+        StatusCode::OK
+    );
+    fresh.set(
+        SESSION_COOKIE,
+        vault.jar.get(SESSION_COOKIE).expect("the kit cookie"),
+    );
+    assert_eq!(
+        vault_get_on(&state, &fresh, "/api/sync/items").await,
+        StatusCode::UNAUTHORIZED,
+        "the kit cookie of the copy"
+    );
+    drop(state);
+
+    // The rule again, with --at-least and then without: never lower, one more
+    // than stored when that is the highest. Each bump ends what is live: the
+    // sign-in made after the first one, then nothing.
+    for (args, said, ended) in [
+        (
+            vec!["--at-least", "4000000000"],
+            4_000_000_000_i64,
+            "1 session",
+        ),
+        (vec![], 4_000_000_001, "0 sessions"),
+    ] {
+        let mut full = vec![
+            "restore-epoch",
+            "bump",
+            "--yes",
+            "--data-dir",
+            copy.path().to_str().unwrap(),
+        ];
+        full.extend(args);
+        let ran = ferret(&full, &[]);
+        assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+        assert_eq!(
+            ran.stdout.trim(),
+            format!(
+                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked"
+            )
+        );
+    }
+}
+
 #[tokio::test]
 async fn cli_needs_no_url_flags() {
     let (copy, _app) = copy_of_a_database().await;
@@ -352,7 +719,7 @@ async fn cli_needs_no_url_flags() {
         &[],
     );
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
-    assert_eq!(epochs(&copy.db()), [1, 1]);
+    assert_bumped_to_the_time(&epochs(&copy.db()), NOW);
 }
 
 #[tokio::test]
@@ -378,6 +745,7 @@ async fn cli_refuses_without_the_confirmation_flag() {
     let err = cli::run(Cmd::RestoreEpochBump {
         data_dir: copy.path().join("nowhere"),
         confirmed: false,
+        at_least: None,
     })
     .expect_err("needs --yes");
     assert!(err.to_string().contains("--yes"), "{err}");
@@ -500,6 +868,7 @@ async fn cli_refuses_while_another_process_holds_the_data_directory() {
     let err = cli::run(Cmd::RestoreEpochBump {
         data_dir: copy.path().to_path_buf(),
         confirmed: true,
+        at_least: None,
     })
     .expect_err("in use");
     assert!(err.to_string().contains("another ferret process"), "{err}");
@@ -518,7 +887,7 @@ async fn cli_refuses_while_another_process_holds_the_data_directory() {
         &[],
     );
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
-    assert_eq!(epochs(&copy.db()), [1, 1]);
+    assert_bumped_to_the_time(&epochs(&copy.db()), NOW);
 }
 
 fn free_port() -> u16 {
@@ -538,6 +907,10 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
         vault_url: VAULT_URL.to_string(),
         admin_url: ADMIN_URL.to_string(),
         trusted_proxies: Vec::new(),
+        backup_dir: None,
+        backup_every_hours: 24,
+        backup_keep_days: 30,
+        backup_push_url: None,
     };
     let server = tokio::spawn(ferret_server::server::run(config.clone()));
     // Up when the vault port takes a connection.
@@ -622,7 +995,11 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
         &[],
     );
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
-    assert_eq!(ran.stdout.trim(), "restore epoch is now 1 (1 vault raised)");
+    assert!(
+        said_epoch(&ran.stdout, "1 vault raised") >= NOW,
+        "{}",
+        ran.stdout
+    );
 }
 
 // ------------------------------------- the condition on the restore epoch
@@ -759,10 +1136,12 @@ async fn read(app: &TestApp, u: &User, uri: &str) -> Value {
     res.json()
 }
 
+/// A bump with 0 for the time in its rule (`max(stored + 1, now, at_least)`):
+/// the epoch goes up by one, so the epochs of the write tests count bumps.
 async fn bump(app: &TestApp) -> u64 {
     app.state
         .vault_db
-        .with_conn(bump_restore_epoch)
+        .with_conn(|conn| bump_restore_epoch(conn, None, 0))
         .await
         .expect("a bump")
 }

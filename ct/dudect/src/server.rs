@@ -489,6 +489,7 @@ const STATE_ID: &str = "0123456789abcdef0123456789abcdef";
 fn fields(credential: [u8; 16]) -> StateFields {
     StateFields {
         credential,
+        record: [0x6b; 32],
         reauth: Some((SESSION, ACCOUNT)),
         expires_at: NOW + 60,
         ksf_profile: 1,
@@ -625,7 +626,7 @@ impl Target for Finish {
                 ke3: black_box(&[0x77; 64]),
                 current_session: Some((SessionBinding(SESSION), CredentialId::from_bytes(ACCOUNT))),
             };
-            let result = login_finish(&cx, &self.store, &request);
+            let result = login_finish(&cx, &self.store, &self.f.records, &request);
             acc = acc.wrapping_add(u64::from(result.is_err()));
         }
         black_box(acc)

@@ -63,7 +63,8 @@ test("e2e_snapshot_and_restore_raise_restore_epoch", async ({ browser }) => {
   await expect(rowsNamed(page, `First-${state.itemTitle}`)).toHaveCount(1, { timeout: 30_000 });
   await expect(rowsNamed(page, `Second-${state.itemTitle}`)).toHaveCount(0);
   const restored = await feed(context);
-  expect(restored.restore_epoch, "the restore epoch is one higher").toBe(state.snapEpoch + 1);
+  // The bump takes `max(stored + 1, now, at_least)`, so the epoch is higher, by one or up to the time.
+  expect(restored.restore_epoch, "the restore epoch is higher").toBeGreaterThan(state.snapEpoch);
   expect(restored.latest_seq, "the feed ends where the snapshot was taken").toBe(state.snapSeq);
   expect(restored.changes.every((c) => c.seq <= state.snapSeq), "no row is newer than the snapshot").toBe(true);
   // The gate script requires this marker: Playwright exits 0 when a file is skipped.

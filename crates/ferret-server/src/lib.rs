@@ -28,6 +28,7 @@
 //!   static files and extractors. [`admin`]: the admin listener's own routes.
 //! * [`wire`]: the JSON shapes shared with the web vault.
 //! * [`cli`]: the commands of `ferret` that are not the server.
+//! * [`backup`]: the backup sets, their schedule and the restore.
 //!
 //! Many modules are still stubs: each has its documentation and, where it has
 //! routes, a `routes()` that serves nothing yet.
@@ -74,6 +75,10 @@ use config::Config;
 /// ones on that listener.
 pub async fn start(config: &Config, clock: Arc<dyn Clock>) -> Result<FerretState, StartError> {
     install();
+    // A restore that did not finish leaves a directory that must not be served.
+    backup::restore::refuse_if_in_progress(&config.data_dir)?;
+    // A wrong backup setting stops the start; nothing is made from it here.
+    config.backup_config()?;
     std::fs::create_dir_all(&config.data_dir).map_err(|e| {
         format!(
             "can't create the data directory {}: {e}",

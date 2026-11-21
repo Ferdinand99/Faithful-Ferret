@@ -64,6 +64,12 @@ const manifest = () => ({
   envelope: envelope("manifest", 2, 160),
   tag: b64("manifest tag", 32),
 });
+/** The manifest as the next revision, written by a change of the unlock methods. */
+const manifestNext = () => ({
+  rev: 2,
+  envelope: envelope("manifest next", 2, 160),
+  tag: b64("manifest next tag", 32),
+});
 const checkpoint = () => ({
   seq: 1,
   digest,
@@ -255,13 +261,14 @@ export function fixtures() {
       challenge: b64("handoff challenge", 32),
     },
     "handoff_res.json": { code: b64("handoff code", 32), expires_in: 60 },
-    "redeem_req.json": { code: b64("handoff code", 32) },
+    "handoff_redeem_req.json": { code: b64("handoff code", 32) },
     "handoff_redeem_res.json": { next: "/admin" },
     "session_res.json": {
       account_id: id("account"),
       email: "ada@example.test",
       scope: "full",
       origin: "vault",
+      reauth_until: 1800000300,
     },
     "session_res.admin.json": {
       email: "ada@example.test",
@@ -402,6 +409,51 @@ export function fixtures() {
       has_more: false,
     },
     "sync_event.json": { seq: 7 },
+    // The third milestone: signed requests, recovery, sign-in codes, import.
+    "challenge_res.json": { nonce: b64("challenge nonce", 32), expires_in: 300 },
+    "reregister_start_req.json": { registration_request: b64("reregister request", 32) },
+    "reregister_start_res.json": { registration_response: b64("reregister response", 64) },
+    "password_put_req.json": {
+      registration_record: b64("new opaque record", 192),
+      ksf_profile: 1,
+      wrap: b64("new wrap password", 104),
+      kek_generation: 2,
+      manifest: manifestNext(),
+    },
+    "password_put_res.json": { kek_generation: 2, seq: 9 },
+    // The answer to the recovery write has the shape of the password one.
+    "recovery_put_res.json": { kek_generation: 3, seq: 10 },
+    "recovery_put_req.json": {
+      wrap: b64("new wrap recovery", 72),
+      kek_generation: 2,
+      pk_r: b64("pk r new", 32),
+      manifest: manifestNext(),
+    },
+    "recovery_res.json": {
+      account_id: id("account"),
+      vault_id: id("vault"),
+      vk_epoch: 1,
+      ksf_profile: 1,
+      wrap: recoveryWrap(),
+      manifest: manifest(),
+    },
+    "recover_req.json": {
+      registration_record: b64("new opaque record", 192),
+      ksf_profile: 1,
+      pw_wrap: b64("new wrap password", 104),
+      rk_wrap: b64("new wrap recovery", 72),
+      pw_kek_generation: 2,
+      rk_kek_generation: 2,
+      pk_r_new: b64("pk r new", 32),
+      manifest: manifestNext(),
+    },
+    "recover_res.json": { session_ended: true, seq: 9 },
+    "redeem_req.json": { email: "ada@example.test", code: "code-0123456789" },
+    "redeem_res.json": { scope: "account_reset" },
+    "import_window_req.json": { ops: 250 },
+    "import_window_res.json": { window_id: id("import window"), ops: 250, expires_in: 1800 },
+    // A batch of an import: the same operations, counted against the window.
+    "batch_req_import.json": { ops: [batchLive(), batchDeleted()], import_window: id("import window") },
   };
 }
 
@@ -441,6 +493,11 @@ export const ERROR_CODES = [
   "checkpoint_stale",
   "checkpoint_invalid",
   "restore_epoch_changed",
+  "reauth_required",
+  "second_factor_required",
+  "write_conflict",
+  "import_window_open",
+  "import_window_invalid",
 ];
 
 /**
@@ -483,6 +540,11 @@ export const STATUS_OF = {
   checkpoint_stale: 409,
   checkpoint_invalid: 422,
   restore_epoch_changed: 409,
+  reauth_required: 403,
+  second_factor_required: 403,
+  write_conflict: 409,
+  import_window_open: 409,
+  import_window_invalid: 409,
 };
 
 /**
@@ -771,7 +833,7 @@ export function invalidCases() {
   validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "only a live row asks to bring an item back");
 
   // A hand-over code is 43 characters of strict base64url that decode to 32 bytes.
-  const code = all["redeem_req.json"].code;
+  const code = all["handoff_redeem_req.json"].code;
   for (const [name, value] of [
     ["42 characters", code.slice(0, 42)],
     ["44 characters", `${code}A`],
@@ -782,7 +844,7 @@ export function invalidCases() {
     ["empty", ""],
     ["non-ASCII", `\u00e9${code.slice(1)}`],
   ]) {
-    validate(`handoff code ${name}`, "redeem_req", with_("redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
+    validate(`handoff code ${name}`, "handoff_redeem_req", with_("handoff_redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
   }
 
   // A batch: the parts of an operation, then the number and the form of the
@@ -1032,6 +1094,139 @@ export function invalidCases() {
   parse("sync_event seq 2^53", "sync_event", with_("sync_event.json", { seq: 9007199254740992 }), "an integer is at most 2^53 - 1");
   parse("sync_event seq negative", "sync_event", with_("sync_event.json", { seq: -1 }), "an integer is not negative");
   parse("sync_event with a second field", "sync_event", text({ seq: 7, vault: id("vault") }), "an event carries the sequence number and nothing else");
+
+  // ------------------------------------------------- the third milestone
+
+  // A missing field of a request or an answer is refused, one case for each field.
+  for (const file of [
+    "password_put_req.json", "recovery_put_req.json", "recover_req.json", "recovery_res.json",
+    "challenge_res.json", "password_put_res.json", "recovery_put_res.json", "recover_res.json", "redeem_req.json",
+    "import_window_res.json", "reregister_start_req.json", "reregister_start_res.json",
+  ]) {
+    for (const field of Object.keys(all[file])) {
+      parse(`${file} without ${field}`, file.split(".")[0], with_(file, { [field]: undefined }), `${field} is required`);
+    }
+  }
+  parse("redeem_res without scope", "redeem_res", "{}", "scope is required");
+  parse("import_window_req without ops", "import_window_req", "{}", "ops is required");
+  parse("batch_req_import without ops", "batch_req_import", with_("batch_req_import.json", { ops: undefined }), "ops is required");
+
+  // The challenge.
+  for (const [name, n] of [["31 bytes", 31], ["33 bytes", 33], ["empty", 0]]) {
+    parse(`challenge_res nonce ${name}`, "challenge_res", with_("challenge_res.json", { nonce: b64(`nonce ${name}`, n) }), "a nonce is 32 bytes");
+  }
+  parse("challenge_res nonce with padding", "challenge_res", with_("challenge_res.json", { nonce: `${b64("nonce", 32)}=` }), "a nonce is strict base64url");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "300"], ["a fraction", 1.5]]) {
+    parse(`challenge_res expires_in ${name}`, "challenge_res", with_("challenge_res.json", { expires_in: value }), "expires_in is a whole number of 32 bits");
+  }
+
+  // The OPAQUE messages of a registration inside a session.
+  sized("registration_request", "reregister_start_req", "reregister_start_req.json", 32, "malformed_registration_request");
+  sized("registration_response", "reregister_start_res", "reregister_start_res.json", 64, "bad_request");
+
+  // The password wrap has 104 bytes, the recovery wrap 72; a request refuses the other size.
+  sized("registration_record", "password_put_req", "password_put_req.json", 192, "malformed_registration_record");
+  sized("wrap", "password_put_req", "password_put_req.json", 104, "bad_request");
+  sized("wrap", "recovery_put_req", "recovery_put_req.json", 72, "bad_request");
+  sized("registration_record", "recover_req", "recover_req.json", 192, "malformed_registration_record");
+  sized("pw_wrap", "recover_req", "recover_req.json", 104, "bad_request");
+  sized("rk_wrap", "recover_req", "recover_req.json", 72, "bad_request");
+  sized("pk_r", "recovery_put_req", "recovery_put_req.json", 32, "bad_request");
+  sized("pk_r_new", "recover_req", "recover_req.json", 32, "bad_request");
+  parse("recovery_put_req with a password-sized wrap", "recovery_put_req", with_("recovery_put_req.json", { wrap: b64("new wrap password", 104) }), "a recovery wrap is 72 bytes, not the 104 of a password wrap");
+  parse("password_put_req with a recovery-sized wrap", "password_put_req", with_("password_put_req.json", { wrap: b64("new wrap recovery", 72) }), "a password wrap is 104 bytes, not the 72 of a recovery wrap");
+  parse("recover_req with the wraps swapped", "recover_req", with_("recover_req.json", { pw_wrap: b64("new wrap recovery", 72), rk_wrap: b64("new wrap password", 104) }), "pw_wrap is 104 bytes and rk_wrap 72");
+  parse("recover_req with a password-sized rk_wrap", "recover_req", with_("recover_req.json", { rk_wrap: b64("new wrap password", 104) }), "rk_wrap is 72 bytes");
+
+  // Whole numbers of the right size.
+  for (const file of ["password_put_req.json", "recover_req.json"]) {
+    const shape = file.split(".")[0];
+    for (const [name, value] of [["256", 256], ["negative", -1], ["a string", "1"], ["a fraction", 1.5]]) {
+      parse(`${shape} ksf_profile ${name}`, shape, with_(file, { ksf_profile: value }), "ksf_profile is a byte");
+    }
+  }
+  parse("recovery_res ksf_profile 256", "recovery_res", with_("recovery_res.json", { ksf_profile: 256 }), "ksf_profile is a byte");
+  for (const file of ["password_put_req.json", "recovery_put_req.json", "password_put_res.json", "recovery_put_res.json"]) {
+    const shape = file.split(".")[0];
+    for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5]]) {
+      parse(`${shape} kek_generation ${name}`, shape, with_(file, { kek_generation: value }), "kek_generation is a whole number of 32 bits");
+    }
+  }
+  // The two generations of a recover request are 32-bit whole numbers.
+  for (const field of ["pw_kek_generation", "rk_kek_generation"]) {
+    for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5], ["null", null]]) {
+      parse(`recover_req ${field} ${name}`, "recover_req", with_("recover_req.json", { [field]: value }), `${field} is a whole number of 32 bits`);
+    }
+  }
+  for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "9"]]) {
+    parse(`recovery_put_res seq ${name}`, "recovery_put_res", with_("recovery_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+    parse(`password_put_res seq ${name}`, "password_put_res", with_("password_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+    parse(`recover_res seq ${name}`, "recover_res", with_("recover_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+  }
+  parse("recover_res session_ended is a string", "recover_res", with_("recover_res.json", { session_ended: "true" }), "session_ended is a boolean");
+  parse("recovery_res vk_epoch 2^53", "recovery_res", with_("recovery_res.json", { vk_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+
+  // The manifest and the wrap that sit inside a request or an answer.
+  for (const file of ["password_put_req.json", "recovery_put_req.json", "recover_req.json", "recovery_res.json"]) {
+    const shape = file.split(".")[0];
+    nested(`unknown field in the manifest of ${file}`, shape, file, ["manifest"], "an unknown field is refused inside a part");
+    parse(`${shape} manifest tag 31 bytes`, shape, with_(file, { manifest: { ...all[file].manifest, tag: b64("short tag", 31) } }), "a tag is 32 bytes");
+    parse(`${shape} manifest rev 2^53`, shape, with_(file, { manifest: { ...all[file].manifest, rev: 9007199254740992 } }), "an integer is at most 2^53 - 1");
+  }
+  nested("unknown field in the wrap of recovery_res", "recovery_res", "recovery_res.json", ["wrap"], "an unknown field is refused inside a part");
+  parse("recovery_res manifest is a string", "recovery_res", with_("recovery_res.json", { manifest: "x" }), "the manifest is an object");
+
+  // The recovery wrap that comes back must be the recovery method with a recovery-sized wrap.
+  const recoveryWith = (wrapFields) => with_("recovery_res.json", { wrap: { ...all["recovery_res.json"].wrap, ...wrapFields } });
+  const recoveryWhy = "the wrap of a recovery answer is the recovery method (type 2) with 72 bytes and no passkey field";
+  validate("recovery_res: a password method", "recovery_res", recoveryWith({ method_type: 1 }), recoveryWhy);
+  validate("recovery_res: a passkey method", "recovery_res", recoveryWith({ method_type: 3 }), recoveryWhy);
+  validate("recovery_res: a password-sized wrap", "recovery_res", recoveryWith({ wrap: b64("wrap password", 104) }), recoveryWhy);
+  validate("recovery_res: a short wrap", "recovery_res", recoveryWith({ wrap: b64("wrap short", 71) }), recoveryWhy);
+  validate("recovery_res: an empty wrap", "recovery_res", recoveryWith({ wrap: "" }), recoveryWhy);
+  validate("recovery_res: a credential_id on the recovery wrap", "recovery_res", recoveryWith({ credential_id: b64("credential", 32) }), recoveryWhy);
+  validate("recovery_res: a prf_salt on the recovery wrap", "recovery_res", recoveryWith({ prf_salt: b64("prf salt", 32) }), recoveryWhy);
+
+  // A sign-in code.
+  parse("redeem_req email is a number", "redeem_req", with_("redeem_req.json", { email: 5 }), "email is a string");
+  parse("redeem_req code is a number", "redeem_req", with_("redeem_req.json", { code: 5 }), "code is a string");
+  parse("redeem_req code is null", "redeem_req", with_("redeem_req.json", { code: null }), "code is a string");
+  parse("redeem_req with a hand-over field", "redeem_req", text({ code: "x" }), "a sign-in code comes with an e-mail");
+  for (const value of ["full", "pending_2fa", "unverified", "", "Account_reset", 1]) {
+    parse(`redeem_res scope ${JSON.stringify(value)}`, "redeem_res", with_("redeem_res.json", { scope: value }), "the scope of a redeemed code is account_reset");
+  }
+
+  // The scope of a session is one of four, and the time of the fresh check is a whole number.
+  for (const value of ["", "Full", "admin", "root", "reset", 1, null]) {
+    parse(`session_res scope ${JSON.stringify(value)}`, "session_res", with_("session_res.json", { scope: value }), "scope is full, pending_2fa, account_reset or unverified");
+  }
+  for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800000300"], ["a fraction", 1.5]]) {
+    parse(`session_res reauth_until ${name}`, "session_res", with_("session_res.json", { reauth_until: value }), "reauth_until is a whole number up to 2^53 - 1");
+  }
+
+  // The import window.
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "250"], ["a fraction", 1.5], ["null", null]]) {
+    parse(`import_window_req ops ${name}`, "import_window_req", with_("import_window_req.json", { ops: value }), "ops is a whole number of 32 bits");
+    parse(`import_window_res ops ${name}`, "import_window_res", with_("import_window_res.json", { ops: value }), "ops is a whole number of 32 bits");
+    parse(`import_window_res expires_in ${name}`, "import_window_res", with_("import_window_res.json", { expires_in: value }), "expires_in is a whole number of 32 bits");
+  }
+  for (const [name, value] of [
+    ["upper case", id("import window").toUpperCase()],
+    ["short", id("import window").slice(1)],
+    ["long", `${id("import window")}0`],
+    ["empty", ""],
+    ["a number", 5],
+  ]) {
+    parse(`import_window_res window_id ${name}`, "import_window_res", with_("import_window_res.json", { window_id: value }), "an id is 32 lower-case hexadecimal characters");
+    parse(`batch_req_import import_window ${name}`, "batch_req_import", with_("batch_req_import.json", { import_window: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  nested("batch_req_import: unknown field in an operation", "batch_req_import", "batch_req_import.json", ["ops", 0], "an unknown field is refused inside a part");
+  validate("batch_req_import with no operations", "batch_req_import", with_("batch_req_import.json", { ops: [] }), "a batch has 1 to 100 operations");
+  validate("batch_req_import with 101 operations", "batch_req_import", text({ ops: JSON.parse(batchOf(101)).ops, import_window: id("import window") }), "a batch has 1 to 100 operations");
+  validate("batch_req_import: an operation with both forms", "batch_req_import", with_("batch_req_import.json", { ops: [{ id: id("form item"), base_rev: 1, blob, tag, tomb, idem }] }), "an operation is a live row (blob, tag) or a tombstone (deleted true, tomb), never both, and only a live row asks to bring an item back");
+  // A batch without the window is the shape of the second milestone.
+  validate("batch_req without an import window and with no operations", "batch_req", text({ ops: [] }), "a batch has 1 to 100 operations");
+  parse("batch_req with an import_window that is not an id", "batch_req", with_("batch_req.json", { import_window: "x" }), "an id is 32 lower-case hexadecimal characters");
 
   return cases;
 }

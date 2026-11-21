@@ -29,10 +29,11 @@ use ferret_server_auth::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, ChallengeKey, ChallengeStore,
     ConsumeOutcome, CredentialId, DenyReason, InMemoryChallengeStore, InternalKind,
     LoginFinishRequest, LoginPurpose, LoginStartRequest, Malformed, Outcome, ProfileRules,
-    RegistrationKind, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest, RetryAfter,
-    ScopeEffect, SessionBinding, SessionScope, SignedAccount, SignedPermit, SignedRequest, Stage,
-    StoreError, StoredRecord, ThrottleCall, ThrottleKey, WriteBasis, authorize_replacement,
-    authorize_signed, issue_challenge, login_finish, login_start, register_finish,
+    RecordBinding, RegistrationKind, ReplaceFields, ReplaceKind, ReplacePermit, ReplaceRequest,
+    RetryAfter, ScopeEffect, SessionBinding, SessionScope, SignedAccount, SignedPermit,
+    SignedRequest, Stage, StoreError, StoredRecord, ThrottleCall, ThrottleKey, WriteBasis,
+    authorize_replacement, authorize_signed, issue_challenge, login_finish, login_start,
+    register_finish,
 };
 use sha2::{Digest, Sha256};
 
@@ -400,9 +401,12 @@ impl World {
         ) else {
             return false;
         };
+        // The record the login started from is the account's record still.
+        let current = RecordBinding::of(record.record.as_bytes());
         login_finish(
             &self.cx(),
             &self.f.store,
+            &|_: &CredentialId| Ok(Some(current.clone())),
             &LoginFinishRequest {
                 caller: LoginFixture::caller(),
                 login_id: started.login_id.to_hex().as_bytes(),

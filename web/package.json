@@ -17,6 +17,7 @@
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "fake-indexeddb": "6.2.8",
+    "jsqr": "1.4.0",
     "typescript": "7.0.2"
   }
 }

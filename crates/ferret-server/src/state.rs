@@ -13,13 +13,13 @@ use std::sync::{Arc, RwLock};
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use deadpool_sqlite::Pool;
-use ferret_server_auth::{Clock, PreloginPolicy, Throttle};
+use ferret_server_auth::{Clock, InMemoryChallengeStore, PreloginPolicy, Throttle};
 use rusqlite::Connection;
 use vole_kit::state::Core;
 
 use crate::auth::secrets::{Secrets, load_secrets};
 use crate::auth::state_store::SqliteLoginStateStore;
-use crate::auth::throttle::KitThrottle;
+use crate::auth::throttle::{ChallengeLimit, KitThrottle};
 use crate::auth::{handoff, login, state_store};
 use crate::config::{Config, Origins};
 use crate::error::{StartError, StoreError};
@@ -30,6 +30,11 @@ use crate::vault::events::EventStreams;
 use crate::vault::notify::{CAPACITY, SyncEvents};
 use crate::vault::rate::{RateConfig, SyncLimits, WriteGate};
 use crate::vault::retention;
+
+/// The proof checks of signed requests, the one way a vault route reaches the
+/// OPAQUE library's `authorize_signed` and `authorize_replacement`. It is
+/// built only in `auth::proofs`, from this state, through `FromRef`.
+pub use crate::auth::proofs::Proofs;
 
 /// The database, as the vault modules see it: a pool and one way to use it.
 #[derive(Clone)]
@@ -54,6 +59,53 @@ impl VaultDb {
         conn.interact(f).await?
     }
 }
+
+/// The nonces of signed requests (Spec: Fase 1 § 4.6), kept in memory: at most
+/// 20 000, and the oldest goes first when the store is full. A restart forgets
+/// them, so a nonce that was issued before it is refused afterwards. One store
+/// for the process, shared by every handle (`Clone` shares it). With them, the
+/// limit on how many nonces a session may ask for.
+#[derive(Clone)]
+pub struct Challenges {
+    store: Arc<InMemoryChallengeStore>,
+    limit: Arc<ChallengeLimit>,
+}
+
+impl Challenges {
+    /// An empty store with the library's limit of 20 000 nonces, and the limit
+    /// of 30 nonces per session per minute.
+    pub fn new() -> Self {
+        Self {
+            store: Arc::new(InMemoryChallengeStore::new()),
+            limit: Arc::new(ChallengeLimit::new()),
+        }
+    }
+
+    /// The store, as the OPAQUE library's functions take it.
+    pub fn store(&self) -> &InMemoryChallengeStore {
+        &self.store
+    }
+
+    /// The limit on the nonces of one session.
+    pub fn limit(&self) -> &ChallengeLimit {
+        &self.limit
+    }
+}
+
+impl Default for Challenges {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for Challenges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Challenges([redacted])")
+    }
+}
+
+pub use crate::backup::status::BackupStatus;
+pub use crate::vault::rate::ImportWindows;
 
 /// Everything the two routers share.
 #[derive(Clone)]
@@ -86,6 +138,12 @@ pub struct FerretState {
     pub write_gate: WriteGate,
     /// The open event streams, counted.
     pub streams: Arc<EventStreams>,
+    /// The nonces of signed requests.
+    pub challenges: Challenges,
+    /// The open import windows.
+    pub import_windows: ImportWindows,
+    /// What the scheduled backup reports.
+    pub backup: BackupStatus,
 }
 
 impl FromRef<FerretState> for Core {
@@ -158,6 +216,24 @@ impl FromRef<FerretState> for Arc<EventStreams> {
     }
 }
 
+impl FromRef<FerretState> for Challenges {
+    fn from_ref(state: &FerretState) -> Challenges {
+        state.challenges.clone()
+    }
+}
+
+impl FromRef<FerretState> for ImportWindows {
+    fn from_ref(state: &FerretState) -> ImportWindows {
+        state.import_windows.clone()
+    }
+}
+
+impl FromRef<FerretState> for BackupStatus {
+    fn from_ref(state: &FerretState) -> BackupStatus {
+        state.backup.clone()
+    }
+}
+
 /// Starts the background jobs: purging login states, renewing the pre-login
 /// policy, purging hand-over codes and the retention of old rows. Call it once,
 /// inside the runtime.
@@ -219,5 +295,8 @@ pub async fn build_state(
         limits,
         write_gate: WriteGate::new(8, 64),
         streams: Arc::new(EventStreams::new(2, 40, 256)),
+        challenges: Challenges::new(),
+        import_windows: ImportWindows::new(),
+        backup: BackupStatus::persistent(&cfg.backup_config()?.dir),
     })
 }

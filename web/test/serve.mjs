@@ -92,10 +92,27 @@ export function loadHeaders(file = headersFile()) {
   return validateHeaders(JSON.parse(readFileSync(file, "utf8")));
 }
 
+/** The two files of the import worker: the entry the page starts and the module it loads. */
+export const IMPORT_WORKER_PATHS = Object.freeze(["/js/import.worker.mjs", "/app/workers/import.worker.mjs"]);
+
+/**
+ * The headers of the import worker's files: the list of the section with `connect-src 'none'`, so the worker
+ * cannot send anything anywhere (a worker keeps the policy of its own script). Throws when the policy has no
+ * `connect-src 'self';` to tighten, so a changed list cannot leave the worker with the page's policy.
+ * @param {Record<string, string>} headers
+ */
+export function importWorkerHeaders(headers) {
+  const policy = headers["Content-Security-Policy"];
+  const strict = policy.replace("connect-src 'self';", "connect-src 'none';");
+  if (strict === policy) throw new Error("headers: the CSP has no connect-src 'self'; for the import worker to tighten");
+  return { ...headers, "Content-Security-Policy": strict };
+}
+
 /**
  * @param {{ dist?: string, port?: number, headers?: Record<string, string> }} [options]
  */
 export function start({ dist = join(web, "dist"), port = Number(process.env.FERRET_WEB_PORT ?? 4578), headers = loadHeaders() } = {}) {
+  const workerHeaders = importWorkerHeaders(headers);
   /** @type {Record<string, { type: string, bytes: Buffer }>} */
   const files = {};
   const manifest = JSON.parse(readFileSync(join(dist, "manifest.json"), "utf8"));
@@ -122,7 +139,7 @@ export function start({ dist = join(web, "dist"), port = Number(process.env.FERR
       return;
     }
     res.writeHead(200, {
-      ...headers,
+      ...(IMPORT_WORKER_PATHS.includes(path) ? workerHeaders : headers),
       "content-type": served.type,
       "content-length": served.bytes.length,
       "cache-control": "no-store",

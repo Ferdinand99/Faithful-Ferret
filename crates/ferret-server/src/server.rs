@@ -65,6 +65,7 @@ pub fn admin_router(state: FerretState) -> Router {
     let core = state.core.clone();
     let kit_protected: Router<FerretState> = Router::new()
         .merge(kit_pages::router())
+        .merge(admin::protected_routes())
         .route_layer(from_fn_with_state(core.clone(), guard::require_auth))
         .route_layer(from_fn_with_state(
             state.clone(),
@@ -86,6 +87,12 @@ pub fn admin_router(state: FerretState) -> Router {
         // Inside the kit's CSRF layer, so a refused request is refused first.
         .layer(from_fn(admin::guard::block_unsupported_kit_routes))
         .layer(from_fn_with_state(core.clone(), guard::csrf_guard))
+        // Outside the CSRF layer: the kit's sign-in code page is a redirect to
+        // the vault origin's recovery page for every request, a form post too.
+        .layer(from_fn_with_state(
+            state.origins.clone(),
+            admin::redirects::sign_in_code_to_recover,
+        ))
         .layer(from_fn_with_state(core, vole_kit::i18n::layer))
         .layer(from_fn(vole_kit::http::error::negotiate))
         .layer(from_fn(vole_kit::http::headers::security_headers));
@@ -145,6 +152,21 @@ pub async fn run(config: Config) -> Result<(), StartError> {
     // Notifications and other work outside a request use the site language.
     vole_kit::i18n::site_language(&state.core).await;
     spawn_background(&state);
+    // The scheduled backup: a set 15 minutes after start, then every
+    // FERRET_BACKUP_EVERY_HOURS, and one soon after a change of unlock methods.
+    crate::backup::schedule::spawn(
+        state.vault_db.clone(),
+        config.data_dir.clone(),
+        config.backup_config()?,
+        state.backup.clone(),
+        state.clock.clone(),
+        crate::backup::push::client()?,
+        crate::backup::set::Loaded::new(
+            state.secrets.keys.fingerprint().0,
+            state.secrets.prelogin.payload(),
+            state.core.session_key.master(),
+        ),
+    );
 
     let vault_listener = bind(config.vault_addr()).await?;
     let admin_listener = bind(config.admin_addr()).await?;

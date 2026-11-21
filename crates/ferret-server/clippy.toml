@@ -1,0 +1,9 @@
+# A proof of a signed request is checked only through ferret-server-auth
+# (`authorize_signed` and `authorize_replacement`), which uses up the nonce,
+# checks its binding to the session and asks the throttle first. The core
+# verifiers do none of that: a proof checked with them could be replayed for
+# the life of the vault key epoch. Spec: Fase 1 § 4.6.
+disallowed-methods = [
+    { path = "ferret_core::verify_auth_proof", reason = "check proofs only through ferret_server_auth::authorize_signed or authorize_replacement (single-use nonce, session binding, throttle)" },
+    { path = "ferret_core::verify_recovery_proof", reason = "check proofs only through ferret_server_auth::authorize_replacement (single-use nonce, session binding, throttle)" },
+]

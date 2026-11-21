@@ -1,0 +1,7 @@
+folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp
+Synthetic folder,1,login,Example login,A synthetic login.,"Pin: 0000
+Memo: none",0,"https://www.example.test/login
+androidapp://example.test.app",alice@example.test,synthetic-password-1,GEZDGNBVGY3TQOJQ
+,,note,Example note,"Line one
+Line two",,0,,,,
+,,login,"Quoted, ""name""",,,0,www.example.test,bob@example.test,synthetic-password-2,

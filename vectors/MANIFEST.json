@@ -1,8 +1,8 @@
 {
   "files": {
     "ERRORS.md": "7758deaa9488fc076dfc73633b717f12f029bd4894e0357b837a19abaca43156",
-    "OPS.md": "2107890476a7acad28237ec4065fcba3ff5bb10133b82e7e379f879a46cbe9cc",
-    "VERSION": "9961d158a7e0e2f990765971a9e490af826c0743b7d603020f34cc8944319fcb",
+    "OPS.md": "e699470d67caed56be044003a7a1652b2f6239fce1c1f3722c2e391b7246f163",
+    "VERSION": "3840bc236ee03aacbb1ef7d5108ddfa347c59f10b68d4174affbb53140f31273",
     "external/SOURCE.md": "afe26b63233f4360c3c04c47d5e508fc1324e0313394f015bde26bc0ee91ee6d",
     "external/publicsuffix-test_psl.txt": "8f50ad958916d6a8f79fba2363501475571acce752757f9126fe9d2f17dd920d",
     "external/rfc4226-hotp.json": "11e6b75510b0eb55164447cb5db1c59f2ab6ccd8f135c2b35399ad054fde3198",
@@ -35,8 +35,8 @@
     "internal/proofs.json": "4c3ed8fa1529090da97203ae9db440ccf64473e9ee34b9e4fdc7ae34134276ea",
     "internal/recovery_renew.json": "fca02ad704a52b499ff0764127dde4f36e2303ec10a00c22f14cd550684cd8da",
     "internal/rekey.json": "956026a04ea9f7f7662f2210966ef229b5897555b0b23d94538edf9aa28bce3e",
-    "internal/server-opaque.json": "c0290a49cd66d467851cffac102b5b1881d78855107f0a17d00a85b7001fb9a8",
-    "internal/server-secrets.json": "00ab0038727cccf417568c63faa0fe138d990e5833afe780b8316fa2ad10c2f1",
+    "internal/server-opaque.json": "4455ebb09f7234bb0dfcb26c6e913a3f984736d3bc15b7fd9dfc67e070874918",
+    "internal/server-secrets.json": "006bc72ddb3f66b24b9bbc5a917f42a30bcabb17e0101095d8dcabe1bd8e65a2",
     "internal/sheet.json": "acc2bcf0c8ff9e67938676d35a83681b8eb1b9b51653011a083c33b68d7e766c",
     "internal/sync.json": "b4deaed58823c3d6ab6af1c31509c45ea2b7d21c8c12fd41a78e97dc07fe5744",
     "internal/tlv.json": "9ad5038c7013130ddddfe5c40b47892b9db79b6a2802e33deecf9216b5bc3769",
@@ -49,5 +49,5 @@
     "schema/vector-file.schema.json": "c0f16538f50209f13f730f7609ba40a1617b20decf468a35bd92c1ccd5807560"
   },
   "format": "ferret-vectors-manifest/1",
-  "version": 28
+  "version": 29
 }

@@ -24,3 +24,11 @@ node_modules/
 
 # Screenshots and output of the end-to-end gate (scripts/lanbox-ferret-e2e-gate.sh m2)
 /test-results/
+
+# The stack for real data (docker/compose.ferret-home.yml): its settings, the SSH key of the copy
+# container, and the record of the images it was started with. Never committed.
+/docker/home.env
+/docker/copy.env
+/docker/secrets/
+/docker/home-image
+/docker/home-releases.log

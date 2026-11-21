@@ -1,0 +1,89 @@
+{
+  "format": "ferret-stored-golden/1",
+  "dbVersion": 2,
+  "store": "pinned",
+  "comment": "What a device keeps of an account: the core's PinnedDto under (server origin, account id), with the e-mail index. keyPath [serverUrl, accountId]; index by_email [serverUrl, email].",
+  "records": [
+    {
+      "value": {
+        "serverUrl": "https://vault.example",
+        "accountId": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "email": "alice@example.test",
+        "record": {
+          "server_url": "https://vault.example",
+          "account_id": {
+            "$bytes": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+          },
+          "vault_id": {
+            "$bytes": "f9e8d7c6b5a4938271605f4e3d2c1b0a"
+          },
+          "ksf_profile": 1,
+          "kek_generation_max": [
+            {
+              "type": "password",
+              "credential_id": null,
+              "generation": 4
+            },
+            {
+              "type": "recovery",
+              "credential_id": null,
+              "generation": {
+                "$bigint": "2"
+              }
+            },
+            {
+              "type": "prf",
+              "credential_id": {
+                "$bytes": "404142434445464748494a4b4c4d4e4f"
+              },
+              "generation": 1
+            }
+          ],
+          "vk_epoch_max": 2,
+          "sk_bit": true,
+          "pk_a": {
+            "$bytes": "030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122"
+          },
+          "server_public_key": {
+            "$bytes": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526"
+          }
+        }
+      }
+    },
+    {
+      "value": {
+        "serverUrl": "https://vault.example",
+        "accountId": "f0e1d2c3b4a5968778695a4b3c2d1e0f",
+        "email": null,
+        "record": {
+          "server_url": "https://vault.example",
+          "account_id": {
+            "$bytes": "f0e1d2c3b4a5968778695a4b3c2d1e0f"
+          },
+          "vault_id": {
+            "$bytes": "0102030405060708090a0b0c0d0e0f10"
+          },
+          "ksf_profile": 2,
+          "kek_generation_max": [
+            {
+              "type": "password",
+              "credential_id": null,
+              "generation": 1
+            },
+            {
+              "type": "recovery",
+              "credential_id": null,
+              "generation": 1
+            }
+          ],
+          "vk_epoch_max": 1,
+          "sk_bit": false,
+          "pk_a": {
+            "$bytes": "090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728"
+          },
+          "server_public_key": null
+        }
+      }
+    }
+  ]
+}

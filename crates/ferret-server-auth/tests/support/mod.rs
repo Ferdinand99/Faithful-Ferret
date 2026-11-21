@@ -31,7 +31,7 @@ use ferret_core::{
     TestRng, VaultId, change_password, create_account, encode_recovery_key, opaque_login_finish,
     opaque_login_start, opaque_register_finish, opaque_register_start, recover,
 };
-use ferret_server_auth::testing::{SMALL, TestAccountStore};
+use ferret_server_auth::testing::{FixtureRecords, SMALL, TestAccountStore};
 use ferret_server_auth::{
     AccountAuthState, AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId,
     InMemoryChallengeStore, InMemoryLoginStateStore, LoginFinishRequest, LoginId, LoginPurpose,
@@ -120,6 +120,9 @@ pub struct Server {
     pub profiles: ProfileRules,
     pub logins: InMemoryLoginStateStore,
     pub nonces: InMemoryChallengeStore,
+    /// The record of each account as the last `begin` of it found it, which
+    /// `finish` reads as the account's record now.
+    pub records: FixtureRecords,
     draws: AtomicU32,
 }
 
@@ -146,6 +149,7 @@ impl Server {
             profiles,
             logins: InMemoryLoginStateStore::new(),
             nonces: InMemoryChallengeStore::new(),
+            records: FixtureRecords::default(),
             draws: AtomicU32::new(0),
         }
     }
@@ -390,6 +394,9 @@ impl Server {
         let name = normalize_login_name(target.login_name()).unwrap();
         let credential = resolve_credential(&self.prelogin, &name, target.account_id().as_ref());
         let row = target.account().map(|a| a.row.read());
+        if let Some(row) = &row {
+            self.records.set(&credential, &row.record);
+        }
         let lookup = match (target, &row) {
             (Target::Active(_), Some(row)) => AccountLookup::Active {
                 record: &row.record,
@@ -431,6 +438,7 @@ impl Server {
         login_finish(
             &self.cx(),
             &self.logins,
+            &self.records,
             &LoginFinishRequest {
                 caller: caller(),
                 login_id: login_id.to_hex().as_bytes(),

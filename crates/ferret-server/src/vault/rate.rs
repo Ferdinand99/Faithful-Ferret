@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use ferret_core::{OsRng, SecureRng};
 use ferret_server_auth::Clock;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -298,6 +299,21 @@ impl SyncLimits {
         Err(refused(ops_wait.unwrap_or(0).max(bytes_wait.unwrap_or(0))))
     }
 
+    /// Takes only `bytes` request bytes from the bucket of this device, or says
+    /// when to come back. This is the check of a batch that has its operations
+    /// counted in an import window: the byte bucket still applies to it, the
+    /// operation bucket does not.
+    ///
+    /// Spec: Fase 1 § 8.2.
+    pub fn admit_bytes(
+        &self,
+        vault: &VaultId,
+        device: &DeviceId,
+        bytes: u64,
+    ) -> Result<(), Refused> {
+        self.admit(vault, device, 0, bytes)
+    }
+
     /// Whether this device may upload a checkpoint now. It only looks: a
     /// refused or failed upload must not use up the turn.
     pub fn checkpoint_allowed(&self, vault: &VaultId, device: &DeviceId) -> Result<(), Refused> {
@@ -326,6 +342,225 @@ impl SyncLimits {
         let mut table = self.table();
         let key = table.key_of(&cfg, vault, device);
         table.touch(&cfg, key, now).checkpoint_at = Some(now);
+    }
+}
+
+/// How long an import window lasts, in seconds.
+pub const IMPORT_WINDOW_SECS: u32 = 1800;
+
+/// Why an import window was not opened or not used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportRefused {
+    /// The vault has an open window that another device opened (`409
+    /// import_window_open`).
+    Open,
+    /// There is no such window for this vault and device, it has ended, or
+    /// it has too few operations left (`409 import_window_invalid`). One
+    /// answer for all of them: the caller learns nothing about whose window
+    /// it is.
+    Invalid,
+}
+
+/// One open window.
+struct Window {
+    id: [u8; 16],
+    /// The device that opened it; no other device may use it.
+    device: DeviceId,
+    /// Operations that no stored write has used yet.
+    remaining: u32,
+    /// Operations that running batches hold out of `remaining`.
+    reserved: u32,
+    /// The second the window ends (the first second it is not usable).
+    expires_at: i64,
+}
+
+impl Window {
+    /// Whether the window can still take operations at `now`.
+    fn is_open(&self, now: i64) -> bool {
+        now < self.expires_at && self.remaining > 0
+    }
+}
+
+/// The open import windows, one per vault at most, kept in memory: a restart
+/// forgets them all, and the page opens a new one (it proves the master
+/// password again to get it).
+///
+/// A window lets one device send a number of operations in batches without the
+/// per-device operation limit of [`SyncLimits`]; the byte limit and the write
+/// queue still apply. It lasts [`IMPORT_WINDOW_SECS`] and holds the number of
+/// operations it was opened for. One set for the process, shared by every
+/// handle (`Clone` shares it).
+///
+/// Spec: Fase 1 § 8.2. This goes past the operation limit of the spec on
+/// purpose: ten thousand items would take 83 minutes at 120 operations a
+/// minute.
+#[derive(Clone, Default)]
+pub struct ImportWindows {
+    windows: Arc<Mutex<HashMap<VaultId, Window>>>,
+}
+
+impl std::fmt::Debug for ImportWindows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ImportWindows([redacted])")
+    }
+}
+
+impl ImportWindows {
+    /// No window open.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn table(&self) -> MutexGuard<'_, HashMap<VaultId, Window>> {
+        // A panic elsewhere cannot leave the table half changed: every change
+        // is made under this lock with no call that can panic in between.
+        self.windows.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Opens a window of `ops` operations for `device` of `vault`, and gives
+    /// its id. It lasts [`IMPORT_WINDOW_SECS`] from `now`.
+    ///
+    /// A vault has one open window. One that has ended, or has no operation
+    /// left, is replaced, and so is one that this device opened (it has just
+    /// proved the master password again; the old window closes at once and a
+    /// batch still running on it is not counted in the new one). A window that
+    /// another device opened and that is still open is
+    /// [`ImportRefused::Open`]. `ops` of 0 is [`ImportRefused::Invalid`]: the
+    /// caller checks the number against the room of the vault first.
+    ///
+    /// Spec: Fase 1 § 8.2.
+    pub fn open(
+        &self,
+        vault: &VaultId,
+        device: &DeviceId,
+        ops: u32,
+        now: i64,
+    ) -> Result<[u8; 16], ImportRefused> {
+        if ops == 0 {
+            return Err(ImportRefused::Invalid);
+        }
+        let mut table = self.table();
+        // A window nobody can use any more is gone; one with a batch still
+        // running is kept until that batch has settled.
+        table.retain(|_, w| w.is_open(now) || w.reserved > 0);
+        if table
+            .get(vault)
+            .is_some_and(|w| w.is_open(now) && w.device != *device)
+        {
+            return Err(ImportRefused::Open);
+        }
+        let mut id = [0u8; 16];
+        OsRng.fill(&mut id);
+        table.insert(
+            *vault,
+            Window {
+                id,
+                device: *device,
+                remaining: ops,
+                reserved: 0,
+                expires_at: now.saturating_add(i64::from(IMPORT_WINDOW_SECS)),
+            },
+        );
+        Ok(id)
+    }
+
+    /// Holds `n` operations of the window `window` for a batch of `device` of
+    /// `vault`. The window must be this vault's, opened by this device, not
+    /// ended at `now`, and have `n` operations that nothing holds or used.
+    /// Anything else is [`ImportRefused::Invalid`], and nothing is held.
+    ///
+    /// The hold ends when the [`Reservation`] is dropped or committed.
+    ///
+    /// Spec: Fase 1 § 8.2.
+    pub fn reserve(
+        &self,
+        vault: &VaultId,
+        device: &DeviceId,
+        window: &[u8; 16],
+        n: u32,
+        now: i64,
+    ) -> Result<Reservation, ImportRefused> {
+        let mut table = self.table();
+        let w = table
+            .get_mut(vault)
+            .filter(|w| w.id == *window && w.device == *device && w.is_open(now))
+            .ok_or(ImportRefused::Invalid)?;
+        let free = w.remaining.saturating_sub(w.reserved);
+        if n == 0 || n > free {
+            return Err(ImportRefused::Invalid);
+        }
+        w.reserved = w.reserved.saturating_add(n);
+        Ok(Reservation {
+            windows: self.clone(),
+            vault: *vault,
+            window: *window,
+            n,
+            stored: 0,
+        })
+    }
+
+    /// Gives back the `n` operations a reservation held, and takes `stored`
+    /// of them for good. A window that is not there any more (or is another
+    /// one, opened since) is left alone.
+    fn settle(&self, vault: &VaultId, window: &[u8; 16], n: u32, stored: u32) {
+        let mut table = self.table();
+        if let Some(w) = table.get_mut(vault).filter(|w| w.id == *window) {
+            w.reserved = w.reserved.saturating_sub(n);
+            w.remaining = w.remaining.saturating_sub(stored);
+        }
+    }
+
+    /// Whether `window` is an open window of this vault and device at `now`,
+    /// with at least one operation left. It only looks: nothing is held. A
+    /// batch that names a window that is not usable is counted like a batch
+    /// without one, so a made-up id gets no way round the operation limit.
+    pub fn usable(&self, vault: &VaultId, device: &DeviceId, window: &[u8; 16], now: i64) -> bool {
+        self.table()
+            .get(vault)
+            .is_some_and(|w| w.id == *window && w.device == *device && w.is_open(now))
+    }
+
+    /// How many operations the window of `vault` has left, if it has one that
+    /// has not ended at `now`.
+    #[doc(hidden)]
+    pub fn remaining(&self, vault: &VaultId, now: i64) -> Option<u32> {
+        self.table()
+            .get(vault)
+            .filter(|w| now < w.expires_at)
+            .map(|w| w.remaining)
+    }
+}
+
+/// Operations of a window held for one batch. Dropped without
+/// [`Reservation::commit`], it gives all of them back.
+pub struct Reservation {
+    windows: ImportWindows,
+    vault: VaultId,
+    window: [u8; 16],
+    n: u32,
+    stored: u32,
+}
+
+impl Reservation {
+    /// Ends the hold: `stored` operations (the writes that stored something
+    /// new, never the repeats of an earlier `idem`) are taken from the window
+    /// for good, and the rest are given back. More than were held counts as
+    /// all of them.
+    pub fn commit(mut self, stored: u32) {
+        self.stored = stored.min(self.n);
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.windows
+            .settle(&self.vault, &self.window, self.n, self.stored);
+    }
+}
+
+impl std::fmt::Debug for Reservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Reservation([redacted])")
     }
 }
 
@@ -412,5 +647,149 @@ mod tests {
         assert_eq!(d.bytes_per_min, 20 * 1024 * 1024);
         assert_eq!(d.checkpoint_every_secs, 600);
         assert_eq!((d.max_keys, d.max_devices_per_vault), (4096, 40));
+    }
+
+    fn vault(n: u8) -> VaultId {
+        VaultId::from_bytes([n; 16])
+    }
+
+    fn device(n: u8) -> DeviceId {
+        DeviceId([n; 16])
+    }
+
+    #[test]
+    fn a_reservation_is_taken_for_what_was_stored_and_the_rest_is_given_back() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 10, 100).expect("open");
+        let held = windows
+            .reserve(&vault(1), &device(1), &id, 6, 100)
+            .expect("six");
+        // Six are held, so four are free: five more do not fit.
+        assert_eq!(
+            windows.reserve(&vault(1), &device(1), &id, 5, 100).err(),
+            Some(ImportRefused::Invalid)
+        );
+        held.commit(2);
+        assert_eq!(windows.remaining(&vault(1), 100), Some(8));
+        // The four given back are free again.
+        let all = windows
+            .reserve(&vault(1), &device(1), &id, 8, 100)
+            .expect("eight");
+        drop(all);
+        assert_eq!(windows.remaining(&vault(1), 100), Some(8));
+    }
+
+    #[test]
+    fn a_window_is_for_its_vault_its_device_and_its_id_until_it_ends() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 10, 100).expect("open");
+        let refused =
+            |v, d, w: &[u8; 16], now| windows.reserve(&vault(v), &device(d), w, 1, now).err();
+        assert_eq!(refused(2, 1, &id, 100), Some(ImportRefused::Invalid));
+        assert_eq!(refused(1, 2, &id, 100), Some(ImportRefused::Invalid));
+        assert_eq!(refused(1, 1, &[0; 16], 100), Some(ImportRefused::Invalid));
+        assert!(windows.reserve(&vault(1), &device(1), &id, 1, 1899).is_ok());
+        assert_eq!(refused(1, 1, &id, 1900), Some(ImportRefused::Invalid));
+        // Nothing of this held anything.
+        assert_eq!(windows.remaining(&vault(1), 1899), Some(10));
+        assert_eq!(windows.remaining(&vault(1), 1900), None);
+    }
+
+    #[test]
+    fn a_window_of_another_device_is_replaced_only_when_it_has_ended_or_is_used_up() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 2, 100).expect("open");
+        assert_eq!(
+            windows.open(&vault(1), &device(2), 5, 101),
+            Err(ImportRefused::Open)
+        );
+        assert_eq!(
+            windows.open(&vault(1), &device(1), 0, 101),
+            Err(ImportRefused::Invalid)
+        );
+        windows
+            .reserve(&vault(1), &device(1), &id, 2, 101)
+            .expect("both")
+            .commit(2);
+        let second = windows
+            .open(&vault(1), &device(2), 5, 102)
+            .expect("used up");
+        assert_ne!(id, second);
+        // A batch that was running when the window was replaced settles on
+        // nothing of the new one.
+        let held = windows
+            .reserve(&vault(1), &device(2), &second, 5, 103)
+            .expect("five");
+        let third = windows
+            .open(&vault(1), &device(2), 5, 103 + 1800)
+            .expect("ended");
+        held.commit(5);
+        assert_eq!(windows.remaining(&vault(1), 103 + 1800), Some(5));
+        assert_ne!(second, third);
+        // The device that holds an open window may replace it: the old id
+        // stops working at once.
+        let again = windows
+            .open(&vault(1), &device(2), 4, 103 + 1801)
+            .expect("replaced");
+        assert_ne!(third, again);
+        assert_eq!(
+            windows
+                .reserve(&vault(1), &device(2), &third, 1, 103 + 1801)
+                .err(),
+            Some(ImportRefused::Invalid)
+        );
+        assert!(
+            windows
+                .reserve(&vault(1), &device(2), &again, 1, 103 + 1801)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn only_the_window_of_this_vault_and_device_that_is_open_is_usable() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 2, 100).expect("open");
+        assert!(windows.usable(&vault(1), &device(1), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(1), &[0; 16], 100));
+        assert!(!windows.usable(&vault(2), &device(1), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(2), &id, 100));
+        assert!(!windows.usable(&vault(1), &device(1), &id, 1900));
+        // Looking holds nothing, and a spent window is not usable.
+        assert_eq!(windows.remaining(&vault(1), 100), Some(2));
+        windows
+            .reserve(&vault(1), &device(1), &id, 2, 100)
+            .expect("both")
+            .commit(2);
+        assert!(!windows.usable(&vault(1), &device(1), &id, 100));
+    }
+
+    #[test]
+    fn the_byte_bucket_alone_is_asked_for_a_batch_in_a_window() {
+        let clock = Arc::new(ferret_server_auth::ManualClock::new(1_000));
+        let cfg = RateConfig {
+            ops_per_min: 1,
+            ops_burst: 1,
+            bytes_per_min: 100,
+            ..RateConfig::DEFAULT
+        };
+        let limits = SyncLimits::new(cfg, clock);
+        // Far more operations than the bucket holds: only bytes count.
+        assert!(limits.admit_bytes(&vault(1), &device(1), 60).is_ok());
+        assert!(limits.admit_bytes(&vault(1), &device(1), 40).is_ok());
+        let refused = limits
+            .admit_bytes(&vault(1), &device(1), 1)
+            .expect_err("empty");
+        assert_eq!(refused.retry_after_secs, 1);
+    }
+
+    #[test]
+    fn the_debug_of_the_windows_and_a_reservation_prints_nothing() {
+        let windows = ImportWindows::new();
+        let id = windows.open(&vault(1), &device(1), 2, 0).expect("open");
+        let held = windows
+            .reserve(&vault(1), &device(1), &id, 1, 0)
+            .expect("one");
+        assert_eq!(format!("{windows:?}"), "ImportWindows([redacted])");
+        assert_eq!(format!("{held:?}"), "Reservation([redacted])");
     }
 }

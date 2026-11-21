@@ -9,15 +9,19 @@ use std::path::PathBuf;
 use ferret_server::error::ApiError;
 use ferret_server::wire::{
     self, BatchOpForm, BatchOpJson, BatchReq, BatchRes, BatchResultJson, CHECKPOINT_ENTRY_LEN,
-    ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, CheckpointPutReq, CheckpointPutRes,
-    CheckpointStaleRes, ConflictRes, ERROR_CODES, ErrorRes, HandoffRedeemRes, HandoffReq,
-    HandoffRes, ItemsRes, LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq,
-    LoginStartRes, MAX_BATCH_BYTES, MAX_BATCH_OPS, MAX_CHECKPOINT_ENTRIES, MethodsRes, PutItemForm,
-    PutItemReq, PutItemRes, RedeemReq, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
-    RegisterStartRes, RestoreEpochChangedRes, RestoreRowsRes, SealedRowJson, SessionRes,
-    SyncEventJson, WireError, WrapJson, b64url, hex16, parse_handoff_code, refusal_code,
+    ChallengeRes, ChangeJson, ChangesRes, CheckpointHeadJson, CheckpointJson, CheckpointPutReq,
+    CheckpointPutRes, CheckpointStaleRes, ConflictRes, ERROR_CODES, ErrorRes, HandoffRedeemReq,
+    HandoffRedeemRes, HandoffReq, HandoffRes, ImportWindowReq, ImportWindowRes, ItemsRes,
+    LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes,
+    MAX_BATCH_BYTES, MAX_BATCH_OPS, MAX_CHECKPOINT_ENTRIES, MAX_SIGNED_BODY, MethodsRes, NONCE_LEN,
+    PASSWORD_WRAP_LEN, PROOF_LEN, PasswordPutReq, PasswordPutRes, PutItemForm, PutItemReq,
+    PutItemRes, RECOVERY_WRAP_LEN, RecoverReq, RecoverRes, RecoveryPutReq, RecoveryPutRes,
+    RecoveryRes, RedeemReq, RedeemRes, RegisterFinishReq, RegisterFinishRes, RegisterStartReq,
+    RegisterStartRes, ReregisterStartReq, ReregisterStartRes, RestoreEpochChangedRes,
+    RestoreRowsRes, SESSION_SCOPES, SealedRowJson, SessionRes, SyncEventJson, WireError, WrapJson,
+    b64url, hex16, parse_handoff_code, refusal_code,
 };
-use ferret_server_auth::{AuthError, DenyReason, Malformed};
+use ferret_server_auth::{AuthError, DenyReason, Malformed, SessionScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -85,7 +89,7 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "login_finish_res" => through::<LoginFinishRes>(text),
         "handoff_req" => through::<HandoffReq>(text),
         "handoff_res" => through::<HandoffRes>(text),
-        "redeem_req" => through::<RedeemReq>(text),
+        "handoff_redeem_req" => through::<HandoffRedeemReq>(text),
         "handoff_redeem_res" => through::<HandoffRedeemRes>(text),
         "session_res" => through::<SessionRes>(text),
         "methods_res" => through::<MethodsRes>(text),
@@ -104,6 +108,21 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "restore_rows_res" => through::<RestoreRowsRes>(text),
         "items_res" => through::<ItemsRes>(text),
         "sync_event" => through::<SyncEventJson>(text),
+        "batch_req_import" => through::<BatchReq>(text),
+        "challenge_res" => through::<ChallengeRes>(text),
+        "reregister_start_req" => through::<ReregisterStartReq>(text),
+        "reregister_start_res" => through::<ReregisterStartRes>(text),
+        "password_put_req" => through::<PasswordPutReq>(text),
+        "password_put_res" => through::<PasswordPutRes>(text),
+        "recovery_put_res" => through::<RecoveryPutRes>(text),
+        "recovery_put_req" => through::<RecoveryPutReq>(text),
+        "recovery_res" => through::<RecoveryRes>(text),
+        "recover_req" => through::<RecoverReq>(text),
+        "recover_res" => through::<RecoverRes>(text),
+        "redeem_req" => through::<RedeemReq>(text),
+        "redeem_res" => through::<RedeemRes>(text),
+        "import_window_req" => through::<ImportWindowReq>(text),
+        "import_window_res" => through::<ImportWindowRes>(text),
         other => panic!("no shape for the fixture kind {other}"),
     }
 }
@@ -123,7 +142,7 @@ const SHAPES: &[&str] = &[
     "login_finish_res",
     "handoff_req",
     "handoff_res",
-    "redeem_req",
+    "handoff_redeem_req",
     "handoff_redeem_res",
     "session_res",
     "methods_res",
@@ -142,6 +161,61 @@ const SHAPES: &[&str] = &[
     "restore_rows_res",
     "items_res",
     "sync_event",
+    "batch_req_import",
+    "challenge_res",
+    "reregister_start_req",
+    "reregister_start_res",
+    "password_put_req",
+    "password_put_res",
+    "recovery_put_req",
+    "recovery_put_res",
+    "recovery_res",
+    "recover_req",
+    "recover_res",
+    "redeem_req",
+    "redeem_res",
+    "import_window_req",
+    "import_window_res",
+];
+
+/// The shapes that came with the third milestone.
+const M3_SHAPES: &[&str] = &[
+    "batch_req_import",
+    "challenge_res",
+    "reregister_start_req",
+    "reregister_start_res",
+    "password_put_req",
+    "password_put_res",
+    "recovery_put_req",
+    "recovery_put_res",
+    "recovery_res",
+    "recover_req",
+    "recover_res",
+    "redeem_req",
+    "redeem_res",
+    "import_window_req",
+    "import_window_res",
+];
+
+/// The fixtures that came with the third milestone (the shapes above, and the
+/// session answer that grew a field).
+const M3_FIXTURES: &[&str] = &[
+    "batch_req_import.json",
+    "challenge_res.json",
+    "import_window_req.json",
+    "import_window_res.json",
+    "password_put_req.json",
+    "password_put_res.json",
+    "recover_req.json",
+    "recover_res.json",
+    "recovery_put_req.json",
+    "recovery_put_res.json",
+    "recovery_res.json",
+    "redeem_req.json",
+    "redeem_res.json",
+    "reregister_start_req.json",
+    "reregister_start_res.json",
+    "session_res.json",
 ];
 
 /// The shapes that came with the second milestone.
@@ -190,6 +264,10 @@ fn optional_fields_have_a_fixture_with_and_without() {
     let finish: LoginFinishReq = parse("login_finish_req.reauth.json");
     assert_eq!(finish.purpose, Some(LoginPurposeJson::Reauth));
     assert!(json_of("session_res.admin.json")["account_id"].is_null());
+    assert!(json_of("session_res.admin.json")["reauth_until"].is_null());
+    assert!(json_of("session_res.json")["reauth_until"].is_u64());
+    assert!(json_of("batch_req.json")["import_window"].is_null());
+    assert!(json_of("batch_req_import.json")["import_window"].is_string());
     assert!(json_of("changes_res.empty.json")["checkpoint"].is_null());
     assert!(json_of("wrap.passkey.json")["credential_id"].is_string());
     assert!(json_of("wrap.password.json")["credential_id"].is_null());
@@ -611,7 +689,7 @@ fn handoff_code_is_43_chars_base64url() {
     assert_eq!(res.code.len(), 43);
     assert_eq!(res.expires_in, 60);
     assert_eq!(parse_handoff_code(&res.code).unwrap().len(), 32);
-    let redeem: RedeemReq = parse("redeem_req.json");
+    let redeem: HandoffRedeemReq = parse("handoff_redeem_req.json");
     assert_eq!(redeem.code, res.code);
     assert!(parse_handoff_code(&redeem.code).is_ok());
 
@@ -695,8 +773,8 @@ fn types_with_ciphertext_never_print_it() {
             format!("{:?}", parse::<HandoffRes>("handoff_res.json")),
         ),
         (
-            "redeem_req.json",
-            format!("{:?}", parse::<RedeemReq>("redeem_req.json")),
+            "handoff_redeem_req.json",
+            format!("{:?}", parse::<HandoffRedeemReq>("handoff_redeem_req.json")),
         ),
         (
             "changes_res.json",
@@ -738,13 +816,17 @@ fn check_step(shape: &str, text: &str) -> Result<(), &'static str> {
             .validate()
             .map(|_| ())
             .map_err(|e| e.code()),
-        "redeem_req" => {
-            let request: RedeemReq = serde_json::from_str(text).unwrap();
+        "handoff_redeem_req" => {
+            let request: HandoffRedeemReq = serde_json::from_str(text).unwrap();
             parse_handoff_code(&request.code)
                 .map(|_| ())
                 .map_err(|_| "handoff_invalid")
         }
-        "batch_req" => {
+        "recovery_res" => {
+            let answer: RecoveryRes = serde_json::from_str(text).unwrap();
+            answer.validate().map_err(|e| e.code())
+        }
+        "batch_req" | "batch_req_import" => {
             let request: BatchReq = serde_json::from_str(text).unwrap();
             request.validate().map_err(|e| e.code())?;
             request
@@ -1058,6 +1140,7 @@ fn batch_req_rejects_zero_and_101_ops_unknown_fields_and_an_op_with_both_forms()
     // The number of operations: 1 to 100.
     let with_ops = |n: usize| BatchReq {
         ops: (0..n).map(|_| fixture.ops[0].clone()).collect(),
+        import_window: None,
     };
     assert_eq!(with_ops(0).validate(), Err(WireError::Field("ops")));
     assert_eq!(with_ops(1).validate(), Ok(()));
@@ -1109,6 +1192,7 @@ fn batch_req_rejects_zero_and_101_ops_unknown_fields_and_an_op_with_both_forms()
         // The count is fine; the bad operation is answered in its own place.
         let request = BatchReq {
             ops: vec![fixture.ops[0].clone(), op],
+            import_window: None,
         };
         assert_eq!(request.validate(), Ok(()), "{label}");
     }
@@ -1456,6 +1540,11 @@ fn new_codes_have_their_status() {
         ("checkpoint_stale", 409),
         ("checkpoint_invalid", 422),
         ("restore_epoch_changed", 409),
+        ("reauth_required", 403),
+        ("second_factor_required", 403),
+        ("write_conflict", 409),
+        ("import_window_open", 409),
+        ("import_window_invalid", 409),
     ] {
         assert!(ERROR_CODES.contains(&code), "{code}");
         assert_eq!(ferret_server::error::status_of(code).as_u16(), status);
@@ -1467,6 +1556,18 @@ fn new_codes_have_their_status() {
     assert!(at("gone") < at("busy") && at("busy") < at("checkpoint_stale"));
     assert!(at("checkpoint_stale") < at("checkpoint_invalid"));
     assert!(at("checkpoint_invalid") < at("restore_epoch_changed"));
+    // The codes of the third milestone close the list, in this order.
+    assert_eq!(
+        &ERROR_CODES[ERROR_CODES.len() - 5..],
+        [
+            "reauth_required",
+            "second_factor_required",
+            "write_conflict",
+            "import_window_open",
+            "import_window_invalid",
+        ]
+    );
+    assert!(at("restore_epoch_changed") < at("reauth_required"));
 }
 
 #[test]
@@ -1712,6 +1813,32 @@ fn invalid_cases_are_refused_the_same_way_in_rust_and_js() {
         );
     }
     assert!(m2.iter().any(|case| case.error == "tombstone_invalid"));
+
+    // The shapes of the third milestone, the same way.
+    let m3: Vec<&Invalid> = cases
+        .iter()
+        .filter(|case| M3_SHAPES.contains(&case.shape.as_str()))
+        .collect();
+    assert!(m3.len() >= 150, "found only {} cases", m3.len());
+    for case in &m3 {
+        assert_refused(case);
+    }
+    for shape in M3_SHAPES {
+        assert!(m3.iter().any(|case| case.shape == *shape), "{shape}");
+    }
+    for shape in ["recovery_res", "batch_req_import"] {
+        assert!(
+            m3.iter()
+                .any(|case| case.shape == shape && case.layer == "validate"),
+            "{shape}"
+        );
+    }
+    for code in [
+        "malformed_registration_request",
+        "malformed_registration_record",
+    ] {
+        assert!(m3.iter().any(|case| case.error == code), "{code}");
+    }
 }
 
 #[test]
@@ -1752,4 +1879,578 @@ fn debug_of_the_new_types_is_redacted() {
     ] {
         assert_eq!(shown, expected);
     }
+}
+
+// ---------------------------------------------------------- the third milestone
+
+#[test]
+fn m3_fixtures_roundtrip_byte_for_byte() {
+    // `web/test/unit/wire.test.mjs` reads the same files under the matching name.
+    let all = fixtures();
+    let names: BTreeSet<&str> = M3_FIXTURES.iter().copied().collect();
+    for name in &names {
+        assert!(
+            all.iter().any(|(file, _)| file == name),
+            "{name} is missing"
+        );
+    }
+    for (name, shape) in all.iter().filter(|(name, _)| names.contains(name.as_str())) {
+        let text = read(name);
+        let text = text.trim_end_matches('\n');
+        assert_eq!(
+            round_trip(shape, text).unwrap_or_else(|e| panic!("{name}: {e}")),
+            text,
+            "{name} changes when it is read and written"
+        );
+        assert_eq!(check_step(shape, text), Ok(()), "{name}");
+        assert!(
+            !has_null(&serde_json::from_str::<Value>(text).unwrap()),
+            "{name}"
+        );
+    }
+    // Every new shape has a fixture of its own.
+    let covered: BTreeSet<&str> = all.iter().map(|(_, shape)| shape.as_str()).collect();
+    for shape in M3_SHAPES {
+        assert!(covered.contains(shape), "{shape}");
+    }
+    // The shapes read what a client or the server writes: the first fields in order.
+    assert_eq!(
+        keys(&json_of("password_put_req.json")),
+        BTreeSet::from([
+            "registration_record",
+            "ksf_profile",
+            "wrap",
+            "kek_generation",
+            "manifest"
+        ])
+    );
+    assert!(read("password_put_req.json").starts_with(r#"{"registration_record":"#));
+    assert!(read("recover_req.json").starts_with(r#"{"registration_record":"#));
+    assert!(read("recovery_put_req.json").starts_with(r#"{"wrap":"#));
+}
+
+#[test]
+fn m3_lengths_match_the_spec() {
+    // The signed bodies and their limits (Spec: Fase 1 § 4.6).
+    assert_eq!(
+        (MAX_SIGNED_BODY, NONCE_LEN, PROOF_LEN),
+        (256 * 1024, 32, 64)
+    );
+    assert_eq!((PASSWORD_WRAP_LEN, RECOVERY_WRAP_LEN), (104, 72));
+    let challenge: ChallengeRes = parse("challenge_res.json");
+    assert_eq!(challenge.nonce.len(), NONCE_LEN);
+    assert_eq!(challenge.expires_in, 300);
+
+    // Spec: Fase 1 § 4.3: a password wrap is 104 bytes, a recovery wrap 72.
+    let password: PasswordPutReq = parse("password_put_req.json");
+    assert_eq!(password.registration_record.len(), 192);
+    assert_eq!(password.wrap.len(), 104);
+    assert_eq!(password.kek_generation, 2);
+    assert_eq!(password.manifest.rev, 2);
+    let recovery: RecoveryPutReq = parse("recovery_put_req.json");
+    assert_eq!((recovery.wrap.len(), recovery.pk_r.len()), (72, 32));
+    // Spec: Fase 1 § 6.3 step 4.
+    let recover: RecoverReq = parse("recover_req.json");
+    assert_eq!(recover.registration_record.len(), 192);
+    assert_eq!((recover.pw_wrap.len(), recover.rk_wrap.len()), (104, 72));
+    // The client sends the generations of both new wraps: the AAD binds them.
+    assert_eq!(
+        (recover.pw_kek_generation, recover.rk_kek_generation),
+        (2, 2)
+    );
+    assert_eq!(recover.pk_r_new.len(), 32);
+    assert_eq!(recover.manifest.rev, 2);
+    let reregister: ReregisterStartReq = parse("reregister_start_req.json");
+    assert_eq!(reregister.registration_request.len(), 32);
+    let answer: ReregisterStartRes = parse("reregister_start_res.json");
+    assert_eq!(answer.registration_response.len(), 64);
+
+    // The answer to the recovery read: the recovery method, with 72 bytes.
+    let read_back: RecoveryRes = parse("recovery_res.json");
+    assert_eq!(read_back.validate(), Ok(()));
+    assert_eq!(read_back.wrap.method_type, 2);
+    assert_eq!(read_back.wrap.wrap.len(), RECOVERY_WRAP_LEN);
+
+    // The answers to the writes.
+    assert_eq!(
+        parse::<PasswordPutRes>("password_put_res.json"),
+        PasswordPutRes {
+            kek_generation: 2,
+            seq: 9
+        }
+    );
+    // The answer to the recovery write is the same shape.
+    assert_eq!(
+        parse::<RecoveryPutRes>("recovery_put_res.json"),
+        PasswordPutRes {
+            kek_generation: 3,
+            seq: 10
+        }
+    );
+    assert_eq!(
+        parse::<RecoverRes>("recover_res.json"),
+        RecoverRes {
+            session_ended: true,
+            seq: 9
+        }
+    );
+    // The import window: the batch names the window the answer gave.
+    let window: ImportWindowRes = parse("import_window_res.json");
+    assert_eq!((window.ops, window.expires_in), (250, 1800));
+    assert_eq!(parse::<ImportWindowReq>("import_window_req.json").ops, 250);
+    let import: BatchReq = parse("batch_req_import.json");
+    assert_eq!(import.import_window, Some(window.window_id));
+    assert_eq!(import.validate(), Ok(()));
+    assert!(import.ops.iter().all(|op| op.validate().is_ok()));
+    assert!(ERROR_CODES.contains(&"import_window_invalid"));
+}
+
+#[test]
+fn password_put_req_refuses_wrong_lengths_and_unknown_fields() {
+    // Spec: Fase 1 § 4.3 and § 4.6: record 192, wrap 104.
+    let base = json_of("password_put_req.json");
+    let with = |field: &str, value: Value| {
+        let mut changed = base.clone();
+        changed[field] = value;
+        serde_json::from_value::<PasswordPutReq>(changed)
+    };
+    assert!(serde_json::from_value::<PasswordPutReq>(base.clone()).is_ok());
+    for (field, size) in [("registration_record", 192usize), ("wrap", 104)] {
+        for wrong in [0, size - 1, size + 1, 2 * size] {
+            assert!(
+                with(field, json!(b64url::encode(&vec![5u8; wrong]))).is_err(),
+                "{field} with {wrong} bytes"
+            );
+        }
+        assert!(
+            with(
+                field,
+                json!(format!("{}=", b64url::encode(&vec![5u8; size])))
+            )
+            .is_err()
+        );
+        assert!(with(field, json!(5)).is_err());
+    }
+    // The wrap of a recovery key is not a wrap of a password.
+    assert!(with("wrap", json!(b64url::encode(&[5u8; 72]))).is_err());
+    // The record has its own code; the wrap is a plain bad request.
+    let record_error = with("registration_record", json!(b64url::encode(&[5u8; 191])))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(refusal_code(&record_error), "malformed_registration_record");
+    let wrap_error = with("wrap", json!(b64url::encode(&[5u8; 103])))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(refusal_code(&wrap_error), "bad_request");
+    // A profile is a byte, a generation is 32 bits.
+    for bad in [json!(256), json!(-1), json!("1"), json!(1.5)] {
+        assert!(with("ksf_profile", bad.clone()).is_err(), "{bad}");
+    }
+    assert!(with("ksf_profile", json!(255)).is_ok());
+    for bad in [json!(4_294_967_296_u64), json!(-1), json!("2"), json!(1.5)] {
+        assert!(with("kek_generation", bad.clone()).is_err(), "{bad}");
+    }
+    assert!(with("kek_generation", json!(4_294_967_295_u64)).is_ok());
+    // Unknown fields, at the top and in the manifest; every field is needed.
+    assert!(serde_json::from_str::<PasswordPutReq>(&with_unknown(&base)).is_err());
+    let mut nested = base.clone();
+    nested["manifest"]["x"] = json!(1);
+    assert!(serde_json::from_value::<PasswordPutReq>(nested).is_err());
+    for field in base.as_object().unwrap().keys() {
+        let mut without = base.clone();
+        without.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<PasswordPutReq>(without).is_err(),
+            "{field}"
+        );
+    }
+    // The answer has the same two integers, and no other field.
+    let answer = json_of("password_put_res.json");
+    assert!(serde_json::from_str::<PasswordPutRes>(&with_unknown(&answer)).is_err());
+    for bad in [
+        r#"{"kek_generation":4294967296,"seq":1}"#,
+        r#"{"kek_generation":1,"seq":9007199254740992}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<PasswordPutRes>(bad).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn recovery_put_req_refuses_a_password_sized_wrap() {
+    // Spec: Fase 1 § 4.3: a recovery wrap has no key commitment, 72 bytes.
+    let base = json_of("recovery_put_req.json");
+    let with = |field: &str, value: Value| {
+        let mut changed = base.clone();
+        changed[field] = value;
+        serde_json::from_value::<RecoveryPutReq>(changed)
+    };
+    assert!(serde_json::from_value::<RecoveryPutReq>(base.clone()).is_ok());
+    for wrong in [0, 71, 73, 104] {
+        assert!(
+            with("wrap", json!(b64url::encode(&vec![5u8; wrong]))).is_err(),
+            "a wrap of {wrong} bytes"
+        );
+    }
+    for wrong in [0, 31, 33, 64] {
+        assert!(
+            with("pk_r", json!(b64url::encode(&vec![5u8; wrong]))).is_err(),
+            "a key of {wrong} bytes"
+        );
+    }
+    assert!(with("kek_generation", json!(4_294_967_296_u64)).is_err());
+    assert!(serde_json::from_str::<RecoveryPutReq>(&with_unknown(&base)).is_err());
+    for field in base.as_object().unwrap().keys() {
+        let mut without = base.clone();
+        without.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<RecoveryPutReq>(without).is_err(),
+            "{field}"
+        );
+    }
+    // The answer of the recovery read: the wrap is the recovery method, 72 bytes.
+    let mut answer = json_of("recovery_res.json");
+    assert_eq!(
+        serde_json::from_value::<RecoveryRes>(answer.clone())
+            .unwrap()
+            .validate(),
+        Ok(())
+    );
+    // A recovery wrap has no passkey field.
+    for field in ["credential_id", "prf_salt"] {
+        let mut passkey = answer.clone();
+        passkey["wrap"][field] = json!(b64url::encode(&[5u8; 32]));
+        let read_back: RecoveryRes = serde_json::from_value(passkey).unwrap();
+        assert_eq!(
+            read_back.validate(),
+            Err(WireError::Field("wrap")),
+            "{field}"
+        );
+    }
+    for (method_type, wrap_len) in [(1, 72), (3, 72), (2, 104), (2, 71), (2, 0)] {
+        answer["wrap"]["method_type"] = json!(method_type);
+        answer["wrap"]["wrap"] = json!(b64url::encode(&vec![5u8; wrap_len]));
+        let read_back: RecoveryRes = serde_json::from_value(answer.clone()).unwrap();
+        assert_eq!(
+            read_back.validate(),
+            Err(WireError::Field("wrap")),
+            "type {method_type}, {wrap_len} bytes"
+        );
+    }
+}
+
+#[test]
+fn recover_req_needs_every_field() {
+    // Spec: Fase 1 § 6.3 step 4: `{ registration_record, ksf_profile, pw_wrap,
+    // rk_wrap, pk_r_new, manifest }`.
+    let base = json_of("recover_req.json");
+    assert_eq!(
+        keys(&base),
+        BTreeSet::from([
+            "registration_record",
+            "ksf_profile",
+            "pw_wrap",
+            "rk_wrap",
+            "pw_kek_generation",
+            "rk_kek_generation",
+            "pk_r_new",
+            "manifest"
+        ])
+    );
+    assert!(serde_json::from_value::<RecoverReq>(base.clone()).is_ok());
+    for field in base.as_object().unwrap().keys() {
+        let mut without = base.clone();
+        without.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<RecoverReq>(without).is_err(),
+            "{field}"
+        );
+        // A `null` is not a value for a field that is needed.
+        let mut null = base.clone();
+        null[field] = Value::Null;
+        assert!(
+            serde_json::from_value::<RecoverReq>(null).is_err(),
+            "{field}"
+        );
+    }
+    assert!(serde_json::from_str::<RecoverReq>(&with_unknown(&base)).is_err());
+    let with = |field: &str, value: Value| {
+        let mut changed = base.clone();
+        changed[field] = value;
+        serde_json::from_value::<RecoverReq>(changed)
+    };
+    // The two wraps are not interchangeable.
+    assert!(with("pw_wrap", json!(b64url::encode(&[5u8; 72]))).is_err());
+    assert!(with("rk_wrap", json!(b64url::encode(&[5u8; 104]))).is_err());
+    for (field, size) in [
+        ("registration_record", 192usize),
+        ("pw_wrap", 104),
+        ("rk_wrap", 72),
+        ("pk_r_new", 32),
+    ] {
+        assert!(with(field, json!(b64url::encode(&vec![5u8; size - 1]))).is_err());
+        assert!(with(field, json!(b64url::encode(&vec![5u8; size + 1]))).is_err());
+    }
+    assert!(with("ksf_profile", json!(256)).is_err());
+    // The two generations are 32-bit whole numbers.
+    for field in ["pw_kek_generation", "rk_kek_generation"] {
+        for bad in [json!(4_294_967_296_u64), json!(-1), json!("2"), json!(1.5)] {
+            assert!(with(field, bad.clone()).is_err(), "{field} {bad}");
+        }
+        assert!(with(field, json!(4_294_967_295_u64)).is_ok(), "{field}");
+    }
+    let answer = json_of("recover_res.json");
+    assert!(serde_json::from_str::<RecoverRes>(&with_unknown(&answer)).is_err());
+    assert!(serde_json::from_str::<RecoverRes>(r#"{"session_ended":true}"#).is_err());
+    assert!(serde_json::from_str::<RecoverRes>(r#"{"session_ended":"yes","seq":1}"#).is_err());
+}
+
+#[test]
+fn batch_req_without_import_window_is_the_m2_shape() {
+    // The batch of the second milestone has no `import_window`, reads as it
+    // did, and is written back without the field.
+    let plain: BatchReq = parse("batch_req.json");
+    assert_eq!(plain.import_window, None);
+    assert!(
+        !serde_json::to_string(&plain)
+            .unwrap()
+            .contains("import_window")
+    );
+    assert_eq!(
+        serde_json::to_string(&plain).unwrap(),
+        read("batch_req.json").trim_end_matches('\n')
+    );
+    // `null` is a field that is left out.
+    let mut with_null = json_of("batch_req.json");
+    with_null["import_window"] = Value::Null;
+    let read_back: BatchReq = serde_json::from_value(with_null).unwrap();
+    assert_eq!(read_back.import_window, None);
+    assert!(!serde_json::to_string(&read_back).unwrap().contains("null"));
+    // With the window, the field comes last, as an id.
+    let import: BatchReq = parse("batch_req_import.json");
+    let window: ImportWindowRes = parse("import_window_res.json");
+    assert_eq!(import.import_window, Some(window.window_id));
+    let written = serde_json::to_string(&import).unwrap();
+    assert!(written.ends_with(&format!(
+        r#""import_window":"{}"}}"#,
+        hex16::encode(&window.window_id)
+    )));
+    // The count and the forms of the operations are the same rules.
+    assert_eq!(import.validate(), Ok(()));
+    let mut empty = import.clone();
+    empty.ops.clear();
+    assert_eq!(empty.validate(), Err(WireError::Field("ops")));
+    // The window is an id: lower-case hexadecimal, 32 characters.
+    for bad in [
+        json!(hex16::encode(&window.window_id).to_uppercase()),
+        json!("00"),
+        json!(5),
+        json!(""),
+    ] {
+        let mut changed = json_of("batch_req_import.json");
+        changed["import_window"] = bad.clone();
+        assert!(
+            serde_json::from_value::<BatchReq>(changed).is_err(),
+            "{bad}"
+        );
+    }
+    // An unknown field is still refused.
+    let mut unknown = json_of("batch_req_import.json");
+    unknown["x"] = json!(1);
+    assert!(serde_json::from_value::<BatchReq>(unknown).is_err());
+}
+
+#[test]
+fn session_res_scope_is_one_of_the_four_scopes() {
+    // Spec: Fase 1 § 6.3 step 1 and § 4.6: the scopes a session can have.
+    assert_eq!(
+        SESSION_SCOPES,
+        ["full", "pending_2fa", "account_reset", "unverified"]
+    );
+    // The list is the words of `SessionScope`. The match has no catch-all, so a
+    // new scope stops this test from compiling until the list and the web
+    // reader know it.
+    let words = |scope: SessionScope| match scope {
+        SessionScope::Full
+        | SessionScope::Pending2fa
+        | SessionScope::AccountReset
+        | SessionScope::Unverified => scope.as_str(),
+    };
+    let from_auth = [
+        words(SessionScope::Full),
+        words(SessionScope::Pending2fa),
+        words(SessionScope::AccountReset),
+        words(SessionScope::Unverified),
+    ];
+    assert_eq!(from_auth.len(), SESSION_SCOPES.len());
+    for word in from_auth {
+        assert!(SESSION_SCOPES.contains(&word), "{word}");
+    }
+    let base = json_of("session_res.json");
+    for scope in SESSION_SCOPES {
+        let mut changed = base.clone();
+        changed["scope"] = json!(scope);
+        let session: SessionRes = serde_json::from_value(changed).unwrap();
+        assert_eq!(session.scope, *scope);
+    }
+    for bad in [
+        json!(""),
+        json!("Full"),
+        json!("FULL"),
+        json!("admin"),
+        json!("reset"),
+        json!("full "),
+        json!(1),
+        Value::Null,
+    ] {
+        let mut changed = base.clone();
+        changed["scope"] = bad.clone();
+        assert!(
+            serde_json::from_value::<SessionRes>(changed).is_err(),
+            "{bad}"
+        );
+    }
+    // The time of the fresh check is an optional whole number.
+    let session: SessionRes = parse("session_res.json");
+    assert_eq!(session.reauth_until, Some(1_800_000_300));
+    let admin: SessionRes = parse("session_res.admin.json");
+    assert_eq!(admin.reauth_until, None);
+    assert!(
+        !serde_json::to_string(&admin)
+            .unwrap()
+            .contains("reauth_until")
+    );
+    let mut null = base.clone();
+    null["reauth_until"] = Value::Null;
+    assert_eq!(
+        serde_json::from_value::<SessionRes>(null)
+            .unwrap()
+            .reauth_until,
+        None
+    );
+    for bad in [
+        json!(-1),
+        json!(1.5),
+        json!("1800000300"),
+        json!(9_007_199_254_740_992_u64),
+    ] {
+        let mut changed = base.clone();
+        changed["reauth_until"] = bad.clone();
+        assert!(
+            serde_json::from_value::<SessionRes>(changed).is_err(),
+            "{bad}"
+        );
+    }
+    // The scope of a redeemed code is the one reset scope.
+    assert!(SESSION_SCOPES.contains(&wire::REDEEM_SCOPE));
+    let redeemed: RedeemRes = parse("redeem_res.json");
+    assert_eq!(redeemed.scope, "account_reset");
+    for bad in ["full", "pending_2fa", "unverified", "", "Account_reset"] {
+        assert!(
+            serde_json::from_value::<RedeemRes>(json!({ "scope": bad })).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn sign_in_code_and_import_window_bodies_have_the_fields_of_the_plan() {
+    let redeem: RedeemReq = parse("redeem_req.json");
+    assert_eq!(redeem.email, "ada@example.test");
+    assert!(!redeem.code.is_empty());
+    for bad in [
+        r#"{"email":"a@b.c"}"#,
+        r#"{"code":"x"}"#,
+        r#"{"email":"a@b.c","code":5}"#,
+        r#"{"email":"a@b.c","code":"x","x":1}"#,
+        r#"{"code":"x","next":"/"}"#,
+    ] {
+        assert!(serde_json::from_str::<RedeemReq>(bad).is_err(), "{bad}");
+    }
+    for bad in [
+        r#"{}"#,
+        r#"{"ops":-1}"#,
+        r#"{"ops":4294967296}"#,
+        r#"{"ops":"250"}"#,
+        r#"{"ops":1.5}"#,
+        r#"{"ops":1,"x":1}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<ImportWindowReq>(bad).is_err(),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        serde_json::from_str::<ImportWindowReq>(r#"{"ops":4294967295}"#)
+            .unwrap()
+            .ops,
+        u32::MAX
+    );
+    let window = json_of("import_window_res.json");
+    for field in ["window_id", "ops", "expires_in"] {
+        let mut without = window.clone();
+        without.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<ImportWindowRes>(without).is_err(),
+            "{field}"
+        );
+    }
+    // The ids of the new answers are the ids of the old ones.
+    assert_eq!(
+        json_of("recovery_res.json")["account_id"],
+        json_of("login_finish_res.json")["account_id"]
+    );
+    assert_eq!(
+        json_of("recovery_res.json")["vault_id"],
+        json_of("login_finish_res.json")["vault_id"]
+    );
+}
+
+#[test]
+fn debug_of_redeem_and_signed_bodies_is_redacted() {
+    let redeem: RedeemReq = parse("redeem_req.json");
+    let shown = format!("{redeem:?}");
+    assert_eq!(shown, "RedeemReq([redacted])");
+    assert!(!shown.contains(&redeem.code) && !shown.contains(&redeem.email));
+    let password: PasswordPutReq = parse("password_put_req.json");
+    let recovery: RecoveryPutReq = parse("recovery_put_req.json");
+    let recover: RecoverReq = parse("recover_req.json");
+    let read_back: RecoveryRes = parse("recovery_res.json");
+    let challenge: ChallengeRes = parse("challenge_res.json");
+    let reregister: ReregisterStartReq = parse("reregister_start_req.json");
+    let reregistered: ReregisterStartRes = parse("reregister_start_res.json");
+    let window: ImportWindowRes = parse("import_window_res.json");
+    let asked: ImportWindowReq = parse("import_window_req.json");
+    let stored: PasswordPutRes = parse("password_put_res.json");
+    let done: RecoverRes = parse("recover_res.json");
+    let redeemed: RedeemRes = parse("redeem_res.json");
+    let import: BatchReq = parse("batch_req_import.json");
+    let session: SessionRes = parse("session_res.json");
+    for (shown, expected) in [
+        (format!("{password:?}"), "PasswordPutReq([redacted])"),
+        (format!("{recovery:?}"), "RecoveryPutReq([redacted])"),
+        (format!("{recover:?}"), "RecoverReq([redacted])"),
+        (format!("{read_back:?}"), "RecoveryRes([redacted])"),
+        (format!("{challenge:?}"), "ChallengeRes([redacted])"),
+        (format!("{reregister:?}"), "ReregisterStartReq([redacted])"),
+        (
+            format!("{reregistered:?}"),
+            "ReregisterStartRes([redacted])",
+        ),
+        (format!("{window:?}"), "ImportWindowRes([redacted])"),
+        (format!("{asked:?}"), "ImportWindowReq([redacted])"),
+        (format!("{stored:?}"), "PasswordPutRes([redacted])"),
+        (format!("{done:?}"), "RecoverRes([redacted])"),
+        (format!("{redeemed:?}"), "RedeemRes([redacted])"),
+        (format!("{import:?}"), "BatchReq([redacted])"),
+        (format!("{session:?}"), "SessionRes([redacted])"),
+    ] {
+        assert_eq!(shown, expected);
+    }
+    // No byte of a wrap, a record or a nonce is in any of them.
+    let text = format!("{password:?}{recover:?}{challenge:?}");
+    assert!(!text.contains(&b64url::encode(&password.wrap)));
+    assert!(!text.contains(&b64url::encode(&challenge.nonce)));
 }

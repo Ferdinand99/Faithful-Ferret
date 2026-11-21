@@ -1,9 +1,13 @@
 //! Retention: how long tombstones and idempotency records are kept, and the
-//! background job that removes the older ones. Spec: Fase 1 § 8.4.
+//! background job that removes the older ones. Spec: Fase 1 § 8.4 and § 8.6.
 //!
-//! * A tombstone is kept for 400 days. Removing one raises the feed floor of its
-//!   vault (`min_valid_since`), so a client that has not been seen since then
-//!   gets `410` and lists the vault again (`reconcile`).
+//! * A tombstone is kept for 400 days, and it is purged only if it is also at or
+//!   below the `seq` of the checkpoint the vault stores: a tombstone above it is
+//!   in no checkpoint yet, and without it a client that saw the item as live
+//!   would find the item gone without a trace. Removing tombstones raises the
+//!   feed floor of the vault (`min_valid_since`) to the highest `seq` purged, so
+//!   a client that has not been seen since then gets `410` and lists the vault
+//!   again (`reconcile`).
 //! * An idempotency record is kept for 30 days, and for one device only the
 //!   newest 1 000 of them stay.
 //!
@@ -74,12 +78,14 @@ pub struct RetentionReport {
 }
 
 /// One pass over every vault at time `now` (Unix seconds): the tombstones last
-/// written more than 400 days ago go, then the idempotency records older than 30
-/// days and, per device, those beyond the newest 1 000. A vault that fails is
-/// logged and counted in [`RetentionReport::failed_vaults`]; the pass goes on
-/// with the next vault.
+/// written more than 400 days ago and at or below the `seq` of the vault's stored
+/// checkpoint go, then the idempotency records older than 30 days and, per
+/// device, those beyond the newest 1 000. A tombstone above the checkpoint stays,
+/// however old, until a newer checkpoint covers it. A vault that fails is logged
+/// and counted in [`RetentionReport::failed_vaults`]; the pass goes on with the
+/// next vault.
 ///
-/// Spec: Fase 1 § 8.4 (retention of 400 days).
+/// Spec: Fase 1 § 8.4 (retention of 400 days) and § 8.6 (checkpoints).
 pub fn run_once(conn: &mut Connection, now: i64) -> Result<RetentionReport, StoreError> {
     let tombstones_before = now.saturating_sub(TOMBSTONE_SECS);
     let idem_before = now.saturating_sub(IDEM_SECS);
@@ -122,8 +128,15 @@ fn purge_vault(
     idem_before: i64,
     report: &mut RetentionReport,
 ) -> Result<(), StoreError> {
-    if has_tombstones_before(conn, vault, tombstones_before)? {
-        let purged = store::purge_tombstones(conn, vault, tombstones_before)?;
+    // The `seq` is read before the purge transaction. That is safe as long as a
+    // stored checkpoint is replaced only by one with a higher `seq`, which holds
+    // today (`put_checkpoint_if`). A later change that replaces it regardless of
+    // `seq` (a rekey) must read the head inside the purge transaction instead.
+    // A vault without a checkpoint row keeps all its tombstones (no row has a
+    // `seq` of 0).
+    let max_seq = store::checkpoint_head(conn, vault)?.map_or(0, |head| head.0);
+    if has_tombstones_before(conn, vault, tombstones_before, max_seq)? {
+        let purged = store::purge_tombstones(conn, vault, tombstones_before, max_seq)?;
         report.tombstones_removed = report.tombstones_removed.saturating_add(purged.removed);
     }
     for device in idem_devices(conn, vault)? {
@@ -133,24 +146,27 @@ fn purge_vault(
     Ok(())
 }
 
-/// Whether the vault has a tombstone last written before `before`: a read on the
-/// index, so a vault with nothing to purge takes no write lock.
+/// Whether the vault has a tombstone last written before `before` with a `seq` of
+/// at most `max_seq`: a read on the index, so a vault with nothing to purge takes
+/// no write lock.
 fn has_tombstones_before(
     conn: &Connection,
     vault: &VaultId,
     before: i64,
+    max_seq: u64,
 ) -> Result<bool, StoreError> {
+    let max_seq = i64::try_from(max_seq).unwrap_or(i64::MAX);
     Ok(conn.query_row(
         SQL_TOMBSTONES_BEFORE,
-        params![vault.as_bytes(), before],
+        params![vault.as_bytes(), before, max_seq],
         |row| row.get(0),
     )?)
 }
 
-/// Whether a vault has a tombstone last written before `?2`. Uses
-/// `ferret_items_tombstones (vault_id, deleted, changed_at)`.
+/// Whether a vault has a tombstone last written before `?2` with `seq <= ?3`.
+/// Uses `ferret_items_tombstones (vault_id, deleted, changed_at)`.
 const SQL_TOMBSTONES_BEFORE: &str = "SELECT EXISTS(SELECT 1 FROM ferret_items \
-     WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2)";
+     WHERE vault_id = ?1 AND deleted = 1 AND changed_at < ?2 AND seq <= ?3)";
 
 /// The devices of a vault that have records. Uses
 /// `ferret_idem_by_device_time (vault_id, device_id, created_at)`.
@@ -331,7 +347,7 @@ mod tests {
         vole_kit::db::migrate::apply_migrations(&mut conn).expect("migrations");
         let vault = [1u8; 16];
         let device = [2u8; 16];
-        let tombstones = plan(&conn, SQL_TOMBSTONES_BEFORE, &[&vault, &1_i64]);
+        let tombstones = plan(&conn, SQL_TOMBSTONES_BEFORE, &[&vault, &1_i64, &1_i64]);
         assert!(
             tombstones.contains("ferret_items_tombstones"),
             "{tombstones}"

@@ -13,6 +13,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request, StatusCode};
 use ferret_server::error::ApiError;
+use ferret_server::http::headers::IMPORT_WORKER_PATHS;
 use ferret_server::http::static_files::{
     MemorySource, StaticFile, vault_routes, vault_routes_with_admin,
 };
@@ -44,6 +45,11 @@ fn source() -> Arc<MemorySource> {
     files.insert("app/locales.en.json", file(b"{}", JSON));
     files.insert("js/client.js", file(b"1;", JS));
     files.insert("js/vault.worker.mjs", file(b"self.onmessage = null;", JS));
+    files.insert(
+        "js/import.worker.mjs",
+        file(b"import \"../app/workers/import.worker.mjs\";", JS),
+    );
+    files.insert("app/workers/import.worker.mjs", file(b"export {};", JS));
     files.insert(
         "pkg-web/ferret_core_wasm_bg.wasm",
         file(b"\0asm\x01\0\0\0", "application/wasm"),
@@ -134,6 +140,66 @@ async fn static_files_carry_the_section_12_headers() {
     .await;
     assert_eq!(status, StatusCode::NOT_MODIFIED);
     assert_section_12(&headers, "304");
+}
+
+#[tokio::test]
+async fn the_import_worker_files_allow_no_connection_and_nothing_else_differs() {
+    let app = TestApp::new().await;
+    let router = vault(&app, source());
+    let section = fixture();
+    let expected_policy =
+        section["Content-Security-Policy"].replace("connect-src 'self';", "connect-src 'none';");
+    assert_ne!(expected_policy, section["Content-Security-Policy"]);
+    for path in IMPORT_WORKER_PATHS {
+        let (status, headers, _) = get(&router, path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(
+            headers["content-security-policy"],
+            expected_policy.as_str(),
+            "{path}"
+        );
+        // Every other header of the section is the same as for any file.
+        for (name, value) in &section {
+            if name != "Content-Security-Policy" {
+                assert_eq!(
+                    headers.get(name).and_then(|v| v.to_str().ok()),
+                    Some(value.as_str()),
+                    "{path}: {name}"
+                );
+            }
+        }
+        assert_eq!(headers["x-content-type-options"], "nosniff", "{path}");
+        // A conditional request for it keeps the policy.
+        let etag = headers["etag"].to_str().expect("etag").to_string();
+        let (status, headers, _) = send(
+            &router,
+            Req::get(path).header("if-none-match", &etag).build(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{path}");
+        assert_eq!(
+            headers["content-security-policy"],
+            expected_policy.as_str(),
+            "{path} 304"
+        );
+    }
+    // No other file has it: the page and the vault worker keep the policy of the section.
+    for path in [
+        "/",
+        "/app/boot.mjs",
+        "/js/vault.worker.mjs",
+        "/app/workers/other.mjs",
+        "/js/import.worker.mjs.map",
+    ] {
+        let (_, headers, _) = get(&router, path).await;
+        assert!(
+            headers["content-security-policy"]
+                .to_str()
+                .expect("csp")
+                .contains("connect-src 'self';"),
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]

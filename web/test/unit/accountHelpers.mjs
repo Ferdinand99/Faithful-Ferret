@@ -64,7 +64,7 @@ export function fakeClient({ log, skBit = true, handlers = {}, skCode = SK_CODE 
         account_id: ACCOUNT,
         ksf_profile: 1,
         secret_key_code: skBit ? skCode : null,
-        qr_payload: "ferret-setup:v1?u=x",
+        qr_payload: `ferret-setup:v1?u=x&s=${skBit ? 1 : 0}`,
       },
       recovery_key_code: RK_CODE,
     }),
@@ -165,7 +165,7 @@ export function fakeServer({ log, skHint = true, overrides = {} } = {}) {
  * Everything a flow needs, wired: fake client, fake server behind the real API
  * client, the real stores in a fresh IndexedDB and a crypto session.
  */
-export async function scenario({ skBit = true, skHint = true, handlers = {}, overrides = {}, sync, secrets, rand } = {}) {
+export async function scenario({ skBit = true, skHint = true, handlers = {}, overrides = {}, sync, secrets, rand, createImportWorker } = {}) {
   const log = [];
   const db = await freshStore();
   const client = fakeClient({ log, skBit, handlers });
@@ -181,6 +181,7 @@ export async function scenario({ skBit = true, skHint = true, handlers = {}, ove
     rand: rand ?? ((bytes) => globalThis.crypto.getRandomValues(bytes)),
     sync,
     secrets,
+    createImportWorker,
   });
   return { log, db, client, server, api, store, session, requests: server.requests };
 }

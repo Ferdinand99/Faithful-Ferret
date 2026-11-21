@@ -1,0 +1,20 @@
+/* The recovery page. Colours and components come from base.css; the new sheet that the
+   page shows keeps the sheet's own screen and print rules (sheet.css). */
+
+.recover-page > h2,
+.recover-page [data-role="recover-done"] > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.recover-page [data-role="new-browser"] {
+  font-size: 0.9375rem;
+}
+
+.recover-page [data-role="recover-done"] {
+  margin-top: var(--sp-4);
+}
+
+.recover-link {
+  margin-top: var(--sp-3);
+}

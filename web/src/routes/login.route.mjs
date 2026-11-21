@@ -17,6 +17,7 @@ export default {
       entry: getEntry(),
       adminUrl: configuredAdminUrl(),
       api: services.api,
+      store: services.store,
       go,
       handoff: { completeHandoff, goToAdmin },
       info,

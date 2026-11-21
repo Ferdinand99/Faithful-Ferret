@@ -897,7 +897,7 @@ fn unknown_vaults_are_errors_not_empty_answers() {
         Err(StoreError::NotFound)
     ));
     assert!(matches!(
-        purge_tombstones(&mut conn, &ghost, i64::MAX),
+        purge_tombstones(&mut conn, &ghost, i64::MAX, u64::MAX),
         Err(StoreError::NotFound)
     ));
     // Nothing was left behind.
@@ -992,7 +992,7 @@ fn tombstones_have_a_cap_of_their_own() {
         &limits,
         NOW,
     ));
-    purge_tombstones(&mut conn, &a.vault_id, NOW + 1).expect("purge");
+    purge_tombstones(&mut conn, &a.vault_id, NOW + 1, u64::MAX).expect("purge");
     stored(&put_at(
         &mut conn,
         &a,
@@ -1058,9 +1058,9 @@ fn counters_equal_the_rows_after_a_mixed_sequence() {
     put_at(&mut conn, &a, &tomb(item(7), 0, &[5; 9], 5), &limits, 500);
     put_at(&mut conn, &a, &live(item(3), 0, &[6; 20], 6), &limits, 600);
     assert_counters_match_rows(&conn, &a);
-    purge_tombstones(&mut conn, &a.vault_id, 450).expect("purge");
+    purge_tombstones(&mut conn, &a.vault_id, 450, u64::MAX).expect("purge");
     assert_counters_match_rows(&conn, &a);
-    purge_tombstones(&mut conn, &a.vault_id, 1000).expect("purge");
+    purge_tombstones(&mut conn, &a.vault_id, 1000, u64::MAX).expect("purge");
     assert_counters_match_rows(&conn, &a);
     assert_eq!(counters(&conn, &a).1, 3, "the manifest and two live items");
 }
@@ -1077,7 +1077,7 @@ fn purging_tombstones_moves_the_counters_in_one_transaction() {
     assert_eq!(counters(&conn, &a), (6, 2, 40 + 30 + 8 + 6));
 
     // Only the tombstone older than 250 goes.
-    let purged = purge_tombstones(&mut conn, &a.vault_id, 250).expect("purge");
+    let purged = purge_tombstones(&mut conn, &a.vault_id, 250, u64::MAX).expect("purge");
     assert_eq!(
         purged,
         Purged {
@@ -1090,10 +1090,10 @@ fn purging_tombstones_moves_the_counters_in_one_transaction() {
     assert_counters_match_rows(&conn, &a);
 
     // Nothing to purge: nothing moves, and the horizon never falls.
-    let none = purge_tombstones(&mut conn, &a.vault_id, 250).expect("purge");
+    let none = purge_tombstones(&mut conn, &a.vault_id, 250, u64::MAX).expect("purge");
     assert_eq!((none.removed, none.min_valid_since), (0, 5));
 
-    let rest = purge_tombstones(&mut conn, &a.vault_id, 1000).expect("purge");
+    let rest = purge_tombstones(&mut conn, &a.vault_id, 1000, u64::MAX).expect("purge");
     assert_eq!((rest.removed, rest.min_valid_since), (1, 6));
     assert_eq!(counters(&conn, &a), (6, 2, 40 + 30));
     // Live rows were not touched (the manifest and item 3 remain).
@@ -1119,7 +1119,7 @@ fn a_purge_leaves_other_vaults_alone() {
         put(&mut conn, who, &tomb(item(1), 1, b"t", 2));
     }
     assert_eq!(
-        purge_tombstones(&mut conn, &a.vault_id, i64::MAX)
+        purge_tombstones(&mut conn, &a.vault_id, i64::MAX, u64::MAX)
             .expect("purge")
             .removed,
         1

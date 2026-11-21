@@ -5,10 +5,11 @@
 // store, because a miss by e-mail alone looks like a first use. The one exception
 // is `pinHintForEmail`, an early guard for the core's `login_finish` (see below).
 import { cache } from "../store/cache.mjs";
+import { exportReminder } from "../store/exportReminder.mjs";
 import { openStore } from "../store/idb.mjs";
 import { outbox } from "../store/outbox.mjs";
 import { forgetServer, pendingWrites, sharedAccount } from "../store/forget.mjs";
-import { forgetPinned, loadPinned, loadPinnedAccount, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
+import { forgetPinned, loadPinned, loadPinnedAccount, pinnedElsewhere, pinnedForSignIn, savePinned } from "../store/pinned.mjs";
 import { deleteRestoreNote, loadRestoreNote, saveRestoreNote } from "../store/restoreNote.mjs";
 import { deleteSetting, deviceId, deviceSecrets, getSetting, setSetting } from "../store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../store/syncState.mjs";
@@ -32,6 +33,8 @@ export default {
         return opened;
       },
       pinnedForSignIn,
+      // Whether the account is pinned under another address: asked right after `login/finish`, before anything is pinned.
+      pinnedElsewhere,
       // For the one caller that has to guard the core's `login_finish`, which runs
       // before the server has named the account: the record the typed e-mail maps
       // to, or null. A null is never a first use by itself; the record that opens the
@@ -55,8 +58,10 @@ export default {
       loadSyncState,
       saveSyncState,
       trash,
-      // The note that an older server state was accepted (not secret; it only picks a text, see store/restoreNote.mjs).
+      // The note that an older server state was accepted (not secret; it picks a text and gates the reapply, see store/restoreNote.mjs).
       restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
+      // The date of the last encrypted export and the reminder to take another (not secret; see store/exportReminder.mjs).
+      exportReminder,
       forgetServer,
       pendingWrites,
       sharedAccount,

@@ -10,13 +10,14 @@ import { consumeEntry, getEntry, plainNext, readEntry } from "../../src/flows/en
 import { completeHandoff } from "../../src/flows/handoff.mjs";
 import { KNOWN_ERRORS } from "../../src/views/form.mjs";
 import { loginView } from "../../src/views/login.mjs";
-import { passwordView } from "../../src/views/password.mjs";
 import { setupView } from "../../src/views/setup.mjs";
 import { ACCOUNT, EMAIL, PASSWORD, RK_CODE, SERVER, SK_CODE, accountDocument, byRole, coded, fire, scenario, settle, textOf, until } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
 
 const catalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "account.json"), "utf8"));
-const i18n = (lang = "en") => createI18n({ en: catalog("en"), nb: catalog("nb") }, lang);
+// The setup page also shows the emergency sheet, whose texts live in their own catalog.
+const sheetCatalog = (lang) => JSON.parse(readFileSync(join(web, "src", "locales", lang, "sheet.json"), "utf8"));
+const i18n = (lang = "en") => createI18n({ en: { ...catalog("en"), ...sheetCatalog("en") }, nb: { ...catalog("nb"), ...sheetCatalog("nb") } }, lang);
 const CHALLENGE = "C".repeat(43);
 const ADMIN = "https://admin.ferret.test";
 
@@ -469,7 +470,7 @@ test("sheet_text_is_removed_from_the_dom_after_confirmation", async () => {
     await until(() => byRole(root, "open-vault") !== null);
     // Once both keys checked out the sheet is gone from the page.
     const after = textOf(root);
-    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "account.sheet"]) assert.ok(!after.includes(secret), secret);
+    for (const secret of [RK_CODE, SK_CODE, PASSWORD, "ferret-setup", "sheet."]) assert.ok(!after.includes(secret), secret);
     assert.ok(byRole(root, "open-vault"));
     assert.equal(world.requests.filter((r) => r.url.endsWith("/register/finish")).length, 1);
     assert.deepEqual(went, ["spent"]);
@@ -526,22 +527,6 @@ test("the_setup_form_checks_that_the_two_passwords_match_before_anything_is_star
     await fire(byRole(root, "use-sk"), "change");
     assert.equal(byRole(root, "no-sk-warning").hidden, false);
     assert.equal(byRole(root, "remember-row").hidden, true);
-  });
-});
-
-test("the_password_page_is_a_real_page_and_starts_no_hand_over", async () => {
-  await withDom(async () => {
-    const page = passwordView({ t: i18n().t });
-    assert.ok(byRole(page, "password-page"));
-    assert.match(textOf(page), /not available in this version/);
-    assert.equal(byRole(page, "password"), null, "no password field");
-    // The route is a page of its own, not a sign-in.
-    const route = (await import("../../src/routes/password.route.mjs")).default;
-    assert.equal(route.path, "/password");
-    const loaded = await route.load({ i18n: i18n() });
-    assert.ok(byRole(loaded, "password-page"));
-    const source = readFileSync(join(web, "src", "routes", "password.route.mjs"), "utf8") + readFileSync(join(web, "src", "views", "password.mjs"), "utf8");
-    assert.doesNotMatch(source, /handoff|goToAdmin/i);
   });
 });
 
@@ -606,7 +591,7 @@ test("every_text_the_account_pages_use_exists_in_both_languages", () => {
   // The route titles are texts too.
   for (const file of readdirSync(join(web, "src", "routes"))) {
     const title = /title: "([^"]+)"/.exec(readFileSync(join(web, "src", "routes", file), "utf8"))?.[1];
-    if (file.startsWith("login") || file.startsWith("reauth") || file.startsWith("setup") || file.startsWith("password")) assert.ok(title in en, file);
+    if (file.startsWith("login") || file.startsWith("reauth") || file.startsWith("setup")) assert.ok(title in en, file);
   }
   // No unused text is left behind.
   for (const key of Object.keys(en)) {

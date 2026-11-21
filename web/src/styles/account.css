@@ -119,52 +119,6 @@ html:has(#app > .auth-card, .unlock-host) body {
   font-size: 0.8125rem;
 }
 
-/* The document: what the emergency sheet shows, and prints. */
-/* The setup page puts the sheet inside its own card. The outer card gives way, so the
-   sheet is the one card on the page, with one mark, and wide enough for the keys. */
-#app > .auth-card:has(> .sheet) {
-  max-width: 40rem;
-  padding: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-}
-
-#app > .auth-card:has(> .sheet)::before {
-  display: none;
-}
-
-.sheet-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  margin: 0;
-  padding: var(--sp-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--bg);
-}
-
-.sheet-fields dt {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.sheet-fields dd {
-  margin: 0 0 var(--sp-3);
-  overflow-wrap: anywhere;
-}
-
-.sheet-fields dd:last-child {
-  margin-bottom: 0;
-}
-
-.sheet-fields .secret {
-  font-family: var(--mono);
-  font-size: 0.875rem;
-  letter-spacing: 0;
-}
-
 /* On a phone the card gives way to the page, as the admin pages do. */
 @media (max-width: 480px) {
   #app > .auth-card {
@@ -185,55 +139,6 @@ html:has(#app > .auth-card, .unlock-host) body {
 
   .auth-card .actions .btn {
     flex: 1 1 auto;
-  }
-}
-
-/* Print: always the light colours, whatever theme is chosen, so the keys come out
-   dark on white. The recovery key starts a page of its own: it is kept apart from the
-   access page (its secret key and address). */
-@media print {
-  :root,
-  :root[data-theme] {
-    color-scheme: light;
-  }
-
-  html:has(#app > .auth-card, .unlock-host) {
-    background: none;
-  }
-
-  body,
-  #app {
-    display: block;
-  }
-
-  .app-foot,
-  .account form,
-  .account .btn,
-  .account .status,
-  .account .error,
-  .no-print {
-    display: none;
-  }
-
-  .auth-card::before {
-    display: none;
-  }
-
-  #app > .auth-card,
-  #app > .auth-card:has(> .sheet) {
-    width: auto;
-    max-width: none;
-    margin: 0;
-  }
-
-  .auth-card {
-    padding: 0;
-    border: 0;
-    box-shadow: none;
-  }
-
-  .sheet-fields[data-role="sheet"] + h2 {
-    break-before: page;
   }
 }
 

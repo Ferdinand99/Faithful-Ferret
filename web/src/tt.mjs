@@ -5,10 +5,16 @@
 // worker files. Browsers without Trusted Types get the same check and a plain
 // string.
 
-/** The two workers of the current client; a new worker is added here. */
+/**
+ * The three workers of the client; a new worker is added here. The vault worker and the job
+ * worker come with the WASM package. The import worker is the page's own (src/workers/import.worker.mjs):
+ * it reads an import file and sends the drafts on to the vault worker, so that no plain text of an import
+ * passes through the main thread. The build writes /js/import.worker.mjs for it.
+ */
 export const DEFAULT_WORKERS = Object.freeze({
   vault: "/js/vault.worker.mjs",
   job: "/js/job.worker.mjs",
+  import: "/js/import.worker.mjs",
 });
 
 /**

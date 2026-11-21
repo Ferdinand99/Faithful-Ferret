@@ -168,6 +168,7 @@ export function makeRoot(extra = {}) {
     filter: (path) => !path.endsWith(".gen.mjs"),
   });
   cpSync(join(web, "types"), join(root, "types"), { recursive: true });
+  cpSync(join(web, "vendor"), join(root, "vendor"), { recursive: true });
   const tar = makeTar(wasmFiles());
   const tarPath = join(root, "wasm.tar.gz");
   writeFileSync(tarPath, tar);

@@ -123,7 +123,7 @@ export function coded(code, extra = {}) {
 
 /** The sync engine as the screens see it. `views` maps an item id to what `item_view` returns. */
 export function fakeEngine({ items = [], views = {}, secrets = {} } = {}) {
-  const listeners = { changed: new Set(), state: new Set(), error: new Set() };
+  const listeners = { changed: new Set(), state: new Set(), error: new Set(), copied: new Set() };
   const handles = new Map();
   let next = 1;
   const engine = {

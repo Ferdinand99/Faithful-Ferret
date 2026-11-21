@@ -4,14 +4,17 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "./test-support.mjs";
 import {
   acceptedLicenses,
+  adaptedEntries,
   fillLines,
   fillTemplate,
   group,
   hasPlaceholder,
+  licenceTerms,
   licenseAllowed,
   npmEntries,
   render,
   rustEntries,
+  vendoredEntries,
 } from "./third-party-notices.mjs";
 
 const accepted = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause"];
@@ -275,3 +278,87 @@ describe("notices.sh", () => {
     for (const c of commands) expect(c.split("\n")[0] + c.split("\n")[1]).toContain("--fail");
   });
 });
+
+describe("vendoredEntries", () => {
+  const licence = "Copyright (c) Project Nayuki\n\nPermission is hereby granted";
+  const entry = {
+    name: "qrcodegen", version: "1.8.0", origin: "https://example.test/q", license: "MIT", copyright: "Copyright (c) Project Nayuki",
+    file: "web/vendor/q/q.mjs", licenseFile: "web/vendor/q/LICENSE", note: "Modified by Faithful Ferret: compiled.",
+  };
+  const listed = { name: "qrcodegen", version: "1.8.0", origin: "https://example.test/q", license: "MIT", copyright: "Copyright (c) Project Nayuki", file: "q/q.mjs", licenseFile: "q/LICENSE" };
+  const read = () => licence;
+  it("gives the entry with the licence text when the two lists agree", () => {
+    const [v] = vendoredEntries({ vendored: [entry] }, { files: [listed] }, read);
+    expect(v.licenseId).toBe("MIT");
+    expect(v.text).toBe(licence);
+    expect(v.packages[0].label).toBe("qrcodegen 1.8.0");
+  });
+  it("fails for a file that has no entry, an entry that has no file, and values that differ", () => {
+    expect(() => vendoredEntries({ vendored: [] }, { files: [listed] }, read)).toThrow(/no entry/);
+    expect(() => vendoredEntries({ vendored: [entry] }, { files: [] }, read)).toThrow(/does not/);
+    expect(() => vendoredEntries({ vendored: [{ ...entry, version: "1.9.0" }] }, { files: [listed] }, read)).toThrow(/differ/);
+    expect(() => vendoredEntries({ vendored: [{ ...entry, license: "GPL-3.0-only" }] }, { files: [listed] }, read)).toThrow(/differ/);
+  });
+  it("fails without the note on what was changed, and without the copyright line in the licence text", () => {
+    expect(() => vendoredEntries({ vendored: [{ ...entry, note: "compiled" }] }, { files: [listed] }, read)).toThrow(/Modified by Faithful Ferret/);
+    expect(() => vendoredEntries({ vendored: [entry] }, { files: [listed] }, () => "Permission is hereby granted")).toThrow(/copyright line/);
+  });
+  it("is listed in the real notices", () => {
+    const extra = JSON.parse(read2("notices-extra.json"));
+    const manifest = JSON.parse(read2("web/vendor/MANIFEST.json"));
+    const entries = vendoredEntries(extra, manifest, read2);
+    expect(entries.map((e) => e.packages[0].label)).toContain("qrcodegen 1.8.0");
+  });
+});
+
+describe("adaptedEntries", () => {
+  const files = {
+    "a/x.mjs": "// SPDX-License-Identifier: AGPL-3.0-only\n// Modified by Faithful Ferret: ported.\n",
+    "a/plain.mjs": "export const x = 1;\n",
+    LIC: "Terms of the licence.\nEND OF TERMS AND CONDITIONS\n\nHow to apply\n    Copyright (C) <year>  <name of author>\n",
+  };
+  const readFile = (path) => {
+    if (!(path in files)) throw new Error("no such file");
+    return files[path];
+  };
+  const entry = {
+    name: "X parser", origin: "https://x.test/x", source: "src/x.ts (commit abc)", license: "AGPL-3.0-only", licenseFile: "LIC",
+    copyright: "The X authors", files: ["a/x.mjs"], note: "Modified by Faithful Ferret: ported.",
+  };
+  it("gives the entry with the terms of the licence and without the how-to-apply appendix", () => {
+    const [a] = adaptedEntries({ adapted: [entry] }, readFile);
+    expect(a.licenseId).toBe("AGPL-3.0-only");
+    expect(a.text).toBe("Terms of the licence.\nEND OF TERMS AND CONDITIONS");
+    expect(a.files[0]).toBe("a/x.mjs");
+    expect(adaptedEntries({}, readFile)).toHaveLength(0);
+    expect(licenceTerms("no end line")).toBe("no end line");
+  });
+  it("fails for an incomplete entry, a note without the change, a missing file or a file without its header", () => {
+    expect(() => adaptedEntries({ adapted: [{ ...entry, origin: "" }] }, readFile)).toThrow(/needs name/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: [] }] }, readFile)).toThrow(/needs name/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, note: "ported" }] }, readFile)).toThrow(/Modified by Faithful Ferret/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: ["a/none.mjs"] }] }, readFile)).toThrow(/does not exist/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, files: ["a/plain.mjs"] }] }, readFile)).toThrow(/SPDX-License-Identifier/);
+    expect(() => adaptedEntries({ adapted: [{ ...entry, licenseFile: "NONE" }] }, readFile)).toThrow(/no such file/);
+  });
+  it("is rendered with each licence text once", () => {
+    const rust = rustEntries([{ licenses: [{ id: "MIT", text: "MIT text", used_by: [{ crate: { name: "a", version: "1.0.0" } }] }] }]);
+    const adapted = adaptedEntries({ adapted: [entry, { ...entry, name: "Y parser" }] }, readFile);
+    const text = render({ product: "P", rust, npm: [], fontLicense: "OFL text", adapted });
+    expect(text).toContain("Source written from other projects (2 entries)");
+    expect(text).toContain("X parser\n  Origin: https://x.test/x");
+    expect(text).toContain("Y parser");
+    expect(text.split("Terms of the licence.").length).toBe(2);
+    expect(text.indexOf("OFL text") < text.indexOf("Source written from other projects")).toBe(true);
+  });
+  it("lists the real entries, and their files and licence texts are in the repository", () => {
+    const entries = adaptedEntries(JSON.parse(read2("notices-extra.json")), read2);
+    expect(entries.map((e) => e.label).join(" | ")).toContain("AliasVault CSV parser");
+    expect(entries.map((e) => e.label).join(" | ")).toContain("Bitwarden export formats");
+    for (const e of entries) expect(e.text).toContain("END OF TERMS AND CONDITIONS");
+  });
+});
+
+function read2(file) {
+  return readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+}
