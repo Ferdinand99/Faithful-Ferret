@@ -3500,6 +3500,15 @@ export function createSyncEngine({
     syncNow,
 
     /**
+     * The last state the engine announced (`syncing`, `idle`, `offline`, `retrying`, `failed`, `unauthorized`, ...), or "" before the
+     * first. A screen that is built after the engine announced it asks for it, because an announcement is made once.
+     * @returns {string}
+     */
+    status() {
+      return lastStatus;
+    },
+
+    /**
      * Why the engine has stopped (one of `HALT_CODES`, or null) and the warnings that stand until a later check clears them.
      * Changes come as `state` events: `{ kind: "halted", code }`, `{ kind: "warning", code }`, `{ kind: "warning_cleared", code }`.
      * @returns {{ halted: string | null, warnings: string[] }}

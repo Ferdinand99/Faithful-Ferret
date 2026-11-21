@@ -74,7 +74,7 @@ if (!(mem > 0)) fail("a memory limit is required");
 
 # The end-to-end stack, and that it shares nothing with the owner's stack.
 e2e_file=docker/compose.ferret-e2e.yml
-e2e_config="$(FERRET_E2E_SETUP_TOKEN=e2echeck docker compose -f "$e2e_file" config --format json)"
+e2e_config="$(FERRET_E2E_SETUP_TOKEN=e2echeck FERRET_E2E_PUSH_TOKEN=e2epush docker compose -f "$e2e_file" config --format json)"
 if grep -qi 'e2e' "$file"; then
   echo "check-ferret-test-stack: $file must not mention the end-to-end stack" >&2
   exit 1
@@ -83,9 +83,13 @@ if grep -qiE 'evil|snapshot' "$file"; then
   echo "check-ferret-test-stack: $file must not mention the malicious server or a snapshot" >&2
   exit 1
 fi
-# Without the token that `e2e-up` makes, the stack does not start.
+# Without the tokens that `e2e-up` makes, the stack does not start.
 if docker compose -f "$e2e_file" config >/dev/null 2>&1; then
-  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_SETUP_TOKEN" >&2
+  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_SETUP_TOKEN and FERRET_E2E_PUSH_TOKEN" >&2
+  exit 1
+fi
+if FERRET_E2E_SETUP_TOKEN=e2echeck docker compose -f "$e2e_file" config >/dev/null 2>&1; then
+  echo "check-ferret-test-stack: $e2e_file starts without FERRET_E2E_PUSH_TOKEN" >&2
   exit 1
 fi
 
@@ -94,15 +98,15 @@ const [owner, e2e] = process.argv.slice(1).map((s) => JSON.parse(s));
 const fail = (m) => { console.error("check-ferret-test-stack: e2e: " + m); process.exit(1); };
 if (e2e.name !== "ferret-e2e") fail("project name must be ferret-e2e");
 const names = Object.keys(e2e.services || {}).sort();
-if (names.join() !== "ferret-e2e-app,ferret-e2e-evil,ferret-e2e-tls") fail("expected the services ferret-e2e-app, ferret-e2e-evil and ferret-e2e-tls, got " + names);
+if (names.join() !== "ferret-e2e-app,ferret-e2e-evil,ferret-e2e-monitor,ferret-e2e-tls") fail("expected the services ferret-e2e-app, ferret-e2e-evil, ferret-e2e-monitor and ferret-e2e-tls, got " + names);
 for (const [k, s] of Object.entries(e2e.services)) {
   if (s.container_name !== k) fail(k + ": container_name");
   if (s.labels?.owner !== "ferret-e2e") fail(k + ": label owner=ferret-e2e");
   if (s.ports && s.ports.length) fail(k + ": no published ports");
   if (s.network_mode) fail(k + ": no network_mode (host networking would reach the LANBox)");
-  // Only the app has a volume: the named volume ferret-e2e-data on /data, nothing else.
+  // Only the app has volumes: the named volume ferret-e2e-data on /data and the named volume ferret-e2e-backups on /backups, nothing else.
   const mounts = (s.volumes || []).map((v) => (typeof v === "string" ? v : v.source + ":" + v.target));
-  const want = k === "ferret-e2e-app" ? ["ferret-e2e-data:/data"] : [];
+  const want = k === "ferret-e2e-app" ? ["ferret-e2e-data:/data", "ferret-e2e-backups:/backups"] : [];
   if (JSON.stringify(mounts) !== JSON.stringify(want)) fail(k + ": mounts must be " + JSON.stringify(want) + ", got " + JSON.stringify(mounts) + " (no bind mounts)");
   if (s.privileged) fail(k + ": privileged");
   if (s.read_only !== true) fail(k + ": read_only");
@@ -114,13 +118,14 @@ for (const [k, s] of Object.entries(e2e.services)) {
 }
 {
   const volumes = Object.entries(e2e.volumes || {});
-  if (volumes.length !== 1 || volumes[0][0] !== "ferret-e2e-data" || volumes[0][1].name !== "ferret-e2e-data" || volumes[0][1].labels?.owner !== "ferret-e2e") {
-    fail("the only volume is ferret-e2e-data, named so and labelled owner=ferret-e2e");
+  if (volumes.map(([k]) => k).sort().join() !== "ferret-e2e-backups,ferret-e2e-data" || volumes.some(([k, v]) => v.name !== k || v.labels?.owner !== "ferret-e2e")) {
+    fail("the only volumes are ferret-e2e-data and ferret-e2e-backups, named so and labelled owner=ferret-e2e");
   }
 }
 const app = e2e.services["ferret-e2e-app"];
 const tls = e2e.services["ferret-e2e-tls"];
 const evil = e2e.services["ferret-e2e-evil"];
+const monitor = e2e.services["ferret-e2e-monitor"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
 if (Object.keys(app.build?.args || {}).sort().join() !== "FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock, nothing else");
@@ -145,9 +150,10 @@ if (subnet !== "172.30.250.0/28") fail("subnet");
 const tlsIp = tls.networks["ferret-e2e-net"].ipv4_address;
 const appIp = app.networks["ferret-e2e-net"].ipv4_address;
 const evilIp = evil.networks["ferret-e2e-net"].ipv4_address;
-if (!tlsIp || !appIp || !evilIp || new Set([tlsIp, appIp, evilIp]).size !== 3) fail("pinned addresses");
+const monitorIp = monitor.networks["ferret-e2e-net"].ipv4_address;
+if (!tlsIp || !appIp || !evilIp || !monitorIp || new Set([tlsIp, appIp, evilIp, monitorIp]).size !== 4) fail("pinned addresses");
 if (env.FERRET_TRUSTED_PROXIES !== evilIp) fail("the only trusted proxy is the malicious server at " + evilIp + ", got " + env.FERRET_TRUSTED_PROXIES);
-for (const ip of [tlsIp, appIp, evilIp]) if (!/^172\.30\.250\.([2-9]|1[0-4])$/.test(ip)) fail(ip + " is not a host address of " + subnet + " (.1 is the gateway)");
+for (const ip of [tlsIp, appIp, evilIp, monitorIp]) if (!/^172\.30\.250\.([2-9]|1[0-4])$/.test(ip)) fail(ip + " is not a host address of " + subnet + " (.1 is the gateway)");
 
 // The malicious server: made here and nowhere else, in a pinned image, with no way in from outside and no right in the container.
 if (evil.image !== "ferret-e2e-evil:latest") fail("image of the malicious server");
@@ -170,6 +176,21 @@ if (!/https:\/\/admin-e2e\.test \{[^}]*tls internal[^}]*reverse_proxy ferret-e2e
 if (/ferret-e2e-app/.test(caddyfile) || /:9000/.test(caddyfile)) fail("Caddyfile: nothing goes to the app directly, and nothing to the control port");
 if (/trusted_proxies/.test(caddyfile)) fail("the terminator must not trust forwarding headers from anyone");
 
+// The stand-in for the push monitor: made here and nowhere else, in a pinned image, with no way in from outside and no right in the
+// container; the app is told where it is (the token in the address is made up by e2e-up for every start) and waits for it.
+if (monitor.image !== "ferret-e2e-monitor:latest") fail("image of the stand-in monitor");
+if (monitor.build?.labels?.owner !== "ferret-e2e") fail("build label of the stand-in monitor");
+if (!String(monitor.build?.context || "").replace(/\\/g, "/").endsWith("/web/test/e2e-stack/monitor") || (monitor.build?.dockerfile || "") !== "Dockerfile") fail("the stand-in monitor is built from web/test/e2e-stack/monitor/Dockerfile");
+if (Object.keys(monitor.build?.args || {}).length) fail("the stand-in monitor takes no build argument");
+if ((monitor.cap_add || []).length) fail("the stand-in monitor needs no capability");
+if (monitor.user || monitor.pid || monitor.ipc || monitor.devices?.length || monitor.volumes?.length || monitor.volumes_from?.length) fail("the stand-in monitor has no extra user, namespace, device or mount");
+if (monitor.expose?.length || Object.keys(monitor.environment || {}).length) fail("the stand-in monitor exposes no port to publish and takes no environment");
+if (!monitor.healthcheck) fail("the stand-in monitor needs a health check (the app waits for it)");
+if (!(monitor.tmpfs || []).every((t) => t.startsWith("/tmp"))) fail("the stand-in monitor writes to /tmp only");
+if (env.FERRET_BACKUP_DIR !== "/backups") fail("the backup sets go to /backups, a volume of their own");
+if (!/^http:\/\/ferret-e2e-monitor:9100\/api\/push\/[0-9A-Za-z]+$/.test(env.FERRET_BACKUP_PUSH_URL || "")) fail("the push address is the stand-in monitor with the token of the run");
+if (!app.depends_on?.["ferret-e2e-monitor"]) fail("the app starts after the stand-in monitor");
+
 // Nothing in common with the owner stack.
 const o = owner.services["ferret-test-app"];
 const overlap = (what, a, b) => { const x = a.filter((v) => b.includes(v)); if (x.length) fail("shared " + what + ": " + x); };
@@ -177,8 +198,8 @@ const hostNames = (c) => Object.keys(c.services).concat(Object.values(c.services
 overlap("service or container names", hostNames(owner), hostNames(e2e));
 overlap("volumes", Object.values(owner.volumes || {}).map((v) => v.name), Object.values(e2e.volumes || {}).map((v) => v.name));
 overlap("networks", Object.values(owner.networks || {}).map((n) => n.name), Object.values(e2e.networks).map((n) => n.name));
-overlap("images", [o.image], [app.image, tls.image, evil.image]);
-overlap("labels", [o.labels.owner], [app.labels.owner, tls.labels.owner]);
+overlap("images", [o.image], [app.image, tls.image, evil.image, monitor.image]);
+overlap("labels", [o.labels.owner], [app.labels.owner, tls.labels.owner, monitor.labels.owner]);
 if (owner.name === e2e.name) fail("same compose project");
 if (o.env_file || app.env_file) fail("env_file would pull in the owner secrets");
 const oe = o.environment;
@@ -200,6 +221,25 @@ if ! tr -d '\r' < .dockerignore | grep -qx 'web/test/e2e-stack/evil'; then
   echo "check-ferret-test-stack: .dockerignore must list web/test/e2e-stack/evil" >&2
   exit 1
 fi
+# The stand-in monitor too: only the e2e compose file mentions it, and the server's build context leaves its folder out.
+for f in docker/*; do
+  [ "$f" = "$e2e_file" ] && continue
+  if grep -qiE 'e2e-monitor|e2e-stack/monitor' "$f"; then
+    echo "check-ferret-test-stack: $f must not mention the stand-in monitor; only $e2e_file may" >&2
+    exit 1
+  fi
+done
+if ! grep -qxE 'web/test/e2e-stack/monitor.?' .dockerignore; then
+  echo "check-ferret-test-stack: .dockerignore must list web/test/e2e-stack/monitor" >&2
+  exit 1
+fi
+monitor_dockerfile=web/test/e2e-stack/monitor/Dockerfile
+monitor_node="$(sed -n 's/^ARG NODE_IMAGE=//p' docker/server.Dockerfile)"
+if [ -z "$monitor_node" ] || ! grep -qx "FROM $monitor_node" "$monitor_dockerfile"; then
+  echo "check-ferret-test-stack: $monitor_dockerfile must start from the Node image of docker/server.Dockerfile, pinned by digest" >&2
+  exit 1
+fi
+grep -q 'monitor.mjs' "$monitor_dockerfile" || { echo "check-ferret-test-stack: $monitor_dockerfile must copy monitor.mjs" >&2; exit 1; }
 # The server image takes the built web vault (web/dist, web/admin) from the web stage and nothing else.
 if grep -E '^COPY --from=web ' docker/server.Dockerfile | grep -vE ' /src/web/(dist|admin)( |$)'; then
   echo "check-ferret-test-stack: docker/server.Dockerfile must copy only web/dist and web/admin from the web stage" >&2

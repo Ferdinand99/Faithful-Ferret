@@ -10,6 +10,7 @@
 #   scripts/lanbox-ferret-e2e-gate.sh restart    restart the container; lost opaque_setup refuses to start
 #   scripts/lanbox-ferret-e2e-gate.sh limits     session limits with the moved clock
 #   scripts/lanbox-ferret-e2e-gate.sh m2         the sync scenarios 10 to 17 in every browser
+#   scripts/lanbox-ferret-e2e-gate.sh m3         the recovery, export, import and backup scenarios 18 to 26 in every browser
 #
 # Steps:
 #  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
@@ -29,6 +30,14 @@
 #     shows the notice, "Use here" moves the vault). The screenshots of every phase are
 #     saved in test-results/out/m2-shots/.
 #
+#  5. The recovery scenarios (step m3), in each browser on a fresh stack, in one run with the host
+#     script at hand (it makes the sign-in codes, empties the server, makes and restores a backup
+#     set): 18 the emergency sheet, 19 a new browser with the sheet text, 20 a password change, 21
+#     recovery with a one-time code, 22 a new recovery key and the backup that follows it, 23 an
+#     encrypted export that goes into a fresh account on a wiped server, 24 the foreign import
+#     formats and a thousand items, 25 backup, wipe and restore, 26 two tabs. Afterwards the data
+#     directory, the backup sets and the server log are searched for the secrets of the run.
+#
 # Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
 # (default "chromium firefox webkit").
 set -euo pipefail
@@ -40,6 +49,7 @@ cd "$(dirname "$0")/.."
 
 browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
 m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
+m3_specs=(18-sheet 19-new-device 20-password 21-recover 22-recovery-key 23-export-import 24-import-foreign 25-backup-restore 26-tabs)
 shots_dir=test-results/out/m2-shots
 main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
 failures=0
@@ -312,13 +322,21 @@ hosted_cleanup() {
 
 # One step the tests asked for, in a subshell of its own: a step that fails ends the subshell (the helpers of the stack
 # script call exit), never the gate, and is reported to the test as a failure.
+host_answer=""
 host_step() { # step
   local rc
+  host_answer=""
   set +e
   case "$1" in
     snapshot) (set -e; e2e_snapshot) >&2 ;;
     restore) (set -e; e2e_restore_snapshot) >&2 ;;
     clock-[0-9]*) (set -e; e2e_clock "${1#clock-}") >&2 ;;
+    reset) (set -e; e2e_reset) >&2 ;;
+    backup) host_answer="$(e2e_backup)" ;;
+    restore-backup) (set -e; e2e_restore_backup) >&2 ;;
+    restore-backup-*) (set -e; e2e_restore_backup "${1#restore-backup-}") >&2 ;;
+    code-*) host_answer="$(e2e_code "${1#code-}")" ;;
+    set-count) host_answer="$(e2e_set_count | tr -d ' ')" ;;
     *)
       echo "the tests asked for a step the host does not know: $1" >&2
       false
@@ -326,6 +344,10 @@ host_step() { # step
   esac
   rc=$?
   set -e
+  # The test asks for the name of the set that a backup made, so that it can be put back later.
+  if [ "$rc" = 0 ] && [ "$1" = backup ]; then
+    host_answer="$(printf '%s\n' "$host_answer" | sed -n 's/.*backup set \([A-Za-z0-9._-]*\) made.*/\1/p' | head -n 1)"
+  fi
   return "$rc"
 }
 
@@ -334,8 +356,9 @@ host_step() { # step
 # writing /tmp/host-request-<step> in the runner container and waits for /tmp/host-done-<step>, or
 # /tmp/host-failed-<step> when the step failed (the test then fails). The tests of this phase fail, and
 # do not skip, when this script is not there.
+hosted_markers="m2-restore"
 run_m2_hosted() { # phase name, state, browser, files...
-  local phase="$1" state="$2" browser="$3" rc=0 requests request step
+  local phase="$1" state="$2" browser="$3" rc=0 requests request step marker
   shift 3
   hosted_out="$(mktemp)"
   trap 'hosted_cleanup' EXIT INT TERM
@@ -360,6 +383,10 @@ run_m2_hosted() { # phase name, state, browser, files...
       dk exec ferret-e2e-playwright rm -f "$request" > /dev/null 2>&1 || true
       say "host step for the tests: $step"
       if host_step "$step"; then
+        # What the step printed for the test (a sign-in code), before the done file that the test waits for.
+        if [ -n "$host_answer" ]; then
+          printf '%s' "$host_answer" | dk exec -i ferret-e2e-playwright sh -c "cat > '/tmp/host-out-$step'" > /dev/null 2>&1 || true
+        fi
         dk exec ferret-e2e-playwright touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
       else
         bad "the host step $step failed"
@@ -376,9 +403,13 @@ run_m2_hosted() { # phase name, state, browser, files...
   trap - EXIT INT TERM
   save_shots "$phase_out"
   # Playwright exits 0 when every test of the file was skipped: the tests leave a marker when they have run.
-  if [ "$rc" = 0 ] && [ -z "$(left "$phase_out" m2-restore)" ]; then
-    echo "the restore scenarios left no marker: they did not run" >&2
-    rc=1
+  if [ "$rc" = 0 ]; then
+    for marker in $hosted_markers; do
+      if [ -z "$(left "$phase_out" "$marker")" ]; then
+        echo "the scenarios of $marker left no marker: they did not run" >&2
+        rc=1
+      fi
+    done
   fi
   return "$rc"
 }
@@ -401,6 +432,55 @@ m2_phase() {
   done
 }
 
+# ------------------------------------------------------------------------ m3
+
+# The same search as search_data, in the backup sets of the stack: they hold a copy of the database and of the secret files, so
+# a secret of the run must not be in them either. The control is the account's e-mail address, which is stored in the clear.
+search_backups() { # needles json, state json
+  local needles="$1" state="$2" data name value count sets total=0
+  data="$(mktemp)"
+  dk run --rm --name ferret-e2e-backup-read --label "$e2e_label" --network none     --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --memory 128m     -v "$e2e_backups_volume:/backups:ro" "$alpine_image" tar -c -C / backups > "$data"
+  sets="$(tar -tf "$data" | grep -c 'MANIFEST.json$' || true)"
+  if [ "${sets:-0}" -ge 1 ]; then ok "backup search: the volume holds $sets set(s)"; else bad "backup search: the volume holds no set"; fi
+  count="$(grep -aFc -- "$(printf '%s' "$state" | jget email)" "$data" || true)"
+  # The sets are tar members here, so a database that is not compressed shows its e-mail address as bytes.
+  if [ "${count:-0}" -ge 1 ]; then ok "backup search: the control in the sets (the e-mail address) is found"; else bad "backup search: the control in the sets (the e-mail address) was not found"; fi
+  while IFS=$'	' read -r name value; do
+    total=$((total + 1))
+    count="$(grep -aFc -- "$value" "$data" || true)"
+    check "backup sets never hold plaintext: no $name in the sets" 0 "${count:-0}"
+  done < <(printf '%s' "$needles" | node -e 'for (const n of JSON.parse(require("fs").readFileSync(0, "utf8"))) console.log(n.name + "	" + n.value);')
+  if [ "$total" -ge 8 ]; then ok "backup search: $total secrets searched"; else bad "backup search: only $total secrets were searched"; fi
+  rm -f "$data"
+}
+
+# The recovery, export, import and backup scenarios, in each browser on a fresh stack, all in one run (the account moves from
+# one scenario to the next) with the host script at hand for what only the Docker host can do. Then the search for the secrets.
+m3_phase() {
+  local browser state needles spec specs=("${m3_specs[@]}")
+  # While the scenarios are written: FERRET_E2E_M3_SPECS picks some of them, and FERRET_E2E_REUSE=1 empties the running stack
+  # (e2e-reset) instead of building a new one. The gate itself always runs all of them on a fresh stack.
+  # shellcheck disable=SC2206
+  [ -z "${FERRET_E2E_M3_SPECS:-}" ] || specs=($FERRET_E2E_M3_SPECS)
+  local markers=""
+  for spec in "${specs[@]}"; do markers="$markers m3-${spec%%-*}"; done
+  for browser in $browsers; do
+    say "recovery scenarios in $browser on a fresh stack"
+    hosted_markers="$markers"
+    if [ "${FERRET_E2E_REUSE:-}" = 1 ] && e2e_running; then e2e_reset >&2; else e2e_up >&2; fi
+    if run_m2_hosted m3 "" "$browser" "${specs[@]}"; then ok "$browser: scenarios ${specs[*]} passed"; else bad "$browser: scenarios ${specs[*]} failed"; fi
+    hosted_markers="m2-restore"
+    state="$(left "$phase_out" state)"
+    needles="$(left "$phase_out" needles)"
+    if [ -z "$state" ] || [ -z "$needles" ]; then
+      bad "$browser: the run left no state, so the data and the backup sets were not searched"
+    else
+      search_data "$needles" "$state"
+      search_backups "$needles" "$state"
+    fi
+  done
+}
+
 # ---------------------------------------------------------------------- main
 
 main_gate() {
@@ -409,10 +489,12 @@ main_gate() {
     all)
       browsers_phase
       m2_phase
+      m3_phase
       limits_phase
       ;;
     browsers) browsers_phase ;;
     m2) m2_phase ;;
+    m3) m3_phase ;;
     restart)
       first="$(printf '%s' "$browsers" | awk '{print $1}')"
       e2e_up >&2

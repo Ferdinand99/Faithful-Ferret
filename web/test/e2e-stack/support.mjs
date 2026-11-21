@@ -35,6 +35,12 @@ export const secrets = {
   // Filled in by the setup scenario from the emergency sheet.
   secretKey: "",
   recoveryKey: "",
+  // The text of the QR code on page 1 of the sheet (the same for the life of the account).
+  qrText: "",
+  // How far the server's clock has been moved on by `freshRedeemWindow`, in seconds.
+  clockOffset: 0,
+  // More secrets of the run (name -> value) that the host script searches for in the data, the sets and the log.
+  needles: /** @type {Record<string, string>} */ ({}),
   itemTitle: `Bank-${tag}-title`,
   itemUsername: `user-${tag}-name`,
   itemPassword: `Pw-${tag}-s3cret!`,
@@ -48,6 +54,17 @@ const keep = `${outDir}/secrets.state`;
 if (existsSync(keep)) Object.assign(secrets, JSON.parse(readFileSync(keep, "utf8")));
 else remember();
 
+/**
+ * Adds a secret of the run to the list that the host script searches for in the server's data, in its backup sets and in its log
+ * (the same list as the secrets above).
+ * @param {string} name @param {string} value
+ */
+export function addNeedle(name, value) {
+  if (value.length < 8) throw new Error(`the needle ${name} is too short to be searched for`);
+  secrets.needles[name] = value;
+  remember();
+}
+
 /** Writes the run's values where a new worker finds them. */
 export function remember() {
   mkdirSync(outDir, { recursive: true });
@@ -59,7 +76,10 @@ export function remember() {
 // under it instead of turning the limit off: the limit is part of what is tested.
 const PACE_WINDOW_MS = 62_000;
 const PACE_MAX = 4;
-const starts = /** @type {number[]} */ ([]);
+// The times of the starts are kept in a file as well: a test that fails ends its worker, and the worker that takes the next test
+// must know about the sign-ins of the minute before.
+const startsFile = `${outDir}/sign-in-starts.json`;
+const starts = /** @type {number[]} */ (existsSync(startsFile) ? JSON.parse(readFileSync(startsFile, "utf8")).filter((/** @type {number} */ at) => Date.now() - at < PACE_WINDOW_MS) : []);
 
 /** Waits until one more sign-in start fits under the server's limit. */
 export async function pace() {
@@ -130,7 +150,15 @@ export async function watch(context) {
   context.on("page", onPage);
   for (const page of context.pages()) onPage(page);
   context.on("request", (request) => {
-    if (request.url().includes("/api/auth/opaque/login/start")) starts.push(Date.now());
+    if (request.url().includes("/api/auth/opaque/login/start")) {
+      starts.push(Date.now());
+      try {
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(startsFile, JSON.stringify(starts));
+      } catch {
+        // The file is a help; the list in memory is what this worker goes by.
+      }
+    }
     const body = request.postData();
     findings.traffic.push(`${request.method()} ${request.url()}\n${JSON.stringify(request.headers())}\n${body ?? ""}`);
   });
@@ -303,6 +331,9 @@ export async function setUpAccount(page) {
   const keys = await readSheet(page);
   secrets.recoveryKey = keys.recoveryKey;
   secrets.secretKey = keys.secretKey;
+  // The text of the QR code on page 1 (a new browser signs in with it, and recovery needs it).
+  secrets.qrText = ((await page.locator('[data-role="sheet-qr"]').textContent()) ?? "").trim();
+  remember();
   await confirmSheet(page, keys);
   await page.locator('[data-role="open-vault"]').click();
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
@@ -375,7 +406,11 @@ export async function signInHere(page, { remember = true, expectList = true } = 
     const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
     await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
   }
-  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 5_000 });
+  if (!(await page.locator('[data-role="list"]').isVisible())) {
+    // What the page says, so that a refused sign-in is not just a missing list.
+    const said = (await page.locator('[data-role="error"]').allTextContents()).map((text) => text.trim()).filter((text) => text !== "");
+    throw new Error(`the sign-in did not end in the list; the page says: ${said.join(" | ") || "nothing"}`);
+  }
 }
 
 /**
@@ -676,14 +711,23 @@ export async function editItem(page, name, change, { waitForName = true } = {}) 
 }
 
 /**
- * The change feed as the server has it now, read with the session of the context.
+ * The change feed as the server has it now, read with the session of the context, all pages of it (a vault with more than a page of
+ * changes is read to the end).
  * @param {import("@playwright/test").BrowserContext} context
  * @returns {Promise<{ changes: { id: string, rev: number, seq: number, deleted: boolean }[], latest_seq: number, restore_epoch: number }>}
  */
 export async function feedOf(context) {
-  const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=0&limit=500`, { headers: { "Ferret-Protocol": "1" } });
-  if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
-  return response.json();
+  /** @type {{ id: string, rev: number, seq: number, deleted: boolean }[]} */
+  const changes = [];
+  let since = 0;
+  for (;;) {
+    const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=${since}&limit=500`, { headers: { "Ferret-Protocol": "1" } });
+    if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
+    const page = await response.json();
+    changes.push(...page.changes);
+    if (!page.has_more || page.changes.length === 0) return { ...page, changes };
+    since = page.changes[page.changes.length - 1].seq;
+  }
 }
 
 /**
@@ -775,12 +819,15 @@ export function noViolations() {
 /** Whether the run has a host script that does the Docker steps for `hostStep`. */
 export const existsHost = () => existsSync("/tmp/host-ready");
 
+/** The phases that the gate script runs with a host. */
+const HOSTED_PHASES = ["m2-restore", "m3"];
+
 /**
- * Whether the host is there. In the phase that the gate script runs with a host (`m2-restore`) the tests fail when it is not,
- * they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
+ * Whether the host is there. In the phases that the gate script runs with a host (`m2-restore`, `m3`) the tests fail when it is
+ * not, they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
  */
 export async function hostAvailable() {
-  if (process.env.FERRET_E2E_PHASE !== "m2-restore") return existsHost();
+  if (!HOSTED_PHASES.includes(process.env.FERRET_E2E_PHASE ?? "")) return existsHost();
   const until = Date.now() + 120_000;
   while (!existsHost()) {
     if (Date.now() > until) throw new Error("the gate script did not make the host ready: the restore scenarios cannot run");
@@ -790,23 +837,180 @@ export async function hostAvailable() {
 }
 
 /**
- * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`
- * or `clock-<seconds>`. The host script (scripts/lanbox-ferret-e2e-gate.sh m2) watches for the request file in the
- * runner container, does the step and answers with a done file, or with a failed file when the step failed (the test then
- * fails). The test is skipped when the run has no host script, except in the phase that the gate script runs with one.
+ * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`,
+ * `clock-<seconds>`, and for the recovery scenarios `reset` (a new, empty server), `backup` (a backup set made while the
+ * app is stopped), `restore-backup` (the newest set on empty data), `code-<e-mail>` (a one-time sign-in code, which is
+ * returned) and `set-count` (how many backup sets the volume holds). The host script
+ * (scripts/lanbox-ferret-e2e-gate.sh m2 or m3) watches for the request file in the runner container, does the step and answers
+ * with a done file, or with a failed file when the step failed (the test then fails). The test is skipped when the run has no
+ * host script, except in the phases that the gate script runs with one. Returns what the step printed for the test, or "".
  * @param {string} step
+ * @returns {Promise<string>}
  */
 export async function hostStep(step) {
-  if (!(await hostAvailable())) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
+  if (!(await hostAvailable())) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2 or m3)");
   // The answers to an earlier request for the same step.
   rmSync(`/tmp/host-done-${step}`, { force: true });
   rmSync(`/tmp/host-failed-${step}`, { force: true });
+  rmSync(`/tmp/host-out-${step}`, { force: true });
   writeFileSync(`/tmp/host-request-${step}`, "");
   const until = Date.now() + 600_000;
   for (;;) {
     if (existsSync(`/tmp/host-failed-${step}`)) throw new Error(`the host failed the step ${step}`);
-    if (existsSync(`/tmp/host-done-${step}`)) return;
+    if (existsSync(`/tmp/host-done-${step}`)) return existsSync(`/tmp/host-out-${step}`) ? readFileSync(`/tmp/host-out-${step}`, "utf8").trim() : "";
     if (Date.now() > until) throw new Error(`the host did not do ${step} within 10 minutes`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+}
+
+// ------------------------------------------------------ the stand-in monitor
+
+/** The stand-in for the push monitor of the stack (web/test/e2e-stack/monitor), on the network of the stack only. */
+export const monitorUrl = process.env.FERRET_E2E_MONITOR_URL ?? "";
+/** The token in the push address the server was given; it is searched for in everything the server shows and logs. */
+export const pushToken = process.env.FERRET_E2E_PUSH_TOKEN ?? "";
+
+/**
+ * What the stand-in monitor has been told so far.
+ * @returns {Promise<{ at: number, method: string, path: string, query: string, headers: Record<string, string> }[]>}
+ */
+export async function monitorCalls() {
+  if (monitorUrl === "") throw new Error("FERRET_E2E_MONITOR_URL is not set: run the scenarios with scripts/lanbox-ferret-test.sh e2e-run");
+  const response = await fetch(`${monitorUrl}/__recorded`);
+  if (!response.ok) throw new Error(`the stand-in monitor answered ${response.status}`);
+  return (await response.json()).calls;
+}
+
+// ------------------------------------------------------------ the import page
+
+/**
+ * Opens the import page of an open vault.
+ * @param {import("@playwright/test").Page} page
+ */
+export async function openImport(page) {
+  // The import page is built again each time (a page that shows what the last import did is left first).
+  await page.evaluate(() => {
+    location.hash = "#/items";
+  });
+  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
+  await page.evaluate(() => {
+    location.hash = "#/import";
+  });
+  await expect(page.locator('[data-role="import-page"]')).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Gives the import page a file and waits for the preview.
+ * @param {import("@playwright/test").Page} page
+ * @param {string | { name: string, mimeType: string, buffer: Buffer }} file
+ */
+export async function chooseImportFile(page, file) {
+  await page.locator('[data-role="file"]').setInputFiles(file);
+  await expect(page.locator('[data-role="preview"]')).toBeVisible({ timeout: 60_000 });
+}
+
+/**
+ * Runs the import of the file that was chosen, with the master password. Returns when the page says the import has finished. A
+ * refusal of the page is an error of the test with the page's own words; the server's limit on sign-ins, which this process
+ * cannot see all of, is waited out and the form is sent again (the page empties the password when it is sent).
+ * @param {import("@playwright/test").Page} page @param {number} items
+ */
+export async function runChosenImport(page, items) {
+  const form = page.locator('[data-role="import-form"]');
+  const done = page.locator('[data-role="done-items"]');
+  const refusal = form.locator('[data-role="error"]');
+  for (let tries = 0; ; tries += 1) {
+    await form.locator('[data-role="master-password"]').fill(secrets.password);
+    await pace();
+    await form.locator('[data-role="submit"]').click();
+    const outcome = await Promise.race([
+      done.waitFor({ timeout: 300_000 }).then(() => "done", () => "timeout"),
+      refusal.waitFor({ timeout: 300_000 }).then(() => "refused", () => "timeout"),
+    ]);
+    if (outcome === "done") break;
+    const said = outcome === "refused" ? ((await refusal.textContent()) ?? "") : "nothing within five minutes";
+    if (/Too many attempts/.test(said) && tries < 4) {
+      await page.waitForTimeout(25_000);
+      continue;
+    }
+    throw new Error(`the import did not finish: ${said}`);
+  }
+  await expect(done).toHaveText(`Items sent to the server: ${items}.`);
+}
+
+/**
+ * A Bitwarden export of this many made-up logins (names `Bulk-<tag>-<n>`).
+ * @param {string} tag @param {number} count
+ */
+export function bulkJson(tag, count) {
+  const items = Array.from({ length: count }, (_, i) => ({
+    id: `c${String(i).padStart(7, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    organizationId: null,
+    folderId: null,
+    type: 1,
+    reprompt: 0,
+    name: `Bulk-${tag}-${i}`,
+    notes: null,
+    favorite: false,
+    login: { uris: [{ match: null, uri: `https://bulk-${i}.example.test/login` }], username: `user-${i}@example.test`, password: `Bulk-pw-${tag}-${i}`, totp: null },
+    collectionIds: null,
+  }));
+  return Buffer.from(JSON.stringify({ encrypted: false, folders: [], items }));
+}
+
+/**
+ * Starts an import in a page and holds its batches before they reach the server (after the window is open and the first batch is
+ * on its way). Returns what the test needs to let them go.
+ * @param {import("@playwright/test").Page} page the vault of the importing browser
+ * @param {Buffer} buffer the file
+ */
+export async function startHeldImport(page, buffer) {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const held = { count: 0 };
+  await page.route("**/api/sync/batch", async (route) => {
+    held.count += 1;
+    await gate;
+    await route.continue();
+  });
+  await openImport(page);
+  await chooseImportFile(page, { name: "held.json", mimeType: "application/json", buffer });
+  await page.locator('[data-role="import-form"] [data-role="master-password"]').fill(secrets.password);
+  await pace();
+  await page.locator('[data-role="import-form"] [data-role="submit"]').click();
+  await expect.poll(() => held.count, { timeout: SLOW, message: "the first batch of the import is on its way" }).toBeGreaterThan(0);
+  return { release, held };
+}
+
+// ------------------------------------------------------------ the sign-in code
+
+/** The headers that the vault's API wants on a request that does not come from its own page. */
+export const API_HEADERS = { Origin: vaultUrl, "Ferret-Protocol": "1", "content-type": "application/json" };
+
+/**
+ * Redeems a one-time sign-in code with the API of the vault. The server limits how often a code is tried (429 with the seconds to
+ * wait); that wait is taken and the call is made again, up to four times, so that a refusal for the code itself is what comes back.
+ * @param {import("@playwright/test").APIRequestContext} api @param {string} email @param {string} code
+ */
+export async function redeemCode(api, email, code) {
+  for (let tries = 0; ; tries += 1) {
+    const response = await api.post(`${vaultUrl}/api/auth/redeem`, { headers: API_HEADERS, data: { email, code } });
+    if (response.status() !== 429 || tries >= 4) return response;
+    const wait = Number(response.headers()["retry-after"] ?? 30);
+    await new Promise((resolve) => setTimeout(resolve, ((Number.isFinite(wait) ? wait : 30) + 2) * 1000));
+  }
+}
+
+/**
+ * Opens a new hour for redeeming codes. The server counts five tries of a code per e-mail address and address in a sliding hour
+ * (every try counts, a good one too), and the scenarios try more than that in a run; so the host moves the server's clock one hour
+ * on (a few seconds more than an hour), which is cheaper than waiting for it. Sessions are good for twelve hours idle, so the
+ * browsers stay signed in.
+ */
+export async function freshRedeemWindow() {
+  secrets.clockOffset += 3_700;
+  remember();
+  await hostStep(`clock-${secrets.clockOffset}`);
 }

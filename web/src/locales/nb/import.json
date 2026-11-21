@@ -37,7 +37,7 @@
   "import.error.import_too_large": "Filen er større enn importen tillater (50 MiB).",
   "import.error.import_too_many": "Filen har flere elementer enn importen tillater (10 000).",
   "import.error.import_unreadable": "Filen kunne ikke leses.",
-  "import.error.import_window_open": "En annen enhet har en import åpen for dette hvelvet. Vent til den er ferdig, eller fullfør den der. Et vindu slutter av seg selv etter 30 minutter.",
+  "import.error.import_window_open": "En annen enhet har en import åpen for dette hvelvet. Den hindrer andre enheter i å importere i opptil 30 minutter, også når enheten er logget ut eller har stoppet. For å fjerne den: fullfør importen på den enheten (eller start en ny import der etter innlogging), eller vent til de 30 minuttene er over.",
   "import.error.import_worker_failed": "Den delen av siden som leser filen, feilet. Ingenting ble importert. Last siden på nytt og prøv igjen.",
   "import.error.import_wrong_export_password": "Eksportpassordet er feil, eller filen er endret. Ingenting ble importert.",
   "import.error.import_zip": "Dette er en ZIP-fil. Ferret kan ikke lese ZIP-eksporter. Eksporter hvelvet på nytt som en ukryptert .json- eller .csv-fil uten vedlegg.",
