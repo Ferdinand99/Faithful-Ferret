@@ -21,8 +21,10 @@
 //!    this build makes, and then one transaction raises the restore epoch
 //!    ([`reconcile::bump`]'s rule, above the epoch of the data that is there)
 //!    and ends every session, hand-over, sign-in state, pending registration
-//!    and sign-in code and raises every user's session version
-//!    ([`reconcile::bump`]).
+//!    and sign-in code, deletes every device token and revokes every device
+//!    that had tokens (they sign in again), and raises every user's session
+//!    version (`reconcile::bump_in` does both). The report and the command's
+//!    output say how many sessions and how many devices were ended.
 //! 4. The database of the data directory with its `-wal`, `-shm` and
 //!    `-journal`, and the three secret files, are moved with `rename` into
 //!    `<data>/pre-restore-<time>/`. The command never deletes them.

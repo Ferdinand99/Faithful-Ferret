@@ -412,10 +412,11 @@ impl fmt::Debug for Credential {
 
 /// A request to a sync route: a full session of the web vault, or an access
 /// token of a device with a DPoP proof of its key. Only the sync routes take
-/// it (`GET /api/sync/changes`, `PUT /api/sync/items/{id}`,
+/// it (`GET /api/sync/changes`, `GET /api/sync/items`,
+/// `GET /api/sync/restore-rows`, `PUT /api/sync/items/{id}`,
 /// `POST /api/sync/batch`, `GET`/`PUT /api/sync/checkpoint`,
-/// `GET /api/sync/events` and `GET /api/vault/unlock-methods`); every other
-/// route takes a session extractor and refuses a token.
+/// `GET /api/sync/events` and `GET /api/vault/unlock-methods`: nine routes);
+/// every other route takes a session extractor and refuses a token.
 ///
 /// **Without a token** (no `Authorization` with the scheme `DPoP`): the same
 /// checks as [`VaultSession`]. An `Authorization` of another scheme (`Basic`
