@@ -59,7 +59,14 @@ packs the folder with `tar`, encrypts it with `age` to a **public** key that you
 one it made, and the file is an age file), trims the target by the retention rule above (`FERRET_COPY_KEEP_DAYS`, 30 by
 default, and the three newest always stay), and only then pushes to its own monitor. A plain set never leaves the machine.
 `age` is a separate, widely used tool; Ferret adds no cryptography of its own here. The container refuses to run if it
-finds an age secret key in its environment or if the backup folder is writable.
+finds an age secret key in its environment or if the backup folder is writable. It runs on a network of its own and cannot
+reach the app's ports; it mounts only the backup volume (read-only) and its SSH key.
+
+**Size limit.** One copy cycle holds the encrypted set and the copy that is read back from the target in the container's work
+space, a memory-backed folder (`/work`, 768 MiB on the stack for real data) that counts against the container's memory limit
+(1 GiB). A database that passes about 300 MiB therefore makes every copy fail, and the copy monitor alerts when that happens
+(it fails safe). Before that point, raise the size of `/work` and `mem_limit` of `ferret-home-copy` in
+`docker/compose.ferret-home.yml`. The same holds for opening a copy by hand: you need room for the packed set and its files.
 
 What you set up before the first start:
 
@@ -180,8 +187,11 @@ Do it with the server stopped:
    <compose> run --rm --no-deps <service> restore-epoch bump --yes
    ```
 
-   It uses the same rule as the restore (`--at-least <n>` works too), ends the sessions the same way, and prints the new
-   epoch, for example `restore epoch is now 1763640000 (1 vault raised)`. Without `--yes` it changes nothing.
+   It uses the same rule as the restore (`--at-least <n>` works too) and ends everything that the copy brought back, exactly
+   like `ferret backup restore`: every session, hand-over, login state and pending registration, every pending sign-in code,
+   and a raised `session_version` for every user, all in the same transaction as the bump. It prints the new
+   epoch, for example `restore epoch is now 1763640000 (1 vault raised)`. Without `--yes` it changes nothing. A bump right
+   after `ferret backup restore` only logs everyone out once more, which is harmless.
 3. Start the server.
 
 A bump needs a database that has every migration of the build you run. A backup that was made before migration `0006`
@@ -253,7 +263,9 @@ file has the full list of what the host needs (Docker 28 or newer, buildx, compo
   * **Read the host key on the target itself** (above), never through the tunnel.
 * **After the first start**, send one request through the public address of the vault with a forged
   `X-Forwarded-For` header and look at what the server recorded (`scripts/ferret-home.sh status` shows the peers and
-  the addresses it has seen): the client address must be the real one, not the forged one. If the forged one shows, the
+  the addresses it has seen): the client address must be the real one, not the forged one. The server logs one line for each
+  new peer address only while `FERRET_LOG_PEERS` is on. It is off by default on the stack for real data, because IP addresses
+  should not be kept longer than needed: turn it on for this check, and off again when you have looked. If the forged one shows, the
   proxy passes the client's value on as the entry the server believes; fix that before any real use.
 * **Residual risk, accepted:** any process on the host that can open a connection to the loopback ports counts as the
   proxy. They are the host's own processes. Allowing only the tunnel client's user to connect to them (an `iptables` match on the user id
