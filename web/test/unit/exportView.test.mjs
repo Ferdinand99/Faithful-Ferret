@@ -271,6 +271,25 @@ test("an_error_is_shown_by_its_code_and_the_form_stays_usable", async () => {
   });
 });
 
+test("a_too_short_export_password_gets_the_export_text_not_the_master_password_text", async () => {
+  await withDom(async () => {
+    for (const lang of ["en", "nb"]) {
+      const t = i18n(lang).t;
+      const error = Object.assign(new Error("x"), { code: "input_too_short" });
+      const text = exportErrorText(t, error);
+      assert.equal(text, t("export.error.input_too_short"));
+      assert.notEqual(text, t("account.error.input_too_short"), "not the text about the master password");
+      assert.ok(text.includes("12"), "it names the length an export password needs");
+    }
+    const t = i18n("en").t;
+    const { root } = page({ t, exportEncrypted: async () => { throw Object.assign(new Error("x"), { code: "input_too_short" }); } });
+    await settle();
+    type(root, { "master-password": MASTER, "export-password": EXPORT_PW, "export-password-again": EXPORT_PW });
+    await submit(root, "encrypted-form");
+    assert.equal(textOf(find(root, "error")).trim(), t("export.error.input_too_short"));
+  });
+});
+
 test("a_lock_of_the_vault_empties_the_fields", async () => {
   await withDom(async () => {
     const { root, scope } = page();

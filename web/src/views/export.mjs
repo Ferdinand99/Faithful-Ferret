@@ -20,7 +20,7 @@ import { securityErrorText } from "./securityError.mjs";
 
 /** The codes with a text of their own in the export catalog (`export.error.<code>`). */
 export const EXPORT_ERRORS = Object.freeze([
-  "export_item_unreadable", "input_same_as_master_password", "kdf_out_of_memory", "kdf_out_of_range", "nothing_to_export",
+  "export_item_unreadable", "input_same_as_master_password", "input_too_short", "kdf_out_of_memory", "kdf_out_of_range", "nothing_to_export",
   "plain_not_confirmed", "too_large", "unsupported",
 ]);
 
