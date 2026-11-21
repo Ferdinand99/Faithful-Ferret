@@ -762,6 +762,8 @@ checkpoint = { seq: S, digest, mac }
 
 *Clarified 2026-11-21:* a restore is done on a stopped server, from a backup set (§ 11), and it ends everything that a backup can bring back to life. In the transaction of the bump (the standalone `restore-epoch bump` of a data directory that was put back by hand does the same) the server ends every session, hand-over, login state and pending registration, revokes every pending sign-in code, and raises every user's `session_version` (so the kit's cookies stop working too). Every device therefore signs in again, and a code from before the restore is dead after it. The restore is done in steps behind a marker file in the data directory that stops the server from starting until the restore has finished or been undone (`docs/OPERATIONS.md`), so an interrupted restore never leaves an empty server with new keys.
 
+*Clarified 2026-11-21:* queued writes, also after a new sign-in, wait for the first pass that reads the feed to its end. A device whose reads fail therefore keeps its writes held (the status says "Offline, trying again", the items say "Waiting to sync"; nothing is lost) and sends them at the first clean pass.
+
 **Residual risk (L4), stated honestly:**
 - A rollback of the **newest writes since the last checkpoint** is not noticed.
 - A rollback of **the whole vault to an older, consistent checkpoint** is noticed only by devices that have seen a newer checkpoint.
