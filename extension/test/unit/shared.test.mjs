@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { build, packXpi, sha256, sharedProblems } from "../../scripts/build.mjs";
 import { extensionRoot, makeRoot, repoRoot } from "./buildHelpers.mjs";
-import { readGraph } from "./importGraph.mjs";
+import { reach, readGraph } from "./importGraph.mjs";
 
 const WEB_SRC = join(repoRoot, "web", "src");
 const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
@@ -35,13 +35,19 @@ function runCheck(target) {
 /** The list as it stands. A change to it is made on purpose, here and in shared.json together. */
 const EXPECTED_LIST = [
   "api.mjs",
+  "auth/deviceKey.mjs",
+  "auth/dpop.mjs",
+  "auth/tokens.mjs",
   "b64.mjs",
   "crypto/convert.mjs",
   "crypto/env.mjs",
   "crypto/errors.mjs",
+  "crypto/session.mjs",
   "dom.mjs",
   "flows/deviceSecret.mjs",
   "flows/forgetServer.mjs",
+  "flows/setupQr.mjs",
+  "flows/signin.mjs",
   "i18n.mjs",
   "store/cache.mjs",
   "store/exportReminder.mjs",
@@ -71,9 +77,51 @@ const EXPECTED_LIST = [
 test("the_shared_list_is_exactly_the_agreed_one", () => {
   const list = realList();
   assert.deepEqual(list, EXPECTED_LIST);
-  // The sign-in flow, the session and the auth modules wait for the device-mode change in the web vault.
-  for (const later of ["flows/signin.mjs", "crypto/session.mjs"]) assert.ok(!list.includes(later), `${later} is not shared yet`);
-  assert.ok(!list.some((path) => path.startsWith("auth/")), "no auth/ module is shared yet");
+});
+
+/**
+ * The web vault's own account operations, and the PDF, QR and download code under
+ * them: the extension never carries them (they stay behind `crypto/vaultSession.mjs`).
+ */
+const WEB_VAULT_ONLY = [
+  "crypto/vaultSession.mjs",
+  "download.mjs",
+  "flows/changePassword.mjs",
+  "flows/emergencySheet.mjs",
+  "flows/export.mjs",
+  "flows/import.mjs",
+  "flows/reauth.mjs",
+  "flows/reapplyMethods.mjs",
+  "flows/register.mjs",
+  "flows/renewRecovery.mjs",
+  "flows/showSecretKey.mjs",
+  "flows/signedCall.mjs",
+  "pdf.mjs",
+  "qr.mjs",
+];
+
+test("the_shared_list_stays_closed_under_imports", () => {
+  // The real import graph of web/src, read from the sign-in modules the extension takes: everything they
+  // reach is on the list, and nothing they reach is a web-vault-only module.
+  const list = new Set(realList());
+  /** @param {string} dir @param {string} prefix @returns {string[]} */
+  const walk = (dir, prefix = "") =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walk(join(dir, entry.name), `${prefix}${entry.name}/`) : entry.name.endsWith(".mjs") ? [`${prefix}${entry.name}`] : []);
+  const all = new Map(walk(WEB_SRC).map((path) => [path, readFileSync(join(WEB_SRC, ...path.split("/")))]));
+  const graph = readGraph(all);
+  const roots = ["crypto/session.mjs", "flows/signin.mjs", "auth/deviceKey.mjs", "auth/dpop.mjs", "auth/tokens.mjs"];
+  for (const root of roots) assert.ok(list.has(root), `${root} is shared`);
+  const reached = reach(graph.edges, roots);
+  assert.deepEqual([...reached].filter((path) => !list.has(path)).sort(), [], "every module the sign-in reaches is on the list");
+  assert.deepEqual(WEB_VAULT_ONLY.filter((path) => reached.has(path) || list.has(path)), [], "no web-vault-only module");
+  // The same holds for the whole list, from every file on it.
+  assert.deepEqual([...reach(graph.edges, list)].filter((path) => !list.has(path)).sort(), []);
+  // The web vault still reaches the shared session and sign-in, and its own operations, through its own session.
+  const vault = reach(graph.edges, ["crypto/vaultSession.mjs"]);
+  for (const path of ["crypto/session.mjs", "flows/signin.mjs", ...WEB_VAULT_ONLY]) {
+    assert.ok(vault.has(path), `the web vault's session reaches ${path}`);
+  }
 });
 
 test("every_shared_file_is_byte_equal_to_its_source_in_web", async () => {

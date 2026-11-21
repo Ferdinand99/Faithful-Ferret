@@ -379,3 +379,27 @@ test("no_token_reaches_url_storage_or_console", async (t) => {
     for (const secret of secrets) assert.ok(!text.includes(secret), "no token in an error");
   }
 });
+
+test("a_device_client_ignores_unknown_answer_fields_and_the_web_vault_refuses_them", async () => {
+  const device = await signedInDevice();
+  const page = { changes: [], latest_seq: 0, vk_epoch: 1, restore_epoch: 0, restore_seq: 0, has_more: false };
+  const later = { ...page, later: { from: "a newer server" }, changes: [] };
+  device.server.handle = () => answer(200, later);
+  // The extension, released apart from the server, reads what it knows and drops the rest.
+  const read = await device.api.get(`${CHANGES}?since=0&limit=1`, { shape: "changes_res" });
+  assert.deepEqual(Object.keys(read), Object.keys(page));
+  // The web vault comes from its own server: an unknown field is a bad answer there, as before.
+  const web = createApi({ fetchImpl: async () => answer(200, later) });
+  assert.equal((await failure(web.get(`${CHANGES}?since=0&limit=1`, { shape: "changes_res" }))).code, "bad_response");
+  // A known field that is wrong is a bad answer for both.
+  device.server.handle = () => answer(200, { ...page, vk_epoch: -1 });
+  assert.equal((await failure(device.api.get(`${CHANGES}?since=0&limit=1`, { shape: "changes_res" }))).code, "bad_response");
+  // The current row of a conflict is read the same way.
+  const row = { current_rev: 2, deleted: true, later: 1 };
+  device.server.handle = () => answer(409, row);
+  const conflict = await failure(device.api.put("/api/sync/items/ab", "{}"));
+  assert.equal(conflict.code, "conflict");
+  assert.deepEqual({ ...conflict.body }, { current_rev: 2, deleted: true });
+  const webConflict = await failure(createApi({ fetchImpl: async () => answer(409, row) }).put("/api/sync/items/ab", "{}"));
+  assert.equal(webConflict.code, "bad_response");
+});
