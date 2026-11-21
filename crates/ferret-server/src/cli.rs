@@ -353,15 +353,27 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
 
 /// The error of a restore, with what it left: with the marker there the restore
 /// is half done and the server does not start; without it the data directory
-/// is as it was.
+/// is as it was. An error that already names `--abort` says what to do, so the
+/// hint to run the same command again is left out then.
 fn restore_failed(data_dir: &Path, error: crate::backup::BackupError) -> StartError {
+    let message = error.to_string();
     let left = if restore::refuse_if_in_progress(data_dir).is_err() {
-        "the restore is not finished and the server will not start: run the same command again \
-         to finish it, or `ferret backup restore --abort --yes` to put the old files back"
+        restore_left(&message)
     } else {
         "the data directory was not changed"
     };
-    format!("{error}; {left}").into()
+    format!("{message}; {left}").into()
+}
+
+/// What to say about a restore that is not finished, after an error with this
+/// text.
+fn restore_left(message: &str) -> &'static str {
+    if message.contains("--abort") {
+        "the restore is not finished and the server will not start"
+    } else {
+        "the restore is not finished and the server will not start: run the same command again \
+         to finish it, or `ferret backup restore --abort --yes` to put the old files back"
+    }
 }
 
 fn plural(n: u64) -> &'static str {
@@ -566,5 +578,21 @@ mod tests {
         );
         assert!(!dir.join(DB_FILE).exists(), "no database was opened");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An error that already says to use `--abort` is not followed by a hint to
+    /// run the same command again, which would contradict it.
+    #[test]
+    fn a_refusal_that_names_abort_gets_no_second_hint() {
+        let plain = restore_left("backup: the files could not be moved");
+        assert!(plain.contains("run the same command again"), "{plain}");
+        assert!(plain.contains("--abort"), "{plain}");
+
+        let named = restore_left(
+            "refused: the restored files are not all in the data directory: undo the restore \
+             with `ferret backup restore --abort --yes`",
+        );
+        assert!(!named.contains("same command"), "{named}");
+        assert!(named.contains("not finished"), "{named}");
     }
 }
