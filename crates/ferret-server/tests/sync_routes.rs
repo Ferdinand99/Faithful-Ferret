@@ -9,7 +9,7 @@
 
 mod support;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use ferret_server::vault::rate::RateConfig;
 use ferret_server::wire::b64url;
 use serde_json::{Value, json};
@@ -122,6 +122,71 @@ async fn a_batch_counts_one_operation_for_each_item() {
     let spent = a.post_batch(&ops[4..5]).await;
     assert_eq!(spent.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(spent.header("retry-after"), "1");
+}
+
+#[tokio::test]
+async fn batches_without_a_window_count_as_in_m2() {
+    // One operation a second, and room for four at once.
+    let rate = RateConfig {
+        ops_per_min: 60,
+        ops_burst: 4,
+        ..RateConfig::DEFAULT
+    };
+    let world = World::on(TestApp::builder().rate(rate).build().await).await;
+    let a = world.client("a").await;
+    let vault = world.vault();
+    let now = i64::try_from(world.app.state.clock.now_unix()).expect("a time");
+    world
+        .db(move |conn| conn.execute("UPDATE ferret_sessions SET reauth_at = ?1", [now]))
+        .await
+        .expect("mark the sessions fresh");
+    let ops: Vec<Value> = (1..=12u16)
+        .map(|n| as_op(item(n), &live_body(&vault, item(n), 0, "n", u32::from(n))))
+        .collect();
+
+    // An open window does not change the batches that do not name it: they
+    // are counted per item against the device, as before.
+    let opened = a
+        .send(Method::POST, "/api/sync/import", Some(&json!({ "ops": 6 })))
+        .await;
+    assert_eq!(opened.status, StatusCode::OK, "{}", opened.text());
+    let window = opened.json()["window_id"].clone();
+    let ok = batch_results(&a.post_batch(&ops[..4]).await);
+    assert!(ok.results.iter().all(|r| r.status == 200));
+    let over = a.post_batch(&ops[4..8]).await;
+    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(error(&over), "throttled");
+
+    // The window is untouched by them, and the same operations pass in it.
+    let in_window = a
+        .send(
+            Method::POST,
+            "/api/sync/batch",
+            Some(&json!({ "ops": &ops[4..10], "import_window": window })),
+        )
+        .await;
+    let results = batch_results(&in_window);
+    assert!(results.results.iter().all(|r| r.status == 200));
+    let none_left = a
+        .send(
+            Method::POST,
+            "/api/sync/batch",
+            Some(&json!({ "ops": &ops[10..11], "import_window": window })),
+        )
+        .await;
+    // The window is spent, so the batch is counted like any other: the bucket is
+    // empty now, and once it has refilled the answer is that the window is no use.
+    assert_eq!(none_left.status, StatusCode::TOO_MANY_REQUESTS);
+    world.app.clock.advance(60);
+    let none_left = a
+        .send(
+            Method::POST,
+            "/api/sync/batch",
+            Some(&json!({ "ops": &ops[10..11], "import_window": window })),
+        )
+        .await;
+    assert_eq!(none_left.status, StatusCode::CONFLICT);
+    assert_eq!(error(&none_left), "import_window_invalid");
 }
 
 // -------------------------------------------------------- the write queue

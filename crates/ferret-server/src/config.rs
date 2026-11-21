@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::backup::BackupConfig;
 use crate::error::ConfigError;
+use crate::secret::SecretUrl;
 
 /// The Faithful Ferret server.
 #[derive(Debug, Clone, Parser)]
@@ -53,6 +55,36 @@ pub struct Config {
     /// Comma separated.
     #[arg(long, env = "FERRET_TRUSTED_PROXIES", value_delimiter = ',')]
     pub trusted_proxies: Vec<String>,
+
+    /// Folder for the scheduled backup sets. Default: `backups/auto` under the
+    /// data directory. On a stack with real data, a volume of its own.
+    #[arg(long, env = "FERRET_BACKUP_DIR")]
+    pub backup_dir: Option<PathBuf>,
+
+    /// Hours between two scheduled backups (1 to 168).
+    #[arg(
+        long,
+        env = "FERRET_BACKUP_EVERY_HOURS",
+        default_value_t = 24,
+        value_parser = clap::value_parser!(u32).range(1..=168)
+    )]
+    pub backup_every_hours: u32,
+
+    /// Days a backup set is kept (1 to 365). The newest good sets are kept
+    /// longer.
+    #[arg(
+        long,
+        env = "FERRET_BACKUP_KEEP_DAYS",
+        default_value_t = 30,
+        value_parser = clap::value_parser!(u32).range(1..=365)
+    )]
+    pub backup_keep_days: u32,
+
+    /// The push address of the monitor that is told after each good backup.
+    /// A secret: it is never printed, logged or shown, and `--help` does not
+    /// show the value of its variable.
+    #[arg(long, env = "FERRET_BACKUP_PUSH_URL", hide_env_values = true)]
+    pub backup_push_url: Option<SecretUrl>,
 }
 
 impl Config {
@@ -64,6 +96,22 @@ impl Config {
     /// Where the admin listener binds.
     pub fn admin_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.admin_port)
+    }
+
+    /// The backup settings, checked. An empty folder or push address (an empty
+    /// variable in a compose file) is read as not set.
+    pub fn backup_config(&self) -> Result<BackupConfig, ConfigError> {
+        let dir = self
+            .backup_dir
+            .as_deref()
+            .filter(|dir| !dir.as_os_str().is_empty());
+        BackupConfig::from_parts(
+            &self.data_dir,
+            dir,
+            self.backup_every_hours,
+            self.backup_keep_days,
+            self.backup_push_url.as_ref(),
+        )
     }
 }
 

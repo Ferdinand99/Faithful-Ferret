@@ -2,10 +2,10 @@
 //! Spec: Fase 1 § 8.1, § 8.3.
 //!
 //! The request is checked in this order, and nothing reads or writes the
-//! database before the last step (after the session, which the extractor
-//! checks first):
+//! database before the last step (after the caller, a session or a device
+//! token, which the extractor checks first):
 //!
-//! 1. the session;
+//! 1. the caller (`VaultCaller`);
 //! 2. the size of the body, at most 128 KiB;
 //! 3. the JSON (unknown, repeated and mistyped fields are refused), and that
 //!    the request has exactly one form: a live row or a tombstone, where only
@@ -51,7 +51,7 @@ use super::rate::{SyncLimits, WriteGate, busy, throttled};
 use super::store::{self, PutBody, PutOutcome, PutRequest};
 use super::validate::check_envelope;
 use crate::error::{ApiError, StoreError, status_of};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::ids::MANIFEST_ITEM_ID;
 use crate::state::VaultDb;
 use crate::wire::{
@@ -122,9 +122,9 @@ fn prepare(id: &str, raw: &[u8]) -> Result<Prepared, ApiError> {
     })
 }
 
-/// Writes one item of the session vault.
+/// Writes one item of the caller's vault.
 async fn put_item(
-    session: VaultSession,
+    caller: VaultCaller,
     State(db): State<VaultDb>,
     State(limits): State<Arc<SyncLimits>>,
     State(gate): State<WriteGate>,
@@ -149,9 +149,9 @@ async fn put_item(
     })?;
     let item_hex = hex16::encode(prepared.item_id.as_bytes());
 
-    let vault = session.vault;
-    let device = session.device;
-    let now = session.now;
+    let vault = caller.vault();
+    let device = caller.device();
+    let now = caller.now();
     let resurrect = prepared.request.resurrect_requested();
     limits
         .admit(

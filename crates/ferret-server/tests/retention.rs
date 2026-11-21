@@ -11,7 +11,9 @@ use ferret_server::vault::quota::Limits;
 use ferret_server::vault::retention::{
     IDEM_DAYS, IDEM_PER_DEVICE, Job, RetentionReport, TOMBSTONE_DAYS, next_run, run_once,
 };
-use ferret_server::vault::store::{PutBody, PutOutcome, PutRequest, changes_since, put_item};
+use ferret_server::vault::store::{
+    PutBody, PutOutcome, PutRequest, StoredCheckpoint, changes_since, put_checkpoint, put_item,
+};
 use rusqlite::{Connection, params};
 use support::accounts::{TestAccount, add_account, id16};
 use support::{Jar, TestApp, Which};
@@ -71,6 +73,32 @@ fn put(conn: &mut Connection, a: &TestAccount, req: &PutRequest<'_>, now: i64) -
         PutOutcome::Stored { rev, seq, .. } => (rev, seq),
         other => panic!("not stored: {other:?}"),
     }
+}
+
+/// Stores a checkpoint at the top `seq` of the vault, as a client that has read
+/// everything does: the rows up to there are what the checkpoint covers. The
+/// store keeps the bytes as they come, so the digest and the MAC are filler.
+fn checkpoint_at_top(conn: &mut Connection, a: &TestAccount) -> u64 {
+    let top: i64 = conn
+        .query_row(
+            "SELECT seq FROM ferret_vaults WHERE vault_id = ?1",
+            [a.vault_id.as_bytes()],
+            |r| r.get(0),
+        )
+        .expect("the top seq");
+    let seq = u64::try_from(top).expect("a seq");
+    put_checkpoint(
+        conn,
+        &a.vault_id,
+        &StoredCheckpoint {
+            seq,
+            digest: [0xd1; 32],
+            mac: [0xa5; 32],
+            entries: Vec::new(),
+        },
+    )
+    .expect("a checkpoint");
+    seq
 }
 
 fn count(conn: &Connection, sql: &str) -> i64 {
@@ -150,6 +178,7 @@ fn tombstones_older_than_400_days_are_purged_and_min_valid_since_rises() {
     put(&mut conn, &a, &live(item(2), 0, 2), written); // seq 3
     put(&mut conn, &a, &tomb(item(1), 1, 3), written); // seq 4
     put(&mut conn, &a, &tomb(item(2), 1, 4), written + DAY); // seq 5
+    assert_eq!(checkpoint_at_top(&mut conn, &a), 5);
     let before = bytes_used(&conn, &a);
     assert_eq!(floor(&conn, &a), 0);
 
@@ -185,6 +214,7 @@ fn younger_tombstones_and_live_rows_stay() {
     put(&mut conn, &a, &live(item(1), 0, 1), written);
     put(&mut conn, &a, &live(item(2), 0, 2), written);
     put(&mut conn, &a, &tomb(item(2), 1, 3), written + 300 * DAY);
+    checkpoint_at_top(&mut conn, &a);
     let before = changes_since(&conn, &a.vault_id, 0, 100, usize::MAX).expect("changes");
 
     // 1 000 days on, the live rows (old as they are) and the manifest stay; the
@@ -219,6 +249,7 @@ fn a_pass_works_per_vault() {
     for (who, at) in [(&a, NOW), (&b, NOW + 399 * DAY), (&c, NOW)] {
         put(&mut conn, who, &live(item(1), 0, 1), at);
         put(&mut conn, who, &tomb(item(1), 1, 2), at);
+        checkpoint_at_top(&mut conn, who);
     }
     let report = run_once(&mut conn, NOW + 401 * DAY).expect("a pass");
     assert_eq!(report.vaults, 3);
@@ -234,6 +265,207 @@ fn a_pass_works_per_vault() {
         .expect("count")
     };
     assert_eq!((rows(&a), rows(&b), rows(&c)), (0, 1, 0));
+}
+
+// -------------------------------------------- tombstones and the checkpoint
+
+fn tombstone_seqs(conn: &Connection, a: &TestAccount) -> Vec<i64> {
+    let mut stmt = conn
+        .prepare("SELECT seq FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 ORDER BY seq")
+        .expect("prepare");
+    let rows = stmt
+        .query_map([a.vault_id.as_bytes()], |r| r.get(0))
+        .expect("rows");
+    rows.map(|r| r.expect("a seq")).collect()
+}
+
+fn stored_checkpoint_seq(conn: &Connection, a: &TestAccount) -> i64 {
+    conn.query_row(
+        "SELECT seq FROM ferret_checkpoints WHERE vault_id = ?1",
+        [a.vault_id.as_bytes()],
+        |r| r.get(0),
+    )
+    .expect("a checkpoint")
+}
+
+#[test]
+fn a_tombstone_above_the_stored_checkpoint_seq_is_kept_after_400_days() {
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, 1), NOW); // seq 2
+    put(&mut conn, &a, &live(item(2), 0, 2), NOW); // seq 3
+    assert_eq!(checkpoint_at_top(&mut conn, &a), 3);
+    put(&mut conn, &a, &tomb(item(1), 1, 3), NOW); // seq 4, above the checkpoint
+    put(&mut conn, &a, &tomb(item(2), 1, 4), NOW); // seq 5, above the checkpoint
+    let bytes = bytes_used(&conn, &a);
+
+    // A very long time on: nothing the checkpoint does not cover goes.
+    for days in [401, 1_000, 10_000] {
+        let report = run_once(&mut conn, NOW + days * DAY).expect("a pass");
+        assert_eq!(report.tombstones_removed, 0, "after {days} days");
+        assert_eq!(report.failed_vaults, 0);
+    }
+    assert_eq!(tombstone_seqs(&conn, &a), vec![4, 5]);
+    assert_eq!(floor(&conn, &a), 0, "the floor did not move");
+    assert_eq!(bytes_used(&conn, &a), bytes, "no bytes were freed");
+}
+
+#[test]
+fn a_tombstone_at_or_below_it_is_purged_and_min_valid_since_rises_to_its_seq() {
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, 1), NOW); // seq 2
+    put(&mut conn, &a, &live(item(2), 0, 2), NOW); // seq 3
+    put(&mut conn, &a, &tomb(item(1), 1, 3), NOW); // seq 4
+    // The checkpoint is at the seq of the first tombstone: "at or below" takes it.
+    assert_eq!(checkpoint_at_top(&mut conn, &a), 4);
+    put(&mut conn, &a, &tomb(item(2), 1, 4), NOW); // seq 5, above
+
+    let report = run_once(&mut conn, NOW + 401 * DAY).expect("a pass");
+    assert_eq!(report.tombstones_removed, 1);
+    assert_eq!(
+        tombstone_seqs(&conn, &a),
+        vec![5],
+        "only the one above stays"
+    );
+    assert_eq!(
+        floor(&conn, &a),
+        4,
+        "the highest seq purged, not the highest tombstone"
+    );
+    assert_eq!(
+        stored_checkpoint_seq(&conn, &a),
+        4,
+        "the pass left it alone"
+    );
+}
+
+#[test]
+fn purge_tombstones_takes_only_rows_up_to_max_seq() {
+    use ferret_server::vault::store::{Purged, purge_tombstones};
+
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, 1), NOW); // seq 2
+    put(&mut conn, &a, &live(item(2), 0, 2), NOW); // seq 3
+    put(&mut conn, &a, &live(item(3), 0, 3), NOW); // seq 4
+    put(&mut conn, &a, &tomb(item(1), 1, 4), NOW); // seq 5
+    put(&mut conn, &a, &tomb(item(2), 1, 5), NOW); // seq 6
+    put(&mut conn, &a, &tomb(item(3), 1, 6), NOW); // seq 7
+    let all = i64::MAX;
+
+    // Nothing at or below 4 is a tombstone.
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, all, 4).expect("purge"),
+        Purged {
+            removed: 0,
+            min_valid_since: 0
+        }
+    );
+    // 6 takes the first two, and the floor is the highest of them.
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, all, 6).expect("purge"),
+        Purged {
+            removed: 2,
+            min_valid_since: 6
+        }
+    );
+    assert_eq!(tombstone_seqs(&conn, &a), vec![7]);
+    // A lower bound later does not lower the floor.
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, all, 1)
+            .expect("purge")
+            .min_valid_since,
+        6
+    );
+    // The time bound still applies with no bound on the seq.
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, NOW - 1, u64::MAX)
+            .expect("purge")
+            .removed,
+        0
+    );
+    assert_eq!(
+        purge_tombstones(&mut conn, &a.vault_id, all, u64::MAX)
+            .expect("purge")
+            .min_valid_since,
+        7
+    );
+}
+
+#[test]
+fn a_vault_with_only_the_registration_checkpoint_keeps_its_tombstones() {
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, 1), NOW); // seq 2
+    put(&mut conn, &a, &tomb(item(1), 1, 2), NOW); // seq 3
+    assert_eq!(
+        stored_checkpoint_seq(&conn, &a),
+        1,
+        "the registration checkpoint is the only one"
+    );
+
+    let report = run_once(&mut conn, NOW + 1_000 * DAY).expect("a pass");
+    assert_eq!(report.tombstones_removed, 0);
+    assert_eq!(report.failed_vaults, 0);
+    assert_eq!(tombstone_seqs(&conn, &a), vec![3]);
+    assert_eq!(floor(&conn, &a), 0);
+}
+
+#[test]
+fn a_newer_checkpoint_lets_the_next_run_purge() {
+    let (mut conn, a) = with_account();
+    put(&mut conn, &a, &live(item(1), 0, 1), NOW); // seq 2
+    put(&mut conn, &a, &tomb(item(1), 1, 2), NOW); // seq 3
+
+    let first = run_once(&mut conn, NOW + 401 * DAY).expect("a pass");
+    assert_eq!(first.tombstones_removed, 0, "no checkpoint covers it yet");
+    assert_eq!(floor(&conn, &a), 0);
+
+    // A device reads everything and uploads a checkpoint at the top.
+    assert_eq!(checkpoint_at_top(&mut conn, &a), 3);
+    let second = run_once(&mut conn, NOW + 402 * DAY).expect("a pass");
+    assert_eq!(second.tombstones_removed, 1);
+    assert_eq!(floor(&conn, &a), 3, "the seq of the purged tombstone");
+    assert!(tombstone_seqs(&conn, &a).is_empty());
+}
+
+#[test]
+fn the_retention_run_still_continues_per_vault() {
+    let mut conn = migrated();
+    let a = add_account(&mut conn, 1, NOW);
+    let b = add_account(&mut conn, 2, NOW);
+    let c = add_account(&mut conn, 3, NOW);
+    for who in [&a, &b, &c] {
+        put(&mut conn, who, &live(item(1), 0, 1), NOW);
+        put(&mut conn, who, &tomb(item(1), 1, 2), NOW);
+    }
+    // `b` has only its registration checkpoint, so it has nothing to purge. The
+    // purge of the first of `a` and `c` in the order of the pass fails.
+    checkpoint_at_top(&mut conn, &a);
+    checkpoint_at_top(&mut conn, &c);
+    let (first, second) = if a.vault_id.as_bytes() < c.vault_id.as_bytes() {
+        (&a, &c)
+    } else {
+        (&c, &a)
+    };
+    conn.execute_batch(&block_one_vault_sql(&first.vault_id))
+        .expect("a trigger");
+
+    let report = run_once(&mut conn, NOW + 401 * DAY).expect("a pass that reports the failure");
+    assert_eq!(report.vaults, 3);
+    assert_eq!(report.failed_vaults, 1, "only the blocked vault failed");
+    assert_eq!(report.tombstones_removed, 1);
+    assert_eq!(tombstone_seqs(&conn, first), vec![3]);
+    assert!(tombstone_seqs(&conn, second).is_empty());
+    assert_eq!(
+        tombstone_seqs(&conn, &b),
+        vec![3],
+        "only the registration checkpoint, no purge"
+    );
+
+    conn.execute_batch("DROP TRIGGER block_one_vault;")
+        .expect("drop");
+    let again = run_once(&mut conn, NOW + 402 * DAY).expect("a pass");
+    assert_eq!(again.failed_vaults, 0);
+    assert_eq!(again.tombstones_removed, 1, "the vault that failed before");
+    assert_eq!(tombstone_seqs(&conn, &b), vec![3]);
 }
 
 // ---------------------------------------------------- idempotency records
@@ -404,6 +636,7 @@ async fn app_with_an_old_tombstone() -> (TestApp, TestAccount) {
             // Written long before the clock of the app: a pass finds it old.
             put(conn, &a, &live(item(1), 0, 1), 1_000);
             put(conn, &a, &tomb(item(1), 1, 2), 1_000);
+            checkpoint_at_top(conn, &a);
             Ok(())
         })
         .await
@@ -533,6 +766,7 @@ fn a_vault_that_fails_does_not_keep_the_next_vault_from_being_purged() {
     for who in [&a, &b] {
         put(&mut conn, who, &live(item(1), 0, 1), NOW);
         put(&mut conn, who, &tomb(item(1), 1, 2), NOW);
+        checkpoint_at_top(&mut conn, who);
     }
     // Only the purge of the vault that comes first in the order of the pass fails.
     let (first, second) = if a.vault_id.as_bytes() < b.vault_id.as_bytes() {
@@ -581,6 +815,7 @@ async fn a_pass_with_one_failed_vault_is_tried_again_in_ten_minutes() {
         for who in [&a, &b] {
             put(conn, who, &live(item(1), 0, 1), 1_000);
             put(conn, who, &tomb(item(1), 1, 2), 1_000);
+            checkpoint_at_top(conn, who);
         }
         conn.execute_batch(&blocked)?;
         Ok(())
@@ -694,8 +929,24 @@ async fn purge_then_listing_then_changes_recovers_every_live_row() {
         }),
     )
     .await;
-    // A device that has seen everything up to here.
+    // A device that has seen everything up to here, and a checkpoint at the top
+    // that lists the tombstone, so that it may be purged.
     let cursor = 3;
+    let vault_id = account.vault_id;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let cp = StoredCheckpoint {
+                seq: 6,
+                digest: [0xd1; 32],
+                mac: [0xa5; 32],
+                entries: Vec::new(),
+            };
+            put_checkpoint(conn, &vault_id, &cp)?;
+            Ok(())
+        })
+        .await
+        .expect("a checkpoint");
 
     // 401 days on, the tombstone is purged.
     let report = app

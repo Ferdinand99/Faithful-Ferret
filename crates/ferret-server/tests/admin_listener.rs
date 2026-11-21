@@ -162,6 +162,56 @@ async fn admin_guard_wraps_only_the_kit_router() {
 }
 
 #[tokio::test]
+async fn the_bare_admin_address_goes_through_sign_in_to_the_landing_page() {
+    let app = TestApp::new().await;
+    seed(&app, 1).await;
+
+    // No session: `/` is a redirect to the landing page and shows nothing, and
+    // the landing page's own guard sends the visitor to the sign-in.
+    for path in ["/", "/?x=1"] {
+        let res = get(&app, path).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(res.header("location"), "/settings/general", "{path}");
+        assert!(res.text().is_empty(), "{path}");
+    }
+    let landing = get(&app, "/settings/general").await;
+    assert_eq!(landing.status, StatusCode::SEE_OTHER);
+    assert!(landing.header("location").starts_with("/login?next="));
+    assert!(!landing.text().contains("<form"));
+
+    // The redirect opens nothing new: only a read of `/` is answered, and the
+    // vault listener's `/` is not this redirect.
+    for res in [
+        app.call(
+            Which::Admin,
+            Req::post("/").page_fetch(Which::Admin).build(),
+        )
+        .await,
+        app.call(Which::Vault, Req::get("/").build()).await,
+    ] {
+        assert_ne!(res.header("location"), "/settings/general");
+    }
+}
+
+#[tokio::test]
+async fn the_bare_admin_address_opens_the_landing_page_for_an_administrator() {
+    let app = TestApp::new_at_real_time().await;
+    admin_user(&app, 1).await;
+    let res = get(&app, "/").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.header("location"), "/settings/general");
+    let landing = get(&app, "/settings/general").await;
+    assert_eq!(landing.status, StatusCode::OK, "{}", landing.text());
+    // The kit's own header links lead to the same page.
+    assert!(
+        landing.text().contains("href=\"/settings/general\""),
+        "{}",
+        landing.text()
+    );
+    assert!(!landing.text().contains("href=\"/settings\""));
+}
+
+#[tokio::test]
 async fn a_new_install_sends_a_visitor_to_the_setup() {
     let app = TestApp::new().await;
     let res = get(&app, "/settings/general").await;
@@ -245,6 +295,145 @@ async fn the_redirect_stubs_start_the_handoff_and_keep_nothing_unclean() {
         res.header("location"),
         "/vault/login?next=%2Fsettings%2Fusers"
     );
+}
+
+// ------------------------------------------------------------ sign-in codes
+
+/// A pending sign-in code for `user`, as the kit's Users page stores one.
+async fn code_for(app: &TestApp, user: i64) -> String {
+    let code = vole_kit::auth::sign_in_codes::generate();
+    let hash = vole_kit::auth::sign_in_codes::hash(&code);
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            vole_kit::db::sign_in_codes::insert(conn, user, &hash, user)?;
+            Ok(())
+        })
+        .await
+        .expect("a code");
+    code
+}
+
+async fn pending_codes(app: &TestApp, user: i64) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(vole_kit::db::sign_in_codes::count_pending(conn, user)?))
+        .await
+        .expect("a count")
+}
+
+fn recover_page() -> String {
+    format!("{VAULT_URL}/vault/#/recover")
+}
+
+#[tokio::test]
+async fn the_kit_sign_in_code_page_redirects_to_the_vault_recover_page_and_spends_no_code() {
+    let app = TestApp::new_at_real_time().await;
+    let user = seed(&app, 1).await;
+    let code = code_for(&app, user.user_id).await;
+    let version = support::session::session_version(&app, user.user_id).await;
+
+    // The page, with and without a query: never the kit's form.
+    for path in [
+        "/sign-in-code".to_string(),
+        format!("/sign-in-code?code={code}"),
+        "/sign-in-code?username=user1%40example.com".to_string(),
+    ] {
+        let res = get(&app, &path).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(res.header("location"), recover_page(), "{path}");
+        assert!(res.set_cookies().is_empty(), "{path}");
+        assert!(!res.text().contains("<form"), "{path}");
+    }
+    // The kit's form post, with a good code and a new password, from the
+    // admin origin's own page: a redirect too, and the code stays unused.
+    let form = format!(
+        "username=user1%40example.com&code={code}&password=a+new+password&password2=a+new+password"
+    );
+    for with_origin in [true, false] {
+        let mut req =
+            Req::post("/sign-in-code").header("content-type", "application/x-www-form-urlencoded");
+        if with_origin {
+            req = req.header("origin", support::ADMIN_URL);
+        }
+        let req = axum::http::Request::from_parts(
+            req.build().into_parts().0,
+            axum::body::Body::from(form.clone()),
+        );
+        let res = app.call(Which::Admin, req).await;
+        if with_origin {
+            assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+            assert_eq!(res.header("location"), recover_page());
+            assert!(res.set_cookies().is_empty());
+        } else {
+            // A post without an origin never gets that far either.
+            assert_ne!(res.status, StatusCode::OK, "{}", res.text());
+        }
+    }
+    assert_eq!(
+        pending_codes(&app, user.user_id).await,
+        1,
+        "the code is not spent"
+    );
+    assert_eq!(
+        support::session::session_version(&app, user.user_id).await,
+        version,
+        "nobody was signed out"
+    );
+    let hash: String = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT password_hash FROM users WHERE id = ?1",
+                [user.user_id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("the hash");
+    assert_eq!(hash, "x", "no kit password was set");
+}
+
+#[tokio::test]
+async fn vault_password_with_code_redirects_to_recover() {
+    let app = TestApp::new().await;
+    for path in [
+        "/vault/password?code=1",
+        "/vault/password?code=1&next=%2Fsettings%2Fusers",
+        "/vault/password?next=%2Fsettings&code=",
+    ] {
+        let res = get(&app, path).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(res.header("location"), recover_page(), "{path}");
+        assert!(res.set_cookies().is_empty(), "{path}");
+    }
+    // Without a code it is the password sign-in of the admin origin, as before.
+    let res = get(&app, "/vault/password?next=%2Fsettings").await;
+    assert_eq!(
+        res.header("location"),
+        "/auth/handoff/begin?next=%2Fsettings"
+    );
+}
+
+#[tokio::test]
+async fn admin_listener_has_no_redeem_route() {
+    let app = TestApp::new().await;
+    let user = seed(&app, 1).await;
+    let code = code_for(&app, user.user_id).await;
+    let res = app
+        .call(
+            Which::Admin,
+            Req::post("/api/auth/redeem")
+                .page_fetch(Which::Admin)
+                .header("x-forwarded-proto", "https")
+                .json(&json!({ "email": "user1@example.com", "code": code }))
+                .build(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert!(res.set_cookies().is_empty());
+    assert_eq!(pending_codes(&app, user.user_id).await, 1);
 }
 
 // ---------------------------------------------------------------- lifetimes

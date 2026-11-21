@@ -106,12 +106,17 @@ function runInWorker(request) {
 async function exportRun() {
   const wasm = await testWasm();
   const { client, recorder } = await makeClient({ mount: "release" });
-  await createAccount(client, wasm, "browser-export");
+  const { server, registration, created } = await createAccount(client, wasm, "browser-export");
   const id = fill(16, 0x41);
   const sealed = await client.vault.encrypt_item(id, 1, { item_type: "note", name: "n", notes: "x".repeat(1000) }, undefined, NOW);
   const rows = [row(id, sealed)];
   // The default parameters: 256 MiB, 3 passes, 1 lane.
-  const started = await client.vault.export_begin(rows, NOW);
+  // The file holds every secret: a fresh sign-in with the master password makes the one-time token it needs.
+  const sk = await client.vault.reveal_secret_key_code();
+  const ke1 = await client.vault.login_start(enc.encode(PASSWORD), sk);
+  await client.vault.login_finish(server.login_start(registration.record, IDS.account_id, ke1), 1, pinned(created.pinned));
+  const token = await client.vault.reauth_grant(created.wraps[0], NOW);
+  const started = await client.vault.export_begin(rows, NOW, undefined, token);
   const t0 = performance.now();
   const key = await client.job.argon2_export_key(EXPORT_PASSWORD, started.salt, started.kdf, "write", PASSWORD);
   const writeMs = performance.now() - t0;
@@ -562,7 +567,7 @@ async function leakRun() {
   const kekPwRecovered = kekPassword(exportKeyRecovered);
   add("export key (recovered)", exportKeyRecovered);
   add("KEK_pw (recovered)", kekPwRecovered);
-  const recovered = await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr);
+  const recovered = await client.vault.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, firstUse(true), qr);
   const rkNewCode = await client.vault.reveal_recovery_code();
   texts["recovery key code (recovered)"] = rkNewCode;
   const rkNew = op(wasm, "recovery_key_decode", "code.rk.decode", { code: rkNewCode }).key;

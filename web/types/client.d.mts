@@ -27,3 +27,24 @@ export function createClient(options?: {
 export class FerretError extends Error {
   code: string;
 }
+
+/** A wrap as the core gives it (bytes, not the wire's base64url). */
+export interface CoreWrap {
+  method_id: Uint8Array;
+  kek_generation: number;
+  method: { type: "password" | "recovery" | "prf"; [field: string]: unknown };
+  wrap: Uint8Array;
+}
+
+/**
+ * What `vault.renew_recovery` gives: the new recovery wrap, `pk_r` of the new key, the manifest row
+ * with the new generation, and the pinned record to store once the server has accepted them. The new
+ * key itself stays in the worker (`reveal_recovery_code`, `verify_recovery_setup`,
+ * `clear_setup_secrets`).
+ */
+export interface RenewedRecovery {
+  wrap: CoreWrap;
+  pk_r: Uint8Array;
+  manifest: { rev: number; envelope: Uint8Array; tag: Uint8Array };
+  pinned: Record<string, any>;
+}

@@ -1,0 +1,26 @@
+SPDX-License-Identifier: GPL-3.0-only
+Modified by Faithful Ferret.
+
+The files in this folder are test data for the Bitwarden import. They are made up: every
+name, address, user name, password, one-time password seed and number in them is invented,
+and none belongs to a real account. A JSON file cannot carry a header of its own, so this
+notice covers all of them.
+
+Their shapes (the keys, the numbers of the item types, the field types and the address match
+rules, and how the CSV holds custom fields and addresses) follow the examples and tests of
+Bitwarden:
+
+  every-type.json, small.json, schemes.json, hostile.json, huge-depth.json
+      the Bitwarden SDK, crates/bitwarden-exporters/src/json.rs, and the Bitwarden clients,
+      libs/importer/src/importers/spec-data/bitwarden-json/unencrypted.json.ts
+  encrypted.json, password-protected.json
+      the Bitwarden clients, libs/importer/src/importers/spec-data/bitwarden-json/
+      account-encrypted.json.ts and password-protected.json.ts (the values are replaced
+      with text that is not an encrypted string)
+  small.csv
+      the Bitwarden SDK, crates/bitwarden-exporters/src/csv.rs, and the Bitwarden clients,
+      libs/importer/src/importers/bitwarden/bitwarden-csv-importer.spec.ts
+
+Origin: https://github.com/bitwarden/sdk-internal and https://github.com/bitwarden/clients,
+GNU General Public License v3. See notices-extra.json and THIRD-PARTY-NOTICES in the root of
+this repository.

@@ -675,3 +675,167 @@ async fn secure_follows_the_public_url_not_the_transport_of_the_listener() {
         );
     }
 }
+
+// ------------------------------------------------------------ device tokens
+
+/// The token headers a device sends: an `Authorization` with the scheme
+/// `DPoP` and a proof. The guard reads only their shape.
+fn with_token(req: Req) -> Req {
+    req.header("authorization", &format!("DPoP {}", "A".repeat(43)))
+        .header("dpop", "a.b.c")
+}
+
+#[tokio::test]
+async fn a_token_header_with_a_cookie_is_400_on_every_method_and_both_listeners() {
+    let app = TestApp::new().await;
+    for which in [Which::Vault, Which::Admin] {
+        let router = listener(&app, which);
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::POST,
+            Method::PUT,
+        ] {
+            for (name, value) in [
+                ("authorization", "DPoP abc"),
+                ("authorization", "dpop abc"),
+                ("authorization", " DPOP"),
+                ("dpop", "a.b.c"),
+            ] {
+                let req = Req::new(method.clone(), "/api/probe")
+                    .header("ferret-protocol", "1")
+                    .header("origin", which.url())
+                    .header("cookie", COOKIE)
+                    .header(name, value);
+                let (status, headers, body) = send(&router, req.build()).await;
+                assert_eq!(
+                    status,
+                    StatusCode::BAD_REQUEST,
+                    "{which:?} {method} {value}"
+                );
+                if method != Method::HEAD {
+                    assert_eq!(error_code(&body), "bad_request");
+                }
+                assert!(
+                    headers
+                        .keys()
+                        .all(|name| !name.as_str().starts_with("access-control-"))
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_admin_listener_takes_no_token_header() {
+    let app = TestApp::new().await;
+    let router = listener(&app, Which::Admin);
+    for method in [Method::GET, Method::POST] {
+        for path in ["/probe", "/api/probe"] {
+            let req = with_token(Req::new(method.clone(), path)).header("ferret-protocol", "1");
+            let (status, _, body) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {path}");
+            assert_eq!(error_code(&body), "bad_request");
+            let req = Req::new(method.clone(), path)
+                .header("ferret-protocol", "1")
+                .header("dpop", "a.b.c");
+            let (status, _, _) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_token_request_needs_the_protocol_header_on_every_method_but_no_origin() {
+    let app = TestApp::new().await;
+    let router = listener(&app, Which::Vault);
+    for method in [
+        Method::GET,
+        Method::HEAD,
+        Method::OPTIONS,
+        Method::POST,
+        Method::PUT,
+    ] {
+        let (status, _, _) = send(
+            &router,
+            with_token(Req::new(method.clone(), "/api/probe")).build(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{method}");
+        for (origin, site) in [
+            (None, None),
+            (Some("https://evil.test"), Some("cross-site")),
+            (Some("moz-extension://x"), Some("none")),
+        ] {
+            let mut req =
+                with_token(Req::new(method.clone(), "/api/probe")).header("ferret-protocol", "1");
+            if let Some(origin) = origin {
+                req = req.header("origin", origin);
+            }
+            if let Some(site) = site {
+                req = req.header("sec-fetch-site", site);
+            }
+            let (status, _, _) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{method} {origin:?}");
+        }
+    }
+    // The hand-over routes still need the listener's origin.
+    let req = with_token(Req::post("/api/auth/handoff")).header("ferret-protocol", "1");
+    let (status, _, body) = send(&router, req.build()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error_code(&body), "forbidden_origin");
+}
+
+#[tokio::test]
+async fn token_headers_that_read_more_than_one_way_are_400() {
+    let app = TestApp::new().await;
+    let router = listener(&app, Which::Vault);
+    let twice_dpop = Req::get("/api/probe")
+        .header("ferret-protocol", "1")
+        .header("dpop", "a.b.c")
+        .header("dpop", "a.b.c");
+    let dpop_and_basic = Req::get("/api/probe")
+        .header("ferret-protocol", "1")
+        .header("authorization", "DPoP abc")
+        .header("authorization", "Basic dXNlcjpwYXNz");
+    for req in [twice_dpop, dpop_and_basic] {
+        let (status, _, body) = send(&router, req.build()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error_code(&body), "bad_request");
+    }
+}
+
+#[tokio::test]
+async fn basic_authorization_from_a_proxy_is_no_token_header() {
+    let app = TestApp::new().await;
+    for which in [Which::Vault, Which::Admin] {
+        let router = listener(&app, which);
+        for value in [
+            "Basic dXNlcjpwYXNz",
+            "Bearer abc",
+            "DPoPx abc",
+            "Digest dpop=1",
+        ] {
+            // With a cookie and the page's own origin, as before.
+            let req = with_cookie("/api/probe")
+                .header("origin", which.url())
+                .header("authorization", value);
+            let (status, _, _) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{which:?} {value}");
+            // A read with a cookie needs nothing more.
+            let req = Req::get("/api/probe")
+                .header("cookie", COOKIE)
+                .header("authorization", value);
+            let (status, _, _) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{which:?} {value}");
+            // Two of them are no token header either.
+            let req = Req::get("/api/probe")
+                .header("cookie", COOKIE)
+                .header("authorization", value)
+                .header("authorization", "Basic eDp5");
+            let (status, _, _) = send(&router, req.build()).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{which:?} {value}");
+        }
+    }
+}

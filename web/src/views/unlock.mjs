@@ -98,6 +98,21 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
   const forgetRow = el("p", { class: "aside", "data-role": "forget-row" }, forgetLink);
   forgetRow.hidden = true;
 
+  // After a refusal of an older password on a server that was restored from a backup: the recovery key (this session stays
+  // open for it), or the way out. The same offer as on the sign-in page.
+  const offerBox = el("div", { class: "actions", "data-role": "recovery-offer" });
+  offerBox.hidden = true;
+  /** @param {"recover" | "old_sheet"} offer */
+  function showOffer(offer) {
+    const action = offer === "recover"
+      ? el("button", { type: "button", class: "btn btn-primary", "data-role": "use-recovery-key" }, t("recover.offer.use_key"))
+      : el("a", { href: "#/forget", class: "btn btn-secondary", "data-role": "offer-forget" }, t("syncwarnings.forget.link"));
+    if (offer === "recover") action.addEventListener("click", () => go("/recover"));
+    mount(offerBox, action);
+    offerBox.hidden = false;
+    showError(t(`recover.offer.${offer}`));
+  }
+
   const form = el("form", {
     class: "stack",
     "data-role": "unlock-form",
@@ -105,6 +120,7 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
       event.preventDefault();
       errorBox.hidden = true;
       forgetRow.hidden = true;
+      offerBox.hidden = true;
       const typed = password.value;
       const skCode = sk ? sk.value.trim() : "";
       if (typed === "") {
@@ -130,6 +146,11 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
           return;
         }
         if (code === "sk_required") showSecretKeyField();
+        const offer = /** @type {any} */ (error)?.recoveryOffer;
+        if (code === "pinned_kek_generation" && (offer === "recover" || offer === "old_sheet")) {
+          showOffer(offer);
+          return;
+        }
         let restoreNote = null;
         if (findRestoreNote && OLDER_METHOD_ERRORS.includes(code)) {
           try {
@@ -158,12 +179,15 @@ export function unlockView({ session, t, go, email, accountId, skRequired, onUnl
   status,
   errorBox,
   forgetRow,
+  offerBox,
   el("div", { class: "actions" }, submit));
 
   mount(root,
     el("h1", null, t("vault.unlock.heading")),
     el("p", null, t("vault.unlock.as", { email })),
     form,
+    // The way to account recovery from the lock screen: a forgotten master password, or a restore of the server (see above).
+    el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link"))),
     el("p", { class: "aside" }, el("a", { href: "#/login", "data-role": "other-account" }, t("vault.unlock.other"))));
   return root;
 }

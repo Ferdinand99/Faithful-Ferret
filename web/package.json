@@ -15,8 +15,9 @@
     "check": "npm run build && npm run test:unit && npm run test:e2e"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
-    "fake-indexeddb": "6.2.7",
+    "@playwright/test": "1.65.1",
+    "fake-indexeddb": "6.2.8",
+    "jsqr": "1.4.0",
     "typescript": "7.0.2"
   }
 }

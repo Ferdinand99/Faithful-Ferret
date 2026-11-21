@@ -7,7 +7,7 @@ import { el, mount } from "./dom.mjs";
 import { createRouter } from "./router.mjs";
 
 /** Services the page makes before any feature service: a feature may depend on them. */
-export const BASE_SERVICES = Object.freeze(["client", "i18n"]);
+export const BASE_SERVICES = Object.freeze(["client", "i18n", "createImportWorker"]);
 
 /**
  * @typedef {object} RouteContext
@@ -17,11 +17,14 @@ export const BASE_SERVICES = Object.freeze(["client", "i18n"]);
  * @property {any} client
  * @property {Record<string, any>} services
  * @property {(path: string) => void} go
+ * @property {readonly Route[]} routes every route of the page, for a page that lists the others (the account menu)
  *
  * @typedef {object} Route
  * @property {string} path    `/`, `/items`, `/items/:id`
  * @property {string} title   an i18n key
  * @property {(ctx: RouteContext) => Node | Promise<Node>} load
+ * @property {string} [menu]  the menu the page is listed in (`account`: the account page links to it); `title` is its label
+ * @property {number} [menuOrder]  where it stands in that menu (lower first; 100 when not given)
  *
  * @typedef {object} ServiceDef
  * @property {string} name
@@ -105,11 +108,12 @@ const NOT_FOUND = {
  *   serviceDefs: readonly ServiceDef[],
  *   client: any,
  *   i18n: RouteContext["i18n"],
+ *   createImportWorker?: () => any,
  *   win?: any,
- * }} options
+ * }} options `createImportWorker` makes the import worker; a service that needs it names it in `deps`
  */
-export function startApp({ root, routes, serviceDefs, client, i18n, win = window }) {
-  const services = resolveServices(serviceDefs, { client, i18n });
+export function startApp({ root, routes, serviceDefs, client, i18n, createImportWorker, win = window }) {
+  const services = resolveServices(serviceDefs, { client, i18n, createImportWorker });
   let token = 0;
 
   /** @param {import("./router.mjs").Match} match */
@@ -125,6 +129,7 @@ export function startApp({ root, routes, serviceDefs, client, i18n, win = window
         client,
         services,
         go: (/** @type {string} */ path) => router.go(path),
+        routes,
       });
     } catch {
       // No detail on the page: an error can carry what the user typed.

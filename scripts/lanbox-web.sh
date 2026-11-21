@@ -7,7 +7,8 @@
 #   scripts/lanbox-web.sh e2e [--project=x]   build, then Playwright (any Playwright option)
 #   scripts/lanbox-web.sh --lock              refresh web/package-lock.json (npm install --package-lock-only)
 #
-# The web/ tree and, when it exists, the server's wire fixtures are streamed
+# The web/ tree, the licence notices that the web tests read (THIRD-PARTY-NOTICES,
+# notices-extra.json) and, when they exist, the server's wire and DPoP fixtures are streamed
 # into the container as a tar archive (no bind mounts from the PC), the locked
 # packages are installed with `npm ci --ignore-scripts`, and the build fetches
 # the published WASM package named in web/wasm.lock.json and checks its SHA-256.
@@ -31,9 +32,9 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 cd "$(dirname "$0")/.."
 
-# Playwright 1.64.1 on Ubuntu 24.04. Keep the tag and the digest in step with
+# Playwright 1.65.1 on Ubuntu 24.04. Keep the tag and the digest in step with
 # web/package.json and .github/workflows/web.yml.
-image="mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f"
+image="mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579"
 
 cpus="${FERRET_CPUS:-4}"
 memory="${FERRET_MEMORY:-12g}"
@@ -117,8 +118,10 @@ run=(docker "${docker_args[@]}" run --rm -i --init
 
 pack() {
   local fixtures=crates/ferret-server/tests/fixtures/wire
-  local extra=()
+  local dpop=crates/ferret-server/tests/fixtures/dpop
+  local extra=(THIRD-PARTY-NOTICES notices-extra.json)
   [ -d "$fixtures" ] && extra+=("$fixtures")
+  [ -d "$dpop" ] && extra+=("$dpop")
   tar -c \
     --exclude='web/node_modules' \
     --exclude='web/dist' \

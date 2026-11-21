@@ -924,7 +924,6 @@ fn recover_with(
         rk_code: code,
         rk_wrap: &s.account.wraps[1],
         manifest: row(&s.account),
-        new_recovery_method_id: method_id(0x73),
     };
     recover(
         &mut rng(&format!("{seed}/recover")),
@@ -961,10 +960,10 @@ fn recover_rotates_recovery_key() {
         rec.pk_r,
         recovery_public_key(&rec.recovery_key, &account(0x11)).unwrap()
     );
-    // The new recovery wrap: new id, generation 2, opens with the new key
-    // and not with the old one.
+    // The new recovery wrap: the stored id, generation 2, opens with the new
+    // key and not with the old one.
     assert_eq!(rec.recovery_wrap.method, Method::Recovery);
-    assert_eq!(rec.recovery_wrap.method_id, method_id(0x73));
+    assert_eq!(rec.recovery_wrap.method_id, method_id(0x71));
     assert_eq!(rec.recovery_wrap.kek_generation, 2);
     let by_new = unwrap_vk(&ctx1(), &kek_rk(&rec.recovery_key), &rec.recovery_wrap).unwrap();
     assert!(by_new.same_vault_key(&a.vault));
@@ -992,7 +991,7 @@ fn recover_rotates_recovery_key() {
         .collect();
     assert_eq!(
         listed,
-        vec![(1, method_id(0x70), 2), (2, method_id(0x73), 2)]
+        vec![(1, method_id(0x70), 2), (2, method_id(0x71), 2)]
     );
     assert!(rec.sk_bit);
     assert_eq!(rec.ksf_profile, KsfProfile::P1);
@@ -1056,7 +1055,6 @@ fn recover_draws_in_the_documented_order() {
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: row(&s.account),
-            new_recovery_method_id: method_id(0x73),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::FirstUse,
@@ -1092,7 +1090,6 @@ fn recover_requires_valid_rk_code_checksum_first() {
                 rk_code: &typo,
                 rk_wrap: &wrong_wrap,
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1112,7 +1109,6 @@ fn recover_requires_valid_rk_code_checksum_first() {
                 rk_code: bad,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1154,7 +1150,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[0],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1176,7 +1171,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1203,7 +1197,6 @@ fn recover_rejects_a_wrong_key_and_a_wrong_wrap() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: sealed_row(&manifest),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1230,7 +1223,6 @@ fn recover_checks_the_pinned_record() {
         rk_code: &code,
         rk_wrap: &s.account.wraps[1],
         manifest: row(&s.account),
-        new_recovery_method_id: method_id(0x73),
     };
     assert_eq!(
         recover(
@@ -1341,7 +1333,6 @@ fn recover_needs_the_creation_floor() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&weak, reg, KsfProfile::P1),
             PinState::FirstUse,
@@ -1399,7 +1390,6 @@ fn after_a_recovery_the_new_state_unlocks_and_the_old_does_not() {
             rk_code: &new_code,
             rk_wrap: &rec.recovery_wrap,
             manifest: sealed_row(&rec.manifest),
-            new_recovery_method_id: method_id(0x74),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::Pinned(&pinned),
@@ -1628,7 +1618,6 @@ fn recover_refuses_dropping_the_secret_key() {
                 rk_code: &code,
                 rk_wrap: &s.account.wraps[1],
                 manifest: row(&s.account),
-                new_recovery_method_id: method_id(0x73),
             },
             password(&input, reg, KsfProfile::P1),
             PinState::Pinned(&pinned),
@@ -1639,31 +1628,21 @@ fn recover_refuses_dropping_the_secret_key() {
 }
 
 #[test]
-fn recover_needs_a_new_recovery_method_id() {
+fn recover_keeps_the_stored_method_ids() {
     let s = create("f3", true);
     let code = rk_code(&s);
     let key = sk(0x5a);
     let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
     let c = ctx1();
-    // A manifest with a passkey as well.
-    let manifest = sealed_manifest(
-        &s,
-        4,
-        vec![
-            ManifestEntry::new(1, method_id(0x70), 1),
-            ManifestEntry::passkey(method_id(0x75), 3, vec![1, 2, 3]),
-            ManifestEntry::new(2, method_id(0x71), 1),
-        ],
-        vec![],
-    );
-    let go = |new_id: u8, draws: bool| {
+    let entries = Error::Malformed(MalformedKind::Entries);
+    let go = |methods: Vec<ManifestEntry>, draws: bool| {
+        let manifest = sealed_manifest(&s, 4, methods, vec![]);
         let reg = register(&s.server, &input, "f3");
         let data = RecoveryInput {
             ctx: &c,
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: sealed_row(&manifest),
-            new_recovery_method_id: method_id(new_id),
         };
         if draws {
             recover(
@@ -1681,15 +1660,150 @@ fn recover_needs_a_new_recovery_method_id() {
             )
         }
     };
-    let entries = Error::Malformed(MalformedKind::Entries);
-    // The password wrap's id, and the passkey's.
-    assert_eq!(go(0x70, false).err(), Some(entries));
-    assert_eq!(go(0x75, false).err(), Some(entries));
-    // A fresh id, and the old recovery wrap's own id (it is replaced).
-    let fresh = go(0x73, true).unwrap();
-    assert_eq!(fresh.recovery_wrap.method_id, method_id(0x73));
-    let same = go(0x71, true).unwrap();
-    assert_eq!(same.recovery_wrap.method_id, method_id(0x71));
+    // A manifest with a passkey as well: every id stays.
+    let rec = go(
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::passkey(method_id(0x75), 3, vec![1, 2, 3]),
+            ManifestEntry::new(2, method_id(0x71), 1),
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(rec.password_wrap.method_id, method_id(0x70));
+    assert_eq!(rec.recovery_wrap.method_id, s.account.wraps[1].method_id);
+    let m = decrypt_manifest(
+        &rec.vault,
+        rec.manifest.rev,
+        &rec.manifest.envelope,
+        &rec.manifest.tag,
+    )
+    .unwrap();
+    let listed: Vec<(u8, MethodId)> = m
+        .methods
+        .iter()
+        .map(|e| (e.method_type, e.method_id))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (1, method_id(0x70)),
+            (3, method_id(0x75)),
+            (2, method_id(0x71))
+        ]
+    );
+    // Another entry with the recovery wrap's id is refused before anything
+    // is drawn: the password entry's, and a passkey's.
+    for shared in [
+        ManifestEntry::new(1, method_id(0x71), 1),
+        ManifestEntry::passkey(method_id(0x71), 3, vec![1, 2, 3]),
+    ] {
+        let mut methods = vec![shared.clone(), ManifestEntry::new(2, method_id(0x71), 1)];
+        if shared.method_type != 1 {
+            methods.insert(0, ManifestEntry::new(1, method_id(0x70), 1));
+        }
+        assert_eq!(go(methods, false).err(), Some(entries));
+    }
+}
+
+/// The server writes the wraps of a recovery under the ids it stores (the
+/// request names none). The new recovery key then opens what the server
+/// serves afterwards, and a renewal starts from it.
+#[test]
+fn after_a_recovery_the_new_key_unlocks_and_renews_the_stored_wrap() {
+    let s = create("f3b", true);
+    let code = rk_code(&s);
+    let key = sk(0x5a);
+    let old_record = pinned_of(&s);
+    let (rec, _) = recover_with(
+        &s,
+        &code,
+        PinState::Pinned(&old_record),
+        PASSWORD_2,
+        Some(&key),
+        "f3b",
+    )
+    .unwrap();
+    // What the server holds after the request: the stored recovery row, its
+    // id, with the new wrap and generation.
+    let stored = ferret_core::WrapRecord {
+        method_id: s.account.wraps[1].method_id,
+        kek_generation: rec.recovery_wrap.kek_generation,
+        method: Method::Recovery,
+        wrap: rec.recovery_wrap.wrap.clone(),
+    };
+    assert_eq!(stored, rec.recovery_wrap);
+    let mut record = rec.pinned(URL, Some(&old_record)).unwrap();
+
+    // The new recovery key opens the stored wrap through the device record.
+    let seen = view(&record);
+    let vault = record
+        .unlock_server(&seen, &stored, &kek_rk(&rec.recovery_key))
+        .unwrap();
+    assert!(vault.same_vault_key(&s.account.vault));
+    // So does a second recovery with it.
+    let new_code = encode_recovery_key(&rec.recovery_key).to_string();
+    let input = new_input(
+        "a third password, long",
+        MpPolicy::WithSecretKey,
+        Some(&key),
+    );
+    let reg = register(&s.server, &input, "f3b/again");
+    let c = ctx1();
+    let again = recover(
+        &mut rng("f3b/again"),
+        &RecoveryInput {
+            ctx: &c,
+            rk_code: &new_code,
+            rk_wrap: &stored,
+            manifest: sealed_row(&rec.manifest),
+        },
+        password(&input, reg, KsfProfile::P1),
+        PinState::Pinned(&record),
+    )
+    .unwrap();
+    assert_eq!(again.recovery_wrap.method_id, method_id(0x71));
+
+    // A renewal of the recovery key from the recovered state works and keeps
+    // the id; the renewed key opens the renewed wrap.
+    let renewed = ferret_core::renew_recovery(
+        &mut rng("f3b/renew"),
+        &vault,
+        &record,
+        &stored,
+        &sealed_row(&rec.manifest),
+    )
+    .unwrap();
+    assert_eq!(renewed.recovery_wrap.method_id, method_id(0x71));
+    assert_eq!(renewed.recovery_wrap.kek_generation, 3);
+    let opened = unwrap_vk(
+        &ctx1(),
+        &kek_rk(&renewed.recovery_key),
+        &renewed.recovery_wrap,
+    )
+    .unwrap();
+    assert!(opened.same_vault_key(&s.account.vault));
+    let m = decrypt_manifest(
+        &vault,
+        renewed.manifest.rev,
+        &renewed.manifest.envelope,
+        &renewed.manifest.tag,
+    )
+    .unwrap();
+    assert!(
+        m.methods
+            .iter()
+            .any(|e| e.method_type == 2 && e.method_id == method_id(0x71) && e.kek_generation == 3)
+    );
+    let mut record = renewed.pinned(&record).unwrap();
+    let seen = view(&record);
+    record
+        .unlock_server(
+            &seen,
+            &renewed.recovery_wrap,
+            &kek_rk(&renewed.recovery_key),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -1738,7 +1852,6 @@ fn a_manifest_without_exactly_one_password_and_recovery_entry_is_refused() {
                     rk_code: &code,
                     rk_wrap: &s.account.wraps[1],
                     manifest: sealed_row(&manifest),
-                    new_recovery_method_id: method_id(0x73),
                 },
                 password(&input, reg, KsfProfile::P1),
                 PinState::FirstUse,
@@ -1833,7 +1946,6 @@ fn the_other_manifest_entries_and_unknown_keys_survive_a_change_and_a_recovery()
             rk_code: &code,
             rk_wrap: &s.account.wraps[1],
             manifest: sealed_row(&manifest),
-            new_recovery_method_id: method_id(0x73),
         },
         password(&input, reg, KsfProfile::P1),
         PinState::FirstUse,
@@ -1850,7 +1962,6 @@ fn the_other_manifest_entries_and_unknown_keys_survive_a_change_and_a_recovery()
     let mut want_password = password_entry;
     want_password.kek_generation = 2;
     let mut want_recovery = recovery_entry;
-    want_recovery.method_id = method_id(0x73);
     want_recovery.kek_generation = 2;
     assert_eq!(after.methods, vec![want_password, passkey, want_recovery]);
 }
@@ -1979,5 +2090,807 @@ fn a_recovery_gives_the_pinned_record_to_store() {
     assert_eq!(
         rec.pinned(&long, None).err(),
         Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+}
+
+// ------------------------------------------------------- new recovery key
+
+/// A renewal of the recovery key of `s` against `current` and `manifest`.
+fn renew(
+    s: &Setup,
+    pinned: &Pinned,
+    current: &ferret_core::WrapRecord,
+    manifest: &ManifestRow<'_>,
+    seed: &str,
+) -> Result<ferret_core::RenewedRecovery, Error> {
+    ferret_core::renew_recovery(
+        &mut rng(&format!("{seed}/renew")),
+        &s.account.vault,
+        pinned,
+        current,
+        manifest,
+    )
+}
+
+/// The recovery wrap of the account at another generation, made for real
+/// under its recovery key (the generation is in the AAD).
+fn recovery_wrap_at(s: &Setup, generation: u64) -> ferret_core::WrapRecord {
+    s.account
+        .vault
+        .wrap_for_method(
+            &mut rng(&format!("rk-wrap/{generation}")),
+            &kek_rk(&s.account.recovery_key),
+            method_id(0x71),
+            generation,
+            Method::Recovery,
+        )
+        .unwrap()
+}
+
+#[test]
+fn renewed_wrap_opens_with_the_new_key_and_not_the_old() {
+    let s = create("rn1", true);
+    let a = &s.account;
+    let pinned = pinned_of(&s);
+    let renewed = renew(&s, &pinned, &a.wraps[1], &row(a), "rn1").unwrap();
+    // Same method id, the next generation, a recovery wrap of 72 bytes.
+    assert_eq!(renewed.recovery_wrap.method_id, method_id(0x71));
+    assert_eq!(renewed.recovery_wrap.kek_generation, 2);
+    assert_eq!(renewed.recovery_wrap.method, Method::Recovery);
+    assert_eq!(renewed.recovery_wrap.wrap.len(), 72);
+    // The new key opens the new wrap to the same vault key.
+    let opened = unwrap_vk(
+        &ctx1(),
+        &kek_rk(&renewed.recovery_key),
+        &renewed.recovery_wrap,
+    )
+    .unwrap();
+    assert!(opened.same_vault_key(&a.vault));
+    // The old key does not open the new wrap, and the new key not the old one.
+    assert_eq!(
+        unwrap_vk(&ctx1(), &kek_rk(&a.recovery_key), &renewed.recovery_wrap).err(),
+        Some(Error::Decrypt)
+    );
+    assert_eq!(
+        unwrap_vk(&ctx1(), &kek_rk(&renewed.recovery_key), &a.wraps[1]).err(),
+        Some(Error::Decrypt)
+    );
+    // The setup confirmation works with the new key on the new wrap only.
+    let code = encode_recovery_key(&renewed.recovery_key).to_string();
+    verify_recovery_setup(&code, &renewed.recovery_wrap, &a.vault).unwrap();
+    assert_eq!(
+        verify_recovery_setup(&rk_code(&s), &renewed.recovery_wrap, &a.vault).err(),
+        Some(Error::Decrypt)
+    );
+    // The password wrap is untouched: it still opens the vault.
+    let by_password = unwrap_vk(&ctx1(), &kek_pw(&s.export), &a.wraps[0]).unwrap();
+    assert!(by_password.same_vault_key(&a.vault));
+}
+
+#[test]
+fn renew_draws_the_key_and_two_nonces_in_order() {
+    let s = create("rn2", true);
+    let pinned = pinned_of(&s);
+    let mut r = rng("rn2/draws");
+    let draws: Vec<Vec<u8>> = [32usize, 24, 24]
+        .iter()
+        .map(|n| {
+            let mut d = vec![0u8; *n];
+            ferret_core::SecureRng::fill(&mut r, &mut d);
+            d
+        })
+        .collect();
+    let mut replay = ReplayRng::new(draws.clone());
+    let renewed = ferret_core::renew_recovery(
+        &mut replay,
+        &s.account.vault,
+        &pinned,
+        &s.account.wraps[1],
+        &row(&s.account),
+    )
+    .unwrap();
+    replay.finish().unwrap();
+    assert_eq!(
+        recovery_key_bytes_of(&renewed.recovery_key).to_vec(),
+        draws[0]
+    );
+    assert_eq!(renewed.recovery_wrap.wrap[..24], draws[1][..]);
+}
+
+#[test]
+fn generation_is_one_above_the_highest_of_floor_manifest_and_server() {
+    let s = create("rn3", true);
+    let a = &s.account;
+    let base = pinned_of(&s);
+    // All three at 1.
+    assert_eq!(
+        renew(&s, &base, &a.wraps[1], &row(a), "rn3/a")
+            .unwrap()
+            .recovery_wrap
+            .kek_generation,
+        2
+    );
+    // The manifest is the highest: it lists 5.
+    let manifest = sealed_manifest(
+        &s,
+        3,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x71), 5),
+        ],
+        vec![],
+    );
+    let renewed = renew(&s, &base, &a.wraps[1], &sealed_row(&manifest), "rn3/b").unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 6);
+    assert_eq!(renewed.manifest.rev, 4);
+    // The server's wrap is the highest: it says 9.
+    let mut high = a.wraps[1].clone();
+    high.kek_generation = 9;
+    let renewed = renew(&s, &base, &high, &row(a), "rn3/c").unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 10);
+    // The floor is the highest, level with the server's wrap and manifest (a
+    // floor above them is refused, see below, except after an accepted
+    // restore).
+    let mut pinned = base.clone();
+    pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 7)];
+    let mut at_floor = a.wraps[1].clone();
+    at_floor.kek_generation = 7;
+    let manifest7 = sealed_manifest(
+        &s,
+        3,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x71), 7),
+        ],
+        vec![],
+    );
+    let renewed = renew(&s, &pinned, &at_floor, &sealed_row(&manifest7), "rn3/d").unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 8);
+    // The floor strictly the highest: only after an accepted restore.
+    let mut low = a.wraps[1].clone();
+    low.kek_generation = 2;
+    let renewed = ferret_core::renew_recovery_after_restore(
+        &mut rng("rn3/f"),
+        &a.vault,
+        &pinned,
+        &low,
+        &row(a),
+    )
+    .unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 8);
+    // A floor at the largest generation cannot be raised.
+    let top = ferret_core::pinning::MAX_GENERATION;
+    pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, top)];
+    at_floor.kek_generation = top;
+    assert_eq!(
+        renew(&s, &pinned, &at_floor, &row(a), "rn3/e").err(),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+}
+
+#[test]
+fn pk_r_matches_the_new_key_and_differs_from_the_old() {
+    let s = create("rn4", true);
+    let a = &s.account;
+    let renewed = renew(&s, &pinned_of(&s), &a.wraps[1], &row(a), "rn4").unwrap();
+    assert_eq!(
+        renewed.pk_r,
+        recovery_public_key(&renewed.recovery_key, &account(0x11)).unwrap()
+    );
+    assert_ne!(renewed.pk_r, a.pk_r);
+    assert_ne!(
+        recovery_key_bytes_of(&renewed.recovery_key),
+        recovery_key_bytes_of(&a.recovery_key)
+    );
+    // A `recover` proof made with the new key checks against the new pk_r
+    // and not against the old one.
+    let nonce = [6; 32];
+    let proof =
+        ferret_core::recovery_sign(&renewed.recovery_key, &account(0x11), 1, &nonce, b"b").unwrap();
+    verify_recovery_proof(
+        &RecoveryPublicKey::new(renewed.pk_r),
+        &account(0x11),
+        &nonce,
+        1,
+        b"b",
+        &proof,
+    )
+    .unwrap();
+    assert!(
+        verify_recovery_proof(
+            &RecoveryPublicKey::new(a.pk_r),
+            &account(0x11),
+            &nonce,
+            1,
+            b"b",
+            &proof,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn manifest_lists_the_new_generation_and_keeps_every_other_method() {
+    let s = create("rn5", true);
+    let passkey = {
+        let mut e = ManifestEntry::passkey(method_id(0x75), 4, vec![9, 8, 7]);
+        e.extra = vec![("aaguid".into(), Value::text("abc"))];
+        e
+    };
+    let mut password_entry = ManifestEntry::new(1, method_id(0x70), 3);
+    password_entry.extra = vec![("note".into(), Value::uint(5))];
+    let mut recovery_entry = ManifestEntry::new(2, method_id(0x71), 1);
+    recovery_entry.extra = vec![("created".into(), Value::uint(77))];
+    let top_extra: Vec<(String, Value)> = vec![("future".into(), Value::uint(7))];
+    let manifest = sealed_manifest(
+        &s,
+        4,
+        vec![
+            password_entry.clone(),
+            passkey.clone(),
+            recovery_entry.clone(),
+        ],
+        top_extra.clone(),
+    );
+    let renewed = renew(
+        &s,
+        &pinned_of(&s),
+        &s.account.wraps[1],
+        &sealed_row(&manifest),
+        "rn5",
+    )
+    .unwrap();
+    assert_eq!(renewed.manifest.rev, 5);
+    let after = decrypt_manifest(
+        &s.account.vault,
+        renewed.manifest.rev,
+        &renewed.manifest.envelope,
+        &renewed.manifest.tag,
+    )
+    .unwrap();
+    assert_eq!(after.vk_epoch, 1);
+    assert_eq!(after.extra, top_extra);
+    let mut want_recovery = recovery_entry;
+    want_recovery.kek_generation = 2;
+    assert_eq!(after.methods, vec![password_entry, passkey, want_recovery]);
+}
+
+#[test]
+fn a_current_wrap_below_the_pinned_floor_is_refused() {
+    let s = create("rn6", true);
+    let a = &s.account;
+    // The device has seen recovery generation 3; the server shows 1. Nothing
+    // is drawn.
+    let mut pinned = pinned_of(&s);
+    pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 3)];
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &a.wraps[1], &row(a)).err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    // A real wrap at the floor, listed at the floor, is accepted.
+    let at_floor = recovery_wrap_at(&s, 3);
+    let manifest3 = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 1),
+            ManifestEntry::new(2, method_id(0x71), 3),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        renew(&s, &pinned, &at_floor, &sealed_row(&manifest3), "rn6")
+            .unwrap()
+            .recovery_wrap
+            .kek_generation,
+        4
+    );
+    // A wrap at the floor whose manifest entry is below it is a rolled-back
+    // manifest, and is refused as well.
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &at_floor, &row(a)).err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+}
+
+#[test]
+fn renew_checks_the_record_and_the_inputs_before_drawing() {
+    let s = create("rn7", true);
+    let a = &s.account;
+    let good = pinned_of(&s);
+    let refused = |pinned: &Pinned, current: &ferret_core::WrapRecord, m: &ManifestRow<'_>| {
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, pinned, current, m).err()
+    };
+    // No recovery floor: seed the record from the manifest first.
+    let mut unseeded = good.clone();
+    unseeded.kek_generation_max = vec![(MethodKey::Password, 1)];
+    assert_eq!(
+        refused(&unseeded, &a.wraps[1], &row(a)),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    // A record of another account, vault, epoch or vault key.
+    let mut other = good.clone();
+    other.account_id = account(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+    let mut other = good.clone();
+    other.vault_id = vault(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VaultId))
+    );
+    let mut other = good.clone();
+    other.vk_epoch_max = 2;
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VkEpoch))
+    );
+    let mut other = good.clone();
+    other.pk_a = [9; 32];
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+    // The password wrap is not a recovery wrap.
+    assert_eq!(
+        refused(&good, &a.wraps[0], &row(a)),
+        Some(Error::Unsupported)
+    );
+    // A recovery wrap the manifest does not list.
+    let mut unlisted = a.wraps[1].clone();
+    unlisted.method_id = method_id(0x72);
+    assert_eq!(
+        refused(&good, &unlisted, &row(a)),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    // A manifest row that does not open.
+    let mut envelope = a.manifest.envelope.clone();
+    envelope[40] ^= 1;
+    let broken = ManifestRow {
+        rev: a.manifest.rev,
+        envelope: &envelope,
+        tag: &a.manifest.tag,
+    };
+    assert_eq!(refused(&good, &a.wraps[1], &broken), Some(Error::Decrypt));
+    // A manifest without a recovery entry.
+    let manifest = sealed_manifest(
+        &s,
+        2,
+        vec![ManifestEntry::new(1, method_id(0x70), 1)],
+        vec![],
+    );
+    assert_eq!(
+        refused(&good, &a.wraps[1], &sealed_row(&manifest)),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+}
+
+#[test]
+fn the_renewal_proof_is_made_only_by_its_own_vault_for_its_operation() {
+    let s = create("rn8", true);
+    let a = &s.account;
+    let renewed = renew(&s, &pinned_of(&s), &a.wraps[1], &row(a), "rn8").unwrap();
+    assert_eq!(
+        ferret_core::RenewedRecovery::OP,
+        AuthOp::UnlockMethodRecoveryPut
+    );
+    assert_eq!(
+        AuthOp::UnlockMethodRecoveryPut.name(),
+        "unlock-method.recovery.put"
+    );
+    let nonce = [2; 32];
+    let proof = renewed.sign(&a.vault, &nonce, b"body").unwrap();
+    verify_auth_proof(
+        &AuthPublicKey::new(a.pk_a),
+        AuthOp::UnlockMethodRecoveryPut,
+        &account(0x11),
+        &nonce,
+        1,
+        b"body",
+        &proof,
+    )
+    .unwrap();
+    // Not for another operation, and not by another vault.
+    assert!(
+        verify_auth_proof(
+            &AuthPublicKey::new(a.pk_a),
+            AuthOp::UnlockMethodPasswordPut,
+            &account(0x11),
+            &nonce,
+            1,
+            b"body",
+            &proof,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        renewed.sign(&unlocked(0x07), &nonce, b"body").err(),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+}
+
+#[test]
+fn a_renewal_gives_the_pinned_record_to_store() {
+    let s = create("rn9", true);
+    let a = &s.account;
+    let pinned = pinned_of(&s);
+    let renewed = renew(&s, &pinned, &a.wraps[1], &row(a), "rn9").unwrap();
+    let mut after = renewed.pinned(&pinned).unwrap();
+    assert_eq!(floor_of(&after, MethodKey::Recovery), Some(2));
+    assert_eq!(floor_of(&after, MethodKey::Password), Some(1));
+    assert_eq!(floor_of(&pinned, MethodKey::Recovery), Some(1));
+    assert_eq!(after.ksf_profile, pinned.ksf_profile);
+    assert_eq!(after.server_public_key, pinned.server_public_key);
+    // The old recovery wrap is now a rollback; the new one opens.
+    let seen = view(&after);
+    assert_eq!(
+        after
+            .unlock_server(&seen, &a.wraps[1], &kek_rk(&a.recovery_key))
+            .err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    let vault = after
+        .unlock_server(
+            &seen,
+            &renewed.recovery_wrap,
+            &kek_rk(&renewed.recovery_key),
+        )
+        .unwrap();
+    assert!(vault.same_vault_key(&a.vault));
+    // A record for another vault key is refused.
+    let mut other = pinned.clone();
+    other.pk_a = [9; 32];
+    assert_eq!(
+        renewed.pinned(&other).err(),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+}
+
+#[test]
+fn the_renewal_holds_a_secret_and_is_not_clone_or_debug() {
+    assert_not_impl_any!(
+        ferret_core::RenewedRecovery: Clone,
+        Copy,
+        core::fmt::Debug,
+        core::fmt::Display
+    );
+}
+
+#[test]
+fn change_password_and_recover_pick_max_floor_manifest_server_plus_one() {
+    let s = create("gm", true);
+    let a = &s.account;
+    let key = sk(0x5a);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let base = pinned_of(&s);
+    let change_with =
+        |pinned: &Pinned, current: &ferret_core::WrapRecord, m: &ManifestRow<'_>, seed: &str| {
+            let reg = register(&s.server, &input, seed);
+            change_password(
+                &mut rng(seed),
+                &a.vault,
+                password(&input, reg, KsfProfile::P1),
+                pinned,
+                current,
+                m,
+            )
+            .unwrap()
+            .wrap
+            .kek_generation
+        };
+
+    // ---- change_password: the floor, the manifest or the server's wrap.
+    let mut floor7 = base.clone();
+    floor7.kek_generation_max = vec![(MethodKey::Password, 7), (MethodKey::Recovery, 1)];
+    assert_eq!(change_with(&floor7, &a.wraps[0], &row(a), "gm/c1"), 8);
+    let manifest4 = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 4),
+            ManifestEntry::new(2, method_id(0x71), 1),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        change_with(&base, &a.wraps[0], &sealed_row(&manifest4), "gm/c2"),
+        5
+    );
+    let mut server6 = a.wraps[0].clone();
+    server6.kek_generation = 6;
+    assert_eq!(change_with(&base, &server6, &row(a), "gm/c3"), 7);
+
+    // ---- recover: the new password wrap from the floor or the manifest (the
+    // server's password wrap is not an input of a recovery, and the server
+    // refuses a generation that is not above the one it holds), the new
+    // recovery wrap from the floor, the manifest or the server's recovery
+    // wrap.
+    let code = rk_code(&s);
+    let c = ctx1();
+    let recover_on =
+        |rk_wrap: &ferret_core::WrapRecord, m: ManifestRow<'_>, pin: PinState<'_>, seed: &str| {
+            let reg = register(&s.server, &input, seed);
+            let r = recover(
+                &mut rng(seed),
+                &RecoveryInput {
+                    ctx: &c,
+                    rk_code: &code,
+                    rk_wrap,
+                    manifest: m,
+                },
+                password(&input, reg, KsfProfile::P1),
+                pin,
+            )
+            .unwrap();
+            (
+                r.password_wrap.kek_generation,
+                r.recovery_wrap.kek_generation,
+            )
+        };
+    let mut floors = base.clone();
+    floors.kek_generation_max = vec![(MethodKey::Password, 5), (MethodKey::Recovery, 3)];
+    let wrap3 = recovery_wrap_at(&s, 3);
+    assert_eq!(
+        recover_on(&wrap3, row(a), PinState::Pinned(&floors), "gm/r1"),
+        (6, 4)
+    );
+    let manifest_high = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), 8),
+            ManifestEntry::new(2, method_id(0x71), 6),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        recover_on(
+            &a.wraps[1],
+            sealed_row(&manifest_high),
+            PinState::Pinned(&base),
+            "gm/r2"
+        ),
+        (9, 7)
+    );
+    let wrap9 = recovery_wrap_at(&s, 9);
+    assert_eq!(
+        recover_on(&wrap9, row(a), PinState::Pinned(&base), "gm/r3"),
+        (2, 10)
+    );
+    assert_eq!(
+        recover_on(&wrap9, row(a), PinState::FirstUse, "gm/r4"),
+        (2, 10)
+    );
+}
+
+/// Every case of `vectors/internal/recovery_renew.json`, through the core.
+/// The same file runs through the WASM build in `tests/node/vectors.test.mjs`.
+#[test]
+fn recovery_renew_vectors_match_in_rust_and_js() {
+    let path = vectors_dir().join("internal/recovery_renew.json");
+    let file = ferret_core::testing::vector::load(&path).unwrap();
+    let report = ferret_core::testing::vector::run_all(&file, |case, rng| {
+        ferret_core::testing::account::run_case(&case.op, &case.input, rng).map(|output| Outcome {
+            output,
+            intermediate: None,
+        })
+    });
+    assert!(report.failures.is_empty(), "{:#?}", report.failures);
+    assert_eq!(report.passed, 20, "{} cases", report.passed);
+}
+
+#[test]
+fn after_an_accepted_restore_a_wrap_below_the_floor_is_renewed_above_it() {
+    let s = create("rr1", true);
+    let a = &s.account;
+    // The device has seen recovery generation 3; the restored server holds
+    // the wrap and the manifest at 1.
+    let mut pinned = pinned_of(&s);
+    pinned.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 3)];
+    // The default entry refuses it, before anything is drawn.
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &a.wraps[1], &row(a)).err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    // The after-restore entry renews it above the floor.
+    let renewed = ferret_core::renew_recovery_after_restore(
+        &mut rng("rr1/renew"),
+        &a.vault,
+        &pinned,
+        &a.wraps[1],
+        &row(a),
+    )
+    .unwrap();
+    assert_eq!(renewed.recovery_wrap.kek_generation, 4);
+    assert_eq!(renewed.recovery_wrap.method_id, method_id(0x71));
+    let opened = unwrap_vk(
+        &ctx1(),
+        &kek_rk(&renewed.recovery_key),
+        &renewed.recovery_wrap,
+    )
+    .unwrap();
+    assert!(opened.same_vault_key(&a.vault));
+    // The manifest lists the new generation.
+    let after = decrypt_manifest(
+        &a.vault,
+        renewed.manifest.rev,
+        &renewed.manifest.envelope,
+        &renewed.manifest.tag,
+    )
+    .unwrap();
+    assert_eq!(after.methods[1].kek_generation, 4);
+    // The record only goes up: floor 4, and the old wrap stays a rollback.
+    let mut stored = renewed.pinned(&pinned).unwrap();
+    assert_eq!(floor_of(&stored, MethodKey::Recovery), Some(4));
+    let seen = view(&stored);
+    assert_eq!(
+        stored
+            .unlock_server(&seen, &a.wraps[1], &kek_rk(&a.recovery_key))
+            .err(),
+        Some(Error::Pinned(PinnedField::KekGeneration))
+    );
+    // It draws exactly as the default entry does: the key and two nonces.
+    let mut r = rng("rr1/draws");
+    let draws: Vec<Vec<u8>> = [32usize, 24, 24]
+        .iter()
+        .map(|n| {
+            let mut d = vec![0u8; *n];
+            ferret_core::SecureRng::fill(&mut r, &mut d);
+            d
+        })
+        .collect();
+    let mut replay = ReplayRng::new(draws);
+    ferret_core::renew_recovery_after_restore(&mut replay, &a.vault, &pinned, &a.wraps[1], &row(a))
+        .unwrap();
+    replay.finish().unwrap();
+}
+
+#[test]
+fn the_after_restore_entry_keeps_every_other_check() {
+    let s = create("rr2", true);
+    let a = &s.account;
+    let mut good = pinned_of(&s);
+    good.kek_generation_max = vec![(MethodKey::Password, 1), (MethodKey::Recovery, 3)];
+    let refused = |pinned: &Pinned, current: &ferret_core::WrapRecord, m: &ManifestRow<'_>| {
+        ferret_core::renew_recovery_after_restore(&mut no_draws(), &a.vault, pinned, current, m)
+            .err()
+    };
+    let mut unseeded = good.clone();
+    unseeded.kek_generation_max = vec![(MethodKey::Password, 1)];
+    assert_eq!(
+        refused(&unseeded, &a.wraps[1], &row(a)),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    let mut top = good.clone();
+    top.kek_generation_max = vec![
+        (MethodKey::Password, 1),
+        (MethodKey::Recovery, ferret_core::pinning::MAX_GENERATION),
+    ];
+    assert_eq!(
+        refused(&top, &a.wraps[1], &row(a)),
+        Some(Error::Malformed(MalformedKind::PinnedRecord))
+    );
+    let mut other = good.clone();
+    other.account_id = account(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AccountId))
+    );
+    let mut other = good.clone();
+    other.vault_id = vault(0x99);
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VaultId))
+    );
+    let mut other = good.clone();
+    other.vk_epoch_max = 2;
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::VkEpoch))
+    );
+    let mut other = good.clone();
+    other.pk_a = [9; 32];
+    assert_eq!(
+        refused(&other, &a.wraps[1], &row(a)),
+        Some(Error::Pinned(PinnedField::AuthKey))
+    );
+    assert_eq!(
+        refused(&good, &a.wraps[0], &row(a)),
+        Some(Error::Unsupported)
+    );
+    let mut unlisted = a.wraps[1].clone();
+    unlisted.method_id = method_id(0x72);
+    assert_eq!(
+        refused(&good, &unlisted, &row(a)),
+        Some(Error::Malformed(MalformedKind::Entries))
+    );
+    let mut envelope = a.manifest.envelope.clone();
+    envelope[40] ^= 1;
+    let broken = ManifestRow {
+        rev: a.manifest.rev,
+        envelope: &envelope,
+        tag: &a.manifest.tag,
+    };
+    assert_eq!(refused(&good, &a.wraps[1], &broken), Some(Error::Decrypt));
+    let mut exhausted = a.wraps[1].clone();
+    exhausted.kek_generation = ferret_core::pinning::MAX_GENERATION;
+    assert_eq!(
+        refused(&good, &exhausted, &row(a)),
+        Some(Error::GenerationExhausted)
+    );
+}
+
+#[test]
+fn a_server_value_at_the_largest_generation_is_generation_exhausted() {
+    let s = create("gx", true);
+    let a = &s.account;
+    let top = ferret_core::pinning::MAX_GENERATION;
+    let pinned = pinned_of(&s);
+    // The renewal: the server's recovery wrap, or its manifest entry.
+    let mut wrap = a.wraps[1].clone();
+    wrap.kek_generation = top;
+    assert_eq!(
+        ferret_core::renew_recovery(&mut no_draws(), &a.vault, &pinned, &wrap, &row(a)).err(),
+        Some(Error::GenerationExhausted)
+    );
+    let manifest_top = sealed_manifest(
+        &s,
+        2,
+        vec![
+            ManifestEntry::new(1, method_id(0x70), top),
+            ManifestEntry::new(2, method_id(0x71), top),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        ferret_core::renew_recovery(
+            &mut no_draws(),
+            &a.vault,
+            &pinned,
+            &a.wraps[1],
+            &sealed_row(&manifest_top)
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
+    );
+    assert_eq!(Error::GenerationExhausted.code(), "generation_exhausted");
+    // A password change: the server's password wrap at the top.
+    let key = sk(0x5a);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let reg = register(&s.server, &input, "gx/c");
+    let mut pw = a.wraps[0].clone();
+    pw.kek_generation = top;
+    assert_eq!(
+        change_password(
+            &mut no_draws(),
+            &a.vault,
+            password(&input, reg, KsfProfile::P1),
+            &pinned,
+            &pw,
+            &row(a),
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
+    );
+    // A recovery: the manifest lists both methods at the top.
+    let code = rk_code(&s);
+    let c = ctx1();
+    let reg = register(&s.server, &input, "gx/r");
+    assert_eq!(
+        recover(
+            &mut no_draws(),
+            &RecoveryInput {
+                ctx: &c,
+                rk_code: &code,
+                rk_wrap: &a.wraps[1],
+                manifest: sealed_row(&manifest_top),
+            },
+            password(&input, reg, KsfProfile::P1),
+            PinState::FirstUse,
+        )
+        .err(),
+        Some(Error::GenerationExhausted)
     );
 }

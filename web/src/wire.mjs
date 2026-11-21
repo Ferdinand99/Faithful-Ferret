@@ -24,6 +24,7 @@ const refuse = (message, code = "bad_request") => {
 // ----------------------------------------------------------- JSON reader
 
 const MAX_INT = Number.MAX_SAFE_INTEGER; // 2^53 - 1
+const U32 = 2 ** 32 - 1;
 const WHITE = new Set([" ", "\t", "\n", "\r"]);
 
 /**
@@ -122,6 +123,7 @@ const b = (text) => void b64u.decode(text);
  * @returns {Check}
  */
 const bytes = (n, code = "bad_request") => (text) => {
+  str(text); // a value that is not text is a plain bad request, as on the server
   const got = b64u.decode(text, code).length;
   if (got !== n) refuse(`expected ${n} bytes, got ${got}`, code);
 };
@@ -157,6 +159,17 @@ const deviceName = (v) => {
   str(v);
   if ([...v].length > 64) refuse("device_name is longer than 64 characters");
   if (FORBIDDEN_IN_NAME.test(v)) refuse("device_name has a control or invisible character");
+};
+/** A device name that must be there: 1 to 64 characters, the rules of `deviceName`. @type {Check} */
+const deviceNameRequired = (v) => {
+  deviceName(v);
+  if (v.length === 0) refuse("device_name is empty");
+};
+/** A device token: 43 characters of strict base64url that decode to 32 bytes. @type {Check} */
+const token = (v) => {
+  str(v);
+  if (v.length !== TOKEN_CHARS) refuse("a token has 43 characters");
+  if (b64u.decode(v).length !== 32) refuse("a token is 32 bytes");
 };
 /** @type {Check} */
 const next = (v) => {
@@ -199,6 +212,50 @@ const restoreRow = [["id", id], ["rev", int()], ["seq", int()], ["hash", b32, tr
 /** The most operations in one batch. */
 export const MAX_BATCH_OPS = 100;
 
+/** The largest body of a request that carries a proof, in bytes (Spec: Fase 1 § 4.6). */
+export const MAX_SIGNED_BODY = 256 * 1024;
+/** The length of a challenge nonce (`Ferret-Nonce`) in bytes. */
+export const NONCE_LEN = 32;
+/** The length of a proof (`Ferret-Proof`, an Ed25519 signature) in bytes. */
+export const PROOF_LEN = 64;
+/** The length of the wrap of a password: nonce 24, key 32, tag 16, commitment 32. */
+export const PASSWORD_WRAP_LEN = 104;
+/** The length of the wrap of a recovery key: nonce 24, key 32, tag 16. */
+export const RECOVERY_WRAP_LEN = 72;
+/** The words a session scope has on the wire. */
+export const SESSION_SCOPES = Object.freeze(["full", "pending_2fa", "account_reset", "unverified"]);
+/** The scope a redeemed sign-in code gives. */
+export const REDEEM_SCOPE = "account_reset";
+/** The seconds an access token of a device lives. */
+export const ACCESS_TOKEN_SECS = 900;
+/** The length of a device token: 32 bytes as base64url without padding. */
+export const TOKEN_CHARS = 43;
+/** The most devices with tokens one account may have. */
+export const MAX_DEVICES = 20;
+/** The most rows in a list of devices. */
+export const MAX_DEVICE_LIST = 200;
+/** The words a platform has on the wire. */
+export const PLATFORMS = Object.freeze(["windows", "macos", "linux", "android", "ios", "chromeos", "other"]);
+
+/** The answer with a device's tokens: `token_type` is `DPoP`, and nothing else. @type {Spec} */
+const tokens = [
+  ["access_token", token], ["refresh_token", token], ["token_type", oneOf("DPoP")], ["expires_in", int(U32)],
+];
+/** One row of the list of devices; a browser that never gave a name has `""`. @type {Spec} */
+const deviceRow = [
+  ["id", id], ["kind", oneOf("device", "web")], ["name", deviceName], ["platform", oneOf(...PLATFORMS), true],
+  ["created_at", int()], ["last_seen", int()], ["current", bool],
+];
+/**
+ * The list of devices: at most {@link MAX_DEVICE_LIST} rows, checked when it is read. An account with more
+ * gets the first ones and, in `more`, how many were left out (see `checkStep`).
+ * @type {Check}
+ */
+const deviceList = (v) => {
+  if (Array.isArray(v) && v.length > MAX_DEVICE_LIST) refuse("a list of devices has at most 200 rows");
+  list(deviceRow)(v);
+};
+
 /** One operation of a batch: a put request with the item id in the body. @type {Spec} */
 const batchOp = [
   ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
@@ -211,6 +268,12 @@ const batchResult = [
   ["current_rev", int(), true], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
   ["error", str, true], ["restore_epoch", int(), true],
 ];
+
+/** One operation of a batch, and the window of an import it counts against (left out: not an import). @type {Spec} */
+const batchReq = [["ops", list(batchOp)], ["import_window", id, true]];
+
+/** The answer to a write of the password or the recovery key. @type {Spec} */
+const putRes = [["kek_generation", int(U32)], ["seq", int()]];
 
 /** @type {Readonly<Record<string, Spec>>} */
 export const SHAPES = Object.freeze({
@@ -243,10 +306,11 @@ export const SHAPES = Object.freeze({
   login_finish_res: [["account_id", id], ["vault_id", id], ["vk_epoch", int()]],
   handoff_req: [["purpose", oneOf("login", "reauth")], ["next", next], ["challenge", b32]],
   handoff_res: [["code", bytes(32)], ["expires_in", int()]],
-  redeem_req: [["code", str]],
+  handoff_redeem_req: [["code", str]],
   handoff_redeem_res: [["next", str]],
   session_res: [
-    ["account_id", id, true], ["email", str], ["scope", str], ["origin", oneOf("vault", "admin")],
+    ["account_id", id, true], ["email", str], ["scope", oneOf(...SESSION_SCOPES)],
+    ["origin", oneOf("vault", "admin")], ["reauth_until", int(), true], ["admin", bool, true],
   ],
   methods_res: [["methods", list(wrap)], ["pk_a", b32], ["vk_epoch", int()], ["manifest", nested(sealedRow)]],
   change,
@@ -262,7 +326,8 @@ export const SHAPES = Object.freeze({
   put_item_res: [["rev", int()], ["seq", int()], ["replayed", bool]],
   conflict_res: [["current_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool]],
   error_res: [["error", str]],
-  batch_req: [["ops", list(batchOp)]],
+  batch_req: batchReq,
+  batch_req_import: batchReq,
   batch_res: [["results", list(batchResult)]],
   checkpoint_put_req: checkpointPut,
   checkpoint_put_res: [["seq", int()]],
@@ -277,6 +342,48 @@ export const SHAPES = Object.freeze({
     ["next_after", id, true], ["has_more", bool],
   ],
   sync_event: [["seq", int()]],
+  challenge_res: [["nonce", bytes(NONCE_LEN)], ["expires_in", int(U32)]],
+  reregister_start_req: [["registration_request", bytes(32, "malformed_registration_request")]],
+  reregister_start_res: [["registration_response", bytes(64)]],
+  password_put_req: [
+    ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
+    ["wrap", bytes(PASSWORD_WRAP_LEN)], ["kek_generation", int(U32)], ["manifest", nested(sealedRow)],
+  ],
+  password_put_res: putRes,
+  recovery_put_res: putRes, // the answer to the recovery write has the same shape
+  recovery_put_req: [
+    ["wrap", bytes(RECOVERY_WRAP_LEN)], ["kek_generation", int(U32)], ["pk_r", b32],
+    ["manifest", nested(sealedRow)],
+  ],
+  recovery_res: [
+    ["account_id", id], ["vault_id", id], ["vk_epoch", int()], ["ksf_profile", int(255)],
+    ["wrap", nested(wrap)], ["manifest", nested(sealedRow)],
+  ],
+  recover_req: [
+    ["registration_record", bytes(192, "malformed_registration_record")], ["ksf_profile", int(255)],
+    ["pw_wrap", bytes(PASSWORD_WRAP_LEN)], ["rk_wrap", bytes(RECOVERY_WRAP_LEN)],
+    ["pw_kek_generation", int(U32)], ["rk_kek_generation", int(U32)], ["pk_r_new", b32],
+    ["manifest", nested(sealedRow)],
+  ],
+  recover_res: [["session_ended", bool], ["seq", int()]],
+  redeem_req: [["email", str], ["code", str]],
+  redeem_res: [["scope", oneOf(REDEEM_SCOPE)]],
+  import_window_req: [["ops", int(U32)]],
+  import_window_res: [["window_id", id], ["ops", int(U32)], ["expires_in", int(U32)]],
+  // Devices and their tokens. A device client signs in with the body that has
+  // `client: "device"` (the web vault's body has no `client`).
+  login_finish_req_device: [
+    ["login_id", id], ["ke3", bytes(64, "malformed_ke3")], ["client", oneOf("device")],
+    ["device_name", deviceNameRequired], ["platform", oneOf(...PLATFORMS)],
+  ],
+  login_finish_res_device: [
+    ["account_id", id], ["vault_id", id], ["vk_epoch", int()], ["device_id", id], ...tokens,
+  ],
+  token_refresh_req: [["refresh_token", token]],
+  token_res: tokens,
+  token_revoke_req: [["refresh_token", token]],
+  devices_res: [["devices", deviceList], ["more", int(U32), true]],
+  revoke_all_res: [["revoked", int(U32)]],
 });
 
 /**
@@ -365,7 +472,9 @@ export const ERROR_STATUS = Object.freeze({
   profile_rejected: 422, unsupported_envelope: 422, tombstone_invalid: 422, too_large: 413, quota_exceeded: 413,
   idem_reuse: 422, conflict: 409, protocol_header_missing: 400, forbidden_origin: 403, not_found: 404,
   bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
-  restore_epoch_changed: 409,
+  restore_epoch_changed: 409, reauth_required: 403, second_factor_required: 403, write_conflict: 409,
+  import_window_open: 409, import_window_invalid: 409,
+  dpop_invalid: 401, token_expired: 401, token_reused: 401, device_revoked: 401,
 });
 
 /**
@@ -419,20 +528,40 @@ function conflictRowIsValid(value) {
 /**
  * The checks that come with a shape once it is read: a hand-over code, the two
  * forms of an item write (a live row, or a tombstone, never both), the two
- * forms of a conflict answer, and for a batch the number of operations and the
- * form of each operation and result.
+ * forms of a conflict answer, the recovery wrap of a recovery answer, and for a
+ * batch the number of operations and the form of each operation and result.
  * @param {string} kind
  * @param {any} value
  */
 export function checkStep(kind, value) {
-  if (kind === "redeem_req") handoffCode(value.code);
-  if (kind === "batch_req") {
+  if (kind === "handoff_redeem_req") handoffCode(value.code);
+  if (kind === "recovery_res") {
+    // The wrap that comes back is the recovery method, with a recovery-sized wrap and no passkey field.
+    if (
+      value.wrap.method_type !== 2 || b64u.decode(value.wrap.wrap).length !== RECOVERY_WRAP_LEN
+      || present(value.wrap, "credential_id") || present(value.wrap, "prf_salt")
+    ) {
+      refuse("the wrap of a recovery answer is the recovery method with 72 bytes and no passkey field");
+    }
+  }
+  if (kind === "batch_req" || kind === "batch_req_import") {
     if (value.ops.length < 1 || value.ops.length > MAX_BATCH_OPS) refuse("a batch has 1 to 100 operations");
     for (const op of value.ops) checkBatchOp(op);
   }
   if (kind === "batch_res") {
     if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
     for (const result of value.results) checkBatchResult(result);
+  }
+  if (kind === "devices_res") {
+    // A device with tokens has a name and a platform, a browser has no platform;
+    // `more` (rows left out) is only on a full list, and at least 1.
+    for (const row of value.devices) {
+      const ok = row.kind === "device" ? row.name !== "" && present(row, "platform") : !present(row, "platform");
+      if (!ok) refuse("a device with tokens has a name and a platform, a browser has no platform");
+    }
+    if (present(value, "more") && (value.more < 1 || value.devices.length !== MAX_DEVICE_LIST)) {
+      refuse("more is at least 1 and only on a full list");
+    }
   }
   if (kind === "items_res" || kind === "restore_rows_res") {
     // `next_after` is there exactly when more rows follow.

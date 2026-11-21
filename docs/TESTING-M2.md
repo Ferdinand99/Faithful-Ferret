@@ -14,15 +14,20 @@ on the test stacks is throwaway test data.
 | What | Where | Command |
 | --- | --- | --- |
 | The web vault: build, type check, unit tests (the sync engine, outbox, restore, conflict, trash, forget, which tab runs the sync, texts) and Playwright in three browsers | `web/` | `scripts/lanbox-web.sh` |
-| The model-based sync matrix: random runs of two to three engines against a model server (offline, retries, deletions, purges, restores, tab handovers), checking that no write is lost and every device converges | `web/test/unit/syncMatrix.test.mjs` | `FERRET_PASS_ENV="FERRET_MATRIX_RUNS FERRET_MATRIX_STRICT FERRET_MATRIX_TOLERATE" FERRET_MATRIX_RUNS=5000 FERRET_MATRIX_STRICT=1 FERRET_MATRIX_TOLERATE=purge scripts/lanbox-web.sh unit` |
+| The model-based sync matrix: random runs of two to three engines against a model server (offline, retries, deletions, purges, restores, tab handovers), checking that no write is lost and every device converges | `web/test/unit/syncMatrix.test.mjs` | `FERRET_PASS_ENV=FERRET_MATRIX_RUNS FERRET_MATRIX_RUNS=5000 scripts/lanbox-web.sh unit`; the purge-heavy step of the gate (10 000 strict runs): `FERRET_PASS_ENV="FERRET_MATRIX_RUNS FERRET_MATRIX_PURGE_HEAVY" FERRET_MATRIX_RUNS=50000 FERRET_MATRIX_PURGE_HEAVY=1 scripts/lanbox-web.sh unit` |
 | The same scenarios against the real server: seven prototype scenarios, batches, swapped blobs, checkpoints, restore epoch, tombstones, and the routes | `crates/ferret-server/tests/sync_matrix.rs`, `sync_routes.rs`, `listing.rs`, `retention.rs`, `restore_seq.rs`, `restore_epoch.rs` | `scripts/lanbox.sh test --manifest-path crates/ferret-server/Cargo.toml` |
 | 10 000 items through the real server (listing, pages, checkpoint size); it is ignored by default | `sync_matrix.rs`, `ten_thousand_items` | `scripts/lanbox.sh test --release --manifest-path crates/ferret-server/Cargo.toml --test sync_matrix ten_thousand_items -- --ignored --nocapture` |
 | The WebAssembly binding at scale: the rollback memory and checkpoints at the size of a large vault, `copy_item`, error codes | `tests/node/scale.test.mjs` and the other files there | `scripts/lanbox.sh --exec sh -c 'scripts/build-wasm.sh && scripts/build-wasm.sh --test && node --test tests/node/*.test.mjs'` |
 | The end-to-end gate on a private stack, in Chromium, Firefox and WebKit (scenarios 01 to 17) | `web/test/e2e-stack/` | `scripts/lanbox-ferret-e2e-gate.sh` (the sync scenarios alone: `scripts/lanbox-ferret-e2e-gate.sh m2`) |
 
-`FERRET_MATRIX_STRICT=1` makes the matrix fail on every shape it knows about. `FERRET_MATRIX_TOLERATE=purge`
-lifts that for the one shape that is known not to be handled (a tombstone that the server purged after 400 days, see
-the known limits below). `FERRET_MATRIX_RUNS` sets the number of seeded runs: 500 by default, 5 000 at the gate. A failing run names its seed, and `FERRET_MATRIX_SEED=<seed>` repeats it.
+The matrix tolerates no known shape any more. The one there was, a tombstone that the server purged after 400 days, is handled: the server
+purges only what its checkpoint covers, and the engine holds a tombstone that the server has purged (also an older one, of an item that was
+brought back and deleted again) and counts a deletion of its own that was purged before it was read back as done, and an item that is brought back from the trash
+(or with "keep mine") over a purged tombstone becomes a copy under a new id. So every run is strict and `KNOWN_GAPS` in `syncModel.mjs` is empty. `FERRET_MATRIX_STRICT=1` tolerates every gap that is named,
+and `FERRET_MATRIX_TOLERATE=<gap>` names the ones that are let through.
+`FERRET_MATRIX_PURGE_HEAVY=1` triples the purges and doubles the deletions in `matrix_passes_strict_without_tolerating_purge`; it finds shapes
+that the usual mix meets rarely (add the variable to `FERRET_PASS_ENV`). `FERRET_MATRIX_RUNS` sets the number of seeded runs: 500 by default,
+5 000 at the gate (the strict test makes a fifth of that). A failing run names its seed, and `FERRET_MATRIX_SEED=<seed>` repeats it.
 
 ### The sync scenarios of the end-to-end gate
 
@@ -72,8 +77,9 @@ and no real passwords. Reload every open vault tab after a deploy: a tab loaded 
    restored. A conflict against a deleted item offers "Restore mine" and "Accept the deletion".
 5. **One tab per browser.** Open the vault in a second tab of the same browser: it shows "The vault is open in another
    tab" with "Use here" and nothing from the vault. Press "Use here": the vault moves, the first tab shows the notice,
-   and a change that was waiting in the first tab is sent. An edit that is open and unsaved in the old tab is lost
-   (a known limit). Locking in the new tab and unlocking again works.
+   and a change that was waiting in the first tab is sent. If the first tab has an edit that is not saved, the second
+   tab warns first ("Use here anyway"); after that the first tab keeps the form on screen, read-only, with "Take back".
+   Locking in the new tab hands the vault to the first waiting tab that is in view, and unlocking again works.
 6. **A restored server.** The administrator stops the server, restores a snapshot, bumps the restore epoch and starts it
    again (`docs/OPERATIONS.md`). Both browsers show "The server was restored" and stop syncing. "See what happened"
    shows how many local changes would be uploaded again. Accepting the older state uploads them, and creates conflicts
@@ -101,9 +107,9 @@ each of them. The ones to expect while testing:
   that drops changes that were not sent yet. A backup from before the `restore_seq` migration needs a start, a stop
   and then the bump.
 - Two devices that accept the same restore get a conflict for every item that was created or changed after the backup.
-- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, can make the checkpoint check fail with the warning that the server shows an older state. Sync goes on, but checkpoints are not uploaded while the warning stands. Nothing is lost; do not forget the server for it.
+- A tombstone purged after 400 days, or a device's own deletion purged before it was read back, no longer fails the checkpoint check (from M3 on): the server purges only tombstones that its checkpoint covers, a device holds a tombstone that the server has purged and leaves it out of the check, and a deletion of its own that was purged before it was read back counts as done. An item that is brought back from the trash (or with "keep mine") over a tombstone that the server has purged becomes a copy under a new id (the core's `copy_item`, as "keep both" does), so every device takes it as a new item at revision 1. Two devices that bring the same purged item back at the same time (or one after the other, each from its own trash) each make their own copy under their own id, so the vault ends with two items with the same content; nothing is lost and no warning is raised, and duplicates are not removed by the engine. What is left: an item that holds a passkey is not copied by the core and is written again under its own id at revision 1, and another device that holds such an item at a higher revision refuses that copy with a warning (section 8.8 of the design). The matrix has no passkey items, so it tolerates nothing here.
 - One tab per browser: no fence for an old tab that is alive but not answering, a standby tab unlocks the account keys,
-  an unsaved edit is lost on "Use here", and locking or signing out during "Use here" can leave no syncing tab until a reload.
+  and locking or signing out in a tab while "Use here" is going on hands the vault to a waiting tab that is in view; when no waiting tab is in view, no tab syncs until one is.
 - A rolled-back newest write, a fork and withheld writes are not detected (§ 8.6), `top_seq` is not signed, and clearing
   site data resets the sync memory.
 - The same account id pinned under two server addresses in one browser shares one local cache, and "Forget this server" leaves the shared rows in place.

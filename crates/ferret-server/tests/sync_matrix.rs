@@ -24,7 +24,8 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 use support::sync::{
-    SyncReport, View, Warning, World, as_op, batch_results, error_code, idem_of, item, live_body,
+    SimClient, SyncReport, View, Warning, World, as_op, batch_results, error_code, idem_of, item,
+    live_body,
 };
 use support::{START, TestApp};
 
@@ -561,13 +562,14 @@ async fn listing_after_410_recovers_every_live_row_after_a_purge() {
     assert_eq!(b.sync().await.pushed, 4);
     b.pull().await;
 
+    // The phone has read everything, and its checkpoint at the top lists both
+    // tombstones: the server may purge them now.
+    assert_eq!(b.upload_checkpoint().await.status, StatusCode::OK);
+
     // The server purges tombstones older than 400 days (without moving the
     // clock: a session would run out). The floor of the feed is now 10, above
     // the cursor of the laptop.
-    let day = 86_400i64;
-    world
-        .run_retention(i64::try_from(START).expect("a time") + 401 * day)
-        .await;
+    world.run_retention(after_400_days()).await;
     assert_eq!(
         count(
             &world,
@@ -607,6 +609,131 @@ async fn listing_after_410_recovers_every_live_row_after_a_purge() {
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert_eq!(c.live_items(), on_server.map(item).to_vec());
     assert_eq!(c.cursor(), world.server_seq().await);
+}
+
+/// 401 days after the clock of the test app started: the retention pass finds
+/// every tombstone written so far old enough.
+fn after_400_days() -> i64 {
+    i64::try_from(START).expect("a time") + 401 * 86_400
+}
+
+async fn tombstone_seqs(world: &World) -> Vec<i64> {
+    let vault = world.account.vault_id;
+    world
+        .db(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT seq FROM ferret_items WHERE vault_id = ?1 AND deleted = 1 ORDER BY seq",
+                )
+                .expect("prepare");
+            let rows = stmt
+                .query_map([vault.as_bytes()], |r| r.get(0))
+                .expect("rows");
+            rows.map(|r| r.expect("a seq")).collect()
+        })
+        .await
+}
+
+/// Every device reads on and checks the stored checkpoint: no warning, no alarm.
+async fn everyone_verifies(devices: &mut [&mut SimClient], note: &str) {
+    for device in devices {
+        let report = device.pull().await;
+        assert!(report.warnings.is_empty(), "{note}: {:?}", report.warnings);
+        assert_eq!(device.verify().await, Ok(()), "{note}");
+    }
+}
+
+#[tokio::test]
+async fn after_a_purge_a_real_client_verifies_against_the_stored_checkpoint() {
+    let world = World::new().await;
+    let mut a = world.client("laptop").await;
+    let mut b = world.client("phone").await;
+    for n in 1..=4u16 {
+        a.edit(item(n), &format!("item {n}"));
+    }
+    assert_eq!(a.sync().await.pushed, 4);
+    b.sync().await;
+
+    // The laptop deletes item 2, reads the deletion back and uploads the
+    // checkpoint of that state: it lists item 2 as a tombstone.
+    a.delete(item(2));
+    assert_eq!(a.sync().await.pushed, 1);
+    a.pull().await;
+    let covered = i64::try_from(a.cursor()).expect("a seq");
+    assert_eq!(a.upload_checkpoint().await.status, StatusCode::OK);
+
+    // The phone deletes item 3 afterwards. No checkpoint lists that tombstone.
+    b.pull().await;
+    b.delete(item(3));
+    assert_eq!(b.sync().await.pushed, 1);
+    b.pull().await;
+    let both = tombstone_seqs(&world).await;
+    assert_eq!(both.len(), 2, "the two tombstones");
+    assert!(both[0] <= covered && both[1] > covered);
+
+    // 401 days on: the covered tombstone goes, the other one stays.
+    world.run_retention(after_400_days()).await;
+    assert_eq!(tombstone_seqs(&world).await, vec![both[1]]);
+
+    // A device that held the purged tombstone, one that held the other, and a
+    // new one that never saw either: the stored checkpoint verifies for each.
+    let mut c = world.client("tablet").await;
+    everyone_verifies(&mut [&mut a, &mut b, &mut c], "after the first purge").await;
+    assert_eq!(a.live_items(), vec![item(1), item(4)]);
+    assert_eq!(c.live_items(), vec![item(1), item(4)]);
+
+    // The phone has read on and uploads a newer checkpoint that lists the second
+    // tombstone; the next run purges it, and everyone still verifies.
+    assert_eq!(b.upload_checkpoint().await.status, StatusCode::OK);
+    world.run_retention(after_400_days() + 86_400).await;
+    assert!(tombstone_seqs(&world).await.is_empty());
+    let mut d = world.client("watch").await;
+    everyone_verifies(
+        &mut [&mut a, &mut b, &mut c, &mut d],
+        "after the second purge",
+    )
+    .await;
+    assert_eq!(d.live_items(), vec![item(1), item(4)]);
+}
+
+#[tokio::test]
+async fn the_seed_703_shape_verifies_after_a_purge() {
+    // The shape of seed 703 of the model matrix: a device deletes an item and
+    // never reads its own deletion back, while the checkpoint on the server
+    // still lists the item as live. Purging that tombstone would leave a live
+    // entry without a row, which every device must call an alarm.
+    let world = World::new().await;
+    let mut a = world.client("laptop").await;
+    let mut b = world.client("phone").await;
+    for n in 1..=3u16 {
+        a.edit(item(n), &format!("item {n}"));
+    }
+    assert_eq!(a.sync().await.pushed, 3);
+    b.sync().await;
+    assert_eq!(b.upload_checkpoint().await.status, StatusCode::OK);
+
+    a.delete(item(1));
+    assert_eq!(a.push().await.pushed, 1);
+    let tombstone = tombstone_seqs(&world).await;
+    assert_eq!(tombstone.len(), 1);
+
+    // 401 days on, the stored checkpoint is below the tombstone: it stays.
+    world.run_retention(after_400_days()).await;
+    assert_eq!(tombstone_seqs(&world).await, tombstone);
+    let mut c = world.client("tablet").await;
+    everyone_verifies(&mut [&mut a, &mut b, &mut c], "tombstone kept").await;
+    assert_eq!(c.live_items(), vec![item(2), item(3)]);
+
+    // The phone has read the deletion now and uploads a checkpoint that lists
+    // it: the next run purges it, and the stored checkpoint still verifies.
+    // A device uploads one checkpoint per 10 minutes.
+    world.app.clock.advance(601);
+    assert_eq!(b.upload_checkpoint().await.status, StatusCode::OK);
+    world.run_retention(after_400_days() + 86_400).await;
+    assert!(tombstone_seqs(&world).await.is_empty());
+    let mut d = world.client("watch").await;
+    everyone_verifies(&mut [&mut a, &mut b, &mut c, &mut d], "tombstone purged").await;
+    assert_eq!(d.live_items(), vec![item(2), item(3)]);
 }
 
 #[tokio::test]

@@ -944,3 +944,16 @@ test("the_uploaded_checkpoint_lists_every_row_it_was_made_from", async () => {
   assert.equal(b64u.encode(stored.digest), model.checkpointPuts[0].digest);
   d.engine.stop();
 });
+
+test("the_engine_answers_the_last_state_it_announced_for_a_screen_that_is_built_later", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  setRow(model, client, ID_A, 1, "A");
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  assert.notEqual(d.engine.status(), "unauthorized");
+  d.api.checkpointFaults.push({ kind: "status", status: 403, code: "forbidden" });
+  await d.engine.verifyNow();
+  assert.equal(d.engine.status(), "unauthorized", "a screen built after the announcement can ask for it");
+  d.engine.stop();
+});

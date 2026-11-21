@@ -36,6 +36,14 @@ async fn main() {
         .with_ansi(std::io::stdout().is_terminal())
         .init();
 
+    // A restore that did not finish leaves a directory that must not be served.
+    // Refused here, before the server takes the lock of the directory or makes
+    // anything in it.
+    if let Err(err) = ferret_server::backup::restore::refuse_if_in_progress(&config.data_dir) {
+        tracing::error!("{err}");
+        std::process::exit(1);
+    }
+
     if let Err(err) = ferret_server::server::run(config).await {
         tracing::error!("{err}");
         std::process::exit(1);

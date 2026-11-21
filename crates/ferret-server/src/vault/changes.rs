@@ -26,7 +26,7 @@ use serde::Deserialize;
 
 use super::store::{self, Change, Changes, CheckpointHead};
 use crate::error::{ApiError, status_of};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::state::VaultDb;
 use crate::wire::{ChangeJson, ChangesRes, CheckpointHeadJson, MAX_JSON_INT};
 
@@ -66,9 +66,9 @@ where
     Router::new().route("/api/sync/changes", get(get_changes))
 }
 
-/// The rows of the session's vault after `since`.
+/// The rows of the caller's vault after `since`.
 async fn get_changes(
-    session: VaultSession,
+    caller: VaultCaller,
     query: Result<Query<ChangesQuery>, QueryRejection>,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
@@ -78,7 +78,7 @@ async fn get_changes(
         return Err(ApiError::coded("bad_request"));
     }
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let vault = session.vault;
+    let vault = caller.vault();
     // The page and the head come out of one read transaction: one snapshot, so
     // the head is never above `latest_seq` (a client reads that as a server
     // that lies about its top).

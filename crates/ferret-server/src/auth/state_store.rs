@@ -97,6 +97,26 @@ impl SqliteLoginStateStore {
         }
     }
 
+    /// The stored OPAQUE record of `account` (`None` when no account has that
+    /// id), read on this store's own connection.
+    ///
+    /// `login/finish` reads the record it compares the login state with here,
+    /// on the blocking thread it already holds for `take`: a sign-in never
+    /// waits for a connection of the vault pool, and never for a second
+    /// blocking thread, so no number of sign-ins can hold up the routes that
+    /// use the pool. An autocommit read sees the last committed record. The
+    /// in-memory store has no accounts table and answers `Backend`.
+    pub fn account_record(&self, account: &[u8; 16]) -> Result<Option<Vec<u8>>, LoginStoreError> {
+        self.with(|conn| {
+            conn.query_row(
+                "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
+                [account.as_slice()],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
     /// Runs `f` on the connection. A poisoned lock or a store that could not
     /// be made is `Backend`.
     fn with<T>(

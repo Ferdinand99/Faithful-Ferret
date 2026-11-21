@@ -1,0 +1,96 @@
+/* The account page, the password page and the dialog that asks for the master
+   password again. Colours and components come from base.css. No inline style
+   is used anywhere: the dialog is placed with these rules only. */
+
+.account-page > h2,
+.password-page > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.account-menu {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-menu a {
+  display: block;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-decoration: none;
+}
+
+.account-menu a:hover,
+.account-menu a:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--card-raised);
+}
+
+.account-page [data-role="reauth-row"] {
+  margin-top: var(--sp-5);
+}
+
+.password-page [data-role="password-done"] > h2 {
+  font-size: 1.0625rem;
+}
+
+/* The password dialog: a raised card over a dimmed page. The dim is the card's own
+   shadow, spread past every edge of the window, so the page needs no second element. */
+.reauth-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: min(26rem, calc(100% - 2 * var(--sp-4)));
+  height: fit-content;
+  max-height: calc(100dvh - 2 * var(--sp-4));
+  margin: auto;
+  overflow-y: auto;
+  padding: var(--sp-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--card-raised);
+  color: var(--text);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), var(--shadow-pop);
+}
+
+.reauth-dialog > * + * {
+  margin-top: var(--sp-3);
+}
+
+.reauth-dialog h2 {
+  font-size: 1.0625rem;
+}
+
+.reauth-dialog p {
+  color: var(--muted);
+}
+
+.reauth-dialog .actions {
+  margin-top: var(--sp-4);
+}
+
+/* The account link is its own landmark in the bar, apart from the item links, so that on a phone it can stand in
+   the first row (with the name and Lock) and the links and the sync state keep the room they had. */
+.vault-ui .vault-bar > nav.account-nav {
+  margin-inline-end: 0;
+}
+
+/* On a phone it stands in the first row, with the name and Lock. */
+@media (max-width: 40rem) {
+  .vault-ui .vault-bar > nav.account-nav {
+    order: 2;
+    margin-inline-start: auto;
+  }
+
+  .vault-ui .vault-bar > nav.account-nav a {
+    padding-inline: 8px;
+  }
+
+  .vault-ui .vault-bar > nav.account-nav + [data-role="lock"] {
+    margin-inline-start: 0;
+  }
+}

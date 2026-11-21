@@ -6,7 +6,7 @@
 # rebuilt tag upstream cannot change the builder. To move to a newer one, look
 # up the digest of the new tag (docker buildx imagetools inspect <image>),
 # change the tag and the digest together and run the checks.
-FROM rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b
+FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c
 
 LABEL owner=ferret-core
 

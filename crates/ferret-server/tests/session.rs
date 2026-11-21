@@ -9,11 +9,13 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ferret_core::OsRng;
+use ferret_server::auth::login::{PURGE_MARGIN_SECS, purge_sessions};
 use ferret_server::auth::session::{
-    NewSession, Origin, insert_session, limits, lookup, new_session, revoke, revoke_all_for_user,
-    session_cookies,
+    NewSession, Origin, RESET_SESSION_ABSOLUTE_SECS, RestoreSweep, SessionRow, end_all_credentials,
+    end_everything_after_restore, insert_session, limits, lookup, new_session, revoke,
+    revoke_all_for_user, scoped_session_cookies, session_cookies, set_parent, within_limits,
 };
-use ferret_server::ids::SidHash;
+use ferret_server::ids::{DeviceId, SidHash};
 use ferret_server::product::{SESSION_COOKIE, SID_COOKIE};
 use ferret_server_auth::{Clock as _, SessionScope};
 use sha2::{Digest as _, Sha256};
@@ -899,4 +901,675 @@ async fn clearing_the_cookies_removes_all_four_with_the_secure_flag() {
             "__Host-ferret_sid"
         ]
     );
+}
+
+// ------------------------------------------------- ending sessions in bulk
+
+/// Whether the row of `sid` is ended.
+async fn is_revoked(app: &TestApp, sid: SidHash) -> bool {
+    db(app, move |c| {
+        c.query_row(
+            "SELECT revoked_at IS NOT NULL FROM ferret_sessions WHERE sid_hash = ?1",
+            [sid.0.as_slice()],
+            |r| r.get(0),
+        )
+    })
+    .await
+}
+
+/// `end_all_credentials` in a transaction of its own.
+async fn end_all(app: &TestApp, user_id: i64, keep: Option<SidHash>) -> Vec<SidHash> {
+    let at = now(app);
+    db(app, move |c| {
+        let tx = c.transaction()?;
+        let ended = end_all_credentials(&tx, user_id, keep.as_ref(), at)?;
+        tx.commit()?;
+        Ok(ended.sessions)
+    })
+    .await
+}
+
+async fn parent(app: &TestApp, child: SidHash, of: SidHash) {
+    db(app, move |c| set_parent(c, &child, &of)).await;
+}
+
+fn sorted(sids: Vec<SidHash>) -> Vec<[u8; 32]> {
+    let mut bytes: Vec<[u8; 32]> = sids.into_iter().map(|s| s.0).collect();
+    bytes.sort_unstable();
+    bytes
+}
+
+#[tokio::test]
+async fn end_all_credentials_ends_both_origins_and_children_and_keeps_the_given_one() {
+    let (app, router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let uid = user.user_id;
+    let kept = issue(&app, uid, Origin::Vault, SessionScope::Full, 1).await;
+    let vault = issue(&app, uid, Origin::Vault, SessionScope::Full, 2).await;
+    let reset = issue(&app, uid, Origin::Vault, SessionScope::AccountReset, 3).await;
+    let admin = issue(&app, uid, Origin::Admin, SessionScope::Full, 4).await;
+    parent(&app, admin.sid, vault.sid).await;
+    // The admin session handed over from the kept one is another session.
+    let kept_child = issue(&app, uid, Origin::Admin, SessionScope::Full, 5).await;
+    parent(&app, kept_child.sid, kept.sid).await;
+    // A child that names a session of the user as its parent ends with it,
+    // whoever it belongs to; also when the parent had ended before.
+    let foreign_child = issue(&app, other.user_id, Origin::Admin, SessionScope::Full, 6).await;
+    parent(&app, foreign_child.sid, vault.sid).await;
+    let old = issue(&app, uid, Origin::Vault, SessionScope::Full, 7).await;
+    let (old_sid, at) = (old.sid, now(&app));
+    db(&app, move |c| {
+        c.execute(
+            "UPDATE ferret_sessions SET revoked_at = ?1 WHERE sid_hash = ?2",
+            rusqlite::params![at, old_sid.0.as_slice()],
+        )
+    })
+    .await;
+    let orphan = issue(&app, other.user_id, Origin::Admin, SessionScope::Full, 8).await;
+    parent(&app, orphan.sid, old.sid).await;
+    let untouched = issue(&app, other.user_id, Origin::Vault, SessionScope::Full, 9).await;
+    let code = code_for(&app, uid, 1).await;
+    code_for(&app, other.user_id, 2).await;
+
+    end_all(&app, uid, Some(kept.sid)).await;
+
+    // The user's pending sign-in code is revoked with the sessions; another
+    // user's is not.
+    let pending = |user_id: i64| {
+        db(&app, move |c| {
+            vole_kit::db::sign_in_codes::count_pending(c, user_id)
+        })
+    };
+    assert_eq!(pending(uid).await, 0);
+    assert_eq!(pending(other.user_id).await, 1);
+    let redeemed = db(&app, move |c| {
+        vole_kit::db::sign_in_codes::redeem(c, &code, uid, None)
+    })
+    .await;
+    assert_eq!(redeemed, None);
+
+    assert!(!is_revoked(&app, kept.sid).await, "the kept session");
+    assert_eq!(status(&router, &kept.jar, "/vault").await, StatusCode::OK);
+    for (name, sid) in [
+        ("vault", vault.sid),
+        ("reset", reset.sid),
+        ("admin child", admin.sid),
+        ("child of the kept one", kept_child.sid),
+        ("foreign child", foreign_child.sid),
+        ("child of an ended one", orphan.sid),
+    ] {
+        assert!(is_revoked(&app, sid).await, "{name}");
+    }
+    assert_eq!(
+        status(&router, &vault.jar, "/vault").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&router, &admin.jar, "/admin").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!is_revoked(&app, untouched.sid).await, "another user's");
+    assert_eq!(
+        status(&router, &untouched.jar, "/vault").await,
+        StatusCode::OK
+    );
+
+    // Without a session to keep, the last one ends too.
+    end_all(&app, uid, None).await;
+    assert!(is_revoked(&app, kept.sid).await);
+    assert!(!is_revoked(&app, untouched.sid).await);
+}
+
+#[tokio::test]
+async fn end_all_credentials_returns_every_ended_sid() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let uid = user.user_id;
+    let kept = issue(&app, uid, Origin::Vault, SessionScope::Full, 1).await;
+    let a = issue(&app, uid, Origin::Vault, SessionScope::Full, 2).await;
+    let b = issue(&app, uid, Origin::Admin, SessionScope::Full, 3).await;
+    parent(&app, b.sid, a.sid).await;
+    let c = issue(&app, uid, Origin::Vault, SessionScope::AccountReset, 4).await;
+    let foreign_child = issue(&app, other.user_id, Origin::Admin, SessionScope::Full, 5).await;
+    parent(&app, foreign_child.sid, c.sid).await;
+    let ended_before = issue(&app, uid, Origin::Vault, SessionScope::Full, 6).await;
+    let (sid, at) = (ended_before.sid, now(&app));
+    db(&app, move |conn| revoke(conn, &sid, at)).await;
+    issue(&app, other.user_id, Origin::Vault, SessionScope::Full, 7).await;
+
+    let ended = end_all(&app, uid, Some(kept.sid)).await;
+    assert_eq!(ended.len(), 4, "each ended session once");
+    assert_eq!(
+        sorted(ended.clone()),
+        sorted(vec![a.sid, b.sid, c.sid, foreign_child.sid]),
+        "no session that had ended before, and not the kept one"
+    );
+    for sid in ended {
+        assert!(is_revoked(&app, sid).await);
+    }
+    // Nothing left to end: nothing is returned, and a second call is harmless.
+    assert!(end_all(&app, uid, Some(kept.sid)).await.is_empty());
+    assert_eq!(end_all(&app, uid, None).await, vec![kept.sid]);
+    assert!(end_all(&app, uid, None).await.is_empty());
+}
+
+/// A device with tokens of `user_id`, written as a sign-in writes it: `n`
+/// makes the id and the key differ. `access` access rows and `refresh`
+/// refresh rows hang off it; `revoked_at` is set when given.
+async fn device_row(
+    app: &TestApp,
+    user_id: i64,
+    n: u8,
+    access: u8,
+    refresh: u8,
+    revoked_at: Option<i64>,
+) -> [u8; 16] {
+    let mut id = [0u8; 16];
+    id[0] = 0xde;
+    id[1] = n;
+    let at = now(app);
+    db(app, move |c| {
+        let version: i64 = c.query_row(
+            "SELECT session_version FROM users WHERE id = ?1",
+            [user_id],
+            |r| r.get(0),
+        )?;
+        c.execute(
+            "INSERT INTO ferret_devices
+               (device_id, user_id, jkt, name, platform, session_version, created_at, last_seen,
+                revoked_at)
+             VALUES (?1, ?2, ?3, 'A device', 'linux', ?4, ?5, ?5, ?6)",
+            rusqlite::params![
+                id.as_slice(),
+                user_id,
+                [n; 32].as_slice(),
+                version,
+                at,
+                revoked_at
+            ],
+        )?;
+        for k in 0..access {
+            c.execute(
+                "INSERT INTO ferret_access (token_hash, device_id, expires_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    [0xa0 ^ n, k, 1].repeat(11)[..32].to_vec(),
+                    id.as_slice(),
+                    at + 900
+                ],
+            )?;
+        }
+        for k in 0..refresh {
+            c.execute(
+                "INSERT INTO ferret_refresh
+                   (token_hash, device_id, issued_at, idle_expires_at, abs_expires_at)
+                 VALUES (?1, ?2, ?3, ?3, ?3)",
+                rusqlite::params![
+                    [0xb0 ^ n, k, 2].repeat(11)[..32].to_vec(),
+                    id.as_slice(),
+                    at
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .await;
+    id
+}
+
+/// `revoked_at` of a device row.
+async fn device_revoked_at(app: &TestApp, id: [u8; 16]) -> Option<i64> {
+    db(app, move |c| {
+        c.query_row(
+            "SELECT revoked_at FROM ferret_devices WHERE device_id = ?1",
+            [id.as_slice()],
+            |r| r.get(0),
+        )
+    })
+    .await
+}
+
+#[tokio::test]
+async fn end_all_credentials_revokes_every_device_of_the_user_and_no_other() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let kept = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 1).await;
+    let first = device_row(&app, user.user_id, 1, 1, 2, None).await;
+    let second = device_row(&app, user.user_id, 2, 0, 1, None).await;
+    let earlier = device_row(&app, user.user_id, 3, 0, 1, Some(now(&app) - 50)).await;
+    let theirs = device_row(&app, other.user_id, 4, 1, 1, None).await;
+    app.clock.advance(5);
+    let at = now(&app);
+    let uid = user.user_id;
+    let keep = kept.sid;
+    let ended = db(&app, move |c| {
+        let tx = c.transaction()?;
+        let ended = end_all_credentials(&tx, uid, Some(&keep), at)?;
+        tx.commit()?;
+        Ok(ended)
+    })
+    .await;
+    let mut expected = vec![DeviceId(first), DeviceId(second)];
+    expected.sort_unstable_by_key(|d| d.0);
+    assert_eq!(ended.devices, expected, "each live device once");
+    assert!(
+        ended.sessions.is_empty(),
+        "the kept session is the only one"
+    );
+    assert_eq!(ended.len(), 2);
+    assert!(!ended.contains(&kept.sid));
+    assert_eq!(device_revoked_at(&app, first).await, Some(at));
+    assert_eq!(device_revoked_at(&app, second).await, Some(at));
+    assert_eq!(
+        device_revoked_at(&app, earlier).await,
+        Some(at - 55),
+        "kept as it was"
+    );
+    assert_eq!(
+        device_revoked_at(&app, theirs).await,
+        None,
+        "another user's"
+    );
+    // The token rows stay (their hashes answer `device_revoked`) until the
+    // purge.
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_refresh").await, 5);
+    assert!(!is_revoked(&app, kept.sid).await);
+
+    // A rolled-back transaction revokes nothing.
+    let fourth = device_row(&app, user.user_id, 5, 0, 0, None).await;
+    db(&app, move |c| {
+        let tx = c.transaction()?;
+        end_all_credentials(&tx, uid, None, at)?;
+        tx.rollback()
+    })
+    .await;
+    assert_eq!(device_revoked_at(&app, fourth).await, None);
+}
+
+#[tokio::test]
+async fn the_restore_sweep_counts_devices_and_tokens() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let earlier = now(&app) - 100;
+    let a = device_row(&app, user.user_id, 1, 2, 3, None).await;
+    let b = device_row(&app, other.user_id, 2, 1, 1, None).await;
+    let c = device_row(&app, user.user_id, 3, 0, 2, Some(earlier)).await;
+    app.clock.advance(7);
+    let swept = sweep(&app).await;
+    assert_eq!(swept.devices, 2, "the live devices of every user");
+    assert_eq!(
+        swept.tokens,
+        2 + 3 + 1 + 1 + 2,
+        "every access and refresh row"
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_access").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_refresh").await, 0);
+    let at = now(&app);
+    assert_eq!(device_revoked_at(&app, a).await, Some(at));
+    assert_eq!(device_revoked_at(&app, b).await, Some(at));
+    assert_eq!(
+        device_revoked_at(&app, c).await,
+        Some(earlier),
+        "kept as it was"
+    );
+    // The rows of the devices stay, revoked: their keys never come back.
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM ferret_devices").await, 3);
+    // A second sweep finds nothing more.
+    let again = sweep(&app).await;
+    assert_eq!((again.devices, again.tokens), (0, 0));
+}
+
+/// Rows of every kind of pending sign-in step, one set per user in `users`.
+async fn pending_steps(app: &TestApp, users: &[i64], sid: SidHash) {
+    let users = users.to_vec();
+    let at = now(app);
+    db(app, move |c| {
+        for (n, user) in users.iter().enumerate() {
+            let n = u8::try_from(n).expect("a few users");
+            c.execute(
+                "INSERT INTO ferret_handoffs
+                   (code_hash, sid_hash, user_id, purpose, next, challenge, expires_at)
+                 VALUES (?1, ?2, ?3, 'login', '/', ?4, ?5)",
+                rusqlite::params![vec![n; 32], sid.0.as_slice(), user, vec![n; 32], at + 60],
+            )?;
+            c.execute(
+                "INSERT INTO ferret_login_states (key, sealed, expires_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![vec![n; 16], vec![n; 40], at + 60],
+            )?;
+            c.execute(
+                "INSERT INTO ferret_registrations
+                   (registration_id, account_id, vault_id, email, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    vec![n; 16],
+                    vec![0xe0 | n; 16],
+                    vec![0xf0 | n; 16],
+                    format!("new{n}@example.com"),
+                    at + 600
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .await;
+}
+
+/// A sign-in code for `user`, as the kit stores it; returns its hash.
+async fn code_for(app: &TestApp, user: i64, n: u8) -> [u8; 32] {
+    let hash = [n; 32];
+    db(app, move |c| {
+        vole_kit::db::sign_in_codes::insert(c, user, &hash, user).map(|_| ())
+    })
+    .await;
+    hash
+}
+
+/// `end_everything_after_restore` in a transaction of its own.
+async fn sweep(app: &TestApp) -> RestoreSweep {
+    let at = now(app);
+    db(app, move |c| {
+        let tx = c.transaction()?;
+        let swept = end_everything_after_restore(&tx, at)?;
+        tx.commit()?;
+        Ok(swept)
+    })
+    .await
+}
+
+async fn count(app: &TestApp, sql: &'static str) -> i64 {
+    db(app, move |c| c.query_row(sql, [], |r| r.get(0))).await
+}
+
+#[tokio::test]
+async fn end_everything_after_restore_ends_every_session_and_purges_states() {
+    let (app, router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let a = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 1).await;
+    let b = issue(&app, user.user_id, Origin::Admin, SessionScope::Full, 2).await;
+    let c = issue(
+        &app,
+        other.user_id,
+        Origin::Vault,
+        SessionScope::AccountReset,
+        3,
+    )
+    .await;
+    let d = issue(&app, other.user_id, Origin::Vault, SessionScope::Full, 4).await;
+    let (sid, at) = (d.sid, now(&app));
+    db(&app, move |conn| revoke(conn, &sid, at)).await;
+    pending_steps(&app, &[user.user_id, other.user_id], a.sid).await;
+    code_for(&app, user.user_id, 1).await;
+
+    let swept = sweep(&app).await;
+    assert_eq!(
+        swept,
+        RestoreSweep {
+            sessions: 3,
+            handoffs: 2,
+            login_states: 2,
+            registrations: 2,
+            sign_in_codes: 1,
+            users: 2,
+            devices: 0,
+            tokens: 0,
+        }
+    );
+    for sid in [a.sid, b.sid, c.sid, d.sid] {
+        assert!(is_revoked(&app, sid).await);
+    }
+    for sql in [
+        "SELECT COUNT(*) FROM ferret_handoffs",
+        "SELECT COUNT(*) FROM ferret_login_states",
+        "SELECT COUNT(*) FROM ferret_registrations",
+        "SELECT COUNT(*) FROM ferret_sessions WHERE revoked_at IS NULL",
+    ] {
+        assert_eq!(count(&app, sql).await, 0, "{sql}");
+    }
+    assert_eq!(
+        status(&router, &a.jar, "/vault").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&router, &b.jar, "/admin").await,
+        StatusCode::UNAUTHORIZED
+    );
+
+    // A transaction that is rolled back leaves everything as it was.
+    let e = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 5).await;
+    let at = now(&app);
+    db(&app, move |c| {
+        let tx = c.transaction()?;
+        end_everything_after_restore(&tx, at)?;
+        tx.rollback()
+    })
+    .await;
+    assert!(!is_revoked(&app, e.sid).await);
+    assert_eq!(status(&router, &e.jar, "/vault").await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_code_pending_in_the_backup_is_dead_after_the_restore_sweep() {
+    let (app, _router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let (uid, oid) = (user.user_id, other.user_id);
+    let of_other = code_for(&app, oid, 2).await;
+    // A code past its time but never settled, as a backup may hold it. It
+    // goes in by hand: the kit's insert would revoke the other pending code
+    // of the same user.
+    let expired = [3u8; 32];
+    db(&app, move |c| {
+        c.execute(
+            "INSERT INTO sign_in_codes (user_id, code_hash, created_by, expires_at)
+             VALUES (?1, ?2, ?1, datetime('now', '-1 hour'))",
+            rusqlite::params![oid, expired.as_slice()],
+        )
+    })
+    .await;
+    // A code that was used before the backup.
+    let used = code_for(&app, uid, 4).await;
+    let redeemed = db(&app, move |c| {
+        vole_kit::db::sign_in_codes::redeem(c, &used, uid, None)
+    })
+    .await;
+    assert!(redeemed.is_some());
+    let pending = code_for(&app, uid, 5).await;
+
+    let swept = sweep(&app).await;
+    assert_eq!(
+        swept.sign_in_codes, 3,
+        "the two pending ones and the expired one"
+    );
+
+    for (hash, user_id) in [(pending, uid), (of_other, oid), (expired, oid)] {
+        let redeemed = db(&app, move |c| {
+            vole_kit::db::sign_in_codes::redeem(c, &hash, user_id, None)
+        })
+        .await;
+        assert_eq!(redeemed, None);
+    }
+    for user_id in [uid, oid] {
+        let left = db(&app, move |c| {
+            vole_kit::db::sign_in_codes::count_pending(c, user_id)
+        })
+        .await;
+        assert_eq!(left, 0);
+    }
+    // The used code keeps its use and gets no revocation on top.
+    let used_row: (bool, bool) = db(&app, move |c| {
+        c.query_row(
+            "SELECT used_at IS NOT NULL, revoked_at IS NOT NULL FROM sign_in_codes
+             WHERE code_hash = ?1",
+            [used.as_slice()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    })
+    .await;
+    assert_eq!(used_row, (true, false));
+}
+
+#[tokio::test]
+async fn the_restore_sweep_raises_every_users_session_version() {
+    let (app, router, user) = setup().await;
+    let other = seed(&app, 2).await;
+    let without_account = db(&app, |c| {
+        c.execute(
+            "INSERT INTO users (username, password_hash, role)
+             VALUES ('admin@example.com', 'x', 'admin')",
+            [],
+        )?;
+        Ok(c.last_insert_rowid())
+    })
+    .await;
+    let users = [user.user_id, other.user_id, without_account];
+    let mut before = Vec::new();
+    for id in users {
+        before.push(session::session_version(&app, id).await);
+    }
+    let signed_in = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 1).await;
+
+    assert_eq!(sweep(&app).await.users, 3);
+    for (id, was) in users.into_iter().zip(before) {
+        assert_eq!(session::session_version(&app, id).await, was + 1);
+    }
+    // A row brought back to life by hand still fails: the kit's cookie names
+    // the old version.
+    let sid = signed_in.sid;
+    db(&app, move |c| {
+        c.execute(
+            "UPDATE ferret_sessions SET revoked_at = NULL WHERE sid_hash = ?1",
+            [sid.0.as_slice()],
+        )
+    })
+    .await;
+    assert_eq!(
+        status(&router, &signed_in.jar, "/vault").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+// ------------------------------------------------------- the reset session
+
+/// `GET /api/auth/session` on the vault listener with the cookies of `jar`.
+async fn session_answer(app: &TestApp, jar: &Jar) -> Res {
+    let mut req = support::Req::get("/api/auth/session");
+    if let Some(cookie) = jar.header() {
+        req = req.header("cookie", &cookie);
+    }
+    app.call_raw(support::Which::Vault, req.build()).await
+}
+
+#[tokio::test]
+async fn a_reset_session_ends_after_30_minutes() {
+    assert_eq!(RESET_SESSION_ABSOLUTE_SECS, 30 * 60);
+    let (app, _router, user) = setup().await;
+    let reset = issue(
+        &app,
+        user.user_id,
+        Origin::Vault,
+        SessionScope::AccountReset,
+        1,
+    )
+    .await;
+    let full = issue(&app, user.user_id, Origin::Vault, SessionScope::Full, 2).await;
+    let answer = session_answer(&app, &reset.jar).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert_eq!(answer.json()["scope"], "account_reset");
+
+    // Kept busy, exactly 30 minutes is still fine; one second more is not.
+    for _ in 0..6 {
+        app.clock.advance(5 * 60);
+        assert_eq!(
+            session_answer(&app, &reset.jar).await.status,
+            StatusCode::OK
+        );
+    }
+    app.clock.advance(1);
+    assert_eq!(
+        session_answer(&app, &reset.jar).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        session::challenge_with(&app, &reset.jar).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    // A full session of the same age goes on.
+    assert_eq!(session_answer(&app, &full.jar).await.status, StatusCode::OK);
+
+    // The rule itself, on the row.
+    let reset_sid = reset.sid;
+    let row = db(&app, move |c| lookup(c, &reset_sid))
+        .await
+        .expect("the row");
+    let issued = row.issued_at;
+    assert!(within_limits(&row, issued + RESET_SESSION_ABSOLUTE_SECS));
+    assert!(!within_limits(
+        &row,
+        issued + RESET_SESSION_ABSOLUTE_SECS + 1
+    ));
+    let as_full = SessionRow {
+        scope: SessionScope::Full,
+        ..row.clone()
+    };
+    assert!(within_limits(
+        &as_full,
+        issued + RESET_SESSION_ABSOLUTE_SECS + 1
+    ));
+
+    // A day after it can no longer be used, the row is removed; the full
+    // session of the same age stays.
+    let at = issued + RESET_SESSION_ABSOLUTE_SECS + PURGE_MARGIN_SECS;
+    assert_eq!(db(&app, move |c| purge_sessions(c, at)).await, 0);
+    assert_eq!(db(&app, move |c| purge_sessions(c, at + 1)).await, 1);
+    assert!(db(&app, move |c| lookup(c, &reset_sid)).await.is_none());
+    let full_sid = full.sid;
+    assert!(db(&app, move |c| lookup(c, &full_sid)).await.is_some());
+}
+
+/// The `Max-Age` of the cookie `name` among `set_cookies`.
+fn max_age(set_cookies: &[String], name: &str) -> i64 {
+    let cookie = set_cookies
+        .iter()
+        .find(|c| c.starts_with(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("no Set-Cookie for {name}: {set_cookies:?}"));
+    cookie
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("Max-Age="))
+        .unwrap_or_else(|| panic!("no Max-Age: {cookie}"))
+        .parse()
+        .expect("a number")
+}
+
+#[tokio::test]
+async fn a_reset_sessions_cookies_live_30_minutes() {
+    let (app, _router, user) = setup().await;
+    let cookies_of = |scope: SessionScope| {
+        let (secret, _, claims) = new_session(
+            &mut OsRng,
+            now(&app),
+            user.user_id,
+            1,
+            Origin::Vault,
+            session::device(1),
+            "Test browser",
+            scope,
+        );
+        let jar = SignedCookieJar::new(app.state.core.session_key.clone());
+        let response = axum::response::IntoResponse::into_response(scoped_session_cookies(
+            jar, &secret, &claims, true, scope,
+        ));
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let reset = cookies_of(SessionScope::AccountReset);
+    for name in [SID_COOKIE, SESSION_COOKIE] {
+        assert_eq!(max_age(&reset, name), RESET_SESSION_ABSOLUTE_SECS, "{name}");
+    }
+    // A full session keeps the kit's lifetime, the same on both cookies.
+    let full = cookies_of(SessionScope::Full);
+    let kit = max_age(&full, SESSION_COOKIE);
+    assert!(kit > RESET_SESSION_ABSOLUTE_SECS, "{kit}");
+    assert_eq!(max_age(&full, SID_COOKIE), kit);
 }

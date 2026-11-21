@@ -295,3 +295,28 @@ export async function forgetPinned(store, serverUrl, accountId) {
     await req(pinned.delete([server, accountId]));
   });
 }
+
+/**
+ * Whether this account id is pinned on this device under another server
+ * address, and which one (spec Fase 1 § 4.2, one pinning per account id). The
+ * rows, the outbox and the trash are kept per account id, so two addresses
+ * that pin the same account would share them. A sign-in therefore asks this
+ * right after `login/finish`, when the server has named the account and before
+ * anything is pinned: with an answer, the sign-in is refused (`pinned_elsewhere`)
+ * until the other address is forgotten ("Forget this server"). A record under
+ * this server's own address is not "elsewhere".
+ * @param {import("./idb.mjs").Store} store
+ * @param {string} serverUrl the address of the server being signed in to
+ * @param {string} accountId 32 hex characters, as the server named it
+ * @returns {Promise<string | null>} the other address (a canonical origin; the lowest if there are several), or null
+ */
+export async function pinnedElsewhere(store, serverUrl, accountId) {
+  const server = serverKey(serverUrl);
+  checkAccount(accountId);
+  const keys = await run(store, ["pinned"], "readonly", ([pinned]) => req(pinned.getAllKeys()));
+  const others = keys
+    .filter((key) => Array.isArray(key) && key[1] === accountId && typeof key[0] === "string" && key[0] !== server)
+    .map((key) => /** @type {string} */ (/** @type {any[]} */ (key)[0]))
+    .sort();
+  return others.length === 0 ? null : others[0];
+}

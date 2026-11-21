@@ -77,6 +77,10 @@ impl Dir {
             vault_url: "https://vault.ferret.test".to_string(),
             admin_url: "https://admin.ferret.test".to_string(),
             trusted_proxies: Vec::new(),
+            backup_dir: None,
+            backup_every_hours: 24,
+            backup_keep_days: 30,
+            backup_push_url: None,
         }
     }
 

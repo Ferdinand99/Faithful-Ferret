@@ -1,0 +1,52 @@
+{% extends "kit/settings_layout.html" %}
+{% import "kit/macros.html" as m %}
+
+{% block settings_content %}
+{% call m::page_header(tr("backup.title"), tr("backup.sub")) %}{% endcall %}
+
+{%- if let Some(f) = view.failure %}
+{{ m::callout("danger", tr(f.why), tr("backup.failed_title")) }}
+{%- endif %}
+
+<div class="stats">
+  {{ m::stat(tr("backup.state"), tr(view.state), view.status) }}
+  {{ m::stat(tr("backup.sets"), view.sets) }}
+</div>
+
+<section class="section" aria-labelledby="backup-status-title">
+  {% call m::section_head(tr("backup.status"), "", "backup-status-title") %}{% endcall %}
+  <div class="card">
+    <dl class="dl">
+      <div class="dl-row"><dt>{{ tr("backup.last_good") }}</dt><dd>
+        {%- if let Some(t) = view.last_good %}{{ m::time_ago(t) }}{% else %}{{ tr("backup.never") }}{% endif -%}
+      </dd></div>
+      <div class="dl-row"><dt>{{ tr("backup.last_failure") }}</dt><dd>
+        {%- if let Some(f) = view.failure %}<code>{{ f.code }}</code>{% if let Some(w) = f.when %} · {{ m::time_ago(w) }}{% endif %}{% else %}{{ tr("backup.none") }}{% endif -%}
+      </dd></div>
+      <div class="dl-row"><dt>{{ tr("backup.last_push") }}</dt><dd>
+        {%- if let Some(p) = view.push %}
+        {%- if p.ok %}{{ tr("backup.push_ok") }}{% else %}{{ tr("backup.push_failed") }} (<code>{{ p.code }}</code>): {{ tr(p.why) }}{% endif %}{% if let Some(w) = p.when %} · {{ m::time_ago(w) }}{% endif %}
+        {%- else %}{{ tr("backup.none_yet") }}{% endif -%}
+      </dd></div>
+      <div class="dl-row"><dt>{{ tr("backup.next_run") }}</dt><dd>
+        {%- if let Some(t) = view.next_run %}{{ m::time_ago(t) }}{% else %}{{ tr("backup.unknown") }}{% endif -%}
+      </dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="backup-now-title">
+  {% call m::section_head(tr("backup.now_title"), tr("backup.now_sub"), "backup-now-title") %}{% endcall %}
+  <form class="card stack-sm" method="post" action="{{ run_path }}">
+    {%- if view.busy %}
+    <p class="help">{{ tr("backup.busy") }}</p>
+    {%- endif %}
+    <div class="cluster cluster-between">
+      <span></span>
+      <button type="submit" class="btn btn-primary"{% if view.busy %} disabled{% endif %}><span>{{ tr("backup.now") }}</span></button>
+    </div>
+  </form>
+</section>
+
+<p class="section-foot">{{ tr("backup.foot") }}</p>
+{% endblock %}

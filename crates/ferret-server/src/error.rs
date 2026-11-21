@@ -176,7 +176,10 @@ impl ApiError {
 /// function of the code, so a code never travels with two statuses.
 ///
 /// 400 is a request that is wrong in itself; 401, 403 and 429 are the answers
-/// of the sign-in and the guards; 409 is a state that does not allow the call;
+/// of the sign-in and the guards (`reauth_required` and `second_factor_required`
+/// are 403: the session is fine, the operation needs more); 409 is a state that
+/// does not allow the call (`write_conflict`: another write got there first;
+/// `import_window_open` and `import_window_invalid`: the import window);
 /// 410 is a feed cursor that is too old; 413 is a size or a quota; 422 is
 /// content the server will not store; 503 is a write queue that is full, and
 /// the answer carries a `Retry-After`.
@@ -186,6 +189,10 @@ impl ApiError {
 /// admin session): the call is made without a session, so 401 would tell the
 /// page that the user is signed out, and one status for every reason keeps the
 /// answer from saying which check failed.
+///
+/// The four codes of a device's tokens are 401: `dpop_invalid` (the DPoP proof
+/// is missing or wrong, for every reason alike), `token_expired`,
+/// `token_reused` and `device_revoked` (Spec: Fase 1 § 7.6).
 pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("unauthorized", StatusCode::UNAUTHORIZED),
     ("denied", StatusCode::UNAUTHORIZED),
@@ -221,6 +228,15 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("checkpoint_stale", StatusCode::CONFLICT),
     ("checkpoint_invalid", StatusCode::UNPROCESSABLE_ENTITY),
     ("restore_epoch_changed", StatusCode::CONFLICT),
+    ("reauth_required", StatusCode::FORBIDDEN),
+    ("second_factor_required", StatusCode::FORBIDDEN),
+    ("write_conflict", StatusCode::CONFLICT),
+    ("import_window_open", StatusCode::CONFLICT),
+    ("import_window_invalid", StatusCode::CONFLICT),
+    ("dpop_invalid", StatusCode::UNAUTHORIZED),
+    ("token_expired", StatusCode::UNAUTHORIZED),
+    ("token_reused", StatusCode::UNAUTHORIZED),
+    ("device_revoked", StatusCode::UNAUTHORIZED),
 ];
 
 /// The status of `code`. A code that is not in the table is a bug of the

@@ -39,19 +39,50 @@
 //!   user for whom it is on gets no session after a good proof (403
 //!   `forbidden`) instead of a session that skips it.
 //!
+//! * A `login/finish` body with the key `client` is a device client's
+//!   ([`crate::wire::LoginFinishBody`]); it goes to `auth::device_login`, which
+//!   checks its DPoP proof first and answers with tokens instead of cookies.
+//!   Every other body is the web vault's and takes the path below, unchanged.
+//!
 //! After a proof the account is read again. A user who was disabled during the
 //! sixty seconds between the steps gets nothing.
 //!
+//! The login state is bound to the OPAQUE record it was made from. The library
+//! reads the account's record when the login finishes (on the request's own
+//! connection, after the throttle) and refuses a state made from a record that
+//! has since been replaced (a new master password, a recovery, a restore) with
+//! the same `denied` and after the same work as a wrong password. The
+//! transaction that writes the session, or marks a re-authentication, compares
+//! the record once more: a change that commits between the library's read and
+//! that transaction is caught there, and a session written before the change
+//! commits is one the change ends.
+//!
 //! # Sessions
 //!
-//! An ordinary sign-in makes a new session row and its two cookies in one
-//! transaction that also ends the vault session the browser presented, whoever
-//! it belongs to: its cookies are replaced, so the row would be left behind.
-//! Only that one: other devices stay signed in. A re-authentication keeps the
-//! session and sets the kit's re-auth grant.
+//! An ordinary sign-in makes a new session row and its two cookies
+//! ([`open_session`], which a redeemed sign-in code uses too) in one
+//! transaction that also ends the session of the same origin the browser
+//! presented, whoever it belongs to: its cookies are replaced, so the row would
+//! be left behind. Only that one: other devices stay signed in.
+//!
+//! A re-authentication keeps the session. In one transaction it checks the
+//! session again (it may have ended while the proof ran) and records the time
+//! in the session's own row (`reauth_at`), which makes this session, and no
+//! other, fresh for a sensitive operation for five minutes. It also sets the
+//! kit's re-auth grant. An ordinary sign-in never makes a session fresh.
+//!
+//! Every successful sign-in, a re-authentication included, revokes the user's
+//! pending sign-in codes in the same transaction: the user knows the password,
+//! so a code made because it was forgotten must not stay usable. The kit asks
+//! this of every product that signs people in itself.
 //!
 //! Sign-out ends the row named by the presented session cookie and clears the
 //! cookies; it answers 204 whether or not there was a valid session.
+//!
+//! The session info (`GET /api/auth/session`) answers a `full` session and a
+//! session of the scope `account_reset`, with the scope, so the web vault knows
+//! it may only recover; `reauth_until` is there while a `full` session is
+//! fresh. Any other scope gets the one 401.
 //!
 //! The rows of ended or expired sessions are deleted by [`purge_sessions`] once
 //! they are a day past anything that could still read them.
@@ -72,30 +103,32 @@ use axum::routing::{get, post};
 use axum_extra::extract::cookie::SignedCookieJar;
 use ferret_core::{KsfProfile, OsRng};
 use ferret_server_auth::{
-    AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId, DenyReason,
-    LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginVerified, NormalizedLoginName,
-    PreloginPolicy, ProfileRules, SessionBinding, SessionScope, StoredRecord, ValidatedRecord,
-    login_finish, login_start, normalize_login_name,
+    AccountLookup, AuthContext, AuthError, Caller, Clock, CredentialId, CurrentRecord, DenyReason,
+    InternalKind, LoginFinishRequest, LoginPurpose, LoginStartRequest, LoginVerified,
+    NormalizedLoginName, PreloginPolicy, ProfileRules, RecordBinding, SessionBinding, SessionScope,
+    StoredRecord, ValidatedRecord, login_finish, login_start, normalize_login_name,
 };
-use rusqlite::{Connection, OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
-use sha2::{Digest as _, Sha256};
 use vole_kit::auth::reauth;
-use vole_kit::db::users;
+use vole_kit::db::{sign_in_codes, users};
 
+use crate::auth::device_login;
 use crate::auth::session::{
-    ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS,
-    clear_cookies, insert_session, lookup, new_session, revoke, session_cookies,
+    ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, REAUTH_SECS, RESET_SESSION_ABSOLUTE_SECS,
+    SessionRow, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS, clear_cookies, insert_session, lookup,
+    mark_reauth, new_session, reauth_fresh, revoke, scoped_session_cookies, still_valid,
 };
+use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{AdminSession, VaultSession};
+use crate::http::extract::{AdminSession, ScopedSession, VaultSession, caps, session_binding};
 use crate::http::proxy_guard::request_is_https;
 use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, VaultId};
 use crate::product;
 use crate::state::{FerretState, VaultDb};
 use crate::wire::{
-    LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes, OriginJson,
+    LoginFinishBody, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes, OriginJson,
     SessionRes, hex16, refusal_code,
 };
 
@@ -633,21 +666,24 @@ pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: 
 }
 
 /// Deletes the session rows that can no longer be used and are a day older than
-/// that: ended rows, rows idle longer than their origin allows and rows older
-/// than the absolute limit. Returns how many it removed.
+/// that: ended rows, rows idle longer than their origin allows, rows older
+/// than the absolute limit, and reset sessions older than their own shorter
+/// limit. Returns how many it removed.
 pub fn purge_sessions(conn: &Connection, now: i64) -> rusqlite::Result<usize> {
     let before = |secs: i64| now.saturating_sub(secs).saturating_sub(PURGE_MARGIN_SECS);
     conn.execute(
         "DELETE FROM ferret_sessions WHERE
             (revoked_at IS NOT NULL AND revoked_at < ?1)
          OR (origin = 'vault' AND (last_seen < ?2 OR issued_at < ?3))
-         OR (origin = 'admin' AND (last_seen < ?4 OR issued_at < ?5))",
+         OR (origin = 'admin' AND (last_seen < ?4 OR issued_at < ?5))
+         OR (scope = 'account_reset' AND issued_at < ?6)",
         params![
             now.saturating_sub(PURGE_MARGIN_SECS),
             before(VAULT_IDLE_SECS),
             before(VAULT_ABSOLUTE_SECS),
             before(ADMIN_IDLE_SECS),
             before(ADMIN_ABSOLUTE_SECS),
+            before(RESET_SESSION_ABSOLUTE_SECS),
         ],
     )
 }
@@ -661,7 +697,7 @@ fn profiles() -> &'static ProfileRules {
 
 /// `insecure_transport` when the vault URL is `https` and this request did not
 /// come over HTTPS through a trusted proxy.
-fn require_transport(
+pub(crate) fn require_transport(
     state: &FerretState,
     headers: &HeaderMap,
     peer: SocketAddr,
@@ -674,7 +710,7 @@ fn require_transport(
 }
 
 /// The time, or a refusal when the clock failed.
-fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
+pub(crate) fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
     let now = state.clock.now_unix();
     if now == u64::MAX {
         tracing::error!("the clock failed; sign-in is refused");
@@ -683,18 +719,28 @@ fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
     Ok(now)
 }
 
-fn to_i64(now: u64) -> Result<i64, ApiError> {
+pub(crate) fn to_i64(now: u64) -> Result<i64, ApiError> {
     i64::try_from(now).map_err(|_| ApiError::internal())
 }
 
 /// Reads a JSON body of at most [`MAX_BODY_BYTES`]. A refusal carries the code
 /// of the field that failed (`malformed_ke1`, ...) and nothing of the input.
 async fn read_json<T: DeserializeOwned>(body: Body) -> Result<T, ApiError> {
-    let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
+    let bytes = read_bytes(body).await?;
+    serde_json::from_slice(&bytes).map_err(|error| refused_body(&error))
+}
+
+/// Reads a body of at most [`MAX_BODY_BYTES`].
+async fn read_bytes(body: Body) -> Result<axum::body::Bytes, ApiError> {
+    axum::body::to_bytes(body, MAX_BODY_BYTES)
         .await
-        .map_err(|_| ApiError::coded("too_large"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| ApiError::coded(refusal_code(&error.to_string())))
+        .map_err(|_| ApiError::coded("too_large"))
+}
+
+/// The refusal of a body that did not parse: the code of the field that
+/// failed, and nothing of the input.
+fn refused_body(error: &serde_json::Error) -> ApiError {
+    ApiError::coded(refusal_code(&error.to_string()))
 }
 
 pub(crate) fn no_store(mut response: Response) -> Response {
@@ -704,22 +750,10 @@ pub(crate) fn no_store(mut response: Response) -> Response {
     response
 }
 
-fn auth_refusal(error: AuthError) -> ApiError {
+pub(crate) fn auth_refusal(error: AuthError) -> ApiError {
     // The reason is for this log only; the answer carries the public code.
     tracing::info!(reason = ?error, "sign-in step refused");
     ApiError::from(error)
-}
-
-/// What the library binds a re-authentication to: a domain-separated hash of
-/// the session's id hash. It cannot be turned back into the session id.
-fn session_binding(sid: &SidHash) -> SessionBinding {
-    let mut hasher = Sha256::new();
-    hasher.update(b"ferret/v1/session-binding");
-    hasher.update(sid.0);
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    SessionBinding(out)
 }
 
 fn read_policy(state: &FerretState) -> PreloginPolicy {
@@ -852,10 +886,69 @@ fn presented_sid(jar: &SignedCookieJar) -> Option<SidHash> {
         .map(|secret| secret.hash())
 }
 
-/// The library's `login_finish`: it takes and opens the sealed state once,
-/// against the purpose the request names, and asks the throttle with the
-/// account of the state before any OPAQUE work.
-fn finish_blocking(
+/// The OPAQUE record each account has now, as the library's `login_finish`
+/// reads it, by the credential id of the state (the account id, or the made-up
+/// id of a name without an account).
+///
+/// `login_finish` runs on a blocking thread, outside the vault pool: it waits
+/// for the login-state store (its mutex, and the SQLite write lock for
+/// `take`). The record is read on that same thread, through the store's own
+/// connection ([`SqliteLoginStateStore::account_record`]): a finish takes no
+/// pooled connection and no second blocking thread, so a flood of finishes,
+/// which need no account, can neither starve the pool nor use up the blocking
+/// threads that the pool's own work needs. The read happens only for a state
+/// that opened and that the throttle let through.
+///
+/// A credential with no row hashes the stand-in record, so a real and a
+/// made-up account cost the same here apart from the primary-key lookup, which
+/// finds a row or not as the lookup of `login/start` does.
+struct StoredRecords<'s>(&'s SqliteLoginStateStore);
+
+impl CurrentRecord for StoredRecords<'_> {
+    fn current_record(
+        &self,
+        credential: &CredentialId,
+    ) -> Result<Option<RecordBinding>, AuthError> {
+        let found = self
+            .0
+            .account_record(credential.as_bytes())
+            .map_err(|_| AuthError::Internal(InternalKind::Storage))?;
+        let binding = match &found {
+            Some(stored) => RecordBinding::of(stored),
+            None => RecordBinding::of(stand_in_record()),
+        };
+        Ok(found.map(|_| binding))
+    }
+}
+
+/// Whether `binding` is the record `account` has now, read in the caller's
+/// transaction. An account that is gone has no record.
+pub(crate) fn record_is_current(
+    conn: &Connection,
+    account: &AccountId,
+    binding: &RecordBinding,
+) -> rusqlite::Result<bool> {
+    let found: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT opaque_record FROM ferret_accounts WHERE account_id = ?1",
+            params![account.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some_and(|stored| binding.same_as(&RecordBinding::of(&stored))))
+}
+
+/// The library's `login_finish`, on a blocking thread: it takes and opens the
+/// sealed state once, against the purpose the request names, asks the
+/// throttle with the account of the state, and then reads the account's
+/// record (on the store's connection, see `StoredRecords`) and checks the
+/// proof.
+///
+/// Every caller that writes a credential after it must call
+/// [`record_is_current`] with `LoginVerified::record` in that write
+/// transaction. Only this module and `auth::device_login` call it (checked by
+/// a test).
+pub(crate) fn finish_blocking(
     state: &FerretState,
     caller: Caller,
     login_id: &str,
@@ -867,6 +960,7 @@ fn finish_blocking(
     login_finish(
         &cx,
         state.login_states.as_ref(),
+        &StoredRecords(state.login_states.as_ref()),
         &LoginFinishRequest {
             caller,
             login_id: login_id.as_bytes(),
@@ -876,25 +970,47 @@ fn finish_blocking(
     )
 }
 
-/// What a finished ordinary sign-in leaves behind.
-struct SignedIn {
-    secret: SessionSecret,
-    claims: vole_kit::auth::session::SessionClaims,
-    account: AccountId,
-    vault: VaultId,
-    vk_epoch: u64,
+/// The account a proof was for, as read before its session is opened.
+pub(crate) struct ProvenAccount {
+    /// The kit user (`users.id`).
+    pub(crate) user_id: i64,
+    /// The user's `session_version` when it was read.
+    pub(crate) session_version: i64,
+    /// The account.
+    pub(crate) account: AccountId,
+    /// Its vault.
+    pub(crate) vault: VaultId,
+    /// The epoch of the vault key.
+    pub(crate) vk_epoch: u64,
 }
 
-/// How the database side of an ordinary sign-in ended.
-enum Opened {
-    /// A new session, and the vault session it ended (the one the browser
-    /// presented), if a live one was ended.
-    Session(SignedIn, Option<SidHash>),
-    /// The user is gone or was disabled since the first step.
-    Refused,
-    /// The kit's second factor is on for the user and this server cannot ask
-    /// for it yet.
-    SecondFactor,
+/// The user, account and vault of `account`; `None` when there is no such
+/// account (it was removed since the first step).
+pub(crate) fn read_proven_account(
+    conn: &Connection,
+    account: [u8; 16],
+) -> Result<Option<ProvenAccount>, StoreError> {
+    let found: Option<(i64, i64, Vec<u8>, i64)> = conn
+        .query_row(
+            "SELECT u.id, u.session_version, a.vault_id, a.vk_epoch
+             FROM ferret_accounts a JOIN users u ON u.id = a.user_id
+             WHERE a.account_id = ?1",
+            params![account.as_slice()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((user_id, session_version, vault, epoch)) = found else {
+        return Ok(None);
+    };
+    let vault = <[u8; 16]>::try_from(vault).map_err(|_| StoreError::Invalid("vault id"))?;
+    let vk_epoch = u64::try_from(epoch).map_err(|_| StoreError::Invalid("vk epoch"))?;
+    Ok(Some(ProvenAccount {
+        user_id,
+        session_version,
+        account: AccountId::from_bytes(account),
+        vault: VaultId::from_bytes(vault),
+        vk_epoch,
+    }))
 }
 
 async fn login_finish_route(
@@ -905,7 +1021,16 @@ async fn login_finish_route(
     let (mut parts, body) = request.into_parts();
     require_transport(&state, &parts.headers, peer)?;
     let now = clock_now(&state)?;
-    let req: LoginFinishReq = read_json(body).await?;
+    let bytes = read_bytes(body).await?;
+    // The key `client` tells a device's body from the web vault's; each shape
+    // is refused with its own field codes. The device sign-in has its own
+    // path from here on and never reaches the session code below.
+    let req = match LoginFinishBody::from_json(&bytes).map_err(|error| refused_body(&error))? {
+        LoginFinishBody::Device(req) => {
+            return device_login::finish(&state, &parts, peer, req).await;
+        }
+        LoginFinishBody::Cookie(req) => req,
+    };
     let caller = caller_from(&parts.headers, Some(peer));
     let jar = SignedCookieJar::from_headers(&parts.headers, state.core.session_key.clone());
 
@@ -930,21 +1055,53 @@ async fn login_finish_route(
         .device_name
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
-    let presented = presented_sid(&jar);
-
     let worker = state.clone();
+    // On a blocking thread, as the store needs, and outside the pool: see
+    // `StoredRecords`.
     let verified = tokio::task::spawn_blocking(move || {
         finish_blocking(&worker, caller, &login_id, &ke3, current_session)
     })
     .await
     .map_err(|_| ApiError::internal())?
     .map_err(auth_refusal)?;
+    let now = to_i64(now)?;
 
-    let secure = state.origins.vault_is_https();
     match verified.purpose {
         LoginPurpose::Reauth { .. } => {
             let session = reauth_session.ok_or_else(ApiError::internal)?;
-            let jar = reauth::grant(jar, &state.core.session_key, secure);
+            let (sid, user_id, version) = (session.sid, session.user_id, session.session_version);
+            let account = session.account;
+            let record = verified.record;
+            // The check of the session, of the record and the mark are one
+            // write transaction: a session that ended, or whose user was
+            // signed out everywhere, while the proof ran is not made fresh,
+            // and neither is one whose master password changed meanwhile.
+            let marked = state
+                .vault_db
+                .with_conn(move |conn| {
+                    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    if !still_valid(&tx, &sid, Origin::Vault, version, now)? {
+                        return Ok(Marked::SessionGone);
+                    }
+                    if !record_is_current(&tx, &account, &record)? {
+                        return Ok(Marked::RecordChanged);
+                    }
+                    if !mark_reauth(&tx, &sid, now)? {
+                        return Ok(Marked::SessionGone);
+                    }
+                    sign_in_codes::revoke_for_user(&tx, user_id)?;
+                    tx.commit()?;
+                    Ok(Marked::Fresh)
+                })
+                .await?;
+            match marked {
+                Marked::Fresh => {}
+                Marked::SessionGone => return Err(ApiError::unauthorized()),
+                Marked::RecordChanged => {
+                    return Err(auth_refusal(AuthError::Denied(DenyReason::RecordChanged)));
+                }
+            }
+            let jar = reauth::grant(jar, &state.core.session_key, state.origins.vault_is_https());
             Ok(no_store(
                 (
                     jar,
@@ -959,39 +1116,33 @@ async fn login_finish_route(
         }
         LoginPurpose::Login => {
             let account_bytes = *verified.credential.as_bytes();
-            let now = to_i64(now)?;
-            let opened = state
+            let proven = state
                 .vault_db
-                .with_conn(move |conn| {
-                    open_session(conn, account_bytes, now, device, &device_name, presented)
-                })
-                .await?;
-            let signed_in = match opened {
-                Opened::Session(signed_in, ended) => {
-                    // The session the new one replaced is over: its event
-                    // stream closes now, not at the next heartbeat. Only a
-                    // session that was really ended is announced.
-                    if let Some(previous) = ended {
-                        state.events.session_revoked(previous);
-                    }
-                    signed_in
-                }
-                Opened::Refused => {
-                    return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
-                }
-                Opened::SecondFactor => {
-                    tracing::info!("sign-in refused: the kit's second factor is on");
-                    return Err(ApiError::coded("forbidden"));
-                }
-            };
-            let jar = session_cookies(jar, &signed_in.secret, &signed_in.claims, secure);
+                .with_conn(move |conn| read_proven_account(conn, account_bytes))
+                .await?
+                .ok_or_else(|| auth_refusal(AuthError::Denied(DenyReason::StateInvalid)))?;
+            let (jar, _) = open_session_proven(
+                &state,
+                jar,
+                &NewSession {
+                    user_id: proven.user_id,
+                    origin: Origin::Vault,
+                    scope: SessionScope::Full,
+                    session_version: proven.session_version,
+                    device,
+                    device_name: &device_name,
+                    now,
+                },
+                Some((proven.account, verified.record)),
+            )
+            .await?;
             Ok(no_store(
                 (
                     jar,
                     Json(LoginFinishRes {
-                        account_id: *signed_in.account.as_bytes(),
-                        vault_id: *signed_in.vault.as_bytes(),
-                        vk_epoch: signed_in.vk_epoch,
+                        account_id: *proven.account.as_bytes(),
+                        vault_id: *proven.vault.as_bytes(),
+                        vk_epoch: proven.vk_epoch,
                     }),
                 )
                     .into_response(),
@@ -1000,79 +1151,264 @@ async fn login_finish_route(
     }
 }
 
-/// The database side of an ordinary sign-in, in one transaction: read the
-/// account again (a user disabled since the first step gets `Refused`), refuse
-/// a user whose second factor is on, note the sign-in, insert the new session
-/// and end the vault session the browser presented, whoever it belongs to.
-fn open_session(
-    conn: &mut Connection,
-    account: [u8; 16],
-    now: i64,
+/// How the transaction of a re-authentication ended.
+enum Marked {
+    /// The session is fresh now.
+    Fresh,
+    /// The session ended, or its user was signed out everywhere, while the
+    /// proof ran.
+    SessionGone,
+    /// The account's record is not the one the proof was checked against.
+    RecordChanged,
+}
+
+/// How the database side of opening a session ended.
+enum Opened {
+    /// A new session, and the session it ended (the one the browser presented
+    /// on the same origin), if a live one was ended.
+    Session {
+        secret: SessionSecret,
+        claims: vole_kit::auth::session::SessionClaims,
+        sid: SidHash,
+        ended: Option<SidHash>,
+    },
+    /// The user is gone, was disabled, or was signed out everywhere (its
+    /// `session_version` moved) since the proof; or, for the vault origin, it
+    /// has no account with a vault.
+    Refused,
+    /// The kit's second factor is on for the user and this server cannot ask
+    /// for it yet.
+    SecondFactor,
+    /// The account's record is not the one the proof was checked against: a
+    /// new master password or a recovery committed after the library read it.
+    RecordChanged,
+}
+
+/// Opens a session for `user_id` on `origin` with `scope`, after a proof (an
+/// OPAQUE sign-in, or a redeemed sign-in code for `account_reset`), and adds
+/// its cookies to `jar`. Returns the jar and the new session's id hash.
+///
+/// One write transaction:
+///
+/// * the user is read again and must be active with exactly
+///   `session_version` (the version the proof was made against; a sign-out
+///   everywhere since then refuses with `401 denied`); a user whose kit
+///   second factor is on gets `403 forbidden`, since this server cannot ask
+///   for it yet; for the vault origin the user must have an account with a
+///   vault;
+/// * the sign-in is noted, and the user's pending sign-in codes are revoked
+///   (the kit's rule for a product that signs people in itself);
+/// * the new row is inserted, never fresh (`reauth_at` is empty);
+/// * the session of the same origin that the browser presented ends, whoever
+///   it belongs to: its cookies are replaced, so the row would be left live
+///   and unreachable.
+///
+/// After the commit, the ended session is announced (`session_revoked`), so
+/// its event stream closes at once.
+///
+/// This form checks no OPAQUE record: it is only for a session that no
+/// OPAQUE proof backs (a redeemed sign-in code). A session issued after
+/// `login_finish` must go through `open_session_proven` with the account and
+/// `LoginVerified::record`, so the record is checked again in the session's
+/// transaction; without that check a new master password that commits between
+/// the proof and the session write would not stop the session.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is a different fact of the sign-in; a struct would only rename them"
+)]
+pub(crate) async fn open_session(
+    state: &FerretState,
+    jar: SignedCookieJar,
+    user_id: i64,
+    origin: Origin,
+    scope: SessionScope,
+    session_version: i64,
     device: DeviceId,
     device_name: &str,
+    now: i64,
+) -> Result<(SignedCookieJar, SidHash), ApiError> {
+    let new = NewSession {
+        user_id,
+        origin,
+        scope,
+        session_version,
+        device,
+        device_name,
+        now,
+    };
+    open_session_proven(state, jar, &new, None).await
+}
+
+/// The facts of a session to open, as [`open_session`] takes them.
+struct NewSession<'a> {
+    user_id: i64,
+    origin: Origin,
+    scope: SessionScope,
+    session_version: i64,
+    device: DeviceId,
+    device_name: &'a str,
+    now: i64,
+}
+
+/// [`open_session`] after an OPAQUE proof: `proven` is the account and the
+/// record the proof was checked against, and the transaction refuses (`401
+/// denied`) when the account's record is another one by then.
+async fn open_session_proven(
+    state: &FerretState,
+    jar: SignedCookieJar,
+    new: &NewSession<'_>,
+    proven: Option<(AccountId, RecordBinding)>,
+) -> Result<(SignedCookieJar, SidHash), ApiError> {
+    let presented = presented_sid(&jar);
+    let device_name = new.device_name.to_string();
+    let (user_id, origin, scope, session_version, device, now) = (
+        new.user_id,
+        new.origin,
+        new.scope,
+        new.session_version,
+        new.device,
+        new.now,
+    );
+    let opened = state
+        .vault_db
+        .with_conn(move |conn| {
+            open_session_tx(
+                conn,
+                &NewRow {
+                    user_id,
+                    origin,
+                    scope,
+                    session_version,
+                    device,
+                    device_name: &device_name,
+                    now,
+                    proven,
+                },
+                presented,
+            )
+        })
+        .await?;
+    let (secret, claims, sid) = match opened {
+        Opened::Session {
+            secret,
+            claims,
+            sid,
+            ended,
+        } => {
+            // After the commit: a stream that wakes for this finds the row
+            // ended. Only a session that was really ended is announced.
+            if let Some(previous) = ended {
+                state.events.session_revoked(previous);
+            }
+            (secret, claims, sid)
+        }
+        Opened::Refused => {
+            return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
+        }
+        Opened::SecondFactor => {
+            tracing::info!("sign-in refused: the kit's second factor is on");
+            return Err(ApiError::coded("forbidden"));
+        }
+        Opened::RecordChanged => {
+            return Err(auth_refusal(AuthError::Denied(DenyReason::RecordChanged)));
+        }
+    };
+    let secure = match origin {
+        Origin::Vault => state.origins.vault_is_https(),
+        Origin::Admin => state.origins.admin_is_https(),
+    };
+    Ok((
+        scoped_session_cookies(jar, &secret, &claims, secure, scope),
+        sid,
+    ))
+}
+
+/// The facts of the row [`open_session_tx`] inserts.
+struct NewRow<'a> {
+    user_id: i64,
+    origin: Origin,
+    scope: SessionScope,
+    session_version: i64,
+    device: DeviceId,
+    device_name: &'a str,
+    now: i64,
+    /// The account and the record of an OPAQUE proof, checked against the
+    /// account's record in the transaction.
+    proven: Option<(AccountId, RecordBinding)>,
+}
+
+/// The database side of [`open_session`], in one write transaction.
+fn open_session_tx(
+    conn: &mut Connection,
+    new: &NewRow<'_>,
     presented: Option<SidHash>,
 ) -> Result<Opened, StoreError> {
-    let tx = conn.transaction()?;
-    let found: Option<(i64, bool, i64, Vec<u8>, i64, bool)> = tx
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let user: Option<(bool, i64, bool)> = tx
         .query_row(
-            "SELECT u.id, u.active, u.session_version, a.vault_id, a.vk_epoch, u.totp_enabled
-             FROM ferret_accounts a JOIN users u ON u.id = a.user_id
-             WHERE a.account_id = ?1",
-            params![account.as_slice()],
-            |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
-            },
+            "SELECT active, session_version, totp_enabled FROM users WHERE id = ?1",
+            params![new.user_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    let Some((user_id, true, version, vault, epoch, totp)) = found else {
-        return Ok(Opened::Refused);
+    let totp = match user {
+        Some((true, version, totp)) if version == new.session_version => totp,
+        _ => return Ok(Opened::Refused),
     };
     if totp {
         return Ok(Opened::SecondFactor);
     }
-    let vault = <[u8; 16]>::try_from(vault).map_err(|_| StoreError::Invalid("vault id"))?;
-    let vk_epoch = u64::try_from(epoch).map_err(|_| StoreError::Invalid("vk epoch"))?;
+    if let Some((account, record)) = &new.proven
+        && !record_is_current(&tx, account, record)?
+    {
+        return Ok(Opened::RecordChanged);
+    }
+    if new.origin == Origin::Vault {
+        let has_vault: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM ferret_accounts a
+                 JOIN ferret_vaults v ON v.account_id = a.account_id
+                 WHERE a.user_id = ?1",
+                params![new.user_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if has_vault.is_none() {
+            return Ok(Opened::Refused);
+        }
+    }
 
-    users::touch_last_login(&tx, user_id)?;
+    users::touch_last_login(&tx, new.user_id)?;
+    sign_in_codes::revoke_for_user(&tx, new.user_id)?;
     let (secret, session, claims) = new_session(
         &mut OsRng,
-        now,
-        user_id,
-        version,
-        Origin::Vault,
-        device,
-        device_name,
-        SessionScope::Full,
+        new.now,
+        new.user_id,
+        new.session_version,
+        new.origin,
+        new.device,
+        new.device_name,
+        new.scope,
     );
     insert_session(&tx, &session)?;
     // The browser's cookies are replaced by the new ones, so the row they
     // named would be left live and unreachable; it ends here, for any user.
     let mut ended = None;
     if let Some(previous) = presented
+        && previous != session.sid
         && let Some(row) = lookup(&tx, &previous)?
-        && row.origin == Origin::Vault
-        && revoke(&tx, &previous, now)?
+        && row.origin == new.origin
+        && revoke(&tx, &previous, new.now)?
     {
         ended = Some(previous);
     }
     tx.commit()?;
-    Ok(Opened::Session(
-        SignedIn {
-            secret,
-            claims,
-            account: AccountId::from_bytes(account),
-            vault: VaultId::from_bytes(vault),
-            vk_epoch,
-        },
+    Ok(Opened::Session {
+        secret,
+        claims,
+        sid: session.sid,
         ended,
-    ))
+    })
 }
 
 // ------------------------------------------------------------------ logout
@@ -1153,18 +1489,74 @@ async fn user_email(state: &FerretState, user_id: i64) -> Result<String, ApiErro
     email.ok_or_else(ApiError::unauthorized)
 }
 
+/// The end of the freshness of `row` (the last moment a sensitive operation
+/// may run on it), if it is fresh at `now`: `reauth_at + 300`. A session that
+/// is not `full` is never fresh.
+///
+/// Spec: Fase 1 § 4.6 (a).
+fn reauth_until(row: &SessionRow, now: i64) -> Option<u64> {
+    if row.scope != SessionScope::Full || !reauth_fresh(row, now) {
+        return None;
+    }
+    row.reauth_at
+        .and_then(|at| at.checked_add(REAUTH_SECS))
+        .and_then(|until| u64::try_from(until).ok())
+}
+
+/// `GET /api/auth/session` on the vault listener: a `full` session or a reset
+/// session (`account_reset`), with its scope and, while a `full` session is
+/// fresh, `reauth_until`. Every other scope gets the one 401, as a session
+/// that does not count.
 async fn session_vault(
     State(state): State<FerretState>,
     mut parts: Parts,
 ) -> Result<Response, ApiError> {
-    let session = VaultSession::from_request_parts(&mut parts, &state).await?;
-    let email = user_email(&state, session.user_id).await?;
+    // `Challenge` is a capability of exactly the two scopes that may read
+    // this; the match below is the rule itself. A scope that the capability
+    // refuses answers like no session at all.
+    let scoped = ScopedSession::<caps::Challenge>::from_request_parts(&mut parts, &state)
+        .await
+        .map_err(|error| {
+            if error == ApiError::coded("forbidden") {
+                ApiError::unauthorized()
+            } else {
+                error
+            }
+        })?;
+    let scope = match scoped.scope() {
+        SessionScope::Full | SessionScope::AccountReset => scoped.scope(),
+        SessionScope::Pending2fa | SessionScope::Unverified => {
+            return Err(ApiError::unauthorized());
+        }
+    };
+    let facts = scoped.session();
+    let (sid, user_id, now) = (facts.sid(), facts.user_id(), facts.now());
+    let found = state
+        .vault_db
+        .with_conn(move |conn| {
+            let row = lookup(conn, &sid)?;
+            let user: Option<(String, bool)> = conn
+                .query_row(
+                    "SELECT username, role = 'admin' AND active = 1 FROM users WHERE id = ?1",
+                    params![user_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            Ok(row.zip(user))
+        })
+        .await?;
+    let Some((row, (email, admin))) = found else {
+        return Err(ApiError::unauthorized());
+    };
     Ok(no_store(
         Json(SessionRes {
-            account_id: Some(*session.account.as_bytes()),
+            account_id: Some(*facts.account().as_bytes()),
             email,
-            scope: SessionScope::Full.as_str().to_string(),
+            scope: scope.as_str().to_string(),
             origin: OriginJson::Vault,
+            reauth_until: reauth_until(&row, now),
+            // A reset session (from a one-time code) is told nothing of the role.
+            admin: (admin && scope == SessionScope::Full).then_some(true),
         })
         .into_response(),
     ))
@@ -1196,6 +1588,8 @@ async fn session_admin(
             email,
             scope: SessionScope::Full.as_str().to_string(),
             origin: OriginJson::Admin,
+            reauth_until: None,
+            admin: None,
         })
         .into_response(),
     ))

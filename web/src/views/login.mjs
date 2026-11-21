@@ -2,7 +2,8 @@
 // same page serves `/vault/login` and `/vault/reauth` (the hand-over to the
 // admin pages starts there, Spec: Fase 1 § 2.4):
 //
-//   * not signed in: e-mail, master password and the secret key questions;
+//   * not signed in: e-mail, the text of the sheet's QR code (optional), master password and
+//     the secret key questions;
 //   * signed in but locked (a reload ends the worker): the master password;
 //   * signed in and open: what the user can do next.
 //
@@ -10,9 +11,26 @@
 // click on "Sign in" or "Confirm" that has just checked the password, or the
 // click on "Continue to the admin pages" for a session that already exists.
 // It is never started because the page was opened.
+//
+// The sheet's QR text (spec Fase 1 § 4.2, F-01 point 6): the user pastes it and the page
+// reads it, with no request, and shows the host and the port the sheet is for. The sign-in
+// does not start before the user has confirmed that address for the text that is in the
+// field. The sheet's secret key bit answers the question about the secret key. Without a
+// sheet the page says that the first sign-in trusts the server the first time.
+//
+// "Forgot your master password?" leads to the recovery page (`#/recover`). A refusal of an
+// older password after the server was restored from a backup (the sign-in flow attaches
+// `recoveryOffer`, see `pinnedRefusalAction`) gets its own text: with the recovery key the
+// server holds, the page offers "Use the recovery key"; when that key was renewed after the
+// backup too, it names the older sheet and the way out ("Forget this server on this device").
+// Without a raised restore epoch the refusal keeps the text that it can be an attack. No offer
+// lowers a floor: the page only picks the text and the link.
 import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
+import { forgetServer } from "../flows/forgetServer.mjs";
+import { checkQrBeforeKe3 } from "../flows/setupQr.mjs";
 import { el, mount } from "../dom.mjs";
+import { askConfirm } from "./common.mjs";
 import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, trustNotice } from "./form.mjs";
 
 /**
@@ -22,6 +40,8 @@ import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, 
  * @property {import("../flows/entry.mjs").Entry} entry how the page was entered
  * @property {string | null} adminUrl the configured admin origin
  * @property {import("../api.mjs").Api} api
+ * @property {any} [store] the store service; with it the page offers "Forget the other server" after `pinned_elsewhere`
+ * @property {typeof forgetServer} [forget] the flow behind that button (the real one by default)
  * @property {(path: string) => void} go
  * @property {{ completeHandoff: (options: any) => Promise<void>, goToAdmin: (options: any) => Promise<void> }} handoff
  * @property {{ accountId: string, email: string } | null} info the vault session found when the page was opened
@@ -42,12 +62,83 @@ export function loginView(deps) {
   const okBox = el("p", { class: "ok", role: "status", "data-role": "done" });
   okBox.hidden = true;
   const trust = trustNotice(t);
+  // After `pinned_elsewhere`: the way out is to forget the other server first.
+  const otherBox = el("div", { class: "stack", "data-role": "pinned-elsewhere" });
+  otherBox.hidden = true;
+  // After a refusal of an older password on a restored server: the recovery key, or the way out.
+  const offerBox = el("div", { class: "actions", "data-role": "recovery-offer" });
+  offerBox.hidden = true;
 
   /** The e-mail the last sign-in was tried with: after a refusal it names the account whose restore note to look for. @type {string | null} */
   let triedEmail = null;
 
+  /**
+   * Offers "Forget the other server" for an account that is pinned under another address. The button asks
+   * once more in a dialog; the flow is the one of the forget page, for that address.
+   * @param {{ server: string, accountId: string }} other
+   */
+  function offerForgetOther(other) {
+    const button = el("button", { type: "button", class: "btn btn-secondary", "data-role": "forget-other" }, t("account.other.forget"));
+    mount(otherBox, button);
+    otherBox.hidden = false;
+    let running = false;
+    button.addEventListener("click", async () => {
+      if (running) return;
+      running = true;
+      errorBox.hidden = true;
+      okBox.hidden = true;
+      /** @type {any} */ (button).disabled = true;
+      try {
+        const outcome = await (deps.forget ?? forgetServer)({
+          // The other server's records go; the secret key sealed for THIS server is not part of that.
+          api, session: { ...session, forgetSecretKey: async () => undefined }, store: deps.store, serverUrl: other.server, accountId: other.accountId,
+          confirm: ({ pending }) => askConfirm({
+            t, host: root, title: "account.other.dialog_title",
+            body: pending > 0 ? "account.other.dialog_body_pending" : "account.other.dialog_body",
+            confirm: "account.other.dialog_confirm", cancel: "account.other.dialog_cancel",
+            vars: { server: other.server, count: pending },
+          }),
+          navigate: () => undefined,
+        });
+        if (outcome === "forgotten") {
+          otherBox.hidden = true;
+          showDone(t("account.other.done", { server: other.server }));
+        }
+      } catch (error) {
+        await showError(error);
+      } finally {
+        /** @type {any} */ (button).disabled = false;
+        running = false;
+      }
+    });
+  }
+
+  /**
+   * The offer after a refusal of an older password on a server that was restored from a backup.
+   * @param {"recover" | "old_sheet"} offer
+   */
+  function showOffer(offer) {
+    const action = offer === "recover"
+      ? el("button", { type: "button", class: "btn btn-primary", "data-role": "use-recovery-key" }, t("recover.offer.use_key"))
+      : el("a", { href: "#/forget", class: "btn btn-secondary", "data-role": "offer-forget" }, t("syncwarnings.forget.link"));
+    if (offer === "recover") action.addEventListener("click", () => go("/recover"));
+    mount(offerBox, action);
+    offerBox.hidden = false;
+    setText(errorBox, t(`recover.offer.${offer}`));
+    errorBox.hidden = false;
+  }
+
   /** @param {unknown} error */
   async function showError(error) {
+    const offer = /** @type {any} */ (error)?.recoveryOffer;
+    if (codeOf(error) === "pinned_kek_generation" && (offer === "recover" || offer === "old_sheet")) {
+      showOffer(offer);
+      return;
+    }
+    const elsewhere = /** @type {any} */ (error)?.details;
+    if (codeOf(error) === "pinned_elsewhere" && deps.store && typeof elsewhere?.server === "string" && typeof elsewhere?.accountId === "string") {
+      offerForgetOther({ server: elsewhere.server, accountId: elsewhere.accountId });
+    }
     // The core has refused an older unlock method: say so differently when this device accepted a restore lately.
     let restoreNote = null;
     if (deps.restoreNote && OLDER_METHOD_ERRORS.includes(codeOf(error))) {
@@ -61,6 +152,8 @@ export function loginView(deps) {
     errorBox.hidden = false;
   }
   function clearError() {
+    otherBox.hidden = true;
+    offerBox.hidden = true;
     errorBox.hidden = true;
     setText(errorBox, "");
     okBox.hidden = true;
@@ -114,6 +207,29 @@ export function loginView(deps) {
     const email = mode === "signin" ? field(t, { id: "email", role: "email", label: "account.login.email", type: "email", autocomplete: "username" }) : null;
     const password = field(t, { id: "password", role: "password", label: "account.login.password", type: "password", autocomplete: "current-password" });
 
+    // The sheet's QR text (a new sign-in only): read with no request, confirmed by the user, then sent along.
+    const qrText = mode === "signin" ? field(t, { id: "qr-text", role: "qr-text", label: "account.qr.label", autocomplete: "off", required: false, help: "account.qr.help", secret: true }) : null;
+    const qrRead = el("button", { type: "button", class: "btn btn-secondary", "data-role": "qr-read" }, t("account.qr.read"));
+    const qrSummary = el("p", { "data-role": "qr-summary" });
+    const qrConfirm = choice(t, { id: "qr-confirm", role: "qr-confirm", label: "account.qr.confirm" });
+    const qrBox = el("div", { class: "notice", role: "status", "data-role": "qr-shown" }, qrSummary, qrConfirm.row);
+    qrBox.hidden = true;
+    const tofu = el("p", { class: "notice", role: "note", "data-role": "tofu-notice" }, t("account.qr.tofu"));
+    /**
+     * The sheet that was read and shown: the text it was read from and what it states. The sign-in is sent only with
+     * this very text in the field and the address confirmed.
+     * @type {{ text: string, qr: import("../flows/setupQr.mjs").SetupQr } | null}
+     */
+    let sheet = null;
+    /** @param {import("../flows/setupQr.mjs").SetupQr} qr */
+    const hostOf = (qr) => (qr.port === null ? qr.host : `${qr.host}:${qr.port}`);
+    function forgetSheet() {
+      sheet = null;
+      qrBox.hidden = true;
+      qrConfirm.input.checked = false;
+      setText(qrSummary, "");
+    }
+
     // The secret key questions: shown according to what this device knows.
     const yes = choice(t, { id: "sk-yes", role: "sk-yes", label: "account.sk.yes", type: "radio", name: "sk-answer", value: "yes" });
     const no = choice(t, { id: "sk-no", role: "sk-no", label: "account.sk.no", type: "radio", name: "sk-answer", value: "no" });
@@ -131,8 +247,10 @@ export function loginView(deps) {
     let device = { pinned: false, skBit: null, skStored: false };
     function layout() {
       const unknown = !device.pinned;
-      question.hidden = !unknown;
-      const answeredYes = yes.input.checked === true;
+      // The sheet answers the question about the secret key, so the page does not ask it.
+      question.hidden = !unknown || sheet !== null;
+      tofu.hidden = !(qrText !== null && unknown && sheet === null && qrText.input.value.trim() === "");
+      const answeredYes = sheet !== null ? sheet.qr.skBit : yes.input.checked === true;
       code.row.hidden = !(device.pinned ? device.skBit === true && !device.skStored : answeredYes);
       // A code typed for another e-mail address must not outlive its field: it would beat the stored key.
       if (code.row.hidden) code.input.value = "";
@@ -155,18 +273,58 @@ export function loginView(deps) {
     no.input.addEventListener("change", layout);
     email?.input.addEventListener("change", () => void refreshDevice());
 
+    /**
+     * Reads the text in the sheet field with the core (no request) and shows what it is for. A sheet for another server
+     * is refused here, before the user is asked to confirm anything.
+     */
+    async function readSheet() {
+      if (qrText === null) return;
+      clearError();
+      forgetSheet();
+      const text = qrText.input.value.trim();
+      if (text === "") {
+        layout();
+        return;
+      }
+      try {
+        const qr = await session.readSetupQr(text);
+        if (typeof session.serverUrl === "string") checkQrBeforeKe3(qr, { serverUrl: session.serverUrl });
+        // The text may have changed while it was read.
+        if (qrText.input.value.trim() !== text) return;
+        sheet = { text, qr };
+        setText(qrSummary, t("account.qr.shown", { host: hostOf(qr), sk: t(qr.skBit ? "account.qr.sk_yes" : "account.qr.sk_no") }));
+        qrBox.hidden = false;
+      } catch (error) {
+        await showError(error);
+      }
+      layout();
+    }
+    qrText?.input.addEventListener("input", () => {
+      forgetSheet();
+      clearError();
+      layout();
+    });
+    qrRead.addEventListener("click", () => void readSheet());
+
     const controls = [password.input, yes.input, no.input, code.input, remember.input, submit, ...(email ? [email.input] : [])];
+    if (qrText) controls.push(qrText.input, qrRead, qrConfirm.input);
     const run = guarded(async () => {
       // The fields are read and emptied before anything is awaited.
       const typedPassword = password.input.value;
       const typedCode = code.input.value;
+      const typedSheet = qrText ? qrText.input.value.trim() : "";
+      // A text in the sheet field is sent only when this very text was read and its address confirmed. The
+      // password stays in its field when it is not: nothing has been used yet.
+      const confirmed = sheet !== null && sheet.text === typedSheet && qrConfirm.input.checked === true ? sheet : null;
+      if (typedSheet !== "" && confirmed === null) throw new AccountError("qr_not_confirmed");
       password.input.value = "";
       code.input.value = "";
       if (email) await refreshDevice();
-      const answer = yes.input.checked ? true : no.input.checked ? false : undefined;
+      const answer = confirmed ? confirmed.qr.skBit : yes.input.checked ? true : no.input.checked ? false : undefined;
       const rememberVisible = !rememberRow.hidden;
       /** @type {Record<string, any>} */
-      const args = { password: typedPassword, skCode: code.row.hidden ? "" : typedCode, skBit: device.pinned ? undefined : answer };
+      const args = { password: typedPassword, skCode: code.row.hidden ? "" : typedCode, skBit: device.pinned && !confirmed ? undefined : answer };
+      if (confirmed) args.qr = typedSheet;
       if (rememberVisible) args.rememberSk = remember.input.checked;
       try {
         /** @type {any} */
@@ -203,7 +361,8 @@ export function loginView(deps) {
       void run();
     });
 
-    mount(form, ...[email?.row, password.row, question, hint, code.row, remembered, rememberRow, submit].filter((n) => n !== undefined && n !== null));
+    const sheetRows = qrText ? [qrText.row, el("div", { class: "actions" }, qrRead), qrBox, tofu] : [];
+    mount(form, ...[email?.row, ...sheetRows, password.row, question, hint, code.row, remembered, rememberRow, submit].filter((n) => n !== undefined && n !== null));
     layout();
     void refreshDevice();
     return form;
@@ -286,6 +445,12 @@ export function loginView(deps) {
     status,
     okBox,
     errorBox,
+    otherBox,
+    offerBox,
+    // While the vault is not open here: the recovery page, for a forgotten master password.
+    !reauthPage && (info === null || session.current() === null)
+      ? el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link")))
+      : null,
     !reauthPage && info === null ? el("p", null, el("a", { href: "#/setup" }, t("account.login.setup_link"))) : null,
     !reauthPage ? el("p", null, el("a", { href: "#/forget", "data-role": "forget-link" }, t("syncwarnings.forget.link"))) : null,
     trust,

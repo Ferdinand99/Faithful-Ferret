@@ -35,6 +35,12 @@ export const secrets = {
   // Filled in by the setup scenario from the emergency sheet.
   secretKey: "",
   recoveryKey: "",
+  // The text of the QR code on page 1 of the sheet (the same for the life of the account).
+  qrText: "",
+  // How far the server's clock has been moved on by `freshRedeemWindow`, in seconds.
+  clockOffset: 0,
+  // More secrets of the run (name -> value) that the host script searches for in the data, the sets and the log.
+  needles: /** @type {Record<string, string>} */ ({}),
   itemTitle: `Bank-${tag}-title`,
   itemUsername: `user-${tag}-name`,
   itemPassword: `Pw-${tag}-s3cret!`,
@@ -48,6 +54,17 @@ const keep = `${outDir}/secrets.state`;
 if (existsSync(keep)) Object.assign(secrets, JSON.parse(readFileSync(keep, "utf8")));
 else remember();
 
+/**
+ * Adds a secret of the run to the list that the host script searches for in the server's data, in its backup sets and in its log
+ * (the same list as the secrets above).
+ * @param {string} name @param {string} value
+ */
+export function addNeedle(name, value) {
+  if (value.length < 8) throw new Error(`the needle ${name} is too short to be searched for`);
+  secrets.needles[name] = value;
+  remember();
+}
+
 /** Writes the run's values where a new worker finds them. */
 export function remember() {
   mkdirSync(outDir, { recursive: true });
@@ -59,7 +76,12 @@ export function remember() {
 // under it instead of turning the limit off: the limit is part of what is tested.
 const PACE_WINDOW_MS = 62_000;
 const PACE_MAX = 4;
-const starts = /** @type {number[]} */ ([]);
+// How long a sign-in keeps trying while the server refuses its start.
+const SIGN_IN_PATIENCE_MS = 240_000;
+// The times of the starts are kept in a file as well: a test that fails ends its worker, and the worker that takes the next test
+// must know about the sign-ins of the minute before.
+const startsFile = `${outDir}/sign-in-starts.json`;
+const starts = /** @type {number[]} */ (existsSync(startsFile) ? JSON.parse(readFileSync(startsFile, "utf8")).filter((/** @type {number} */ at) => Date.now() - at < PACE_WINDOW_MS) : []);
 
 /** Waits until one more sign-in start fits under the server's limit. */
 export async function pace() {
@@ -71,20 +93,36 @@ export async function pace() {
   }
 }
 
+/**
+ * Waits until every sign-in start this process knows of has left the server's window. A file whose last tests sign in calls it
+ * at its end: the gate runs the next file in another process, which does not know these starts and would run into the limit.
+ */
+export async function settleSignIns() {
+  const last = starts.at(-1);
+  if (last === undefined) return;
+  const wait = last + PACE_WINDOW_MS - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+}
+
 /** Every context that was made, for the whole-run check at the end. */
 const watched = [];
+
+/** The last network failures and page closes of the run, with their times (kept for the text of an uncaught error). */
+const trail = /** @type {string[]} */ ([]);
+const stamp = () => new Date().toISOString().slice(11, 23);
+const testTitle = () => {
+  try {
+    return `in ${test.info().title}, `;
+  } catch {
+    return "";
+  }
+};
 
 /** What the run collected (shared by all tests of the worker). */
 export const findings = {
   violations: /** @type {string[]} */ ([]),
   pageErrors: /** @type {string[]} */ ([]),
   consoleErrors: /** @type {string[]} */ ([]),
-  /** Reports that WebKit makes about the inner style of its own select (see `watchScript`); not violations of the page. */
-  engineReports: /** @type {string[]} */ ([]),
-  /** The console lines that go with those reports; there is at most one per report. */
-  engineConsole: /** @type {string[]} */ ([]),
-  /** How many selects the pages of WebKit contexts made; each one must have had a report in `engineReports`. */
-  selectsMade: 0,
   pages: 0,
   /** Everything sent to the servers and received from them, as text. */
   traffic: /** @type {string[]} */ ([]),
@@ -93,71 +131,17 @@ export const findings = {
 // ------------------------------------------------------------- watching
 
 /**
- * The script that watches one page for policy violations.
- *
- * One report is not ours and is set apart: WebKit builds the inner parts of a
- * `<select>` with an inline `style` attribute, and reports a `style-src-attr`
- * violation for each `<select>` that a page makes, with or without our code (a bare
- * `document.createElement("select")` on this page does it, and the element has no
- * `style` attribute afterwards). Chromium and Firefox report nothing.
- *
- * In WebKit the page keeps the `<select>` elements that `document.createElement` made.
- * A report is set apart only when all of this is true: the directive is `style-src-attr`,
- * the blocked source is `inline`, and the report belongs to one of those elements that
- * has no `style` attribute and has not had a report yet. It belongs to an element when
- * the event's target is that element, or when the target is the document and the element
- * is not in the page (WebKit reports for a select that is made and never shown, such as
- * the one of the edit screen, at the document). The script and line that the report names
- * are not used: WebKit gives the code that happens to run when the report is sent (in
- * these runs Playwright's own script), not the code that made the element. Any other
- * inline style, a select that got a `style` attribute, and a second report for the same
- * select, still fail the run. The CSP is not loosened for this: the page keeps `style-src 'self'`.
- * (The sample is not checked: without `'report-sample'` in the policy it is always empty.)
- *
- * The exception must not outlive the problem: 09-csp requires one set-apart report for
- * every select that was made in WebKit, and the WebKit canary (08b) checks both ways.
- * @param {string} engine the name of the browser engine (`chromium`, `firefox`, `webkit`)
+ * The script that watches one page for policy violations. Every `securitypolicyviolation`
+ * event is passed on as a violation; nothing is set apart. (Until Playwright 1.65, WebKit
+ * reported a `style-src-attr` violation for the inner style of each of its own `<select>`
+ * elements, and these reports were set apart under a canary that failed when WebKit stopped.
+ * It stopped, so the exception is gone.)
  */
-const watchScript = (engine) => `
+const watchScript = () => `
   (() => {
-    const webkit = ${JSON.stringify(engine === "webkit")};
-    /** @type {{ node: Element, file: string, line: number }[]} selects that await their report */
-    const made = [];
-    // The place a call came from, as "file", "line" (from a stack line "name@file:line:column").
-    const caller = () => {
-      const frame = String(new Error().stack).split("\\n")[2] || "";
-      const colon = frame.lastIndexOf(":");
-      const colon2 = frame.lastIndexOf(":", colon - 1);
-      const head = frame.slice(0, colon2);
-      return { file: head.slice(head.lastIndexOf("@") + 1), line: Number(frame.slice(colon2 + 1, colon)) };
-    };
-    if (webkit) {
-      const create = Document.prototype.createElement;
-      Document.prototype.createElement = function (name, ...rest) {
-        const node = create.call(this, name, ...rest);
-        if (this === document && node instanceof HTMLSelectElement) {
-          made.push({ node, ...caller() });
-          try { window.__e2eSelectMade(); } catch {}
-        }
-        return node;
-      };
-    }
     document.addEventListener("securitypolicyviolation", (e) => {
       try {
-        const text = e.violatedDirective + " " + e.blockedURI + " " + (e.sample || "");
-        if (webkit && e.effectiveDirective === "style-src-attr" && e.blockedURI === "inline") {
-          const at = made.findIndex((m) =>
-            (e.target === m.node || (e.target === document && !m.node.isConnected)) &&
-            !m.node.hasAttribute("style"));
-          if (at >= 0) {
-            const [m] = made.splice(at, 1);
-            window.__e2eEngineReport(text + " (the inner style of a select, WebKit; made at " + (m.file || "?") + ":" + m.line + ")");
-            return;
-          }
-        }
-        // What a failure needs to be understood: where the report came from, and what selects wait for one.
-        const waiting = made.map((m) => (m.file || "?") + ":" + m.line + (m.node.isConnected ? " shown" : " not shown") + (m.node.hasAttribute("style") ? " with style" : ""));
-        window.__e2eViolation(text + "(target " + (e.target && e.target.nodeName) + ", at " + (e.sourceFile || "?") + ":" + e.lineNumber + ", selects waiting: " + waiting.join("; ") + ")");
+        window.__e2eViolation(e.violatedDirective + " " + e.blockedURI + " " + (e.sample || "") + "(target " + (e.target && e.target.nodeName) + ", at " + (e.sourceFile || "?") + ":" + e.lineNumber + ", page " + location.href + ")");
       } catch {}
     });
   })();
@@ -172,15 +156,14 @@ export async function watch(context) {
   if (watched.includes(context)) return context;
   watched.push(context);
   await context.exposeFunction("__e2eViolation", (/** @type {string} */ text) => findings.violations.push(text));
-  await context.exposeFunction("__e2eEngineReport", (/** @type {string} */ text) => findings.engineReports.push(text));
-  await context.exposeFunction("__e2eSelectMade", () => {
-    findings.selectsMade += 1;
-  });
-  const engine = context.browser()?.browserType().name() ?? "";
-  await context.addInitScript(watchScript(engine));
+  await context.addInitScript(watchScript());
   const onPage = (/** @type {import("@playwright/test").Page} */ page) => {
     findings.pages += 1;
-    page.on("pageerror", (e) => findings.pageErrors.push(String(e)));
+    // An uncaught error says which test it came in, what the page was doing, and the last things that went wrong on the network
+    // or closed before it, so that a failure of the whole-run check can be placed.
+    page.on("pageerror", (e) => findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`));
+    page.on("requestfailed", (request) => trail.push(`${stamp()} ${request.method()} ${request.url()} failed: ${request.failure()?.errorText ?? "?"}`));
+    page.on("close", () => trail.push(`${stamp()} page closed ${page.url()}`));
     page.on("console", (m) => {
       if (m.type() !== "error") return;
       const text = m.text();
@@ -189,19 +172,21 @@ export async function watch(context) {
       if (/^Failed to load resource/.test(text)) return;
       // WebKit does not know the `interactive-widget` viewport key of the page's meta tag and says so.
       if (/^Viewport argument key "interactive-widget" not recognized/.test(text)) return;
-      // WebKit also logs the report of its own select widget (see `watchScript`). These are
-      // counted apart, and 09-csp holds them to the number of reports set apart in the page.
-      if (engine === "webkit" && /^Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive/.test(text)) {
-        findings.engineConsole.push(text);
-        return;
-      }
       findings.consoleErrors.push(text);
     });
   };
   context.on("page", onPage);
   for (const page of context.pages()) onPage(page);
   context.on("request", (request) => {
-    if (request.url().includes("/api/auth/opaque/login/start")) starts.push(Date.now());
+    if (request.url().includes("/api/auth/opaque/login/start")) {
+      starts.push(Date.now());
+      try {
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(startsFile, JSON.stringify(starts));
+      } catch {
+        // The file is a help; the list in memory is what this worker goes by.
+      }
+    }
     const body = request.postData();
     findings.traffic.push(`${request.method()} ${request.url()}\n${JSON.stringify(request.headers())}\n${body ?? ""}`);
   });
@@ -235,18 +220,6 @@ export const test = base.extend({
     await use(context);
     expect(findings.violations.slice(before), "security policy violations during the test").toEqual([]);
   },
-  // Every report that WebKit made about its own select (see `watchScript`) shows in the
-  // report of the test that was running, so that the exception is seen and not silent.
-  engineIssues: [
-    async ({}, use, testInfo) => {
-      const before = findings.engineReports.length;
-      await use(undefined);
-      for (const description of findings.engineReports.slice(before)) {
-        testInfo.annotations.push({ type: "known-engine-issue", description });
-      }
-    },
-    { auto: true },
-  ],
 });
 
 // -------------------------------------------------- recording the Worker
@@ -386,9 +359,46 @@ export async function setUpAccount(page) {
   const keys = await readSheet(page);
   secrets.recoveryKey = keys.recoveryKey;
   secrets.secretKey = keys.secretKey;
+  // The text of the QR code on page 1 (a new browser signs in with it, and recovery needs it).
+  secrets.qrText = ((await page.locator('[data-role="sheet-qr"]').textContent()) ?? "").trim();
+  remember();
   await confirmSheet(page, keys);
   await page.locator('[data-role="open-vault"]').click();
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
+}
+
+// ------------------------------------------------------------ the server's limit on sign-in starts
+
+/**
+ * Runs `start`, which sends the form that starts a sign-in (a sign-in, an unlock, a re-check of the password), and sends it
+ * again for as long as the server refuses the start. The server's limit counts the sign-ins of earlier phases, and of other
+ * pages, that this process does not know of. It says so in its answer to the start (429, with the seconds until it lets that
+ * caller in again), so that answer is what this goes by: it waits for the reset the server names, and sends the form again.
+ * A refused start is not counted by the server, so every wait ends in a try that can pass. Nothing is raised or switched off.
+ * What the page shows is not used for this: the message of an earlier try can still be on the page while a slow sign-in (a busy
+ * machine) is under way, and a click on it would be one more start.
+ * @param {import("@playwright/test").BrowserContext} context
+ * @param {() => Promise<void>} start fills and sends the form
+ * @param {boolean} [watch] false when the caller does not wait for the answer
+ * @returns {Promise<import("@playwright/test").Response | null>} the last answer, or null when no start was seen
+ */
+export async function untilStartAccepted(context, start, watch = true) {
+  if (!watch) {
+    await start();
+    return null;
+  }
+  const isStart = (/** @type {import("@playwright/test").Response} */ response) =>
+    response.url().includes("/api/auth/opaque/login/start") && response.request().method() === "POST";
+  const giveUpAt = Date.now() + SIGN_IN_PATIENCE_MS;
+  for (let tries = 1; ; tries += 1) {
+    const answered = context.waitForEvent("response", { predicate: isStart, timeout: SLOW }).catch(() => null);
+    await start();
+    const answer = await answered;
+    if (answer === null || answer.status() !== 429) return answer;
+    if (Date.now() > giveUpAt) throw new Error(`the server still refused the start of the sign-in after ${tries} tries over ${SIGN_IN_PATIENCE_MS / 1000} seconds`);
+    const named = Number(answer.headers()["retry-after"]);
+    await new Promise((resolve) => setTimeout(resolve, (Number.isFinite(named) && named > 0 ? Math.min(named, 120) : 20) * 1000 + 1_500));
+  }
 }
 
 // ------------------------------------------------------------ sign-in
@@ -441,24 +451,22 @@ export async function signInHere(page, { remember = true, expectList = true } = 
   } else if (await page.locator('[data-role="sk-code"]').isVisible()) {
     await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
   }
-  // The server's limit counts the starts of earlier phases too, which this process does not know of: when it says so, the
-  // wait it names is taken and the form is sent again.
-  const limit = page.locator('[data-role="error"]').filter({ hasText: /Too many attempts/ });
-  for (let tries = 0; ; tries += 1) {
-    await pace();
-    await page.locator('[data-role="credentials"] [data-role="submit"]').click();
-    if (!expectList) return;
-    // The message of the try that was refused goes when the next one starts.
-    if (tries > 0) await limit.first().waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
-    const outcome = await Promise.race([
-      page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).then(() => "list", () => "timeout"),
-      limit.waitFor({ timeout: SLOW }).then(() => "limited", () => "timeout"),
-    ]);
-    if (outcome !== "limited" || tries >= 5) break;
-    const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
-    await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
+  // The server's limit counts the starts of earlier phases too, which this process does not know of: see untilStartAccepted.
+  await untilStartAccepted(
+    page.context(),
+    async () => {
+      await pace();
+      await page.locator('[data-role="credentials"] [data-role="submit"]').click();
+    },
+    expectList,
+  );
+  if (!expectList) return;
+  await page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).catch(() => {});
+  if (!(await page.locator('[data-role="list"]').isVisible())) {
+    // What the page says, so that a refused sign-in is not just a missing list.
+    const said = (await page.locator('[data-role="error"]').allTextContents()).map((text) => text.trim()).filter((text) => text !== "");
+    throw new Error(`the sign-in did not end in the list; the page says: ${said.join(" | ") || "nothing"}`);
   }
-  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 5_000 });
 }
 
 /**
@@ -759,14 +767,23 @@ export async function editItem(page, name, change, { waitForName = true } = {}) 
 }
 
 /**
- * The change feed as the server has it now, read with the session of the context.
+ * The change feed as the server has it now, read with the session of the context, all pages of it (a vault with more than a page of
+ * changes is read to the end).
  * @param {import("@playwright/test").BrowserContext} context
  * @returns {Promise<{ changes: { id: string, rev: number, seq: number, deleted: boolean }[], latest_seq: number, restore_epoch: number }>}
  */
 export async function feedOf(context) {
-  const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=0&limit=500`, { headers: { "Ferret-Protocol": "1" } });
-  if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
-  return response.json();
+  /** @type {{ id: string, rev: number, seq: number, deleted: boolean }[]} */
+  const changes = [];
+  let since = 0;
+  for (;;) {
+    const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=${since}&limit=500`, { headers: { "Ferret-Protocol": "1" } });
+    if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
+    const page = await response.json();
+    changes.push(...page.changes);
+    if (!page.has_more || page.changes.length === 0) return { ...page, changes };
+    since = page.changes[page.changes.length - 1].seq;
+  }
 }
 
 /**
@@ -830,8 +847,7 @@ export async function shot(page, name) {
 /**
  * Whether a policy violation is one that these scenarios leave out: in WebKit only, the style element that Playwright itself
  * puts in a page to take a screenshot (`style-src-elem`, blocked `inline`, no source file). It is narrow and not a fault of what
- * is tested here. The inner style of WebKit's own select is not handled here: `watchScript` sets those reports apart for every
- * test. Any other violation fails the test.
+ * is tested here. Any other violation fails the test.
  * @param {string} browserName @param {string} violation
  */
 function leftOut(browserName, violation) {
@@ -859,12 +875,15 @@ export function noViolations() {
 /** Whether the run has a host script that does the Docker steps for `hostStep`. */
 export const existsHost = () => existsSync("/tmp/host-ready");
 
+/** The phases that the gate script runs with a host. */
+const HOSTED_PHASES = ["m2-restore", "m3"];
+
 /**
- * Whether the host is there. In the phase that the gate script runs with a host (`m2-restore`) the tests fail when it is not,
- * they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
+ * Whether the host is there. In the phases that the gate script runs with a host (`m2-restore`, `m3`) the tests fail when it is
+ * not, they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
  */
 export async function hostAvailable() {
-  if (process.env.FERRET_E2E_PHASE !== "m2-restore") return existsHost();
+  if (!HOSTED_PHASES.includes(process.env.FERRET_E2E_PHASE ?? "")) return existsHost();
   const until = Date.now() + 120_000;
   while (!existsHost()) {
     if (Date.now() > until) throw new Error("the gate script did not make the host ready: the restore scenarios cannot run");
@@ -874,23 +893,177 @@ export async function hostAvailable() {
 }
 
 /**
- * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`
- * or `clock-<seconds>`. The host script (scripts/lanbox-ferret-e2e-gate.sh m2) watches for the request file in the
- * runner container, does the step and answers with a done file, or with a failed file when the step failed (the test then
- * fails). The test is skipped when the run has no host script, except in the phase that the gate script runs with one.
+ * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`,
+ * `clock-<seconds>`, and for the recovery scenarios `reset` (a new, empty server), `backup` (a backup set made while the
+ * app is stopped), `restore-backup` (the newest set on empty data), `code-<e-mail>` (a one-time sign-in code, which is
+ * returned) and `set-count` (how many backup sets the volume holds). The host script
+ * (scripts/lanbox-ferret-e2e-gate.sh m2 or m3) watches for the request file in the runner container, does the step and answers
+ * with a done file, or with a failed file when the step failed (the test then fails). The test is skipped when the run has no
+ * host script, except in the phases that the gate script runs with one. Returns what the step printed for the test, or "".
  * @param {string} step
+ * @returns {Promise<string>}
  */
 export async function hostStep(step) {
-  if (!(await hostAvailable())) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2)");
+  if (!(await hostAvailable())) test.skip(true, "needs the host script (scripts/lanbox-ferret-e2e-gate.sh m2 or m3)");
   // The answers to an earlier request for the same step.
   rmSync(`/tmp/host-done-${step}`, { force: true });
   rmSync(`/tmp/host-failed-${step}`, { force: true });
+  rmSync(`/tmp/host-out-${step}`, { force: true });
   writeFileSync(`/tmp/host-request-${step}`, "");
   const until = Date.now() + 600_000;
   for (;;) {
     if (existsSync(`/tmp/host-failed-${step}`)) throw new Error(`the host failed the step ${step}`);
-    if (existsSync(`/tmp/host-done-${step}`)) return;
+    if (existsSync(`/tmp/host-done-${step}`)) return existsSync(`/tmp/host-out-${step}`) ? readFileSync(`/tmp/host-out-${step}`, "utf8").trim() : "";
     if (Date.now() > until) throw new Error(`the host did not do ${step} within 10 minutes`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+}
+
+// ------------------------------------------------------ the stand-in monitor
+
+/** The stand-in for the push monitor of the stack (web/test/e2e-stack/monitor), on the network of the stack only. */
+export const monitorUrl = process.env.FERRET_E2E_MONITOR_URL ?? "";
+/** The token in the push address the server was given; it is searched for in everything the server shows and logs. */
+export const pushToken = process.env.FERRET_E2E_PUSH_TOKEN ?? "";
+
+/**
+ * What the stand-in monitor has been told so far.
+ * @returns {Promise<{ at: number, method: string, path: string, query: string, headers: Record<string, string> }[]>}
+ */
+export async function monitorCalls() {
+  if (monitorUrl === "") throw new Error("FERRET_E2E_MONITOR_URL is not set: run the scenarios with scripts/lanbox-ferret-test.sh e2e-run");
+  const response = await fetch(`${monitorUrl}/__recorded`);
+  if (!response.ok) throw new Error(`the stand-in monitor answered ${response.status}`);
+  return (await response.json()).calls;
+}
+
+// ------------------------------------------------------------ the import page
+
+/**
+ * Opens the import page of an open vault.
+ * @param {import("@playwright/test").Page} page
+ */
+export async function openImport(page) {
+  // The import page is built again each time (a page that shows what the last import did is left first).
+  await page.evaluate(() => {
+    location.hash = "#/items";
+  });
+  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
+  await page.evaluate(() => {
+    location.hash = "#/import";
+  });
+  await expect(page.locator('[data-role="import-page"]')).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Gives the import page a file and waits for the preview.
+ * @param {import("@playwright/test").Page} page
+ * @param {string | { name: string, mimeType: string, buffer: Buffer }} file
+ */
+export async function chooseImportFile(page, file) {
+  await page.locator('[data-role="file"]').setInputFiles(file);
+  await expect(page.locator('[data-role="preview"]')).toBeVisible({ timeout: 60_000 });
+}
+
+/**
+ * Runs the import of the file that was chosen, with the master password. Returns when the page says the import has finished. A
+ * refusal of the page is an error of the test with the page's own words; the server's limit on sign-ins, which this process
+ * cannot see all of, is waited out and the form is sent again (see untilStartAccepted; the page empties the password when it is sent).
+ * @param {import("@playwright/test").Page} page @param {number} items
+ */
+export async function runChosenImport(page, items) {
+  const form = page.locator('[data-role="import-form"]');
+  const done = page.locator('[data-role="done-items"]');
+  const refusal = form.locator('[data-role="error"]');
+  await untilStartAccepted(page.context(), async () => {
+    await form.locator('[data-role="master-password"]').fill(secrets.password);
+    await pace();
+    await form.locator('[data-role="submit"]').click();
+  });
+  const outcome = await Promise.race([
+    done.waitFor({ timeout: 300_000 }).then(() => "done", () => "timeout"),
+    refusal.waitFor({ timeout: 300_000 }).then(() => "refused", () => "timeout"),
+  ]);
+  if (outcome !== "done") {
+    const said = outcome === "refused" ? ((await refusal.textContent()) ?? "") : "nothing within five minutes";
+    throw new Error(`the import did not finish: ${said}`);
+  }
+  await expect(done).toHaveText(`Items sent to the server: ${items}.`);
+}
+
+/**
+ * A Bitwarden export of this many made-up logins (names `Bulk-<tag>-<n>`).
+ * @param {string} tag @param {number} count
+ */
+export function bulkJson(tag, count) {
+  const items = Array.from({ length: count }, (_, i) => ({
+    id: `c${String(i).padStart(7, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    organizationId: null,
+    folderId: null,
+    type: 1,
+    reprompt: 0,
+    name: `Bulk-${tag}-${i}`,
+    notes: null,
+    favorite: false,
+    login: { uris: [{ match: null, uri: `https://bulk-${i}.example.test/login` }], username: `user-${i}@example.test`, password: `Bulk-pw-${tag}-${i}`, totp: null },
+    collectionIds: null,
+  }));
+  return Buffer.from(JSON.stringify({ encrypted: false, folders: [], items }));
+}
+
+/**
+ * Starts an import in a page and holds its batches before they reach the server (after the window is open and the first batch is
+ * on its way). Returns what the test needs to let them go.
+ * @param {import("@playwright/test").Page} page the vault of the importing browser
+ * @param {Buffer} buffer the file
+ */
+export async function startHeldImport(page, buffer) {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const held = { count: 0 };
+  await page.route("**/api/sync/batch", async (route) => {
+    held.count += 1;
+    await gate;
+    await route.continue();
+  });
+  await openImport(page);
+  await chooseImportFile(page, { name: "held.json", mimeType: "application/json", buffer });
+  await page.locator('[data-role="import-form"] [data-role="master-password"]').fill(secrets.password);
+  await pace();
+  await page.locator('[data-role="import-form"] [data-role="submit"]').click();
+  await expect.poll(() => held.count, { timeout: SLOW, message: "the first batch of the import is on its way" }).toBeGreaterThan(0);
+  return { release, held };
+}
+
+// ------------------------------------------------------------ the sign-in code
+
+/** The headers that the vault's API wants on a request that does not come from its own page. */
+export const API_HEADERS = { Origin: vaultUrl, "Ferret-Protocol": "1", "content-type": "application/json" };
+
+/**
+ * Redeems a one-time sign-in code with the API of the vault. The server limits how often a code is tried (429 with the seconds to
+ * wait); that wait is taken and the call is made again, up to four times, so that a refusal for the code itself is what comes back.
+ * @param {import("@playwright/test").APIRequestContext} api @param {string} email @param {string} code
+ */
+export async function redeemCode(api, email, code) {
+  for (let tries = 0; ; tries += 1) {
+    const response = await api.post(`${vaultUrl}/api/auth/redeem`, { headers: API_HEADERS, data: { email, code } });
+    if (response.status() !== 429 || tries >= 4) return response;
+    const wait = Number(response.headers()["retry-after"] ?? 30);
+    await new Promise((resolve) => setTimeout(resolve, ((Number.isFinite(wait) ? wait : 30) + 2) * 1000));
+  }
+}
+
+/**
+ * Opens a new hour for redeeming codes. The server counts five tries of a code per e-mail address and address in a sliding hour
+ * (every try counts, a good one too), and the scenarios try more than that in a run; so the host moves the server's clock one hour
+ * on (a few seconds more than an hour), which is cheaper than waiting for it. Sessions are good for twelve hours idle, so the
+ * browsers stay signed in.
+ */
+export async function freshRedeemWindow() {
+  secrets.clockOffset += 3_700;
+  remember();
+  await hostStep(`clock-${secrets.clockOffset}`);
 }

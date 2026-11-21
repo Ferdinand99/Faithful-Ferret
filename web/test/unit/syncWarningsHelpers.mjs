@@ -29,7 +29,7 @@ export const textFor = (catalog, key, vars = {}) => catalog[key].replace(/{([a-z
  * @param {{ halted?: string | null, warnings?: string[] }} [start]
  */
 export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
-  const listeners = { state: new Set(), error: new Set() };
+  const listeners = { state: new Set(), error: new Set(), copied: new Set() };
   const engine = {
     halted,
     warnings: [...warnings],

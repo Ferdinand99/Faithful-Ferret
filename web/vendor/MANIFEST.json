@@ -1,0 +1,22 @@
+{
+  "format": "ferret-vendor/1",
+  "comment": "Every third-party file that the web vault ships from web/vendor, with the hash of the file as it is in this repository and the licence that it comes with. The build refuses a file whose hash is not the one listed here, and a file in web/vendor that is not listed. A change to a vendored file is a change to this list, with its notice in notices-extra.json.",
+  "files": [
+    {
+      "name": "qrcodegen",
+      "version": "1.8.0",
+      "origin": "https://github.com/nayuki/QR-Code-generator",
+      "commit": "720f62bddb7226106071d4728c292cb1df519ceb",
+      "sourcePath": "typescript-javascript/qrcodegen.ts",
+      "sourceSha256": "c4749095a91bf9696e3a303998b9905e467094f53041e64393e65e6d887737fd",
+      "derivation": "tsc 7.0.2 --target ES2022 --module esnext --strict, then one added line: export default qrcodegen;",
+      "license": "MIT",
+      "copyright": "Copyright (c) Project Nayuki",
+      "licenseFile": "qrcodegen/LICENSE",
+      "licenseSha256": "013bb580e895ea9ac7c2e56665b3fda772d45cadc36ede41daa369b13b0aa533",
+      "file": "qrcodegen/qrcodegen.mjs",
+      "sha256": "431935a3148eeffc57534e859ee2d3826c89c89228e92b7827d8d3c736d3c8b1",
+      "ships": "js/vendor/qrcodegen/qrcodegen.mjs"
+    }
+  ]
+}

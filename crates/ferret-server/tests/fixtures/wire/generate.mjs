@@ -64,6 +64,12 @@ const manifest = () => ({
   envelope: envelope("manifest", 2, 160),
   tag: b64("manifest tag", 32),
 });
+/** The manifest as the next revision, written by a change of the unlock methods. */
+const manifestNext = () => ({
+  rev: 2,
+  envelope: envelope("manifest next", 2, 160),
+  tag: b64("manifest next tag", 32),
+});
 const checkpoint = () => ({
   seq: 1,
   digest,
@@ -154,6 +160,17 @@ const batchDeleted = () => ({
   tomb: b64("item two tomb", 40),
   idem: id("idem two"),
 });
+
+/** `n` browsers of one account, newest first, as a full list of devices shows them. */
+const listedBrowsers = (n) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: id(`listed browser ${i}`),
+    kind: "web",
+    name: i === 0 ? "Firefox on a laptop" : `Browser ${i}`,
+    created_at: 1799000000 + 100 * (n - i),
+    last_seen: 1800000000 - i,
+    current: i === 0,
+  }));
 
 /** Every fixture: file name -> object. The type is the name before the first dot. */
 export function fixtures() {
@@ -255,13 +272,15 @@ export function fixtures() {
       challenge: b64("handoff challenge", 32),
     },
     "handoff_res.json": { code: b64("handoff code", 32), expires_in: 60 },
-    "redeem_req.json": { code: b64("handoff code", 32) },
+    "handoff_redeem_req.json": { code: b64("handoff code", 32) },
     "handoff_redeem_res.json": { next: "/admin" },
     "session_res.json": {
       account_id: id("account"),
       email: "ada@example.test",
       scope: "full",
       origin: "vault",
+      reauth_until: 1800000300,
+      admin: true,
     },
     "session_res.admin.json": {
       email: "ada@example.test",
@@ -402,8 +421,135 @@ export function fixtures() {
       has_more: false,
     },
     "sync_event.json": { seq: 7 },
+    // The third milestone: signed requests, recovery, sign-in codes, import.
+    "challenge_res.json": { nonce: b64("challenge nonce", 32), expires_in: 300 },
+    "reregister_start_req.json": { registration_request: b64("reregister request", 32) },
+    "reregister_start_res.json": { registration_response: b64("reregister response", 64) },
+    "password_put_req.json": {
+      registration_record: b64("new opaque record", 192),
+      ksf_profile: 1,
+      wrap: b64("new wrap password", 104),
+      kek_generation: 2,
+      manifest: manifestNext(),
+    },
+    "password_put_res.json": { kek_generation: 2, seq: 9 },
+    // The answer to the recovery write has the shape of the password one.
+    "recovery_put_res.json": { kek_generation: 3, seq: 10 },
+    "recovery_put_req.json": {
+      wrap: b64("new wrap recovery", 72),
+      kek_generation: 2,
+      pk_r: b64("pk r new", 32),
+      manifest: manifestNext(),
+    },
+    "recovery_res.json": {
+      account_id: id("account"),
+      vault_id: id("vault"),
+      vk_epoch: 1,
+      ksf_profile: 1,
+      wrap: recoveryWrap(),
+      manifest: manifest(),
+    },
+    "recover_req.json": {
+      registration_record: b64("new opaque record", 192),
+      ksf_profile: 1,
+      pw_wrap: b64("new wrap password", 104),
+      rk_wrap: b64("new wrap recovery", 72),
+      pw_kek_generation: 2,
+      rk_kek_generation: 2,
+      pk_r_new: b64("pk r new", 32),
+      manifest: manifestNext(),
+    },
+    "recover_res.json": { session_ended: true, seq: 9 },
+    "redeem_req.json": { email: "ada@example.test", code: "code-0123456789" },
+    "redeem_res.json": { scope: "account_reset" },
+    "import_window_req.json": { ops: 250 },
+    "import_window_res.json": { window_id: id("import window"), ops: 250, expires_in: 1800 },
+    // A batch of an import: the same operations, counted against the window.
+    "batch_req_import.json": { ops: [batchLive(), batchDeleted()], import_window: id("import window") },
+    // Devices and their tokens. A `<shape>.device.json` is the device form of
+    // the shape (`<shape>_device`, see `shapeOf`).
+    "login_finish_req.device.json": {
+      login_id: id("login"),
+      ke3: b64("ke3", 64),
+      client: "device",
+      device_name: "Ferret for Firefox (Windows)",
+      platform: "windows",
+    },
+    "login_finish_res.device.json": {
+      account_id: id("account"),
+      vault_id: id("vault"),
+      vk_epoch: 1,
+      device_id: id("token device"),
+      access_token: b64("access token", 32),
+      refresh_token: b64("refresh token", 32),
+      token_type: "DPoP",
+      expires_in: 900,
+    },
+    "token_refresh_req.json": { refresh_token: b64("refresh token", 32) },
+    "token_res.json": {
+      access_token: b64("access token next", 32),
+      refresh_token: b64("refresh token next", 32),
+      token_type: "DPoP",
+      expires_in: 900,
+    },
+    "token_revoke_req.json": { refresh_token: b64("refresh token next", 32) },
+    // A device with tokens, this browser, and another browser that never gave a name.
+    "devices_res.json": {
+      devices: [
+        {
+          id: id("token device"),
+          kind: "device",
+          name: "Ferret for Firefox (Windows)",
+          platform: "windows",
+          created_at: 1800000000,
+          last_seen: 1800000300,
+          current: false,
+        },
+        {
+          id: id("device"),
+          kind: "web",
+          name: "Firefox on a laptop",
+          created_at: 1799990000,
+          last_seen: 1800000200,
+          current: true,
+        },
+        {
+          id: id("other browser"),
+          kind: "web",
+          name: "",
+          created_at: 1799980000,
+          last_seen: 1799990100,
+          current: false,
+        },
+      ],
+    },
+    "devices_res.empty.json": { devices: [] },
+    // An account with more rows than a list holds: the first 200, and how many were left out.
+    "devices_res.more.json": { devices: listedBrowsers(200), more: 7 },
+    "revoke_all_res.json": { revoked: 3 },
   };
 }
+
+/** The shape of a fixture file: the name before the first dot; `<shape>.device.json` is `<shape>_device`. */
+export function shapeOf(file) {
+  const [shape, variant] = file.split(".");
+  return variant === "device" ? `${shape}_device` : shape;
+}
+
+/**
+ * A fixed public P-256 key (the example key of RFC 9449 § 4.1) and its RFC 7638
+ * thumbprint, for the DPoP check and the client to check theirs against.
+ */
+export const DPOP_JWK = {
+  jwk: {
+    kty: "EC",
+    crv: "P-256",
+    x: "l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs",
+    y: "9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA",
+  },
+  // Made with Node's crypto: createHash("sha256").update('{"crv":"P-256","kty":"EC","x":…,"y":…}').digest("base64url").
+  jkt: "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I",
+};
 
 /** The golden list of error codes. */
 export const ERROR_CODES = [
@@ -441,6 +587,15 @@ export const ERROR_CODES = [
   "checkpoint_stale",
   "checkpoint_invalid",
   "restore_epoch_changed",
+  "reauth_required",
+  "second_factor_required",
+  "write_conflict",
+  "import_window_open",
+  "import_window_invalid",
+  "dpop_invalid",
+  "token_expired",
+  "token_reused",
+  "device_revoked",
 ];
 
 /**
@@ -483,6 +638,15 @@ export const STATUS_OF = {
   checkpoint_stale: 409,
   checkpoint_invalid: 422,
   restore_epoch_changed: 409,
+  reauth_required: 403,
+  second_factor_required: 403,
+  write_conflict: 409,
+  import_window_open: 409,
+  import_window_invalid: 409,
+  dpop_invalid: 401,
+  token_expired: 401,
+  token_reused: 401,
+  device_revoked: 401,
 };
 
 /**
@@ -623,7 +787,7 @@ export function invalidCases() {
 
   // Unknown fields: at the top of every shape, then inside parts.
   for (const [file, value] of Object.entries(all)) {
-    const shape = file.split(".")[0];
+    const shape = shapeOf(file);
     parse(`unknown field in ${file}`, shape, text({ ...value, x: 1 }), "an unknown field is refused");
   }
   const nested = (name, shape, file, path, why) => {
@@ -771,7 +935,7 @@ export function invalidCases() {
   validate("put resurrect true on a tombstone", "put_item_req", put({ deleted: true, tomb, resurrect: true }), "only a live row asks to bring an item back");
 
   // A hand-over code is 43 characters of strict base64url that decode to 32 bytes.
-  const code = all["redeem_req.json"].code;
+  const code = all["handoff_redeem_req.json"].code;
   for (const [name, value] of [
     ["42 characters", code.slice(0, 42)],
     ["44 characters", `${code}A`],
@@ -782,7 +946,7 @@ export function invalidCases() {
     ["empty", ""],
     ["non-ASCII", `\u00e9${code.slice(1)}`],
   ]) {
-    validate(`handoff code ${name}`, "redeem_req", with_("redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
+    validate(`handoff code ${name}`, "handoff_redeem_req", with_("handoff_redeem_req.json", { code: value }), "a hand-over code is 43 characters of strict base64url", "handoff_invalid");
   }
 
   // A batch: the parts of an operation, then the number and the form of the
@@ -1033,6 +1197,293 @@ export function invalidCases() {
   parse("sync_event seq negative", "sync_event", with_("sync_event.json", { seq: -1 }), "an integer is not negative");
   parse("sync_event with a second field", "sync_event", text({ seq: 7, vault: id("vault") }), "an event carries the sequence number and nothing else");
 
+  // ------------------------------------------------- the third milestone
+
+  // A missing field of a request or an answer is refused, one case for each field.
+  for (const file of [
+    "password_put_req.json", "recovery_put_req.json", "recover_req.json", "recovery_res.json",
+    "challenge_res.json", "password_put_res.json", "recovery_put_res.json", "recover_res.json", "redeem_req.json",
+    "import_window_res.json", "reregister_start_req.json", "reregister_start_res.json",
+  ]) {
+    for (const field of Object.keys(all[file])) {
+      parse(`${file} without ${field}`, file.split(".")[0], with_(file, { [field]: undefined }), `${field} is required`);
+    }
+  }
+  parse("redeem_res without scope", "redeem_res", "{}", "scope is required");
+  parse("import_window_req without ops", "import_window_req", "{}", "ops is required");
+  parse("batch_req_import without ops", "batch_req_import", with_("batch_req_import.json", { ops: undefined }), "ops is required");
+
+  // The challenge.
+  for (const [name, n] of [["31 bytes", 31], ["33 bytes", 33], ["empty", 0]]) {
+    parse(`challenge_res nonce ${name}`, "challenge_res", with_("challenge_res.json", { nonce: b64(`nonce ${name}`, n) }), "a nonce is 32 bytes");
+  }
+  parse("challenge_res nonce with padding", "challenge_res", with_("challenge_res.json", { nonce: `${b64("nonce", 32)}=` }), "a nonce is strict base64url");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "300"], ["a fraction", 1.5]]) {
+    parse(`challenge_res expires_in ${name}`, "challenge_res", with_("challenge_res.json", { expires_in: value }), "expires_in is a whole number of 32 bits");
+  }
+
+  // The OPAQUE messages of a registration inside a session.
+  sized("registration_request", "reregister_start_req", "reregister_start_req.json", 32, "malformed_registration_request");
+  sized("registration_response", "reregister_start_res", "reregister_start_res.json", 64, "bad_request");
+
+  // The password wrap has 104 bytes, the recovery wrap 72; a request refuses the other size.
+  sized("registration_record", "password_put_req", "password_put_req.json", 192, "malformed_registration_record");
+  sized("wrap", "password_put_req", "password_put_req.json", 104, "bad_request");
+  sized("wrap", "recovery_put_req", "recovery_put_req.json", 72, "bad_request");
+  sized("registration_record", "recover_req", "recover_req.json", 192, "malformed_registration_record");
+  sized("pw_wrap", "recover_req", "recover_req.json", 104, "bad_request");
+  sized("rk_wrap", "recover_req", "recover_req.json", 72, "bad_request");
+  sized("pk_r", "recovery_put_req", "recovery_put_req.json", 32, "bad_request");
+  sized("pk_r_new", "recover_req", "recover_req.json", 32, "bad_request");
+  parse("recovery_put_req with a password-sized wrap", "recovery_put_req", with_("recovery_put_req.json", { wrap: b64("new wrap password", 104) }), "a recovery wrap is 72 bytes, not the 104 of a password wrap");
+  parse("password_put_req with a recovery-sized wrap", "password_put_req", with_("password_put_req.json", { wrap: b64("new wrap recovery", 72) }), "a password wrap is 104 bytes, not the 72 of a recovery wrap");
+  parse("recover_req with the wraps swapped", "recover_req", with_("recover_req.json", { pw_wrap: b64("new wrap recovery", 72), rk_wrap: b64("new wrap password", 104) }), "pw_wrap is 104 bytes and rk_wrap 72");
+  parse("recover_req with a password-sized rk_wrap", "recover_req", with_("recover_req.json", { rk_wrap: b64("new wrap password", 104) }), "rk_wrap is 72 bytes");
+
+  // Whole numbers of the right size.
+  for (const file of ["password_put_req.json", "recover_req.json"]) {
+    const shape = file.split(".")[0];
+    for (const [name, value] of [["256", 256], ["negative", -1], ["a string", "1"], ["a fraction", 1.5]]) {
+      parse(`${shape} ksf_profile ${name}`, shape, with_(file, { ksf_profile: value }), "ksf_profile is a byte");
+    }
+  }
+  parse("recovery_res ksf_profile 256", "recovery_res", with_("recovery_res.json", { ksf_profile: 256 }), "ksf_profile is a byte");
+  for (const file of ["password_put_req.json", "recovery_put_req.json", "password_put_res.json", "recovery_put_res.json"]) {
+    const shape = file.split(".")[0];
+    for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5]]) {
+      parse(`${shape} kek_generation ${name}`, shape, with_(file, { kek_generation: value }), "kek_generation is a whole number of 32 bits");
+    }
+  }
+  // The two generations of a recover request are 32-bit whole numbers.
+  for (const field of ["pw_kek_generation", "rk_kek_generation"]) {
+    for (const [name, value] of [["2^32", 4294967296], ["2^53", 9007199254740992], ["negative", -1], ["a string", "2"], ["a fraction", 1.5], ["null", null]]) {
+      parse(`recover_req ${field} ${name}`, "recover_req", with_("recover_req.json", { [field]: value }), `${field} is a whole number of 32 bits`);
+    }
+  }
+  for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "9"]]) {
+    parse(`recovery_put_res seq ${name}`, "recovery_put_res", with_("recovery_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+    parse(`password_put_res seq ${name}`, "password_put_res", with_("password_put_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+    parse(`recover_res seq ${name}`, "recover_res", with_("recover_res.json", { seq: value }), "seq is a whole number up to 2^53 - 1");
+  }
+  parse("recover_res session_ended is a string", "recover_res", with_("recover_res.json", { session_ended: "true" }), "session_ended is a boolean");
+  parse("recovery_res vk_epoch 2^53", "recovery_res", with_("recovery_res.json", { vk_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+
+  // The manifest and the wrap that sit inside a request or an answer.
+  for (const file of ["password_put_req.json", "recovery_put_req.json", "recover_req.json", "recovery_res.json"]) {
+    const shape = file.split(".")[0];
+    nested(`unknown field in the manifest of ${file}`, shape, file, ["manifest"], "an unknown field is refused inside a part");
+    parse(`${shape} manifest tag 31 bytes`, shape, with_(file, { manifest: { ...all[file].manifest, tag: b64("short tag", 31) } }), "a tag is 32 bytes");
+    parse(`${shape} manifest rev 2^53`, shape, with_(file, { manifest: { ...all[file].manifest, rev: 9007199254740992 } }), "an integer is at most 2^53 - 1");
+  }
+  nested("unknown field in the wrap of recovery_res", "recovery_res", "recovery_res.json", ["wrap"], "an unknown field is refused inside a part");
+  parse("recovery_res manifest is a string", "recovery_res", with_("recovery_res.json", { manifest: "x" }), "the manifest is an object");
+
+  // The recovery wrap that comes back must be the recovery method with a recovery-sized wrap.
+  const recoveryWith = (wrapFields) => with_("recovery_res.json", { wrap: { ...all["recovery_res.json"].wrap, ...wrapFields } });
+  const recoveryWhy = "the wrap of a recovery answer is the recovery method (type 2) with 72 bytes and no passkey field";
+  validate("recovery_res: a password method", "recovery_res", recoveryWith({ method_type: 1 }), recoveryWhy);
+  validate("recovery_res: a passkey method", "recovery_res", recoveryWith({ method_type: 3 }), recoveryWhy);
+  validate("recovery_res: a password-sized wrap", "recovery_res", recoveryWith({ wrap: b64("wrap password", 104) }), recoveryWhy);
+  validate("recovery_res: a short wrap", "recovery_res", recoveryWith({ wrap: b64("wrap short", 71) }), recoveryWhy);
+  validate("recovery_res: an empty wrap", "recovery_res", recoveryWith({ wrap: "" }), recoveryWhy);
+  validate("recovery_res: a credential_id on the recovery wrap", "recovery_res", recoveryWith({ credential_id: b64("credential", 32) }), recoveryWhy);
+  validate("recovery_res: a prf_salt on the recovery wrap", "recovery_res", recoveryWith({ prf_salt: b64("prf salt", 32) }), recoveryWhy);
+
+  // A sign-in code.
+  parse("redeem_req email is a number", "redeem_req", with_("redeem_req.json", { email: 5 }), "email is a string");
+  parse("redeem_req code is a number", "redeem_req", with_("redeem_req.json", { code: 5 }), "code is a string");
+  parse("redeem_req code is null", "redeem_req", with_("redeem_req.json", { code: null }), "code is a string");
+  parse("redeem_req with a hand-over field", "redeem_req", text({ code: "x" }), "a sign-in code comes with an e-mail");
+  for (const value of ["full", "pending_2fa", "unverified", "", "Account_reset", 1]) {
+    parse(`redeem_res scope ${JSON.stringify(value)}`, "redeem_res", with_("redeem_res.json", { scope: value }), "the scope of a redeemed code is account_reset");
+  }
+
+  // The scope of a session is one of four, and the time of the fresh check is a whole number.
+  for (const value of ["", "Full", "admin", "root", "reset", 1, null]) {
+    parse(`session_res scope ${JSON.stringify(value)}`, "session_res", with_("session_res.json", { scope: value }), "scope is full, pending_2fa, account_reset or unverified");
+  }
+  for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800000300"], ["a fraction", 1.5]]) {
+    parse(`session_res reauth_until ${name}`, "session_res", with_("session_res.json", { reauth_until: value }), "reauth_until is a whole number up to 2^53 - 1");
+  }
+  // Whether the user is an administrator is a boolean.
+  for (const [name, value] of [["a string", "true"], ["a number", 1], ["a list", []]]) {
+    parse(`session_res admin ${name}`, "session_res", with_("session_res.json", { admin: value }), "admin is true or false");
+  }
+
+  // The import window.
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "250"], ["a fraction", 1.5], ["null", null]]) {
+    parse(`import_window_req ops ${name}`, "import_window_req", with_("import_window_req.json", { ops: value }), "ops is a whole number of 32 bits");
+    parse(`import_window_res ops ${name}`, "import_window_res", with_("import_window_res.json", { ops: value }), "ops is a whole number of 32 bits");
+    parse(`import_window_res expires_in ${name}`, "import_window_res", with_("import_window_res.json", { expires_in: value }), "expires_in is a whole number of 32 bits");
+  }
+  for (const [name, value] of [
+    ["upper case", id("import window").toUpperCase()],
+    ["short", id("import window").slice(1)],
+    ["long", `${id("import window")}0`],
+    ["empty", ""],
+    ["a number", 5],
+  ]) {
+    parse(`import_window_res window_id ${name}`, "import_window_res", with_("import_window_res.json", { window_id: value }), "an id is 32 lower-case hexadecimal characters");
+    parse(`batch_req_import import_window ${name}`, "batch_req_import", with_("batch_req_import.json", { import_window: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  nested("batch_req_import: unknown field in an operation", "batch_req_import", "batch_req_import.json", ["ops", 0], "an unknown field is refused inside a part");
+  validate("batch_req_import with no operations", "batch_req_import", with_("batch_req_import.json", { ops: [] }), "a batch has 1 to 100 operations");
+  validate("batch_req_import with 101 operations", "batch_req_import", text({ ops: JSON.parse(batchOf(101)).ops, import_window: id("import window") }), "a batch has 1 to 100 operations");
+  validate("batch_req_import: an operation with both forms", "batch_req_import", with_("batch_req_import.json", { ops: [{ id: id("form item"), base_rev: 1, blob, tag, tomb, idem }] }), "an operation is a live row (blob, tag) or a tombstone (deleted true, tomb), never both, and only a live row asks to bring an item back");
+  // A batch without the window is the shape of the second milestone.
+  validate("batch_req without an import window and with no operations", "batch_req", text({ ops: [] }), "a batch has 1 to 100 operations");
+  parse("batch_req with an import_window that is not an id", "batch_req", with_("batch_req.json", { import_window: "x" }), "an id is 32 lower-case hexadecimal characters");
+
+  // Devices and their tokens. The device sign-in: the OPAQUE fields as in the
+  // cookie body (with their codes), `client` is `device`, a name of 1 to 64
+  // characters, a known platform, and no `device_id`, `purpose` or key.
+  const deviceLogin = "login_finish_req.device.json";
+  sized("ke3", "login_finish_req_device", deviceLogin, 64, "malformed_ke3");
+  for (const [name, value] of [["upper case", id("login").toUpperCase()], ["short", id("login").slice(1)], ["a number", 5]]) {
+    parse(`login_finish_req_device login_id ${name}`, "login_finish_req_device", with_(deviceLogin, { login_id: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  for (const value of ["web", "Device", "DEVICE", "", 1, true, null]) {
+    parse(`login_finish_req_device client ${JSON.stringify(value)}`, "login_finish_req_device", with_(deviceLogin, { client: value }), "client is device");
+  }
+  for (const field of ["login_id", "ke3", "client", "device_name", "platform"]) {
+    parse(`login_finish_req_device without ${field}`, "login_finish_req_device", with_(deviceLogin, { [field]: undefined }), `${field} is required`);
+  }
+  for (const [field, value] of [
+    ["device_id", id("device")],
+    ["purpose", "login"],
+    ["jwk", { kty: "EC", crv: "P-256", x: b64("jwk x", 32), y: b64("jwk y", 32) }],
+  ]) {
+    parse(`login_finish_req_device with ${field}`, "login_finish_req_device", with_(deviceLogin, { [field]: value }), "the server gives the id, the key is the proof's, and a device does not re-authenticate");
+  }
+  for (const [name, value] of [
+    ["empty", ""],
+    ["65 characters", "a".repeat(65)],
+    ["65 characters, 260 bytes", "\u{1d11e}".repeat(65)],
+    ["a tab", "tab\there"],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
+    ["a byte order mark", "\ufeffphone"],
+    ["a NUL", "nul\u0000"],
+    ["a NUL before more characters", `a\u0000${"b".repeat(100)}`],
+    ["a number", 5],
+    ["null", null],
+    ["a list", ["x"]],
+  ]) {
+    parse(`login_finish_req_device device_name ${name}`, "login_finish_req_device", with_(deviceLogin, { device_name: value }), "a device name has 1 to 64 characters and no control or invisible ones");
+  }
+  for (const value of ["freebsd", "Windows", "", 1, null]) {
+    parse(`login_finish_req_device platform ${JSON.stringify(value)}`, "login_finish_req_device", with_(deviceLogin, { platform: value }), "platform is one of the seven words");
+  }
+
+  // A token: exactly 43 characters of strict base64url that decode to 32 bytes.
+  const token = (shape, file, field) => {
+    const good = all[file][field];
+    const spare = good.at(-1) === "B" ? "C" : "B";
+    for (const [name, value] of [
+      ["42 characters", good.slice(0, 42)],
+      ["44 characters", `${good}A`],
+      ["padded", `${good.slice(0, 42)}=`],
+      ["padded to 44", `${good}=`],
+      ["spare bits", `${good.slice(0, 42)}${spare}`],
+      ["standard alphabet", `+${good.slice(1)}`],
+      ["empty", ""],
+      ["a number", 5],
+      ["null", null],
+    ]) {
+      parse(`${shape} ${field} ${name}`, shape, with_(file, { [field]: value }), "a token is 43 characters of strict base64url without padding (32 bytes)");
+    }
+  };
+  token("token_refresh_req", "token_refresh_req.json", "refresh_token");
+  token("token_revoke_req", "token_revoke_req.json", "refresh_token");
+  token("token_res", "token_res.json", "access_token");
+  token("token_res", "token_res.json", "refresh_token");
+  token("login_finish_res_device", "login_finish_res.device.json", "access_token");
+  token("login_finish_res_device", "login_finish_res.device.json", "refresh_token");
+  parse("token_refresh_req without refresh_token", "token_refresh_req", "{}", "refresh_token is required");
+  parse("token_revoke_req without refresh_token", "token_revoke_req", "{}", "refresh_token is required");
+  for (const [shape, file] of [["token_res", "token_res.json"], ["login_finish_res_device", "login_finish_res.device.json"]]) {
+    for (const value of ["dpop", "Bearer", "DPOP", "", 1, null]) {
+      parse(`${shape} token_type ${JSON.stringify(value)}`, shape, with_(file, { token_type: value }), "token_type is DPoP");
+    }
+    for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "900"], ["a fraction", 1.5]]) {
+      parse(`${shape} expires_in ${name}`, shape, with_(file, { expires_in: value }), "expires_in is a whole number of 32 bits");
+    }
+    for (const field of ["access_token", "refresh_token", "token_type", "expires_in"]) {
+      parse(`${shape} without ${field}`, shape, with_(file, { [field]: undefined }), `${field} is required`);
+    }
+  }
+  const deviceLoginRes = "login_finish_res.device.json";
+  parse("login_finish_res_device vk_epoch 2^53", "login_finish_res_device", with_(deviceLoginRes, { vk_epoch: 9007199254740992 }), "an integer is at most 2^53 - 1");
+  parse("login_finish_res_device device_id upper case", "login_finish_res_device", with_(deviceLoginRes, { device_id: id("token device").toUpperCase() }), "an id is lower case");
+  parse("login_finish_res_device device_id short", "login_finish_res_device", with_(deviceLoginRes, { device_id: id("token device").slice(1) }), "an id is 32 characters");
+  parse("login_finish_res_device without device_id", "login_finish_res_device", with_(deviceLoginRes, { device_id: undefined }), "device_id is required");
+
+  // The list of devices: at most 200 rows, each a device with tokens or a
+  // browser, with a name that may be empty and an optional platform.
+  const devices = all["devices_res.json"].devices;
+  const deviceRow = (fields) => {
+    const row = { ...devices[0] };
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete row[key];
+      else row[key] = v;
+    }
+    return text({ devices: [row, devices[1]] });
+  };
+  const rows = (n) => text({ devices: Array.from({ length: n }, (_, i) => ({ ...devices[0], id: id(`listed ${i}`) })) });
+  parse("devices_res with 201 devices", "devices_res", rows(201), "the list has at most 200 devices");
+  parse("devices_res with 300 devices", "devices_res", rows(300), "the list has at most 200 devices");
+  parse("devices_res devices is not a list", "devices_res", text({ devices: {} }), "devices is a list");
+  parse("devices_res devices is null", "devices_res", text({ devices: null }), "devices is a list");
+  parse("devices_res without devices", "devices_res", "{}", "devices is required");
+  parse("devices_res devices holds a string", "devices_res", text({ devices: ["x"] }), "a device is an object");
+  for (const value of ["browser", "Web", "", 1, null]) {
+    parse(`devices_res kind ${JSON.stringify(value)}`, "devices_res", deviceRow({ kind: value }), "kind is device or web");
+  }
+  for (const value of ["freebsd", "Windows", "", 1]) {
+    parse(`devices_res platform ${JSON.stringify(value)}`, "devices_res", deviceRow({ platform: value }), "platform is one of the seven words, or left out");
+  }
+  for (const [name, value] of [
+    ["65 characters", "a".repeat(65)],
+    ["a right-to-left override", "phone\u202eknil"],
+    ["a zero-width space", "pho\u200bne"],
+    ["a number", 5],
+    ["null", null],
+  ]) {
+    parse(`devices_res name ${name}`, "devices_res", deviceRow({ name: value }), "a device name has at most 64 characters and no control or invisible ones");
+  }
+  for (const [name, value] of [["upper case", id("token device").toUpperCase()], ["short", id("token device").slice(1)], ["empty", ""]]) {
+    parse(`devices_res id ${name}`, "devices_res", deviceRow({ id: value }), "an id is 32 lower-case hexadecimal characters");
+  }
+  for (const field of ["created_at", "last_seen"]) {
+    for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800000000"], ["a fraction", 1.5]]) {
+      parse(`devices_res ${field} ${name}`, "devices_res", deviceRow({ [field]: value }), `${field} is a whole number up to 2^53 - 1`);
+    }
+  }
+  parse("devices_res current is a string", "devices_res", deviceRow({ current: "true" }), "current is a boolean");
+  for (const field of ["id", "kind", "name", "created_at", "last_seen", "current"]) {
+    parse(`devices_res row without ${field}`, "devices_res", deviceRow({ [field]: undefined }), `${field} is required`);
+  }
+  nested("unknown field in a row of devices_res", "devices_res", "devices_res.json", ["devices", 1], "an unknown field is refused inside a part");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "3"], ["a fraction", 1.5], ["null", null]]) {
+    parse(`revoke_all_res revoked ${name}`, "revoke_all_res", with_("revoke_all_res.json", { revoked: value }), "revoked is a whole number of 32 bits");
+  }
+  parse("revoke_all_res without revoked", "revoke_all_res", "{}", "revoked is required");
+  parse("devices_res name a NUL", "devices_res", deviceRow({ name: "nul\u0000" }), "a device name has no control character");
+
+  // A row of the list has the fields of its kind: a device with tokens has a
+  // name and a platform, a browser has no platform (its name may be empty).
+  const rowWhy = "a device with tokens has a name and a platform, a browser has no platform";
+  validate("devices_res: a device row with an empty name", "devices_res", deviceRow({ name: "" }), rowWhy);
+  validate("devices_res: a device row without a platform", "devices_res", deviceRow({ platform: undefined }), rowWhy);
+  validate("devices_res: a web row with a platform", "devices_res", text({ devices: [devices[0], { ...devices[1], platform: "linux" }] }), rowWhy);
+  // `more` says how many rows a full list left out: only on a full list, at least 1.
+  const full = all["devices_res.more.json"];
+  validate("devices_res: more on a list that is not full", "devices_res", text({ devices: full.devices.slice(0, 199), more: 7 }), "more is only on a full list of 200 rows");
+  validate("devices_res: more is 0", "devices_res", text({ ...full, more: 0 }), "more is at least 1");
+  for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "7"], ["a fraction", 1.5]]) {
+    parse(`devices_res more ${name}`, "devices_res", text({ ...full, more: value }), "more is a whole number of 32 bits");
+  }
+
   return cases;
 }
 
@@ -1047,6 +1498,7 @@ export function files() {
   });
   out["error_statuses.json"] = `${JSON.stringify(Object.fromEntries(statuses))}\n`;
   out["invalid.json"] = `[\n${invalidCases().map((c) => JSON.stringify(c)).join(",\n")}\n]\n`;
+  out["dpop_jwk.json"] = `${JSON.stringify(DPOP_JWK)}\n`;
   return out;
 }
 

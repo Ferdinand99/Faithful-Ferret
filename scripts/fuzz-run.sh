@@ -92,6 +92,7 @@ for t in "${targets[@]}"; do
   case "$t" in
     fuzz_envelope | fuzz_item_body | fuzz_cbor_value | fuzz_export_file) maxlen=70000 ;;
     fuzz_url_match) maxlen=16384 ;;
+    fuzz_dpop_proof) maxlen=8192 ;;
     *) maxlen=4096 ;;
   esac
   echo "fuzz-run.sh: $mode $t" >&2

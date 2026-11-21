@@ -31,3 +31,13 @@
 .standby .standby-message > p:empty {
   display: none;
 }
+
+/* The warning that the other tab may hold changes that are not saved: text, then the two buttons. */
+.standby .standby-warning {
+  margin-block: var(--sp-3);
+}
+
+.standby .standby-warning > p {
+  margin: 0 0 var(--sp-3);
+  text-wrap: pretty;
+}

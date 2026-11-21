@@ -9,6 +9,7 @@
 //   now      the clock, in milliseconds
 //   rand     fills a byte array with random values
 //   secrets  options for the sealing of the secret key (WebCrypto and the random source), for tests
+//   createImportWorker  makes the import worker; only a page that imports needs it
 
 /**
  * @typedef {object} Env
@@ -20,6 +21,7 @@
  * @property {() => number} now
  * @property {(bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>} rand
  * @property {import("../flows/deviceSecret.mjs").Env} [secrets]
+ * @property {() => any} [createImportWorker] makes the import worker (the page's own file, through the Trusted Types policy)
  */
 
 /**
