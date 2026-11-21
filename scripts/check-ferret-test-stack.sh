@@ -208,6 +208,59 @@ for (const k of ["FERRET_VAULT_URL", "FERRET_ADMIN_URL", "FERRET_TRUSTED_PROXIES
 }
 ' "$config" "$e2e_config"
 
+# The same stack under another suffix and network (FERRET_E2E_SUFFIX, FERRET_E2E_SUBNET): every name, the label,
+# the host names and the addresses follow, so that it can run beside the first and touch nothing of it.
+alt_config="$(FERRET_E2E_SUFFIX=alt FERRET_E2E_SUBNET=172.30.249 FERRET_E2E_SETUP_TOKEN=e2echeck FERRET_E2E_PUSH_TOKEN=e2epush docker compose -f "$e2e_file" config --format json)"
+node -e '
+const [base, alt] = process.argv.slice(1).map((s) => JSON.parse(s));
+const fail = (m) => { console.error("check-ferret-test-stack: e2e suffix: " + m); process.exit(1); };
+const rename = (text) => String(text).replaceAll("ferret-e2e-", "ferret-alt-").replaceAll("-e2e.test", "-alt.test").replaceAll("172.30.250", "172.30.249");
+if (alt.name !== "ferret-e2e") fail("the file names the project; the script gives it with -p");
+for (const [k, s] of Object.entries(alt.services)) {
+  const b = base.services[k];
+  if (s.container_name !== rename(b.container_name)) fail(k + ": container name " + s.container_name);
+  if (s.image !== rename(b.image) && !b.image.startsWith("caddy:")) fail(k + ": image " + s.image);
+  if (s.labels?.owner !== "ferret-alt") fail(k + ": label " + s.labels?.owner);
+  if (b.build && s.build.labels?.owner !== "ferret-alt") fail(k + ": build label");
+  for (const [net, n] of Object.entries(s.networks)) {
+    if (n.ipv4_address !== b.networks[net].ipv4_address.replace("172.30.250", "172.30.249")) fail(k + ": address " + n.ipv4_address);
+  }
+}
+const app = alt.services["ferret-e2e-app"];
+if (app.environment.FERRET_VAULT_URL !== "https://vault-alt.test" || app.environment.FERRET_ADMIN_URL !== "https://admin-alt.test") fail("the host names of the app");
+if (app.environment.FERRET_TRUSTED_PROXIES !== "172.30.249.4") fail("the trusted proxy is the malicious server of this stack");
+const tls = alt.services["ferret-e2e-tls"];
+if ([...tls.networks["ferret-e2e-net"].aliases].sort().join() !== "admin-alt.test,vault-alt.test") fail("the aliases of the terminator");
+const caddy = tls.environment.CADDYFILE;
+if (!caddy.includes("https://vault-alt.test {") || !caddy.includes("https://admin-alt.test {") || caddy.includes("-e2e.test")) fail("the Caddyfile host names");
+if (Object.keys(alt.volumes).sort().join() !== "ferret-e2e-backups,ferret-e2e-data" || Object.values(alt.volumes).some((v) => !v.name.startsWith("ferret-alt-") || v.labels.owner !== "ferret-alt")) fail("volumes");
+const net = alt.networks["ferret-e2e-net"];
+if (net.name !== "ferret-alt-net" || net.labels.owner !== "ferret-alt" || net.ipam.config[0].subnet !== "172.30.249.0/28") fail("network");
+' "$e2e_config" "$alt_config"
+# A suffix or a network that is not allowed stops the script before it calls docker, and the labels of DEV_RUN
+# are added only when it is set (the second compose file is made only then).
+for bad in 'FERRET_E2E_SUFFIX=Bad' 'FERRET_E2E_SUFFIX=waytoolongsuffix' 'FERRET_E2E_SUFFIX=a-b' 'FERRET_E2E_SUBNET=1.2' 'FERRET_E2E_SUBNET=a.b.c' 'DEV_RUN=Bad_Name' 'DEV_RUN=-dash'; do
+  if env "$bad" FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh e2e-down >/dev/null 2>&1; then
+    echo "check-ferret-test-stack: $bad was accepted" >&2
+    exit 1
+  fi
+done
+labels_out="$(DEV_RUN=check-run DEV_TITLE='A "title" $x' bash -c '
+  FERRET_DOCKER_ARGS="--context stub"
+  source scripts/lanbox-ferret-test.sh
+  printf "%s\n" "${e2e_dev_labels[@]}"
+  e2e_dev_override' scripts/check-ferret-test-stack.sh)"
+# shellcheck disable=SC2016
+for want in 'dev.run=check-run' 'dev.title=A "title" $x' '      dev.run: "check-run"' '      dev.title: "A \"title\" $$x"'; do
+  printf '%s\n' "$labels_out" | grep -qxF -- "$want" || { echo "check-ferret-test-stack: the labels of DEV_RUN lack: $want" >&2; exit 1; }
+done
+# shellcheck disable=SC2016
+no_labels="$(env -u DEV_RUN -u DEV_TITLE bash -c 'FERRET_DOCKER_ARGS="--context stub"; source scripts/lanbox-ferret-test.sh; echo "${#e2e_dev_labels[@]}"' scripts/check-ferret-test-stack.sh)"
+if [ "$no_labels" != 0 ]; then
+  echo "check-ferret-test-stack: labels are added without DEV_RUN" >&2
+  exit 1
+fi
+
 # The malicious server exists in the e2e stack only: no other compose file, no
 # Dockerfile of the server, nothing of its folder in the server's build context.
 for f in docker/*; do
