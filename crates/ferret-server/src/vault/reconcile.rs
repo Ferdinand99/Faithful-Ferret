@@ -47,8 +47,9 @@ use super::events::EventStreams;
 use super::notify::SyncEvents;
 use super::rate::{SyncLimits, WriteGate};
 use super::store::{Change, column_u64};
+use crate::auth::session::{RestoreSweep, end_everything_after_restore};
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::ids::{ItemId, VaultId};
 use crate::state::VaultDb;
 use crate::wire::{ChangeJson, ItemsRes, MAX_JSON_INT, RestoreRowJson, RestoreRowsRes, hex16};
@@ -201,6 +202,15 @@ pub struct Bumped {
     /// The highest `restore_epoch` of any vault after the bump (0 without
     /// vaults).
     pub restore_epoch: u64,
+    /// What the same transaction ended: sessions, codes, device tokens (see
+    /// [`end_everything_after_restore`]).
+    pub swept: RestoreSweep,
+}
+
+/// The epoch rule alone, before the sweep.
+struct Raised {
+    vaults: u64,
+    restore_epoch: u64,
 }
 
 /// Raises the restore epoch of every vault in one transaction, with the rule
@@ -220,6 +230,12 @@ pub struct Bumped {
 /// the envelope)`, with a NULL hash for a tombstone. Nothing is signed: the
 /// server has no key. Writes after the bump never touch the frozen rows.
 ///
+/// The same transaction ends everything the data that came back holds: every
+/// session, hand-over, pending sign-in state and registration, every sign-in
+/// code, every device with its tokens, and it raises every user's
+/// `session_version` ([`end_everything_after_restore`]). There is no way to raise
+/// the epoch without it.
+///
 /// An `at_least` or a `now` above the largest number a JSON integer can carry,
 /// or a vault that already holds that number, refuses the whole bump with
 /// [`StoreError::Invalid`] (nothing changes).
@@ -235,7 +251,10 @@ pub fn bump(conn: &mut Connection, at_least: Option<u64>, now: i64) -> Result<Bu
 }
 
 /// [`bump`] inside the caller's write transaction, so that a restore raises the
-/// epoch and ends every session in one commit. The rule is the same.
+/// epoch and ends everything in one commit. The rule is the same, and so is the
+/// sweep: this is the only way to raise the epoch, so no bump leaves a session,
+/// a sign-in code or a device token of the data that came back alive
+/// ([`end_everything_after_restore`], Spec: Fase 1 § 11 and § 7.6).
 ///
 /// Spec: Fase 1 § 8.6, "Legitimate rollbacks".
 pub(crate) fn bump_in(
@@ -243,6 +262,22 @@ pub(crate) fn bump_in(
     at_least: Option<u64>,
     now: i64,
 ) -> Result<Bumped, StoreError> {
+    let raised = raise_in(tx, at_least, now)?;
+    let swept = end_everything_after_restore(tx, now)?;
+    Ok(Bumped {
+        vaults: raised.vaults,
+        restore_epoch: raised.restore_epoch,
+        swept,
+    })
+}
+
+/// The epoch rule of [`bump`], with no sweep: private, so that nothing raises
+/// the epoch without one.
+fn raise_in(
+    tx: &rusqlite::Transaction<'_>,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<Raised, StoreError> {
     let lowest = at_least.unwrap_or(0).max(u64::try_from(now).unwrap_or(0));
     if lowest > MAX_JSON_INT {
         return Err(StoreError::Invalid(
@@ -274,7 +309,7 @@ pub(crate) fn bump_in(
         [],
         |row| row.get(0),
     )?;
-    Ok(Bumped {
+    Ok(Raised {
         vaults: u64::try_from(vaults).unwrap_or(u64::MAX),
         restore_epoch: u64::try_from(highest)
             .map_err(|_| StoreError::Invalid("restore_epoch is negative"))?,
@@ -494,9 +529,9 @@ pub struct RestoreRowsQuery {
     limit: Option<u32>,
 }
 
-/// A page of the frozen rows of the session's vault.
+/// A page of the frozen rows of the caller's vault.
 async fn get_restore_rows(
-    session: VaultSession,
+    caller: VaultCaller,
     query: Result<Query<RestoreRowsQuery>, QueryRejection>,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
@@ -511,7 +546,7 @@ async fn get_restore_rows(
         .limit
         .unwrap_or(MAX_RESTORE_ROWS)
         .clamp(1, MAX_RESTORE_ROWS);
-    let vault = session.vault;
+    let vault = caller.vault();
     let page = db
         .with_conn(move |conn| restore_rows(conn, &vault, after.as_ref(), limit))
         .await?;
@@ -541,9 +576,9 @@ async fn get_restore_rows(
     Ok(Json(res).into_response())
 }
 
-/// A page of the listing of the session's vault.
+/// A page of the listing of the caller's vault.
 async fn get_items(
-    session: VaultSession,
+    caller: VaultCaller,
     query: Result<Query<ItemsQuery>, QueryRejection>,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
@@ -555,7 +590,7 @@ async fn get_items(
         .transpose()
         .map_err(|_| ApiError::coded("bad_request"))?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let vault = session.vault;
+    let vault = caller.vault();
     let page = db
         .with_conn(move |conn| list_items(conn, &vault, after.as_ref(), limit, PAGE_BYTES))
         .await?;

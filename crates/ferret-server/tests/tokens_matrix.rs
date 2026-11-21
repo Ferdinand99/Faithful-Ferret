@@ -152,7 +152,7 @@ const ROWS: &[&str] = &[
 /// cache and an empty grace store: the server after a start.
 fn started(app: &TestApp) -> Router {
     let mut state = app.state.clone();
-    state.device_auth = DeviceAuth::new(state.vault_db.clone(), state.clock.clone(), VAULT_URL);
+    state.device_auth = DeviceAuth::new(VAULT_URL);
     ferret_server::server::vault_router(state)
 }
 
@@ -540,9 +540,13 @@ impl Bystander {
 
     /// The bystander's device renews and syncs: nothing a run did may have
     /// touched it. A device that is old is replaced as a client does (a new
-    /// key, the old one signed out).
-    async fn touch(&mut self, app: &TestApp) {
+    /// key, the old one signed out). Says whether the device it started with
+    /// is the one that renewed (not a replacement), which is what "untouched"
+    /// is about.
+    async fn touch(&mut self, app: &TestApp) -> bool {
+        let mut kept = true;
         if now_of(app) - self.created > 60 * DAY {
+            kept = false;
             let old = copy(self.device.refresh.as_ref().expect("signed in"));
             let proof = self.device.proof(app, "POST", REVOKE, None);
             let res = app
@@ -575,6 +579,7 @@ impl Bystander {
             "the bystander cannot sync: {}",
             res.text()
         );
+        kept
     }
 
     /// After a restore: every token of the device is gone, and a new device
@@ -1507,9 +1512,19 @@ impl<'a> Run<'a> {
                 .clock
                 .advance(u64::try_from(piece).expect("a duration"));
             left -= piece;
-            self.bystander.touch(self.app).await;
+            let kept = self.bystander.touch(self.app).await;
+            self.bystander_untouched(kept);
         }
-        self.hit("bystander.untouched");
+    }
+
+    /// The row "the bystander was not touched" counts only when the claim has a
+    /// content: the bystander's own device renewed and synced, and this run had
+    /// ended a device of its own account by then, so something could have
+    /// reached it by mistake.
+    fn bystander_untouched(&self, kept: bool) {
+        if kept && self.devs.iter().any(Dev::dead) {
+            self.hit("bystander.untouched");
+        }
     }
 
     async fn advance(&mut self) {
@@ -1800,7 +1815,10 @@ impl<'a> Run<'a> {
             live <= i64::try_from(MAX_DEVICES).expect("a number"),
             || format!("{live} devices are live, over the quota"),
         );
-        self.hit("quota.holds");
+        // The row counts when there is a quota to hold: a device is live.
+        if live > 0 {
+            self.hit("quota.holds");
+        }
     }
 
     /// Every token the run holds is looked at once more, for the devices the
@@ -1843,12 +1861,14 @@ impl<'a> Run<'a> {
     async fn no_clear_text(&mut self) {
         let user = self.client.ids.user_id;
         let patterns: HashSet<Vec<u8>> = self.patterns.iter().cloned().collect();
-        let hits = self
+        let issued_any = !patterns.is_empty();
+        let (hits, token_rows) = self
             .app
             .state
             .vault_db
             .with_conn(move |conn| {
                 let mut hits = Vec::new();
+                let mut token_rows = 0usize;
                 for (table, sql) in [
                     (
                         "ferret_access",
@@ -1869,6 +1889,9 @@ impl<'a> Run<'a> {
                     let columns = statement.column_count();
                     let mut rows = statement.query([user])?;
                     while let Some(row) = rows.next()? {
+                        if table != "ferret_devices" {
+                            token_rows += 1;
+                        }
                         for column in 0..columns {
                             if cell_holds(row.get_ref(column)?, &patterns) {
                                 hits.push(table);
@@ -1876,14 +1899,18 @@ impl<'a> Run<'a> {
                         }
                     }
                 }
-                Ok(hits)
+                Ok((hits, token_rows))
             })
             .await
             .expect("a scan");
         self.ensure(hits.is_empty(), || {
             format!("a token is in clear text in {hits:?}")
         });
-        self.hit("db.no_clear_text_token");
+        // The row counts when the scan had something to find and somewhere to
+        // find it: tokens were issued, and rows of tokens were looked at.
+        if token_rows > 0 && issued_any {
+            self.hit("db.no_clear_text_token");
+        }
     }
 
     async fn step(&mut self) {
@@ -1939,9 +1966,8 @@ impl<'a> Run<'a> {
         self.check_db().await;
         self.no_clear_text().await;
         // The bystander: nothing a run did touched it.
-        self.bystander.touch(self.app).await;
-        self.hit("bystander.untouched");
-        self.hit("bystander.untouched");
+        let kept = self.bystander.touch(self.app).await;
+        self.bystander_untouched(kept);
     }
 }
 

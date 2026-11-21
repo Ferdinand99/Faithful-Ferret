@@ -458,6 +458,7 @@ async fn restore_puts_the_set_back_and_moves_the_current_data_aside() {
             restore_epoch: u64::try_from(NOW).unwrap(),
             vaults: 1,
             sessions_ended: 0,
+            devices_revoked: 0,
             moved_aside: scene.aside(),
             seen_epoch_unknown: false,
         }
@@ -1021,7 +1022,7 @@ async fn restore_epoch_bump_uses_the_same_rule() {
     assert_eq!(
         said,
         format!(
-            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked",
+            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked, 0 devices signed out",
             at_least + 1
         )
     );

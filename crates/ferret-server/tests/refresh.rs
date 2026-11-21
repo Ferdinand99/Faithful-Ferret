@@ -294,7 +294,7 @@ async fn call_router(router: axum::Router, req: Req) -> Res {
 /// `jti` cache and an empty grace store.
 fn restarted(app: &TestApp) -> axum::Router {
     let mut state = app.state.clone();
-    state.device_auth = DeviceAuth::new(state.vault_db.clone(), state.clock.clone(), VAULT_URL);
+    state.device_auth = DeviceAuth::new(VAULT_URL);
     ferret_server::server::vault_router(state)
 }
 

@@ -10,14 +10,11 @@
 mod support;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use axum::http::Method;
 use ferret_server::auth::dpop::{self, DpopError, Expect, JtiCache, VerifiedProof};
 use ferret_server::auth::tokens::{DeviceAuth, Htu};
 use ferret_server::ids::TokenSecret;
-use ferret_server::state::VaultDb;
-use ferret_server_auth::{Clock, ManualClock};
 use serde_json::Value;
 use support::dpop::{DeviceKey, b64, headers_with, segments, vault_htu};
 use support::{START, VAULT_URL};
@@ -264,11 +261,7 @@ fn rfc9449_example_proofs_verify_in_rust() {
     }
 }
 
-/// A handle for proofs on `origin`, over a database that is never opened.
+/// A handle for proofs on `origin`.
 fn auth_for(origin: &str) -> DeviceAuth {
-    let pool = deadpool_sqlite::Config::new("/ferret-no-such-directory/none.db")
-        .create_pool(deadpool_sqlite::Runtime::Tokio1)
-        .expect("a pool");
-    let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(START));
-    DeviceAuth::new(VaultDb::new(pool), clock, origin)
+    DeviceAuth::new(origin)
 }

@@ -39,7 +39,8 @@ use ferret_server_auth::{ManualClock, SessionScope};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::accounts::{add_account, add_account_to_app, id16};
+use support::accounts::{CLIENT_PASSWORD, add_account, add_account_to_app, client_account, id16};
+use support::device::{DeviceClient, device_app};
 use support::session::issue;
 use support::{ADMIN_URL, Jar, PEER, Res, START, TestApp, VAULT_URL, Which};
 use tower::ServiceExt as _;
@@ -205,7 +206,7 @@ async fn changes_and_listing_show_the_new_restore_epoch() {
     let bumped = app
         .state
         .vault_db
-        .with_conn(|conn| bump_restore_epoch(conn, None, NOW))
+        .with_conn(|conn| support::session::bump_epoch_keeping_sessions(conn, None, NOW))
         .await
         .expect("a bump");
     // The rule: one more than 0, or the time, whichever is higher.
@@ -396,7 +397,7 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
     assert_eq!(
         ran.stdout.trim(),
         "restore epoch is now 4000000000 (2 vaults raised); 0 sessions ended, 0 sign-in codes \
-         revoked"
+         revoked, 0 devices signed out"
     );
     assert_eq!(epochs(&copy.db()), [4_000_000_000, 4_000_000_000]);
 
@@ -602,7 +603,7 @@ async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy()
     assert!(
         ran.stdout
             .trim()
-            .ends_with("; 2 sessions ended, 1 sign-in code revoked"),
+            .ends_with("; 2 sessions ended, 1 sign-in code revoked, 0 devices signed out"),
         "{}",
         ran.stdout
     );
@@ -693,10 +694,126 @@ async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy()
         assert_eq!(
             ran.stdout.trim(),
             format!(
-                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked"
+                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked, 0 devices signed out"
             )
         );
     }
+}
+
+/// The bump signs every device with tokens out and deletes their tokens, and
+/// its line says how many devices that was.
+#[tokio::test]
+async fn cli_bump_signs_every_device_out_and_says_how_many() {
+    let app = device_app().await;
+    client_account(&app, 1).await;
+    for key in [1, 2] {
+        let mut device = DeviceClient::new(key);
+        let res = device
+            .sign_in(&app, "client1@example.com", CLIENT_PASSWORD)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    }
+    let copy = copy_of_the_data_directory(&app).await;
+    let live_devices = "SELECT COUNT(*) FROM ferret_devices WHERE revoked_at IS NULL";
+    let tokens =
+        "SELECT (SELECT COUNT(*) FROM ferret_access) + (SELECT COUNT(*) FROM ferret_refresh)";
+    assert_eq!(
+        one(&copy, live_devices),
+        2,
+        "both devices are live in the copy"
+    );
+    assert!(one(&copy, tokens) >= 4, "and hold tokens");
+
+    let args = [
+        "restore-epoch",
+        "bump",
+        "--yes",
+        "--data-dir",
+        copy.path().to_str().unwrap(),
+    ];
+    let ran = ferret(&args, &[]);
+    assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+    assert!(
+        ran.stdout.trim().ends_with(", 2 devices signed out"),
+        "{}",
+        ran.stdout
+    );
+    assert_eq!(one(&copy, live_devices), 0);
+    assert_eq!(one(&copy, tokens), 0, "no token is left");
+    assert_eq!(
+        one(&copy, "SELECT COUNT(*) FROM ferret_devices"),
+        2,
+        "the rows stay, revoked"
+    );
+
+    // Nothing left to sign out.
+    let ran = ferret(&args, &[]);
+    assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+    assert!(
+        ran.stdout.trim().ends_with(", 0 devices signed out"),
+        "{}",
+        ran.stdout
+    );
+}
+
+/// No public way raises the restore epoch without the sweep: the rule alone is
+/// private to its module, and the sweep has one caller, which every bump runs.
+/// Nothing in `src/` calls the public wrappers either, so a new caller would
+/// have to be added here on purpose.
+#[test]
+fn nothing_raises_the_epoch_without_the_sweep() {
+    use std::collections::BTreeSet;
+    fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("a folder") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                sources(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&src, &mut files);
+    let holding = |needle: &str| -> BTreeSet<String> {
+        files
+            .iter()
+            .filter(|f| {
+                std::fs::read_to_string(f)
+                    .expect("a source")
+                    .contains(needle)
+            })
+            .map(|f| {
+                f.strip_prefix(&src)
+                    .expect("under src")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect()
+    };
+    let set =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| (*n).to_string()).collect() };
+    assert_eq!(
+        holding("end_everything_after_restore("),
+        set(&["auth/session.rs", "vault/reconcile.rs"]),
+        "the sweep is called from the bump alone"
+    );
+    assert_eq!(
+        holding("raise_in("),
+        set(&["vault/reconcile.rs"]),
+        "the rule alone is private to its module"
+    );
+    assert_eq!(
+        holding("bump_in("),
+        set(&["backup/restore.rs", "cli.rs", "vault/reconcile.rs"]),
+        "a new caller of the bump needs a look: it must report the devices it signs out"
+    );
+    assert!(
+        holding("reconcile::bump(").is_empty()
+            && holding("reconcile::bump_restore_epoch").is_empty(),
+        "nothing in src/ calls the public wrappers"
+    );
 }
 
 #[tokio::test]
@@ -1166,7 +1283,7 @@ async fn read(app: &TestApp, u: &User, uri: &str) -> Value {
 async fn bump(app: &TestApp) -> u64 {
     app.state
         .vault_db
-        .with_conn(|conn| bump_restore_epoch(conn, None, 0))
+        .with_conn(|conn| support::session::bump_epoch_keeping_sessions(conn, None, 0))
         .await
         .expect("a bump")
 }

@@ -23,27 +23,19 @@ use axum::http::HeaderValue;
 use axum::http::header::DATE;
 use axum::response::Response;
 use ferret_core::SecureRng;
-use ferret_server_auth::Clock;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use crate::auth::dpop::{JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER, JtiCache};
 use crate::auth::refresh::{ABSOLUTE_SECS, GRACE_CAPACITY, IDLE_SECS, RefreshGrace};
 use crate::ids::{DeviceId, TokenHash, TokenSecret};
-use crate::state::VaultDb;
 use crate::wire::ACCESS_TOKEN_SECS;
 
-/// What the token routes and the extractor of a token request share: the
-/// database, the clock, the cache of used `jti` values, the successors of the
-/// grace period, and the vault origin the proofs name in `htu`. `Clone`
-/// shares them.
+/// What the token routes and the extractor of a token request share: the cache
+/// of used `jti` values, the successors of the grace period, and the vault
+/// origin the proofs name in `htu`. `Clone` shares them (the routes take the
+/// database and the clock from the state).
 #[derive(Clone)]
 pub struct DeviceAuth {
-    /// The database.
-    #[expect(dead_code, reason = "read by the token routes, which come later")]
-    db: VaultDb,
-    /// The only source of time.
-    #[expect(dead_code, reason = "read by the token routes, which come later")]
-    clock: Arc<dyn Clock>,
     /// The `jti` values used in the window, for the whole process.
     replay: Arc<JtiCache>,
     /// The successors of the grace period, for the whole process.
@@ -54,21 +46,19 @@ pub struct DeviceAuth {
 }
 
 impl DeviceAuth {
-    /// The handle over `db` and `clock`, with an empty `jti` cache and an
-    /// empty store of successors, for proofs whose `htu` starts with
-    /// `vault_origin` (the configured origin; a trailing `/` is dropped).
-    pub fn new(db: VaultDb, clock: Arc<dyn Clock>, vault_origin: &str) -> Self {
+    /// The handle with an empty `jti` cache and an empty store of successors,
+    /// for proofs whose `htu` starts with `vault_origin` (the configured
+    /// origin; a trailing `/` is dropped).
+    pub fn new(vault_origin: &str) -> Self {
         Self {
-            db,
-            clock,
             replay: Arc::new(JtiCache::new(JTI_CAPACITY, JTI_PER_KEY, JTI_PER_USER)),
             grace: Arc::new(RefreshGrace::new(GRACE_CAPACITY)),
             vault_origin: Arc::from(vault_origin.trim_end_matches('/')),
         }
     }
 
-    /// The same handle with another cache of used `jti` values: the database,
-    /// the clock, the successors and the origin stay shared.
+    /// The same handle with another cache of used `jti` values: the successors
+    /// and the origin stay shared.
     ///
     /// Tests only: the server has one cache for the whole process, and a
     /// route with a cache of its own would not see the proofs the others

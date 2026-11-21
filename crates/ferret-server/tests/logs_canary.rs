@@ -370,6 +370,8 @@ async fn tokens_and_proofs_never_reach_the_logs() {
         (Method::GET, SYNC, None),
         (Method::GET, "/api/vault/unlock-methods", None),
         (Method::GET, "/api/sync/checkpoint", None),
+        (Method::GET, "/api/sync/items", None),
+        (Method::GET, "/api/sync/restore-rows", None),
         (Method::PUT, "/api/sync/checkpoint", Some(json!({}))),
         (Method::POST, "/api/sync/batch", Some(json!({}))),
         (
