@@ -35,7 +35,10 @@
 # a TLS terminator and the test host names vault-e2e.test and admin-e2e.test on a
 # network of its own; no published port; the data in a volume that every start removes). Only resources named
 # ferret-e2e* and labelled owner=ferret-e2e are created or removed, and it never
-# touches the stack above:
+# touches the stack above. FERRET_E2E_SUFFIX (letters and digits, default e2e) and FERRET_E2E_SUBNET (the
+# first three octets of the network, default 172.30.250) put another stack beside it: every name above
+# then has the suffix in place of "e2e", and only the resources labelled owner=ferret-<suffix> are touched.
+# With DEV_RUN set (and DEV_TITLE), every container of the stack gets the labels dev.run and dev.title.
 #
 #   scripts/lanbox-ferret-test.sh e2e-up       build and start a fresh, empty stack
 #   scripts/lanbox-ferret-test.sh e2e-run [args]  run the Playwright tests of web/ in a container on the
@@ -110,27 +113,90 @@ docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
 dk() { docker "${docker_args[@]}" "$@"; }
 dc() { dk compose -p "$project" -f "$composefile" --env-file "$envfile" "$@"; }
 
-# The end-to-end stack: everything it uses is named ferret-e2e* and has this label.
-e2e_project=ferret-e2e
-e2e_label=owner=ferret-e2e
+# The end-to-end stack: everything it uses is named ferret-<suffix>* and has this label. The
+# suffix is `e2e` unless FERRET_E2E_SUFFIX says another one (letters and digits), and the
+# network's first three octets are FERRET_E2E_SUBNET (default 172.30.250), so a second stack can
+# run beside the first: another project, containers, volumes, network, label and host names
+# (vault-<suffix>.test), and nothing of the first is touched.
+e2e_suffix="${FERRET_E2E_SUFFIX:-e2e}"
+case "$e2e_suffix" in
+  '' | *[!a-z0-9]* | ?????????????*) echo "lanbox-ferret-test: FERRET_E2E_SUFFIX is 1 to 12 lower-case letters and digits" >&2; exit 2 ;;
+esac
+e2e_subnet="${FERRET_E2E_SUBNET:-172.30.250}"
+if ! printf '%s' "$e2e_subnet" | grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+  echo "lanbox-ferret-test: FERRET_E2E_SUBNET is the first three octets of a /28, for example 172.30.250" >&2
+  exit 2
+fi
+export FERRET_E2E_SUFFIX="$e2e_suffix" FERRET_E2E_SUBNET="$e2e_subnet"
+e2e_project="ferret-$e2e_suffix"
+e2e_label="owner=ferret-$e2e_suffix"
 e2e_composefile=docker/compose.ferret-e2e.yml
-e2e_app=ferret-e2e-app
-e2e_tls=ferret-e2e-tls
-e2e_network=ferret-e2e-net
-e2e_image=ferret-e2e-app:latest
+e2e_app="ferret-$e2e_suffix-app"
+e2e_tls="ferret-$e2e_suffix-tls"
+e2e_network="ferret-$e2e_suffix-net"
+e2e_image="ferret-$e2e_suffix-app:latest"
+e2e_vault_url="https://vault-$e2e_suffix.test"
+e2e_admin_url="https://admin-$e2e_suffix.test"
+e2e_playwright="ferret-$e2e_suffix-playwright"
+# The services of the compose file keep their names (the containers' addresses on the network).
+e2e_app_service=ferret-e2e-app
+e2e_evil_service=ferret-e2e-evil
+e2e_monitor_service=ferret-e2e-monitor
+e2e_tls_service=ferret-e2e-tls
 # The malicious server between the terminator and the app (web/test/e2e-stack/evil), and the
 # volumes of the app's data and of its snapshot.
-e2e_evil=ferret-e2e-evil
-e2e_evil_image=ferret-e2e-evil:latest
-e2e_data_volume=ferret-e2e-data
+e2e_evil="ferret-$e2e_suffix-evil"
+e2e_evil_image="ferret-$e2e_suffix-evil:latest"
+e2e_data_volume="ferret-$e2e_suffix-data"
 e2e_snapshot_volume=ferret-e2e-snapshot
+[ "$e2e_suffix" = e2e ] || e2e_snapshot_volume="ferret-$e2e_suffix-snapshot"
 # The volume of the backup sets (the app's FERRET_BACKUP_DIR), and the stand-in for the push monitor.
-e2e_backups_volume=ferret-e2e-backups
-e2e_monitor=ferret-e2e-monitor
-e2e_monitor_image=ferret-e2e-monitor:latest
+e2e_backups_volume="ferret-$e2e_suffix-backups"
+e2e_monitor="ferret-$e2e_suffix-monitor"
+e2e_monitor_image="ferret-$e2e_suffix-monitor:latest"
+# With DEV_RUN set (lower-case letters, digits and dashes, at most 63, as for scripts/lanbox.sh), every
+# container of the stack and every helper container it starts gets the label dev.run=$DEV_RUN, and
+# dev.title=$DEV_TITLE when that is set too, next to the label owner=ferret-<suffix>. Without DEV_RUN nothing is added.
+e2e_dev_labels=()
+if [ -n "${DEV_RUN:-}" ]; then
+  if ! (LC_ALL=C; [[ $DEV_RUN =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]); then
+    echo "lanbox-ferret-test: DEV_RUN must match ^[a-z0-9][a-z0-9-]{0,62}$" >&2
+    exit 2
+  fi
+  e2e_dev_labels+=(--label "dev.run=$DEV_RUN")
+  [ -z "${DEV_TITLE:-}" ] || e2e_dev_labels+=(--label "dev.title=$DEV_TITLE")
+fi
+# The same labels for the services of the compose file, as a second compose file on stdout. Compose
+# cannot leave a label out when a variable is empty, so this file is used only when DEV_RUN is set.
+e2e_dev_override() {
+  local title service
+  title="$(printf '%s' "${DEV_TITLE:-}" | tr -d '\000-\037')"
+  # A double-quoted YAML string, and no $ that compose would take for a variable.
+  title="${title//\\/\\\\}"
+  title="${title//\"/\\\"}"
+  title="${title//\$/\$\$}"
+  echo "services:"
+  for service in "$e2e_app_service" "$e2e_evil_service" "$e2e_monitor_service" "$e2e_tls_service"; do
+    echo "  $service:"
+    echo "    labels:"
+    echo "      dev.run: \"$DEV_RUN\""
+    [ -z "$title" ] || echo "      dev.title: \"$title\""
+  done
+}
 # The compose file wants the setup token of the run; commands that only stop or
 # list the stack do not need the real one.
-dce() { FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" FERRET_E2E_PUSH_TOKEN="${FERRET_E2E_PUSH_TOKEN:-unused}" dk compose -p "$e2e_project" -f "$e2e_composefile" "$@"; }
+dce() {
+  local files=(-f "$e2e_composefile") override="" rc=0
+  if [ -n "${DEV_RUN:-}" ]; then
+    override="$(mktemp)"
+    e2e_dev_override > "$override"
+    # Git Bash: the Docker program on Windows does not know the /tmp of the shell.
+    if command -v cygpath > /dev/null 2>&1; then files+=(-f "$(cygpath -m "$override")"); else files+=(-f "$override"); fi
+  fi
+  FERRET_E2E_SETUP_TOKEN="${FERRET_E2E_SETUP_TOKEN:-unused}" FERRET_E2E_PUSH_TOKEN="${FERRET_E2E_PUSH_TOKEN:-unused}" dk compose -p "$e2e_project" "${files[@]}" "$@" || rc=$?
+  [ -z "$override" ] || rm -f "$override"
+  return "$rc"
+}
 
 # The tunnel client of the proxy (the Newt container) as Docker on the build VM
 # knows it, read only. The container name can be changed with
@@ -473,7 +539,7 @@ e2e_up() {
   FERRET_E2E_SETUP_TOKEN="$token" FERRET_E2E_PUSH_TOKEN="$push" dce up -d --build --wait
   echo
   echo "End-to-end stack is up (project $e2e_project, no published ports):"
-  echo "  vault  https://vault-e2e.test  admin  https://admin-e2e.test   (only on the network $e2e_network)"
+  echo "  vault  $e2e_vault_url  admin  $e2e_admin_url   (only on the network $e2e_network)"
   echo "  run the tests:  scripts/lanbox-ferret-test.sh e2e-run    setup token:  scripts/lanbox-ferret-test.sh e2e-token"
 }
 
@@ -641,7 +707,7 @@ process.exit(answer.ok ? 0 : 1);
 
 e2e_clock_before=0
 e2e_stop_app() { dk stop "$e2e_app" >/dev/null; }
-e2e_bump() { dce run --rm -T --no-deps "$e2e_app" restore-epoch bump --yes; }
+e2e_bump() { dce run --rm -T --no-deps "$e2e_app_service" restore-epoch bump --yes; }
 # A restart empties /tmp of the app, where the clock offset is: it is put back.
 e2e_start_app() {
   dk start "$e2e_app" >/dev/null
@@ -660,7 +726,7 @@ process.exit(answer.ok ? 0 : 1);
 e2e_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_start_app
+  take_snapshot "$e2e_data_volume" "$e2e_snapshot_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_start_app
   echo "e2e-snapshot: the data of $e2e_app is in the volume $e2e_snapshot_volume"
 }
 
@@ -668,7 +734,7 @@ e2e_snapshot() {
 e2e_restore_snapshot() {
   e2e_require_running
   e2e_clock_before="$(e2e_clock_offset)"
-  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" ferret-e2e-snapshot e2e_stop_app e2e_bump e2e_start_app
+  restore_snapshot "$e2e_snapshot_volume" "$e2e_data_volume" "$e2e_label" "$e2e_snapshot_volume" e2e_stop_app e2e_bump e2e_start_app
   e2e_evil_reset
   echo "e2e-restore-snapshot: $e2e_app runs on the snapshot, with a higher restore epoch"
 }
@@ -679,7 +745,7 @@ e2e_restore_snapshot() {
 # purpose.
 # shellcheck disable=SC2016
 e2e_wipe_data() {
-  dk run --rm --name ferret-e2e-wipe --label "$e2e_label" --network none \
+  dk run --rm --name "$e2e_project-wipe" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none \
     --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add FOWNER \
     --security-opt no-new-privileges:true --memory 64m \
     -v "$e2e_data_volume:/data" \
@@ -689,7 +755,7 @@ e2e_wipe_data() {
 
 # The newest backup set in the volume (a name; nothing when there is none). Mounted read-only.
 e2e_newest_set() {
-  dk run --rm --name ferret-e2e-lsbackups --label "$e2e_label" --network none \
+  dk run --rm --name "$e2e_project-lsbackups" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none \
     --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --memory 64m \
     -v "$e2e_backups_volume:/backups:ro" \
     "$alpine_image" sh -c 'ls -1t /backups | grep -v "^\." | head -n 1'
@@ -697,7 +763,7 @@ e2e_newest_set() {
 
 # How many backup sets the volume holds (folders; the status file is not one). Mounted read-only.
 e2e_set_count() {
-  dk run --rm --name ferret-e2e-countbackups --label "$e2e_label" --network none     --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --memory 64m     -v "$e2e_backups_volume:/backups:ro"     "$alpine_image" sh -c 'find /backups -mindepth 1 -maxdepth 1 -type d ! -name ".*" | wc -l'
+  dk run --rm --name "$e2e_project-countbackups" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none     --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --memory 64m     -v "$e2e_backups_volume:/backups:ro"     "$alpine_image" sh -c 'find /backups -mindepth 1 -maxdepth 1 -type d ! -name ".*" | wc -l'
 }
 
 # A new, empty server: the app is stopped, the data is emptied, the app is started (a new server key, no account, the setup
@@ -718,7 +784,7 @@ e2e_backup() {
   e2e_clock_before="$(e2e_clock_offset)"
   e2e_stop_app
   local out rc=0
-  out="$(dce run --rm -T --no-deps "$e2e_app" backup create 2>&1)" || rc=$?
+  out="$(dce run --rm -T --no-deps "$e2e_app_service" backup create 2>&1)" || rc=$?
   e2e_start_app
   [ "$rc" -eq 0 ] || { echo "e2e-backup: the backup failed (exit $rc): $out" >&2; exit 1; }
   echo "e2e-backup: $out"
@@ -736,7 +802,7 @@ e2e_restore_backup() {
   e2e_clock_before="$(e2e_clock_offset)"
   e2e_stop_app
   e2e_wipe_data
-  out="$(dce run --rm -T --no-deps "$e2e_app" backup restore --from "/backups/$name" --yes 2>&1)" || rc=$?
+  out="$(dce run --rm -T --no-deps "$e2e_app_service" backup restore --from "/backups/$name" --yes 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "e2e-restore-backup: the restore failed (exit $rc): $out; the app stays stopped" >&2
     exit 1
@@ -762,7 +828,7 @@ e2e_code() {
 # content of the file. The Dockerfile goes in on stdin, so no build context (and
 # nothing from docker/, where the .env of the test stack lives) is sent.
 runner_hash="$(tr -d '' < docker/e2e-runner.Dockerfile | sha256sum | cut -c1-12)"
-runner_image="ferret-e2e-playwright:$runner_hash"
+runner_image="ferret-$e2e_suffix-playwright:$runner_hash"
 e2e_runner_image() {
   if ! dk image inspect "$runner_image" >/dev/null 2>&1; then
     dk build --label "$e2e_label" -t "$runner_image" - < docker/e2e-runner.Dockerfile >&2
@@ -787,10 +853,10 @@ e2e_run() {
   local pem token
   pem="$(e2e_ca)"
   token="$(e2e_token)"
-  PW_NETWORK="$e2e_network" PW_NAME=ferret-e2e-playwright PW_LABEL="$e2e_label" \
-    PW_VAULT_URL=https://vault-e2e.test PW_ADMIN_URL=https://admin-e2e.test PW_EVIL_URL="http://$e2e_evil:9000" \
+  PW_NETWORK="$e2e_network" PW_NAME="$e2e_playwright" PW_LABEL="$e2e_label" \
+    PW_VAULT_URL="$e2e_vault_url" PW_ADMIN_URL="$e2e_admin_url" PW_EVIL_URL="http://$e2e_evil_service:9000" \
     PW_TOKEN="$token" PW_CA_PEM="$pem" PW_HOSTS="" \
-    PW_MONITOR_URL="http://$e2e_monitor:9100" PW_PUSH_TOKEN="$(e2e_push_token)" \
+    PW_MONITOR_URL="http://$e2e_monitor_service:9100" PW_PUSH_TOKEN="$(e2e_push_token)" \
     playwright_run "$@"
 }
 
@@ -854,7 +920,7 @@ exit $status'
   tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web \
     | dk run --rm -i --init \
         --name "$PW_NAME-install" \
-        --label "$PW_LABEL" \
+        --label "$PW_LABEL" "${e2e_dev_labels[@]}" \
         --network bridge \
         --cpus 2 --memory 2g \
         --tmpfs /work:exec,size=1g \
@@ -866,7 +932,7 @@ exit $status'
     | {
       dk create --rm -i --init \
         --name "$PW_NAME" \
-        --label "$PW_LABEL" \
+        --label "$PW_LABEL" "${e2e_dev_labels[@]}" \
         --network "$PW_NETWORK" \
         "${hosts[@]}" \
         --cpus 4 --memory 8g --shm-size 2g \
