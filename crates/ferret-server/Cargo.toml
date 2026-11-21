@@ -59,6 +59,12 @@ ed25519-dalek = { version = "3.0.0", default-features = false }
 futures-util = "0.3.34"
 # Trusted proxy addresses and networks (FERRET_TRUSTED_PROXIES).
 ipnet = "2.11.0"
+# The signature of a DPoP proof (ES256), and nothing else: the server reads the
+# header and the claims itself (src/auth/dpop/proof.rs) and hands the library
+# the signing input, the signature and the key. The aws-lc-rs backend is the
+# one rustls already uses (one copy of aws-lc-rs); the RustCrypto backend would
+# bring `rsa`, and the PEM feature is not needed.
+jsonwebtoken = { version = "=12.0.0", default-features = false, features = ["aws_lc_rs"] }
 rand = "0.10.3"
 # The kit's Core holds an HTTP client; the server uses it for one call: the message to the backup monitor.
 reqwest = { version = "0.13.5", default-features = false }
@@ -110,6 +116,9 @@ tokio = { version = "1.53.1", features = ["test-util"] }
 rusqlite = { version = "0.41", features = ["bundled", "backup", "functions"] }
 # The architecture test reads the source files of the vault modules.
 syn = { version = "3", features = ["full", "visit"] }
+# The device key of the DPoP tests, which signs good proofs and wrong ones. The
+# version vole-kit already brings (passkeys); only the tests sign with it.
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 
 # The release profile of the root workspace, apart from the size setting:
 # arithmetic overflow must never wrap silently, and a panic ends the process

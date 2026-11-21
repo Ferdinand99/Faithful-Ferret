@@ -1,4 +1,4 @@
-// Opening the database at version 2, fresh and from version 1.
+// Opening the database at the current version, fresh and from version 1.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -73,22 +73,24 @@ function dump(db, names) {
 
 const OLD_STORES = ["pinned", "rows", "outbox", "settings", "device_secrets"];
 
-test("fresh_open_creates_seven_stores", async () => {
+test("fresh_open_creates_eight_stores", async () => {
   const db = await freshStore();
-  assert.equal(DB_VERSION, 2);
-  assert.equal(db.store.db.version, 2);
-  assert.equal(STORES.length, 7);
+  assert.equal(DB_VERSION, 3);
+  assert.equal(db.store.db.version, 3);
+  assert.equal(STORES.length, 8);
   assert.deepEqual(sorted(db.store.db.objectStoreNames), sorted(STORES));
-  assert.deepEqual(sorted(STORES), ["device_secrets", "outbox", "pinned", "rows", "settings", "sync_state", "trash"]);
+  assert.deepEqual(sorted(STORES), ["device_keys", "device_secrets", "outbox", "pinned", "rows", "settings", "sync_state", "trash"]);
 
-  const tx = db.store.db.transaction(["sync_state", "trash", "outbox", "pinned"], "readonly");
+  const tx = db.store.db.transaction(["sync_state", "trash", "outbox", "pinned", "device_keys"], "readonly");
+  assert.equal(tx.objectStore("device_keys").keyPath, "serverUrl");
+  assert.deepEqual([...tx.objectStore("device_keys").indexNames], []);
   assert.deepEqual(tx.objectStore("sync_state").keyPath, ["serverUrl", "accountId"]);
   assert.deepEqual(tx.objectStore("trash").keyPath, ["accountId", "vaultId", "vkEpoch", "itemId"]);
   assert.deepEqual(sorted(tx.objectStore("outbox").indexNames), ["by_idem", "by_scope"]);
   assert.deepEqual(sorted(tx.objectStore("pinned").indexNames), ["by_email"]);
 });
 
-test("upgrade_from_version_1_keeps_every_record_and_adds_two_empty_stores", async () => {
+test("upgrade_from_version_1_keeps_every_record_and_adds_three_empty_stores", async () => {
   const factory = new IDBFactory();
   const old = await openVersion1(factory);
   assert.deepEqual(sorted(old.objectStoreNames), sorted(OLD_STORES));
@@ -107,12 +109,13 @@ test("upgrade_from_version_1_keeps_every_record_and_adds_two_empty_stores", asyn
   old.close();
 
   const store = await openStore(factory, "ferret", IDBKeyRange);
-  assert.equal(store.db.version, 2);
+  assert.equal(store.db.version, 3);
   assert.deepEqual(sorted(store.db.objectStoreNames), sorted(STORES));
   assert.deepEqual(await dump(store.db, OLD_STORES), before, "every old record is as it was");
-  const added = await dump(store.db, ["sync_state", "trash"]);
+  const added = await dump(store.db, ["sync_state", "trash", "device_keys"]);
   assert.deepEqual(added.sync_state, { keys: [], values: [] });
   assert.deepEqual(added.trash, { keys: [], values: [] });
+  assert.deepEqual(added.device_keys, { keys: [], values: [] });
 
   // The indexes of version 1 still work, and the outbox counter goes on.
   const tx = store.db.transaction(["outbox", "pinned"], "readwrite");
@@ -146,7 +149,7 @@ test("a_tab_on_version_1_is_closed_by_the_upgrade_and_reports_it", async () => {
     new Promise((_, reject) => setTimeout(() => reject(new Error("the upgrade was blocked by the old tab")), 2000)),
   ]);
   assert.equal(closed, 1, "the old tab was told");
-  assert.equal(opened.db.version, 2);
+  assert.equal(opened.db.version, 3);
   assert.deepEqual((await dump(opened.db, ["settings"])).settings.values, ["kept"]);
 
   // The new tab in turn lets a later version in, and tells the code that opened it.

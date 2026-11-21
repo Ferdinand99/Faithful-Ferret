@@ -1708,12 +1708,18 @@ fn every_route_that_writes_the_unlock_methods_or_ends_sessions_has_a_row_in_the_
         "a new kind of change needs rows in the matrix"
     );
 
-    // The code that ends every session of a user.
+    // The code that ends every session of a user. "Revoke all" on the page of
+    // devices (`auth/devices.rs`) has its rows in `tests/devices.rs`.
     let enders = files_holding(&src, "end_all_credentials(");
-    let expected: BTreeSet<String> = ["auth/redeem.rs", "auth/session.rs", "vault/unlock_write.rs"]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let expected: BTreeSet<String> = [
+        "auth/devices.rs",
+        "auth/redeem.rs",
+        "auth/session.rs",
+        "vault/unlock_write.rs",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     assert_eq!(
         enders, expected,
         "something new ends the sessions of a user and the matrix has no row for it"

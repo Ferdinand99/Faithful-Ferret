@@ -4,7 +4,8 @@
 //!   the restore epoch of every vault in the database of the data directory, so
 //!   that every client that remembers a lower one sees that the server was
 //!   restored (Spec: Fase 1 § 8.6), and ends every session and pending
-//!   sign-in code the restored data holds (Spec: Fase 1 § 11).
+//!   sign-in code the restored data holds and signs out every device with
+//!   tokens (Spec: Fase 1 § 7.6 and § 11). It prints how many devices that was.
 //! * `ferret backup create|list [--data-dir <dir>]` and `ferret backup verify
 //!   <set>`: make, list and check backup sets. They change nothing that exists,
 //!   so they need no `--yes`. `backup create` needs the server to be stopped
@@ -34,9 +35,12 @@
 //! * `restore-epoch bump` and `backup restore` raise the restore epoch with the
 //!   same rule: `max(stored + 1, now, --at-least)` ([`reconcile::bump`]), and in
 //!   the same transaction end every session, hand-over, pending sign-in state,
-//!   pending registration and pending sign-in code, and raise every user's
-//!   `session_version` (`end_everything_after_restore`): whatever way the old
-//!   data came back, nothing that was live in it is live after the bump.
+//!   pending registration and pending sign-in code, delete every device token
+//!   and revoke every device that had tokens, and raise every user's
+//!   `session_version` (`end_everything_after_restore`, run by
+//!   `reconcile::bump_in`): whatever way the old data came back, nothing that
+//!   was live in it is live after the bump. Both commands say how many devices
+//!   they signed out.
 //!
 //! No listener is started and no URL setting is read.
 //!
@@ -53,7 +57,6 @@ use clap::{Parser, Subcommand};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::admin::codes;
-use crate::auth::session::end_everything_after_restore;
 use crate::backup::{BackupConfig, restore, set};
 use crate::data_lock;
 use crate::error::StartError;
@@ -310,13 +313,15 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             let report = restore::restore(&data_dir, &from, at_least, now_unix()?)
                 .map_err(|error| restore_failed(&data_dir, error))?;
             let mut said = format!(
-                "restored {} vault{}: restore epoch is now {}, {} session{} ended, the files \
-                 that were there are in {}",
+                "restored {} vault{}: restore epoch is now {}, {} session{} ended, {} device{} signed \
+                 out, the files that were there are in {}",
                 report.vaults,
                 plural(report.vaults),
                 report.restore_epoch,
                 report.sessions_ended,
                 plural(report.sessions_ended),
+                report.devices_revoked,
+                plural(report.devices_revoked),
                 report.moved_aside.display()
             );
             if report.seen_epoch_unknown {
@@ -464,24 +469,31 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
     // The bump is what says "this server was restored", by hand (a copy of the
     // data directory put back), by a snapshot of the volume, or by going back
     // to the copy from before a migration. The data that came back holds the
-    // sessions and sign-in codes that were live when it was copied, so the
-    // bump ends them in its own transaction, as `backup restore` does.
+    // sessions, sign-in codes and device tokens that were live when it was
+    // copied, so the bump ends them (and signs the devices out) in its own
+    // transaction, as `backup restore` does.
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let bumped = reconcile::bump_in(&tx, at_least, now)?;
-    let swept = end_everything_after_restore(&tx, now)?;
     tx.commit()?;
     let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
-    let (sessions, codes) = (count(swept.sessions), count(swept.sign_in_codes));
+    let swept = bumped.swept;
+    let (sessions, codes, devices) = (
+        count(swept.sessions),
+        count(swept.sign_in_codes),
+        count(swept.devices),
+    );
     Ok(format!(
         "restore epoch is now {} ({} vault{} raised); {} session{} ended, {} sign-in code{} \
-         revoked",
+         revoked, {} device{} signed out",
         bumped.restore_epoch,
         bumped.vaults,
         plural(bumped.vaults),
         sessions,
         plural(sessions),
         codes,
-        plural(codes)
+        plural(codes),
+        devices,
+        plural(devices)
     ))
 }
 

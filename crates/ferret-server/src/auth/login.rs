@@ -39,6 +39,11 @@
 //!   user for whom it is on gets no session after a good proof (403
 //!   `forbidden`) instead of a session that skips it.
 //!
+//! * A `login/finish` body with the key `client` is a device client's
+//!   ([`crate::wire::LoginFinishBody`]); it goes to `auth::device_login`, which
+//!   checks its DPoP proof first and answers with tokens instead of cookies.
+//!   Every other body is the web vault's and takes the path below, unchanged.
+//!
 //! After a proof the account is read again. A user who was disabled during the
 //! sixty seconds between the steps gets nothing.
 //!
@@ -108,6 +113,7 @@ use serde::de::DeserializeOwned;
 use vole_kit::auth::reauth;
 use vole_kit::db::{sign_in_codes, users};
 
+use crate::auth::device_login;
 use crate::auth::session::{
     ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, REAUTH_SECS, RESET_SESSION_ABSOLUTE_SECS,
     SessionRow, VAULT_ABSOLUTE_SECS, VAULT_IDLE_SECS, clear_cookies, insert_session, lookup,
@@ -122,7 +128,7 @@ use crate::ids::{AccountId, DeviceId, SessionSecret, SidHash, VaultId};
 use crate::product;
 use crate::state::{FerretState, VaultDb};
 use crate::wire::{
-    LoginFinishReq, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes, OriginJson,
+    LoginFinishBody, LoginFinishRes, LoginPurposeJson, LoginStartReq, LoginStartRes, OriginJson,
     SessionRes, hex16, refusal_code,
 };
 
@@ -691,7 +697,7 @@ fn profiles() -> &'static ProfileRules {
 
 /// `insecure_transport` when the vault URL is `https` and this request did not
 /// come over HTTPS through a trusted proxy.
-fn require_transport(
+pub(crate) fn require_transport(
     state: &FerretState,
     headers: &HeaderMap,
     peer: SocketAddr,
@@ -704,7 +710,7 @@ fn require_transport(
 }
 
 /// The time, or a refusal when the clock failed.
-fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
+pub(crate) fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
     let now = state.clock.now_unix();
     if now == u64::MAX {
         tracing::error!("the clock failed; sign-in is refused");
@@ -713,18 +719,28 @@ fn clock_now(state: &FerretState) -> Result<u64, ApiError> {
     Ok(now)
 }
 
-fn to_i64(now: u64) -> Result<i64, ApiError> {
+pub(crate) fn to_i64(now: u64) -> Result<i64, ApiError> {
     i64::try_from(now).map_err(|_| ApiError::internal())
 }
 
 /// Reads a JSON body of at most [`MAX_BODY_BYTES`]. A refusal carries the code
 /// of the field that failed (`malformed_ke1`, ...) and nothing of the input.
 async fn read_json<T: DeserializeOwned>(body: Body) -> Result<T, ApiError> {
-    let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
+    let bytes = read_bytes(body).await?;
+    serde_json::from_slice(&bytes).map_err(|error| refused_body(&error))
+}
+
+/// Reads a body of at most [`MAX_BODY_BYTES`].
+async fn read_bytes(body: Body) -> Result<axum::body::Bytes, ApiError> {
+    axum::body::to_bytes(body, MAX_BODY_BYTES)
         .await
-        .map_err(|_| ApiError::coded("too_large"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| ApiError::coded(refusal_code(&error.to_string())))
+        .map_err(|_| ApiError::coded("too_large"))
+}
+
+/// The refusal of a body that did not parse: the code of the field that
+/// failed, and nothing of the input.
+fn refused_body(error: &serde_json::Error) -> ApiError {
+    ApiError::coded(refusal_code(&error.to_string()))
 }
 
 pub(crate) fn no_store(mut response: Response) -> Response {
@@ -734,7 +750,7 @@ pub(crate) fn no_store(mut response: Response) -> Response {
     response
 }
 
-fn auth_refusal(error: AuthError) -> ApiError {
+pub(crate) fn auth_refusal(error: AuthError) -> ApiError {
     // The reason is for this log only; the answer carries the public code.
     tracing::info!(reason = ?error, "sign-in step refused");
     ApiError::from(error)
@@ -907,7 +923,7 @@ impl CurrentRecord for StoredRecords<'_> {
 
 /// Whether `binding` is the record `account` has now, read in the caller's
 /// transaction. An account that is gone has no record.
-fn record_is_current(
+pub(crate) fn record_is_current(
     conn: &Connection,
     account: &AccountId,
     binding: &RecordBinding,
@@ -927,7 +943,12 @@ fn record_is_current(
 /// throttle with the account of the state, and then reads the account's
 /// record (on the store's connection, see `StoredRecords`) and checks the
 /// proof.
-fn finish_blocking(
+///
+/// Every caller that writes a credential after it must call
+/// [`record_is_current`] with `LoginVerified::record` in that write
+/// transaction. Only this module and `auth::device_login` call it (checked by
+/// a test).
+pub(crate) fn finish_blocking(
     state: &FerretState,
     caller: Caller,
     login_id: &str,
@@ -950,17 +971,22 @@ fn finish_blocking(
 }
 
 /// The account a proof was for, as read before its session is opened.
-struct ProvenAccount {
-    user_id: i64,
-    session_version: i64,
-    account: AccountId,
-    vault: VaultId,
-    vk_epoch: u64,
+pub(crate) struct ProvenAccount {
+    /// The kit user (`users.id`).
+    pub(crate) user_id: i64,
+    /// The user's `session_version` when it was read.
+    pub(crate) session_version: i64,
+    /// The account.
+    pub(crate) account: AccountId,
+    /// Its vault.
+    pub(crate) vault: VaultId,
+    /// The epoch of the vault key.
+    pub(crate) vk_epoch: u64,
 }
 
 /// The user, account and vault of `account`; `None` when there is no such
 /// account (it was removed since the first step).
-fn read_proven_account(
+pub(crate) fn read_proven_account(
     conn: &Connection,
     account: [u8; 16],
 ) -> Result<Option<ProvenAccount>, StoreError> {
@@ -995,7 +1021,16 @@ async fn login_finish_route(
     let (mut parts, body) = request.into_parts();
     require_transport(&state, &parts.headers, peer)?;
     let now = clock_now(&state)?;
-    let req: LoginFinishReq = read_json(body).await?;
+    let bytes = read_bytes(body).await?;
+    // The key `client` tells a device's body from the web vault's; each shape
+    // is refused with its own field codes. The device sign-in has its own
+    // path from here on and never reaches the session code below.
+    let req = match LoginFinishBody::from_json(&bytes).map_err(|error| refused_body(&error))? {
+        LoginFinishBody::Device(req) => {
+            return device_login::finish(&state, &parts, peer, req).await;
+        }
+        LoginFinishBody::Cookie(req) => req,
+    };
     let caller = caller_from(&parts.headers, Some(peer));
     let jar = SignedCookieJar::from_headers(&parts.headers, state.core.session_key.clone());
 

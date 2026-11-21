@@ -1,5 +1,5 @@
 // The frozen stored formats: golden records of version 2 of the browser's database, one file per store in
-// test/fixtures/stored/v2/. They are written into a database that has the version-2 schema (frozen in this
+// test/fixtures/stored/v2/, and of the store that version 3 added, in test/fixtures/stored/v3/. They are written into a database that has the version-2 schema (frozen in this
 // file), and then read by the code as it is now. A change to what a store holds, or to the schema, needs a
 // reader (or a migration) for these records and a new golden file for the new version; it never changes
 // these files. The outbox entries of outbox.json have no import mark: an entry without it is an ordinary write.
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { deleteDeviceKey, DEVICE_KEY_FIELDS, loadDeviceKey, saveDeviceKey, saveRefreshToken } from "../../src/auth/deviceKey.mjs";
 import { hex16 } from "../../src/b64.mjs";
 import { loadSecretKey, hasSecretKey } from "../../src/flows/deviceSecret.mjs";
 import { deviceNameFor } from "../../src/sync/deviceName.mjs";
@@ -25,6 +26,7 @@ import { trash, TRASH_FIELDS } from "../../src/store/trash.mjs";
 import { web } from "./helpers.mjs";
 
 const GOLDEN = join(web, "test", "fixtures", "stored", "v2");
+const GOLDEN_V3 = join(web, "test", "fixtures", "stored", "v3");
 
 /**
  * The SHA-256 of each golden file. These files are frozen: a stored shape that changes gets a reader for the old one and a
@@ -39,6 +41,10 @@ const GOLDEN_SHA256 = Object.freeze({
   "settings.json": "b22bff49c58473bc532c00a55b232e43dfd1f28030023c3677faaf58445bd3be",
   "sync_state.json": "91d5ef73785d3c3595fb50533bd2cc486bb0fe1c890dd70d7ac91c8a7c99e2a7",
   "trash.json": "c078b08f16fd35d97071b8f3e7846352c2a02ecac5a8bfacba0c6203e9070e8b",
+});
+/** The SHA-256 of each golden file of version 3 (frozen the same way). */
+const GOLDEN_V3_SHA256 = Object.freeze({
+  "device_keys.json": "c8205f052c291065c1a6db1da9dcaf2e9f1b123d1ea67769d252933346a96721",
 });
 const ACCOUNT = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
 const OTHER = "f0e1d2c3b4a5968778695a4b3c2d1e0f";
@@ -65,9 +71,17 @@ const V2 = Object.freeze({
   trash: { keyPath: ["accountId", "vaultId", "vkEpoch", "itemId"] },
 });
 
+/** The store that version 3 added, and how it is keyed. Frozen: a later version adds its own list. */
+const V3_ADDED = Object.freeze({
+  device_keys: { keyPath: "serverUrl" },
+});
+
 // ------------------------------------------------------------------ golden files
 
-/** A value from a golden file: {$bytes}, {$bigint} and {$aesGcmKey} (a test key, imported non-extractable) become their types. */
+/**
+ * A value from a golden file: {$bytes}, {$bigint}, {$aesGcmKey} and {$ecdsaP256PrivateKey} (test keys, imported
+ * non-extractable) become their types.
+ */
 async function decode(x) {
   if (x === null || typeof x !== "object") return x;
   if (Array.isArray(x)) return Promise.all(x.map(decode));
@@ -77,17 +91,21 @@ async function decode(x) {
   if (keys.length === 1 && keys[0] === "$aesGcmKey") {
     return crypto.subtle.importKey("raw", Buffer.from(x.$aesGcmKey, "hex"), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
+  if (keys.length === 1 && keys[0] === "$ecdsaP256PrivateKey") {
+    return crypto.subtle.importKey("jwk", x.$ecdsaP256PrivateKey, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  }
   const out = {};
   for (const key of keys) out[key] = await decode(x[key]);
   return out;
 }
 
-async function golden(store) {
-  const text = readFileSync(join(GOLDEN, `${store}.json`), "utf8");
-  assert.equal(createHash("sha256").update(text.replaceAll("\r\n", "\n")).digest("hex"), GOLDEN_SHA256[`${store}.json`], `${store}.json is a frozen golden file`);
+async function golden(store, version = 2) {
+  const [dir, hashes] = version === 2 ? [GOLDEN, GOLDEN_SHA256] : [GOLDEN_V3, GOLDEN_V3_SHA256];
+  const text = readFileSync(join(dir, `${store}.json`), "utf8");
+  assert.equal(createHash("sha256").update(text.replaceAll("\r\n", "\n")).digest("hex"), hashes[`${store}.json`], `${store}.json is a frozen golden file`);
   const file = JSON.parse(text);
   assert.equal(file.format, "ferret-stored-golden/1");
-  assert.equal(file.dbVersion, 2);
+  assert.equal(file.dbVersion, version);
   assert.equal(file.store, store);
   return Promise.all(file.records.map(async ({ key, value }) => ({ key: key === undefined ? undefined : await decode(key), value: await decode(value) })));
 }
@@ -121,6 +139,46 @@ async function goldenStore() {
       const table = tx.objectStore(name);
       for (const { key, value } of records) {
         if (key === undefined) table.add(value);
+        else table.put(value, key);
+      }
+    }
+    tx.oncomplete = () => resolve(undefined);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  raw.close();
+  return { store: await openStore(factory, "ferret", IDBKeyRange), factory, all };
+}
+
+// ------------------------------------------------------------------ the version-3 database
+
+function openVersion3(factory) {
+  return new Promise((resolve, reject) => {
+    const request = factory.open("ferret", 3);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      for (const [name, { keyPath, autoIncrement, indexes }] of Object.entries({ ...V2, ...V3_ADDED })) {
+        const table = db.createObjectStore(name, { ...(keyPath ? { keyPath } : {}), ...(autoIncrement ? { autoIncrement } : {}) });
+        for (const [index, path, options] of indexes ?? []) table.createIndex(index, path, options);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** A database that version-3 code wrote: the version-3 schema and the golden records of the store it added. */
+async function goldenStoreV3() {
+  const factory = new IDBFactory();
+  const raw = await openVersion3(factory);
+  const all = {};
+  for (const name of Object.keys(V3_ADDED)) all[name] = await golden(name, 3);
+  await new Promise((resolve, reject) => {
+    const tx = raw.transaction(Object.keys(V3_ADDED), "readwrite");
+    for (const [name, records] of Object.entries(all)) {
+      const table = tx.objectStore(name);
+      for (const { key, value } of records) {
+        if (key === undefined) table.put(value);
         else table.put(value, key);
       }
     }
@@ -292,6 +350,63 @@ test("stored_records_of_version_2_are_read_by_the_current_code", async () => {
   await forgetPinned(store, SERVER, OTHER);
   assert.equal(await loadPinnedByAccount(store, SERVER, OTHER), null);
   assert.deepEqual(await loadPinnedByAccount(store, SERVER, ACCOUNT), alice.record);
+});
+
+test("stored_records_of_version_3_are_read_by_the_current_code", async () => {
+  // The store that version 3 added has a golden file, and the code still opens it.
+  assert.deepEqual(readdirSync(GOLDEN_V3).sort(), Object.keys(V3_ADDED).map((n) => `${n}.json`).sort());
+  for (const name of [...Object.keys(V2), ...Object.keys(V3_ADDED)]) assert.ok(STORES.includes(name), `${name} is still a store`);
+  assert.ok(DB_VERSION >= 3);
+
+  const { store, all } = await goldenStoreV3();
+  const records = all.device_keys.map((r) => r.value);
+  assert.equal(records.length, 2);
+
+  // Opening the database with the current code changes no record (a CryptoKey has no fields to compare:
+  // the rest of the record stands for it, and the key must still sign for its public JWK below).
+  const stored = await dump(store, "device_keys");
+  assert.equal(stored.length, records.length);
+  for (const record of records) {
+    const at = stored.find((s) => s.key === record.serverUrl);
+    assert.ok(at, `${record.serverUrl} is stored under its origin`);
+    const { privateKey: _k1, ...rest } = at.value;
+    const { privateKey: _k2, ...expected } = record;
+    assert.deepEqual(rest, expected);
+  }
+
+  // Each record is read as written, for its own server only, and its key signs for its public JWK.
+  const data = new TextEncoder().encode("a stored device key");
+  for (const record of records) {
+    const key = await loadDeviceKey(store, `${record.serverUrl}/`);
+    assert.ok(key);
+    assert.deepEqual(Object.keys(key).sort(), [...DEVICE_KEY_FIELDS].sort());
+    assert.deepEqual(sortedKeys(record), [...DEVICE_KEY_FIELDS].sort(), "the golden record has the fields the code declares");
+    assert.deepEqual({ ...key, privateKey: null }, { ...record, privateKey: null });
+    assert.equal(key.privateKey.extractable, false);
+    assert.deepEqual(key.privateKey.usages, ["sign"]);
+    const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key.privateKey, data);
+    const verifier = await crypto.subtle.importKey("jwk", record.publicJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    assert.equal(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, verifier, signature, data), true);
+  }
+  assert.equal(await loadDeviceKey(store, "https://vault.example:8443"), null);
+
+  // What the code writes today has the form of the golden records.
+  const [first] = records;
+  const fresh = await freshStore();
+  await saveDeviceKey(fresh, first, { deviceId: first.deviceId, accountId: first.accountId, refreshToken: first.refreshToken });
+  const [written] = await dump(fresh, "device_keys");
+  assert.equal(written.key, first.serverUrl);
+  assert.deepEqual(shapeOf(written.value), shapeOf(first), "device_keys");
+  assert.equal(shapeOf(written.value).privateKey, "CryptoKey");
+  assert.deepEqual(shapeOf(first.publicJwk), { crv: "string", kty: "string", x: "string", y: "string" });
+
+  // A renewal changes the refresh token of its record and nothing else; forgetting removes one record.
+  await saveRefreshToken(store, SERVER, Buffer.alloc(32, 0x43).toString("base64url"));
+  const renewed = await loadDeviceKey(store, SERVER);
+  assert.deepEqual({ ...renewed, privateKey: null, refreshToken: null }, { ...first, privateKey: null, refreshToken: null });
+  await deleteDeviceKey(store, SERVER);
+  assert.equal(await loadDeviceKey(store, SERVER), null);
+  assert.ok(await loadDeviceKey(store, records[1].serverUrl));
 });
 
 test("a_changed_stored_shape_without_a_reader_fails", async () => {

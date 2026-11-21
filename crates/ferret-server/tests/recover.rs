@@ -23,6 +23,7 @@ use ferret_server::auth::session::{Origin, lookup, set_parent};
 use ferret_server::http::proxy_guard::ProxyList;
 use ferret_server::ids::SidHash;
 use ferret_server::product::{PENDING_2FA_COOKIE, SESSION_COOKIE, SID_COOKIE};
+use ferret_server::vault::notify::Revoked;
 use ferret_server::wire::{RecoveryRes, b64url};
 use ferret_server_auth::SessionScope;
 use ferret_server_auth::testing::SMALL;
@@ -673,7 +674,7 @@ async fn a_reset_session_ends_after_recover_and_its_cookies_are_cleared() {
         .await
         .expect("in time")
         .expect("a revocation");
-    assert_eq!(revoked, reset);
+    assert_eq!(revoked, Revoked::Session(reset));
     let res = vault_get(&app, &old_jar, RECOVERY_PATH).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     let res = challenge_with(&app, &old_jar).await;

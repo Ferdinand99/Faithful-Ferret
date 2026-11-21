@@ -21,8 +21,10 @@
 //!    this build makes, and then one transaction raises the restore epoch
 //!    ([`reconcile::bump`]'s rule, above the epoch of the data that is there)
 //!    and ends every session, hand-over, sign-in state, pending registration
-//!    and sign-in code and raises every user's session version
-//!    ([`end_everything_after_restore`]).
+//!    and sign-in code, deletes every device token and revokes every device
+//!    that had tokens (they sign in again), and raises every user's session
+//!    version (`reconcile::bump_in` does both). The report and the command's
+//!    output say how many sessions and how many devices were ended.
 //! 4. The database of the data directory with its `-wal`, `-shm` and
 //!    `-journal`, and the three secret files, are moved with `rename` into
 //!    `<data>/pre-restore-<time>/`. The command never deletes them.
@@ -58,7 +60,6 @@ use super::set::{
     self, COMPLETE_FILE, MANIFEST_FILE, Platform as _, SECRET_FILES, SESSION_KEY_FILE,
 };
 use super::{BackupError, RESTORE_MARKER};
-use crate::auth::session::end_everything_after_restore;
 use crate::data_lock::{self, DataDirLock};
 use crate::error::{StartError, StoreError};
 use crate::product::DB_FILE;
@@ -179,6 +180,8 @@ pub struct RestoreReport {
     pub vaults: u64,
     /// How many sessions were ended.
     pub sessions_ended: u64,
+    /// How many devices with tokens were revoked (they sign in again).
+    pub devices_revoked: u64,
     /// Where the files that were in the data directory before went.
     pub moved_aside: PathBuf,
     /// Whether the restore epoch of the data that was in the data directory
@@ -362,6 +365,7 @@ struct Done {
     restore_epoch: u64,
     vaults: u64,
     sessions_ended: u64,
+    devices_revoked: u64,
 }
 
 impl Marker {
@@ -685,12 +689,14 @@ impl Run<'_> {
             vaults = done.vaults,
             restore_epoch = done.restore_epoch,
             sessions_ended = done.sessions_ended,
+            devices_revoked = done.devices_revoked,
             "restore finished"
         );
         Ok(RestoreReport {
             restore_epoch: done.restore_epoch,
             vaults: done.vaults,
             sessions_ended: done.sessions_ended,
+            devices_revoked: done.devices_revoked,
             moved_aside: self.aside(),
             seen_epoch_unknown: self.marker.seen_epoch_unknown,
         })
@@ -927,7 +933,6 @@ fn bump(db: &Path, at_least: Option<u64>, now: i64) -> Result<Done, BackupError>
             BackupError::Io("could not raise the restore epoch")
         }
     })?;
-    let swept = end_everything_after_restore(&tx, now).map_err(sql)?;
     tx.commit().map_err(sql)?;
     let verdict: String = conn
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
@@ -941,7 +946,8 @@ fn bump(db: &Path, at_least: Option<u64>, now: i64) -> Result<Done, BackupError>
     Ok(Done {
         restore_epoch: bumped.restore_epoch,
         vaults: bumped.vaults,
-        sessions_ended: u64::try_from(swept.sessions).unwrap_or(u64::MAX),
+        sessions_ended: u64::try_from(bumped.swept.sessions).unwrap_or(u64::MAX),
+        devices_revoked: u64::try_from(bumped.swept.devices).unwrap_or(u64::MAX),
     })
 }
 

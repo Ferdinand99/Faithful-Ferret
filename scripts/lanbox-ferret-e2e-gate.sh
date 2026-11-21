@@ -11,6 +11,7 @@
 #   scripts/lanbox-ferret-e2e-gate.sh limits     session limits with the moved clock
 #   scripts/lanbox-ferret-e2e-gate.sh m2         the sync scenarios 10 to 17 in every browser
 #   scripts/lanbox-ferret-e2e-gate.sh m3         the recovery, export, import and backup scenarios 18 to 26 in every browser
+#   scripts/lanbox-ferret-e2e-gate.sh m5a        the device scenarios (27) in every browser, a fresh stack for each
 #   scripts/lanbox-ferret-e2e-gate.sh --parallel [step]   (or all-parallel) the same, but one stack per browser, all at once
 #
 # With --parallel every browser runs the steps on a stack of its own, at the same time: its own suffix (the
@@ -63,6 +64,7 @@ browsers="${FERRET_E2E_BROWSERS:-chromium firefox webkit}"
 m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 m3_specs=(18-sheet 19-new-device 20-password 21-recover 22-recovery-key 23-export-import 24-import-foreign 25-backup-restore 26-tabs)
 shots_dir=test-results/out/m2-shots
+m5a_specs=(01-setup 27-device)
 main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
 failures=0
 vault_origin="$e2e_vault_url"
@@ -444,6 +446,22 @@ m2_phase() {
   done
 }
 
+# ------------------------------------------------------------------------ m5a
+
+# The device scenarios (27): a device client in Node signs in as its own device, syncs, is revoked from the
+# page "Devices" and by a password change, and stays out of the admin listener; the web vault sends no token
+# header; contexts of one browser renew at once. Each browser gets a fresh stack and its own account (01-setup).
+# Run it on a stack of its own, so the stack of another run is left alone:
+#   FERRET_E2E_SUFFIX=m5a FERRET_E2E_SUBNET=172.30.248 scripts/lanbox-ferret-e2e-gate.sh m5a
+m5a_phase() {
+  local browser
+  for browser in $browsers; do
+    say "device scenarios in $browser on a fresh stack"
+    e2e_up >&2
+    if run_phase m5a "$browser" "${m5a_specs[@]}"; then ok "$browser: the device scenarios passed"; else bad "$browser: the device scenarios failed"; fi
+  done
+}
+
 # ------------------------------------------------------------------------ m3
 
 # The same search as search_data, in the backup sets of the stack: they hold a copy of the database and of the secret files, so
@@ -614,7 +632,7 @@ main_gate() {
   done
   if [ "$parallel" = 1 ]; then
     case "$step" in
-      all | browsers | m2 | m3 | restart | limits)
+      all | browsers | m2 | m3 | m5a | restart | limits)
         parallel_gate "$step"
         return
         ;;
@@ -630,6 +648,7 @@ main_gate() {
     browsers) browsers_phase ;;
     m2) m2_phase ;;
     m3) m3_phase ;;
+    m5a) m5a_phase ;;
     restart)
       first="$(printf '%s' "$browsers" | awk '{print $1}')"
       e2e_up >&2

@@ -42,9 +42,10 @@
 //!    30 minutes at most) and its two cookies. The kit's password hash is not
 //!    touched: the master password is not the kit's.
 //! 6. In one more write transaction `session::end_all_credentials` ends every
-//!    other session of the user on both origins (and revokes any code the user
-//!    still has), and after the commit each ended session is announced
-//!    (`session_revoked`), so its event stream closes at once.
+//!    other session of the user on both origins, revokes every device of the
+//!    user with tokens (and any code the user still has), and after the commit
+//!    each ended session and revoked device is announced
+//!    (`SyncEvents::announce_ended`), so its event streams close at once.
 //!
 //! The code is spent at step 4. When step 5 refuses (the kit's second factor
 //! is on, which this server cannot ask for yet; the user has no vault; the
@@ -228,28 +229,30 @@ async fn redeem_route(
     ))
 }
 
-/// Ends every session of the user but `keep`, on both origins, in one write
-/// transaction, and announces each after the commit. The sessions are already
-/// dead (the redeem moved the user's `session_version`); this ends their rows
-/// and closes their event streams.
+/// Ends every session of the user but `keep`, on both origins, and revokes
+/// every device of the user with tokens, in one write transaction, and
+/// announces each after the commit. The sessions and devices are already dead
+/// (the redeem moved the user's `session_version`); this ends their rows, so
+/// the devices leave the list and the quota, and closes their event streams.
+/// The announcement runs on the database thread right after the commit, so a
+/// request whose client went away still closes the streams.
 async fn end_the_others(
     state: &FerretState,
     user_id: i64,
     keep: Option<SidHash>,
     now: i64,
 ) -> Result<(), ApiError> {
-    let ended = state
+    let events = state.events.clone();
+    state
         .vault_db
         .with_conn(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let ended = end_all_credentials(&tx, user_id, keep.as_ref(), now)?;
             tx.commit()?;
-            Ok(ended)
+            events.announce_ended(&ended);
+            Ok(())
         })
         .await?;
-    for previous in ended {
-        state.events.session_revoked(previous);
-    }
     Ok(())
 }
 

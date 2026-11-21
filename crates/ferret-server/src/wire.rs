@@ -140,6 +140,29 @@ pub const CHECKPOINT_ENTRY_LEN: usize = 56;
 /// than the one the vault has.
 pub const RESTORE_EPOCH_CHANGED: &str = "restore_epoch_changed";
 
+/// The seconds an access token of a device lives (`expires_in`).
+///
+/// Spec: Fase 1 § 7.6 (short-lived access tokens, 15 minutes).
+pub const ACCESS_TOKEN_SECS: u32 = 900;
+
+/// The length of a device token on the wire: 32 bytes as base64url without
+/// padding.
+pub const TOKEN_CHARS: usize = 43;
+
+/// The most devices with tokens one account may have at once.
+///
+/// Spec: Fase 1 § 8.2 (quotas per account: 20 devices).
+pub const MAX_DEVICES: usize = 20;
+
+/// The most rows in a list of devices ([`DevicesRes`]): the devices with
+/// tokens and the browsers with a session.
+pub const MAX_DEVICE_LIST: usize = 200;
+
+/// The words a platform has on the wire, in the order of [`PlatformJson`].
+pub const PLATFORMS: &[&str] = &[
+    "windows", "macos", "linux", "android", "ios", "chromeos", "other",
+];
+
 /// The code of the answer for a refusal that came out of parsing `message`.
 ///
 /// A field with a fixed size refuses with a message that starts with
@@ -626,6 +649,69 @@ pub mod redeem_scope {
             return Err(de::Error::custom("scope is not account_reset"));
         }
         Ok(scope)
+    }
+}
+
+/// Checks a device name: at most [`DEVICE_NAME_MAX_CHARS`] characters, none of
+/// them a control, bidirectional-control or zero-width character, and not
+/// empty unless `empty_ok`.
+fn device_name_is_valid(name: &str, empty_ok: bool) -> bool {
+    let chars = name.chars().count();
+    (empty_ok || chars > 0)
+        && chars <= DEVICE_NAME_MAX_CHARS
+        && !name.chars().any(is_forbidden_in_name)
+}
+
+/// `deserialize_with = "device_name_required::deserialize"`: a name that must
+/// be there, of 1 to [`DEVICE_NAME_MAX_CHARS`] characters, with the rules of
+/// [`device_name`]. `""` is refused.
+pub mod device_name_required {
+    use super::{Deserialize, Deserializer, de, device_name_is_valid};
+
+    /// Reads a device name and refuses an empty or a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if !device_name_is_valid(&name, false) {
+            return Err(de::Error::custom(
+                "device name is empty, too long or has forbidden characters",
+            ));
+        }
+        Ok(name)
+    }
+}
+
+/// `deserialize_with = "device_name_listed::deserialize"`: the name of a row in
+/// a list of devices. The rules of [`device_name`], and `""` is allowed: a
+/// browser that never gave a name has none.
+pub mod device_name_listed {
+    use super::{Deserialize, Deserializer, de, device_name_is_valid};
+
+    /// Reads a device name, which may be empty, and refuses a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if !device_name_is_valid(&name, true) {
+            return Err(de::Error::custom(
+                "device name is too long or has forbidden characters",
+            ));
+        }
+        Ok(name)
+    }
+}
+
+/// `deserialize_with = "device_list::deserialize"`: at most
+/// [`MAX_DEVICE_LIST`] devices.
+pub mod device_list {
+    use super::{Deserialize, Deserializer, DeviceJson, MAX_DEVICE_LIST, de};
+
+    /// Reads the list and refuses a longer one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<DeviceJson>, D::Error> {
+        let devices = Vec::<DeviceJson>::deserialize(deserializer)?;
+        if devices.len() > MAX_DEVICE_LIST {
+            return Err(de::Error::custom("more than 200 devices"));
+        }
+        Ok(devices)
     }
 }
 
@@ -2041,6 +2127,347 @@ pub struct ImportWindowRes {
     pub expires_in: u32,
 }
 
+/// The platform of a device, as the device says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlatformJson {
+    /// Windows.
+    Windows,
+    /// macOS.
+    Macos,
+    /// Linux.
+    Linux,
+    /// Android.
+    Android,
+    /// iOS and iPadOS.
+    Ios,
+    /// ChromeOS.
+    Chromeos,
+    /// Anything else.
+    Other,
+}
+
+impl PlatformJson {
+    /// Every platform, in the order of [`PLATFORMS`].
+    pub const ALL: [PlatformJson; 7] = [
+        PlatformJson::Windows,
+        PlatformJson::Macos,
+        PlatformJson::Linux,
+        PlatformJson::Android,
+        PlatformJson::Ios,
+        PlatformJson::Chromeos,
+        PlatformJson::Other,
+    ];
+
+    /// The word on the wire, which is also the word in the `platform` column
+    /// of `ferret_devices`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PlatformJson::Windows => "windows",
+            PlatformJson::Macos => "macos",
+            PlatformJson::Linux => "linux",
+            PlatformJson::Android => "android",
+            PlatformJson::Ios => "ios",
+            PlatformJson::Chromeos => "chromeos",
+            PlatformJson::Other => "other",
+        }
+    }
+
+    /// The platform of a word, or `None` for a word that is not one.
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == word)
+    }
+}
+
+/// The kind of client in a device sign-in: always `device`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceClientJson {
+    /// A device client, which signs in for tokens instead of a session cookie.
+    Device,
+}
+
+/// The `token_type` of a device's tokens: always `DPoP`, never a free text.
+///
+/// RFC 9449 § 5 (`token_type` `DPoP`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenTypeJson {
+    /// Tokens bound to the device key with DPoP proofs.
+    #[serde(rename = "DPoP")]
+    DPoP,
+}
+
+/// A device token on the wire: exactly [`TOKEN_CHARS`] characters of strict
+/// base64url without padding that decode to 32 bytes. Anything else is
+/// refused when it is read (`bad_request`). The text is a secret: its `Debug`
+/// shows nothing, and it is zeroed when dropped. It has no `Clone` and no
+/// `PartialEq`: the server never copies or compares the text of a token, it
+/// reads it with `TokenSecret::from_wire` and compares the hash.
+///
+/// Spec: Fase 1 § 7.6 (never tokens in URLs or logs).
+#[derive(Serialize)]
+#[serde(transparent)]
+pub struct TokenJson(pub String);
+
+impl TokenJson {
+    /// Whether `text` is a token: [`TOKEN_CHARS`] characters of strict
+    /// base64url that decode to 32 bytes.
+    fn is_valid(text: &str) -> bool {
+        text.len() == TOKEN_CHARS
+            && b64url::decode(text).is_ok_and(|bytes| zeroize::Zeroizing::new(bytes).len() == 32)
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let token = TokenJson(String::deserialize(deserializer)?);
+        if !TokenJson::is_valid(&token.0) {
+            return Err(de::Error::custom(
+                "a token is 43 characters of base64url without padding",
+            ));
+        }
+        Ok(token)
+    }
+}
+
+impl Drop for TokenJson {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+/// `POST /api/auth/opaque/login/finish` from a device client: the OPAQUE
+/// finish and what the new device is called. The device gets its id from the
+/// server, and its key is the one in the DPoP proof of the request, so the body
+/// carries neither; nor a `purpose` (a device does not re-authenticate).
+///
+/// Spec: Fase 1 § 7.6 (the device registry); RFC 9449 § 5.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLoginFinishReq {
+    /// From [`LoginStartRes`].
+    #[serde(with = "serde_hex16")]
+    pub login_id: [u8; 16],
+    /// The third OPAQUE message (64 bytes).
+    #[serde(with = "serde_ke3")]
+    pub ke3: Vec<u8>,
+    /// Always `device`: the key that tells this body from the cookie one.
+    pub client: DeviceClientJson,
+    /// A name for the device: 1 to 64 characters.
+    #[serde(deserialize_with = "device_name_required::deserialize")]
+    pub device_name: String,
+    /// The platform of the device.
+    pub platform: PlatformJson,
+}
+
+/// The body of `POST /api/auth/opaque/login/finish`: the cookie sign-in of the
+/// web vault ([`LoginFinishReq`], unchanged) or the sign-in of a device client
+/// ([`DeviceLoginFinishReq`]). The body with the key `client` is the device
+/// one; every other body is the cookie one.
+pub enum LoginFinishBody {
+    /// A device client signs in for tokens.
+    Device(DeviceLoginFinishReq),
+    /// The web vault signs in for a session cookie.
+    Cookie(LoginFinishReq),
+}
+
+impl LoginFinishBody {
+    /// Reads the body. It looks for the key `client` first, without looking at
+    /// anything else, and then reads the bytes straight as one of the two
+    /// shapes, so each shape is refused with its own field codes
+    /// (`malformed_ke3`, see [`refusal_code`]) just as when it is read alone.
+    /// Bytes that are not a JSON object are read as the cookie shape, which
+    /// refuses them as it always did.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        /// Only the key `client`; every other field is skipped unread.
+        #[derive(Deserialize)]
+        struct Probe {
+            client: Option<de::IgnoredAny>,
+        }
+        match serde_json::from_slice::<Probe>(bytes) {
+            Ok(Probe { client: Some(_) }) => {
+                serde_json::from_slice(bytes).map(LoginFinishBody::Device)
+            }
+            _ => serde_json::from_slice(bytes).map(LoginFinishBody::Cookie),
+        }
+    }
+}
+
+impl fmt::Debug for LoginFinishBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            LoginFinishBody::Device(_) => "LoginFinishBody::Device([redacted])",
+            LoginFinishBody::Cookie(_) => "LoginFinishBody::Cookie([redacted])",
+        })
+    }
+}
+
+/// The `200` answer to [`DeviceLoginFinishReq`]: the account, the id the
+/// server gave the device, and its first tokens.
+///
+/// Spec: Fase 1 § 7.6; RFC 9449 § 5.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLoginFinishRes {
+    /// The account.
+    #[serde(with = "serde_hex16")]
+    pub account_id: [u8; 16],
+    /// The vault.
+    #[serde(with = "serde_hex16")]
+    pub vault_id: [u8; 16],
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// The id the server gave the device.
+    #[serde(with = "serde_hex16")]
+    pub device_id: [u8; 16],
+    /// The access token.
+    pub access_token: TokenJson,
+    /// The refresh token.
+    pub refresh_token: TokenJson,
+    /// Always `DPoP`.
+    pub token_type: TokenTypeJson,
+    /// Seconds until the access token expires ([`ACCESS_TOKEN_SECS`]).
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/token/refresh`: a refresh token, with a DPoP proof of the
+/// device key in the `DPoP` header.
+///
+/// Spec: Fase 1 § 7.6 (every renewal needs a proof from the device key).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRefreshReq {
+    /// The refresh token, used once.
+    pub refresh_token: TokenJson,
+}
+
+/// The `200` answer to [`TokenRefreshReq`]: a new access token and the next
+/// refresh token.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRes {
+    /// The new access token.
+    pub access_token: TokenJson,
+    /// The next refresh token.
+    pub refresh_token: TokenJson,
+    /// Always `DPoP`.
+    pub token_type: TokenTypeJson,
+    /// Seconds until the access token expires ([`ACCESS_TOKEN_SECS`]).
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/token/revoke`: a device signs out. The answer is `204`, also
+/// for a token the server does not know.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRevokeReq {
+    /// The refresh token of the device.
+    pub refresh_token: TokenJson,
+}
+
+/// What a row of the list of devices is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKindJson {
+    /// A device client with tokens.
+    Device,
+    /// A browser with a session of the web vault.
+    Web,
+}
+
+/// One row of `GET /api/auth/devices`. A device with tokens has a name and its
+/// platform; a browser has no platform, and its name is `""` when it never
+/// gave one. Call [`DevicesRes::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceJson {
+    /// The device.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// A device with tokens, or a browser.
+    pub kind: DeviceKindJson,
+    /// The name; `""` for a browser that never gave one.
+    #[serde(deserialize_with = "device_name_listed::deserialize")]
+    pub name: String,
+    /// The platform, for a device with tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<PlatformJson>,
+    /// When the device first signed in (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub created_at: u64,
+    /// When the device was last seen (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub last_seen: u64,
+    /// Whether this row is the browser that asks.
+    pub current: bool,
+}
+
+/// `GET /api/auth/devices`: at most [`MAX_DEVICE_LIST`] rows, checked when the
+/// list is read. An account with more rows than that gets the first
+/// [`MAX_DEVICE_LIST`] and, in `more`, how many were left out, so the list is
+/// cut instead of refused. Call [`DevicesRes::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevicesRes {
+    /// The devices.
+    #[serde(deserialize_with = "device_list::deserialize")]
+    pub devices: Vec<DeviceJson>,
+    /// How many rows were left out; left out when none were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<u32>,
+}
+
+impl DeviceJson {
+    /// Checks the row: a device with tokens has a name and a platform, a
+    /// browser has no platform. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        let ok = match self.kind {
+            DeviceKindJson::Device => !self.name.is_empty() && self.platform.is_some(),
+            DeviceKindJson::Web => self.platform.is_none(),
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(WireError::Field("kind, name, platform"))
+        }
+    }
+}
+
+impl DevicesRes {
+    /// Checks every row ([`DeviceJson::validate`]), and that `more` is there
+    /// only on a full list and is at least 1. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if let Some(more) = self.more
+            && (more == 0 || self.devices.len() != MAX_DEVICE_LIST)
+        {
+            return Err(WireError::Field("more"));
+        }
+        self.devices.iter().try_for_each(DeviceJson::validate)
+    }
+}
+
+/// The `200` answer to `POST /api/auth/devices/revoke-all` and
+/// `POST /api/auth/devices/forget-old`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeAllRes {
+    /// How many devices and sessions were revoked.
+    pub revoked: u32,
+}
+
+redacted_debug!(
+    DeviceLoginFinishReq,
+    DeviceLoginFinishRes,
+    TokenRefreshReq,
+    TokenRes,
+    TokenRevokeReq,
+    DeviceJson,
+    DevicesRes,
+    RevokeAllRes,
+    TokenJson,
+);
+
 /// The body of every error: `{"error":"<code>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2143,4 +2570,8 @@ pub const ERROR_CODES: &[&str] = &[
     "write_conflict",
     "import_window_open",
     "import_window_invalid",
+    "dpop_invalid",
+    "token_expired",
+    "token_reused",
+    "device_revoked",
 ];

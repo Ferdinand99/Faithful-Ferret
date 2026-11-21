@@ -594,13 +594,7 @@ fn bump_takes_one_more_the_time_or_at_least_whichever_is_highest() {
     );
     assert_eq!(epochs(&conn), [NOW + 1, NOW + 1]);
     let bumped = reconcile::bump(&mut conn, Some(now + 10), NOW).expect("a bump");
-    assert_eq!(
-        bumped,
-        reconcile::Bumped {
-            vaults: 2,
-            restore_epoch: now + 10
-        }
-    );
+    assert_eq!((bumped.vaults, bumped.restore_epoch), (2, now + 10));
     assert_eq!(epochs(&conn), [NOW + 10, NOW + 10]);
 
     // A lowest epoch no JSON integer can carry is refused, and nothing

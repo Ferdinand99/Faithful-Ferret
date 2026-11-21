@@ -6,6 +6,12 @@
 // Writes: pass the body of a retried write as the same string (or bytes) you
 // sent the first time, under the same `idem`. The server hashes the raw body,
 // so a re-serialized retry is 422 `idem_reuse` instead of a replay.
+//
+// A device client passes `auth` (the `TokenAuth` of `auth/tokens.mjs`). Then
+// no request carries a cookie (`credentials: "omit"`), every request carries
+// `Ferret-Protocol: 1` (also GET and the event stream), and each attempt has
+// `Authorization: DPoP <access token>` and a new DPoP proof (spec Fase 1 § 7.6;
+// RFC 9449 § 7.1). Without `auth` nothing changes for the web vault.
 import { b64u } from "./b64.mjs";
 import { checkStep, readJson, readWire, SHAPES } from "./wire.mjs";
 
@@ -83,6 +89,7 @@ function secondsOf(value) {
  * @property {(path: string, options?: CallOptions) => Promise<any>} get
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} post
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} put
+ * @property {(path: string, options?: CallOptions) => Promise<any>} del a `DELETE` without a body (a write: `Ferret-Protocol: 1`)
  * @property {(path: string, options?: { signal?: AbortSignal }) => Promise<ReadableStreamDefaultReader<Uint8Array>>} stream
  * @property {(method: "PUT" | "POST", path: string, bodyBytes: Uint8Array, proof: { nonce: Uint8Array, proof: Uint8Array }, options?: CallOptions) => Promise<any>} sendSigned
  *   a write that carries a proof (spec Fase 1 § 4.6): the exact bytes of `bodyBytes` are the body, the nonce and the proof go in
@@ -90,12 +97,94 @@ function secondsOf(value) {
  */
 
 /**
- * @param {{ base?: string, fetchImpl?: typeof fetch, timeoutMs?: number }} [options]
+ * What a device client gives the API client so that its requests carry tokens:
+ * the `TokenAuth` of `auth/tokens.mjs`.
+ * @typedef {object} RequestAuth
+ * @property {(method: string, url: string) => Promise<Record<string, string>>} prepare
+ *   the `Authorization` and `DPoP` headers of one attempt, with a new proof each time
+ * @property {(response: Response) => void} observe takes the server's clock from a `dpop_invalid` answer
+ * @property {(used?: Record<string, string> | null) => Promise<void>} refresh
+ *   renews the access token once the attempt that sent the headers `used` met `token_expired`
+ * @property {(code: string) => Promise<void>} refused tells the tokens the code a token request was refused with
+ */
+
+/** The calls a {@link RequestAuth} has. */
+const AUTH_CALLS = Object.freeze(["prepare", "observe", "refresh", "refused"]);
+
+/**
+ * @param {{ base?: string, fetchImpl?: typeof fetch, timeoutMs?: number, auth?: RequestAuth | null }} [options]
+ *   `auth`: the tokens of a device client; without it the client is the web vault's and sends its cookie
  * @returns {Api}
  */
-export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } = {}) {
+export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, auth = null } = {}) {
+  if (auth !== null && (typeof auth !== "object" || !AUTH_CALLS.every((name) => typeof Reflect.get(auth, name) === "function"))) {
+    throw new TypeError("auth is the TokenAuth of a device client");
+  }
+  /** Cookies go with the web vault's requests only; a device's requests carry its token instead. */
+  const credentials = auth === null ? "same-origin" : "omit";
+
   /**
-   * @param {"GET" | "POST" | "PUT"} method
+   * Sends a request and reads its answer with `read`. Without `auth` this is one
+   * `fetch` of `init` as it is. With `auth`, every attempt is a copy of `init`
+   * with the token headers of `auth.prepare` (a new proof each time), and a
+   * refusal of the token may send it once more: `token_expired` after one
+   * renewal, `dpop_invalid` after taking the server's clock from that answer
+   * once. Any other refusal is told to `auth.refused` (`device_revoked` and
+   * `token_reused` end the tokens) and thrown.
+   * @template T
+   * @param {string} url
+   * @param {RequestInit & { method: string, headers: Record<string, string> }} init
+   * @param {() => AbortSignal | undefined} signalOf the signal of one attempt
+   * @param {() => string} failure the code of an attempt that got no answer
+   * @param {(response: Response) => Promise<T>} read gives the value of the answer, or throws its `ApiError`
+   * @returns {Promise<T>}
+   */
+  async function exchange(url, init, signalOf, failure, read) {
+    /** @param {RequestInit} attempt */
+    const send = async (attempt) => {
+      const signal = signalOf();
+      if (signal) attempt.signal = signal;
+      try {
+        return await fetchImpl(url, attempt);
+      } catch {
+        // A refused redirect, a dropped connection and a timeout all end here.
+        throw new ApiError(0, failure());
+      }
+    };
+    if (auth === null) return read(await send(init));
+
+    let refreshed = false;
+    let resynced = false;
+    for (;;) {
+      const headers = { ...init.headers, ...(await auth.prepare(init.method, url)) };
+      const response = await send({ ...init, headers });
+      try {
+        return await read(response);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) throw error;
+        // Only an access token is renewed; a request with a proof alone (a renewal, a sign-out) has nothing to renew.
+        if (error.code === "token_expired" && !refreshed && Object.hasOwn(headers, "Authorization")) {
+          refreshed = true;
+          await auth.refresh(headers);
+          continue;
+        }
+        if (error.code === "dpop_invalid" && !resynced) {
+          resynced = true;
+          auth.observe(response);
+          continue;
+        }
+        await auth.refused(error.code);
+        throw error;
+      }
+    }
+  }
+
+  /** A time limit for one attempt of a call, where the platform has one. */
+  const timeout = () =>
+    typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
+
+  /**
+   * @param {"GET" | "POST" | "PUT" | "DELETE"} method
    * @param {string} path
    * @param {unknown} body a string or bytes are sent as they are; anything else as JSON
    * @param {CallOptions} options
@@ -107,8 +196,8 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
     if (kind !== undefined && !(kind in SHAPES)) throw new TypeError(`no wire shape named ${kind}`);
     /** @type {Record<string, string>} */
     const headers = { Accept: "application/json" };
-    /** @type {RequestInit} */
-    const init = { method, credentials: "same-origin", cache: "no-store", redirect: "error", headers };
+    /** @type {RequestInit & { method: string, headers: Record<string, string> }} */
+    const init = { method, credentials, cache: "no-store", redirect: "error", headers };
     if (method !== "GET") {
       headers["Ferret-Protocol"] = "1";
       headers["Content-Type"] = "application/json";
@@ -121,46 +210,39 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
       } else if (body !== undefined) {
         init.body = JSON.stringify(body);
       }
-    }
-    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-      init.signal = AbortSignal.timeout(timeoutMs);
-    }
-
-    /** @type {Response} */
-    let response;
-    try {
-      response = await fetchImpl(base + path, init);
-    } catch {
-      // A refused redirect, a dropped connection and a timeout all end here.
-      throw new ApiError(0, "network");
+    } else if (auth !== null) {
+      // A token request carries the protocol header on every method, GET too.
+      headers["Ferret-Protocol"] = "1";
     }
 
-    const status = response.status;
-    const retryAfter = secondsOf(response.headers.get("retry-after"));
-    if (response.redirected || response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
-      throw new ApiError(status, "bad_response", retryAfter);
-    }
-    const ok = status >= 200 && status < 300;
-    if (ok && status === 204) return null;
+    return exchange(base + path, init, timeout, () => "network", async (response) => {
+      const status = response.status;
+      const retryAfter = secondsOf(response.headers.get("retry-after"));
+      if (response.redirected || response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
+        throw new ApiError(status, "bad_response", retryAfter);
+      }
+      const ok = status >= 200 && status < 300;
+      if (ok && status === 204) return null;
 
-    const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    /** @type {string} */
-    let text;
-    try {
-      text = media === "application/json" ? await response.text() : "";
-    } catch {
-      throw new ApiError(status, "bad_response", retryAfter);
-    }
-    if (media !== "application/json") throw new ApiError(status, "bad_response", retryAfter);
-
-    if (ok) {
+      const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      /** @type {string} */
+      let text;
       try {
-        return kind ? readWire(kind, text) : readJson(text);
+        text = media === "application/json" ? await response.text() : "";
       } catch {
         throw new ApiError(status, "bad_response", retryAfter);
       }
-    }
-    throw errorOf(status, text, retryAfter);
+      if (media !== "application/json") throw new ApiError(status, "bad_response", retryAfter);
+
+      if (ok) {
+        try {
+          return kind ? readWire(kind, text) : readJson(text);
+        } catch {
+          throw new ApiError(status, "bad_response", retryAfter);
+        }
+      }
+      throw errorOf(status, text, retryAfter);
+    });
   }
 
   /**
@@ -174,65 +256,60 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
    */
   async function stream(path, { signal } = {}) {
     if (!isLocalPath(path)) throw new TypeError("an API path starts with a single / and has no backslash or control character");
-    /** @type {RequestInit} */
+    /** @type {RequestInit & { method: string, headers: Record<string, string> }} */
     const init = {
       method: "GET",
-      credentials: "same-origin",
+      credentials,
       cache: "no-store",
       redirect: "error",
       headers: { Accept: "text/event-stream", "Ferret-Protocol": "1" },
     };
-    if (signal) init.signal = signal;
 
-    /** @type {Response} */
-    let response;
-    try {
-      response = await fetchImpl(base + path, init);
-    } catch {
-      throw new ApiError(0, signal?.aborted ? "aborted" : "network");
-    }
-
-    /** Drops what is left of the body without waiting for it. */
-    const drop = () => {
-      try {
-        void response.body?.cancel().catch(() => {});
-      } catch {
-        // Nothing to drop.
-      }
-    };
-    const status = response.status;
-    const retryAfter = secondsOf(response.headers.get("retry-after"));
-    if (response.redirected || response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
-      drop();
-      throw new ApiError(status, "bad_response", retryAfter);
-    }
-    const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (status === 200) {
-      const reader = media === "text/event-stream" ? response.body?.getReader() : undefined;
-      if (!reader) {
+    return exchange(base + path, init, () => signal, () => (signal?.aborted ? "aborted" : "network"), async (response) => {
+      /** Drops what is left of the body without waiting for it. */
+      const drop = () => {
+        try {
+          void response.body?.cancel().catch(() => {});
+        } catch {
+          // Nothing to drop.
+        }
+      };
+      const status = response.status;
+      const retryAfter = secondsOf(response.headers.get("retry-after"));
+      if (response.redirected || response.type === "opaqueredirect" || (status >= 300 && status < 400)) {
         drop();
         throw new ApiError(status, "bad_response", retryAfter);
       }
-      return reader;
-    }
-    if ((status >= 200 && status < 300) || media !== "application/json") {
-      drop();
-      throw new ApiError(status, "bad_response", retryAfter);
-    }
-    /** @type {string} */
-    let text;
-    try {
-      text = await response.text();
-    } catch {
-      throw new ApiError(status, "bad_response", retryAfter);
-    }
-    throw errorOf(status, text, retryAfter);
+      const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (status === 200) {
+        const reader = media === "text/event-stream" ? response.body?.getReader() : undefined;
+        if (!reader) {
+          drop();
+          throw new ApiError(status, "bad_response", retryAfter);
+        }
+        return reader;
+      }
+      if ((status >= 200 && status < 300) || media !== "application/json") {
+        drop();
+        throw new ApiError(status, "bad_response", retryAfter);
+      }
+      /** @type {string} */
+      let text;
+      try {
+        text = await response.text();
+      } catch {
+        throw new ApiError(status, "bad_response", retryAfter);
+      }
+      throw errorOf(status, text, retryAfter);
+    });
   }
 
   /**
    * A write with a proof. The body is sent as the bytes it is: the proof is over those bytes, so the call never builds the
    * body from a value, and a retry sends the same array. A wrong length of the nonce or the proof is refused before anything
    * is sent (the server answers 400 and burns no nonce for it, but a request that cannot be right is not worth a trip).
+   * A device client makes no signed call (sensitive operations take the web vault's session only), so with `auth` it is
+   * refused before anything is sent.
    * @param {"PUT" | "POST"} method
    * @param {string} path
    * @param {Uint8Array} bodyBytes
@@ -240,6 +317,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
    * @param {CallOptions} [options]
    */
   async function sendSigned(method, path, bodyBytes, proof, options = {}) {
+    if (auth !== null) throw new TypeError("a device client makes no signed call");
     if (method !== "PUT" && method !== "POST") throw new TypeError("a signed call is a PUT or a POST");
     if (!(bodyBytes instanceof Uint8Array)) throw new TypeError("a signed call sends bytes");
     if (proof === null || typeof proof !== "object") throw new TypeError("a signed call has a nonce and a proof");
@@ -255,6 +333,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000 } =
     get: (path, options = {}) => call("GET", path, undefined, options),
     post: (path, body, options = {}) => call("POST", path, body, options),
     put: (path, body, options = {}) => call("PUT", path, body, options),
+    del: (path, options = {}) => call("DELETE", path, undefined, options),
   };
 }
 

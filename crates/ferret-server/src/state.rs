@@ -20,7 +20,8 @@ use vole_kit::state::Core;
 use crate::auth::secrets::{Secrets, load_secrets};
 use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::{ChallengeLimit, KitThrottle};
-use crate::auth::{handoff, login, state_store};
+use crate::auth::tokens::DeviceAuth;
+use crate::auth::{dpop, handoff, login, refresh, state_store};
 use crate::config::{Config, Origins};
 use crate::error::{StartError, StoreError};
 use crate::http::extract::SessionAuth;
@@ -144,6 +145,9 @@ pub struct FerretState {
     pub import_windows: ImportWindows,
     /// What the scheduled backup reports.
     pub backup: BackupStatus,
+    /// The device tokens: the cache of used DPoP `jti` values, the
+    /// successors of the grace period and the vault origin of `htu`.
+    pub device_auth: DeviceAuth,
 }
 
 impl FromRef<FerretState> for Core {
@@ -188,6 +192,7 @@ impl FromRef<FerretState> for SessionAuth {
             key: state.core.session_key.clone(),
             db: state.vault_db.clone(),
             clock: state.clock.clone(),
+            device: state.device_auth.clone(),
         }
     }
 }
@@ -234,9 +239,15 @@ impl FromRef<FerretState> for BackupStatus {
     }
 }
 
+impl FromRef<FerretState> for DeviceAuth {
+    fn from_ref(state: &FerretState) -> DeviceAuth {
+        state.device_auth.clone()
+    }
+}
+
 /// Starts the background jobs: purging login states, renewing the pre-login
-/// policy, purging hand-over codes and the retention of old rows. Call it once,
-/// inside the runtime.
+/// policy, purging hand-over codes, the retention of old rows and purging old
+/// device tokens. Call it once, inside the runtime.
 pub fn spawn_background(state: &FerretState) {
     state_store::spawn_purge(state.login_states.clone(), state.clock.clone());
     login::spawn_prelogin_refresh(
@@ -246,12 +257,13 @@ pub fn spawn_background(state: &FerretState) {
     );
     handoff::spawn_purge(state.vault_db.clone(), state.clock.clone());
     retention::spawn(state.vault_db.clone(), state.clock.clone());
+    refresh::spawn_purge(state.vault_db.clone(), state.clock.clone());
 }
 
 /// Builds the state from the kit's `Core` (whose database is migrated) and the
 /// configuration: the origins and the proxy list are checked, the secrets are
-/// loaded and checked against the database, and the login state store is
-/// opened.
+/// loaded and checked against the database, the login state store is opened,
+/// and the JOSE library must have its crypto backend (the DPoP check needs it).
 ///
 /// Fails, and so refuses to serve, when any of that is wrong.
 pub async fn build_state(
@@ -259,6 +271,9 @@ pub async fn build_state(
     cfg: &Config,
     clock: Arc<dyn Clock>,
 ) -> Result<FerretState, StartError> {
+    if !dpop::backend_ready() {
+        return Err("the JOSE library has no crypto backend: the DPoP check cannot run".into());
+    }
     let origins = Origins::parse(&cfg.vault_url, &cfg.admin_url)?;
     let proxies = Arc::new(ProxyList::parse(&cfg.trusted_proxies)?);
     let vault_db = VaultDb::new(core.db.clone());
@@ -280,6 +295,7 @@ pub async fn build_state(
         .await?;
     let throttle: Arc<dyn Throttle> = Arc::new(KitThrottle::new(clock.clone()));
     let limits = Arc::new(SyncLimits::new(RateConfig::DEFAULT, clock.clone()));
+    let device_auth = DeviceAuth::new(origins.vault());
 
     Ok(FerretState {
         core,
@@ -298,5 +314,6 @@ pub async fn build_state(
         challenges: Challenges::new(),
         import_windows: ImportWindows::new(),
         backup: BackupStatus::persistent(&cfg.backup_config()?.dir),
+        device_auth,
     })
 }

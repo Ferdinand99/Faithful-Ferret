@@ -107,8 +107,9 @@ any change of key.
 ## Restoring a backup set
 
 A restore needs a stopped server and one command. It puts a whole set in place, brings it up to the migrations of the
-build you run, raises the restore epoch, ends every session and every pending sign-in code, and starts nothing. Every
-device then signs in again, and browsers that have synced before see "the server was restored from an older backup" and
+build you run, raises the restore epoch, ends every session and every pending sign-in code, signs out every device that
+has tokens (it deletes their tokens and revokes the devices), and starts nothing. Every device then signs in again with
+the master password, and browsers that have synced before see "the server was restored from an older backup" and
 offer to accept the older state.
 
 1. **Stop the server.** The command takes an exclusive lock on `ferret.lock` in the data directory and refuses while a
@@ -126,8 +127,9 @@ offer to accept the older state.
 
    Without `--yes` it changes nothing. Before anything is written it checks the set (the files, the fingerprint, a
    newer migration than this build knows, a trigger or view that the schema does not have) and refuses a set that does
-   not pass; nothing has changed then. It prints the new restore epoch, how many sessions it ended and the folder the old files
-   went to. If it warns that the epoch of the data that was there could not be read, follow the warning: bump again with
+   not pass; nothing has changed then. It prints the new restore epoch, how many sessions it ended, how many devices it signed out and the folder the old
+   files went to, for example `restored 1 vault: restore epoch is now 1763640000, 4 sessions ended, 2 devices signed out,
+   the files that were there are in <data>/pre-restore-<time>`. If it warns that the epoch of the data that was there could not be read, follow the warning: bump again with
    `--at-least` above any epoch clients may have seen, before you start the server.
 4. **Start the server** and ask the users to reload every open vault tab: a tab loaded before a deploy still runs the
    old scripts, and those refuse the answers of a newer server.
@@ -196,10 +198,12 @@ Do it with the server stopped:
 
    It uses the same rule as the restore (`--at-least <n>` works too) and ends everything that the copy brought back, exactly
    like `ferret backup restore`: every session, hand-over, login state and pending registration, every pending sign-in code,
-   and a raised `session_version` for every user, all in the same transaction as the bump. It prints the new
-   epoch and what it ended, for example `restore epoch is now 1763640000 (1 vault raised); 4 sessions ended, 2 sign-in codes
-   revoked`. Without `--yes` it changes nothing. After a restore by hand, a volume snapshot or a rollback (below), everyone
-   therefore signs in again, and a sign-in code that was issued before has to be issued again. A bump right
+   every device token (the devices are revoked and their tokens deleted), and a raised `session_version` for every user,
+   all in the same transaction as the bump. It prints the new epoch and what it ended, for example `restore epoch is now
+   1763640000 (1 vault raised); 4 sessions ended, 2 sign-in codes revoked, 3 devices signed out`. Without `--yes` it
+   changes nothing. After a restore by hand, a volume snapshot or a rollback (below), everyone therefore signs in again,
+   every device with tokens signs in again with the master password, and a sign-in code that was issued before has to be
+   issued again. A bump right
    after `ferret backup restore` only logs everyone out once more, which is harmless.
 3. Start the server.
 
@@ -232,8 +236,8 @@ one-time code, the recovery key and the pages of the emergency sheet (a new brow
 * **It is typed in one place only:** `https://vault.example.org/vault/#/recover`, with the e-mail address of the account.
   The admin pages redirect the kit's own sign-in-code pages there, so nothing asks for the master password that was
   forgotten.
-* **Redeeming ends every other session of the account at once**, also one that is in the middle of a change of master
-  password (that change then fails with "session ended"). The recovery session it opens lasts 30 minutes.
+* **Redeeming ends every other session of the account at once** and signs out every device with tokens, also a session that
+  is in the middle of a change of master password (that change then fails with "session ended"). The recovery session it opens lasts 30 minutes.
 * **Every try counts**, a good code too: 5 per hour for one typed e-mail address from one network address, and 10 a minute
   from one network address. A try that was throttled does not count, and the throttled answer (`429`) says nothing about
   whether the account exists. The count is kept for the typed e-mail address and the network address together, so someone at
@@ -307,12 +311,80 @@ old form. The server migrates its database when it starts.
 * **The way back** is the copy of the database that the server writes to `/data/backups` before it applies a migration,
   or a backup set from before the deploy, restored with `ferret backup restore` (or a bump after putting the copy back by
   hand). **What was written after the deploy is lost**, and so is every change of master password or recovery key made
-  since. Every session and every pending sign-in code ends, so everyone signs in again; devices will see the restore and
+  since. Every session, every pending sign-in code and every device token ends, so everyone signs in again (each device with the
+  master password); devices will see the restore and
   offer the older state, and the unlock methods may be older than the ones a device has seen (the vault explains the way out).
   **A rollback to a build older than this change** (0.4.x or earlier) runs a bump that does not end sessions and codes: the old
   image only raises the epoch. After such a rollback end the sessions by hand, or bump again once you are back on a newer build.
 * **Before a deploy that migrates**, make a set ("Take a backup now", or `backup create` on a stopped server) and check
   that it is listed.
+
+## Devices and tokens
+
+A client that is not the web vault, such as the browser extension, signs in as a *device*: it makes its own key, signs in
+with the master password, and gets an access token and a refresh token that only that key can use. Each request carries a
+proof of the key (DPoP, RFC 9449). The web vault is not a device: it keeps its cookie session. The design is in
+`docs/design/phase-1-security-design.md` (§ 7.6 and § 8.2).
+
+* **Lifetimes.** An access token lives 15 minutes. A refresh token is used once and replaced by the next one at every
+  renewal; it lives 30 days without use, and a device signs in again with the master password 90 days after its sign-in
+  at the latest. A renewal whose answer was lost may be sent again for 60 seconds and gets the same new token. After that,
+  or with another key, using an old refresh token revokes the device (`token_reused`).
+* **The quota.** An account has at most 20 live devices with tokens; the 21st sign-in is refused (`quota_exceeded`).
+  Browsers do not count.
+* **The list.** The Devices page of the web vault (in the account menu) shows the devices with tokens and the browsers
+  that have a live session: name, platform and last seen. From it you can revoke one device (which also ends any browser
+  session that carries the same device id), revoke every device and every other session (it asks for the master password
+  again), or forget the devices that were not seen for 7 days, which frees places in the quota. The admin pages do not
+  list devices.
+* **Revoking** makes the tokens of a device invalid at once and closes its event streams. The device is answered
+  `device_revoked` and the user signs in again. The server keeps the hashes of those tokens for 30 days (invalid, only
+  there so that an old token is recognised), then deletes them and, after that, the device's row. A job that runs every 10
+  minutes also revokes a device that has no live refresh token left, deletes expired access tokens, and deletes used
+  refresh tokens 30 days after their use.
+* **What signs every device out at once:** a change of master password, a recovery, a redeemed sign-in code, "revoke all
+  devices", the kit's "sign out everywhere", a disabled user, and a restore or a bump of the restore epoch (above).
+* **What a restart does.** The cache of used proof identifiers and the successors held for the 60 seconds of grace live in
+  memory only. A restart empties them: a device whose renewal answer was lost and that retries after the restart signs in
+  again with the master password. Nothing else is lost.
+* **Only hashes.** The database holds a hash of each token, never a token. A copy of the database or of a backup set holds
+  no usable token, and a restore deletes every token row in any case.
+
+### The proxy in front of a device client
+
+* **Do not log `Authorization` or `DPoP`.** Remove both headers from the proxy's access log and from every log that the
+  proxy writes (like the cookie headers), and pass both on to the server unchanged. A token alone is of no use without its
+  key, but a log is not the place for either. The server never logs them.
+* **Basic authentication in front of the hosts may stay.** The server looks at an `Authorization` header only when its scheme
+  is `DPoP`; a `Basic` header that a proxy asks for, or that a browser repeats on requests to the same address, passes
+  untouched, and the web vault works as before. A device client cannot answer a prompt of that kind (its own `Authorization`
+  header is the token) and has no cookie, so a layer that asks for a sign-in on the vault address (Basic or a single
+  sign-on) has to let the paths a device uses through: `/api/auth/opaque/*`, `/api/auth/token/*`, `/api/sync/*` and
+  `/api/vault/unlock-methods`. The web vault's own routes under the same paths then become reachable without that layer
+  too; they still need Ferret's session, and the server's limits per address apply.
+* **Add no CORS headers** and do not answer pre-flight requests: the server sends none, on purpose, and a page of another
+  site must not be able to send a token request. A browser extension needs permission for the vault address in its own
+  manifest instead.
+* **Keep the clocks right (NTP) on the proxy host and on the server host.** A proof is accepted within 60 seconds of the
+  server's clock. A device uses its own clock for its proofs until the server refuses one with `dpop_invalid`; only then
+  does it take the `Date` header of that refusal, and it sends the request once more. A proxy that writes its own `Date`
+  (nginx does) therefore gives the device the proxy's time at that moment. A small gap does no harm, and one resync
+  repairs a device whose own clock is off, but if the proxy's clock and the server's differ by close to a minute (the
+  60 second window), the resynced device is refused again and keeps failing with `dpop_invalid`. The server's clock is
+  the one that counts; fix the proxy host to match.
+* **The event stream** of a device ends when its access token expires (at most 15 minutes) and the device opens a new one,
+  so a proxy timeout that is longer than the 25 seconds between its heartbeats is enough.
+
+### Rolling back and the browser's database
+
+The server's migration for devices (`0008`) is a migration like the others (above). The browser side has one more thing:
+the vault page creates the IndexedDB store `device_keys` and raises the database version to 3 the first time a browser
+opens a vault page of this build, whether or not that browser ever signs in as a device. **IndexedDB cannot be rolled
+back.** A browser refuses to open a database at a version lower than the one it holds, so after a rollback to a build
+that is older than this one the vault pages of that build cannot open the browser's local data until the site data of the
+vault address is cleared in the browser, and clearing it removes the local cache, the changes that were not sent yet and
+the remembered state of the server. So roll the server back only together with a restore, ask users to send their
+changes first where you can, and tell them to clear the site data of the vault address afterwards.
 
 ## Event streams behind a proxy
 
@@ -337,7 +409,7 @@ Do these in order, on the test instance first, and write down the result of each
 2. The automatic backup runs: a set is listed on the Backup page, the encrypted copy is on the target, you have opened it
    with your age key once, and **both** monitors have received a push and would alert you when the pushes stop.
 3. The trust in the proxy for the stack for real data is checked (the forged `X-Forwarded-For` request above, and the rules
-   about raw TCP resources and client access).
+   about raw TCP resources and client access), and its access log holds neither an `Authorization` nor a `DPoP` header.
 4. A restore has been rehearsed from the encrypted copy on the throwaway stack, and the freeze tests (the migrations, the
    stored formats) are green on the release you start.
 5. The first start is with an explicit yes, from a released image, by digest.

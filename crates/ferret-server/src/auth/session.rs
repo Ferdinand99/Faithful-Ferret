@@ -16,11 +16,13 @@
 //! session of the scope `account_reset` (opened by a sign-in code) lives 30
 //! minutes at most ([`RESET_SESSION_ABSOLUTE_SECS`]).
 //!
-//! Ending sessions in bulk: [`end_all_credentials`] ends every session of one
-//! user (after a change of the master password, a recovery or a redeemed
-//! sign-in code), and [`end_everything_after_restore`] ends every session and
-//! every pending sign-in step of every user after the database was restored
-//! from a backup. Both run in the caller's transaction.
+//! Ending sessions in bulk: [`end_all_credentials`] ends every session and
+//! every device with tokens of one user (after a change of the master
+//! password, a recovery, a redeemed sign-in code or "revoke all devices"),
+//! [`end_device_sessions`] ends the sessions of one browser, and
+//! [`end_everything_after_restore`] ends every session, every pending sign-in
+//! step and every device token of every user after the database was restored
+//! from a backup. All run in the caller's transaction.
 
 use axum_extra::extract::cookie::{Cookie, SameSite, SignedCookieJar};
 use ferret_core::SecureRng;
@@ -30,6 +32,7 @@ use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, params};
 use vole_kit::auth::reauth;
 use vole_kit::auth::session::{self as kit_session, SessionClaims};
 
+use crate::auth::{devices, tokens};
 use crate::ids::{DeviceId, SessionSecret, SidHash};
 use crate::product;
 
@@ -373,29 +376,72 @@ pub fn mark_reauth(conn: &Connection, sid: &SidHash, now: i64) -> rusqlite::Resu
     Ok(changed > 0)
 }
 
+/// What a bulk end of credentials ended: the sessions (each once) and the
+/// devices with tokens. The caller announces each of them after the commit
+/// (`SyncEvents::announce_ended`), and not before: a stream that wakes up must
+/// find its row ended.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ended {
+    /// The sessions that ended.
+    pub sessions: Vec<SidHash>,
+    /// The devices with tokens that were revoked.
+    pub devices: Vec<DeviceId>,
+}
+
+impl Ended {
+    /// Whether the session `sid` is among the ended ones.
+    pub fn contains(&self, sid: &SidHash) -> bool {
+        self.sessions.contains(sid)
+    }
+
+    /// How many sessions and devices ended.
+    pub fn len(&self) -> usize {
+        self.sessions.len().saturating_add(self.devices.len())
+    }
+
+    /// Whether nothing ended.
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty() && self.devices.is_empty()
+    }
+
+    /// Sorts both lists and drops repeats, so each credential is announced
+    /// once.
+    pub fn dedup(&mut self) {
+        self.sessions.sort_unstable_by_key(|sid| sid.0);
+        self.sessions.dedup();
+        self.devices.sort_unstable_by_key(|device| device.0);
+        self.devices.dedup();
+    }
+}
+
 /// Ends every live session of `user_id` at `now`, on both origins, except the
 /// session `keep` if given, in the caller's transaction. A session that was
 /// handed over from an ended one ends with it, whoever it belongs to (the
-/// hand-over only ever makes a session for the same user). Returns the session
-/// ids of every session it ended, so the caller can announce each one
-/// (`session_revoked`) after the commit, and not before: a stream that wakes
-/// up must find its row ended.
+/// hand-over only ever makes a session for the same user). In the same
+/// transaction every device of the user with tokens is revoked
+/// (`devices::revoke_all_for_user`): its tokens are invalid at once, since
+/// every token lookup goes through the device row. Returns every session and
+/// device it ended, so the caller can announce each one after the commit, and
+/// not before: a stream that wakes up must find its row ended.
 ///
 /// The user's pending sign-in codes are revoked too: each caller settles how
 /// the user signs in, and the kit's rule is that such a change ends a code
 /// made before it.
 ///
-/// Used after a change of the master password, a recovery and a redeemed
-/// sign-in code. Device tokens, once the server has them, end here too.
+/// Used after a change of the master password, a recovery, a redeemed
+/// sign-in code and "revoke all devices". `keep` is a browser session only:
+/// no device with tokens is ever kept.
 ///
-/// Spec: Fase 1 § 4.6 (after an MP change, recovery and rekey) and § 7.6.
+/// Spec: Fase 1 § 4.6 (after an MP change, recovery and rekey: all other
+/// sessions and device tokens are revoked) and § 7.6.
 pub fn end_all_credentials(
     tx: &Transaction<'_>,
     user_id: i64,
     keep: Option<&SidHash>,
     now: i64,
-) -> rusqlite::Result<Vec<SidHash>> {
+) -> rusqlite::Result<Ended> {
     vole_kit::db::sign_in_codes::revoke_for_user(tx, user_id)?;
+    let devices = devices::revoke_all_for_user(tx, user_id, now)?;
     let keep: Option<&[u8]> = keep.map(|sid| sid.0.as_slice());
     let mut ended = returning_sids(
         tx,
@@ -417,7 +463,85 @@ pub fn end_all_credentials(
         params![user_id, now, keep],
     )?;
     ended.extend(children);
+    let mut ended = Ended {
+        sessions: ended,
+        devices,
+    };
+    ended.dedup();
     Ok(ended)
+}
+
+/// Ends every live session of `user_id` from the browser `device` (on both
+/// origins) at `now`, except the session `keep` if given and the sessions
+/// handed over from it (its admin sessions, which carry its device id too), and
+/// every session handed over from one of the others, in the caller's
+/// transaction. Returns the ids of the sessions it ended, each once, for the
+/// caller to announce after the commit.
+///
+/// A browser is a device of the list through its sessions: they all carry the
+/// `device_id` the browser chose. Only the sessions of `user_id` are touched,
+/// whatever another user's browser calls itself.
+///
+/// Spec: Fase 1 § 7.6 (revoking a device).
+pub fn end_device_sessions(
+    tx: &Transaction<'_>,
+    user_id: i64,
+    device: &DeviceId,
+    keep: Option<&SidHash>,
+    now: i64,
+) -> rusqlite::Result<Vec<SidHash>> {
+    let keep: Option<&[u8]> = keep.map(|sid| sid.0.as_slice());
+    let mut ended = returning_sids(
+        tx,
+        "UPDATE ferret_sessions SET revoked_at = ?3
+         WHERE user_id = ?1 AND device_id = ?2 AND revoked_at IS NULL
+           AND (?4 IS NULL OR sid_hash <> ?4)
+           AND (?4 IS NULL OR parent_sid IS NULL OR parent_sid <> ?4)
+         RETURNING sid_hash",
+        params![user_id, device.0.as_slice(), now, keep],
+    )?;
+    // The children of every other session of that browser, also of one that
+    // had ended before: a child must never outlive its parent.
+    let children = returning_sids(
+        tx,
+        "UPDATE ferret_sessions SET revoked_at = ?3
+         WHERE revoked_at IS NULL AND (?4 IS NULL OR sid_hash <> ?4)
+           AND parent_sid IN (
+               SELECT sid_hash FROM ferret_sessions
+               WHERE user_id = ?1 AND device_id = ?2 AND (?4 IS NULL OR sid_hash <> ?4))
+         RETURNING sid_hash",
+        params![user_id, device.0.as_slice(), now, keep],
+    )?;
+    ended.extend(children);
+    ended.sort_unstable_by_key(|sid| sid.0);
+    ended.dedup();
+    Ok(ended)
+}
+
+/// The live sessions of `user_id` on `origin` at `now`: not revoked and
+/// within the limits of their origin ([`within_limits`]), of any scope. For
+/// the list of devices, which groups them by browser.
+pub fn live_sessions(
+    conn: &Connection,
+    user_id: i64,
+    origin: Origin,
+    now: i64,
+) -> rusqlite::Result<Vec<SessionRow>> {
+    let mut statement = conn.prepare(
+        "SELECT sid_hash, user_id, issued_at, origin, device_id, device_name, scope,
+                last_seen, revoked_at, reauth_at
+         FROM ferret_sessions
+         WHERE user_id = ?1 AND origin = ?2 AND revoked_at IS NULL",
+    )?;
+    let rows = statement.query_map(params![user_id, origin.as_str()], read_row)?;
+    let mut live = Vec::new();
+    for row in rows {
+        let row = row?;
+        if within_limits(&row, now) {
+            live.push(row);
+        }
+    }
+    Ok(live)
 }
 
 /// What [`end_everything_after_restore`] ended or removed, as counts.
@@ -435,6 +559,10 @@ pub struct RestoreSweep {
     pub sign_in_codes: usize,
     /// Users whose `session_version` was raised.
     pub users: usize,
+    /// Devices with tokens that were revoked.
+    pub devices: usize,
+    /// Token rows (access and refresh) that were deleted.
+    pub tokens: usize,
 }
 
 /// After the database was restored from a backup, in the caller's
@@ -443,12 +571,14 @@ pub struct RestoreSweep {
 /// revokes every sign-in code that is neither used nor revoked (an expired
 /// one too, whatever the clock says), and raises every user's
 /// `session_version`, so a cookie of the kit's (a session or a re-auth grant)
-/// made before the restore is no good either.
+/// made before the restore is no good either. Every device token is deleted
+/// and every device with tokens revoked
+/// (`tokens::invalidate_all_after_restore`), in the same transaction.
 ///
-/// A backup holds the sessions and codes that were live when it was taken.
-/// Without this, a session that was ended or a code that was used since would
-/// come back to life with the restore. Device tokens, once the server has
-/// them, end here too.
+/// A backup holds the sessions, codes and token hashes that were live when it
+/// was taken. Without this, a session that was ended, a code that was used or
+/// a token that was renewed or revoked since would come back to life with the
+/// restore.
 ///
 /// Spec: Fase 1 § 11 (backups) and § 7.6.
 pub fn end_everything_after_restore(
@@ -468,6 +598,7 @@ pub fn end_everything_after_restore(
         [],
     )?;
     let users = tx.execute("UPDATE users SET session_version = session_version + 1", [])?;
+    let (devices, tokens) = tokens::invalidate_all_after_restore(tx, now)?;
     Ok(RestoreSweep {
         sessions,
         handoffs,
@@ -475,6 +606,8 @@ pub fn end_everything_after_restore(
         registrations,
         sign_in_codes,
         users,
+        devices,
+        tokens,
     })
 }
 

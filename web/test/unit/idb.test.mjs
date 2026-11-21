@@ -21,10 +21,10 @@ test("the_store_tells_its_owner_when_another_tab_upgrades_the_database", async (
   assert.equal(closed, 1);
 });
 
-test("the_database_has_the_seven_stores_of_version_2", async () => {
+test("the_database_has_the_eight_stores_of_version_3", async () => {
   const db = await freshStore();
-  assert.equal(DB_VERSION, 2);
-  assert.equal(STORES.length, 7);
+  assert.equal(DB_VERSION, 3);
+  assert.equal(STORES.length, 8);
   assert.deepEqual([...db.store.db.objectStoreNames].sort(), [...STORES].sort());
 });
 

@@ -927,7 +927,7 @@ exit $status'
         --tmpfs /root/.npm:size=512m \
         -w /work \
         "$runner_image" \
-        sh -c 'tar -x -C /work && cd /work/web && npm ci --no-audit --no-fund --ignore-scripts >&2 && tar -c -C /work web/node_modules' > "$deps"
+        sh -c 'tar -x -C /work && cd /work/web && npm ci --no-audit --no-fund --ignore-scripts >&2 && node -e '"'"'import("./test/e2e-stack/deviceClient.mjs").then((m) => m.prepareWasmNode())'"'"' >&2 && tar -c -C /work web/node_modules web/.wasm-node' > "$deps"
   { tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web; cat "$deps"; } \
     | {
       dk create --rm -i --init \

@@ -17,6 +17,7 @@ use ferret_core::{MasterPassword, OsRng, opaque_login_start};
 use ferret_server::auth::session::Origin;
 use ferret_server::http::extract::{Cap, FreshReauth, ScopedSession, SessionAuth, caps};
 use ferret_server::http::proxy_guard::ProxyList;
+use ferret_server::vault::notify::Revoked;
 use ferret_server::wire::b64url;
 use ferret_server_auth::{Clock as _, SessionScope};
 use serde_json::{Value, json};
@@ -271,7 +272,7 @@ async fn redeem_signs_out_every_other_session_at_once() {
     // Each ended session is announced once; the new one and the other user's
     // are not.
     let mut announced: BTreeMap<[u8; 32], usize> = BTreeMap::new();
-    while let Ok(sid) = revocations.try_recv() {
+    while let Ok(Revoked::Session(sid)) = revocations.try_recv() {
         *announced.entry(sid.0).or_default() += 1;
     }
     let expected: BTreeMap<[u8; 32], usize> = [vault_a.sid.0, vault_b.sid.0, admin.sid.0]
@@ -493,7 +494,10 @@ async fn a_second_factor_user_spends_the_code_and_gets_the_common_refusal() {
     let rows = sessions_of(&app, user.user_id).await;
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!((rows[0].1.as_str(), rows[0].4), ("full", Some(at)));
-    assert_eq!(revocations.try_recv().expect("announced").0, full.sid.0);
+    assert_eq!(
+        revocations.try_recv().expect("announced"),
+        Revoked::Session(full.sid)
+    );
     assert!(revocations.try_recv().is_err());
     let res = get_vault(&app, &full.jar, "/api/auth/session").await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);

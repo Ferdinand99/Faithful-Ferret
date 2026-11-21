@@ -160,6 +160,17 @@ const deviceName = (v) => {
   if ([...v].length > 64) refuse("device_name is longer than 64 characters");
   if (FORBIDDEN_IN_NAME.test(v)) refuse("device_name has a control or invisible character");
 };
+/** A device name that must be there: 1 to 64 characters, the rules of `deviceName`. @type {Check} */
+const deviceNameRequired = (v) => {
+  deviceName(v);
+  if (v.length === 0) refuse("device_name is empty");
+};
+/** A device token: 43 characters of strict base64url that decode to 32 bytes. @type {Check} */
+const token = (v) => {
+  str(v);
+  if (v.length !== TOKEN_CHARS) refuse("a token has 43 characters");
+  if (b64u.decode(v).length !== 32) refuse("a token is 32 bytes");
+};
 /** @type {Check} */
 const next = (v) => {
   str(v);
@@ -215,6 +226,35 @@ export const RECOVERY_WRAP_LEN = 72;
 export const SESSION_SCOPES = Object.freeze(["full", "pending_2fa", "account_reset", "unverified"]);
 /** The scope a redeemed sign-in code gives. */
 export const REDEEM_SCOPE = "account_reset";
+/** The seconds an access token of a device lives. */
+export const ACCESS_TOKEN_SECS = 900;
+/** The length of a device token: 32 bytes as base64url without padding. */
+export const TOKEN_CHARS = 43;
+/** The most devices with tokens one account may have. */
+export const MAX_DEVICES = 20;
+/** The most rows in a list of devices. */
+export const MAX_DEVICE_LIST = 200;
+/** The words a platform has on the wire. */
+export const PLATFORMS = Object.freeze(["windows", "macos", "linux", "android", "ios", "chromeos", "other"]);
+
+/** The answer with a device's tokens: `token_type` is `DPoP`, and nothing else. @type {Spec} */
+const tokens = [
+  ["access_token", token], ["refresh_token", token], ["token_type", oneOf("DPoP")], ["expires_in", int(U32)],
+];
+/** One row of the list of devices; a browser that never gave a name has `""`. @type {Spec} */
+const deviceRow = [
+  ["id", id], ["kind", oneOf("device", "web")], ["name", deviceName], ["platform", oneOf(...PLATFORMS), true],
+  ["created_at", int()], ["last_seen", int()], ["current", bool],
+];
+/**
+ * The list of devices: at most {@link MAX_DEVICE_LIST} rows, checked when it is read. An account with more
+ * gets the first ones and, in `more`, how many were left out (see `checkStep`).
+ * @type {Check}
+ */
+const deviceList = (v) => {
+  if (Array.isArray(v) && v.length > MAX_DEVICE_LIST) refuse("a list of devices has at most 200 rows");
+  list(deviceRow)(v);
+};
 
 /** One operation of a batch: a put request with the item id in the body. @type {Spec} */
 const batchOp = [
@@ -330,6 +370,20 @@ export const SHAPES = Object.freeze({
   redeem_res: [["scope", oneOf(REDEEM_SCOPE)]],
   import_window_req: [["ops", int(U32)]],
   import_window_res: [["window_id", id], ["ops", int(U32)], ["expires_in", int(U32)]],
+  // Devices and their tokens. A device client signs in with the body that has
+  // `client: "device"` (the web vault's body has no `client`).
+  login_finish_req_device: [
+    ["login_id", id], ["ke3", bytes(64, "malformed_ke3")], ["client", oneOf("device")],
+    ["device_name", deviceNameRequired], ["platform", oneOf(...PLATFORMS)],
+  ],
+  login_finish_res_device: [
+    ["account_id", id], ["vault_id", id], ["vk_epoch", int()], ["device_id", id], ...tokens,
+  ],
+  token_refresh_req: [["refresh_token", token]],
+  token_res: tokens,
+  token_revoke_req: [["refresh_token", token]],
+  devices_res: [["devices", deviceList], ["more", int(U32), true]],
+  revoke_all_res: [["revoked", int(U32)]],
 });
 
 /**
@@ -420,6 +474,7 @@ export const ERROR_STATUS = Object.freeze({
   bad_request: 400, internal: 500, gone: 410, busy: 503, checkpoint_stale: 409, checkpoint_invalid: 422,
   restore_epoch_changed: 409, reauth_required: 403, second_factor_required: 403, write_conflict: 409,
   import_window_open: 409, import_window_invalid: 409,
+  dpop_invalid: 401, token_expired: 401, token_reused: 401, device_revoked: 401,
 });
 
 /**
@@ -496,6 +551,17 @@ export function checkStep(kind, value) {
   if (kind === "batch_res") {
     if (value.results.length < 1 || value.results.length > MAX_BATCH_OPS) refuse("a batch answer has 1 to 100 results");
     for (const result of value.results) checkBatchResult(result);
+  }
+  if (kind === "devices_res") {
+    // A device with tokens has a name and a platform, a browser has no platform;
+    // `more` (rows left out) is only on a full list, and at least 1.
+    for (const row of value.devices) {
+      const ok = row.kind === "device" ? row.name !== "" && present(row, "platform") : !present(row, "platform");
+      if (!ok) refuse("a device with tokens has a name and a platform, a browser has no platform");
+    }
+    if (present(value, "more") && (value.more < 1 || value.devices.length !== MAX_DEVICE_LIST)) {
+      refuse("more is at least 1 and only on a full list");
+    }
   }
   if (kind === "items_res" || kind === "restore_rows_res") {
     // `next_after` is there exactly when more rows follow.

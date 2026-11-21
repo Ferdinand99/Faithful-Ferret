@@ -333,6 +333,7 @@ test("api_handles_every_error_code_with_the_status_the_server_gives_it", async (
   assert.deepEqual(retryable, [
     "unauthorized", "denied", "registration_closed", "throttled", "conflict", "not_found", "internal", "gone", "busy",
     "checkpoint_stale", "restore_epoch_changed", "write_conflict", "import_window_open", "import_window_invalid",
+    "dpop_invalid", "token_expired", "token_reused", "device_revoked",
   ]);
 });
 
