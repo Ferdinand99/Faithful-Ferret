@@ -91,6 +91,17 @@ export async function pace() {
   }
 }
 
+/**
+ * Waits until every sign-in start this process knows of has left the server's window. A file whose last tests sign in calls it
+ * at its end: the gate runs the next file in another process, which does not know these starts and would run into the limit.
+ */
+export async function settleSignIns() {
+  const last = starts.at(-1);
+  if (last === undefined) return;
+  const wait = last + PACE_WINDOW_MS - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+}
+
 /** Every context that was made, for the whole-run check at the end. */
 const watched = [];
 

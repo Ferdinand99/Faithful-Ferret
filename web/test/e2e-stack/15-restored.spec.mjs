@@ -3,8 +3,9 @@
 // `hostStep`). The restore ends every session the snapshot holds (the bump that records it does), so both browsers sign in
 // again; then both say the server was restored and offer to accept the older state. The first to accept sends what the
 // server lost without a conflict, over rows nobody changed since; the second gets a conflict where the first wrote. A write
-// saved by a browser that has not heard of the restore is refused by the server, and nothing lands in silence.
-import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, shot, signInHere, synced, syncBanner, test, useAccount, vaultUrl } from "./support.mjs";
+// saved by a browser that has not heard of the restore is refused by the server (its session is over), it is kept, and
+// nothing lands in silence.
+import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, settleSignIns, shot, signInHere, synced, syncBanner, test, useAccount, vaultUrl } from "./support.mjs";
 
 const SEEN = 20_000;
 const WARNED = 150_000;
@@ -171,29 +172,22 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   const id = await itemIdOf(b.page, target);
   const rev = await serverRev(b.context, id);
 
-  // B cannot read: it does not hear that the server is restored. Its session ended with the restore; it signs in again
-  // (the sign-in does not read the restore number) and can still write.
+  // B is open and cannot read: it does not hear that the server is restored. It can still write, but its session ended
+  // with the restore, so the server refuses the write before it looks at anything else. (A write with a session made after
+  // the restore and a restore number from before it is refused with 409 restore_epoch_changed; the server's tests cover it.)
   await b.page.route(/\/api\/sync\/(events|changes|checkpoint)|\/api\/sync\/items\?/, (route) => route.abort("failed"));
   await hostStep("restore");
-  await signInAfterTheRestore(b);
-  const epochAfter = (await feedOf(b.context)).restore_epoch;
   const refused = b.page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/sync/items/"));
   await editItem(b.page, target, { name: `${target}-saved-during-restore`, username: "after" });
-  // The answer to the write: 409, and the reason is the restore number.
   const answer = await refused;
-  expect(answer.status()).toBe(409);
-  expect((await answer.json()).error).toBe("restore_epoch_changed");
+  expect(answer.status(), "the session from before the restore is over").toBe(401);
 
-  // The server refused it for the restore number, and it did not land: the row is as it was.
-  await b.page.waitForTimeout(5_000);
-  expect(await serverRev(b.context, id), "the write did not land").toBe(rev);
-  expect(epochAfter, "the server was restored").toBeGreaterThan(0);
-  await expect(rowsNamed(b.page, `${target}-saved-during-restore`)).toHaveCount(1);
-
-  // B can read again and says so: the server was restored, and the write is kept and waits.
+  // B can read again and signs in again: the server was restored, the write did not land, and it is kept and waits.
   await b.page.unroute(/\/api\/sync\/(events|changes|checkpoint)|\/api\/sync\/items\?/);
-  await b.page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await b.page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await signInAfterTheRestore(b);
+  const epochAfter = (await feedOf(b.context)).restore_epoch;
+  expect(epochAfter, "the server was restored").toBeGreaterThan(0);
+  expect(await serverRev(b.context, id), "the write did not land").toBe(rev);
   await expect(syncBanner(b.page, "server_restored")).toBeVisible({ timeout: WARNED });
   await shot(b.page, "15-restored-write-refused");
   expect(await serverRev(b.context, id), "still not on the server").toBe(rev);
@@ -201,6 +195,8 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   // The way out is the stop, which the person can read and act on; the banner that says a write was refused again and again
   // for a restore number the server does not show (the repeated refusal) is not the one that appears here.
   await expect(b.page.locator('[data-role="banner"][data-banner="error:restore_epoch_refused"]')).toHaveCount(0);
+  // The browsers signed in again after each restore; the next scenarios run in another process and start with the whole limit.
+  await settleSignIns();
   // The gate script requires this marker: Playwright exits 0 when every test of a file is skipped.
   leave("m2-restore", { ok: true });
 });
