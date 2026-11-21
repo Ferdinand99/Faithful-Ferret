@@ -21,6 +21,12 @@
 #    is. The server refuses a gateway that ends in .1 inside the Docker address pools
 #    (it would be the address of every direct client of a published port), so the
 #    gateway is a different address of the subnet. Change subnet and gateway together.
+#  * The copy container is on a network of its own (ferret-home-copy-net, another fixed
+#    subnet), never on the app's network. It needs a way out to the SFTP target and its
+#    monitor and nothing else, so it cannot open the app's ports 3040 and 3041 directly
+#    (Docker keeps two of its networks apart), and the published ports are on the
+#    host's loopback address, which a container does not reach. The copy container
+#    holds an SSH key and is the one part of the stack that talks to another machine.
 #  * The data and the backup sets are on two volumes of their own (label
 #    owner=ferret-home). The copy container reads the sets read-only.
 #  * The image is a release image, taken by digest (FERRET_IMAGE, set by the script).
@@ -54,7 +60,9 @@
 #  * After the first start, send one request with a forged X-Forwarded-For through the public
 #    address of the vault and look at what the server recorded: the client address must be the
 #    real one, not the forged one, so the proxy does not pass the client's value on as the
-#    entry the server believes.
+#    entry the server believes. The server records peer addresses only while the peer log is
+#    on (FERRET_HOME_LOG_PEERS=1 for `up`, see FERRET_LOG_PEERS below); turn it off again
+#    after the check.
 #
 # What the host that runs `scripts/ferret-home.sh up` needs: Docker 28 or newer (`up` checks),
 # docker buildx, compose v2, git with the release tags, node, and cosign (or --no-cosign, which
@@ -111,9 +119,13 @@ services:
       # The gateway of the network ferret-home-net, and nothing else.
       FERRET_TRUSTED_PROXIES: 172.30.251.14
       FERRET_TRUST_PROXY: "1"
-      # One log line per new peer address: `scripts/ferret-home.sh status` shows which
-      # addresses the server has seen, and whether it believed them.
-      FERRET_LOG_PEERS: "1"
+      # Off by default: IP addresses are not kept longer than needed. When on, the server
+      # writes one log line per new peer address, and `scripts/ferret-home.sh status` shows
+      # which addresses it has seen and whether it believed them. Switch it on only for the
+      # forged X-Forwarded-For check after the first start, or to debug the proxy:
+      #   FERRET_HOME_LOG_PEERS=1 scripts/ferret-home.sh up <tag> --yes-ferret-home
+      # and afterwards run `up` again without it, so the app runs with the log off.
+      FERRET_LOG_PEERS: ${FERRET_HOME_LOG_PEERS:-0}
 
   ferret-home-copy:
     image: ferret-home-copy:latest
@@ -146,9 +158,10 @@ services:
       # The copy is packed and encrypted here before it is sent; it is gone at the end of the cycle.
       - /work:size=768m,uid=1000,gid=1000,mode=0700
       - /tmp:size=16m
+    # Its own network: never the app's (see the top of this file).
     networks:
-      ferret-home-net:
-        ipv4_address: 172.30.251.3
+      ferret-home-copy-net:
+        ipv4_address: 172.30.251.18
     volumes:
       # The sets, read-only. Nothing else of the server is mounted: not the data, not the keys.
       - ferret-home-backups:/backups:ro
@@ -184,3 +197,13 @@ networks:
       config:
         - subnet: 172.30.251.0/28
           gateway: 172.30.251.14
+  # The copy container's way out (to the SFTP target and the monitor). Not internal: it must
+  # reach another machine. Nothing else is on it.
+  ferret-home-copy-net:
+    name: ferret-home-copy-net
+    labels:
+      owner: ferret-home
+    ipam:
+      config:
+        - subnet: 172.30.251.16/28
+          gateway: 172.30.251.17

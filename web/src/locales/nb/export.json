@@ -18,6 +18,7 @@
   "export.encrypted.submit": "Lag den krypterte filen",
   "export.error.export_item_unreadable": "Disse elementene åpnes ikke på denne enheten, så ingen fil ble laget: {names}. Last siden på nytt og la den synkronisere. Hvis det vedvarer, lag en ren eksport av de andre elementene, eller si fra til den som drifter tjeneren.",
   "export.error.input_same_as_master_password": "Eksportpassordet er det samme som hovedpassordet ditt. Velg et annet.",
+  "export.error.input_too_short": "Eksportpassordet er for kort. Det må ha minst 12 tegn.",
   "export.error.kdf_out_of_memory": "Denne nettleseren klarte ikke å sette av de 256 MiB nøkkelen trenger. Lukk andre faner eller prøv en annen nettleser eller enhet. Ingen fil ble laget.",
   "export.error.kdf_out_of_range": "Nøkkelinnstillingene var under det en eksport trenger. Ingen fil ble laget.",
   "export.error.nothing_to_export": "Denne enheten har ingen elementer å eksportere ennå. Vent på første synkronisering og prøv igjen.",

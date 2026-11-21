@@ -1001,6 +1001,13 @@ test("session_res_scope_is_one_of_the_four_scopes", () => {
   for (const bad of [-1, 1.5, "1800000300", 2 ** 53]) {
     assert.equal(refusalOf(() => shape(SHAPES.session_res, { ...base, reauth_until: bad })), "bad_request", String(bad));
   }
+  // Whether the user is an administrator is a boolean, and `null` is absent (the Rust side agrees).
+  assert.equal(base.admin, true);
+  shape(SHAPES.session_res, { ...base, admin: null });
+  shape(SHAPES.session_res, { ...base, admin: false });
+  for (const bad of ["true", 1, []]) {
+    assert.equal(refusalOf(() => shape(SHAPES.session_res, { ...base, admin: bad })), "bad_request", JSON.stringify(bad));
+  }
   // The scope of a redeemed code is the one reset scope.
   assert.equal(REDEEM_SCOPE, "account_reset");
   assert.ok(SESSION_SCOPES.includes(REDEEM_SCOPE));

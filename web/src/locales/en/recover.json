@@ -35,7 +35,7 @@
   "recover.password_help": "At least 12 characters with a secret key, 15 without. Use it from now on; the recovery key is the only way back if you forget it.",
   "recover.qr_help": "The line under the QR code on page 1 of the emergency sheet. A device that remembers this account may leave it empty.",
   "recover.qr_label": "Text of the sheet's QR code (page 1)",
-  "recover.reset_open": "A recovery session for this browser is still open (it lasts 30 minutes), so the code you already used is not needed again.",
+  "recover.reset_open": "A recovery session for this browser is still open (it lasts 30 minutes), so the code you already used is not needed again for the same e-mail address.",
   "recover.rk": "Recovery key (page 2)",
   "recover.rk_help": "The key that starts with FFR1 on page 2 of your emergency sheet. A typing error is caught before anything is sent.",
   "recover.secret_key": "Secret key (page 1)",

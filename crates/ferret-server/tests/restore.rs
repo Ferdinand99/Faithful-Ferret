@@ -996,9 +996,11 @@ async fn restore_epoch_bump_uses_the_same_rule() {
         at_least: Some(at_least),
     })
     .expect("a bump");
-    assert_eq!(
-        said,
-        format!("restore epoch is now {at_least} (1 vault raised)")
+    assert!(
+        said.starts_with(&format!(
+            "restore epoch is now {at_least} (1 vault raised); "
+        )),
+        "{said}"
     );
     let report =
         restore::restore(scene.data(), &scene.backup, Some(at_least), NOW).expect("a restore");
@@ -1015,9 +1017,13 @@ async fn restore_epoch_bump_uses_the_same_rule() {
         at_least: None,
     })
     .expect("a bump");
+    // The first bump ended everything in the copy, so the second ends nothing.
     assert_eq!(
         said,
-        format!("restore epoch is now {} (1 vault raised)", at_least + 1)
+        format!(
+            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked",
+            at_least + 1
+        )
     );
     let mut conn = Connection::open(scene.data().join(DB_FILE)).expect("open");
     assert_eq!(

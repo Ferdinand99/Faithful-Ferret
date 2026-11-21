@@ -35,7 +35,7 @@
   "recover.password_help": "Minst 12 tegn med hemmelig nøkkel, 15 uten. Bruk det fra nå av; gjenopprettingsnøkkelen er eneste vei tilbake hvis du glemmer det.",
   "recover.qr_help": "Linjen under QR-koden på side 1 av nødarket. En enhet som husker denne kontoen, kan la feltet stå tomt.",
   "recover.qr_label": "Tekst fra arkets QR-kode (side 1)",
-  "recover.reset_open": "En gjenopprettingsøkt for denne nettleseren er fortsatt åpen (den varer i 30 minutter), så koden du allerede har brukt, trengs ikke igjen.",
+  "recover.reset_open": "En gjenopprettingsøkt for denne nettleseren er fortsatt åpen (den varer i 30 minutter), så koden du allerede har brukt, trengs ikke igjen for den samme e-postadressen.",
   "recover.rk": "Gjenopprettingsnøkkel (side 2)",
   "recover.rk_help": "Nøkkelen som begynner med FFR1 på side 2 av nødarket. En skrivefeil blir oppdaget før noe sendes.",
   "recover.secret_key": "Hemmelig nøkkel (side 1)",

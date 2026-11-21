@@ -22,6 +22,7 @@ use ferret_server::wire::b64url;
 use ferret_server_auth::{Clock as _, SessionScope};
 use serde_json::{Value, json};
 use support::backup::capture_log;
+use support::handoff::set_role;
 use support::session::{Seeded, get_with, issue, seed, session_version};
 use support::{Jar, PEER, Req, Res, TestApp, Which};
 use vole_kit::auth::rate_limit::CODE_CEILING_POLICY;
@@ -163,6 +164,8 @@ fn assert_denied(res: &Res, why: &str) {
 async fn a_valid_code_gives_an_account_reset_session_and_nothing_more() {
     let app = app().await;
     let user = seed(&app, 1).await;
+    // Even an administrator's reset session is told nothing of the role.
+    set_role(&app, user.user_id, "admin").await;
     let code = code_for(&app, user.user_id).await;
 
     let res = redeem(&app, &email(1), &code).await;
@@ -194,6 +197,7 @@ async fn a_valid_code_gives_an_account_reset_session_and_nothing_more() {
     assert_eq!(info["scope"], "account_reset");
     assert_eq!(info["email"], email(1));
     assert!(info.get("reauth_until").is_none(), "{info}");
+    assert!(info.get("admin").is_none(), "{info}");
     let res = app
         .call_raw(
             Which::Vault,
@@ -755,6 +759,14 @@ async fn the_code_never_reaches_the_log() {
     // the good one in another spelling.
     assert_denied(&redeem(&app, &code, &code).await, "code as e-mail");
     assert_denied(&redeem(&app, &email(1), &wrong).await, "a wrong code");
+    // The two refusals above are two lines, and the throttled tries have not
+    // started yet: the capture holds exactly the lines of these two calls.
+    let first_two = log.text();
+    assert_eq!(
+        first_two.matches("a sign-in code was refused").count(),
+        2,
+        "the refusals of the first two calls were not captured: {first_two}"
+    );
     let mut last = None;
     for _ in 0..6 {
         last = Some(
@@ -769,8 +781,8 @@ async fn the_code_never_reaches_the_log() {
     // The capture only counts if it holds the lines these calls make: the
     // refusals of the first two, and the throttled tries.
     assert!(
-        refusals.matches("a sign-in code was refused").count() >= 2,
-        "the refusals were not captured: {refusals}"
+        refusals.matches("a sign-in code was refused").count() > 2,
+        "the refusals of the throttled tries were not captured: {refusals}"
     );
     assert!(
         refusals.contains("a sign-in code redeem was throttled"),

@@ -275,7 +275,7 @@ check_stack() {
   if [ "$first_id" != "$(dk inspect -f '{{.Id}}' "$e2e_app")" ]; then pass "e2e-up: the container is new"; else fail "e2e-up: the container is new"; fi
 
   # Isolation.
-  expect "e2e: the containers of the project" "$e2e_app $e2e_evil $e2e_tls" \
+  expect "e2e: the containers of the project" "$e2e_app $e2e_evil $e2e_monitor $e2e_tls" \
     "$(dk ps -a --filter "label=$e2e_label" --format '{{.Names}}' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: the app is on its own network only" "$e2e_network" \
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_app" | sed 's/ $//')"
@@ -283,11 +283,11 @@ check_stack() {
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_tls" | sed 's/ $//')"
   expect "e2e: the malicious server is on its own network only" "$e2e_network" \
     "$(dk inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$e2e_evil" | sed 's/ $//')"
-  expect "e2e: the data volume is the only mount (no bind mount)" "volume:ferret-e2e-data" \
-    "$(dk inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} {{end}}' "$e2e_app" "$e2e_evil" "$e2e_tls" | tr -d ' \n')"
+  expect "e2e: the data volume and the backup volume are the only mounts (no bind mount)" "volume:ferret-e2e-backups volume:ferret-e2e-data" \
+    "$(dk inspect -f '{{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} {{end}}' "$e2e_app" "$e2e_evil" "$e2e_monitor" "$e2e_tls" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: no published port (a port the image declares is only exposed)" "" \
-    "$(dk inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$e2e_app" "$e2e_evil" "$e2e_tls" | tr -d ' \n')"
-  expect "e2e: the network has only the three containers" "$e2e_app $e2e_evil $e2e_tls" \
+    "$(dk inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$e2e_app" "$e2e_evil" "$e2e_monitor" "$e2e_tls" | tr -d ' \n')"
+  expect "e2e: the network has only the four containers" "$e2e_app $e2e_evil $e2e_monitor $e2e_tls" \
     "$(dk network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$e2e_network" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: the server runs as uid 1000" "1000" "$(dk exec "$e2e_app" awk '/^Uid:/{print $2}' /proc/1/status)"
   contains "e2e: the e2e image says so" "$(dk run --rm --name "$probe" --label "$e2e_label" "$e2e_image" --build-info)" "features: e2e-clock"

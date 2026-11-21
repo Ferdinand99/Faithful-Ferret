@@ -5,7 +5,7 @@
 #
 # Differences from the stack for real data, and only these:
 #
-#  * Own names, own volumes and a network of its own, all labelled owner=ferret-drill, and
+#  * Own names, own volumes and networks of its own, all labelled owner=ferret-drill, and
 #    other loopback ports (13040, 13041), so it can run beside other stacks. `down -v` removes
 #    everything.
 #  * Caddy with `tls internal` stands in for the proxy of the host: it runs on the host network,
@@ -15,6 +15,11 @@
 #    SSH key, encrypted to a test age key. The test keys are made by the keys service, in
 #    volumes; the private age key is in a volume of its own that only the keys service and the
 #    decrypt service mount, never the copy container.
+#  * The test target is on the network of the copy container (ferret-drill-copy-net), the way
+#    the real target is reached from there; the drill checks that the copy container cannot
+#    open the app's ports.
+#  * The peer log of the server is on (FERRET_LOG_PEERS), for the drill's check of which
+#    address the server believed; the stack for real data has it off.
 #  * No messages to a monitor.
 #
 # Use scripts/ferret-home.sh drill. It builds the images, makes the keys, starts the stack
@@ -150,9 +155,11 @@ services:
       - SYS_CHROOT
     security_opt:
       - no-new-privileges:true
+    # On the network of the copy container, as a target outside the stack would be reached; not
+    # on the app's network.
     networks:
-      ferret-drill-net:
-        ipv4_address: 172.30.252.4
+      ferret-drill-copy-net:
+        ipv4_address: 172.30.252.20
     volumes:
       - ferret-drill-target:/srv/target
       - ferret-drill-host:/host-key:ro
@@ -188,9 +195,10 @@ services:
     tmpfs:
       - /work:size=768m,uid=1000,gid=1000,mode=0700
       - /tmp:size=16m
+    # Its own network, as on the stack for real data: never the app's.
     networks:
-      ferret-drill-net:
-        ipv4_address: 172.30.252.3
+      ferret-drill-copy-net:
+        ipv4_address: 172.30.252.18
     volumes:
       - ferret-drill-backups:/backups:ro
       # The SSH key and the PUBLIC age key. The private age key is in another volume.
@@ -198,7 +206,7 @@ services:
     environment:
       FERRET_COPY_BACKUPS_DIR: /backups
       FERRET_BACKUP_AGE_RECIPIENT_FILE: /client/recipient.txt
-      FERRET_COPY_SFTP_HOST: 172.30.252.4
+      FERRET_COPY_SFTP_HOST: 172.30.252.20
       FERRET_COPY_SFTP_PORT: "2222"
       FERRET_COPY_SFTP_USER: backup
       FERRET_COPY_SFTP_DIR: ferret
@@ -328,3 +336,11 @@ networks:
       config:
         - subnet: 172.30.252.0/28
           gateway: 172.30.252.14
+  ferret-drill-copy-net:
+    name: ferret-drill-copy-net
+    labels:
+      owner: ferret-drill
+    ipam:
+      config:
+        - subnet: 172.30.252.16/28
+          gateway: 172.30.252.17
