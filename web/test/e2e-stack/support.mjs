@@ -76,6 +76,8 @@ export function remember() {
 // under it instead of turning the limit off: the limit is part of what is tested.
 const PACE_WINDOW_MS = 62_000;
 const PACE_MAX = 4;
+// How long a sign-in keeps trying while the server refuses its start.
+const SIGN_IN_PATIENCE_MS = 240_000;
 // The times of the starts are kept in a file as well: a test that fails ends its worker, and the worker that takes the next test
 // must know about the sign-ins of the minute before.
 const startsFile = `${outDir}/sign-in-starts.json`;
@@ -339,6 +341,40 @@ export async function setUpAccount(page) {
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
 }
 
+// ------------------------------------------------------------ the server's limit on sign-in starts
+
+/**
+ * Runs `start`, which sends the form that starts a sign-in (a sign-in, an unlock, a re-check of the password), and sends it
+ * again for as long as the server refuses the start. The server's limit counts the sign-ins of earlier phases, and of other
+ * pages, that this process does not know of. It says so in its answer to the start (429, with the seconds until it lets that
+ * caller in again), so that answer is what this goes by: it waits for the reset the server names, and sends the form again.
+ * A refused start is not counted by the server, so every wait ends in a try that can pass. Nothing is raised or switched off.
+ * What the page shows is not used for this: the message of an earlier try can still be on the page while a slow sign-in (a busy
+ * machine) is under way, and a click on it would be one more start.
+ * @param {import("@playwright/test").BrowserContext} context
+ * @param {() => Promise<void>} start fills and sends the form
+ * @param {boolean} [watch] false when the caller does not wait for the answer
+ * @returns {Promise<import("@playwright/test").Response | null>} the last answer, or null when no start was seen
+ */
+export async function untilStartAccepted(context, start, watch = true) {
+  if (!watch) {
+    await start();
+    return null;
+  }
+  const isStart = (/** @type {import("@playwright/test").Response} */ response) =>
+    response.url().includes("/api/auth/opaque/login/start") && response.request().method() === "POST";
+  const giveUpAt = Date.now() + SIGN_IN_PATIENCE_MS;
+  for (let tries = 1; ; tries += 1) {
+    const answered = context.waitForEvent("response", { predicate: isStart, timeout: SLOW }).catch(() => null);
+    await start();
+    const answer = await answered;
+    if (answer === null || answer.status() !== 429) return answer;
+    if (Date.now() > giveUpAt) throw new Error(`the server still refused the start of the sign-in after ${tries} tries over ${SIGN_IN_PATIENCE_MS / 1000} seconds`);
+    const named = Number(answer.headers()["retry-after"]);
+    await new Promise((resolve) => setTimeout(resolve, (Number.isFinite(named) && named > 0 ? Math.min(named, 120) : 20) * 1000 + 1_500));
+  }
+}
+
 // ------------------------------------------------------------ sign-in
 
 /**
@@ -389,23 +425,17 @@ export async function signInHere(page, { remember = true, expectList = true } = 
   } else if (await page.locator('[data-role="sk-code"]').isVisible()) {
     await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
   }
-  // The server's limit counts the starts of earlier phases too, which this process does not know of: when it says so, the
-  // wait it names is taken and the form is sent again.
-  const limit = page.locator('[data-role="error"]').filter({ hasText: /Too many attempts/ });
-  for (let tries = 0; ; tries += 1) {
-    await pace();
-    await page.locator('[data-role="credentials"] [data-role="submit"]').click();
-    if (!expectList) return;
-    // The message of the try that was refused goes when the next one starts.
-    if (tries > 0) await limit.first().waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
-    const outcome = await Promise.race([
-      page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).then(() => "list", () => "timeout"),
-      limit.waitFor({ timeout: SLOW }).then(() => "limited", () => "timeout"),
-    ]);
-    if (outcome !== "limited" || tries >= 5) break;
-    const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
-    await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
-  }
+  // The server's limit counts the starts of earlier phases too, which this process does not know of: see untilStartAccepted.
+  await untilStartAccepted(
+    page.context(),
+    async () => {
+      await pace();
+      await page.locator('[data-role="credentials"] [data-role="submit"]').click();
+    },
+    expectList,
+  );
+  if (!expectList) return;
+  await page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).catch(() => {});
   if (!(await page.locator('[data-role="list"]').isVisible())) {
     // What the page says, so that a refused sign-in is not just a missing list.
     const said = (await page.locator('[data-role="error"]').allTextContents()).map((text) => text.trim()).filter((text) => text !== "");
@@ -912,27 +942,24 @@ export async function chooseImportFile(page, file) {
 /**
  * Runs the import of the file that was chosen, with the master password. Returns when the page says the import has finished. A
  * refusal of the page is an error of the test with the page's own words; the server's limit on sign-ins, which this process
- * cannot see all of, is waited out and the form is sent again (the page empties the password when it is sent).
+ * cannot see all of, is waited out and the form is sent again (see untilStartAccepted; the page empties the password when it is sent).
  * @param {import("@playwright/test").Page} page @param {number} items
  */
 export async function runChosenImport(page, items) {
   const form = page.locator('[data-role="import-form"]');
   const done = page.locator('[data-role="done-items"]');
   const refusal = form.locator('[data-role="error"]');
-  for (let tries = 0; ; tries += 1) {
+  await untilStartAccepted(page.context(), async () => {
     await form.locator('[data-role="master-password"]').fill(secrets.password);
     await pace();
     await form.locator('[data-role="submit"]').click();
-    const outcome = await Promise.race([
-      done.waitFor({ timeout: 300_000 }).then(() => "done", () => "timeout"),
-      refusal.waitFor({ timeout: 300_000 }).then(() => "refused", () => "timeout"),
-    ]);
-    if (outcome === "done") break;
+  });
+  const outcome = await Promise.race([
+    done.waitFor({ timeout: 300_000 }).then(() => "done", () => "timeout"),
+    refusal.waitFor({ timeout: 300_000 }).then(() => "refused", () => "timeout"),
+  ]);
+  if (outcome !== "done") {
     const said = outcome === "refused" ? ((await refusal.textContent()) ?? "") : "nothing within five minutes";
-    if (/Too many attempts/.test(said) && tries < 4) {
-      await page.waitForTimeout(25_000);
-      continue;
-    }
     throw new Error(`the import did not finish: ${said}`);
   }
   await expect(done).toHaveText(`Items sent to the server: ${items}.`);

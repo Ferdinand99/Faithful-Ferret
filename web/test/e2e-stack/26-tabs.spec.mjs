@@ -2,7 +2,7 @@
 // form comes back whole; locking the tab that holds the vault hands it to the tab that waits, and a tab that is out of view does not
 // take it; a tab that does not answer is warned about, and a waiting tab that nobody sees does not stand in the way. The last
 // scenario puts a copy of the server's data back over a server that has purged the tombstones the copy still holds.
-import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, useAccount, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
 
 // The scenarios do not depend on each other (each makes its own browsers), so one that fails does not skip the rest.
 noViolations();
@@ -18,21 +18,12 @@ const list = (page) => page.locator('[data-role="list"]');
 
 /**
  * Unlocks the vault in a tab. The server's limit counts the sign-ins and unlocks of the earlier scenarios too, which this process does not
- * know of: when it says so, the wait it names is taken and the form is sent again.
+ * know of: when it says so, the wait it names is taken and the form is sent again (see untilStartAccepted).
  * @param {import("@playwright/test").Page} page @param {import("@playwright/test").Locator} done what shows when the unlock has worked
  */
 async function unlockPatiently(page, done) {
-  const limit = page.locator('[data-role="error"]').filter({ hasText: /Too many attempts/ });
-  for (let tries = 0; ; tries += 1) {
-    await unlockWith(page, secrets.password);
-    const outcome = await Promise.race([
-      done.waitFor({ timeout: SLOW }).then(() => "done", () => "timeout"),
-      limit.waitFor({ timeout: SLOW }).then(() => "limited", () => "timeout"),
-    ]);
-    if (outcome !== "limited" || tries >= 5) return;
-    const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
-    await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
-  }
+  await untilStartAccepted(page.context(), () => unlockWith(page, secrets.password));
+  await done.waitFor({ timeout: SLOW }).catch(() => {});
 }
 
 /**
