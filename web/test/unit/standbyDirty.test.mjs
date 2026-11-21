@@ -237,3 +237,39 @@ async function draftNeverLeaves(printed) {
     }
   });
 }
+
+test("a_screen_that_was_replaced_before_the_vault_moved_does_not_build_the_kept_form_a_second_time", async () => {
+  await withDom(async () => {
+    const b = await browser();
+    const one = await b.tab();
+    const two = await b.tab();
+    const p1 = pageOf(one);
+    const p2 = pageOf(two);
+    // The first tab showed the list, then the form for a new item; the frame of the list has left the page.
+    const old = await listRoute.load(p1.ctx("/items"));
+    const frame1 = await newRoute.load(p1.ctx("/items/new"));
+    old.isConnected = false;
+    frame1.isConnected = true;
+    const card2 = await listRoute.load(p2.ctx("/items"));
+    assert.ok(find(card2, "standby"), "the second tab is on standby");
+    find(frame1, "name").value = NAME_TEXT;
+    find(frame1, "password").value = SECRET;
+    try {
+      await two.sync.takeOver();
+      await until(() => one.sync.standby(), "the first tab is on standby");
+      assert.ok(find(frame1, "take-back"), "the form is kept under the notice");
+      assert.equal(find(old, "take-back"), null, "the screen that left the page builds nothing");
+      await click(find(frame1, "take-back"));
+      await until(() => one.sync.current() !== null, "the first tab has the engine again");
+      await settle(10);
+      assert.deepEqual(p1.moves, ["/items/new"], "the screen is built once: a second build would find the form gone and make an empty one");
+      const again = await newRoute.load(p1.ctx("/items/new"));
+      assert.equal(find(again, "name").value, NAME_TEXT, "the kept form comes back with what was typed");
+      assert.equal(find(again, "password").value, SECRET);
+    } finally {
+      p1.done();
+      p2.done();
+      b.stopAll();
+    }
+  });
+});

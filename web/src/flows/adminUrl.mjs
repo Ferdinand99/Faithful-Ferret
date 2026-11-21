@@ -26,7 +26,8 @@ export function configuredAdminUrl(doc = globalThis.document, pageOrigin = globa
 }
 
 /**
- * Where the "Go to the admin pages" buttons land on the admin origin. The admin
- * origin has no page of its own at `/`, so the landing page is the settings page.
+ * Where the "Go to the admin pages" buttons land on the admin origin: the first
+ * page of the settings. The bare admin address redirects to it too; naming it
+ * here saves that step.
  */
 export const ADMIN_LANDING = "/settings/general";

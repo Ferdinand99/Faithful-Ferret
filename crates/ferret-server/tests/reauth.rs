@@ -31,6 +31,7 @@ use ferret_server_auth::{
 };
 use serde_json::{Value, json};
 use support::accounts::{account_ids, insert_user, rows};
+use support::handoff::set_role;
 use support::session::{get_with, issue};
 use support::{Jar, PEER, Req, Res, TestApp, Which};
 
@@ -386,6 +387,23 @@ async fn reauth_on_one_session_does_not_make_another_fresh() {
     assert_eq!(get_with(&router, &mixed, "/fresh").await.status, 403);
     let info = session_info(&app, &mut second).await;
     assert!(info.json().get("reauth_until").is_none(), "{}", info.text());
+}
+
+#[tokio::test]
+async fn session_answer_says_only_an_administrator_is_one() {
+    let app = app().await;
+    let user = seed(&app, 1, ALICE).await;
+    let mut jar = Jar::default();
+    sign_in(&app, &mut jar).await;
+    // A user with another role: the key is not there.
+    let info = session_info(&app, &mut jar).await;
+    assert_eq!(info.status, 200, "{}", info.text());
+    assert!(info.json().get("admin").is_none(), "{}", info.text());
+    // An administrator: `admin` is true.
+    set_role(&app, user, "admin").await;
+    let info = session_info(&app, &mut jar).await;
+    assert_eq!(info.status, 200, "{}", info.text());
+    assert_eq!(info.json()["admin"], json!(true), "{}", info.text());
 }
 
 #[tokio::test]

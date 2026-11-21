@@ -138,29 +138,48 @@ if (publishedList.join() !== wantPorts.join()) fail("the loopback ports must be 
 if (ports.map((p) => Number(p.target)).sort((a, b) => a - b).join() !== "3040,3041") fail("the container ports must be 3040 and 3041");
 for (const [k, s] of Object.entries(services)) if (k !== P + "-app" && (s.ports || []).length) fail(k + ": publishes a port");
 
-// The network of the stack, with a fixed subnet and a fixed gateway; the one trusted proxy is the gateway.
+// Two networks, each with a fixed subnet and a fixed gateway: the network of the app (the one trusted
+// proxy is its gateway) and the network of the copy container, which is never the one of the app (the
+// copy container holds an SSH key and talks to another machine, so it must not reach the ports of the
+// app without the proxy).
+const appNet = P + "-net";
+const copyNet = P + "-copy-net";
 const nets = c.networks || {};
-if (Object.keys(nets).join() !== P + "-net") fail("exactly the network " + P + "-net");
-const net = nets[P + "-net"];
-if (net.name !== P + "-net" || net.labels?.owner !== labelValue) fail("network name and label");
-if (net.external || net.internal) fail("the network is made here and is not internal (a published port needs a routed network)");
-const cfg = net.ipam?.config || [];
-if (cfg.length !== 1 || !/^\d+\.\d+\.\d+\.\d+\/(2[89]|30)$/.test(cfg[0].subnet || "") || !ipv4.test(cfg[0].gateway || "")) fail("one IPv4 subnet (/28 to /30) with a fixed gateway");
-const { subnet, gateway } = cfg[0];
-if (!inSubnet(gateway, subnet)) fail("the gateway is not in the subnet");
+if (Object.keys(nets).sort().join() !== [appNet, copyNet].sort().join()) fail("exactly the networks " + appNet + " and " + copyNet);
+const subnetOf = {};
+for (const name of [appNet, copyNet]) {
+  const net = nets[name];
+  if (net.name !== name || net.labels?.owner !== labelValue) fail("network name and label (" + name + ")");
+  if (net.external || net.internal) fail("the network " + name + " is made here and is not internal (a published port and the way out to the copy target need a routed network)");
+  const cfg = net.ipam?.config || [];
+  if (cfg.length !== 1 || !/^\d+\.\d+\.\d+\.\d+\/(2[89]|30)$/.test(cfg[0].subnet || "") || !ipv4.test(cfg[0].gateway || "")) fail("one IPv4 subnet (/28 to /30) with a fixed gateway (" + name + ")");
+  if (!inSubnet(cfg[0].gateway, cfg[0].subnet)) fail("the gateway is not in the subnet (" + name + ")");
+  subnetOf[name] = cfg[0];
+}
+const { subnet, gateway } = subnetOf[appNet];
+const other = subnetOf[copyNet];
+if (inSubnet(other.gateway, subnet) || inSubnet(gateway, other.subnet) || inSubnet(other.subnet.split("/")[0], subnet) || inSubnet(subnet.split("/")[0], other.subnet)) fail("the subnets of " + appNet + " and " + copyNet + " overlap");
 if (refusedByServer(gateway)) fail("the gateway " + gateway + " is a .1 address of a Docker pool: the server refuses to trust it");
 const env = app.environment || {};
 if (env.FERRET_TRUSTED_PROXIES !== gateway) fail("FERRET_TRUSTED_PROXIES must be exactly the gateway " + gateway + ", got " + env.FERRET_TRUSTED_PROXIES);
 if (env.FERRET_TRUST_PROXY !== "1") fail("FERRET_TRUST_PROXY");
+// Which network each service is on; the proxy stand-in and the key services of the drill have none.
+const netOf = { [P + "-app"]: appNet, [P + "-copy"]: copyNet, [P + "-target"]: copyNet };
 for (const [k, s] of Object.entries(services)) {
   if (k === P + "-tls" || k === P + "-keys" || k === P + "-decrypt") continue;
+  const want = netOf[k];
+  if (!want) fail(k + ": a service with no network rule");
   const keys = Object.keys(s.networks || {});
-  if (keys.join() !== P + "-net") fail(k + ": only the network " + P + "-net");
-  const a = s.networks[P + "-net"].ipv4_address;
-  if (!a || !ipv4.test(a) || !inSubnet(a, subnet) || a === gateway) fail(k + ": a fixed address in the subnet that is not the gateway");
+  if (k === P + "-copy" && keys.includes(appNet)) fail("the copy container is never on the app network " + appNet);
+  if (keys.join() !== want) fail(k + ": only the network " + want);
+  const a = s.networks[want].ipv4_address;
+  if (!a || !ipv4.test(a) || !inSubnet(a, subnetOf[want].subnet) || a === subnetOf[want].gateway) fail(k + ": a fixed address in the subnet that is not the gateway");
 }
-const addrs = Object.entries(services).map(([, s]) => s.networks?.[P + "-net"]?.ipv4_address).filter(Boolean);
+const addrs = Object.entries(services).flatMap(([, s]) => Object.values(s.networks || {}).map((n) => n?.ipv4_address)).filter(Boolean);
 if (new Set(addrs).size !== addrs.length) fail("two services share an address");
+// The peer log (one line per new client address) is off on the stack for real data unless it is
+// switched on for a check (FERRET_HOME_LOG_PEERS=1 for `up`).
+if (mode === "home" && !["0", "1"].includes(String(env.FERRET_LOG_PEERS))) fail("FERRET_LOG_PEERS must be 0 (the default) or 1 (for a check), got " + env.FERRET_LOG_PEERS);
 
 // The app.
 if (app.read_only !== true) fail("the app: read_only");
@@ -371,8 +390,18 @@ status() {
   echo "network gateway: $(dk network inspect --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' ferret-home-net 2>/dev/null || echo none)"
   echo "trusted proxy:   $(dk inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$app" 2>/dev/null | sed -n 's/^FERRET_TRUSTED_PROXIES=//p')"
   echo "copy container mounts: $(dk inspect --format '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{if .RW}}rw{{else}}ro{{end}} {{end}}' "$copy" 2>/dev/null || echo none)"
-  echo "peer addresses the server has seen:"
-  dk logs "$app" 2>&1 | grep -i 'new peer address' | sed 's/\x1b\[[0-9;]*m//g' | tail -n 10 || echo "  none yet"
+  # The $k of the template is Go's, not the shell's.
+  # shellcheck disable=SC2016
+  echo "copy container networks: $(dk inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$copy" 2>/dev/null || echo none)"
+  local peer_log
+  peer_log="$(dk inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$app" 2>/dev/null | sed -n 's/^FERRET_LOG_PEERS=//p')"
+  if [ "$peer_log" = 1 ]; then
+    echo "peer log: ON (switch it off after the check: run up again without FERRET_HOME_LOG_PEERS)"
+    echo "peer addresses the server has seen:"
+    dk logs "$app" 2>&1 | grep -i 'new peer address' | sed 's/\x1b\[[0-9;]*m//g' | tail -n 10 || echo "  none yet"
+  else
+    echo "peer log: off (FERRET_HOME_LOG_PEERS=1 for up switches it on for the forged X-Forwarded-For check)"
+  fi
 }
 
 down() {
@@ -457,6 +486,18 @@ drill() {
     "127.0.0.1:13040 127.0.0.1:13041" \
     "$(dk port ferret-drill-app | sed 's#^[0-9]*/tcp -> ##' | sort | tr '\n' ' ' | sed 's/ $//')"
   drill_check "the proxy stand-in is on the host network and publishes nothing" "host" "$(dk inspect --format '{{.HostConfig.NetworkMode}}' ferret-drill-tls)"
+
+  say "the copy container cannot open the app's ports (its own network, no way to the loopback ports)"
+  local reach target_url
+  for target_url in http://172.30.252.2:3040/ http://172.30.252.2:3041/ http://172.30.252.17:13040/ http://172.30.252.17:13041/; do
+    reach=0
+    dcd run -T --rm --no-deps --entrypoint curl ferret-drill-copy -sS -o /dev/null --max-time 5 "$target_url" > /dev/null 2>&1 || reach=$?
+    # 7: no connection, 28: no answer in time. Anything else means something answered.
+    case "$reach" in
+      7 | 28) drill_ok "the copy container cannot reach $target_url" ;;
+      *) drill_bad "the copy container reached $target_url (curl exit $reach)" ;;
+    esac
+  done
 
   say "an account and an item (browser, through the proxy stand-in)"
   local ca vault admin state out

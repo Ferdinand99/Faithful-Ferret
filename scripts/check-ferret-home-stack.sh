@@ -18,6 +18,8 @@
 #   the_image_has_no_test_features_and_its_revision_is_the_release_tag
 #   up_refuses_a_branch_build
 #   the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
+#   the_copy_container_is_never_on_the_app_network
+#   peer_log_is_off_by_default
 #   copies_on_the_target_are_age_files_never_plain_sets
 #   drill_stack_has_its_own_volumes_and_label
 #   home_env_is_never_read_by_the_script
@@ -413,6 +415,60 @@ the_copy_container_mounts_the_backups_read_only_and_has_no_private_key() {
   pass the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
 }
 
+the_copy_container_is_never_on_the_app_network() {
+  # The copy container holds an SSH key and talks to another machine: it is on a network of its own,
+  # so it cannot open the app's ports 3040 and 3041 without the proxy. The drill tries it for real.
+  node -e '
+const c = JSON.parse(process.argv[1]);
+const fail = (m) => { console.error(m); process.exit(1); };
+const nets = (s) => Object.keys(s.networks || {}).sort().join();
+if (nets(c.services["ferret-home-app"]) !== "ferret-home-net") fail("the app is on ferret-home-net only");
+if (nets(c.services["ferret-home-copy"]) !== "ferret-home-copy-net") fail("the copy container is on ferret-home-copy-net only");
+const copyNet = c.networks["ferret-home-copy-net"];
+if (copyNet.internal) fail("the copy network needs a way out to the target");
+if (copyNet.ipam.config[0].subnet !== "172.30.251.16/28") fail("the copy network has its own fixed subnet");' "$home_json" \
+    || fail "the copy container must be on ferret-home-copy-net only, apart from the app"
+  node -e '
+const c = JSON.parse(process.argv[1]);
+const nets = (s) => Object.keys(s.networks || {}).sort().join();
+if (nets(c.services["ferret-drill-app"]) !== "ferret-drill-net") process.exit(1);
+if (nets(c.services["ferret-drill-copy"]) !== "ferret-drill-copy-net") process.exit(1);
+if (nets(c.services["ferret-drill-target"]) !== "ferret-drill-copy-net") process.exit(1);
+if (c.services["ferret-drill-copy"].environment.FERRET_COPY_SFTP_HOST !== c.services["ferret-drill-target"].networks["ferret-drill-copy-net"].ipv4_address) process.exit(1);' "$drill_json" \
+    || fail "the drill must put the copy container and its test target on ferret-drill-copy-net, apart from the app"
+  refused home "the copy container on the app network too" "${copy}.networks['ferret-home-net'] = { ipv4_address: '172.30.251.3' }" "never on the app network"
+  refused home "the copy container on the app network only" "${copy}.networks = { 'ferret-home-net': { ipv4_address: '172.30.251.3' } }" "never on the app network"
+  refused home "the app on the copy network too" "${app}.networks['ferret-home-copy-net'] = { ipv4_address: '172.30.251.19' }" "only the network ferret-home-net"
+  refused home "one network for both" "delete c.networks['ferret-home-copy-net']" "exactly the networks"
+  refused home "a third network" "c.networks.extra = { name: 'extra', labels: { owner: 'ferret-home' }, ipam: { config: [{ subnet: '172.30.251.32/28', gateway: '172.30.251.33' }] } }" "exactly the networks"
+  refused home "overlapping subnets" "c.networks['ferret-home-copy-net'].ipam.config[0] = { subnet: '172.30.251.0/28', gateway: '172.30.251.13' }; ${copy}.networks['ferret-home-copy-net'].ipv4_address = '172.30.251.4'" "overlap"
+  refused home "an internal copy network" "c.networks['ferret-home-copy-net'].internal = true" "not internal"
+  refused home "the copy container without a fixed address" "delete ${copy}.networks['ferret-home-copy-net'].ipv4_address" "fixed address"
+  refused home "the copy container on an address of the app network" "${copy}.networks['ferret-home-copy-net'].ipv4_address = '172.30.251.3'" "fixed address"
+  refused home "a copy network without the label" "delete c.networks['ferret-home-copy-net'].labels.owner" "network name and label"
+  refused drill "the copy container of the drill on the app network" 'c.services["ferret-drill-copy"].networks["ferret-drill-net"] = { ipv4_address: "172.30.252.3" }' "never on the app network"
+  refused drill "the test target on the app network" 'c.services["ferret-drill-target"].networks = { "ferret-drill-net": { ipv4_address: "172.30.252.4" } }' "only the network ferret-drill-copy-net"
+  # The drill tries the app's ports from the copy container, and must fail to reach them.
+  grep -q 'the copy container cannot reach' scripts/ferret-home.sh || fail "the drill must try the app's ports from the copy container"
+  pass the_copy_container_is_never_on_the_app_network
+}
+
+peer_log_is_off_by_default() {
+  # IP addresses are not kept longer than needed: the stack for real data starts with the peer log
+  # off, and it can be switched on for the forged X-Forwarded-For check.
+  local peers='process.stdout.write(String(JSON.parse(require("fs").readFileSync(0, "utf8")).services["ferret-home-app"].environment.FERRET_LOG_PEERS))'
+  [ "$(printf '%s' "$home_json" | node -e "$peers")" = 0 ] || fail "FERRET_LOG_PEERS must be 0 on the stack for real data by default"
+  local on_json
+  on_json="$(FERRET_HOME_LOG_PEERS=1 render home)"
+  [ "$(printf '%s' "$on_json" | node -e "$peers")" = 1 ] || fail "FERRET_HOME_LOG_PEERS=1 must switch the peer log on"
+  printf '%s' "$on_json" | scripts/ferret-home.sh verify-json home > /dev/null || fail "the stack with the peer log on for a check must pass its own check"
+  refused home "a peer log value that is neither 0 nor 1" "${app}.environment.FERRET_LOG_PEERS = 'yes'" "FERRET_LOG_PEERS"
+  refused home "no peer log setting" "delete ${app}.environment.FERRET_LOG_PEERS" "FERRET_LOG_PEERS"
+  grep -q 'FERRET_HOME_LOG_PEERS=1 scripts/ferret-home.sh up' "$home_compose" || fail "the compose file must say how to switch the peer log on for a check"
+  grep -q 'peer log: off' scripts/ferret-home.sh || fail "status must say whether the peer log is on"
+  pass peer_log_is_off_by_default
+}
+
 drill_stack_has_its_own_volumes_and_label() {
   node -e '
 const c = JSON.parse(process.argv[1]);
@@ -421,7 +477,7 @@ for (const other of ["ferret-home", "ferret-test", "ferret-e2e"]) if (text.inclu
 const vols = Object.entries(c.volumes);
 if (vols.length < 7 || vols.some(([k, v]) => !k.startsWith("ferret-drill-") || v.labels.owner !== "ferret-drill")) { console.error("volumes"); process.exit(1); }
 for (const [k, s] of Object.entries(c.services)) if (s.labels.owner !== "ferret-drill") { console.error(k); process.exit(1); }
-if (c.networks["ferret-drill-net"].labels.owner !== "ferret-drill") process.exit(1);' "$drill_json" || fail "the drill must have its own names and the label owner=ferret-drill"
+for (const n of ["ferret-drill-net", "ferret-drill-copy-net"]) if (c.networks[n].labels.owner !== "ferret-drill") process.exit(1);' "$drill_json" || fail "the drill must have its own names and the label owner=ferret-drill"
   refused drill "a volume of the real stack" "c.volumes['ferret-home-data'] = { name: 'ferret-home-data', labels: { owner: 'ferret-drill' } }" "volumes must be"
   refused drill "a volume without the label" "delete c.volumes['ferret-drill-data'].labels.owner" "label owner=ferret-drill"
   refused drill "a volume with the label of the real stack" "c.volumes['ferret-drill-data'].labels.owner = 'ferret-home'" "label owner=ferret-drill"
@@ -704,6 +760,8 @@ the_image_has_no_test_features_and_its_revision_is_the_release_tag
 up_refuses_a_branch_build
 up_checks_the_machine_and_records_what_it_started
 the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
+the_copy_container_is_never_on_the_app_network
+peer_log_is_off_by_default
 drill_stack_has_its_own_volumes_and_label
 home_env_is_never_read_by_the_script
 copies_on_the_target_are_age_files_never_plain_sets

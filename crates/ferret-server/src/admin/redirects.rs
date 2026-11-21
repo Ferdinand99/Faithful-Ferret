@@ -30,6 +30,7 @@ use axum::routing::get;
 
 use crate::auth::handoff::sanitize_next;
 use crate::config::Origins;
+use crate::product;
 
 /// The first value of a query parameter, decoded.
 pub fn query_param(raw: Option<&str>, name: &str) -> Option<String> {
@@ -116,14 +117,24 @@ async fn setup(State(origins): State<Origins>, RawQuery(query): RawQuery) -> Red
     Redirect::to(&target)
 }
 
-/// `/vault/{login,setup,password,reauth}`. `/sign-in-code` is not a route here:
-/// the kit has one, so [`sign_in_code_to_recover`] answers it as a layer.
+/// `GET /` on the admin listener: the bare admin address is the way in. It is
+/// a `303` to [`product::ADMIN_LANDING`] and nothing more: the landing page is
+/// behind the admin session guard, which sends a visitor without a session on
+/// through the normal sign-in hand-over. Nothing is read or shown here.
+async fn root() -> Redirect {
+    Redirect::to(product::ADMIN_LANDING)
+}
+
+/// `/` and `/vault/{login,setup,password,reauth}`. `/sign-in-code` is not a
+/// route here: the kit has one, so [`sign_in_code_to_recover`] answers it as a
+/// layer.
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     Origins: FromRef<S>,
 {
     Router::new()
+        .route("/", get(root))
         .route("/vault/login", get(login))
         .route("/vault/password", get(password))
         .route("/vault/reauth", get(reauth))

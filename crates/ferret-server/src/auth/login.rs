@@ -1535,17 +1535,17 @@ async fn session_vault(
         .vault_db
         .with_conn(move |conn| {
             let row = lookup(conn, &sid)?;
-            let email: Option<String> = conn
+            let user: Option<(String, bool)> = conn
                 .query_row(
-                    "SELECT username FROM users WHERE id = ?1",
+                    "SELECT username, role = 'admin' AND active = 1 FROM users WHERE id = ?1",
                     params![user_id],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
-            Ok(row.zip(email))
+            Ok(row.zip(user))
         })
         .await?;
-    let Some((row, email)) = found else {
+    let Some((row, (email, admin))) = found else {
         return Err(ApiError::unauthorized());
     };
     Ok(no_store(
@@ -1555,6 +1555,8 @@ async fn session_vault(
             scope: scope.as_str().to_string(),
             origin: OriginJson::Vault,
             reauth_until: reauth_until(&row, now),
+            // A reset session (from a one-time code) is told nothing of the role.
+            admin: (admin && scope == SessionScope::Full).then_some(true),
         })
         .into_response(),
     ))
@@ -1587,6 +1589,7 @@ async fn session_admin(
             scope: SessionScope::Full.as_str().to_string(),
             origin: OriginJson::Admin,
             reauth_until: None,
+            admin: None,
         })
         .into_response(),
     ))

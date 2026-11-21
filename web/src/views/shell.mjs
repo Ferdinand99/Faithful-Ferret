@@ -295,6 +295,10 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
 
   // A frame built while the engine is stopped says so from the start.
   if (warnings !== null && engine.health().halted !== null) onState({ kind: "halted", code: engine.health().halted });
+  // A state that the engine announced before this screen was built (a write that was refused while the page changed screens) is
+  // said now: the announcement is made once, and a screen that missed it would show "Syncing" for good.
+  const stood = typeof engine.status === "function" ? engine.status() : "";
+  if (stood === "unauthorized" || stood === "offline" || stood === "failed") onState({ kind: stood });
   listenWhileShown(root, engine, "state", onState);
   listenWhileShown(root, engine, "error", onError);
 

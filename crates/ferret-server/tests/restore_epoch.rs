@@ -8,32 +8,41 @@
 
 mod support;
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::extract::ConnectInfo;
+use axum::http::{Request, StatusCode, header};
+use axum::response::IntoResponse as _;
+use axum_extra::extract::cookie::SignedCookieJar;
 use ferret_core::{
     ItemBody, ItemType, OsRng, UnlockedVault, VaultContext, VaultKey, encrypt_item, make_tombstone,
 };
-use ferret_server::auth::session::Origin;
+use ferret_server::auth::session::{Origin, insert_session, new_session, session_cookies};
+use ferret_server::backup::set::SECRET_FILES;
 use ferret_server::cli::{self, Command as Cmd};
 use ferret_server::config::Config;
 use ferret_server::data_lock;
 use ferret_server::error::StoreError;
-use ferret_server::ids::ItemId;
-use ferret_server::product;
+use ferret_server::ids::{DeviceId, ItemId};
+use ferret_server::product::{self, SESSION_COOKIE};
+use ferret_server::server;
+use ferret_server::state::FerretState;
 use ferret_server::vault::reconcile::{self, bump_restore_epoch};
 use ferret_server::wire::{BatchRes, BatchResultJson, MAX_JSON_INT, b64url, hex16};
-use ferret_server_auth::SessionScope;
+use ferret_server_auth::{ManualClock, SessionScope};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::accounts::{add_account, add_account_to_app};
+use support::accounts::{add_account, add_account_to_app, id16};
 use support::session::issue;
-use support::{ADMIN_URL, Res, TestApp, VAULT_URL, Which};
+use support::{ADMIN_URL, Jar, PEER, Res, START, TestApp, VAULT_URL, Which};
+use tower::ServiceExt as _;
 use vole_kit::db::migrate::apply_migrations;
 
 const BIN: &str = env!("CARGO_BIN_EXE_ferret");
@@ -282,13 +291,14 @@ fn assert_bumped_to_the_time(epochs: &[i64], before: i64) {
     }
 }
 
-/// The epoch in "restore epoch is now <n> (<rest>)".
+/// The epoch in "restore epoch is now <n> (<rest>); <what the bump ended>".
 fn said_epoch(stdout: &str, rest: &str) -> i64 {
     stdout
         .trim()
         .strip_prefix("restore epoch is now ")
-        .and_then(|tail| tail.strip_suffix(&format!(" ({rest})")))
-        .and_then(|n| n.parse().ok())
+        .and_then(|tail| tail.split_once(' '))
+        .filter(|(_, after)| after.starts_with(&format!("({rest}); ")))
+        .and_then(|(n, _)| n.parse().ok())
         .unwrap_or_else(|| panic!("an epoch line: {stdout}"))
 }
 
@@ -385,7 +395,8 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
     assert_eq!(
         ran.stdout.trim(),
-        "restore epoch is now 4000000000 (2 vaults raised)"
+        "restore epoch is now 4000000000 (2 vaults raised); 0 sessions ended, 0 sign-in codes \
+         revoked"
     );
     assert_eq!(epochs(&copy.db()), [4_000_000_000, 4_000_000_000]);
 
@@ -416,6 +427,276 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
             .any(|n| n.contains("secret") || n.ends_with(".key")),
         "{names:?}"
     );
+}
+
+/// The database and the secret files of a running app, copied into a data
+/// directory of their own as a copy by hand would hold them (`0600`): what a
+/// stopped server leaves, put back.
+async fn copy_of_the_data_directory(app: &TestApp) -> Dir {
+    let copy = Dir::new("hand-copy");
+    let target = copy.path().join(product::DB_FILE);
+    let target_text = target.to_string_lossy().into_owned();
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute("VACUUM INTO ?1", [target_text])?;
+            Ok(())
+        })
+        .await
+        .expect("copy the database");
+    for name in SECRET_FILES {
+        std::fs::copy(app.dir.join(name), copy.path().join(name)).expect("copy a secret file");
+    }
+    #[cfg(unix)]
+    for name in [product::DB_FILE].into_iter().chain(SECRET_FILES) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            copy.path().join(name),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("private");
+    }
+    copy
+}
+
+/// One number out of the copy.
+fn one(dir: &Dir, sql: &str) -> i64 {
+    dir.db()
+        .query_row(sql, [], |row| row.get(0))
+        .expect("a number")
+}
+
+/// The server's start-up on a data directory, with its clock a minute after
+/// the sessions of the app were made: they would still be good by their age.
+async fn start_on(dir: &Dir) -> FerretState {
+    let config = Config {
+        data_dir: dir.path().to_path_buf(),
+        host: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        vault_port: 3041,
+        admin_port: 3040,
+        vault_url: VAULT_URL.to_string(),
+        admin_url: ADMIN_URL.to_string(),
+        trusted_proxies: Vec::new(),
+        backup_dir: None,
+        backup_every_hours: 24,
+        backup_keep_days: 30,
+        backup_push_url: None,
+    };
+    let clock = Arc::new(ManualClock::new(START + 60));
+    ferret_server::start(&config, clock)
+        .await
+        .expect("the server starts on the copy")
+}
+
+/// A new vault session for `user_id` on a started server, at the user's
+/// `session_version` now, and its cookies. It is made at [`START`], the second
+/// the sessions of the app were made, so a kit cookie of theirs differs from
+/// its own only in the version.
+async fn sign_in_on(state: &FerretState, user_id: i64) -> Jar {
+    let version: i64 = state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT session_version FROM users WHERE id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("a session version");
+    let (secret, session, claims) = new_session(
+        &mut OsRng,
+        i64::try_from(START).expect("a time"),
+        user_id,
+        version,
+        Origin::Vault,
+        DeviceId(id16(0xd7, 9)),
+        "Test browser",
+        SessionScope::Full,
+    );
+    state
+        .vault_db
+        .with_conn(move |conn| Ok(insert_session(conn, &session)?))
+        .await
+        .expect("a session");
+    let cookies = session_cookies(
+        SignedCookieJar::new(state.core.session_key.clone()),
+        &secret,
+        &claims,
+        true,
+    )
+    .into_response();
+    let mut jar = Jar::default();
+    jar.absorb(cookies.headers());
+    jar
+}
+
+/// A `GET` to the vault listener of a started server.
+async fn vault_get_on(state: &FerretState, jar: &Jar, uri: &str) -> StatusCode {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header(header::HOST, Which::Vault.host());
+    if let Some(cookie) = jar.header() {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    let mut request = builder.body(Body::empty()).expect("a request");
+    let peer: SocketAddr = PEER.parse().expect("a peer");
+    request.extensions_mut().insert(ConnectInfo(peer));
+    server::vault_router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response")
+        .status()
+}
+
+/// A copy of the data directory put back by hand, then `ferret restore-epoch
+/// bump`: the bump ends what was live in the copy, in the same transaction as
+/// the epoch, as `ferret backup restore` does. Spec: Fase 1 § 8.6 and § 11.
+#[tokio::test]
+async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy() {
+    let app = TestApp::new().await;
+    let account = add_account_to_app(&app, 1).await;
+    let user = account.user_id;
+    let vault = issue(&app, user, Origin::Vault, SessionScope::Full, 1).await;
+    let admin = issue(&app, user, Origin::Admin, SessionScope::Full, 2).await;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO sign_in_codes (user_id, code_hash, expires_at) \
+                 VALUES (?1, randomblob(32), datetime('now', '+1 day'))",
+                [user],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a pending code");
+    let version = support::session::session_version(&app, user).await;
+    // The sessions work when the copy is made.
+    let items = get("/api/sync/items", &vault.jar);
+    assert_eq!(
+        app.call_raw(Which::Vault, items).await.status,
+        StatusCode::OK
+    );
+
+    let copy = copy_of_the_data_directory(&app).await;
+    let live = "SELECT COUNT(*) FROM ferret_sessions WHERE revoked_at IS NULL";
+    let pending = "SELECT COUNT(*) FROM sign_in_codes WHERE used_at IS NULL AND revoked_at IS NULL";
+    assert_eq!(one(&copy, live), 2, "both sessions are live in the copy");
+    assert_eq!(one(&copy, pending), 1, "the code is pending in the copy");
+
+    let before = wall_clock();
+    let ran = ferret(
+        &[
+            "restore-epoch",
+            "bump",
+            "--yes",
+            "--data-dir",
+            copy.path().to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+    let epoch = said_epoch(&ran.stdout, "1 vault raised");
+    assert!(
+        ran.stdout
+            .trim()
+            .ends_with("; 2 sessions ended, 1 sign-in code revoked"),
+        "{}",
+        ran.stdout
+    );
+    // The epoch rule holds: the vault was behind the time.
+    assert_bumped_to_the_time(&epochs(&copy.db()), before);
+    assert_eq!(epochs(&copy.db()), [epoch]);
+
+    // In the copy: no live session, no pending code, the version one higher,
+    // and none of the half-done sign-ins and hand-overs.
+    assert_eq!(one(&copy, live), 0);
+    for sid in [vault.sid, admin.sid] {
+        let revoked: Option<i64> = copy
+            .db()
+            .query_row(
+                "SELECT revoked_at FROM ferret_sessions WHERE sid_hash = ?1",
+                [sid.0.as_slice()],
+                |row| row.get(0),
+            )
+            .expect("the row");
+        assert!(revoked.is_some(), "the session is revoked");
+    }
+    assert_eq!(one(&copy, pending), 0, "the pending code is revoked");
+    assert_eq!(
+        one(
+            &copy,
+            &format!("SELECT session_version FROM users WHERE id = {user}")
+        ),
+        version + 1
+    );
+    for table in [
+        "ferret_handoffs",
+        "ferret_login_states",
+        "ferret_registrations",
+    ] {
+        assert_eq!(
+            one(&copy, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table}"
+        );
+    }
+
+    // On a server started on the copy, the old cookies get nowhere.
+    let state = start_on(&copy).await;
+    assert_eq!(
+        vault_get_on(&state, &vault.jar, "/api/sync/items").await,
+        StatusCode::UNAUTHORIZED,
+        "the vault session of the copy"
+    );
+    // A new sign-in gets in; with the kit cookie of the copy in place of its
+    // own, it does not: the raised version ends that cookie by itself.
+    let mut fresh = sign_in_on(&state, user).await;
+    assert_eq!(
+        vault_get_on(&state, &fresh, "/api/sync/items").await,
+        StatusCode::OK
+    );
+    fresh.set(
+        SESSION_COOKIE,
+        vault.jar.get(SESSION_COOKIE).expect("the kit cookie"),
+    );
+    assert_eq!(
+        vault_get_on(&state, &fresh, "/api/sync/items").await,
+        StatusCode::UNAUTHORIZED,
+        "the kit cookie of the copy"
+    );
+    drop(state);
+
+    // The rule again, with --at-least and then without: never lower, one more
+    // than stored when that is the highest. Each bump ends what is live: the
+    // sign-in made after the first one, then nothing.
+    for (args, said, ended) in [
+        (
+            vec!["--at-least", "4000000000"],
+            4_000_000_000_i64,
+            "1 session",
+        ),
+        (vec![], 4_000_000_001, "0 sessions"),
+    ] {
+        let mut full = vec![
+            "restore-epoch",
+            "bump",
+            "--yes",
+            "--data-dir",
+            copy.path().to_str().unwrap(),
+        ];
+        full.extend(args);
+        let ran = ferret(&full, &[]);
+        assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+        assert_eq!(
+            ran.stdout.trim(),
+            format!(
+                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked"
+            )
+        );
+    }
 }
 
 #[tokio::test]
@@ -609,15 +890,42 @@ async fn cli_refuses_while_another_process_holds_the_data_directory() {
     assert_bumped_to_the_time(&epochs(&copy.db()), NOW);
 }
 
-fn free_port() -> u16 {
-    let socket = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
-    socket.local_addr().expect("an address").port()
+/// Two different free ports. Both sockets are held until both ports are known,
+/// so the system cannot hand the same port out twice.
+fn free_ports() -> (u16, u16) {
+    let first = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let second = std::net::TcpListener::bind("127.0.0.1:0").expect("another free port");
+    let port = |socket: &std::net::TcpListener| socket.local_addr().expect("an address").port();
+    (port(&first), port(&second))
+}
+
+/// Whether the server on `port` answers `GET /healthz` with `200` and `ok`:
+/// an HTTP answer from this server, not just something that takes a connection.
+async fn healthz_ok(port: u16) -> bool {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+        return false;
+    };
+    let request = "GET /healthz HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+
+";
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut answer = Vec::new();
+    if stream.read_to_end(&mut answer).await.is_err() {
+        return false;
+    }
+    let answer = String::from_utf8_lossy(&answer);
+    answer.starts_with("HTTP/1.1 200") && answer.ends_with("ok")
 }
 
 #[tokio::test]
 async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
     let dir = Dir::new("live");
-    let (vault_port, admin_port) = (free_port(), free_port());
+    let (vault_port, admin_port) = free_ports();
     let config = Config {
         data_dir: dir.path().to_path_buf(),
         host: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
@@ -632,12 +940,9 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
         backup_push_url: None,
     };
     let server = tokio::spawn(ferret_server::server::run(config.clone()));
-    // Up when the vault port takes a connection.
+    // Up when the vault port answers `/healthz`.
     let started = Instant::now();
-    while tokio::net::TcpStream::connect(("127.0.0.1", vault_port))
-        .await
-        .is_err()
-    {
+    while !healthz_ok(vault_port).await {
         if server.is_finished() {
             panic!("the server ended: {:?}", server.await);
         }
@@ -671,9 +976,10 @@ async fn cli_refuses_while_the_server_runs_on_the_same_data_directory() {
     );
 
     // A second server on the same directory is refused for the same reason.
+    let (vault_port, admin_port) = free_ports();
     let second = Config {
-        vault_port: free_port(),
-        admin_port: free_port(),
+        vault_port,
+        admin_port,
         ..config
     };
     let err = ferret_server::server::run(second)
