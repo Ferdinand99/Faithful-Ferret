@@ -70,6 +70,17 @@ async function setHidden(page, hidden) {
   }, hidden);
 }
 
+/**
+ * The restore number the server shows now. The last page of the feed is asked for (a cursor at the end), so that a vault of more than
+ * a page, or a feed whose floor has moved (410 for an old cursor), does not matter.
+ * @param {import("@playwright/test").BrowserContext} context
+ */
+async function restoreEpochOf(context) {
+  const response = await context.request.get(`${vaultUrl}/api/sync/changes?since=9007199254740991&limit=1`, { headers: { "Ferret-Protocol": "1" } });
+  if (response.status() !== 200) throw new Error(`the change feed answered ${response.status()}`);
+  return (await response.json()).restore_epoch;
+}
+
 test("use_here_with_an_unsaved_edit_warns_first", async ({ browser }) => {
   test.setTimeout(900_000);
   const { context, page: first } = await newDevice(browser);
@@ -269,7 +280,7 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
 
   // The copy from before the purge is put back with a higher restore number: the tombstone is on the server again, with the feed floor
   // of the copy.
-  const epochSeen = (await feedOf(late.context)).restore_epoch;
+  const epochSeen = await restoreEpochOf(late.context);
   await hostStep("restore");
   const fresh = await newDevice(browser);
   await expect(rowsNamed(fresh.page, keep)).toHaveCount(1, { timeout: 90_000 });
@@ -287,7 +298,7 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
   await signInHere(late.page);
   await synced(late.page, 90_000);
   await late.page.waitForTimeout(10_000);
-  expect((await feedOf(late.context)).restore_epoch, "the server shows a higher restore number").toBeGreaterThan(epochSeen);
+  expect(await restoreEpochOf(late.context), "the server shows a higher restore number").toBeGreaterThan(epochSeen);
   const codes = await late.page.locator('[data-role="sync-banner"]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-code")));
   expect(codes, "no alarm and no offer").toEqual([]);
   await expect(late.page.locator('[data-role="banner"][data-banner^="error:"]')).toHaveCount(0);
