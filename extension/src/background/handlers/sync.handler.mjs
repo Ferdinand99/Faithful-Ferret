@@ -11,6 +11,8 @@ export const REASONS = Object.freeze([
   "sync_still_halted",
   "sync_not_running",
   "another_server",
+  "busy",
+  "forget_incomplete",
   "vault_locked",
   "worker_failed",
   "network",

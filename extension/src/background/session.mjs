@@ -34,10 +34,11 @@
 // engine starts there); every lock of the core host stops what they started.
 
 import { loadDeviceKey } from "../shared/auth/deviceKey.mjs";
+import { hex16 } from "../shared/b64.mjs";
 import { createCryptoSession } from "../shared/crypto/session.mjs";
 import { cache } from "../shared/store/cache.mjs";
 import { forgetServer, pendingWrites, sharedAccount } from "../shared/store/forget.mjs";
-import { openStore, serverKey } from "../shared/store/idb.mjs";
+import { openStore, req, run, serverKey } from "../shared/store/idb.mjs";
 import { outbox } from "../shared/store/outbox.mjs";
 import { loadPinned, loadPinnedAccount, pinnedElsewhere, pinnedForSignIn, savePinned } from "../shared/store/pinned.mjs";
 import { deleteSetting, deviceId, getSetting, setSetting } from "../shared/store/settings.mjs";
@@ -173,7 +174,30 @@ export function createLocalStore({ factory, keyRange } = {}) {
     forgetServer,
     pendingWrites,
     sharedAccount,
+    accountsOf,
   };
+}
+
+/**
+ * The accounts this device keeps records of under a server: the account ids in the keys of its pinned records, its
+ * sync states and its device secrets (`[server, account]`). Read from this device's own stores, never from the
+ * server, so "forget this server" finds them also after the device's tokens and key record have gone.
+ * @param {import("../shared/store/idb.mjs").Store} db
+ * @param {string} serverUrl
+ * @returns {Promise<string[]>}
+ */
+export async function accountsOf(db, serverUrl) {
+  const server = serverKey(serverUrl);
+  return run(db, ["pinned", "sync_state", "device_secrets"], "readonly", async (tables) => {
+    /** @type {Set<string>} */
+    const found = new Set();
+    for (const table of tables) {
+      for (const key of await req(table.getAllKeys())) {
+        if (Array.isArray(key) && key[0] === server && hex16.is(key[1])) found.add(/** @type {string} */ (key[1]));
+      }
+    }
+    return [...found].sort();
+  });
 }
 
 /**
@@ -349,6 +373,26 @@ export function createSessionHost({
     },
   });
 
+  // A sign-in or an unlock and "forget this server" never run at the same time: a forget that came while a sign-in
+  // was on its way would remove the old records while the sign-in saves a new device key and pin for the server
+  // being forgotten. Whichever comes second is refused with `busy` (the page says to try again).
+  /** How many sign-ins and unlocks are running. */
+  let opening = 0;
+  /** A forget is running. */
+  let forgetting = false;
+
+  /** @param {(args: any, context: import("./coreHost.mjs").OpContext) => Promise<unknown>} run */
+  const opener = (run) =>
+    op(async (args, context) => {
+      if (forgetting) throw new SessionError("busy");
+      opening += 1;
+      try {
+        return await run(args, context);
+      } finally {
+        opening -= 1;
+      }
+    });
+
   /**
    * After the shared session opened the vault: the core host opens too, and the
    * listeners of `onOpen` hear it; or (a lock came in the meantime) the session
@@ -394,7 +438,7 @@ export function createSessionHost({
       };
     }),
 
-    sign_in: op(async (args, context) => {
+    sign_in: opener(async (args, context) => {
       const checked = checkServer(args.server, { allowTestHosts });
       if (!checked.ok) throw new SessionError(checked.reason);
       const server = checked.server;
@@ -419,7 +463,7 @@ export function createSessionHost({
       return { ok: true, account_email: unlocked.email, server };
     }),
 
-    unlock: op(async (args, context) => {
+    unlock: opener(async (args, context) => {
       const server = await storedServer();
       if (server === null) throw new SessionError("signed_out");
       const session = await sessionOf(server);
@@ -476,6 +520,23 @@ export function createSessionHost({
 
     /** The name this device writes into what it saves ("Ferret for Firefox (Windows)"). */
     deviceName: async () => (await deviceOf()).deviceName,
+
+    /**
+     * Runs `fn` ("forget this server") while no sign-in or unlock runs, and keeps
+     * them out until it is done; refused with `busy` while one runs.
+     * @template T
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     */
+    async exclusive(fn) {
+      if (opening > 0 || forgetting) throw new SessionError("busy");
+      forgetting = true;
+      try {
+        return await fn();
+      } finally {
+        forgetting = false;
+      }
+    },
 
     /**
      * Forgets the server this device was signed in at: its address in

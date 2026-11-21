@@ -5,6 +5,7 @@
   "session.error.another_server": "Denne nettleseren er logget inn på en annen server. Glem den serveren først, og logg så inn her.",
   "session.error.attack_warning": "Advarsel: serveren viser noe annet enn det denne enheten har festet for kontoen din. Dette kan være et angrep. Ingenting ble åpnet. Ikke prøv igjen på dette nettet, og si fra til den som driver serveren.",
   "session.error.bad_response": "Serveren ga et svar Ferret ikke forstår. Prøv igjen senere.",
+  "session.error.busy": "Ferret glemmer en server akkurat nå. Vent til det er ferdig, og prøv igjen.",
   "session.error.disconnected": "Bakgrunnen til Ferret stoppet mens den arbeidet, og hvelvet er låst. Prøv igjen.",
   "session.error.email_required": "Skriv inn e-postadressen.",
   "session.error.internal_error": "Noe gikk galt i Ferret. Prøv igjen.",

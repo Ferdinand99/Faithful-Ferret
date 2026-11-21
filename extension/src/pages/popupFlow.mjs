@@ -48,6 +48,8 @@ export const WARNING_TEXTS = Object.freeze([
   "tombstone_unverified",
   "trash_copy_skipped",
   "unexpected_rev",
+  // An error the engine reports until it is fixed.
+  "checkpoint_upload_failed",
 ]);
 
 /** The states of the engine the popup has a text for (`sync.status.<state>`); before the first, `sync.status.starting`. */

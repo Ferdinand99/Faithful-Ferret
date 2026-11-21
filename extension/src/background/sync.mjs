@@ -48,6 +48,9 @@ const MAX_WARNINGS = 16;
 /** A code the popup may be given: a word of letters, digits and underscores. @param {unknown} code @returns {code is string} */
 const isCode = (code) => typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code);
 
+/** The engine's `error` events that the popup shows as warnings (the engine clears them with `warning_cleared`). */
+const ERROR_WARNINGS = Object.freeze(["checkpoint_upload_failed"]);
+
 /** The states of the live channel (`sync/events.mjs`). */
 const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
 
@@ -95,6 +98,7 @@ export class SyncHostError extends Error {
  *     sessionFor(server: string): Promise<AccountSession>,
  *     deviceName(): Promise<string>,
  *     forget(): Promise<void>,
+ *     exclusive<T>(fn: () => Promise<T>): Promise<T>,
  *   },
  *   permissions?: { remove?(p: { origins: string[] }): Promise<boolean> },
  *   locks?: any,
@@ -198,6 +202,17 @@ export function createSyncHost({
   }
 
   /**
+   * An error the engine reports: the ones that say something about the server and come back until they are fixed
+   * stand as warnings until the engine clears them (as the web vault shows them). Item-level errors belong to a list
+   * the popup does not have yet.
+   * @param {Running} run @param {any} payload
+   */
+  function onEngineError(run, payload) {
+    if (run.ended || !ERROR_WARNINGS.includes(payload?.code)) return;
+    onEngineState(run, { kind: "warning", code: payload.code });
+  }
+
+  /**
    * Starts the engine for the vault an op has just opened.
    * @param {{ server: string, session: AccountSession }} opened
    */
@@ -236,6 +251,7 @@ export function createSyncHost({
     const run = { engine, server, session, channel: null, live: "offline", seen: new Set(), ended: false };
     running = run;
     engine.on("state", (payload) => onEngineState(run, payload));
+    engine.on("error", (payload) => onEngineError(run, payload));
     engine.start().then(
       () => openChannel(run),
       () => {
@@ -273,59 +289,83 @@ export function createSyncHost({
   /**
    * "Forget this server" (design document, section 8.6), the steps of the shared
    * `forgetServer`: the device is revoked at the server and its key record
-   * deleted, the vault locks, and the account's records are removed inside the
+   * deleted, the vault locks, and each account's records are removed inside the
    * Web Lock of the sync memory. Then the stored address goes, and the host
    * permission. Nothing is left of the server, so another one can be signed in at.
+   *
+   * The accounts come from this device's own records, never from the server: the
+   * open session, the key record, and the keys of the pinned records, sync states
+   * and device secrets of that server. The last ones are still there when the
+   * device's tokens have ended (revoked, reused, expired: the key record went with
+   * them), and after a forget that failed half way, so a forget then still removes
+   * everything. It answers `ok` only when nothing of the server is left; until
+   * then the address stays, and the user can try again.
+   *
+   * It never runs at the same time as a sign-in or an unlock (`busy`).
    * @param {unknown} expected the server the page showed: a different stored one is not forgotten
    */
   async function forget(expected) {
     const server = await sessionHost.storedServer();
     if (server === null) return { ok: true };
     if (expected !== server) return { ok: false, reason: "another_server" };
-    stop();
-    const session = await sessionHost.sessionFor(server);
-    const db = await store.open();
-    // The account comes from this device's own records, never from the server.
-    let accountId = session.current()?.accountId ?? null;
-    if (!hex16.is(accountId)) accountId = (await loadDeviceKey(db, server).catch(() => null))?.accountId ?? null;
-    await host?.lock("sign_out");
-    // The device is signed out at the server (best effort: it is forgotten here whether or not the server answers), and
-    // whatever is left of its key record goes after that.
-    const revoke = async () => {
-      try {
-        await session.signOut?.();
-      } catch {
-        // `signout_incomplete`: the server could not be reached; the device is forgotten here all the same.
+    return sessionHost.exclusive(async () => {
+      stop();
+      const session = await sessionHost.sessionFor(server);
+      const db = await store.open();
+      /** @type {Set<string>} */
+      const accounts = new Set();
+      const open = session.current()?.accountId;
+      if (hex16.is(open)) accounts.add(/** @type {string} */ (open));
+      const keyed = (await loadDeviceKey(db, server).catch(() => null))?.accountId;
+      if (hex16.is(keyed)) accounts.add(/** @type {string} */ (keyed));
+      for (const id of await store.accountsOf(db, server)) accounts.add(id);
+      await host?.lock("sign_out");
+      // The device is signed out at the server once (best effort: it is forgotten here whether or not the server
+      // answers), and whatever is left of its key record goes after that.
+      let revoked = false;
+      const revoke = async () => {
+        if (revoked) return;
+        revoked = true;
+        try {
+          await session.signOut?.();
+        } catch {
+          // `signout_incomplete`: the server could not be reached; the device is forgotten here all the same.
+        }
+        await deleteDeviceKey(db, server);
+      };
+      for (const accountId of [...accounts].sort()) {
+        await forgetServer({
+          api: { post: revoke },
+          session: {
+            lock: () => host?.lock("sign_out") ?? Promise.resolve(),
+            forgetSecretKey: (/** @type {string} */ id) => session.forgetSecretKey?.(id) ?? Promise.resolve(),
+          },
+          store,
+          serverUrl: server,
+          accountId,
+          // The page asked before it sent the request.
+          confirm: async () => true,
+          navigate: () => {},
+          // The extension has one background page: no other tab runs an engine.
+          channel: null,
+          locks,
+        });
       }
-      await deleteDeviceKey(db, server);
-    };
-    if (hex16.is(accountId)) {
-      await forgetServer({
-        api: { post: revoke },
-        session: {
-          lock: () => host?.lock("sign_out") ?? Promise.resolve(),
-          forgetSecretKey: (/** @type {string} */ id) => session.forgetSecretKey?.(id) ?? Promise.resolve(),
-        },
-        store,
-        serverUrl: server,
-        accountId: /** @type {string} */ (accountId),
-        // The page asked before it sent the request.
-        confirm: async () => true,
-        navigate: () => {},
-        // The extension has one background page: no other tab runs an engine.
-        channel: null,
-        locks,
-      });
-    } else {
+      // The shared flow keeps a failure of its sign-out step to itself: the key record is removed once more here, so
+      // a failure to remove it is not lost (the address then stays, for another try).
       await revoke();
-    }
-    await sessionHost.forget();
-    try {
-      await permissions.remove?.({ origins: [permissionOf(server)] });
-    } catch {
-      // A permission that cannot be taken back is asked for again at the next sign-in anyway.
-    }
-    return { ok: true };
+      await deleteDeviceKey(db, server);
+      if ((await store.accountsOf(db, server)).length > 0 || (await loadDeviceKey(db, server)) !== null) {
+        throw new SyncHostError("forget_incomplete");
+      }
+      await sessionHost.forget();
+      try {
+        await permissions.remove?.({ origins: [permissionOf(server)] });
+      } catch {
+        // A permission that cannot be taken back is asked for again at the next sign-in anyway.
+      }
+      return { ok: true };
+    });
   }
 
   const ops = Object.freeze({
