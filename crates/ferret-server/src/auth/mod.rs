@@ -8,13 +8,16 @@
 #![deny(clippy::arithmetic_side_effects)]
 
 pub mod challenge;
+pub mod device_login;
 pub mod devices;
 pub mod dpop;
 pub mod email_change;
 pub mod handoff;
 pub mod login;
 pub mod notify;
+pub mod proofs;
 pub mod redeem;
+pub mod refresh;
 pub mod register;
 pub mod second_factor;
 pub mod secrets;
@@ -29,7 +32,9 @@ use axum::extract::FromRef;
 use crate::state::FerretState;
 
 /// The routes of the vault listener: registration, sign-in, sign-out, the
-/// session info and the start of a hand-over.
+/// session info, the start of a hand-over, the nonces of signed requests and
+/// the redeeming of a one-time code; and the renewal of a device's tokens and
+/// the list of devices.
 pub fn routes_vault<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -39,6 +44,10 @@ where
         .merge(register::routes())
         .merge(login::routes())
         .merge(handoff::routes())
+        .merge(challenge::routes())
+        .merge(redeem::routes())
+        .merge(refresh::routes())
+        .merge(devices::routes())
 }
 
 /// The routes of the admin listener that are Ferret's: sign-out, the session

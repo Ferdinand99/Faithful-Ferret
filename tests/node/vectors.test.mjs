@@ -52,6 +52,18 @@ test("wasm_runs_all_internal_vectors_in_node", () => {
   assert.ok(passed > 800);
 });
 
+test("recovery_renew_vectors_match_in_rust_and_js", () => {
+  // The same file runs through the core in crates/ferret-core/tests/account.rs.
+  const file = JSON.parse(readFileSync(join(vectors, "internal", "recovery_renew.json"), "utf8"));
+  assert.equal(file.group, "recovery_renew");
+  const r = runVectorFile(wasm, file, ops);
+  assert.deepEqual(r.failures, []);
+  assert.equal(r.passed, file.cases.length);
+  assert.equal(r.passed, 20);
+  assert.ok(file.cases.some((c) => c.input.after_restore === true), "the after-restore entry has cases");
+  assert.ok(file.cases.every((c) => c.op === "account.renew_recovery"));
+});
+
 test("wasm_external_vectors_in_node", async () => {
   const read = async (name) => JSON.parse(readFileSync(join(vectors, "external", name), "utf8"));
   let passed = 0;

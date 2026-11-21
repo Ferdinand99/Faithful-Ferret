@@ -9,6 +9,7 @@
 **/node_modules
 web/dist
 web/test/e2e-stack/evil
+web/test/e2e-stack/monitor
 site
 assets
 docs
@@ -21,3 +22,6 @@ tools
 ct/dudect
 ct/results
 **/*.log
+docker/home.env
+docker/copy.env
+docker/secrets

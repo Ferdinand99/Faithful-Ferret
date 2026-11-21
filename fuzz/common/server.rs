@@ -111,6 +111,7 @@ impl World {
         ferret_server_auth::login_finish(
             &self.cx(),
             store,
+            &self.f.records,
             &LoginFinishRequest {
                 caller: Self::caller(),
                 login_id,

@@ -31,6 +31,7 @@ const MAX_LEN_OF = {
   fuzz_cbor_value: BIG,
   fuzz_export_file: BIG,
   fuzz_url_match: 16384,
+  fuzz_dpop_proof: 8192,
 };
 const DEFAULT_MAX_LEN = 4096;
 /** The most any seed may be, for reading vector values. */
@@ -317,6 +318,164 @@ for (const c of server('server-opaque.json', 'server.replace_authorize')) {
   if (!body) continue;
   add('fuzz_server_replace_body', withSelect(c.input.kind === 'recover' ? 1 : 0, body));
   add('fuzz_server_replace_body', withSelect(c.input.kind === 'recover' ? 0 : 1, body));
+}
+
+// fuzz_dpop_proof: the proofs of the server's DPoP tests (made by the web
+// client's code, and the examples of RFC 9449), as the text of a proof (first
+// byte 0), as header, claims and signature (1) and as claims with a request
+// (2), and one change of each rule on them: another header or claims member, a
+// private key member, a duplicate, an array, a long or ill-formed segment, a
+// time at the edge of the window.
+{
+  const dpop = JSON.parse(readFileSync(join(root, 'crates', 'ferret-server', 'tests', 'fixtures', 'dpop', 'js_proofs.json'), 'utf8'));
+  const good = [
+    ...dpop.proofs.map((p) => ({ proof: p.proof, method: p.method, url: p.url, token: p.token })),
+    ...dpop.rfc9449.examples.map((e) => ({ proof: e.proof, method: e.method, url: e.origin + e.path, token: false })),
+  ];
+  const dp = 'fuzz_dpop_proof';
+  const nul = Buffer.from([0]);
+  const parts = (proof) => proof.split('.').map((s) => Buffer.from(s, 'base64url'));
+  const b64 = (b) => Buffer.from(b).toString('base64url');
+  const claimsSeed = (flags, nowBytes, method, url, claims) =>
+    withSelect(2, nowBytes, Buffer.from([flags]), text(method), nul, text(url), nul, claims);
+  const fixedNow = (n) => u64be(n);
+  // A signed difference in the first byte, for flag 4 (the time is set near iat).
+  const delta = (d) => Buffer.from([d & 0xff, 0, 0, 0, 0, 0, 0, 0]);
+
+  for (const g of good) {
+    const [hj, cj, sig] = parts(g.proof);
+    const iat = JSON.parse(cj.toString('utf8')).iat;
+    add(dp, withSelect(0, text(g.proof)));
+    add(dp, withSelect(1, hj, nul, cj, nul, sig));
+    add(dp, claimsSeed(3 | (g.token ? 1 : 0), fixedNow(iat), g.method, g.url, cj));
+    add(dp, claimsSeed(7 | (g.token ? 1 : 0), delta(60), g.method, g.url, cj));
+    add(dp, claimsSeed(7 | (g.token ? 1 : 0), delta(-61), g.method, g.url, cj));
+    add(dp, claimsSeed(1, fixedNow(iat), g.method, `${g.url}?a=1`, cj));
+  }
+
+  // Text of a proof that is not three canonical segments of base64url.
+  const { proof: first } = good[0];
+  const [h0, c0, s0] = first.split('.');
+
+  // Proofs of exactly N bytes around the limit. The claims are valid JSON with
+  // a padded `htu`, so every segment is canonical and only the size differs.
+  // (No claims segment has 4m + 1 characters, so a total in the range may have
+  // no proof.)
+  const tokenSeed = good.find((g) => g.token);
+  const [tokenHeader, tokenClaims, tokenSig] = parts(tokenSeed.proof);
+  const [th, , ts] = tokenSeed.proof.split('.');
+  const sized = (total) => {
+    const cl = JSON.parse(tokenClaims.toString('utf8'));
+    for (let k = 0; k < 4000; k++) {
+      const claims = Buffer.from(JSON.stringify({ ...cl, htu: `${cl.htu}${'a'.repeat(k)}` }));
+      const length = th.length + claims.toString('base64url').length + ts.length + 2;
+      if (length === total) return { claims, text: `${th}.${claims.toString('base64url')}.${ts}` };
+      if (length > total) return null;
+    }
+    return null;
+  };
+  for (const total of [4094, 4095, 4096, 4097, 4098, 4099, 4100]) {
+    const p = sized(total);
+    if (!p) continue;
+    add(dp, withSelect(0, text(p.text)));
+    add(dp, withSelect(1, tokenHeader, nul, p.claims, nul, tokenSig));
+  }
+
+  for (const text0 of [
+    `${first}=`,
+    `${first}.AAAA`,
+    `${h0}.${c0}`,
+    `${h0}..${s0}`,
+    `.${c0}.${s0}`,
+    `${h0}.${c0}.`,
+    `${h0}.${c0}.${s0.slice(0, 85)}`,
+    `${h0}.${c0}.${s0}A`,
+    `${h0} .${c0}.${s0}`,
+    `${h0}.${c0}.${s0.replace(/[A-Za-z0-9]$/, '+')}`,
+    `${h0}.${'A'.repeat(4096)}.${s0}`,
+    `${'A'.repeat(4000)}.${c0}.${s0}`,
+    'a.b.c',
+    '..',
+    '',
+  ]) {
+    add(dp, withSelect(0, text(text0)));
+  }
+
+  // Headers: the accepted one, then one change each.
+  const baseHeader = JSON.parse(parts(first)[0].toString('utf8'));
+  const raw = parts(first)[0].toString('utf8');
+  const withJwk = (more) => JSON.stringify({ ...baseHeader, jwk: { ...baseHeader.jwk, ...more } });
+  const withHeader = (more) => JSON.stringify({ ...baseHeader, ...more });
+  const headers = [
+    withJwk({ d: 'A'.repeat(43) }),
+    withJwk({ kid: 'k', ext: true, key_ops: ['verify'] }),
+    withJwk({ crv: 'P-384' }),
+    withJwk({ kty: 'RSA' }),
+    withJwk({ x: baseHeader.jwk.x.slice(0, 42) }),
+    withJwk({ x: baseHeader.jwk.x.slice(0, 42) + 'B' }),
+    withJwk({ y: `${baseHeader.jwk.y}A` }),
+    withJwk({ x: 7 }),
+    JSON.stringify({ ...baseHeader, jwk: [baseHeader.jwk] }),
+    JSON.stringify([baseHeader]),
+    withHeader({ typ: 'JWT' }),
+    withHeader({ alg: 'none' }),
+    withHeader({ alg: 'HS256' }),
+    withHeader({ alg: 'es256' }),
+    withHeader({ kid: 'k' }),
+    withHeader({ jku: 'https://example.test/jwks' }),
+    withHeader({ x5c: ['AAAA'] }),
+    JSON.stringify({ jwk: baseHeader.jwk, alg: 'ES256', typ: 'dpop+jwt' }),
+    JSON.stringify(baseHeader, null, 2),
+    `{"t\\u0079p":"dpop+jwt",${raw.slice(1)}`,
+    raw.replace('"kty":"EC"', '"kty":"EC","kty":"EC"'),
+    `${raw} `,
+    `${raw}{}`,
+    `${raw}x`,
+    `\ufeff${raw}`,
+    '{}',
+    'null',
+    '',
+  ];
+  const claimsBase = JSON.parse(parts(good.find((g) => g.token).proof)[1].toString('utf8'));
+  const tokenProof = good.find((g) => g.token);
+  const tokenParts = parts(tokenProof.proof);
+  const rawClaims = tokenParts[1].toString('utf8');
+  for (const h of headers) add(dp, withSelect(1, text(h), nul, tokenParts[1], nul, tokenParts[2]));
+  add(dp, withSelect(1, parts(first)[0], nul, parts(first)[1]));
+
+  // Claims: one change each, checked against the request they name.
+  const claimsList = [
+    JSON.stringify({ ...claimsBase, ath: null }),
+    JSON.stringify({ ...claimsBase, ath: 7 }),
+    JSON.stringify({ ...claimsBase, ath: claimsBase.ath.slice(0, 42) }),
+    JSON.stringify({ ...claimsBase, ath: claimsBase.ath.slice(0, 42) + 'B' }),
+    JSON.stringify({ ...claimsBase, nonce: 'n' }),
+    JSON.stringify({ ...claimsBase, jti: 'short' }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(65) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(64) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(16) }),
+    JSON.stringify({ ...claimsBase, jti: 'j'.repeat(15) }),
+    rawClaims.replace('"iat"', '"i\\u0061t":1,"iat"'),
+    JSON.stringify({ ...claimsBase, jti: 'a b'.padEnd(20, 'c') }),
+    JSON.stringify({ ...claimsBase, htm: 'post' }),
+    JSON.stringify({ ...claimsBase, htu: `${claimsBase.htu}#top` }),
+    JSON.stringify({ ...claimsBase, iat: '1793491200' }),
+    JSON.stringify({ ...claimsBase, iat: 1.5 }),
+    rawClaims.replace(`"iat":${claimsBase.iat}`, `"iat":${claimsBase.iat}e0`),
+    rawClaims.replace(`"iat":${claimsBase.iat}`, '"iat":9223372036854775808'),
+    rawClaims.replace(`"iat":${claimsBase.iat}`, '"iat":-9223372036854775808'),
+    rawClaims.replace(`"iat":${claimsBase.iat}`, `"iat":${claimsBase.iat},"iat":1`),
+    `${rawClaims} `,
+    `${rawClaims}{}`,
+    `[${rawClaims}]`,
+    JSON.stringify({ jti: claimsBase.jti }),
+    '{}',
+    '',
+  ];
+  for (const cj of claimsList) {
+    add(dp, withSelect(1, parts(first)[0], nul, text(cj), nul, tokenParts[2]));
+    add(dp, claimsSeed(3, fixedNow(claimsBase.iat), 'GET', claimsBase.htu, text(cj)));
+  }
 }
 
 // Setup QR payloads.

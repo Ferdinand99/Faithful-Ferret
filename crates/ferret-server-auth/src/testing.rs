@@ -369,6 +369,7 @@ pub fn state_plain_wipe_probe(fill: u8, reader: &mut dyn FnMut(WipePhase, *const
     let mut held: Vec<StatePlain> = Vec::with_capacity(1);
     held.push(StatePlain {
         credential: CredentialId::from_bytes([fill; 16]),
+        record: crate::RecordBinding::from_bytes([fill; 32]),
         purpose: LoginPurpose::Reauth {
             session: SessionBinding([fill; 32]),
             account: CredentialId::from_bytes([fill; 16]),
@@ -452,8 +453,60 @@ pub struct LoginFixture {
     pub credential: CredentialId,
     /// The record the account registered, with profile 1.
     pub record: crate::StoredRecord,
+    /// The records the accounts of this server have now, which `finish`
+    /// compares the state with: the account's, and those of
+    /// [`LoginFixture::register`].
+    pub records: FixtureRecords,
     /// How many logins `start` has begun: each gets its own random source.
     starts: AtomicUsize,
+}
+
+/// The records the accounts of a [`LoginFixture`] have now, as
+/// `login_finish` reads them ([`crate::login::CurrentRecord`]). A test
+/// replaces one to play a password change, or removes one.
+#[derive(Default)]
+pub struct FixtureRecords(std::sync::Mutex<Vec<(CredentialId, crate::RecordBinding)>>);
+
+impl FixtureRecords {
+    /// Stores `record` as the record of `credential`, in place of any other.
+    pub fn set(&self, credential: &CredentialId, record: &crate::StoredRecord) {
+        let binding = crate::RecordBinding::of(record.record.as_bytes());
+        let mut all = self.0.lock().unwrap();
+        all.retain(|(id, _)| id != credential);
+        all.push((*credential, binding));
+    }
+
+    /// Removes the account of `credential`.
+    pub fn remove(&self, credential: &CredentialId) {
+        self.0.lock().unwrap().retain(|(id, _)| id != credential);
+    }
+}
+
+impl crate::login::CurrentRecord for FixtureRecords {
+    fn current_record(
+        &self,
+        credential: &CredentialId,
+    ) -> Result<Option<crate::RecordBinding>, crate::AuthError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == credential)
+            .map(|(_, binding)| binding.clone()))
+    }
+}
+
+impl core::fmt::Debug for FixtureRecords {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("FixtureRecords([redacted])")
+    }
+}
+
+/// The 32 bytes of the [`crate::RecordBinding`] of `record`, for tests and
+/// fuzz targets that build a state by hand ([`StateFields::record`]).
+pub fn record_binding_bytes(record: &crate::StoredRecord) -> [u8; 32] {
+    *crate::RecordBinding::of(record.record.as_bytes()).as_bytes()
 }
 
 impl LoginFixture {
@@ -471,6 +524,8 @@ impl LoginFixture {
         let credential = CredentialId::from_bytes([0x42; 16]);
         let profiles = crate::ProfileRules::ferret_v1();
         let record = register_account(&keys, &profiles, &credential, FIXTURE_PASSWORD);
+        let records = FixtureRecords::default();
+        records.set(&credential, &record);
         Self {
             keys,
             prelogin,
@@ -483,14 +538,19 @@ impl LoginFixture {
             name: crate::normalize_login_name("alice@example.com").unwrap(),
             credential,
             record,
+            records,
             starts: AtomicUsize::new(0),
         }
     }
 
-    /// Registers another account on this server, with its own record, for
-    /// tests of two accounts. The record is not known to the fixture.
+    /// Registers an account on this server, with its own record, for tests
+    /// of two accounts. The record becomes the account's current one in
+    /// [`LoginFixture::records`]; registering the fixture's own credential
+    /// again plays a password change (`record` keeps the first one).
     pub fn register(&self, credential: &CredentialId, password: &str) -> crate::StoredRecord {
-        register_account(&self.keys, &self.profiles, credential, password)
+        let record = register_account(&self.keys, &self.profiles, credential, password);
+        self.records.set(credential, &record);
+        record
     }
 
     /// The OPAQUE input of a password.
@@ -596,6 +656,7 @@ impl LoginFixture {
         crate::login_finish(
             &self.cx(),
             &self.store,
+            &self.records,
             &crate::LoginFinishRequest {
                 caller: Self::caller(),
                 login_id: login_id.to_hex().as_bytes(),
@@ -1111,6 +1172,9 @@ pub const SEALED_STATE_LEN: usize = crate::state::BLOB_LEN;
 pub struct StateFields {
     /// The account the login is for.
     pub credential: [u8; 16],
+    /// The binding of the record the login was started from
+    /// ([`record_binding_bytes`]).
+    pub record: [u8; 32],
     /// `None` for an ordinary login; the session binding and the account of a
     /// re-authentication otherwise.
     pub reauth: Option<([u8; 32], [u8; 16])>,
@@ -1144,6 +1208,7 @@ impl StateFields {
     fn to_plain(&self) -> StatePlain {
         StatePlain {
             credential: CredentialId::from_bytes(self.credential),
+            record: crate::RecordBinding::from_bytes(self.record),
             purpose: purpose_of(self.reauth),
             expires_at: self.expires_at,
             ksf_profile: self.ksf_profile,
@@ -1158,6 +1223,7 @@ impl StateFields {
         };
         Self {
             credential: *plain.credential.as_bytes(),
+            record: *plain.record.as_bytes(),
             reauth,
             expires_at: plain.expires_at,
             ksf_profile: plain.ksf_profile,

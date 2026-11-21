@@ -1,0 +1,221 @@
+{
+  "encrypted": false,
+  "folders": [
+    { "id": "11111111-1111-4111-8111-111111111111", "name": "Synthetic folder A" },
+    { "id": "22222222-2222-4222-8222-222222222222", "name": "Synthetic folder B" }
+  ],
+  "collections": [
+    { "id": "33333333-3333-4333-8333-333333333333", "organizationId": "44444444-4444-4444-8444-444444444444", "name": "Synthetic collection" }
+  ],
+  "items": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000001",
+      "organizationId": null,
+      "folderId": "11111111-1111-4111-8111-111111111111",
+      "type": 1,
+      "reprompt": 0,
+      "name": "Every login field",
+      "notes": "Synthetic notes",
+      "favorite": true,
+      "fields": [
+        { "name": "Text field", "value": "text value", "type": 0, "linkedId": null },
+        { "name": "Hidden field", "value": "hidden value", "type": 1, "linkedId": null },
+        { "name": "Boolean true", "value": "true", "type": 2, "linkedId": null },
+        { "name": "Boolean false", "value": "false", "type": 2, "linkedId": null },
+        { "name": "Linked field", "value": null, "type": 3, "linkedId": 100 }
+      ],
+      "login": {
+        "uris": [
+          { "match": null, "uri": "https://www.example.test/login" },
+          { "match": 0, "uri": "https://accounts.example.test" },
+          { "match": 1, "uri": "https://host.example.test" },
+          { "match": 3, "uri": "https://exact.example.test/path" }
+        ],
+        "username": "alice@example.test",
+        "password": "synthetic-password-1",
+        "totp": "otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQ&issuer=Example",
+        "fido2Credentials": [
+          {
+            "credentialId": "synthetic-credential-id",
+            "keyType": "public-key",
+            "keyAlgorithm": "ECDSA",
+            "keyCurve": "P-256",
+            "keyValue": "synthetic-key-value",
+            "rpId": "example.test",
+            "userHandle": "synthetic-handle",
+            "userName": "alice",
+            "counter": "0",
+            "rpName": "Example",
+            "userDisplayName": "Alice",
+            "discoverable": "true",
+            "creationDate": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "httpAuthenticationEnabled": false
+      },
+      "passwordHistory": [{ "lastUsedDate": "2025-01-01T00:00:00.000Z", "password": "synthetic-old-password" }],
+      "revisionDate": "2026-01-02T00:00:00.000Z",
+      "creationDate": "2026-01-01T00:00:00.000Z",
+      "deletedDate": null,
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000002",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Match rules",
+      "archivedDate": null,
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "uris": [
+          { "match": 2, "uri": "https://starts.example.test/app" },
+          { "match": 4, "uri": "https://regex.example.test/.*" },
+          { "match": 5, "uri": "https://never.example.test" },
+          { "match": 9, "uri": "https://odd.example.test" },
+          { "match": null, "uri": "http://plain.example.test" }
+        ],
+        "username": "carol",
+        "password": "synthetic-password-2",
+        "totp": null
+      },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000003",
+      "organizationId": null,
+      "folderId": null,
+      "type": 2,
+      "reprompt": 0,
+      "name": "A secure note",
+      "notes": "Note body",
+      "favorite": false,
+      "secureNote": { "type": 0 },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000004",
+      "organizationId": null,
+      "folderId": null,
+      "type": 3,
+      "reprompt": 0,
+      "name": "A card",
+      "notes": null,
+      "favorite": false,
+      "card": {
+        "cardholderName": "Alice Example",
+        "brand": "Synthetic",
+        "number": "0000000000000000",
+        "expMonth": "12",
+        "expYear": "2030",
+        "code": "000"
+      },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000005",
+      "organizationId": null,
+      "folderId": null,
+      "type": 4,
+      "reprompt": 0,
+      "name": "An identity",
+      "notes": null,
+      "favorite": false,
+      "identity": {
+        "title": "Ms",
+        "firstName": "Alice",
+        "middleName": "Q",
+        "lastName": "Example",
+        "address1": "1 Example Street",
+        "address2": null,
+        "address3": null,
+        "city": "Exampleville",
+        "state": "EX",
+        "postalCode": "00000",
+        "country": "XX",
+        "company": "Example Co",
+        "email": "alice@example.test",
+        "phone": "+00 000 0000",
+        "ssn": "000-00-0000",
+        "username": "alice",
+        "passportNumber": "P0000000",
+        "licenseNumber": "L0000000"
+      },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000006",
+      "organizationId": null,
+      "folderId": null,
+      "type": 5,
+      "reprompt": 0,
+      "name": "An SSH key",
+      "notes": null,
+      "favorite": false,
+      "sshKey": { "privateKey": "synthetic-private-key", "publicKey": "synthetic-public-key", "keyFingerprint": "synthetic-fingerprint" },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000007",
+      "organizationId": null,
+      "folderId": null,
+      "type": 8,
+      "reprompt": 0,
+      "name": "A passport",
+      "notes": null,
+      "favorite": false,
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000008",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "In the trash",
+      "notes": null,
+      "favorite": false,
+      "login": { "uris": [], "username": "trashed", "password": "synthetic-password-3", "totp": null },
+      "deletedDate": "2026-02-01T00:00:00.000Z",
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000009",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Bare secret",
+      "notes": null,
+      "favorite": false,
+      "login": { "uris": [], "username": "dave", "password": "synthetic-password-4", "totp": "GEZD GNBV GY3T QOJQ" },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-00000000000a",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Steam secret",
+      "notes": null,
+      "favorite": false,
+      "login": { "uris": [], "username": "erin", "password": "synthetic-password-5", "totp": "steam://GEZDGNBVGY3TQOJQ" },
+      "collectionIds": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-00000000000b",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Invalid secret",
+      "notes": null,
+      "favorite": false,
+      "login": { "uris": [], "username": "frank", "password": "synthetic-password-6", "totp": "not a secret!" },
+      "collectionIds": null
+    }
+  ]
+}

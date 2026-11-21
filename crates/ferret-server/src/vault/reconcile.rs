@@ -21,7 +21,8 @@
 //!
 //! Also here: `restore_epoch`, the counter that tells clients the server was
 //! restored from an older copy (spec § 8.6, "Legitimate rollbacks"). Only the
-//! command `ferret restore-epoch bump` raises it. The same command records
+//! commands `ferret restore-epoch bump` and `ferret backup restore` raise it,
+//! both with the rule of [`bump`]. The same bump records
 //! `restore_seq` (the `seq` of the vault at the bump) and freezes one row for
 //! each item the vault then had (`item_id`, `rev`, `seq`, SHA-256 of the
 //! envelope, NULL for a tombstone). `GET /api/sync/restore-rows` pages that
@@ -46,8 +47,9 @@ use super::events::EventStreams;
 use super::notify::SyncEvents;
 use super::rate::{SyncLimits, WriteGate};
 use super::store::{Change, column_u64};
+use crate::auth::session::{RestoreSweep, end_everything_after_restore};
 use crate::error::{ApiError, StoreError};
-use crate::http::extract::{SessionAuth, VaultSession};
+use crate::http::extract::{SessionAuth, VaultCaller};
 use crate::ids::{ItemId, VaultId};
 use crate::state::VaultDb;
 use crate::wire::{ChangeJson, ItemsRes, MAX_JSON_INT, RestoreRowJson, RestoreRowsRes, hex16};
@@ -200,10 +202,27 @@ pub struct Bumped {
     /// The highest `restore_epoch` of any vault after the bump (0 without
     /// vaults).
     pub restore_epoch: u64,
+    /// What the same transaction ended: sessions, codes, device tokens (see
+    /// [`end_everything_after_restore`]).
+    pub swept: RestoreSweep,
 }
 
-/// Raises the restore epoch of every vault by one, in one transaction, and
-/// says how many vaults it was and what the highest epoch is now.
+/// The epoch rule alone, before the sweep.
+struct Raised {
+    vaults: u64,
+    restore_epoch: u64,
+}
+
+/// Raises the restore epoch of every vault in one transaction, with the rule
+/// that `ferret restore-epoch bump` and `ferret backup restore` share, and says
+/// how many vaults it was and what the highest epoch is now.
+///
+/// Every vault gets `max(stored + 1, now, at_least)`: one more than it had, at
+/// least the time in Unix seconds, and at least `at_least` when the caller asks
+/// for more. A restore brings back the older, lower epoch of its backup; with
+/// the time in the rule the new epoch is still above every epoch a client was
+/// shown before, unless a clock ran ahead, which is what `at_least` is for. A
+/// `now` below zero counts as zero.
 ///
 /// In the same transaction each vault records `restore_seq` (its `seq` at the
 /// bump) and the frozen rows of the previous bump are replaced by one row for
@@ -211,14 +230,62 @@ pub struct Bumped {
 /// the envelope)`, with a NULL hash for a tombstone. Nothing is signed: the
 /// server has no key. Writes after the bump never touch the frozen rows.
 ///
-/// A vault that already holds the largest number a JSON integer can carry
-/// refuses the whole bump (nothing changes).
+/// The same transaction ends everything the data that came back holds: every
+/// session, hand-over, pending sign-in state and registration, every sign-in
+/// code, every device with its tokens, and it raises every user's
+/// `session_version` ([`end_everything_after_restore`]). There is no way to raise
+/// the epoch without it.
+///
+/// An `at_least` or a `now` above the largest number a JSON integer can carry,
+/// or a vault that already holds that number, refuses the whole bump with
+/// [`StoreError::Invalid`] (nothing changes).
 ///
 /// Spec: Fase 1 § 8.6, "Legitimate rollbacks": after a restore the
 /// administrator sets `restore_epoch` higher, and clients that remember a lower
 /// one say that the server was restored.
-pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
+pub fn bump(conn: &mut Connection, at_least: Option<u64>, now: i64) -> Result<Bumped, StoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let bumped = bump_in(&tx, at_least, now)?;
+    tx.commit()?;
+    Ok(bumped)
+}
+
+/// [`bump`] inside the caller's write transaction, so that a restore raises the
+/// epoch and ends everything in one commit. The rule is the same, and so is the
+/// sweep: this is the only way to raise the epoch, so no bump leaves a session,
+/// a sign-in code or a device token of the data that came back alive
+/// ([`end_everything_after_restore`], Spec: Fase 1 § 11 and § 7.6).
+///
+/// Spec: Fase 1 § 8.6, "Legitimate rollbacks".
+pub(crate) fn bump_in(
+    tx: &rusqlite::Transaction<'_>,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<Bumped, StoreError> {
+    let raised = raise_in(tx, at_least, now)?;
+    let swept = end_everything_after_restore(tx, now)?;
+    Ok(Bumped {
+        vaults: raised.vaults,
+        restore_epoch: raised.restore_epoch,
+        swept,
+    })
+}
+
+/// The epoch rule of [`bump`], with no sweep: private, so that nothing raises
+/// the epoch without one.
+fn raise_in(
+    tx: &rusqlite::Transaction<'_>,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<Raised, StoreError> {
+    let lowest = at_least.unwrap_or(0).max(u64::try_from(now).unwrap_or(0));
+    if lowest > MAX_JSON_INT {
+        return Err(StoreError::Invalid(
+            "the lowest restore_epoch is above the largest JSON integer",
+        ));
+    }
+    let lowest = i64::try_from(lowest)
+        .map_err(|_| StoreError::Invalid("the lowest restore_epoch is out of range"))?;
     let max_json = i64::try_from(MAX_JSON_INT).unwrap_or(i64::MAX);
     let at_the_limit: i64 = tx.query_row(
         "SELECT COUNT(*) FROM ferret_vaults WHERE restore_epoch >= ?1",
@@ -231,18 +298,18 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
     // `restore_seq` takes the `seq` the row has now, before the same statement
     // is done, and the frozen rows below are read in this same transaction.
     let vaults = tx.execute(
-        "UPDATE ferret_vaults SET restore_epoch = restore_epoch + 1, restore_seq = seq",
-        [],
+        "UPDATE ferret_vaults \
+         SET restore_epoch = MAX(restore_epoch + 1, ?1), restore_seq = seq",
+        [lowest],
     )?;
     tx.execute("DELETE FROM ferret_restore_rows", [])?;
-    freeze_rows(&tx)?;
+    freeze_rows(tx)?;
     let highest: i64 = tx.query_row(
         "SELECT COALESCE(MAX(restore_epoch), 0) FROM ferret_vaults",
         [],
         |row| row.get(0),
     )?;
-    tx.commit()?;
-    Ok(Bumped {
+    Ok(Raised {
         vaults: u64::try_from(vaults).unwrap_or(u64::MAX),
         restore_epoch: u64::try_from(highest)
             .map_err(|_| StoreError::Invalid("restore_epoch is negative"))?,
@@ -250,10 +317,14 @@ pub fn bump_all_vaults(conn: &mut Connection) -> Result<Bumped, StoreError> {
 }
 
 /// Raises the restore epoch (the counter that tells clients the server was
-/// restored) of every vault by one in one transaction and returns the highest
-/// value now. See [`bump_all_vaults`].
-pub fn bump_restore_epoch(conn: &mut Connection) -> Result<u64, StoreError> {
-    Ok(bump_all_vaults(conn)?.restore_epoch)
+/// restored) of every vault in one transaction and returns the highest value
+/// now. See [`bump`] for the rule.
+pub fn bump_restore_epoch(
+    conn: &mut Connection,
+    at_least: Option<u64>,
+    now: i64,
+) -> Result<u64, StoreError> {
+    Ok(bump(conn, at_least, now)?.restore_epoch)
 }
 
 /// Writes the frozen rows of every vault: one for each row of `ferret_items`,
@@ -458,9 +529,9 @@ pub struct RestoreRowsQuery {
     limit: Option<u32>,
 }
 
-/// A page of the frozen rows of the session's vault.
+/// A page of the frozen rows of the caller's vault.
 async fn get_restore_rows(
-    session: VaultSession,
+    caller: VaultCaller,
     query: Result<Query<RestoreRowsQuery>, QueryRejection>,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
@@ -475,7 +546,7 @@ async fn get_restore_rows(
         .limit
         .unwrap_or(MAX_RESTORE_ROWS)
         .clamp(1, MAX_RESTORE_ROWS);
-    let vault = session.vault;
+    let vault = caller.vault();
     let page = db
         .with_conn(move |conn| restore_rows(conn, &vault, after.as_ref(), limit))
         .await?;
@@ -505,9 +576,9 @@ async fn get_restore_rows(
     Ok(Json(res).into_response())
 }
 
-/// A page of the listing of the session's vault.
+/// A page of the listing of the caller's vault.
 async fn get_items(
-    session: VaultSession,
+    caller: VaultCaller,
     query: Result<Query<ItemsQuery>, QueryRejection>,
     State(db): State<VaultDb>,
 ) -> Result<Response, ApiError> {
@@ -519,7 +590,7 @@ async fn get_items(
         .transpose()
         .map_err(|_| ApiError::coded("bad_request"))?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let vault = session.vault;
+    let vault = caller.vault();
     let page = db
         .with_conn(move |conn| list_items(conn, &vault, after.as_ref(), limit, PAGE_BYTES))
         .await?;

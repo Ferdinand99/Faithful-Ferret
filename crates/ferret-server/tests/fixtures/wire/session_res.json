@@ -1,1 +1,1 @@
-{"account_id":"977544aad42056d83c0af7ce027d2017","email":"ada@example.test","scope":"full","origin":"vault"}
+{"account_id":"977544aad42056d83c0af7ce027d2017","email":"ada@example.test","scope":"full","origin":"vault","reauth_until":1800000300,"admin":true}

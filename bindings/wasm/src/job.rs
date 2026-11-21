@@ -28,6 +28,7 @@
 //! | change password, KSF upgrade | `register_start`, `register_finish`, `Vault.seed_pinned`, `change_password` |
 //! | recovery on a device with a record | `register_start`, `register_finish`, `recover` (pin state `pinned`) |
 //! | recovery on a new device | `register_start`, `register_finish`, `recover` (pin state `first_use`, with the `o` value of the scanned emergency sheet QR) |
+//! | new recovery key | `Vault.seed_pinned`, `Vault.renew_recovery` (or `Vault.renew_recovery_after_restore` after an accepted restore), `Vault.reveal_recovery_code`, `Vault.verify_recovery_setup`, `Vault.auth_sign("unlock-method.recovery.put")` |
 //! | recovery key unlock | `unlock_recovery` |
 //! | passkey unlock | `unlock_prf` |
 //! | PIN unlock | `pin_unlock` |
@@ -733,9 +734,11 @@ impl UnlockJob {
                 server_public_key,
                 pinned: PinnedDto::of(&pinned),
             })?;
+            let sk_bit = secret_key.is_some();
             let setup = Setup::new(
                 Some(recovery_key),
                 secret_key,
+                sk_bit,
                 server_public_key,
                 ksf_profile,
             );
@@ -811,9 +814,11 @@ impl UnlockJob {
     /// Returns `{ vault, password_wrap, recovery_wrap, manifest, pk_r,
     /// registration_record, ksf_profile, server_public_key, sk_bit, pinned }`
     /// where `pinned` is the record to store once the server has accepted the
-    /// recovery. The request is signed with the **old** recovery key by
-    /// `recover_sign`; call `recover_done` afterwards. The new recovery key
-    /// is shown with `vault.reveal_recovery_code()`.
+    /// recovery. Both wraps keep the method ids the server stores them under
+    /// (`rk_wrap.method_id` for the recovery wrap). The request is signed with
+    /// the **old** recovery key by `recover_sign`; call `recover_done`
+    /// afterwards. The new recovery key is shown with
+    /// `vault.reveal_recovery_code()`.
     #[allow(clippy::too_many_arguments)]
     pub fn recover(
         &mut self,
@@ -822,7 +827,6 @@ impl UnlockJob {
         rk_code: String,
         rk_wrap: JsValue,
         manifest: JsValue,
-        new_recovery_method_id: Vec<u8>,
         pin: JsValue,
         qr: Option<String>,
     ) -> Result<JsValue, JsValue> {
@@ -832,7 +836,6 @@ impl UnlockJob {
             let ctx = from_js::<CtxDto>(ctx)?.core();
             let rec = from_js::<WrapDto>(rk_wrap)?.core()?;
             let row: RowDto = from_js(manifest)?;
-            let new_id = MethodId::from_bytes(crate::convert::arr(&new_recovery_method_id)?);
             let qr = qr.map(Zeroizing::new);
             let qr = qr.as_deref().map(|t| parse_setup_qr(t)).transpose()?;
             let registered = self.registered.take().ok_or(Fail::Input)?;
@@ -881,7 +884,6 @@ impl UnlockJob {
                     rk_code: &rk_code,
                     rk_wrap: &rec,
                     manifest: row.core(),
-                    new_recovery_method_id: new_id,
                 },
                 NewPassword {
                     input: &input,
@@ -915,6 +917,7 @@ impl UnlockJob {
             let setup = Setup::new(
                 Some(copy_recovery_key(&recovered.recovery_key)?),
                 None,
+                recovered.sk_bit,
                 recovered.server_public_key,
                 recovered.ksf_profile,
             );
@@ -1073,6 +1076,7 @@ impl UnlockJob {
                 setup: Setup::new(
                     Some(recovery_key),
                     secret_key,
+                    record.sk_bit,
                     done.server_public_key,
                     done.profile,
                 ),
@@ -1083,7 +1087,8 @@ impl UnlockJob {
         })
     }
 
-    /// Makes the one-time token that `Vault.reveal_plain_export` needs. Like
+    /// Makes the one-time token that `Vault.export_begin` and
+    /// `Vault.reveal_plain_export` need. Like
     /// a rekey it needs a fresh sign-in of this job (`login_start`,
     /// `login_finish`) in which the master password was typed again. `pw_wrap`
     /// is the vault's password wrap record from the server: it is opened with

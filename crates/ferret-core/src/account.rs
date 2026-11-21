@@ -1,9 +1,10 @@
 //! The account flows: create an account, change the master password (and
-//! upgrade the KSF profile), recover with the recovery key, and check the
-//! recovery key and secret key the user wrote down.
+//! upgrade the KSF profile), recover with the recovery key, make a new
+//! recovery key for an open vault, and check the recovery key and secret key
+//! the user wrote down.
 //!
 //! Spec: Fase 1 § 4.2 ("Registrering", "Oppgradering av KSF-profil"), § 4.3
-//! ("Bytte av MP"), § 4.6, § 6.1 (confirmation at setup) and § 6.3.
+//! ("Bytte av MP"), § 4.5, § 4.6, § 6.1 (confirmation at setup) and § 6.3.
 //!
 //! # What the core does and does not do
 //!
@@ -49,7 +50,9 @@
 //! A new password or recovery wrap gets `max(pinned floor, generation in the
 //! authenticated manifest, generation of the wrap the server holds) + 1`, so
 //! a server that rolls the manifest or a wrap back cannot make the client
-//! reuse a generation it has seen. A new account starts at 1.
+//! reuse a generation it has seen. A new account starts at 1. A pinned floor
+//! at the largest generation is `malformed_pinned_record`; a value of the
+//! server at the largest generation is `generation_exhausted`.
 //!
 //! # Draws
 //!
@@ -61,7 +64,10 @@
 //! * [`change_password`]: the nonce of the password wrap (24), the nonce of
 //!   the manifest (24);
 //! * [`recover`]: the nonce of the password wrap (24), the new `RK` (32), the
-//!   nonce of the recovery wrap (24), the nonce of the manifest (24).
+//!   nonce of the recovery wrap (24), the nonce of the manifest (24);
+//! * [`renew_recovery`] and [`renew_recovery_after_restore`]: the new `RK`
+//!   (32), the nonce of the recovery wrap (24), the nonce of the manifest
+//!   (24).
 
 use crate::codes::{decode_recovery_key, decode_secret_key};
 use crate::envelope::{SealedItem, decrypt_manifest, encrypt_manifest};
@@ -107,12 +113,23 @@ fn pinned_record_error() -> Error {
     Error::Malformed(MalformedKind::PinnedRecord)
 }
 
-/// The generation after `generation`, within the pinning maximum.
-fn after(generation: u64) -> Result<u64, Error> {
+/// The generation after the pinned floor `generation`, within the pinning
+/// maximum. A floor at the maximum is `malformed_pinned_record`.
+fn after_floor(generation: u64) -> Result<u64, Error> {
     generation
         .checked_add(1)
         .filter(|g| *g <= MAX_GENERATION)
         .ok_or_else(pinned_record_error)
+}
+
+/// The generation after `generation` of a wrap or manifest entry the server
+/// holds, within the pinning maximum. A server value at the maximum (or
+/// above it) is `generation_exhausted`.
+fn after_server(generation: u64) -> Result<u64, Error> {
+    generation
+        .checked_add(1)
+        .filter(|g| *g <= MAX_GENERATION)
+        .ok_or(Error::GenerationExhausted)
 }
 
 /// The ids that the server (or the client) assigns to a new account.
@@ -542,8 +559,8 @@ pub fn change_password<R: SecureRng>(
     }
     let generation = pinned
         .next_generation(&MethodKey::Password)?
-        .max(after(listed.kek_generation)?)
-        .max(after(current.kek_generation)?);
+        .max(after_server(listed.kek_generation)?)
+        .max(after_server(current.kek_generation)?);
     let new_rev = manifest.rev.checked_add(1).ok_or_else(entries_error)?;
 
     let kek = Kek::from_export_key(&ctx.account_id, &registration.export_key)?;
@@ -698,8 +715,6 @@ pub struct RecoveryInput<'a> {
     pub rk_wrap: &'a WrapRecord,
     /// The current manifest row.
     pub manifest: ManifestRow<'a>,
-    /// The id of the new recovery wrap.
-    pub new_recovery_method_id: MethodId,
 }
 
 /// Recovers an account with the recovery key code `rk_code`.
@@ -713,9 +728,12 @@ pub struct RecoveryInput<'a> {
 ///    device with a record) or [`PinState::FirstUse`] (a new device). With a
 ///    record the wrap's epoch, `kek_generation` and the vault's `pk_a` are
 ///    checked against it as well.
-/// 4. A new password wrap (under the same method id as in the manifest), a
-///    **new** recovery key with its own wrap (under `new_recovery_method_id`)
-///    and `pk_r`, and a new manifest are made. The vault key is unchanged.
+/// 4. A new password wrap and a **new** recovery key with its own wrap and
+///    `pk_r`, and a new manifest are made. The vault key is unchanged. Both
+///    wraps keep the method ids they have in the manifest: the request names
+///    no method id, and the server replaces the stored wraps under their
+///    stored ids, so a new id would leave a recovery wrap whose associated
+///    data names a method the server does not hold.
 ///
 /// `recovery.manifest` is opened with the recovered
 /// vault key and must list one password and one recovery method, the latter
@@ -738,7 +756,6 @@ pub fn recover<R: SecureRng>(
         rk_code,
         rk_wrap,
         manifest,
-        new_recovery_method_id,
     } = *recovery;
     let NewPassword {
         input,
@@ -789,25 +806,25 @@ pub fn recover<R: SecureRng>(
         return Err(entries_error());
     }
     let password_method_id = password_entry.method_id;
-    // The new recovery wrap needs an id of its own: not the password
-    // wrap's and not any other method's in the manifest (only the old
-    // recovery entry, which it replaces, may share it).
+    // The new recovery wrap replaces the stored one under the same id, as a
+    // renewal does. No other method may share that id.
+    let recovery_method_id = rk_wrap.method_id;
     if old
         .methods
         .iter()
         .enumerate()
-        .any(|(i, e)| i != recovery_index && e.method_id == new_recovery_method_id)
+        .any(|(i, e)| i != recovery_index && e.method_id == recovery_method_id)
     {
         return Err(entries_error());
     }
-    let mut password_generation = after(password_entry.kek_generation)?;
+    let mut password_generation = after_server(password_entry.kek_generation)?;
     if let Some(floor) = password_floor {
-        password_generation = password_generation.max(after(floor)?);
+        password_generation = password_generation.max(after_floor(floor)?);
     }
     let mut recovery_generation =
-        after(recovery_entry.kek_generation)?.max(after(rk_wrap.kek_generation)?);
+        after_server(recovery_entry.kek_generation)?.max(after_server(rk_wrap.kek_generation)?);
     if let Some(floor) = recovery_floor {
-        recovery_generation = recovery_generation.max(after(floor)?);
+        recovery_generation = recovery_generation.max(after_floor(floor)?);
     }
     let new_rev = manifest.rev.checked_add(1).ok_or_else(entries_error)?;
 
@@ -829,7 +846,7 @@ pub fn recover<R: SecureRng>(
         ctx,
         vault.vault_key(),
         &recovery_kek,
-        new_recovery_method_id,
+        recovery_method_id,
         recovery_generation,
         Method::Recovery,
     )?;
@@ -841,7 +858,6 @@ pub fn recover<R: SecureRng>(
     }
     {
         let entry = entry_at_mut(&mut new_manifest, recovery_index)?;
-        entry.method_id = new_recovery_method_id;
         entry.kek_generation = recovery_generation;
     }
     let sealed = encrypt_manifest(rng, &vault, new_rev, &new_manifest)?;
@@ -864,6 +880,221 @@ pub fn recover<R: SecureRng>(
         sk_bit: input.includes_secret_key(),
         server_public_key: registration.server_public_key,
         old_recovery_key,
+    })
+}
+
+// ------------------------------------------------------- new recovery key
+
+/// A new recovery key for an open vault, for one `PUT
+/// /api/vault/unlock-methods/recovery` request: the recovery wrap under the
+/// new key, `pk_r` of the new key and the manifest with the new generation.
+/// It holds the new recovery key (wiped when the value is dropped), so it has
+/// no `Clone` and no `Debug`.
+pub struct RenewedRecovery {
+    /// The new recovery wrap: the same `method_id`, the next generation.
+    pub recovery_wrap: WrapRecord,
+    /// `pk_r` of the new recovery key.
+    pub pk_r: [u8; 32],
+    /// The new manifest, one revision up, with the new generation.
+    pub manifest: SealedItem,
+    /// The new recovery key, to be shown on a new emergency sheet.
+    pub recovery_key: RecoveryKey,
+    /// `pk_a` of the vault the renewal was made for.
+    pk_a: [u8; 32],
+}
+
+impl RenewedRecovery {
+    /// The operation of the request's proof.
+    pub const OP: AuthOp = AuthOp::UnlockMethodRecoveryPut;
+
+    /// Signs the request with `sk_a` of `vault`, for [`RenewedRecovery::OP`].
+    /// `vault` must be the vault the renewal was made for (another vault is
+    /// `pinned_auth_key`). `body` is the exact bytes that are sent.
+    ///
+    /// Spec: Fase 1 § 4.6.
+    pub fn sign(
+        &self,
+        vault: &UnlockedVault,
+        nonce: &[u8; 32],
+        body: &[u8],
+    ) -> Result<[u8; 64], Error> {
+        if vault.auth_public_key() != self.pk_a {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
+        auth_sign(vault, Self::OP, nonce, body)
+    }
+
+    /// The pinned record after the server has accepted the new recovery wrap:
+    /// the recovery floor is the new wrap's generation; everything else is as
+    /// in `old`. `old` is the record the renewal was made with; a record for
+    /// another vault key (`pk_a`) is `pinned_auth_key`.
+    ///
+    /// The client stores it when the request succeeded, so that the old
+    /// recovery wrap is refused as a rollback from then on.
+    pub fn pinned(&self, old: &Pinned) -> Result<Pinned, Error> {
+        old.validate()?;
+        if old.pk_a != self.pk_a {
+            return Err(Error::Pinned(PinnedField::AuthKey));
+        }
+        old.after_flow(
+            old.ksf_profile,
+            &[(MethodKey::Recovery, self.recovery_wrap.kek_generation)],
+            None,
+        )
+    }
+}
+
+/// Makes a new recovery key for an open vault: a new `RK`, a new recovery
+/// wrap of the vault key under `KEK_rk` of it, `pk_r` from its `seed_r`, and
+/// the manifest with the new generation. The vault key, the password wrap and
+/// the items are not touched. The old recovery key opens nothing the request
+/// writes; a copy of the old wrap in a backup still opens the vault with it.
+///
+/// * `vault` is the open vault; `pinned` is its device's record (account,
+///   vault, epoch and `pk_a` must agree, and the recovery floor must be
+///   seeded, otherwise `malformed_pinned_record`);
+/// * `current` is the recovery wrap the server holds. It must be a recovery
+///   wrap (`unsupported`). It is not opened;
+/// * `manifest` is the current manifest row, which must list `current` as
+///   its one recovery entry (`malformed_entries`).
+///
+/// A `current` wrap or a manifest recovery entry below the pinned recovery
+/// floor is a rollback and is refused (`pinned_kek_generation`: the client
+/// rejects a lower generation than it has seen). After the user has accepted
+/// an older server state, [`renew_recovery_after_restore`] is the one entry
+/// that renews over such a wrap.
+///
+/// The new wrap keeps `current`'s `method_id` and gets `kek_generation =
+/// max(pinned floor, the manifest's, current's) + 1`; a server value at the
+/// largest generation is `generation_exhausted`. The manifest is made again
+/// one revision up with that generation; its other entries and unknown keys
+/// are kept. Everything is checked before anything is drawn, and the result
+/// is checked before it is returned: the new key opens the new wrap to this
+/// vault, and the manifest opens.
+///
+/// Sign the request with [`RenewedRecovery::sign`] (or `auth_sign` with
+/// `unlock-method.recovery.put`). The new key must be typed back before the
+/// request is sent.
+///
+/// Spec: Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1.
+pub fn renew_recovery<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    pinned: &Pinned,
+    current: &WrapRecord,
+    manifest: &ManifestRow<'_>,
+) -> Result<RenewedRecovery, Error> {
+    renew(rng, vault, pinned, current, manifest, Rollback::Refuse)
+}
+
+/// [`renew_recovery`] after the user has accepted an older server state (a
+/// server restored from a backup) in which the unlock methods went back: the
+/// same checks, draws and result, except that a `current` wrap or a manifest
+/// recovery entry below the pinned recovery floor is **not** refused.
+///
+/// Call it only for that case: the client has noted an accepted restore whose
+/// manifest is older than what this device has seen, for the server's
+/// current restore epoch. Everywhere else a recovery wrap below the floor is
+/// a rollback, and [`renew_recovery`] refuses it.
+///
+/// It does not weaken the floor: the old wrap is never opened or used, the
+/// new wrap's generation is still above the pinned floor (`max(floor,
+/// manifest, current) + 1`), and [`RenewedRecovery::pinned`] only raises the
+/// record. A server that keeps the old wrap can still open the vault with the
+/// old recovery key; only a full rekey changes that.
+///
+/// Spec: Fase 1 § 4.3, § 4.5, § 4.6 and § 6.1.
+pub fn renew_recovery_after_restore<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    pinned: &Pinned,
+    current: &WrapRecord,
+    manifest: &ManifestRow<'_>,
+) -> Result<RenewedRecovery, Error> {
+    renew(
+        rng,
+        vault,
+        pinned,
+        current,
+        manifest,
+        Rollback::AcceptedRestore,
+    )
+}
+
+/// What a renewal does with a server value below the pinned recovery floor.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rollback {
+    /// Refuse it (`pinned_kek_generation`).
+    Refuse,
+    /// Renew over it: the user has accepted an older server state.
+    AcceptedRestore,
+}
+
+/// The body of [`renew_recovery`] and [`renew_recovery_after_restore`].
+fn renew<R: SecureRng>(
+    rng: &mut R,
+    vault: &UnlockedVault,
+    pinned: &Pinned,
+    current: &WrapRecord,
+    manifest: &ManifestRow<'_>,
+    rollback: Rollback,
+) -> Result<RenewedRecovery, Error> {
+    let ctx = *vault.context();
+    check_pinned_vault(pinned, vault)?;
+    if !matches!(current.method, Method::Recovery) {
+        return Err(Error::Unsupported);
+    }
+    let floor_next = pinned.next_generation(&MethodKey::Recovery)?;
+    let below_floor = |generation: u64| {
+        rollback == Rollback::Refuse
+            && pinned
+                .floor(&MethodKey::Recovery)
+                .is_some_and(|floor| generation < floor)
+    };
+    if below_floor(current.kek_generation) {
+        return Err(Error::Pinned(PinnedField::KekGeneration));
+    }
+
+    let old = decrypt_manifest(vault, manifest.rev, manifest.envelope, manifest.tag)?;
+    let index = singleton(&old, TYPE_RECOVERY)?;
+    let listed = entry_at(&old, index)?;
+    if listed.method_id != current.method_id {
+        return Err(entries_error());
+    }
+    if below_floor(listed.kek_generation) {
+        return Err(Error::Pinned(PinnedField::KekGeneration));
+    }
+    let generation = floor_next
+        .max(after_server(listed.kek_generation)?)
+        .max(after_server(current.kek_generation)?);
+    let new_rev = manifest.rev.checked_add(1).ok_or_else(entries_error)?;
+
+    let recovery_key = RecoveryKey::generate(rng);
+    let kek = Kek::from_recovery_key(&ctx.account_id, &recovery_key)?;
+    let recovery_wrap = wrap_vk(
+        rng,
+        &ctx,
+        vault.vault_key(),
+        &kek,
+        current.method_id,
+        generation,
+        Method::Recovery,
+    )?;
+    let pk_r = recovery_public_key(&recovery_key, &ctx.account_id)?;
+    let mut new_manifest = old;
+    entry_at_mut(&mut new_manifest, index)?.kek_generation = generation;
+    let sealed = encrypt_manifest(rng, vault, new_rev, &new_manifest)?;
+
+    check_wrap(&ctx, &kek, &recovery_wrap, vault)?;
+    if decrypt_manifest(vault, sealed.rev, &sealed.envelope, &sealed.tag)? != new_manifest {
+        return Err(Error::Decrypt);
+    }
+    Ok(RenewedRecovery {
+        recovery_wrap,
+        pk_r,
+        manifest: sealed,
+        recovery_key,
+        pk_a: vault.auth_public_key(),
     })
 }
 

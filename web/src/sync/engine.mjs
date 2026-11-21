@@ -75,6 +75,14 @@
 // * A verified tombstone that replaces a live row puts that row in the local trash
 //   for 30 days (ciphertext only; `trash`, `restoreFromTrash`). Nothing is removed
 //   locally on the server's word alone: an unverified tombstone touches nothing.
+// * An import (`importItems`, `resumeImport`): the items arrive sealed, are all stored in the outbox with the import mark before
+//   anything is sent, and go out in batches under the import window the caller got (outbox.mjs). They show as pending like any new item.
+//   `import` events say how far it is (`sent`, `total`, `failed`); when the server refuses the window, `import_window_closed` says how
+//   many are left, and `resumeImport` with a new window sends them under the same keys.
+// * Tombstones the server has purged (`heldTombstones`, `settleOwnDeletions`): the server purges a tombstone only when the checkpoint
+//   it holds covers it, and raises its floor (`min_valid_since`) to the highest `seq` it purged. A tombstone this device holds that the
+//   server no longer lists, at or below that floor, is held: it stays in the cache and is left out of the rows given to the check of the
+//   checkpoint. A deletion this device made and the server took, purged before the feed brought it back, counts as done.
 // * Writes go through the outbox (see outbox.mjs): stored before the request,
 //   resent byte for byte under the same key. Every new write and every upload of a checkpoint names the restore epoch this device has
 //   accepted (`restore_epoch`), and the server refuses it with `409 restore_epoch_changed` when its own is another: that answer
@@ -85,7 +93,7 @@ import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
 import {
-  checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
+  checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, entryMap, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
   UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
 } from "./checkpoint.mjs";
 import { compareFields, TRASH_MS } from "./conflict.mjs";
@@ -124,6 +132,19 @@ export const MANIFEST_ID = "00000000000000000000000000000000";
 
 /** Rows asked for in one page of the feed (the server's maximum). */
 const PAGE_LIMIT = MAX_PAGE;
+
+/**
+ * The most own deletions that are kept as done until the feed has brought their tombstones back (the oldest go first; an item whose note
+ * has gone is seen as missing from a listing, like any other).
+ */
+const MAX_OWN_DELETED = 1024;
+
+/**
+ * The failures of the check of a checkpoint that a tombstone the server has purged can cause: a row at the top that has no entry
+ * (`checkpoint_top_digest_mismatch`), and an older tombstone of an item that was brought back and deleted again, against the entry of the
+ * newer tombstone (`checkpoint_lower_rev`). Only these start the look for held tombstones (`heldTombstones`).
+ */
+const HELD_CODES = new Set(["checkpoint_top_digest_mismatch", "checkpoint_lower_rev"]);
 
 /**
  * The codes that stop the engine: nothing is pulled or sent until the user acts.
@@ -275,6 +296,30 @@ export function createSyncEngine({
   let epochHolds = 0;
   /** No release of the runner before this time (ms): a server kept refusing an epoch it shows, and the polls try again, not a loop. */
   let epochRetryAt = 0;
+  /**
+   * The floor of the feed, `min_valid_since`, as the server named it in a 410 in this session (0: none yet). A tombstone at or below
+   * it has been purged: the retention of the server removes only tombstones that the stored checkpoint covers.
+   */
+  let feedFloor = 0;
+  /**
+   * The deletions this device made that the server took (the answer to the write of the tombstone) and whose row it has not read back
+   * yet: the tombstone it sent, with the revision and the `seq` the answer named. When the server purges such a tombstone before the
+   * feed brings it, the listing that follows does not show the item, and the deletion counts as done (`settleOwnDeletions`) instead
+   * of the item being uploaded again. Saved with the marks, so a restart in between does not lose it.
+   * @type {Map<string, { rev: number, seq: number, tomb: Uint8Array }>}
+   */
+  const ownDeleted = new Map();
+  /**
+   * The revision of the newer tombstone that a checkpoint listed for an item whose older tombstone this device holds and the server has
+   * purged: a live row at or below it is a replay of an old state, and is refused like any row below what this device holds. Kept for this
+   * session; the checkpoint that says it is verified again.
+   * @type {Map<string, number>}
+   */
+  const heldFloors = new Map();
+  /** The import that is under way (writes of it are queued): how many items it has, how many the server has taken, how many it refused for good. */
+  const importCount = { total: 0, sent: 0, failed: 0 };
+  /** Items of the import whose writes were answered since the last batch ended. @type {Set<string>} */
+  const batchTouched = new Set();
 
   /** The server-accepted rows, ciphertext only (what the cache holds). @type {Map<string, CachedRow>} */
   const rows = new Map();
@@ -319,11 +364,11 @@ export function createSyncEngine({
   /** @type {Map<string, Promise<unknown>>} */
   const itemQueues = new Map();
   /** @type {Record<string, Set<(payload: any) => void>>} */
-  const listeners = { changed: new Set(), error: new Set(), state: new Set() };
+  const listeners = { changed: new Set(), error: new Set(), state: new Set(), import: new Set(), import_window_closed: new Set(), copied: new Set() };
 
   // --------------------------------------------------------------- events
 
-  /** @param {"changed" | "error" | "state"} event @param {any} payload */
+  /** @param {"changed" | "error" | "state" | "import" | "import_window_closed" | "copied"} event @param {any} payload */
   function emit(event, payload) {
     if (stopped) return;
     for (const fn of [...listeners[event]]) {
@@ -532,13 +577,40 @@ export function createSyncEngine({
         epochRefusals.delete(entry.itemId);
         if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return; // given up or dropped while it was being sent
         if (flags.get(entry.itemId)?.kind === "missing_on_server") acked.add(entry.itemId);
+        if ("tomb" in entry.body && answer.rev === entry.baseRev + 1) {
+          // The server took this deletion (or says that the item is deleted at the revision this one makes: `seq` is 0 then, the `seq`
+          // of its tombstone is not known). Until the feed brings the tombstone back, the note says that it is done.
+          ownDeleted.delete(entry.itemId);
+          ownDeleted.set(entry.itemId, { rev: answer.rev, seq: answer.seq, tomb: entry.body.tomb });
+          for (const old of ownDeleted.keys()) {
+            if (ownDeleted.size <= MAX_OWN_DELETED) break;
+            ownDeleted.delete(old);
+          }
+          flagsDirty = true;
+          void persistFlags();
+        }
         if (answer.rev !== entry.baseRev + 1) {
           warn("unexpected_rev", { id: entry.itemId, rev: answer.rev, expected: entry.baseRev + 1 });
+        }
+        if (entry.import !== undefined) {
+          // A write of an import: the screen and the feed hear of the whole batch at once (`onBatchEnd`).
+          importCount.sent += 1;
+          batchTouched.add(entry.itemId);
+          return;
         }
         changed([entry.itemId]); // `pending` may have turned false
         void syncNow(); // bring our own row back with its `seq`
       },
       onRetry: (entry, delayMs, error) => setStatus("retrying", { id: entry.itemId, inMs: delayMs, code: error.code }),
+      onImportWindowClosed: ({ remaining }) => emit("import_window_closed", { remaining }),
+      onBatchEnd: () => {
+        // One batch has been answered: the screen and the feed hear of it once, and so does whoever shows how far the import is.
+        const touched = [...batchTouched];
+        batchTouched.clear();
+        changed(touched);
+        if (touched.length > 0) void syncNow();
+        emit("import", { sent: importCount.sent, total: importCount.total, failed: importCount.failed });
+      },
       onBlocked: (entry, error, kind) => {
         if (kind === "unauthorized") {
           paused = true;
@@ -546,6 +618,7 @@ export function createSyncEngine({
           return;
         }
         if (abandoned.has(entry.itemId) || droppedIdems.has(entry.idem)) return;
+        if (entry.import !== undefined) importCount.failed += 1;
         if (kind === "conflict" && showsOurRow(entry, error)) {
           void serverHidItem(entry.itemId);
           return;
@@ -553,6 +626,12 @@ export function createSyncEngine({
         // An upload nobody asked for (a copy of an item the server left out, sent again by this engine) that the server
         // refuses is not a change of the user's: it says so, and it is not a conflict the user can resolve with a choice.
         const automatic = kind === "conflict" && entry.baseRev === 0 && flags.get(entry.itemId)?.kind === "missing_on_server";
+        // The user brought an item back over a tombstone this device holds (a restore from the trash, or "keep mine"), and the server has no
+        // row for it any more: the tombstone was purged. There is nothing to choose between; the item is uploaded again.
+        if (kind === "conflict" && !automatic && purgedUnderneath(entry, error)) {
+          void recreateAfterPurge(entry, error);
+          return;
+        }
         // The refusal of a write over an item this device already holds a verified tombstone for, when everything that waits for the
         // item ends in a deletion: the item may be deleted on both sides, with nothing to choose. The 409 does not decide that, whatever
         // it says: the chain is kept, the item is marked for a check, and the next pass of the feed that begins from here settles it
@@ -637,6 +716,7 @@ export function createSyncEngine({
     return {
       idem, itemId: old.itemId, baseRev: old.baseRev, body: old.body,
       bytes: writeBytes({ baseRev: old.baseRev, body: old.body, idem, resurrect: asked.resurrect === true, restoreEpoch: epoch }),
+      ...(old.import === undefined ? {} : { import: old.import }), // an import stays an import: a key that was used in a batch is sent in a batch
     };
   }
 
@@ -753,6 +833,7 @@ export function createSyncEngine({
         page = await api.get(`/api/sync/changes?since=${since}&limit=${PAGE_LIMIT}`, { shape: "changes_res" });
       } catch (error) {
         if (/** @type {any} */ (error)?.code === "gone" && !restarted) {
+          feedFloor = Math.max(feedFloor, /** @type {any} */ (error).minValidSince ?? 0);
           restarted = true; // the cursor is below the floor: list the vault again, then go on from where the listing began
           await relist(db, pass);
           if (stopped) return;
@@ -801,7 +882,7 @@ export function createSyncEngine({
       seq: last.latest_seq, head: last.checkpoint?.seq ?? null, pageHead: last.checkpoint?.seq ?? null, listed: listing !== null,
       refused: pass.refused, memory: (await memory.load()).memory, epoch: raised === null ? null : { from: pass.stored, to: raised },
     };
-    if (listing !== null) await finishListing(db); // the marks of what the listing did not show are saved first
+    if (listing !== null) await finishListing(db, pass); // the marks of what the listing did not show are saved first
     if (stopped) return;
     await clearListingNote(db); // the feed after the listing (if there was one) has been read to its end
   }
@@ -1114,6 +1195,11 @@ export function createSyncEngine({
           continue;
         }
       }
+      const heldFloor = heldFloors.get(id);
+      if (heldFloor !== undefined && !row.deleted && row.rev <= heldFloor) {
+        lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: heldFloor });
+        continue;
+      }
       if (local) {
         if (row.rev < local.rev) {
           lowerSeen("rev_lower_than_local", { id, rev: row.rev, localRev: local.rev });
@@ -1308,6 +1394,16 @@ export function createSyncEngine({
       await dropMoot(itemId);
     }
     for (const itemId of draftLate) await showServerVersion(itemId); // a refusal came in while the page was used: the draft is what the screen shows
+    // The row of an item this device deleted has come back: the note that the deletion is done is no longer needed.
+    for (const row of accepted) {
+      const floor = heldFloors.get(row.itemId);
+      if (floor !== undefined && row.rev > floor) heldFloors.delete(row.itemId);
+      const own = ownDeleted.get(row.itemId);
+      if (own !== undefined && row.rev >= own.rev) {
+        ownDeleted.delete(row.itemId);
+        flagsDirty = true;
+      }
+    }
     // A conflict follows the server's row: its revision and whether it is deleted are what the user will be shown.
     for (const row of accepted) {
       if (conflictNotes.has(row.itemId) && blocked.get(row.itemId) === "conflict") {
@@ -1393,19 +1489,73 @@ export function createSyncEngine({
   }
 
   /**
+   * A deletion that this device made, that the server took, and whose tombstone the server has purged before this device read it
+   * back, is done. The listing does not show the item and the feed cannot show the tombstone, but the server has named a floor (the 410 of
+   * this session) at or above the `seq` of the answer to the write, which is what a purge of that tombstone leaves behind. The tombstone
+   * this device sent is judged like a row of the feed (it is verified, the live row goes to the trash, the item leaves the screen, the
+   * memory takes it) and stays as a held tombstone. Nothing applies without such a floor, or when the item was shown or has a write that
+   * waits: an item the listing leaves out is then marked as missing, like any other.
+   * Spec: Fase 1 section 8.4 ("Retention").
+   * @param {any} db @param {PassState} pass @param {Set<string>} seen the ids the listing showed
+   */
+  async function settleOwnDeletions(db, pass, seen) {
+    /** @type {Array<{ id: string, own: { rev: number, seq: number, tomb: Uint8Array } }>} */
+    const candidates = [];
+    for (const [id, own] of [...ownDeleted]) {
+      if (seen.has(id) || abandoned.has(id) || runner.entriesOf(id).length > 0) continue;
+      const row = rows.get(id);
+      if (row === undefined || row.rev >= own.rev) {
+        // Nothing here to settle: the item was never read, or its row is already at the deletion.
+        ownDeleted.delete(id);
+        if (overlay.get(id)?.deleted === true) overlay.delete(id);
+        flagsDirty = true;
+        continue;
+      }
+      candidates.push({ id, own });
+    }
+    if (candidates.length === 0) return;
+    // The floor this engine has seen may be older than the purge (this listing may have been begun by another engine, or owed by a start).
+    /**
+     * Whether the server's floor covers the deletion: its tombstone has the `seq` of the answer, or, when that is not known (0: the answer was
+     * a conflict that says "deleted at this revision"), some purge has happened. The floor is the server's word, as everywhere here.
+     */
+    const covered = (/** @type {{ seq: number }} */ own) => (own.seq > 0 ? own.seq <= feedFloor : feedFloor > 0);
+    if (candidates.some(({ own }) => !covered(own))) await learnFloor(); // the floor is read into `feedFloor`; no answer leaves the deletions as they are
+    alive();
+    // A tombstone above the floor has not been purged as far as the server says: the item is hidden, and the listing says so.
+    const changes = candidates
+      .filter(({ own }) => covered(own))
+      .map(({ id, own }) => ({ id, rev: own.rev, seq: own.seq, deleted: true, tomb: b64u.encode(own.tomb) }));
+    if (changes.length === 0) return;
+    // Once more with a fresh view of the memory when another tab saved while this page was judged (the same rule as for a page of the feed).
+    for (const mayRefetch of [true, false]) {
+      const snapshot = (await memory.load()).memory;
+      alive();
+      const outcome = await applyPage(db, { changes, latest_seq: Math.max(lastDrain?.seq ?? 0, cursor) }, pass, { snapshot, mayRefetch });
+      if (outcome !== "refetch") break;
+    }
+  }
+
+  /**
    * After a full listing from 0: nothing is deleted. Items the listing did not
    * show stay (rows, cache and revision floors), are marked, and are queued for
    * upload again; only `discardMissing` removes one, on the user's word. A
-   * server can hide items to make the user throw away the only copy.
-   * @param {any} db
+   * server can hide items to make the user throw away the only copy. The one exception is a deletion that this device made and the
+   * server has purged since (`settleOwnDeletions`).
+   * @param {any} db @param {PassState} pass
    */
-  async function finishListing(db) {
+  async function finishListing(db, pass) {
     const seen = /** @type {Set<string>} */ (listing);
     listing = null;
+    await settleOwnDeletions(db, pass, seen);
+    if (stopped) return;
     /** @type {string[]} */
     const missing = [];
     for (const [id, row] of rows) {
       if (seen.has(id) || id === MANIFEST_ID || row.deleted) continue;
+      // A deletion this device made and the server took is never uploaded again, whether or not its floor could be read just now: the note
+      // stays, and a later listing that knows the floor settles it. (A note dropped past `MAX_OWN_DELETED` does not protect its item.)
+      if (ownDeleted.has(id)) continue;
       // Another mark stays as it is. An item that was uploaded again and is left out once more is marked again, with
       // the floor it already has. The keys of its own writes are kept only for writes that are still queued or in
       // flight (their echo must still be taken as ours); the others belong to a copy the server has dropped. Keys
@@ -1434,6 +1584,152 @@ export function createSyncEngine({
     await saveFlags(db);
     warn("missing_on_server", { count: missing.length });
     changed(missing);
+  }
+
+  /**
+   * Whether the refusal of `entry` says that the tombstone it was built on has been purged: the entry is the user's choice to bring an item
+   * back (a live write with `resurrect`, based on the tombstone this device holds), and the server answers that it has no row for the item.
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+   */
+  function purgedUnderneath(entry, error) {
+    const body = error.body;
+    const row = rows.get(entry.itemId);
+    if (!body || body.current_rev !== 0 || body.deleted === true || body.blob != null) return false;
+    if (!row?.deleted || entry.baseRev !== row.rev || "tomb" in entry.body) return false;
+    try {
+      return JSON.parse(new TextDecoder().decode(entry.bytes)).resurrect === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The item that the user brought back over a purged tombstone becomes a copy under a new id (the core's `copy_item`: the same body under a
+   * new item key, sealed inside the worker): the queued writes of the old item are swapped for the first write of the copy in one transaction,
+   * the old item stays deleted on the screen, and the copy shows as pending like any new item. Two devices that bring the same purged item back
+   * each make their own copy under their own id, so the vault ends with two items with the same content (nothing is lost, nothing is refused, and
+   * duplicates are not removed here). Answers false, and changes nothing, for an item
+   * the core will not copy (`invalid_state` for a passkey, `read_only_schema` for a newer schema).
+   * Spec: Fase 1 section 8.5 ("Keep both" creates a new item: a copy under a new item key) and section 8.4.
+   * @param {string} id @param {import("../store/outbox.mjs").OutboxEntry} last the newest write that waits for the item (a live one)
+   * @param {import("../store/outbox.mjs").OutboxEntry[]} chain
+   * @returns {Promise<boolean>}
+   */
+  async function copyUnderNewId(id, last, chain) {
+    if ("tomb" in last.body) return false;
+    const copyId = randomId();
+    const handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
+    /** @type {{ rev: number, envelope: Uint8Array, tag: Uint8Array }} */
+    let made;
+    try {
+      made = await client.vault.copy_item(handle, hex16.decode(copyId), now(), ...(typeof device === "string" && device !== "" ? [device] : []));
+    } catch (error) {
+      if (stopped || isFatal(error)) throw error;
+      if (codeOf(error) === "invalid_state" || codeOf(error) === "read_only_schema") return false;
+      throw error;
+    } finally {
+      await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+    }
+    alive();
+    const summary = await summarize(copyId, 1, made.envelope, made.tag);
+    alive();
+    const body = { blob: made.envelope, tag: made.tag };
+    const idem = randomId();
+    const restoreEpoch = await acceptedEpoch();
+    if (restoreEpoch === null) unconditioned.add(idem);
+    const written = { idem, itemId: copyId, baseRev: 0, body, bytes: writeBytes({ baseRev: 0, body, idem, restoreEpoch }) };
+    for (const gone of await runner.moveItem(id, chain.map((one) => one.idem), written)) droppedIdems.add(gone);
+    alive();
+    ownDeleted.delete(id);
+    blocked.delete(id);
+    conflictNotes.delete(id);
+    overlay.delete(id);
+    index.delete(id);
+    overlay.set(copyId, { rev: 1, deleted: false, envelope: made.envelope, tag: made.tag });
+    index.set(copyId, summary);
+    flagsDirty = true;
+    void persistFlags();
+    changed([id, copyId]);
+    emit("copied", { from: id, to: copyId });
+    return true;
+  }
+
+  /**
+   * What is done with an item that the user brought back over a purged tombstone (a restore from the trash, or "keep mine", refused with "no row"):
+   * a copy under a new id when the core can copy it (`copyUnderNewId`), else, for an item with a passkey, a new item under the same id: the sealed draft is sealed
+   * once more at revision 1 and sent against nothing (`base_rev` 0), under the rules of an item that the server left out: the item is marked
+   * `missing_on_server` with the revision of the tombstone as its floor, and the key of the new write is noted, so the row that comes back
+   * is taken as this device's own. The refused write goes. A failure leaves the refusal as the conflict it would be.
+   * Spec: Fase 1 section 8.4 ("Local items the server does not know are shown as 'exists only on this device'. The default action is 'keep
+   * and upload again'"; "No resurrection without an active choice": the choice is the write that was refused) and section 8.8 (a device
+   * that holds the item at a higher revision refuses the copy with a warning).
+   * @param {import("../store/outbox.mjs").OutboxEntry} entry @param {import("../api.mjs").ApiError} error
+   */
+  async function recreateAfterPurge(entry, error) {
+    const id = entry.itemId;
+    try {
+      await withItem(id, async () => {
+        const row = rows.get(id);
+        const chain = runner.entriesOf(id);
+        if (chain[0]?.idem !== entry.idem || !row?.deleted) return; // the item has moved on
+        const last = /** @type {import("../store/outbox.mjs").OutboxEntry} */ (chain.at(-1));
+        // The user's last word is what is written again. A deletion after the restore leaves nothing to upload: the item is deleted on both
+        // sides (the server has nothing), and the chain goes, as for any deletion over a tombstone that this device holds.
+        if ("tomb" in last.body) {
+          await dropMoot(id);
+          return;
+        }
+        // A copy under a new id: the old id stays a deleted item, every device accepts the copy as a new item at revision 1, and nothing has to
+        // be told apart. An item that the core will not copy (a passkey, or a newer schema) is written again under its own id.
+        const copied = await copyUnderNewId(id, last, chain);
+        if (copied) return;
+        const handle = await client.vault.open_item(hex16.decode(id), last.baseRev + 1, last.body.blob, last.body.tag);
+        /** @type {Awaited<ReturnType<typeof seal>>} */
+        let made;
+        try {
+          made = await seal(id, 1, {}, handle);
+        } finally {
+          await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+        }
+        alive();
+        const { envelope, tag } = made.sealed;
+        const body = { blob: envelope, tag };
+        const idem = randomId();
+        const restoreEpoch = await acceptedEpoch();
+        if (restoreEpoch === null) unconditioned.add(idem);
+        const bytes = writeBytes({ baseRev: 0, body, idem, restoreEpoch });
+        // The mark and the key of the new write are saved first (the row that comes back must be taken as ours), then the queued writes of the
+        // item are swapped for the new one in one transaction: it fails, changing nothing, when the store holds other writes of the item than
+        // the ones that were looked at, and the item is never absent from the store between the two.
+        const before = flags.get(id);
+        flags.set(id, { kind: "missing_on_server", rev: row.rev, sent: [await ownKeyOfBody(1, body)] });
+        ownDeleted.delete(id); // the item is brought back: a deletion of it is not what this device has now
+        flagsDirty = true;
+        try {
+          await saveFlags(await store.open());
+          alive(); // a save that is skipped because the engine has been stopped must not be followed by the swap: the mark has to be stored first
+          for (const gone of await runner.replace({ idem, itemId: id, baseRev: 0, body, bytes }, chain.map((one) => one.idem))) droppedIdems.add(gone);
+        } catch (failure) {
+          if (before === undefined) flags.delete(id);
+          else flags.set(id, before);
+          flagsDirty = true;
+          void persistFlags();
+          throw failure;
+        }
+        alive();
+        blocked.delete(id);
+        conflictNotes.delete(id);
+        overlay.set(id, { rev: 1, deleted: false, envelope, tag });
+        index.set(id, made.summary);
+        changed([id]);
+      });
+    } catch (failure) {
+      if (stopped || isFatal(failure)) return;
+      // The store holds other writes of the item than the ones that were looked at: another tab of this browser has dealt with it (it is
+      // writing the item again itself), and this tab's view is stale. Nothing is said, and nothing is changed here.
+      if (codeOf(failure) === "outbox_changed") return;
+      refuse(entry, error, "conflict", false); // nothing was swapped: the refusal stands as the conflict it is
+    }
   }
 
   /**
@@ -1586,13 +1882,17 @@ export function createSyncEngine({
     if (!flagsDirty || stopped) return;
     flagsDirty = false;
     try {
-      if (flags.size === 0 && blocked.size === 0) {
+      if (flags.size === 0 && blocked.size === 0 && ownDeleted.size === 0) {
         await store.deleteSetting(db, flagsKey);
         return;
       }
       const noted = [...conflictNotes].filter(([id]) => blocked.get(id) === "conflict");
       await store.setSetting(db, flagsKey, {
         v: 1, marks: Object.fromEntries(flags), blocked: Object.fromEntries(blocked), conflicts: Object.fromEntries(noted),
+        // Left out when there is none, so a record without deletions has the shape it had before they were kept.
+        ...(ownDeleted.size > 0
+          ? { deleted: Object.fromEntries([...ownDeleted].map(([id, own]) => [id, { rev: own.rev, seq: own.seq, tomb: b64u.encode(own.tomb) }])) }
+          : {}),
       });
     } catch (error) {
       flagsDirty = true; // not saved: the next save writes it
@@ -1624,8 +1924,9 @@ export function createSyncEngine({
    * @param {string} code the failure of the core
    * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
    * @param {import("../store/syncState.mjs").SyncState} state the state the verification ran against
+   * @param {Set<string> | null} [held] the held tombstones, which the check was made without: they disagree with nothing here
    */
-  async function explainedByMarks(code, checkpoint, topSeq, state) {
+  async function explainedByMarks(code, checkpoint, topSeq, state, held = null) {
     if (hardWarningOf(code, { deferred: true }) !== "verify_deferred") return false;
     if (state.verifiedSeq !== null && checkpoint.seq < state.verifiedSeq) return false;
     /** @type {Set<string>} */
@@ -1634,11 +1935,12 @@ export function createSyncEngine({
     if (marked.size === 0) return false;
     const failing = await failingIds(checkpoint.entries, rows, checkpoint.seq === topSeq);
     if (failing === null) return false;
+    for (const id of held ?? []) failing.delete(id);
     // A row below what this device remembers (the copy that was uploaded again is below its old floor, by design) is not
     // a disagreement between entries and rows: it is explained when nothing unmarked disagrees.
     if (code !== REV_BELOW_REMEMBERED && failing.size === 0) return false;
     if (![...failing].every((id) => marked.has(id))) return false;
-    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId)).map(coreRow);
+    const unmarked = [...rows.values()].filter((row) => !marked.has(row.itemId) && !held?.has(row.itemId)).map(coreRow);
     try {
       await client.vault.accept_rows(unmarked, topSeq, state.memory);
     } catch (error) {
@@ -1646,6 +1948,57 @@ export function createSyncEngine({
       return false;
     }
     return true;
+  }
+
+  /**
+   * The tombstones this device holds that the server has purged. The server purges a tombstone only when the checkpoint it holds
+   * covers its `seq`, so a device that never held the tombstone makes later checkpoints without it, and at the top of such a checkpoint a
+   * tombstone this device holds is a row without an entry; and a tombstone this device holds of an older revision (the item was brought back
+   * and deleted again) is below the entry of the newer tombstone that was purged. When that is the only thing the checkpoint disagrees with, and the server's
+   * floor (`min_valid_since`) is at or above the `seq` of each of those tombstones, they are held: left out of the rows given to the
+   * check, and kept locally. A live row is never held, and neither is a tombstone above the floor: those stay what they are, an alarm. An
+   * entry that lists the item live stays an alarm as well: without the held row it is a live entry without a row, and the core refuses that.
+   * Answers the ids, `null` (nothing is held), or `"unreachable"` (the server cannot be asked for its floor now: nothing is said, as
+   * when the checkpoint itself cannot be read, and the check is made again later).
+   * Spec: Fase 1 section 8.4 ("Retention"), section 8.6 ("What a recipient checks", point 5).
+   * @param {import("./checkpoint.mjs").Checkpoint} checkpoint @param {number} topSeq
+   * @returns {Promise<Set<string> | "unreachable" | null>}
+   */
+  async function heldTombstones(checkpoint, topSeq) {
+    const failing = await failingIds(checkpoint.entries, rows, checkpoint.seq === topSeq);
+    if (failing === null || failing.size === 0) return null;
+    for (const id of failing) {
+      if (id === MANIFEST_ID || rows.get(id)?.deleted !== true) return null;
+    }
+    const floor = await learnFloor();
+    if (floor === "unreachable") return floor;
+    if (floor === null) return null;
+    for (const id of failing) {
+      if (/** @type {CachedRow} */ (rows.get(id)).seq > floor) return null;
+    }
+    return failing;
+  }
+
+  /**
+   * The floor of the feed as the server names it now. A cursor of 1 is below any floor a purge can leave (a tombstone is at least the
+   * second write of its vault), so the feed answers it with a 410 that names the floor, or, when nothing was purged, with a page.
+   * Answers the floor, `"unreachable"` when the server does not answer now (no network, a wait, a failure of its own), or null when it
+   * answers with something that is not a floor.
+   * @returns {Promise<number | "unreachable" | null>}
+   */
+  async function learnFloor() {
+    try {
+      await api.get("/api/sync/changes?since=1&limit=1", { shape: "changes_res" });
+      return 0; // no 410: the floor is below 2 (one from before a restore is not reused)
+    } catch (error) {
+      const err = /** @type {any} */ (error);
+      if (err?.code === "gone" && Number.isSafeInteger(err.minValidSince)) {
+        feedFloor = Math.max(feedFloor, err.minValidSince);
+        return feedFloor;
+      }
+      const status = err?.status;
+      return typeof status !== "number" || status === 0 || status === 408 || status === 429 || status >= 500 ? "unreachable" : null;
+    }
   }
 
   /**
@@ -1690,39 +2043,68 @@ export function createSyncEngine({
     // A checkpoint above the feed that was read: another device uploaded one since. Read again before calling it a lie.
     if (checkpoint.seq > drain.seq && mayRetry) return "retry";
     const rowsNow = [...rows.values()];
-    const coreRows = rowsNow.map(coreRow);
-    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string, offered?: boolean }} Verdict */
+    /** @typedef {{ ok: true } | { ok: false, code: string, moved: boolean, warning: string, kept: string, offered?: boolean, heldCheck?: boolean }} Verdict */
     /** @type {{ verdict: Verdict | null }} */
     const box = { verdict: null };
-    await memory.withLock(async (state) => {
-      const moved = !sameMemory(state.memory, drain.memory); // another tab has saved since this pass left the memory
-      try {
-        const done = await client.vault.verify_checkpoint(checkpoint, coreRows, drain.seq, state.memory);
-        box.verdict = { ok: true };
-        return {
-          ...state, memory: done.newSyncMemory, verifiedAt: now(), verifiedSeq: Math.max(state.verifiedSeq ?? 0, checkpoint.seq), hardWarning: null,
-        };
-      } catch (error) {
-        if (isFatal(error)) throw error;
-        const code = codeOf(error);
-        if (moved && mayRetry && TAB_RACE.has(code)) {
-          box.verdict = { ok: false, code, moved, warning: "", kept: "" };
-          return null; // the other tab has seen more: nothing is said before the feed has been read again
+    // Tombstones this device holds that the server has purged are left out of the rows when, and only when, the checkpoint does not agree
+    // with the rows for no other reason (`heldTombstones`). That is looked at after a first failure, outside the lock: it asks the server.
+    /** @type {Set<string> | null} */
+    let held = null;
+    let heldTried = false;
+    for (;;) {
+      box.verdict = null;
+      const coreRows = rowsNow.filter((row) => held === null || !held.has(row.itemId)).map(coreRow);
+      await memory.withLock(async (state) => {
+        const moved = !sameMemory(state.memory, drain.memory); // another tab has saved since this pass left the memory
+        try {
+          const done = await client.vault.verify_checkpoint(checkpoint, coreRows, drain.seq, state.memory);
+          box.verdict = { ok: true };
+          return {
+            ...state, memory: done.newSyncMemory, verifiedAt: now(), verifiedSeq: Math.max(state.verifiedSeq ?? 0, checkpoint.seq), hardWarning: null,
+          };
+        } catch (error) {
+          if (isFatal(error)) throw error;
+          const code = codeOf(error);
+          if (!heldTried && HELD_CODES.has(code)) {
+            box.verdict = { ok: false, code, moved, warning: "", kept: "", heldCheck: true };
+            return null; // nothing is stored or said before the held tombstones have been looked at
+          }
+          if (moved && mayRetry && TAB_RACE.has(code)) {
+            box.verdict = { ok: false, code, moved, warning: "", kept: "" };
+            return null; // the other tab has seen more: nothing is said before the feed has been read again
+          }
+          if (offer && hardWarningOf(code) !== "sync_memory_full") {
+            box.verdict = { ok: false, code, moved, warning: "", kept: "", offered: true };
+            return null; // a restored server that shows what this device cannot verify: the user is offered the older state, nothing is said
+          }
+          const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state, held) });
+          // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
+          const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
+          box.verdict = { ok: false, code, moved, warning, kept };
+          if (STOP_CODES.includes(warning) || state.hardWarning === kept) return null;
+          return { ...state, hardWarning: kept };
         }
-        if (offer && hardWarningOf(code) !== "sync_memory_full") {
-          box.verdict = { ok: false, code, moved, warning: "", kept: "", offered: true };
-          return null; // a restored server that shows what this device cannot verify: the user is offered the older state, nothing is said
-        }
-        const warning = hardWarningOf(code, { deferred: await explainedByMarks(code, checkpoint, drain.seq, state) });
-        // What is stored after a failure can only go up: a warning that stands is not replaced by a lesser one.
-        const kept = STOP_CODES.includes(warning) ? warning : escalate(state.hardWarning, warning);
-        box.verdict = { ok: false, code, moved, warning, kept };
-        if (STOP_CODES.includes(warning) || state.hardWarning === kept) return null;
-        return { ...state, hardWarning: kept };
+      });
+      alive();
+      const checked = /** @type {Verdict | null} */ (box.verdict);
+      if (checked === null || checked.ok || checked.heldCheck !== true) break;
+      heldTried = true;
+      const found = await heldTombstones(checkpoint, drain.seq);
+      alive();
+      if (found === "unreachable") return null; // nothing can be said now: the checkpoint is looked at again later
+      held = found;
+    }
+    const verdict = /** @type {Verdict} */ (/** @type {unknown} */ (box.verdict));
+    if (verdict.ok && held !== null) {
+      // A held tombstone that the checkpoint lists as a newer tombstone: the item is deleted at that revision (the checkpoint is signed), so
+      // nothing live at or below it can be true any more.
+      const listed = entryMap(checkpoint.entries);
+      for (const id of held) {
+        const entry = listed?.get(id);
+        const mine = rows.get(id);
+        if (entry && entry.hash === null && mine && entry.rev > mine.rev) heldFloors.set(id, entry.rev);
       }
-    });
-    alive();
-    const verdict = /** @type {Verdict} */ (box.verdict);
+    }
     if (verdict.ok) {
       verifiedInSession = true;
       forgedUnlock = false;
@@ -2034,6 +2416,8 @@ export function createSyncEngine({
     const mine = overlay.get(id);
     const row = rows.get(id);
     if (mine && (!row || mine.rev > row.rev)) return mine;
+    // An item that is being uploaded again over a tombstone this device holds (it is below the tombstone's revision, by design) is the copy.
+    if (mine && !mine.deleted && row?.deleted && flags.get(id)?.kind === "missing_on_server") return mine;
     return row ?? null;
   }
 
@@ -2069,6 +2453,8 @@ export function createSyncEngine({
     const idem = randomId();
     const restoreEpoch = await acceptedEpoch();
     const bytes = writeBytes({ baseRev, body, idem, resurrect, restoreEpoch });
+    // The user brings the item back: the note that a deletion of it is done is over (it would hide the item after a restart).
+    if (resurrect && ownDeleted.delete(id)) flagsDirty = true;
     if (restoreEpoch === null) unconditioned.add(idem);
     const kept = flags.get(id)?.kind;
     const key = kept === "missing_on_server" || kept === "reuploaded" ? await ownKeyOfBody(baseRev + 1, body) : null;
@@ -2584,6 +2970,13 @@ export function createSyncEngine({
     epochRefusals.clear();
     epochRetryAt = 0;
     epochMovedAt = null;
+    feedFloor = 0;
+    heldFloors.clear();
+    // The server's state is another one now: what it took before is not what it holds.
+    if (ownDeleted.size > 0) {
+      ownDeleted.clear();
+      flagsDirty = true;
+    }
   }
 
   /**
@@ -2914,6 +3307,17 @@ export function createSyncEngine({
       for (const [id, code] of Object.entries(savedBlocked)) {
         if (hex16.is(id) && typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code)) blocked.set(id, code);
       }
+      // The deletions that were made here and not yet read back. A record from before they were kept has none.
+      const savedDeleted = saved?.v === 1 && saved.deleted && typeof saved.deleted === "object" ? saved.deleted : {};
+      for (const [id, own] of Object.entries(savedDeleted)) {
+        if (!hex16.is(id) || !Number.isSafeInteger(own?.rev) || own.rev < 2 || !Number.isSafeInteger(own?.seq) || own.seq < 0) continue;
+        try {
+          const tomb = b64u.decode(own.tomb, "tombstone_invalid");
+          if (tomb.length === 40) ownDeleted.set(id, { rev: own.rev, seq: own.seq, tomb });
+        } catch {
+          // A note that cannot be read is dropped: the deletion is then read back from the feed, or the item is seen as missing.
+        }
+      }
       // What the server showed when a conflict began. A conflict saved without it (before it existed) is read from the row.
       const savedConflicts = saved?.v === 1 && saved.conflicts && typeof saved.conflicts === "object" ? saved.conflicts : {};
       for (const [id, note] of Object.entries(savedConflicts)) {
@@ -2974,6 +3378,18 @@ export function createSyncEngine({
           index.set(row.itemId, summaryOf({}, row.rev));
         }
       }
+      // A deletion this device made, that the server took and whose tombstone has not come back yet, stays deleted on the screen after a start
+      // (the row that is cached is still the live one). A note that the row has outgrown goes.
+      for (const [id, own] of [...ownDeleted]) {
+        const row = rows.get(id);
+        if (row !== undefined && row.rev >= own.rev) {
+          ownDeleted.delete(id);
+          flagsDirty = true;
+        } else if (row !== undefined && !flags.has(id)) {
+          overlay.set(id, { rev: own.rev, deleted: true, envelope: null, tag: null });
+          index.delete(id);
+        }
+      }
       for (const [id, flag] of [...flags]) {
         // A flag needs its item: a damaged one may have no good version, but a quarantine keeps one.
         if (!rows.has(id) && flag.kind === "quarantined") flags.delete(id);
@@ -2985,6 +3401,10 @@ export function createSyncEngine({
       // Writes that were queued before the restart show as pending, newest last.
       const queued = await runner.load();
       alive();
+      // An import that was under way is carried on (its keys are the ones it had); what was sent before the restart is not counted again.
+      importCount.total = queued.filter((entry) => entry.import !== undefined).length;
+      importCount.sent = 0;
+      importCount.failed = 0;
       for (const id of [...blocked.keys()]) {
         // A block needs its draft: when the outbox no longer has one, the block is over.
         if (queued.some((entry) => entry.itemId === id)) runner.block(id);
@@ -3060,6 +3480,9 @@ export function createSyncEngine({
       mootRecheck.clear();
       unconditioned.clear();
       epochRefusals.clear();
+      ownDeleted.clear();
+      heldFloors.clear();
+      feedFloor = 0;
       standing.clear();
       lastDrain = null;
       verifyRequested = false;
@@ -3075,6 +3498,15 @@ export function createSyncEngine({
     },
 
     syncNow,
+
+    /**
+     * The last state the engine announced (`syncing`, `idle`, `offline`, `retrying`, `failed`, `unauthorized`, ...), or "" before the
+     * first. A screen that is built after the engine announced it asks for it, because an announcement is made once.
+     * @returns {string}
+     */
+    status() {
+      return lastStatus;
+    },
 
     /**
      * Why the engine has stopped (one of `HALT_CODES`, or null) and the warnings that stand until a later check clears them.
@@ -3270,6 +3702,114 @@ export function createSyncEngine({
         await queue(id, 0, { blob: sealed.envelope, tag: sealed.tag }, { rev: 1, deleted: false, envelope: sealed.envelope, tag: sealed.tag }, summary);
       });
       return id;
+    },
+
+    /**
+     * Imports items that have been sealed already (`{ id, rev: 1, envelope, tag }`, made by the core in the import worker: no field of an
+     * item passes through here). Every item is checked to open, then all of them are stored in the outbox with the mark of the import
+     * window `windowId` (the one `POST /api/sync/import` gave), and only then is anything sent: in batches of at most 100 operations and
+     * 5 MiB, the head of each lane, under the same keys after a reload. The items show as pending like any new item. Nothing is stored
+     * when one of them does not open or its id is in use.
+     * Events: `import` `{ sent, total, failed }` after each batch, and `import_window_closed` `{ remaining }` when the server refuses the window.
+     * Spec: Fase 1 section 8.2 (batch) and 8.3 (idempotency).
+     * @param {Array<{ id: string, rev: 1, envelope: Uint8Array, tag: Uint8Array }>} sealedItems
+     * @param {{ windowId: string }} options
+     * @returns {Promise<{ queued: number }>}
+     */
+    async importItems(sealedItems, { windowId } = /** @type {{ windowId: string }} */ ({})) {
+      if (stopped) throw new SyncError("stopped");
+      if (restoring || restorePending) throw new SyncError("busy", "An older state is being accepted.");
+      if (!Array.isArray(sealedItems) || sealedItems.length === 0) throw new TypeError("an import has items");
+      if (!hex16.is(windowId)) throw new TypeError("an import names the window it counts against");
+      /** @type {Set<string>} */
+      const ids = new Set();
+      for (const item of sealedItems) {
+        const ok = item !== null && typeof item === "object" && hex16.is(item.id) && item.id !== MANIFEST_ID && item.rev === 1 &&
+          item.envelope instanceof Uint8Array && item.tag instanceof Uint8Array && item.tag.length === 32;
+        if (!ok) throw new TypeError("an imported item is { id, rev: 1, envelope, tag }");
+        if (ids.has(item.id)) throw new TypeError("an item is imported once");
+        ids.add(item.id);
+        if (rows.has(item.id) || overlay.has(item.id) || flags.has(item.id) || ownDeleted.has(item.id) || runner.entriesOf(item.id).length > 0) {
+          throw new SyncError("invalid_state", "An item with that id is already here.");
+        }
+      }
+      // Each must open (the core checks the tag against the id and the revision) before anything is stored.
+      /** @type {Map<string, ReturnType<typeof summaryOf>>} */
+      const summaries = new Map();
+      for (let from = 0; from < sealedItems.length; from += 20) {
+        await Promise.all(sealedItems.slice(from, from + 20).map(async (item) => {
+          try {
+            summaries.set(item.id, await summarize(item.id, 1, item.envelope, item.tag));
+          } catch (error) {
+            if (stopped || isFatal(error)) throw error;
+            throw new SyncError("invalid_item", "An imported item does not open.", codeOf(error));
+          }
+        }));
+        alive();
+      }
+      const epoch = await acceptedEpoch();
+      const entries = sealedItems.map(({ id, envelope, tag }) => {
+        const idem = randomId();
+        if (epoch === null) unconditioned.add(idem);
+        return {
+          idem, itemId: id, baseRev: 0, body: { blob: envelope, tag }, import: windowId,
+          bytes: writeBytes({ baseRev: 0, body: { blob: envelope, tag }, idem, restoreEpoch: epoch }),
+        };
+      });
+      // An import that is not finished goes on under the new window with the new one.
+      if (runner.importState().queued > 0) await runner.resumeImport(windowId);
+      else {
+        importCount.total = 0;
+        importCount.sent = 0;
+        importCount.failed = 0;
+      }
+      // The screen and the count are ready before the first request is made (the answer can come before this function goes on).
+      for (const { id, envelope, tag } of sealedItems) {
+        overlay.set(id, { rev: 1, deleted: false, envelope, tag });
+        index.set(id, /** @type {any} */ (summaries.get(id)));
+      }
+      importCount.total += entries.length;
+      try {
+        await runner.enqueueMany(entries);
+      } catch (error) {
+        // Not stored, so not sent: the screen and the count go back to what they were.
+        for (const { id } of sealedItems) {
+          overlay.delete(id);
+          index.delete(id);
+        }
+        importCount.total -= entries.length;
+        throw error;
+      }
+      alive();
+      changed(ids);
+      emit("import", { sent: importCount.sent, total: importCount.total, failed: importCount.failed });
+      return { queued: entries.length };
+    },
+
+    /**
+     * How an import stands, for the page that shows it (also after a reload, when the import carries on from the outbox): `queued` writes of
+     * the import can still be sent, `refused` were refused by the server for good and stay as drafts (also after a reload: it is read from the
+     * blocked lanes), `sent` went through and `failed` were refused since this engine started or the import began, `total` is the size of the
+     * import (after a reload: what was left), and `windowClosed` says that the server refused the window (the page offers "Continue import").
+     * `queued` counts an answered batch until its writes are reported, so `sent + queued` never drops below what is done.
+     * @returns {{ queued: number, refused: number, sent: number, total: number, failed: number, windowClosed: boolean }}
+     */
+    importStatus() {
+      const { queued, refused, windowClosed } = runner.importState();
+      return { queued, refused, sent: importCount.sent, total: importCount.total, failed: importCount.failed, windowClosed };
+    },
+
+    /**
+     * "Continue the import": the server refused the window of the import (`import_window_closed`), or the page was reloaded after it ran
+     * out. The writes that are left get the window `windowId` (a new one, made with a fresh re-authentication for as many operations as
+     * are left) and go on in batches under their own keys: what the server stored before the window closed comes back as a replay.
+     * @param {{ windowId: string }} options
+     * @returns {Promise<void>}
+     */
+    async resumeImport({ windowId } = /** @type {{ windowId: string }} */ ({})) {
+      if (stopped) throw new SyncError("stopped");
+      if (!hex16.is(windowId)) throw new TypeError("an import names the window it counts against");
+      await runner.resumeImport(windowId);
     },
 
     /**
@@ -3566,7 +4106,7 @@ export function createSyncEngine({
     },
 
     /**
-     * @param {"changed" | "error" | "state"} event
+     * @param {"changed" | "error" | "state" | "import" | "import_window_closed" | "copied"} event
      * @param {(payload: any) => void} fn
      * @returns {() => void} removes the listener
      */

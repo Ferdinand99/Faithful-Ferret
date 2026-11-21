@@ -426,7 +426,7 @@ test("the_pin_state_is_always_required", () => {
   const job2 = new wasm.UnlockJob();
   assert.equal(code(() => job2.pin_unlock(enc.encode("123456"), undefined, created.wraps[0], null)), "invalid_input");
   assert.equal(code(() => job2.unlock_recovery(URL_, CTX, "FFR1-", created.wraps[1], undefined)), "invalid_input");
-  assert.equal(code(() => job2.recover(URL_, CTX, "x", created.wraps[1], created.manifest, fill(16, 0x73), undefined, null)), "invalid_input");
+  assert.equal(code(() => job2.recover(URL_, CTX, "x", created.wraps[1], created.manifest, undefined, null)), "invalid_input");
 });
 
 test("sign_in_checks_the_pins_and_returns_the_record", () => {
@@ -582,14 +582,13 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   const { server, created, vault } = newAccount("recover");
   const rk = vault.reveal_recovery_code();
   const sk = vault.reveal_secret_key_code();
-  const newRecoveryId = fill(16, 0x73);
   // The text of a scanned QR code for this account.
   const qrOf = (key, url = URL_, account = IDS.account_id) => wasm.setup_qr_build(url, account, 1, true, key);
   const recoverWith = (pin, qr, text = rk) => {
     const job = new wasm.UnlockJob();
     const request = job.register_start(enc.encode(PASSWORD_2), { kind: "code", code: sk });
     job.register_finish(server.register_response(IDS.account_id, request), 1);
-    return { job, call: () => job.recover(URL_, CTX, text, created.wraps[1], created.manifest, newRecoveryId, pin, qr) };
+    return { job, call: () => job.recover(URL_, CTX, text, created.wraps[1], created.manifest, pin, qr) };
   };
 
   // A new device needs the value of the scanned QR code.
@@ -617,6 +616,9 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   assert.equal(out.sk_bit, true);
   assert.equal(out.password_wrap.kek_generation, 2);
   assert.equal(out.recovery_wrap.kek_generation, 2);
+  // Both wraps keep the ids the server stores them under.
+  assert.deepEqual(out.password_wrap.method_id, created.wraps[0].method_id);
+  assert.deepEqual(out.recovery_wrap.method_id, created.wraps[1].method_id);
   assert.deepEqual(out.pinned.server_public_key, created.server_public_key);
   assert.equal(out.pinned.server_url, URL_);
   assert.deepEqual(out.pinned.kek_generation_max.map((f) => f.generation), [2, 2]);
@@ -633,6 +635,14 @@ test("recovery_compares_the_qr_server_key_inside_wasm", () => {
   // The new record unlocks with the new password wrap.
   const next = signIn(server, out.registration_record, PASSWORD_2, sk, pinned(out.pinned), out.password_wrap);
   assert.deepEqual(next.vault.auth_public_key(), created.pk_a);
+  // The new recovery key opens the new recovery wrap, which a renewal then
+  // replaces under the same id.
+  const again = new wasm.UnlockJob();
+  const reopened = again.unlock_recovery(URL_, CTX, newRk, out.recovery_wrap, pinned(out.pinned, { server_public_key: out.pinned.server_public_key }));
+  assert.deepEqual(reopened.vault.auth_public_key(), created.pk_a);
+  const renewed = out.vault.renew_recovery(out.pinned, out.recovery_wrap, out.manifest);
+  assert.deepEqual(renewed.wrap.method_id, created.wraps[1].method_id);
+  assert.equal(renewed.wrap.kek_generation, 3);
 
   // A device with the record compares with it, and gets the raised floors.
   const known = recoverWith(pinned(created.pinned), null).call();
@@ -814,7 +824,8 @@ test("export_and_import_split_the_slow_step_into_the_job_worker", () => {
 });
 
 test("export_begin_refuses_kdf_parameters_below_the_default", () => {
-  const { vault } = newAccount("export-floor");
+  const account = newAccount("export-floor");
+  const { vault } = account;
   const id = fill(16, 0x41);
   const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
   for (const kdf of [
@@ -823,16 +834,75 @@ test("export_begin_refuses_kdf_parameters_below_the_default", () => {
     { m_kib: 131072, t: 9, p: 1 },
     { m_kib: 262143, t: 3, p: 1 },
   ]) {
-    assert.equal(code(() => vault.export_begin(rows, NOW, kdf)), "kdf_out_of_range", JSON.stringify(kdf));
+    assert.equal(code(() => vault.export_begin(rows, NOW, kdf, reauthToken(account))), "kdf_out_of_range", JSON.stringify(kdf));
   }
   // The default (256 MiB, 3 passes) and anything stronger is fine; only the
   // draft is made here, no Argon2id runs.
-  assert.deepEqual(vault.export_begin(rows, NOW, undefined).kdf, { m_kib: 262144, t: 3, p: 1 });
-  assert.deepEqual(vault.export_begin(rows, NOW, { m_kib: 262144, t: 4, p: 1 }).kdf, { m_kib: 262144, t: 4, p: 1 });
+  assert.deepEqual(vault.export_begin(rows, NOW, undefined, reauthToken(account)).kdf, { m_kib: 262144, t: 3, p: 1 });
+  assert.deepEqual(vault.export_begin(rows, NOW, { m_kib: 262144, t: 4, p: 1 }, reauthToken(account)).kdf, { m_kib: 262144, t: 4, p: 1 });
   // A key that is refused (here: too short) leaves the draft in place, so the
   // export can be finished with the right key.
   assert.equal(code(() => vault.export_finish(fill(31, 7))), "input_too_short");
   assert.ok(vault.export_finish(fill(32, 7)).length > 100);
+});
+
+test("an_encrypted_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
+  const account = newAccount("export-token");
+  const { vault } = account;
+  const id = fill(16, 0x41);
+  const rows = [row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))];
+  const begin = (token, now = NOW, kdf = undefined) => vault.export_begin(rows, now, kdf, token);
+  // No token, a short one, a zero one, a made-up one: reauth_required, no draft, and each attempt uses the grant up.
+  const first = reauthToken(account);
+  assert.equal(code(() => begin(undefined)), "reauth_required");
+  assert.equal(code(() => begin(first.slice())), "reauth_required", "used up by the attempt without a token");
+  const second = reauthToken(account);
+  assert.equal(code(() => begin(new Uint8Array(0))), "reauth_required");
+  assert.equal(code(() => begin(second.slice())), "reauth_required");
+  const third = reauthToken(account);
+  assert.equal(code(() => begin(fill(32, 7))), "reauth_required");
+  assert.equal(code(() => begin(third.slice())), "reauth_required");
+  assert.equal(code(() => vault.export_finish(fill(32, 7))), "invalid_input", "a refused begin leaves no draft");
+  // A grant for the plaintext export is the same permission and is not kept for this one.
+  const plain = reauthToken(account);
+  assert.ok(vault.reveal_plain_export(rows, "json", false, plain.slice(), NOW).length > 0);
+  assert.equal(code(() => begin(plain)), "reauth_required", "one grant, one use");
+  // Five minutes and no more; the clock cannot go back; an attempt uses the token up.
+  assert.ok(begin(reauthToken(account), NOW + 300_000).salt.length === 16);
+  const late = reauthToken(account);
+  assert.equal(code(() => begin(late.slice(), NOW + 300_001)), "reauth_required");
+  assert.equal(code(() => begin(late.slice())), "reauth_required", "used up by the late attempt");
+  const early = reauthToken(account);
+  assert.equal(code(() => begin(early.slice(), NOW - 1)), "reauth_required");
+  assert.equal(code(() => begin(early.slice())), "reauth_required");
+  // A mistake of the page (a time that is not a time, parameters that are too weak) keeps the token.
+  const kept = reauthToken(account);
+  assert.equal(code(() => begin(kept.slice(), NaN)), "invalid_input");
+  assert.equal(code(() => begin(kept.slice(), -5)), "invalid_input");
+  assert.equal(code(() => begin(kept.slice(), NOW, { m_kib: 65536, t: 3, p: 1 })), "kdf_out_of_range");
+  // A kdf that is not the shape of one (a wrong type, a missing or an extra field) is a mistake of the page as well.
+  for (const bad of [{ m_kib: "x", t: 3, p: 1 }, { m_kib: 262144 }, { m_kib: 262144, t: 3, p: 1, extra: 1 }, "argon2id", 7]) {
+    assert.equal(code(() => begin(kept.slice(), NOW, bad)), "invalid_input", JSON.stringify(bad));
+  }
+  const started = begin(kept, NOW + 1);
+  assert.equal(started.salt.length, 16);
+  assert.ok(vault.export_finish(fill(32, 7)).length > 100);
+  // A row that does not open is found after the token is checked: the token is used up, no draft is made, and the
+  // same token is `reauth_required` afterwards (the page finds such rows with open_item, which spends no grant).
+  const damaged = [row(id, { ...vault.encrypt_item(id, 2, LOGIN_DRAFT, undefined, NOW), tag: fill(32, 0) })];
+  const spent = reauthToken(account);
+  assert.equal(code(() => vault.export_begin(damaged, NOW, undefined, spent.slice())), "decrypt");
+  assert.equal(code(() => vault.export_finish(fill(32, 7))), "invalid_input", "no draft after a row that does not open");
+  assert.equal(code(() => begin(spent.slice())), "reauth_required", "the failed attempt used the token up");
+  // A new token replaces the one before it.
+  const old = reauthToken(account);
+  const newer = reauthToken(account);
+  assert.equal(code(() => begin(old)), "reauth_required");
+  assert.equal(code(() => begin(newer)), "reauth_required", "the failed attempt used it up");
+  // Locking drops the grant.
+  const dropped = reauthToken(account);
+  vault.lock();
+  assert.equal(code(() => begin(dropped)), "vault_locked");
 });
 
 test("a_plaintext_export_needs_a_one_time_token_from_a_fresh_sign_in", () => {
@@ -1179,7 +1249,8 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.equal(a.length, 32);
   assert.ok(a.some((x) => x !== 0));
   assert.notDeepEqual(a, b);
-  const { vault, created } = newAccount("zero-keys");
+  const account = newAccount("zero-keys");
+  const { vault, created } = account;
   const wrap = (salt, prf) => vault.wrap_prf(fill(24, 0x44), salt, prf, fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
   assert.equal(code(() => wrap(new Uint8Array(32), fill(32, 0x33))), "input_all_zero", "a salt of zeros");
   assert.equal(code(() => wrap(a, new Uint8Array(32))), "input_all_zero", "a PRF output of zeros");
@@ -1188,7 +1259,7 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, new Uint8Array(32), wrap(a, fill(32, 0x33)), pinned(created.pinned))), "input_all_zero");
   assert.equal(code(() => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), new Uint8Array(32))), "input_all_zero");
   const id = fill(16, 0x41);
-  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW);
+  vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW, undefined, reauthToken(account));
   assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");
   assert.ok(vault.export_finish(fill(32, 7)).length > 100, "the draft was kept");
 });
@@ -1409,4 +1480,223 @@ test("copy_on_a_locked_vault_is_vault_locked", () => {
   const h = open(vault, ITEM, first);
   vault.lock();
   assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "vault_locked");
+});
+
+// ------------------------------------------------------- new recovery key
+
+const floorOf = (p, type) => p.kek_generation_max.find((f) => f.type === type).generation;
+
+/** A new account whose setup secrets have been typed back (none held). */
+function confirmedAccount(seed, options) {
+  const acct = newAccount(seed, options);
+  const { vault, created } = acct;
+  const oldCode = vault.reveal_recovery_code();
+  vault.verify_recovery_setup(oldCode, created.wraps[1]);
+  if (options?.secretKey !== false) vault.verify_secret_key_entry(vault.reveal_secret_key_code());
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  return { ...acct, oldCode };
+}
+
+test("renew_recovery_returns_the_request_and_the_new_pinned_record", () => {
+  const { created, vault, oldCode } = confirmedAccount("renew");
+  const renewed = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  assert.deepEqual(Object.keys(renewed).sort(), ["manifest", "pinned", "pk_r", "wrap"]);
+  // Same method id, the next generation, the manifest one revision up.
+  assert.deepEqual(renewed.wrap.method_id, created.wraps[1].method_id);
+  assert.equal(renewed.wrap.kek_generation, 2);
+  assert.equal(renewed.wrap.method.type, "recovery");
+  assert.equal(renewed.manifest.rev, created.manifest.rev + 1);
+  assert.equal(renewed.pk_r.length, 32);
+  assert.notDeepEqual(renewed.pk_r, created.pk_r);
+  // The record to store: the recovery floor is the new generation.
+  assert.equal(floorOf(renewed.pinned, "recovery"), 2);
+  assert.equal(floorOf(renewed.pinned, "password"), 1);
+  // The new key opens the new wrap under the new record; the old wrap is a
+  // rollback for it, and the old key does not open the new wrap.
+  const newCode = vault.reveal_recovery_code();
+  assert.notEqual(newCode, oldCode);
+  const unlock = (rkText, wrap, record) =>
+    new wasm.UnlockJob().unlock_recovery(URL_, CTX, rkText, wrap, pinned(record, { server_public_key: record.server_public_key }));
+  const opened = unlock(newCode, renewed.wrap, renewed.pinned);
+  assert.deepEqual(opened.vault.auth_public_key(), created.pk_a);
+  assert.equal(code(() => unlock(oldCode, created.wraps[1], renewed.pinned)), "pinned_kek_generation");
+  assert.equal(code(() => unlock(oldCode, renewed.wrap, renewed.pinned)), "decrypt");
+  // A renewal while the new key is still held is refused, and nothing is made.
+  assert.equal(code(() => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest)), "invalid_state");
+  assert.equal(vault.reveal_recovery_code(), newCode, "the held key is untouched");
+  vault.clear_setup_secrets();
+  // A current wrap below the pinned floor is refused, before anything is made.
+  assert.equal(
+    code(() => vault.renew_recovery(renewed.pinned, created.wraps[1], created.manifest)),
+    "pinned_kek_generation",
+  );
+  // The password wrap is not a recovery wrap; a record without a server key
+  // cannot make the sheet of the new key.
+  assert.equal(code(() => vault.renew_recovery(created.pinned, created.wraps[0], created.manifest)), "unsupported");
+  assert.equal(
+    code(() => vault.renew_recovery({ ...created.pinned, server_public_key: null }, created.wraps[1], created.manifest)),
+    "pinned_server_key",
+  );
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input", "no refusal left a key behind");
+});
+
+test("renewal_refuses_while_setup_secrets_are_pending", () => {
+  // A new account holds its recovery key and secret key until they are typed
+  // back: a renewal does not wipe them silently.
+  const { created, vault } = newAccount("renew-pending");
+  const rk = vault.reveal_recovery_code();
+  const sk = vault.reveal_secret_key_code();
+  assert.equal(code(() => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest)), "invalid_state");
+  assert.equal(
+    code(() => vault.renew_recovery_after_restore(created.pinned, created.wraps[1], created.manifest)),
+    "invalid_state",
+  );
+  assert.equal(vault.reveal_recovery_code(), rk);
+  assert.equal(vault.reveal_secret_key_code(), sk);
+  // Discarding them is an explicit call; then the renewal goes through.
+  vault.clear_setup_secrets();
+  assert.equal(vault.renew_recovery(created.pinned, created.wraps[1], created.manifest).wrap.kek_generation, 2);
+});
+
+test("after_an_accepted_restore_the_renewal_goes_above_the_floor", () => {
+  const { created, vault } = confirmedAccount("renew-restore");
+  // The device has seen recovery generation 3; the restored server shows 1.
+  const record = structuredClone(created.pinned);
+  record.kek_generation_max.find((f) => f.type === "recovery").generation = 3;
+  assert.equal(code(() => vault.renew_recovery(record, created.wraps[1], created.manifest)), "pinned_kek_generation");
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input", "the refusal made nothing");
+  const renewed = vault.renew_recovery_after_restore(record, created.wraps[1], created.manifest);
+  assert.equal(renewed.wrap.kek_generation, 4);
+  assert.deepEqual(renewed.wrap.method_id, created.wraps[1].method_id);
+  assert.equal(floorOf(renewed.pinned, "recovery"), 4, "the record only goes up");
+  const rk = vault.reveal_recovery_code();
+  vault.verify_recovery_setup(rk, renewed.wrap);
+  // Every other check still applies.
+  assert.equal(code(() => vault.renew_recovery_after_restore(record, created.wraps[0], created.manifest)), "unsupported");
+  assert.equal(
+    code(() => vault.renew_recovery_after_restore({ ...record, pk_a: fill(32, 9) }, created.wraps[1], created.manifest)),
+    "pinned_auth_key",
+  );
+  assert.equal(
+    code(() => vault.renew_recovery_after_restore({ ...record, server_public_key: null }, created.wraps[1], created.manifest)),
+    "pinned_server_key",
+  );
+  vault.lock();
+  assert.equal(code(() => vault.renew_recovery_after_restore(record, created.wraps[1], created.manifest)), "vault_locked");
+});
+
+test("auth_sign_accepts_unlock_method_recovery_put", () => {
+  const { created, vault } = confirmedAccount("renew-sign");
+  vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  const nonce = fill(32, 5);
+  const body = enc.encode('{"wrap":"..."}');
+  const sig = vault.auth_sign("unlock-method.recovery.put", nonce, body);
+  assert.equal(sig.length, 64);
+  // The proof is over the operation: another op name gives another signature.
+  assert.notDeepEqual(vault.auth_sign("unlock-method.password.put", nonce, body), sig);
+  // It checks against pk_a for that operation (the check the server makes),
+  // and not for another one.
+  const hex = (b) => Buffer.from(b).toString("hex");
+  const verifyAs = (op) =>
+    JSON.parse(
+      wasm.test_run_case(
+        "proof_verify",
+        JSON.stringify({
+          op: "proof.verify",
+          input: {
+            pk: hex(created.pk_a), op, account_id: hex(IDS.account_id), nonce: hex(nonce),
+            vk_epoch: "1", body: hex(body), proof: hex(sig),
+          },
+          rng: [],
+        }),
+      ),
+    );
+  assert.deepEqual(verifyAs("unlock-method.recovery.put").output, { ok: true });
+  assert.equal(verifyAs("unlock-method.password.put").code, "decrypt");
+});
+
+test("the_new_key_is_shown_until_typed_back_and_then_cleared", () => {
+  const { created, vault, oldCode } = confirmedAccount("renew-show");
+  const renewed = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  const rk = vault.reveal_recovery_code();
+  assert.match(rk, /^FFR1-/);
+  assert.equal(vault.reveal_recovery_code(), rk, "shown again until it is typed back");
+  // The old wrap does not confirm the new key, and a typo is a checksum.
+  assert.equal(code(() => vault.verify_recovery_setup(rk, created.wraps[1])), "decrypt");
+  const typo = rk.slice(0, -1) + (rk.endsWith("0") ? "1" : "0");
+  assert.equal(code(() => vault.verify_recovery_setup(typo, renewed.wrap)), "checksum");
+  assert.equal(vault.reveal_recovery_code(), rk);
+  // Typed back against the new wrap: the key is gone.
+  vault.verify_recovery_setup(rk, renewed.wrap);
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  assert.notEqual(oldCode, rk);
+
+  // Not typed back: clear_setup_secrets drops it.
+  const again = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  assert.match(vault.reveal_recovery_code(), /^FFR1-/);
+  vault.clear_setup_secrets();
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  assert.equal(again.wrap.kek_generation, 2);
+  // And the lock drops it as well.
+  vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  vault.lock();
+  assert.equal(code(() => vault.reveal_recovery_code()), "vault_locked");
+});
+
+test("typing_back_the_old_key_does_not_confirm_the_renewal", () => {
+  const { created, vault, oldCode } = confirmedAccount("renew-old-key");
+  const renewed = vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  const rk = vault.reveal_recovery_code();
+  // The old key opens the old wrap, but it is not the key the setup holds.
+  assert.equal(code(() => vault.verify_recovery_setup(oldCode, created.wraps[1])), "decrypt");
+  assert.equal(vault.reveal_recovery_code(), rk, "the new key is still held");
+  vault.verify_recovery_setup(rk, renewed.wrap);
+  assert.equal(code(() => vault.reveal_recovery_code()), "invalid_input");
+  // With nothing held, the check is the wrap alone, as before.
+  vault.verify_recovery_setup(rk, renewed.wrap);
+});
+
+test("the_full_sheet_is_refused_after_renew_and_recover_for_an_account_with_a_secret_key", () => {
+  // After a renewal: page 1 would say "no secret key", so the full sheet is
+  // refused; page 2 alone is reveal_recovery_code.
+  const { created, vault } = confirmedAccount("sheet-renew");
+  vault.renew_recovery(created.pinned, created.wraps[1], created.manifest);
+  assert.equal(code(() => vault.reveal_emergency_sheet(URL_, "alice@example.com")), "secret_key_not_held");
+  assert.match(vault.reveal_recovery_code(), /^FFR1-/);
+
+  // After a recovery of an account with a secret key: the same.
+  const acct = newAccount("sheet-recover");
+  const sk = acct.vault.reveal_secret_key_code();
+  const rkCode = acct.vault.reveal_recovery_code();
+  const job = new wasm.UnlockJob();
+  const request = job.register_start(enc.encode(PASSWORD_2), { kind: "code", code: sk });
+  job.register_finish(acct.server.register_response(IDS.account_id, request), 1);
+  const recovered = job.recover(
+    URL_, CTX, rkCode, acct.created.wraps[1], acct.created.manifest, pinned(acct.created.pinned),
+  );
+  assert.equal(recovered.sk_bit, true);
+  assert.equal(code(() => recovered.vault.reveal_emergency_sheet(URL_, "alice@example.com")), "secret_key_not_held");
+  assert.match(recovered.vault.reveal_recovery_code(), /^FFR1-/);
+
+  // An account without a secret key: s=0 is the truth, and the full sheet is made.
+  const plain = confirmedAccount("sheet-plain", { secretKey: false });
+  assert.equal(plain.created.pinned.sk_bit, false);
+  plain.vault.renew_recovery(plain.created.pinned, plain.created.wraps[1], plain.created.manifest);
+  const sheet = plain.vault.reveal_emergency_sheet(URL_, "alice@example.com");
+  assert.equal(sheet.access.secret_key_code, null);
+  assert.equal(wasm.setup_qr_parse(sheet.access.qr_payload).sk_bit, false);
+  assert.equal(sheet.recovery_key_code, plain.vault.reveal_recovery_code());
+
+  // And a new account with a secret key still gets its full sheet.
+  const fresh = newAccount("sheet-fresh");
+  assert.equal(wasm.setup_qr_parse(fresh.vault.reveal_emergency_sheet(URL_, "a@example.com").access.qr_payload).sk_bit, true);
+});
+
+test("renew_on_a_locked_vault_is_vault_locked", () => {
+  const { created, vault } = newAccount("renew-locked");
+  vault.lock();
+  assert.equal(
+    code(() => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest)),
+    "vault_locked",
+  );
 });

@@ -2031,3 +2031,73 @@ async fn a_failed_bucket_write_does_not_change_the_policy() {
     .await;
     assert_eq!(*app.state.prelogin.read().unwrap(), policy);
 }
+
+// ------------------------------------------------------------ sign-in codes
+
+/// A pending sign-in code for `user`, as the kit stores it.
+async fn code_for(app: &TestApp, user: i64, n: u8) -> [u8; 32] {
+    let hash = [n; 32];
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            vole_kit::db::sign_in_codes::insert(conn, user, &hash, user)?;
+            Ok(())
+        })
+        .await
+        .expect("a code");
+    hash
+}
+
+async fn pending_codes(app: &TestApp, user: i64) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(vole_kit::db::sign_in_codes::count_pending(conn, user)?))
+        .await
+        .expect("a count")
+}
+
+#[tokio::test]
+async fn a_successful_sign_in_revokes_pending_sign_in_codes() {
+    let app = app().await;
+    let alice = seed(&app, 1, "alice@example.com").await;
+    let bob = seed(&app, 2, "bob@example.com").await;
+    let code = code_for(&app, alice, 1).await;
+    code_for(&app, bob, 2).await;
+
+    // A sign-in that fails leaves the code alone.
+    let mut jar = Jar::default();
+    let (_, started) = start(&app, &mut jar, "alice@example.com", OTHER_PASSWORD, None).await;
+    let started = started.unwrap();
+    let login_id = started.login_id.clone();
+    assert!(ke3_of(started).is_err());
+    let res = finish(&app, &mut jar, &login_id, &[0x11; 64], 1).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(pending_codes(&app, alice).await, 1);
+
+    // A sign-in that succeeds revokes it, and only the user's own.
+    let res = sign_in(&app, &mut jar, "alice@example.com", 1).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(pending_codes(&app, alice).await, 0);
+    assert_eq!(pending_codes(&app, bob).await, 1);
+    let redeemed = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(vole_kit::db::sign_in_codes::redeem(
+                conn, &code, alice, None,
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(redeemed, None, "the revoked code no longer works");
+
+    // A re-authentication proves the password too, and revokes a code made
+    // in the meantime.
+    code_for(&app, alice, 3).await;
+    assert_eq!(pending_codes(&app, alice).await, 1);
+    let (login_id, ke3) = reauth_proof(&app, &mut jar).await;
+    let done = finish_as(&app, &mut jar, &login_id, &ke3, 1, Some("reauth")).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text());
+    assert_eq!(pending_codes(&app, alice).await, 0);
+    assert_eq!(pending_codes(&app, bob).await, 1);
+}

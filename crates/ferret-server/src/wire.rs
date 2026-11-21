@@ -92,6 +92,43 @@ pub const MAX_BATCH_OPS: usize = 100;
 /// The largest body of a batch, in bytes.
 pub const MAX_BATCH_BYTES: usize = 6 * 1024 * 1024;
 
+/// The largest body of a request that carries a proof (`Ferret-Proof`), in
+/// bytes. The body is read as raw bytes up to this size and only parsed once
+/// the proof has been checked.
+///
+/// Spec: Fase 1 § 4.6 (the proof is bound to the exact body).
+pub const MAX_SIGNED_BODY: usize = 256 * 1024;
+
+/// The length of a challenge nonce (`Ferret-Nonce`) in bytes.
+///
+/// Spec: Fase 1 § 4.6 (`nonce (32 bytes)`).
+pub const NONCE_LEN: usize = 32;
+
+/// The length of a proof (`Ferret-Proof`, an Ed25519 signature) in bytes.
+///
+/// Spec: Fase 1 § 4.6.
+pub const PROOF_LEN: usize = 64;
+
+/// The length of the wrap of a password in bytes: nonce 24, vault key 32, tag
+/// 16 and the key commitment 32.
+///
+/// Spec: Fase 1 § 4.3 (key commitment, F-25).
+pub const PASSWORD_WRAP_LEN: usize = 104;
+
+/// The length of the wrap of a recovery key in bytes: nonce 24, vault key 32
+/// and tag 16.
+///
+/// Spec: Fase 1 § 4.3.
+pub const RECOVERY_WRAP_LEN: usize = 72;
+
+/// The words a session scope has on the wire.
+///
+/// Spec: Fase 1 § 6.3 (the reset session) and § 4.6 (a session before 2FA).
+pub const SESSION_SCOPES: &[&str] = &["full", "pending_2fa", "account_reset", "unverified"];
+
+/// The scope a redeemed sign-in code gives.
+pub const REDEEM_SCOPE: &str = "account_reset";
+
 /// The most entries in a checkpoint.
 pub const MAX_CHECKPOINT_ENTRIES: usize = 50_000;
 
@@ -102,6 +139,29 @@ pub const CHECKPOINT_ENTRY_LEN: usize = 56;
 /// The code of the `409` answer to a write that names another `restore_epoch`
 /// than the one the vault has.
 pub const RESTORE_EPOCH_CHANGED: &str = "restore_epoch_changed";
+
+/// The seconds an access token of a device lives (`expires_in`).
+///
+/// Spec: Fase 1 § 7.6 (short-lived access tokens, 15 minutes).
+pub const ACCESS_TOKEN_SECS: u32 = 900;
+
+/// The length of a device token on the wire: 32 bytes as base64url without
+/// padding.
+pub const TOKEN_CHARS: usize = 43;
+
+/// The most devices with tokens one account may have at once.
+///
+/// Spec: Fase 1 § 8.2 (quotas per account: 20 devices).
+pub const MAX_DEVICES: usize = 20;
+
+/// The most rows in a list of devices ([`DevicesRes`]): the devices with
+/// tokens and the browsers with a session.
+pub const MAX_DEVICE_LIST: usize = 200;
+
+/// The words a platform has on the wire, in the order of [`PlatformJson`].
+pub const PLATFORMS: &[&str] = &[
+    "windows", "macos", "linux", "android", "ios", "chromeos", "other",
+];
 
 /// The code of the answer for a refusal that came out of parsing `message`.
 ///
@@ -286,6 +346,36 @@ fixed_len_b64!(
     /// The OPAQUE registration record: 192 bytes, `malformed_registration_record`.
     serde_reg_record, 192, "malformed_registration_record"
 );
+fixed_len_b64!(
+    /// The wrap of a password: 104 bytes, `bad_request`.
+    serde_password_wrap, 104, "bad_request"
+);
+fixed_len_b64!(
+    /// The wrap of a recovery key: 72 bytes, `bad_request`.
+    serde_recovery_wrap, 72, "bad_request"
+);
+
+/// `#[serde(with = "serde_reg_request_b32")]` for `[u8; 32]`: the OPAQUE
+/// registration request as a fixed array, `malformed_registration_request` for
+/// any other size.
+pub mod serde_reg_request_b32 {
+    use super::{Deserialize, Deserializer, Serializer, b64url, de, decode_len};
+
+    /// Writes 32 bytes as base64url.
+    pub fn serialize<S: Serializer>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&b64url::encode(bytes))
+    }
+
+    /// Reads strict base64url of exactly 32 bytes; another size is refused
+    /// with the code of the field.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let bytes =
+            decode_len(&text, 32, "malformed_registration_request").map_err(de::Error::custom)?;
+        <[u8; 32]>::try_from(bytes)
+            .map_err(|_| de::Error::custom("malformed_registration_request: expected 32 bytes"))
+    }
+}
 
 /// `#[serde(with = "serde_tomb_opt")]` for `Option<Vec<u8>>`: a tombstone is
 /// 40 bytes, else `tombstone_invalid`. Pair it with `default` and
@@ -529,6 +619,99 @@ pub mod next_path {
             return Err(de::Error::custom("next is empty or too long"));
         }
         Ok(next)
+    }
+}
+
+/// `deserialize_with = "session_scope::deserialize"`: one of
+/// [`SESSION_SCOPES`].
+pub mod session_scope {
+    use super::{Deserialize, Deserializer, SESSION_SCOPES, de};
+
+    /// Reads a scope and refuses any word that is not one of the four.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let scope = String::deserialize(deserializer)?;
+        if !SESSION_SCOPES.contains(&scope.as_str()) {
+            return Err(de::Error::custom("scope is not one of the four scopes"));
+        }
+        Ok(scope)
+    }
+}
+
+/// `deserialize_with = "redeem_scope::deserialize"`: the `scope` of a redeemed
+/// code is `account_reset` and nothing else.
+pub mod redeem_scope {
+    use super::{Deserialize, Deserializer, REDEEM_SCOPE, de};
+
+    /// Reads the scope and refuses any other word.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let scope = String::deserialize(deserializer)?;
+        if scope != REDEEM_SCOPE {
+            return Err(de::Error::custom("scope is not account_reset"));
+        }
+        Ok(scope)
+    }
+}
+
+/// Checks a device name: at most [`DEVICE_NAME_MAX_CHARS`] characters, none of
+/// them a control, bidirectional-control or zero-width character, and not
+/// empty unless `empty_ok`.
+fn device_name_is_valid(name: &str, empty_ok: bool) -> bool {
+    let chars = name.chars().count();
+    (empty_ok || chars > 0)
+        && chars <= DEVICE_NAME_MAX_CHARS
+        && !name.chars().any(is_forbidden_in_name)
+}
+
+/// `deserialize_with = "device_name_required::deserialize"`: a name that must
+/// be there, of 1 to [`DEVICE_NAME_MAX_CHARS`] characters, with the rules of
+/// [`device_name`]. `""` is refused.
+pub mod device_name_required {
+    use super::{Deserialize, Deserializer, de, device_name_is_valid};
+
+    /// Reads a device name and refuses an empty or a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if !device_name_is_valid(&name, false) {
+            return Err(de::Error::custom(
+                "device name is empty, too long or has forbidden characters",
+            ));
+        }
+        Ok(name)
+    }
+}
+
+/// `deserialize_with = "device_name_listed::deserialize"`: the name of a row in
+/// a list of devices. The rules of [`device_name`], and `""` is allowed: a
+/// browser that never gave a name has none.
+pub mod device_name_listed {
+    use super::{Deserialize, Deserializer, de, device_name_is_valid};
+
+    /// Reads a device name, which may be empty, and refuses a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if !device_name_is_valid(&name, true) {
+            return Err(de::Error::custom(
+                "device name is too long or has forbidden characters",
+            ));
+        }
+        Ok(name)
+    }
+}
+
+/// `deserialize_with = "device_list::deserialize"`: at most
+/// [`MAX_DEVICE_LIST`] devices.
+pub mod device_list {
+    use super::{Deserialize, Deserializer, DeviceJson, MAX_DEVICE_LIST, de};
+
+    /// Reads the list and refuses a longer one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<DeviceJson>, D::Error> {
+        let devices = Vec::<DeviceJson>::deserialize(deserializer)?;
+        if devices.len() > MAX_DEVICE_LIST {
+            return Err(de::Error::custom("more than 200 devices"));
+        }
+        Ok(devices)
     }
 }
 
@@ -826,12 +1009,12 @@ pub struct HandoffRes {
 /// `POST /api/auth/handoff/redeem`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RedeemReq {
+pub struct HandoffRedeemReq {
     /// The code from [`HandoffRes`].
     pub code: String,
 }
 
-/// The answer to [`RedeemReq`].
+/// The answer to [`HandoffRedeemReq`].
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandoffRedeemRes {
@@ -864,10 +1047,27 @@ pub struct SessionRes {
     pub account_id: Option<[u8; 16]>,
     /// The login name.
     pub email: String,
-    /// The scope of the session.
+    /// The scope of the session: one of [`SESSION_SCOPES`].
+    #[serde(deserialize_with = "session_scope::deserialize")]
     pub scope: String,
     /// The origin the session belongs to.
     pub origin: OriginJson,
+    /// Unix seconds until which the last fresh re-authentication counts (five
+    /// minutes after it). Left out when the session has none, or it ran out.
+    ///
+    /// Spec: Fase 1 § 4.6 a.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "u53_opt::deserialize"
+    )]
+    pub reauth_until: Option<u64>,
+    /// Whether the user is an active administrator, so the web vault knows to
+    /// offer the way to the admin pages. Only the vault origin's answer says it
+    /// (`true` or left out, like the other optional booleans, and left out in
+    /// the admin origin's answer and for a session that is not `full`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin: Option<bool>,
 }
 
 /// The origin a session belongs to.
@@ -1258,6 +1458,15 @@ impl BatchOpJson {
 pub struct BatchReq {
     /// The operations.
     pub ops: Vec<BatchOpJson>,
+    /// The import window the operations are counted against, from
+    /// `POST /api/sync/import` ([`ImportWindowRes`]). Left out for a batch that
+    /// is not an import: that is the shape of the second milestone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub import_window: Option<[u8; 16]>,
 }
 
 impl BatchReq {
@@ -1682,6 +1891,583 @@ pub struct SyncEventJson {
     pub seq: u64,
 }
 
+/// The `200` answer to `POST /api/auth/challenge`: a nonce that can be used
+/// once, bound to the session, and the seconds it lives.
+///
+/// Spec: Fase 1 § 4.6 (`{nonce (32 bytes), expires_in: 300}`).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChallengeRes {
+    /// The nonce (32 bytes); it goes back in `Ferret-Nonce`.
+    #[serde(with = "serde_b32")]
+    pub nonce: [u8; 32],
+    /// Seconds until the nonce expires.
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/opaque/reregister/start`: the first step of a new OPAQUE
+/// registration inside a session (a password change, or a recovery).
+///
+/// Spec: Fase 1 § 4.3 (changing MP) and § 6.3 step 1.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReregisterStartReq {
+    /// The OPAQUE registration request (32 bytes).
+    #[serde(with = "serde_reg_request_b32")]
+    pub registration_request: [u8; 32],
+}
+
+/// The answer to [`ReregisterStartReq`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReregisterStartRes {
+    /// The OPAQUE registration response (64 bytes).
+    #[serde(with = "serde_reg_response")]
+    pub registration_response: Vec<u8>,
+}
+
+/// `PUT /api/vault/unlock-methods/password`: a new password (a new OPAQUE
+/// record, a new wrap and a new manifest). A sensitive operation: the body
+/// comes with `Ferret-Nonce` and `Ferret-Proof` (at most [`MAX_SIGNED_BODY`]
+/// bytes), and `kek_generation` is higher than the stored one.
+///
+/// Spec: Fase 1 § 4.6 (the endpoint table), § 4.3 (changing MP; the wrap is
+/// [`PASSWORD_WRAP_LEN`] bytes).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordPutReq {
+    /// The OPAQUE registration record (192 bytes).
+    #[serde(with = "serde_reg_record")]
+    pub registration_record: Vec<u8>,
+    /// The key-stretching profile the client used.
+    pub ksf_profile: u8,
+    /// The wrap of the vault key under the new password (104 bytes).
+    #[serde(with = "serde_password_wrap")]
+    pub wrap: Vec<u8>,
+    /// The generation of the new key-encryption key.
+    pub kek_generation: u32,
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to [`PasswordPutReq`].
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordPutRes {
+    /// The generation now stored.
+    pub kek_generation: u32,
+    /// The sequence number of the vault after the manifest was written.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// The `200` answer to [`RecoveryPutReq`]: the same two numbers as
+/// [`PasswordPutRes`].
+pub type RecoveryPutRes = PasswordPutRes;
+
+/// `PUT /api/vault/unlock-methods/recovery`: a new recovery key (a new wrap, a
+/// new public key and a new manifest). A sensitive operation, signed like
+/// [`PasswordPutReq`].
+///
+/// Spec: Fase 1 § 4.6 (the endpoint table; the wrap is [`RECOVERY_WRAP_LEN`]
+/// bytes, and a wrap of a password has more).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryPutReq {
+    /// The wrap of the vault key under the new recovery key (72 bytes).
+    #[serde(with = "serde_recovery_wrap")]
+    pub wrap: Vec<u8>,
+    /// The generation of the new key-encryption key.
+    pub kek_generation: u32,
+    /// The public key that checks the recovery proofs.
+    #[serde(with = "serde_b32")]
+    pub pk_r: [u8; 32],
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to `GET /api/vault/recovery`: what a client needs to open
+/// the vault with the recovery key. Call [`RecoveryRes::validate`].
+///
+/// Spec: Fase 1 § 6.3 step 2.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRes {
+    /// The account.
+    #[serde(with = "serde_hex16")]
+    pub account_id: [u8; 16],
+    /// The vault.
+    #[serde(with = "serde_hex16")]
+    pub vault_id: [u8; 16],
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// The key-stretching profile of the account.
+    pub ksf_profile: u8,
+    /// The recovery wrap.
+    pub wrap: WrapJson,
+    /// The manifest row.
+    pub manifest: SealedRowJson,
+}
+
+impl RecoveryRes {
+    /// Checks that the wrap is the recovery method (type 2), has the size of a
+    /// recovery wrap and carries no passkey fields. Every failure is
+    /// `bad_request`.
+    ///
+    /// Spec: Fase 1 § 4.3 (a recovery wrap is 72 bytes; `credential_id` and
+    /// `prf_salt` belong to a passkey).
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.wrap.method_type != 2
+            || self.wrap.wrap.len() != RECOVERY_WRAP_LEN
+            || self.wrap.credential_id.is_some()
+            || self.wrap.prf_salt.is_some()
+        {
+            return Err(WireError::Field("wrap"));
+        }
+        Ok(())
+    }
+}
+
+/// `POST /api/vault/recover`: a new password and a new recovery key, signed
+/// with the recovery key (`sk_r`). The body is at most [`MAX_SIGNED_BODY`]
+/// bytes, and every field is needed.
+///
+/// Spec: Fase 1 § 6.3 step 4 (`{ registration_record, ksf_profile, pw_wrap,
+/// rk_wrap, pk_r_new, manifest }`), with the two generations of the new wraps
+/// added: the wrap AAD binds `kek_generation` (§ 4.3), the client picks it
+/// (the manifest is sealed and the floor lives on the device), and the server
+/// can neither derive it nor check that it is higher than the stored one
+/// without it.
+///
+/// The new recovery wrap is made under the `method_id` of the stored recovery
+/// method, which the server keeps (the AAD binds the id too).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverReq {
+    /// The OPAQUE registration record of the new password (192 bytes).
+    #[serde(with = "serde_reg_record")]
+    pub registration_record: Vec<u8>,
+    /// The key-stretching profile the client used.
+    pub ksf_profile: u8,
+    /// The wrap of the vault key under the new password (104 bytes).
+    #[serde(with = "serde_password_wrap")]
+    pub pw_wrap: Vec<u8>,
+    /// The wrap of the vault key under the new recovery key (72 bytes).
+    #[serde(with = "serde_recovery_wrap")]
+    pub rk_wrap: Vec<u8>,
+    /// The generation of the key-encryption key of `pw_wrap`.
+    pub pw_kek_generation: u32,
+    /// The generation of the key-encryption key of `rk_wrap`.
+    pub rk_kek_generation: u32,
+    /// The public key that checks the proofs of the new recovery key.
+    #[serde(with = "serde_b32")]
+    pub pk_r_new: [u8; 32],
+    /// The manifest as the next revision of the manifest row.
+    pub manifest: SealedRowJson,
+}
+
+/// The `200` answer to [`RecoverReq`].
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverRes {
+    /// Whether the session that made the call ended with it (a reset session
+    /// does; a full session does not).
+    pub session_ended: bool,
+    /// The sequence number of the vault after the manifest was written.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub seq: u64,
+}
+
+/// `POST /api/auth/redeem`: a sign-in code from the administrator, with the
+/// e-mail it was made for. Its `Debug` shows neither. Any text reads: the
+/// redeem route checks length and form, and every failure is the same `401`.
+///
+/// Spec: Fase 1 § 6.3 step 1.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedeemReq {
+    /// The login name.
+    pub email: String,
+    /// The code.
+    pub code: String,
+}
+
+/// The `200` answer to [`RedeemReq`]; the session cookies come with it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedeemRes {
+    /// Always [`REDEEM_SCOPE`]: the session may do the things of § 6.3 step 1
+    /// and nothing else.
+    #[serde(deserialize_with = "redeem_scope::deserialize")]
+    pub scope: String,
+}
+
+/// `POST /api/sync/import`: asks for an import window for `ops` operations.
+/// Needs a fresh re-authentication. Any `ops` reads; the import route refuses
+/// 0 and too many (`quota_exceeded`).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportWindowReq {
+    /// How many operations the import will send.
+    pub ops: u32,
+}
+
+/// The `200` answer to [`ImportWindowReq`]; `window_id` goes in the
+/// `import_window` of each [`BatchReq`] of the import.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportWindowRes {
+    /// Names the window.
+    #[serde(with = "serde_hex16")]
+    pub window_id: [u8; 16],
+    /// How many operations the window holds.
+    pub ops: u32,
+    /// Seconds until the window ends.
+    pub expires_in: u32,
+}
+
+/// The platform of a device, as the device says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlatformJson {
+    /// Windows.
+    Windows,
+    /// macOS.
+    Macos,
+    /// Linux.
+    Linux,
+    /// Android.
+    Android,
+    /// iOS and iPadOS.
+    Ios,
+    /// ChromeOS.
+    Chromeos,
+    /// Anything else.
+    Other,
+}
+
+impl PlatformJson {
+    /// Every platform, in the order of [`PLATFORMS`].
+    pub const ALL: [PlatformJson; 7] = [
+        PlatformJson::Windows,
+        PlatformJson::Macos,
+        PlatformJson::Linux,
+        PlatformJson::Android,
+        PlatformJson::Ios,
+        PlatformJson::Chromeos,
+        PlatformJson::Other,
+    ];
+
+    /// The word on the wire, which is also the word in the `platform` column
+    /// of `ferret_devices`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PlatformJson::Windows => "windows",
+            PlatformJson::Macos => "macos",
+            PlatformJson::Linux => "linux",
+            PlatformJson::Android => "android",
+            PlatformJson::Ios => "ios",
+            PlatformJson::Chromeos => "chromeos",
+            PlatformJson::Other => "other",
+        }
+    }
+
+    /// The platform of a word, or `None` for a word that is not one.
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == word)
+    }
+}
+
+/// The kind of client in a device sign-in: always `device`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceClientJson {
+    /// A device client, which signs in for tokens instead of a session cookie.
+    Device,
+}
+
+/// The `token_type` of a device's tokens: always `DPoP`, never a free text.
+///
+/// RFC 9449 § 5 (`token_type` `DPoP`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenTypeJson {
+    /// Tokens bound to the device key with DPoP proofs.
+    #[serde(rename = "DPoP")]
+    DPoP,
+}
+
+/// A device token on the wire: exactly [`TOKEN_CHARS`] characters of strict
+/// base64url without padding that decode to 32 bytes. Anything else is
+/// refused when it is read (`bad_request`). The text is a secret: its `Debug`
+/// shows nothing, and it is zeroed when dropped. It has no `Clone` and no
+/// `PartialEq`: the server never copies or compares the text of a token, it
+/// reads it with `TokenSecret::from_wire` and compares the hash.
+///
+/// Spec: Fase 1 § 7.6 (never tokens in URLs or logs).
+#[derive(Serialize)]
+#[serde(transparent)]
+pub struct TokenJson(pub String);
+
+impl TokenJson {
+    /// Whether `text` is a token: [`TOKEN_CHARS`] characters of strict
+    /// base64url that decode to 32 bytes.
+    fn is_valid(text: &str) -> bool {
+        text.len() == TOKEN_CHARS
+            && b64url::decode(text).is_ok_and(|bytes| zeroize::Zeroizing::new(bytes).len() == 32)
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let token = TokenJson(String::deserialize(deserializer)?);
+        if !TokenJson::is_valid(&token.0) {
+            return Err(de::Error::custom(
+                "a token is 43 characters of base64url without padding",
+            ));
+        }
+        Ok(token)
+    }
+}
+
+impl Drop for TokenJson {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+/// `POST /api/auth/opaque/login/finish` from a device client: the OPAQUE
+/// finish and what the new device is called. The device gets its id from the
+/// server, and its key is the one in the DPoP proof of the request, so the body
+/// carries neither; nor a `purpose` (a device does not re-authenticate).
+///
+/// Spec: Fase 1 § 7.6 (the device registry); RFC 9449 § 5.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLoginFinishReq {
+    /// From [`LoginStartRes`].
+    #[serde(with = "serde_hex16")]
+    pub login_id: [u8; 16],
+    /// The third OPAQUE message (64 bytes).
+    #[serde(with = "serde_ke3")]
+    pub ke3: Vec<u8>,
+    /// Always `device`: the key that tells this body from the cookie one.
+    pub client: DeviceClientJson,
+    /// A name for the device: 1 to 64 characters.
+    #[serde(deserialize_with = "device_name_required::deserialize")]
+    pub device_name: String,
+    /// The platform of the device.
+    pub platform: PlatformJson,
+}
+
+/// The body of `POST /api/auth/opaque/login/finish`: the cookie sign-in of the
+/// web vault ([`LoginFinishReq`], unchanged) or the sign-in of a device client
+/// ([`DeviceLoginFinishReq`]). The body with the key `client` is the device
+/// one; every other body is the cookie one.
+pub enum LoginFinishBody {
+    /// A device client signs in for tokens.
+    Device(DeviceLoginFinishReq),
+    /// The web vault signs in for a session cookie.
+    Cookie(LoginFinishReq),
+}
+
+impl LoginFinishBody {
+    /// Reads the body. It looks for the key `client` first, without looking at
+    /// anything else, and then reads the bytes straight as one of the two
+    /// shapes, so each shape is refused with its own field codes
+    /// (`malformed_ke3`, see [`refusal_code`]) just as when it is read alone.
+    /// Bytes that are not a JSON object are read as the cookie shape, which
+    /// refuses them as it always did.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        /// Only the key `client`; every other field is skipped unread.
+        #[derive(Deserialize)]
+        struct Probe {
+            client: Option<de::IgnoredAny>,
+        }
+        match serde_json::from_slice::<Probe>(bytes) {
+            Ok(Probe { client: Some(_) }) => {
+                serde_json::from_slice(bytes).map(LoginFinishBody::Device)
+            }
+            _ => serde_json::from_slice(bytes).map(LoginFinishBody::Cookie),
+        }
+    }
+}
+
+impl fmt::Debug for LoginFinishBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            LoginFinishBody::Device(_) => "LoginFinishBody::Device([redacted])",
+            LoginFinishBody::Cookie(_) => "LoginFinishBody::Cookie([redacted])",
+        })
+    }
+}
+
+/// The `200` answer to [`DeviceLoginFinishReq`]: the account, the id the
+/// server gave the device, and its first tokens.
+///
+/// Spec: Fase 1 § 7.6; RFC 9449 § 5.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLoginFinishRes {
+    /// The account.
+    #[serde(with = "serde_hex16")]
+    pub account_id: [u8; 16],
+    /// The vault.
+    #[serde(with = "serde_hex16")]
+    pub vault_id: [u8; 16],
+    /// The epoch of the vault key.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub vk_epoch: u64,
+    /// The id the server gave the device.
+    #[serde(with = "serde_hex16")]
+    pub device_id: [u8; 16],
+    /// The access token.
+    pub access_token: TokenJson,
+    /// The refresh token.
+    pub refresh_token: TokenJson,
+    /// Always `DPoP`.
+    pub token_type: TokenTypeJson,
+    /// Seconds until the access token expires ([`ACCESS_TOKEN_SECS`]).
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/token/refresh`: a refresh token, with a DPoP proof of the
+/// device key in the `DPoP` header.
+///
+/// Spec: Fase 1 § 7.6 (every renewal needs a proof from the device key).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRefreshReq {
+    /// The refresh token, used once.
+    pub refresh_token: TokenJson,
+}
+
+/// The `200` answer to [`TokenRefreshReq`]: a new access token and the next
+/// refresh token.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRes {
+    /// The new access token.
+    pub access_token: TokenJson,
+    /// The next refresh token.
+    pub refresh_token: TokenJson,
+    /// Always `DPoP`.
+    pub token_type: TokenTypeJson,
+    /// Seconds until the access token expires ([`ACCESS_TOKEN_SECS`]).
+    pub expires_in: u32,
+}
+
+/// `POST /api/auth/token/revoke`: a device signs out. The answer is `204`, also
+/// for a token the server does not know.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRevokeReq {
+    /// The refresh token of the device.
+    pub refresh_token: TokenJson,
+}
+
+/// What a row of the list of devices is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKindJson {
+    /// A device client with tokens.
+    Device,
+    /// A browser with a session of the web vault.
+    Web,
+}
+
+/// One row of `GET /api/auth/devices`. A device with tokens has a name and its
+/// platform; a browser has no platform, and its name is `""` when it never
+/// gave one. Call [`DevicesRes::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceJson {
+    /// The device.
+    #[serde(with = "serde_hex16")]
+    pub id: [u8; 16],
+    /// A device with tokens, or a browser.
+    pub kind: DeviceKindJson,
+    /// The name; `""` for a browser that never gave one.
+    #[serde(deserialize_with = "device_name_listed::deserialize")]
+    pub name: String,
+    /// The platform, for a device with tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<PlatformJson>,
+    /// When the device first signed in (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub created_at: u64,
+    /// When the device was last seen (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub last_seen: u64,
+    /// Whether this row is the browser that asks.
+    pub current: bool,
+}
+
+/// `GET /api/auth/devices`: at most [`MAX_DEVICE_LIST`] rows, checked when the
+/// list is read. An account with more rows than that gets the first
+/// [`MAX_DEVICE_LIST`] and, in `more`, how many were left out, so the list is
+/// cut instead of refused. Call [`DevicesRes::validate`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevicesRes {
+    /// The devices.
+    #[serde(deserialize_with = "device_list::deserialize")]
+    pub devices: Vec<DeviceJson>,
+    /// How many rows were left out; left out when none were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<u32>,
+}
+
+impl DeviceJson {
+    /// Checks the row: a device with tokens has a name and a platform, a
+    /// browser has no platform. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        let ok = match self.kind {
+            DeviceKindJson::Device => !self.name.is_empty() && self.platform.is_some(),
+            DeviceKindJson::Web => self.platform.is_none(),
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(WireError::Field("kind, name, platform"))
+        }
+    }
+}
+
+impl DevicesRes {
+    /// Checks every row ([`DeviceJson::validate`]), and that `more` is there
+    /// only on a full list and is at least 1. Every failure is `bad_request`.
+    pub fn validate(&self) -> Result<(), WireError> {
+        if let Some(more) = self.more
+            && (more == 0 || self.devices.len() != MAX_DEVICE_LIST)
+        {
+            return Err(WireError::Field("more"));
+        }
+        self.devices.iter().try_for_each(DeviceJson::validate)
+    }
+}
+
+/// The `200` answer to `POST /api/auth/devices/revoke-all` and
+/// `POST /api/auth/devices/forget-old`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeAllRes {
+    /// How many devices and sessions were revoked.
+    pub revoked: u32,
+}
+
+redacted_debug!(
+    DeviceLoginFinishReq,
+    DeviceLoginFinishRes,
+    TokenRefreshReq,
+    TokenRes,
+    TokenRevokeReq,
+    DeviceJson,
+    DevicesRes,
+    RevokeAllRes,
+    TokenJson,
+);
+
 /// The body of every error: `{"error":"<code>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1705,7 +2491,7 @@ redacted_debug!(
     LoginFinishRes,
     HandoffReq,
     HandoffRes,
-    RedeemReq,
+    HandoffRedeemReq,
     HandoffRedeemRes,
     SessionRes,
     MethodsRes,
@@ -1726,6 +2512,19 @@ redacted_debug!(
     RestoreRowsRes,
     ItemsRes,
     SyncEventJson,
+    ChallengeRes,
+    ReregisterStartReq,
+    ReregisterStartRes,
+    PasswordPutReq,
+    PasswordPutRes,
+    RecoveryPutReq,
+    RecoveryRes,
+    RecoverReq,
+    RecoverRes,
+    RedeemReq,
+    RedeemRes,
+    ImportWindowReq,
+    ImportWindowRes,
 );
 
 /// Every code an error body can carry. The list is stable: the web vault
@@ -1766,4 +2565,13 @@ pub const ERROR_CODES: &[&str] = &[
     "checkpoint_stale",
     "checkpoint_invalid",
     "restore_epoch_changed",
+    "reauth_required",
+    "second_factor_required",
+    "write_conflict",
+    "import_window_open",
+    "import_window_invalid",
+    "dpop_invalid",
+    "token_expired",
+    "token_reused",
+    "device_revoked",
 ];

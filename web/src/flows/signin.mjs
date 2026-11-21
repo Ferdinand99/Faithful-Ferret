@@ -1,10 +1,14 @@
 // Sign-in and unlock (spec Fase 1 § 4.2, "Sign-in" and "Pinning and the SK
 // bit"). The order of the calls:
 //
+//   (the sheet's QR text, when there is one: its address is checked first)
 //   login_start           core: KE1 from the password (and the secret key code)
 //   POST login/start      the server's KE2, the profile number and `sk_hint`
+//   (the sheet's profile is checked before the password is stretched)
 //   login_finish          core: checks the profile and the pins, runs Argon2id, KE3
+//   (the sheet's server key is checked before KE3 is posted)
 //   POST login/finish     the session cookie; the account, vault and epoch
+//   (the sheet's account id and `pinnedElsewhere`, before anything is pinned)
 //   GET unlock-methods    the wraps, the manifest row and `pk_a`
 //   unlock_password       core: opens the password wrap under the pin state
 //   seed_pinned           core: adds the generation floors from the manifest
@@ -19,12 +23,31 @@
 // both lookups found nothing, and the secret key bit is the user's answer: the
 // server's `sk_hint` is shown as a preselection and changes nothing that is
 // sent.
+//
+// The text of the emergency sheet's QR code (`args.qr`) is the way to a new
+// device that does not rest on the first answer of the server (spec Fase 1
+// § 4.2, F-01 point 6). It states the address, the server's OPAQUE key, the KSF
+// profile, the account id and the secret key bit. The bit answers the question
+// about the secret key, and everything else is checked against what the server
+// says; a difference ends the sign-in with a hard error and nothing is pinned.
+// An account id is pinned under one server address only: `pinnedElsewhere` runs
+// right after `login/finish`, for a sign-in and for any re-authentication that
+// would make a new pin (this server holds no record of the account yet). Such a
+// pin is refused (`pinned_elsewhere`). A refused sign-in locks the vault and asks
+// the server to end the new session (best effort); a refused re-authentication
+// keeps the session it was made for, because nothing was pinned.
+//
+// One refusal keeps the new session too: the core refuses the server's password wrap as
+// older than this device has seen (`pinned_kek_generation`) and the server's restore epoch
+// is above the one this device stored. The server was restored from a backup, and the page
+// offers the recovery key (`pinnedRefusalAction`); that recovery runs in this session.
 import { ApiError } from "../api.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { rowToCore, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
-import { AccountError, withSkHint } from "../crypto/errors.mjs";
+import { AccountError, codeOf, withSkHint } from "../crypto/errors.mjs";
 import { encodeWire } from "../wire.mjs";
 import { forgetSecretKey, hasSecretKey, loadSecretKey, saveSecretKey } from "./deviceSecret.mjs";
+import { checkQrAfterLogin, checkQrBeforeKe3, readSetupQr, SetupQrError } from "./setupQr.mjs";
 
 /** What the server calls this browser when it lists the devices. */
 export const DEVICE_NAME = "Web vault";
@@ -46,15 +69,18 @@ function sameBytes(a, b) {
 }
 
 /**
- * What the vault session says, or null when there is none.
+ * What the vault session says, or null when there is none. Only a full session is a signed-in one: a reset session
+ * (`account_reset`, from a one-time code) can do nothing but recover the account, and one that waits for a second
+ * factor can do nothing at all.
  * @param {Env} env
- * @returns {Promise<{ accountId: string, email: string } | null>}
+ * @returns {Promise<{ accountId: string, email: string, admin: boolean } | null>} `admin`: the server says the user is
+ *   an administrator (only then are the admin pages offered)
  */
 export async function sessionInfo(env) {
   try {
     const res = await env.api.get("/api/auth/session", { shape: "session_res" });
-    if (res.origin !== "vault" || !hex16.is(res.account_id)) return null;
-    return { accountId: res.account_id, email: res.email };
+    if (res.origin !== "vault" || res.scope !== "full" || !hex16.is(res.account_id)) return null;
+    return { accountId: res.account_id, email: res.email, admin: res.admin === true };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return null;
     throw error;
@@ -85,10 +111,16 @@ export async function deviceStatus(env, email) {
  * @param {import("../store/idb.mjs").Store} db
  * @param {Record<string, any> | null} record the pinned record found so far
  * @param {{ skBit?: boolean, skCode?: string }} args
+ * @param {import("./setupQr.mjs").SetupQr | null} [qr] the sheet's text, when there is one: its bit is the answer
  * @returns {Promise<{ skBit: boolean, skCode: string | null }>}
  */
-async function decideSecretKey(env, db, record, args) {
-  const bit = typeof args.skBit === "boolean" ? args.skBit : record ? record.sk_bit === true : undefined;
+export async function decideSecretKey(env, db, record, args, qr = null) {
+  // The sheet answers the question. An answer or a record that differs from it is no wrong password: nothing is
+  // sent, and the refusal says that the sheet and the device disagree.
+  if (qr !== null && ((typeof args.skBit === "boolean" && args.skBit !== qr.skBit) || (record && (record.sk_bit === true) !== qr.skBit))) {
+    throw new SetupQrError("qr_sk_bit");
+  }
+  const bit = qr !== null ? qr.skBit : typeof args.skBit === "boolean" ? args.skBit : record ? record.sk_bit === true : undefined;
   if (bit === undefined) throw new AccountError("sk_answer_required");
   if (!bit) return { skBit: false, skCode: null };
   let code = nonEmpty(args.skCode);
@@ -111,6 +143,7 @@ async function decideSecretKey(env, db, record, args) {
  *   skCode: string | null,
  *   early: Record<string, any> | null,
  *   rememberSk?: boolean,
+ *   qr?: import("./setupQr.mjs").SetupQr | null,
  * }} p
  * @returns {Promise<Unlocked>}
  */
@@ -118,12 +151,15 @@ async function open(env, p) {
   const { client, api, store, server } = env;
   const db = await store.open();
   const deviceId = await store.deviceId(db, env.rand);
+  const qr = p.qr ?? null;
 
   /** @type {Record<string, any>} */
   let start;
   /** @type {Uint8Array} */
   let ke3;
   try {
+    // The sheet is for this server or the sign-in does not start: nothing is sent to a server the sheet is not for.
+    if (qr !== null) checkQrBeforeKe3(qr, { serverUrl: server });
     const ke1 = await withPassword(p.password, (mp) => client.vault.login_start(mp, p.skCode));
     start = await api.post(
       "/api/auth/opaque/login/start",
@@ -131,8 +167,16 @@ async function open(env, p) {
       { shape: "login_start_res" },
     );
     try {
+      // The password is not stretched for a profile below the sheet's.
+      if (qr !== null) checkQrBeforeKe3(qr, { serverUrl: server, serverProfile: start.ksf_profile });
       const early = p.early ? { kind: "pinned", record: p.early } : { kind: "first_use", sk_bit: p.skBit };
-      ke3 = (await client.vault.login_finish(b64u.decode(start.ke2), start.ksf_profile, early)).ke3;
+      const finished = await client.vault.login_finish(b64u.decode(start.ke2), start.ksf_profile, early);
+      ke3 = finished.ke3;
+      // The server has proved its key. It is the sheet's, or KE3 is not posted.
+      if (qr !== null) {
+        if (!(finished.server_public_key instanceof Uint8Array)) throw new SetupQrError("qr_server_key");
+        checkQrBeforeKe3(qr, { serverUrl: server, serverProfile: start.ksf_profile, serverPublicKey: finished.server_public_key });
+      }
     } catch (error) {
       throw withSkHint(error, start.sk_hint);
     }
@@ -164,9 +208,24 @@ async function open(env, p) {
     throw error;
   }
 
+  // What the refusal of an older password is weighed against (see `pinnedRefusalAction`).
+  /** @type {Record<string, any> | null} */
+  let seenRecord = null;
+  /** @type {Record<string, any> | null} */
+  let seenMethods = null;
   try {
+    // The server has named the account. It is the sheet's account, and no other address has it pinned: both
+    // are asked before anything is pinned.
+    if (qr !== null) checkQrAfterLogin(qr, { accountId: done.account_id });
     const record = await store.pinnedForSignIn(db, server, p.email, done.account_id);
+    seenRecord = record;
+    // A re-authentication in a session that is already pinned here makes no new pin; every other path does.
+    if (p.purpose === "login" || !record) {
+      const other = await store.pinnedElsewhere(db, server, done.account_id);
+      if (other !== null) throw new AccountError("pinned_elsewhere", { server: other, accountId: done.account_id });
+    }
     const methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+    seenMethods = methods;
     if (methods.vk_epoch !== done.vk_epoch) throw new AccountError("epoch_mismatch");
     const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
     if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
@@ -203,19 +262,95 @@ async function open(env, p) {
     };
   } catch (error) {
     await Promise.resolve(env.lock()).catch(() => undefined);
+    // A refusal of an older password after a restore of the server can be answered with the recovery key.
+    const offer = codeOf(error) === "pinned_kek_generation" && seenRecord && seenMethods
+      ? await pinnedRefusalAction(env, db, { accountId: done.account_id, record: seenRecord, methods: seenMethods }).catch(() => null)
+      : null;
+    if (offer !== null && error !== null && typeof error === "object") /** @type {any} */ (error).recoveryOffer = offer;
     // A sign-in that did not open the vault leaves no session behind; a
-    // re-authentication must not end the session it was made for.
-    if (p.purpose === "login") await api.post("/api/auth/logout").catch(() => undefined);
+    // re-authentication must not end the session it was made for. The one
+    // exception is the offer to recover: that recovery runs in this session.
+    if (p.purpose === "login" && offer !== "recover") await api.post("/api/auth/logout").catch(() => undefined);
     throw error;
   }
 }
 
 /**
+ * The floor this device has pinned for an unlock method, or null.
+ * @param {Record<string, any>} record
+ * @param {"password" | "recovery"} type
+ * @returns {number | null}
+ */
+function floorOf(record, type) {
+  const floor = Array.isArray(record?.kek_generation_max) ? record.kek_generation_max.find((/** @type {any} */ f) => f?.type === type) : undefined;
+  return Number.isSafeInteger(floor?.generation) ? floor.generation : null;
+}
+
+/**
+ * The generation of the server's wrap of an unlock method type (1 password, 2 recovery), or null.
+ * @param {Record<string, any>} methods the answer of `GET /api/vault/unlock-methods`
+ * @param {number} type
+ * @returns {number | null}
+ */
+function serverGeneration(methods, type) {
+  const wraps = Array.isArray(methods?.methods) ? methods.methods.filter((/** @type {any} */ m) => m.method_type === type) : [];
+  return wraps.length === 1 && Number.isSafeInteger(wraps[0].kek_generation) ? wraps[0].kek_generation : null;
+}
+
+/**
+ * What a page can offer after the core refused the server's password wrap as older than the one this device has
+ * seen (`pinned_kek_generation`, spec Fase 1 § 4.5 and § 8.6, "re-applying the newest unlock methods"):
+ *
+ *   - `"recover"`: the server's restore epoch is above the one this device has stored, so the server was restored
+ *     from a backup. If the restore is the user's own, the recovery key the server holds opens the vault, and a
+ *     recovery with the newest master password as the new one puts the password back (in this session);
+ *   - `"old_sheet"`: as above, but the server's recovery wrap is below this device's recovery floor too (the recovery
+ *     key was renewed after the backup). The newest recovery key does not work on this server, and this device does
+ *     not use the older one: the way out is to forget this server here, then use the sheet from before the renewal,
+ *     or sign in with the password the server knows;
+ *   - `null`: the epoch was not raised (or cannot be read), so the refusal keeps the text that it can be an attack.
+ *
+ * No answer here lowers a floor or changes a check; it only picks what the page says and offers. The restore epoch
+ * the server states is not authenticated, so a server that raises it (with an older wrap) can lead the user on:
+ *   - into a recovery: the server then gets a new OPAQUE record for the newest master password (open to guessing
+ *     offline by whoever holds the OPRF key when the account has no secret key), the recovery key is rotated, and the
+ *     account's other sessions end. The recovery key never leaves the core, the request is signed with the old one,
+ *     every pin of this device is checked (the core refuses a recovery wrap below its floor) and the store refuses a
+ *     record that would lower one;
+ *   - in the `old_sheet` case, towards forgetting this server on this device, which drops its pins. Both texts say
+ *     so only "if you restored the server yourself" and name the attack otherwise.
+ * These checks protect the honest-code case: the web vault's code comes from the same origin, so a hostile server can
+ * serve code that skips them; the extension and the apps keep them.
+ * @param {Env} env
+ * @param {import("../store/idb.mjs").Store} db
+ * @param {{ accountId: string, record: Record<string, any>, methods: Record<string, any> }} seen
+ * @returns {Promise<"recover" | "old_sheet" | null>}
+ */
+export async function pinnedRefusalAction(env, db, { accountId, record, methods }) {
+  const passwordFloor = floorOf(record, "password");
+  const passwordOnServer = serverGeneration(methods, 1);
+  // The refusal is about the password wrap, and that wrap really is below what this device has seen.
+  if (passwordFloor === null || passwordOnServer === null || passwordOnServer >= passwordFloor) return null;
+  const state = await env.store.loadSyncState(db, env.server, accountId);
+  const stored = state?.restoreEpoch;
+  if (!Number.isSafeInteger(stored)) return null;
+  // A cursor at the top of the feed asks for no rows, only the head (and is never below the floor).
+  const feed = await env.api.get(`/api/sync/changes?since=${Number.MAX_SAFE_INTEGER}&limit=1`, { shape: "changes_res" });
+  if (!Number.isSafeInteger(feed.restore_epoch) || feed.restore_epoch <= stored) return null;
+  const recoveryFloor = floorOf(record, "recovery");
+  const recoveryOnServer = serverGeneration(methods, 2);
+  if (recoveryOnServer === null) return null;
+  return recoveryFloor !== null && recoveryOnServer < recoveryFloor ? "old_sheet" : "recover";
+}
+
+/**
  * Sign in with the e-mail and the master password (purpose `login`). On a
  * device with no record for the e-mail the answer to "does the account have a
- * secret key" (`skBit`) is required, and the code if the answer is yes.
+ * secret key" (`skBit`) is required, and the code if the answer is yes. With the
+ * text of the sheet's QR code (`qr`), the sheet's bit is the answer and the
+ * sheet is checked against the server (see the top of this file).
  * @param {Env} env
- * @param {{ email: string, password: string, skCode?: string, skBit?: boolean, rememberSk?: boolean }} args
+ * @param {{ email: string, password: string, skCode?: string, skBit?: boolean, rememberSk?: boolean, qr?: string | null }} args
  * @returns {Promise<Unlocked>}
  */
 export async function signIn(env, args) {
@@ -223,8 +358,11 @@ export async function signIn(env, args) {
   if (email === null) throw new AccountError("email_required");
   const db = await env.store.open();
   const early = await env.store.pinHintForEmail(db, env.server, email);
-  const { skBit, skCode } = await decideSecretKey(env, db, early, args);
-  return open(env, { purpose: "login", email, password: args.password, skBit, skCode, early, rememberSk: args.rememberSk });
+  const qr = args.qr === undefined || args.qr === null ? null : await readSetupQr(env.client, args.qr);
+  // A record this device holds for the e-mail names an account: it is the sheet's, or nothing is sent.
+  if (qr !== null && early && hex16.encode(early.account_id) !== qr.accountId) throw new SetupQrError("qr_account");
+  const { skBit, skCode } = await decideSecretKey(env, db, early, args, qr);
+  return open(env, { purpose: "login", email, password: args.password, skBit, skCode, early, rememberSk: args.rememberSk, qr });
 }
 
 /**

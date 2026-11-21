@@ -1,0 +1,34 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "d0000000-0000-4000-8000-000000000001",
+      "type": 1,
+      "name": "Schemes",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "uris": [
+          { "match": 1, "uri": "www.example.test" },
+          { "match": 0, "uri": "example.test/login?x=1" },
+          { "match": 3, "uri": "localhost:8080/app" },
+          { "match": 1, "uri": "https://secure.example.test" },
+          { "match": 1, "uri": "HTTP://Upper.example.test" },
+          { "match": 1, "uri": "androidapp://com.example.test.app" },
+          { "match": 1, "uri": "iosapp://com.example.test.app" },
+          { "match": 1, "uri": "javascript:alert(1)" },
+          { "match": 1, "uri": "data:text/html;base64,PHA+PC9wPg==" },
+          { "match": 1, "uri": "file:///etc/example" },
+          { "match": 1, "uri": "ftp://files.example.test" },
+          { "match": 1, "uri": "mailto:alice@example.test" },
+          { "match": 1, "uri": "https://has space.example.test" },
+          { "match": 1, "uri": "   " }
+        ],
+        "username": "alice",
+        "password": "synthetic-password-8",
+        "totp": null
+      }
+    }
+  ]
+}

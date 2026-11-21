@@ -147,11 +147,15 @@ export class FakeChannels {
   }
 }
 
-/** Waits (real time, in turns of the event loop) until `condition()` is true. */
+/**
+ * Waits until `condition()` is true, at most 20 seconds of real time. Work that waits for the thread pool (the hashes of WebCrypto) finishes in real
+ * time, not in turns of the event loop, so a wait that counted only turns would end early on a busy machine; every few turns a millisecond is given.
+ */
 export async function until(condition, what = "condition") {
-  for (let turn = 0; turn < 3000; turn += 1) {
+  const started = Date.now();
+  for (let turn = 0; Date.now() - started < 20_000; turn += 1) {
     if (await condition()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => (turn % 16 === 15 ? setTimeout(resolve, 1) : setImmediate(resolve)));
   }
   throw new Error(`timed out waiting for ${what}`);
 }
@@ -244,6 +248,8 @@ export class Model {
     this.checkpoint = "auto";
     this.signKey = Buffer.alloc(32, 7);
     this.hidden = new Set(); // ids the listing leaves out (the feed and the item routes still show them)
+    this.importWindows = new Map(); // window id -> { ops, used, open }: the windows of an import that the server has given out
+    this.windowCount = 0;
     this.checkpointPuts = []; // the body of every checkpoint the server stored
   }
 
@@ -355,6 +361,54 @@ export class Model {
     return result;
   }
 
+  /** `POST /api/sync/import`: a window for `ops` operations. Returns its id. */
+  openImportWindow(ops) {
+    this.windowCount += 1;
+    const id = this.windowCount.toString(16).padStart(32, "0");
+    this.importWindows.set(id, { ops, used: 0, open: true });
+    return id;
+  }
+
+  /** The window ran out, or the server started again: the next batch for it is `409 import_window_invalid`. */
+  closeImportWindow(id) {
+    const window = this.importWindows.get(id);
+    if (window) window.open = false;
+  }
+
+  /**
+   * The server side of `POST /api/sync/batch` for the exact body text: the operations in order, each as its own write (the key text is the
+   * text of the operation, so the same key in a single write is `idem_reuse`, as on the real server); one result for each. A window that is
+   * not open, or an operation that would take more than the window has left, is `409 import_window_invalid` for the whole batch before
+   * anything is written; two operations on one item are `400 bad_request`. Only operations that are stored (not replays) use the window.
+   */
+  batch(body) {
+    const request = JSON.parse(body);
+    if (!Array.isArray(request.ops) || request.ops.length < 1 || request.ops.length > 100) throw new ApiError(400, "bad_request");
+    if (new Set(request.ops.map((op) => op.id)).size !== request.ops.length) throw new ApiError(400, "bad_request");
+    let window = null;
+    if (request.import_window !== undefined) {
+      window = this.importWindows.get(request.import_window);
+      if (!window || !window.open) throw new ApiError(409, "import_window_invalid", null, { error: "import_window_invalid" });
+    }
+    if (window) {
+      const fresh = request.ops.filter((op) => !this.idems.has(op.idem)).length;
+      if (window.used + fresh > window.ops) throw new ApiError(409, "import_window_invalid", null, { error: "import_window_invalid" });
+    }
+    const results = request.ops.map((op) => {
+      try {
+        const stored = this.put(op.id, JSON.stringify(op));
+        if (window && !stored.replayed) window.used += 1;
+        return { status: 200, ...stored };
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        if (error.code === "conflict") return { status: 409, ...error.body };
+        if (error.code === "restore_epoch_changed") return { status: 409, error: "restore_epoch_changed", restore_epoch: error.body.restore_epoch };
+        return { status: error.status, error: error.code };
+      }
+    });
+    return { results };
+  }
+
   /** Sets a row directly (an honest write from another device, or a lie). */
   set(id, { rev, deleted = false, blob = null, tag = null, tomb = null, seq = null }) {
     this.seq = seq ?? this.seq + 1;
@@ -416,6 +470,8 @@ export function createFakeApi(model, { order = [] } = {}) {
     checkpointFaults: [], // failures for the next checkpoint reads (`{ kind: "network" | "status", status, code }`)
     checkpointPutFaults: [], // and for the next uploads (`{ kind: "network" | "status", status, code, retryAfter }`)
     puts: [], // { id, bytes, text } of every write request, faults included
+    batches: [], // { text, window, ids } of every batch request, faults included
+    batchFaults: [], // failures for the next batches: `{ kind: "network" | "lost" | "status", status, code, retryAfter, body }`
     failFeed: null, // an ApiError to throw on the next feed calls (count in failFeedTimes)
     failFeedTimes: 0,
     async get(path) {
@@ -447,6 +503,19 @@ export function createFakeApi(model, { order = [] } = {}) {
       if (url.pathname === "/api/sync/items") return model.listItems(url.searchParams.get("after"), Number(url.searchParams.get("limit")));
       return model.changes(Number(url.searchParams.get("since")), Number(url.searchParams.get("limit")));
     },
+    async post(path, body) {
+      if (path !== "/api/sync/batch") throw new ApiError(404, "not_found");
+      const sent = body instanceof Uint8Array ? text(body) : String(body);
+      const parsed = JSON.parse(sent);
+      api.batches.push({ text: sent, bytes: sent.length, window: parsed.import_window ?? null, ids: parsed.ops.map((op) => op.id) });
+      order.push("batch");
+      const fault = api.batchFaults.shift();
+      if (fault?.kind === "network") throw new ApiError(0, "network");
+      if (fault?.kind === "status") throw new ApiError(fault.status, fault.code, fault.retryAfter ?? null, fault.body ?? null);
+      const result = model.batch(sent);
+      if (fault?.kind === "lost") throw new ApiError(0, "network");
+      return result;
+    },
     async put(path, body) {
       if (path === "/api/sync/checkpoint") {
         const sent = body instanceof Uint8Array ? text(body) : String(body);
@@ -474,9 +543,11 @@ export function createFakeApi(model, { order = [] } = {}) {
 
 /** A failure the way the worker client reports it. */
 export class FakeFerretError extends Error {
-  constructor(code) {
+  /** @param {string} code @param {string[]} [ids] the items a refusal of a checkpoint is about (none: about the checkpoint, or the memory, as a whole) */
+  constructor(code, ids = []) {
     super(code);
     this.code = code;
+    this.ids = ids;
   }
 }
 
@@ -565,6 +636,17 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }
       return sealed;
     },
+    /** The same body under a new item key, sealed at revision 1 (the copy is not opened); an item with a passkey is not copied. */
+    async copy_item(handle, newId, nowMs, deviceName) {
+      const open = handles.get(handle);
+      if (!open) throw new FakeFerretError("invalid_handle");
+      calls.push(["copy_item", hex16.encode(newId), open.id]);
+      if (open.body.passkey) throw new FakeFerretError("invalid_state");
+      if (hex16.encode(newId) === open.id || hex16.encode(newId) === "00000000000000000000000000000000") throw new FakeFerretError("invalid_input");
+      const body = { ...open.body, modified: nowMs, ...(deviceName === undefined ? {} : { device: deviceName }) };
+      const sealed = seal(newId, 1, body);
+      return { rev: 1, envelope: sealed.envelope, tag: sealed.tag };
+    },
     async make_tombstone(id, rev) {
       calls.push(["make_tombstone", hex16.encode(id), rev]);
       return { rev, tomb: new Uint8Array(Buffer.concat([mac(Buffer.from("tomb"), id, rev8(rev)), mac(Buffer.from("tomb2"), id).subarray(0, 8)])) };
@@ -624,7 +706,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
     if (topSeq < memory.maxSeq) throw new FakeFerretError("checkpoint_top_seq_below_remembered");
     for (const row of rows) {
       const known = memory.revs[hex16.encode(row.item_id)];
-      if (known !== undefined && row.rev < known) throw new FakeFerretError("checkpoint_rev_below_remembered");
+      if (known !== undefined && row.rev < known) throw new FakeFerretError("checkpoint_rev_below_remembered", [hex16.encode(row.item_id)]);
     }
   }
   function record(memory, rows, topSeq, checkpointSeq) {
@@ -653,17 +735,22 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       const row = byId.get(entry.id);
       const tombstone = entry.hash.equals(zero);
       if (!row) {
-        if (!tombstone) throw new FakeFerretError("checkpoint_hidden_or_rolled_back");
+        if (!tombstone) throw new FakeFerretError("checkpoint_hidden_or_rolled_back", [entry.id]);
       } else if (row.rev < entry.rev) {
-        throw new FakeFerretError(row.state === "live" && tombstone ? "checkpoint_live_behind_tombstone" : "checkpoint_lower_rev");
+        throw new FakeFerretError(row.state === "live" && tombstone ? "checkpoint_live_behind_tombstone" : "checkpoint_lower_rev", [entry.id]);
       } else if (row.rev === entry.rev) {
         const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
-        if (!hash.equals(entry.hash)) throw new FakeFerretError("checkpoint_same_rev_different_hash");
+        if (!hash.equals(entry.hash)) throw new FakeFerretError("checkpoint_same_rev_different_hash", [entry.id]);
       }
     }
     if (topSeq === checkpoint.seq) {
-      const listed = new Set(entries.map((entry) => entry.id));
-      for (const id of byId.keys()) if (!listed.has(id)) throw new FakeFerretError("checkpoint_top_digest_mismatch");
+      // At the top every row is an entry with the same revision and hash (or both deleted), as in the core.
+      const listed = new Map(entries.map((entry) => [entry.id, entry]));
+      for (const [id, row] of byId) {
+        const entry = listed.get(id);
+        const hash = row.state === "deleted" ? zero : createHash("sha256").update(row.envelope).digest();
+        if (!entry || entry.rev !== row.rev || !entry.hash.equals(hash)) throw new FakeFerretError("checkpoint_top_digest_mismatch", [id]);
+      }
     }
   }
   /** A sealed row for the model, as the wire has it (base64url). */
@@ -750,6 +837,13 @@ export async function createFakeStore({ order = [], db = null } = {}) {
           throw new Error("the disk is full");
         }
         return outbox.remove(store, scope, idem);
+      },
+      removeMany: async (store, scope, idems) => {
+        if (service.failRemove > 0) {
+          service.failRemove -= 1;
+          throw new Error("the disk is full");
+        }
+        return outbox.removeMany(store, scope, idems);
       },
       swap: async (store, scope, remove, entries, only = null) => {
         if (service.failEnqueue > 0) {

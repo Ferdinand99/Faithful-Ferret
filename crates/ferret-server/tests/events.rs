@@ -334,6 +334,23 @@ async fn logout_of_another_session_leaves_the_stream_open() {
 }
 
 #[tokio::test]
+async fn a_device_revocation_does_not_close_a_cookie_stream_and_a_session_revocation_still_does() {
+    let w = world().await;
+    let mut stream = open(&w).await;
+    let events = w.app.sync_events();
+    // A token device with the same id as the browser of the stream: a cookie
+    // stream belongs to its session, never to a token device.
+    events.device_revoked(device(1));
+    events.device_revoked(device(2));
+    stream.quiet(Duration::from_millis(900)).await;
+    assert_eq!(live_streams(&w.app).await, 1);
+    // Its own session ending still closes it at once.
+    events.session_revoked(w.issued.sid);
+    stream.end(SECOND).await;
+    wait_until(SECOND, || w.app.state.streams.open() == 0).await;
+}
+
+#[tokio::test]
 async fn the_logout_of_the_admin_listener_does_not_end_a_vault_stream() {
     // A vault session id shown to the admin listener's sign-out is not ended
     // there (the row belongs to the other listener), so its stream goes on.
@@ -1174,4 +1191,53 @@ async fn still_valid_reads_and_never_writes() {
         .await
         .expect("last_seen");
     assert_eq!(last_seen, i64::try_from(before).expect("a time"));
+}
+
+#[tokio::test]
+async fn a_cookie_stream_with_cross_site_is_still_refused() {
+    // A device's stream skips the fetch-metadata check; a session's never
+    // does, whatever `Authorization` a proxy adds to it.
+    let w = world().await;
+    let cookie = w.issued.jar.header().expect("cookies");
+    for site in ["cross-site", "same-site", "none"] {
+        for authorization in [None, Some("Basic dXNlcjpwYXNz")] {
+            let mut req = Req::get("/api/sync/events")
+                .header("cookie", &cookie)
+                .header("ferret-protocol", "1")
+                .header("sec-fetch-site", site);
+            if let Some(value) = authorization {
+                req = req.header("authorization", value);
+            }
+            let mut refused = w.app.open_stream(req.build()).await;
+            assert_eq!(
+                refused.status,
+                StatusCode::FORBIDDEN,
+                "{site} {authorization:?}"
+            );
+            assert_eq!(refused.error().await, "forbidden_origin");
+        }
+    }
+    assert_eq!(live_streams(&w.app).await, 0);
+}
+
+#[tokio::test]
+async fn a_cookie_stream_with_a_token_header_is_400() {
+    let w = world().await;
+    let cookie = w.issued.jar.header().expect("cookies");
+    for (name, value) in [("authorization", "DPoP abc"), ("dpop", "a.b.c")] {
+        let mut refused = w
+            .app
+            .open_stream(
+                Req::get("/api/sync/events")
+                    .header("cookie", &cookie)
+                    .header("ferret-protocol", "1")
+                    .header("sec-fetch-site", "same-origin")
+                    .header(name, value)
+                    .build(),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{name}");
+        assert_eq!(refused.error().await, "bad_request");
+    }
+    assert_eq!(live_streams(&w.app).await, 0);
 }

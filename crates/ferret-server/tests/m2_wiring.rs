@@ -20,12 +20,12 @@ use ferret_server::db::MIGRATION_FILES;
 use ferret_server::http::extract::SessionAuth;
 use ferret_server::ids::{AccountId, ItemId, SidHash, VaultId};
 use ferret_server::product;
-use ferret_server::state::VaultDb;
+use ferret_server::state::{BackupStatus, ImportWindows, Proofs, VaultDb};
 use ferret_server::vault::events::EventStreams;
-use ferret_server::vault::notify::{SyncEvents, VaultChange};
+use ferret_server::vault::notify::{Revoked, SyncEvents, VaultChange};
 use ferret_server::vault::rate::{SyncLimits, WriteGate};
 use ferret_server::vault::validate::check_envelope;
-use ferret_server_auth::SessionScope;
+use ferret_server_auth::{Clock, SessionScope};
 use rusqlite::Connection;
 use support::accounts::add_account_to_app;
 use support::session::issue;
@@ -144,8 +144,14 @@ async fn revocations_reach_a_subscriber() {
     let mut rx = events.subscribe_revocations();
     let mut other = events.subscribe_revocations();
     events.session_revoked(SidHash([2; 32]));
-    assert_eq!(rx.recv().await.expect("a revocation"), SidHash([2; 32]));
-    assert_eq!(other.recv().await.expect("a revocation"), SidHash([2; 32]));
+    assert_eq!(
+        rx.recv().await.expect("a revocation"),
+        Revoked::Session(SidHash([2; 32]))
+    );
+    assert_eq!(
+        other.recv().await.expect("a revocation"),
+        Revoked::Session(SidHash([2; 32]))
+    );
     // The two channels are separate.
     let mut changes = events.subscribe();
     events.session_revoked(SidHash([3; 32]));
@@ -154,8 +160,9 @@ async fn revocations_reach_a_subscriber() {
 
 // ------------------------------------------------------------------ the state
 
-/// What the vault routes may see: the database, the session handle and the
-/// handles of the sync routes. Nothing else of the state.
+/// What the vault routes may see: the database, the session handle, the handles
+/// of the sync routes and those of the unlock-method and import routes. Nothing
+/// else of the state.
 #[derive(Clone)]
 struct Handles {
     db: VaultDb,
@@ -164,6 +171,10 @@ struct Handles {
     limits: Arc<SyncLimits>,
     gate: WriteGate,
     streams: Arc<EventStreams>,
+    proofs: Proofs,
+    import_windows: ImportWindows,
+    backup: BackupStatus,
+    clock: Arc<dyn Clock>,
 }
 
 macro_rules! handle {
@@ -181,6 +192,10 @@ handle!(events, SyncEvents);
 handle!(limits, Arc<SyncLimits>);
 handle!(gate, WriteGate);
 handle!(streams, Arc<EventStreams>);
+handle!(proofs, Proofs);
+handle!(import_windows, ImportWindows);
+handle!(backup, BackupStatus);
+handle!(clock, Arc<dyn Clock>);
 
 #[tokio::test]
 async fn state_hands_out_the_new_handles_through_from_ref() {
@@ -198,6 +213,10 @@ async fn state_hands_out_the_new_handles_through_from_ref() {
         limits: Arc::<SyncLimits>::from_ref(&app.state),
         gate: WriteGate::from_ref(&app.state),
         streams: Arc::<EventStreams>::from_ref(&app.state),
+        proofs: Proofs::from_ref(&app.state),
+        import_windows: ImportWindows::from_ref(&app.state),
+        backup: BackupStatus::from_ref(&app.state),
+        clock: Arc::<dyn Clock>::from_ref(&app.state),
     };
     assert!(Arc::ptr_eq(&handles.limits, &app.state.limits));
     assert!(Arc::ptr_eq(&handles.streams, &app.state.streams));
@@ -275,6 +294,7 @@ fn restore_epoch_command_is_parsed_and_server_flags_are_left_to_config() {
         Command::RestoreEpochBump {
             data_dir: PathBuf::from("/srv/ferret"),
             confirmed: false,
+            at_least: None,
         }
     );
 

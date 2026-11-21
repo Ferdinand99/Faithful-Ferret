@@ -1,5 +1,5 @@
 // server.*: the secret files, the fingerprint of the set-up, the made-up pre-login answers, the key of a
-// challenge nonce and the sealed login state of the server library.
+// challenge nonce, the binding of a record and the sealed login state of the server library.
 //
 // Written from the section "Server operations" of vectors/OPS.md and the rows of its table (and Fase 1
 // section 4.2 for the made-up credential id). The OPAQUE messages (server.register_response, server.login_start,
@@ -136,10 +136,17 @@ ops['server.challenge_key'] = ({ input }) => ({
   expect: { key: hex(sha256(bytesOf(input.session, 32, 'session'), bytesOf(input.nonce, 32, 'nonce'))) },
 });
 
+// ---------------------------------------------------------------- the record binding
+
+ops['server.record_binding'] = ({ input }) => ({
+  expect: { binding: hex(sha256(concat(ascii('ferret/v1/server/login-record'), unhex(input.record)))) },
+});
+
 // ---------------------------------------------------------------- the login state
 
-const BLOB_LEN = 244;
-const PLAIN_LEN = 203;
+const BLOB_VERSION = 2;
+const BLOB_LEN = 276;
+const PLAIN_LEN = 235;
 
 function loginIdBytes(text) {
   if (!/^[0-9a-f]{32}$/.test(text)) fail('malformed_login_id');
@@ -147,7 +154,7 @@ function loginIdBytes(text) {
 }
 
 function stateAad(id) {
-  return concat(label('ferret/v1/server/login-state'), tlv(T.version, u8(1)), tlv(T.suite, u8(1)), tlv(T.nonce, id));
+  return concat(label('ferret/v1/server/login-state'), tlv(T.version, u8(BLOB_VERSION)), tlv(T.suite, u8(1)), tlv(T.nonce, id));
 }
 
 // The purpose as the plaintext holds it: [code, flag, binding(48)].
@@ -168,6 +175,7 @@ function plaintext(state) {
     u64(state.expires_at),
     purposeBytes(state.purpose),
     bytesOf(state.credential, 16, 'credential'),
+    bytesOf(state.record, 32, 'record'),
     u8(state.ksf_profile),
     bytesOf(state.server_login, 128, 'server_login'),
   );
@@ -179,7 +187,7 @@ ops['server.state_seal'] = ({ input, rng }) => {
   // A state that is dead when it is made is not sealed.
   if (BigInt(input.now) >= BigInt(input.state.expires_at)) fail('internal');
   const nonce = rng.draw(24);
-  const blob = concat(u8(1), aeadSeal(key, nonce, plaintext(input.state), stateAad(id)));
+  const blob = concat(u8(BLOB_VERSION), aeadSeal(key, nonce, plaintext(input.state), stateAad(id)));
   if (blob.length !== BLOB_LEN) throw new Error(`blob of ${blob.length} bytes`);
   return { expect: { blob: hex(blob) } };
 };
@@ -188,7 +196,7 @@ ops['server.state_open'] = ({ input }) => {
   const id = loginIdBytes(input.login_id);
   const key = hkdf(null, prelogin(input), ascii('ferret/v1/state-seal'), 32);
   const blob = unhex(input.blob);
-  if (blob.length !== BLOB_LEN || blob[0] !== 1) fail('denied');
+  if (blob.length !== BLOB_LEN || blob[0] !== BLOB_VERSION) fail('denied');
   let plain;
   try {
     plain = aeadOpen(key, blob.subarray(1), stateAad(id));
@@ -216,8 +224,9 @@ ops['server.state_open'] = ({ input }) => {
         expires_at: expiresAt.toString(),
         purpose,
         credential: hex(plain.subarray(58, 74)),
-        ksf_profile: plain[74],
-        server_login: hex(plain.subarray(75, 203)),
+        record: hex(plain.subarray(74, 106)),
+        ksf_profile: plain[106],
+        server_login: hex(plain.subarray(107, 235)),
       },
     },
   };

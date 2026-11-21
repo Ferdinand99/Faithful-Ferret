@@ -1,0 +1,21 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "c0000000-0000-4000-8000-000000000001",
+      "type": 1,
+      "name": "Hostile",
+      "notes": null,
+      "favorite": false,
+      "__proto__": { "polluted": true, "isAdmin": true },
+      "login": {
+        "uris": [],
+        "username": "mallory",
+        "password": "synthetic-password-7",
+        "totp": null,
+        "constructor": { "prototype": { "polluted": true } }
+      }
+    }
+  ]
+}

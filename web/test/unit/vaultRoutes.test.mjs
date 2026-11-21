@@ -272,3 +272,18 @@ test("a_frame_built_after_the_vault_locked_is_the_unlock_screen", async () => {
     }
   });
 });
+
+test("a_screen_built_after_the_session_ended_says_so_at_once", async () => {
+  await withDom(async () => {
+    const r = rig();
+    try {
+      // The engine announced the state while the page changed screens: it says it once, and the new screen was not there to hear it.
+      r.engine.status = () => "unauthorized";
+      const node = await listRoute.load(r.ctx("/items"));
+      assert.equal(find(node, "sync-status").getAttribute("data-state"), "unauthorized");
+      assert.ok(textOf(find(node, "banners")).includes("vault.banner.sign_in_again"));
+    } finally {
+      r.done();
+    }
+  });
+});

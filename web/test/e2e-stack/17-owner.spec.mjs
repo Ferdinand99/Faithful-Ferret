@@ -2,7 +2,7 @@
 // button "Use here", opens no stream and asks the server for nothing; the button moves the vault to the tab where it is
 // pressed (the other tab is asked to stop and shows the notice), and a write that was waiting in the first tab is sent from
 // the second, once. When the first tab does not answer, the lock is taken after about three seconds.
-import { bodyText, createItem, expect, feedOf, freshContext, itemIdOf, newDevice, noViolations, openList, readStores, rowsNamed, secrets, serverRev, shot, signInOn, SLOW, synced, test, unlockWith, useAccount, vaultUrl } from "./support.mjs";
+import { bodyText, createItem, expect, feedOf, freshContext, itemIdOf, newDevice, noViolations, openList, readStores, rowsNamed, secrets, serverRev, shot, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -18,21 +18,12 @@ const list = (page) => page.locator('[data-role="list"]');
 
 /**
  * Unlocks the vault in a tab. The server's limit counts the sign-ins and unlocks of the earlier scenarios too, which this process does not
- * know of: when it says so, the wait it names is taken and the form is sent again.
+ * know of: when it says so, the wait it names is taken and the form is sent again (see untilStartAccepted).
  * @param {import("@playwright/test").Page} page @param {import("@playwright/test").Locator} done what shows when the unlock has worked
  */
 async function unlockPatiently(page, done) {
-  const limit = page.locator('[data-role="error"]').filter({ hasText: /Too many attempts/ });
-  for (let tries = 0; ; tries += 1) {
-    await unlockWith(page, secrets.password);
-    const outcome = await Promise.race([
-      done.waitFor({ timeout: SLOW }).then(() => "done", () => "timeout"),
-      limit.waitFor({ timeout: SLOW }).then(() => "limited", () => "timeout"),
-    ]);
-    if (outcome !== "limited" || tries >= 5) return;
-    const named = /in (\d+) second/.exec((await limit.first().textContent()) ?? "");
-    await page.waitForTimeout((named ? Number(named[1]) : 20) * 1000 + 2_000);
-  }
+  await untilStartAccepted(page.context(), () => unlockWith(page, secrets.password));
+  await done.waitFor({ timeout: SLOW }).catch(() => {});
 }
 
 /**
@@ -165,6 +156,10 @@ test("use_here_takes_the_vault_after_about_three_seconds_when_the_other_tab_does
     });
     const from = Date.now();
     await second.locator('[data-role="use-here"]').click();
+    // The owner says nothing within a second: the notice warns, and the user goes on.
+    await expect(second.locator('[data-role="warning"]')).toBeVisible({ timeout: 30_000 });
+    await expect(second.locator('[data-role="warning"]')).toContainText(/did not answer/i);
+    await second.locator('[data-role="use-here-anyway"]').click();
     await expect(second.locator('[data-role="use-here"]')).toHaveAttribute("aria-busy", "true");
     await expect(list(second)).toBeVisible({ timeout: 30_000 });
     const took = Date.now() - from;

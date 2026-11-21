@@ -18,7 +18,7 @@
 name = "ferret-server"
 description = "Faithful Ferret server: OPAQUE login, vault API and web vault on vole-kit"
 # release-please bumps this together with the root version.
-version = "0.2.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
@@ -35,7 +35,7 @@ path = "src/main.rs"
 [dependencies]
 # The shared product kit (auth, i18n, db, HTTP, admin pages). Same tag as
 # Keen Kestrel and Wise Wren.
-vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.1" }
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1" }
 # The crypto core (only the server suite of OPAQUE; no argon2 or opaque-ke on a
 # line of our own) and the OPAQUE server library. Paths, never `version = "=..."`:
 # release-please bumps the lock entries (release-please-config.json).
@@ -44,19 +44,31 @@ ferret-server-auth = { path = "../ferret-server-auth" }
 # The versions below match vole-kit's, so both use one copy of each crate.
 axum = "0.8.9"
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
+# The admin pages are askama templates that extend the kit's layouts (build.rs copies the kit's
+# templates to templates/kit/). Same version as vole-kit.
+askama = "0.16.1"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-deadpool-sqlite = "0.14.0"
+# Fork of deadpool-sqlite that supports rusqlite 0.41 (bundled SQLite 3.54.1, RUSTSEC-2026-0459); the
+# same commit vole-kit uses, so both share one copy. Upstream 0.14.0 needs rusqlite 0.40. Switch back to
+# the crates.io release once it supports rusqlite 0.41 or newer, and drop the git source from deny.toml.
+deadpool-sqlite = { git = "https://github.com/Ferdinand99/deadpool", rev = "cb9ab33940fd64254660d61c85a1fc68d0f4a3b7" }
 # Only to tell a real Ed25519 public key from 32 arbitrary bytes at registration
 # (same version as ferret-core, which does the signing and verifying).
 ed25519-dalek = { version = "3.0.0", default-features = false }
 futures-util = "0.3.34"
 # Trusted proxy addresses and networks (FERRET_TRUSTED_PROXIES).
 ipnet = "2.11.0"
+# The signature of a DPoP proof (ES256), and nothing else: the server reads the
+# header and the claims itself (src/auth/dpop/proof.rs) and hands the library
+# the signing input, the signature and the key. The aws-lc-rs backend is the
+# one rustls already uses (one copy of aws-lc-rs); the RustCrypto backend would
+# bring `rsa`, and the PEM feature is not needed.
+jsonwebtoken = { version = "=12.0.0", default-features = false, features = ["aws_lc_rs"] }
 rand = "0.10.3"
-# The kit's Core holds an HTTP client; the server makes no requests of its own.
+# The kit's Core holds an HTTP client; the server uses it for one call: the message to the backup monitor.
 reqwest = { version = "0.13.5", default-features = false }
-rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 rust-embed = "8.12.0"
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -68,6 +80,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
+
+[build-dependencies]
+# Copies the kit's templates into templates/kit/ for askama (build.rs).
+vole-kit-build = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1" }
 
 [features]
 # Lets a release build go ahead without web/dist (the build script refuses
@@ -81,13 +97,13 @@ dev-no-web = []
 e2e-clock = []
 
 [target.'cfg(unix)'.dependencies]
-# RLIMIT_CORE = 0 at start-up: a safe setrlimit.
-rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
+# RLIMIT_CORE = 0 at start-up: a safe setrlimit; free disk space (statvfs) before a backup.
+rustix = { version = "1.1.5", default-features = false, features = ["fs", "process", "std"] }
 
 [dev-dependencies]
 # `/setup` without a setup token in the in-process tests, and the software
 # passkey authenticator.
-vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.8.1", features = ["test-support"] }
+vole-kit = { git = "https://github.com/Ferdinand99/Vigilant-Vole", tag = "vole-kit-v0.9.1", features = ["test-support"] }
 # The manual clock and the replay generators.
 ferret-core = { path = "../ferret-core", features = ["server-suite", "test-support"] }
 ferret-server-auth = { path = "../ferret-server-auth", features = ["test-support"] }
@@ -97,9 +113,12 @@ tower = "0.5.3"
 tokio = { version = "1.53.1", features = ["test-util"] }
 # A SQL function in a test that waits for the test (the write of a batch that
 # is dropped half way).
-rusqlite = { version = "0.40", features = ["bundled", "backup", "functions"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "functions"] }
 # The architecture test reads the source files of the vault modules.
 syn = { version = "3", features = ["full", "visit"] }
+# The device key of the DPoP tests, which signs good proofs and wrong ones. The
+# version vole-kit already brings (passkeys); only the tests sign with it.
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 
 # The release profile of the root workspace, apart from the size setting:
 # arithmetic overflow must never wrap silently, and a panic ends the process

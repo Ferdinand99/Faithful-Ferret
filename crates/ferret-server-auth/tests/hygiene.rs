@@ -963,6 +963,7 @@ fn the_comparison_detector_sees_every_operator() {
 const CT_CALLS: &[(&str, &str, usize)] = &[
     ("ct_eq(", "keys.rs", 1),
     ("ct_eq(", "login.rs", 1),
+    ("ct_eq(", "record.rs", 1),
     ("ct_eq(", "registration.rs", 1),
     ("ct_eq(", "secret_file.rs", 1),
     ("ct_eq(", "state.rs", 2),

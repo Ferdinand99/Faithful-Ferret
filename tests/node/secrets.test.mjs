@@ -289,6 +289,15 @@ const EXPECTED_BYTE_PATHS = [
   "rekey:sync_memory",
   "rekey:wraps[].method_id",
   "rekey:wraps[].wrap",
+  "renew_recovery:manifest.envelope",
+  "renew_recovery:manifest.tag",
+  "renew_recovery:pinned.account_id",
+  "renew_recovery:pinned.pk_a",
+  "renew_recovery:pinned.server_public_key",
+  "renew_recovery:pinned.vault_id",
+  "renew_recovery:pk_r",
+  "renew_recovery:wrap.method_id",
+  "renew_recovery:wrap.wrap",
   "seed_pinned:account_id",
   "seed_pinned:pk_a",
   "seed_pinned:server_public_key",
@@ -408,13 +417,25 @@ test("no_reply_holds_key_material", () => {
   addSecret("export key (change)", change.test_export_key());
   call("change_password", () => change.change_password(vault, created.pinned, created.wraps[0], created.manifest));
 
+  // ---- a new recovery key (it stays in the vault until it is revealed);
+  // the setup secrets of the account are discarded first, on purpose
+  vault.clear_setup_secrets();
+  const renewed = call("renew_recovery", () => vault.renew_recovery(created.pinned, created.wraps[1], created.manifest));
+  const renewedCode = vault.reveal_recovery_code();
+  addText("recovery key code (renewed)", renewedCode);
+  const renewedRk = fromHex(op("recovery_key_decode", "code.rk.decode", { code: renewedCode }).key);
+  addSecret("RK (renewed)", renewedRk);
+  addSecret("KEK_rk (renewed)", fromHex(op("kek_from_recovery_key", "kdf.kek.recovery", { account_id: accountHex, rk: hex(renewedRk) }).kek));
+  assert.equal(renewed.wrap.kek_generation, 2);
+  call("verify_recovery_setup", () => vault.verify_recovery_setup(renewedCode, renewed.wrap));
+
   // ---- recover
   const recovery = new wasm.UnlockJob();
   const recoverRequest = recovery.register_start(enc.encode(PASSWORD_2), { kind: "code", code: skCode });
   recovery.register_finish(server.register_response(IDS.account_id, recoverRequest), 1);
   addSecret("export key (recover)", recovery.test_export_key());
   const qr = wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key);
-  const recovered = call("recover", () => recovery.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, fill(16, 0x73), firstUse(true), qr));
+  const recovered = call("recover", () => recovery.recover(URL_, CTX, rkCode, created.wraps[1], created.manifest, firstUse(true), qr));
   addSecret("RK (new)", fromHex(op("recovery_key_decode", "code.rk.decode", { code: recovered.vault.reveal_recovery_code() }).key));
   call("recover_sign", () => recovery.recover_sign(fill(32, 2), enc.encode("request")));
 
@@ -510,6 +531,24 @@ test("no_reply_holds_key_material", () => {
   const plain = vault.reveal_plain_export(rows, "json", true, token2.slice(), NOW);
   assert.ok(plain.includes("hunter2-secret") && plain.includes("example.com"));
   assert.equal(refuse(token2), "reauth_required", "one use");
+
+  // ---- the encrypted export has the same gate: its file holds every secret too (passkey keys included)
+  const refuseBegin = (token) => {
+    try {
+      vault.export_begin(rows, NOW, undefined, token);
+    } catch (e) {
+      return e.code;
+    }
+    return "returned";
+  };
+  assert.equal(refuseBegin(undefined), "reauth_required", "no token, no encrypted export");
+  assert.equal(refuseBegin(fill(32, 1)), "reauth_required", "a made-up token");
+  const g3 = grantJob.login_start(enc.encode(PASSWORD), skCode);
+  grantJob.login_finish(server.login_start(registration.record, IDS.account_id, g3), 1, pinned(plan.pinned));
+  const token3 = grantJob.reauth_grant(vault, plan.wraps.find((w) => w.method.type === "password"), NOW);
+  assert.equal(refuseBegin(token3.slice()), "returned", "a fresh grant opens it");
+  vault.export_abort();
+  assert.equal(refuseBegin(token3), "reauth_required", "one use");
 
   // ---- the walk, over every reply and every secret known at the end
   assert.ok(secrets.size >= 25, `${secrets.size} secrets`);

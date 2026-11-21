@@ -73,8 +73,8 @@ use crate::ids::{SessionSecret, SidHash};
 use crate::product;
 use crate::state::{FerretState, VaultDb};
 use crate::wire::{
-    HANDOFF_CODE_BYTES, HandoffPurposeJson, HandoffRedeemRes, HandoffReq, HandoffRes,
-    NEXT_MAX_CHARS, RedeemReq, parse_handoff_code,
+    HANDOFF_CODE_BYTES, HandoffPurposeJson, HandoffRedeemReq, HandoffRedeemRes, HandoffReq,
+    HandoffRes, NEXT_MAX_CHARS, parse_handoff_code,
 };
 
 /// Seconds a code lives: 60.
@@ -431,7 +431,7 @@ async fn redeem(State(state): State<FerretState>, request: Request) -> Result<Re
     };
     let headers = parts.headers.clone();
     let ApiJson(req) =
-        ApiJson::<RedeemReq>::from_request(Request::from_parts(parts, body), &state).await?;
+        ApiJson::<HandoffRedeemReq>::from_request(Request::from_parts(parts, body), &state).await?;
     // A refusal also removes the verifier: it is good for one attempt.
     let invalid = || {
         let verifier = CookieJar::from_headers(&headers).remove(removal(product::HANDOFF_COOKIE));

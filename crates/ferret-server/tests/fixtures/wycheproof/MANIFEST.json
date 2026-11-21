@@ -1,0 +1,24 @@
+{
+  "comment": "Unmodified copies of files from Project Wycheproof. tests/dpop.rs checks the SHA-256 of each file before it runs the vectors through the ES256 signature check of DPoP proofs. LICENSE.txt is the licence of the project at the same commit.",
+  "repository": "https://github.com/C2SP/wycheproof",
+  "commit": "65ca494727a52944c204441c860b039e6786b99b",
+  "committed": "2026-11-11",
+  "retrieved": "2026-11-20",
+  "license": "Apache-2.0",
+  "licenseFile": "LICENSE.txt",
+  "licenseUrl": "https://github.com/C2SP/wycheproof/blob/65ca494727a52944c204441c860b039e6786b99b/LICENSE",
+  "files": [
+    {
+      "name": "ecdsa_secp256r1_sha256_p1363_test.json",
+      "path": "testvectors_v1/ecdsa_secp256r1_sha256_p1363_test.json",
+      "url": "https://raw.githubusercontent.com/C2SP/wycheproof/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1/ecdsa_secp256r1_sha256_p1363_test.json",
+      "sha256": "c60de693930e386c3a5472d08081623ef8504decc54b38ac01ec6b2a2575c986"
+    },
+    {
+      "name": "LICENSE.txt",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/C2SP/wycheproof/65ca494727a52944c204441c860b039e6786b99b/LICENSE",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    }
+  ]
+}
