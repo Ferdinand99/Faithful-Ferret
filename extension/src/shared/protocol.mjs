@@ -157,7 +157,8 @@ export const UI_TYPES = defineTypes({
         email,
         mp: string({ min: 1, max: 1024 }),
         sk: string({ min: 1, max: 128 }),
-        // The answer to "does this account have a secret key?" when no code is typed (false: it has none).
+        // The answer to "does this account have a secret key?" when no code is typed: only false (it has none)
+        // means anything; "yes" is answered by `sk`, and true without `sk` leaves the question open.
         sk_bit: boolean(),
         // Whether this device keeps the secret key (sealed) after the sign-in; left out: it does.
         remember_sk: boolean(),

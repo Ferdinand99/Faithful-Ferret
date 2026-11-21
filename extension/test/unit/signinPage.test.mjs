@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { EXTENSION_CSP, build } from "../../scripts/build.mjs";
 import { createPopupFlow, viewOf } from "../../src/pages/popupFlow.mjs";
-import { createSignInFlow, unlockWith } from "../../src/pages/signinFlow.mjs";
+import { createSignInFlow, permissionOf, unlockWith } from "../../src/pages/signinFlow.mjs";
 import { UiError, connectUi, initialsOf, reasonKey, shownHost } from "../../src/pages/ui.mjs";
 import { UI_TYPES, decode, encode, encodeRefusal } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
@@ -115,6 +115,18 @@ test("signin_needs_the_host_permission_and_a_refusal_stops_with_a_message", asyn
   // Checking another address takes the permission back from the flow.
   await flow.check("https://other.example.com");
   assert.equal(flow.granted(), false);
+});
+
+test("the_permission_of_a_server_on_another_port_is_asked_for_its_host", async () => {
+  const { request } = recorder({ server_check: () => ({ ok: true, server: "https://vault.example.com:8443", host: "vault.example.com", host_a_label: "vault.example.com" }) });
+  /** @type {Array<{ origins: string[] }>} */
+  const asked = [];
+  const flow = createSignInFlow({ request, requestPermission: async (wanted) => (asked.push(wanted), true) });
+  await flow.check("https://vault.example.com:8443");
+  assert.deepEqual(await flow.grant(), { ok: true });
+  // A match pattern has no port: the pattern is the host's, which covers every port of it.
+  assert.deepEqual(asked, [{ origins: ["https://vault.example.com/*"] }]);
+  assert.equal(permissionOf("https://vault.example.com"), "https://vault.example.com/*");
 });
 
 test("the_permission_is_asked_in_the_turn_of_the_click", async () => {

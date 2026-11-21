@@ -38,6 +38,18 @@ export const SERVER_KEY = "server";
 /** The longest address the protocol carries. */
 const MAX_SERVER = 300;
 
+/** How many hosts the background keeps as the core showed them (the server in use and the addresses checked last). */
+const MAX_HOSTS = 8;
+
+/**
+ * The host permission of a server: a match pattern has no port, so it is the
+ * host's (and covers the server on any port). The sign-in tab asks for the same.
+ * @param {string} server an origin from `checkServer`
+ */
+export function permissionOf(server) {
+  return `https://${new URL(server).hostname}/*`;
+}
+
 /**
  * Special-use names (RFC 2606 and RFC 6761) that no real server has. A release
  * refuses them; the test build signs in against its test stacks under them.
@@ -259,6 +271,8 @@ export function createSessionHost({
     const aLabel = typeof shown?.a_label === "string" ? shown.a_label : "";
     if (unicode === "" || aLabel === "" || unicode.length > MAX_SERVER || aLabel.length > MAX_SERVER) throw new SessionError("server_invalid");
     const host = { host: unicode, host_a_label: aLabel };
+    // A bounded cache: every address typed on the sign-in page would add one.
+    if (hosts.size >= MAX_HOSTS) hosts.delete(/** @type {string} */ (hosts.keys().next().value));
     hosts.set(server, host);
     return host;
   }
@@ -340,7 +354,7 @@ export function createSessionHost({
       // One server at a time: another one needs "forget this server" first.
       if (stored !== null && stored !== server) throw new SessionError("another_server");
       // The page asks for the permission; without it no request could reach the server.
-      if (!(await permissions.contains({ origins: [`${server}/*`] }))) throw new SessionError("permission_needed");
+      if (!(await permissions.contains({ origins: [permissionOf(server)] }))) throw new SessionError("permission_needed");
       const session = await sessionOf(server);
       await resetSession();
       const unlocked = await session.signIn({

@@ -424,9 +424,11 @@ export function fakeSessions(behaviour = {}) {
  *   allowTestHosts?: boolean,
  *   server?: string | null,
  *   os?: string,
- * }} [options]
+ *   gate?: (label: string) => Promise<void>,
+ * }} [options] `gate` runs before every call to the local storage, the permissions and the platform (a test
+ *   that locks at each await point passes one)
  */
-export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win" } = {}) {
+export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {} } = {}) {
   const { load } = await pkg();
   const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui] = await Promise.all([
     load("background/session.mjs"),
@@ -444,14 +446,27 @@ export async function sessionWorld({ createSession, client = coreClient(), store
   /** @type {Array<{ origins: string[] }>} */
   const asked = [];
   const sessionHost = createSessionHost({
-    storageLocal: local,
+    storageLocal: {
+      get: async (/** @type {string} */ key) => {
+        await gate("storage.local.get");
+        return local.get(key);
+      },
+      set: async (/** @type {Record<string, unknown>} */ items) => {
+        await gate("storage.local.set");
+        return local.set(items);
+      },
+    },
     permissions: {
       contains: async (/** @type {{ origins: string[] }} */ wanted) => {
+        await gate("permissions.contains");
         asked.push(wanted);
         return permitted;
       },
     },
-    platformInfo: async () => ({ os }),
+    platformInfo: async () => {
+      await gate("platformInfo");
+      return { os };
+    },
     allowTestHosts,
     now: clock.now,
     ...(store ? { store } : {}),

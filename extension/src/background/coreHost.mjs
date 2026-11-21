@@ -236,8 +236,20 @@ export function createCoreHost({
           return true;
         },
       };
+      /** @type {any} */
+      let real = null;
+      // An op that opened the vault after a lock had come (its unlock was refused) leaves the vault in a worker that
+      // started after that lock: that worker is ended too, before the refusal goes out. If another call has opened the
+      // host in the meantime, the host locks as a whole (fail closed).
+      let ended = false;
+      const endRefused = async () => {
+        if (!refusedUnlock || ended) return;
+        ended = true;
+        if (current === "unlocked") await lock("manual").catch(() => {});
+        else await Promise.resolve(real?.lock()).catch(() => {});
+      };
       try {
-        const real = await client();
+        real = await client();
         const view = {
           get vault() {
             usedVault = true;
@@ -249,9 +261,14 @@ export function createCoreHost({
         };
         const value = await def.run(view, args, context);
         // A lock that happened while the call ran wins: nothing is handed out for it.
-        if ((def.vault && current !== "unlocked") || refusedUnlock) throw new CoreError("vault_locked");
+        if (refusedUnlock) {
+          await endRefused();
+          throw new CoreError("vault_locked");
+        }
+        if (def.vault && current !== "unlocked") throw new CoreError("vault_locked");
         return value;
       } catch (error) {
+        await endRefused();
         if (error instanceof CoreError) throw error;
         const code = codeOf(error);
         // The vault worker is gone (it failed, ran out of memory, or was ended):

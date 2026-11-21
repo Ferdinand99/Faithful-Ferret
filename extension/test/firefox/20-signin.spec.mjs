@@ -174,3 +174,48 @@ test("the_popup_of_a_new_install_offers_the_sign_in_tab", async () => {
     }
   }
 });
+
+test("the_permission_of_a_server_on_another_port_is_asked_for_its_host", async () => {
+  for (const channel of channels()) {
+    const session = await launch({ channel });
+    try {
+      const server = await fixtures();
+      await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+      const page = helpers(session);
+      const hostname = server.hosts[0];
+      const address = `https://${hostname}:${server.altPort}`;
+      await session.navigate(SIGNIN_URL);
+      await page.ready();
+      await page.waitVisible('[data-role="server"]');
+      await page.type('[data-role="server"]', address);
+      await page.click('[data-role="server-submit"]');
+      await page.waitVisible('[data-role="grant"]');
+      await page.click('[data-role="grant"]');
+      // Firefox takes the pattern (a pattern with a port would be refused) and the flow goes on.
+      await page.waitVisible('[data-role="credentials"]');
+      const bridgeTab = await session.windowHandle();
+      const bridge = await openBridge(session);
+      const granted = await bridge.invoke("permissions.getAll");
+      assert.deepEqual(granted.origins, [`https://${hostname}/*`], `${channel}: ${JSON.stringify(granted.origins)}`);
+      // The background sees the permission for the server on that port: a sign-in reaches it (the fixture server is no
+      // vault, so it ends in another refusal, never in a missing permission or an unreachable server).
+      await session.switchTo(bridgeTab);
+      await session.navigate(SIGNIN_URL);
+      await page.ready();
+      await page.type('[data-role="server"]', address);
+      await page.click('[data-role="server-submit"]');
+      await page.waitVisible('[data-role="grant"]');
+      await page.click('[data-role="grant"]');
+      await page.waitVisible('[data-role="credentials"]');
+      await page.type('[data-role="email"]', "someone@fixture.example");
+      await page.type('[data-role="password"]', "a password that never reaches a vault");
+      await page.click('[data-role="sk-no"]');
+      await page.click('[data-role="submit"]');
+      await page.waitVisible('[data-role="credentials"] [data-role="error"]', 60_000);
+      const said = await page.text('[data-role="credentials"] [data-role="error"]');
+      assert.doesNotMatch(said, /could not be reached|no permission|without permission/i, `${channel}: ${said}`);
+    } finally {
+      await session.quit();
+    }
+  }
+});

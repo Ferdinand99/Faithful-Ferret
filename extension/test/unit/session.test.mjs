@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CONTENT_TYPES, decode, encode } from "../../src/shared/protocol.mjs";
 import {
-  ACCOUNT, EMAIL, SERVER, SK_CODE, coreClient, deviceServer, fakeSessions, filled, memoryDb, memoryStore, pkg, sessionWorld, sheet,
+  ACCOUNT, EMAIL, SERVER, SK_CODE, coreClient, deviceServer, fakeSessions, filled, memoryDb, memoryStore, pinnedRecord, pkg, sessionWorld, sheet,
 } from "./sessionHelpers.mjs";
 
 const MP = "Correct-horse-UNIQUE-4711";
@@ -187,6 +187,13 @@ test("signin_needs_the_host_permission_in_the_background_too", async () => {
   assert.deepEqual(world.asked, [{ origins: [`${SERVER}/*`] }], "the permission of exactly that origin");
   assert.deepEqual(sessions.calls, []);
   assert.equal(world.local.data.has("server"), false);
+  // A server on another port: a match pattern has no port, so the permission is the host's.
+  const ported = await sessionWorld({ createSession: sessions.create, permitted: false });
+  await ported.page().request("sign_in", { server: "https://vault.example.com:8443", email: EMAIL, mp: MP });
+  assert.deepEqual(ported.asked, [{ origins: ["https://vault.example.com/*"] }]);
+  const { load } = await pkg();
+  const { permissionOf } = await load("background/session.mjs");
+  assert.equal(permissionOf("https://xn--bcher-kva.example:8443"), "https://xn--bcher-kva.example/*");
 });
 
 test("a_content_script_cannot_send_sign_in_or_unlock", async () => {
@@ -381,4 +388,127 @@ test("every_reason_has_a_text_in_both_languages", async () => {
   const en = JSON.parse(readFileSync(join(extensionRoot, "src", "locales", "en", "session.json"), "utf8"));
   const nb = JSON.parse(readFileSync(join(extensionRoot, "src", "locales", "nb", "session.json"), "utf8"));
   assert.deepEqual(Object.keys(nb).sort(), Object.keys(en).sort());
+});
+
+/**
+ * One sign-in or unlock with a lock at the `target`-th await point: before each call to the local storage, the
+ * permissions, the platform, the local stores, the server and the core. Answers what happened and whether a worker
+ * still holds keys (the fake core holds them from `unlock_password` until its worker is ended).
+ * @param {"sign_in" | "unlock"} flow
+ * @param {number} target
+ */
+async function lockedAt(flow, target) {
+  let armed = false;
+  let count = 0;
+  /** @type {string | null} */
+  let hit = null;
+  /** @type {any} */
+  let world = null;
+  const gate = async (/** @type {string} */ label) => {
+    if (!armed) return;
+    count += 1;
+    if (count !== target) return;
+    hit = label;
+    await world.coreHost.lock("idle");
+  };
+  let keyed = false;
+  const base = coreClient({
+    unlock_password: () => {
+      keyed = true;
+      return { pinned: pinnedRecord() };
+    },
+  });
+  const baseLock = base.lock.bind(base);
+  const client = {
+    calls: base.calls,
+    get locks() {
+      return base.locks;
+    },
+    vault: new Proxy({}, {
+      get: (_, method) => async (/** @type {unknown[]} */ ...args) => {
+        await gate(`vault.${String(method)}`);
+        return /** @type {any} */ (base.vault)[method](...args);
+      },
+    }),
+    job: base.job,
+    async lock() {
+      keyed = false;
+      await baseLock();
+    },
+  };
+  const server = deviceServer();
+  const gatedServer = {
+    ...server,
+    fetchImpl: /** @type {typeof fetch} */ (async (url, init) => {
+      await gate(`fetch ${new URL(String(url)).pathname}`);
+      return server.fetchImpl(url, init);
+    }),
+  };
+  const plain = memoryStore(memoryDb());
+  /** @type {any} */
+  const store = { pinned: plain.pinned };
+  for (const [name, value] of Object.entries(plain)) {
+    if (typeof value === "function") {
+      store[name] = async (/** @type {unknown[]} */ ...args) => {
+        await gate(`store.${name}`);
+        return /** @type {any} */ (value)(...args);
+      };
+    } else if (name !== "pinned") store[name] = value;
+  }
+  world = await sessionWorld({ createSession: await realSessions(gatedServer), client, store, gate });
+  const ui = world.page();
+  const signIn = { server: SERVER, email: EMAIL, mp: MP, sk: SK_CODE };
+  if (flow === "unlock") {
+    assert.equal((await ui.request("sign_in", signIn)).ok, true);
+    await world.coreHost.lock("manual");
+    assert.equal(keyed, false);
+  }
+  armed = true;
+  const reply = await ui.request(flow, flow === "sign_in" ? signIn : { mp: MP });
+  armed = false;
+  return { reply, hit, keyed, state: world.coreHost.state(), session: world.sessionHost.session(), server };
+}
+
+test("a_lock_at_any_await_point_of_a_sign_in_or_an_unlock_leaves_no_worker_with_keys", async () => {
+  for (const flow of /** @type {const} */ (["sign_in", "unlock"])) {
+    let points = 0;
+    for (let target = 1; target < 200; target += 1) {
+      const outcome = await lockedAt(flow, target);
+      if (outcome.hit === null) break;
+      points += 1;
+      const where = `${flow}, lock before ${outcome.hit} (#${target})`;
+      assert.equal(outcome.keyed, false, `${where}: a worker still holds keys`);
+      assert.equal(outcome.state, "locked", `${where}: the host is not locked`);
+      assert.equal(outcome.session?.current() ?? null, null, `${where}: the session still names an open account`);
+    }
+    // Every point of the flow was tried: the core, the server and the stores are all among them.
+    assert.ok(points >= 8, `${flow}: only ${points} await points`);
+  }
+});
+
+test("an_unlock_after_a_lock_keeps_the_device_and_posts_no_ke3", async () => {
+  // Model A, end to end in the extension: the unlock runs login/start and the core's finish, reads the wraps with
+  // the device's token, and never posts KE3, so no device and no token is made.
+  const server = deviceServer();
+  const client = coreClient();
+  const world = await sessionWorld({ createSession: await realSessions(server), client, store: memoryStore(memoryDb()) });
+  const { ui } = await signInThroughThePage(world);
+  const device = server.to("/api/auth/opaque/login/finish")[0];
+  await ui.request("lock", {});
+  assert.equal(world.coreHost.state(), "locked");
+  const before = server.calls.length;
+  assert.deepEqual(await ui.request("unlock", { mp: MP }), { ok: true });
+  assert.equal(world.coreHost.state(), "unlocked");
+  const unlockCalls = server.calls.slice(before).map((c) => c.path);
+  assert.deepEqual(unlockCalls, ["/api/auth/opaque/login/start", "/api/vault/unlock-methods"], "no KE3, no new device, no renewal");
+  assert.equal(server.to("/api/auth/opaque/login/finish").length, 1);
+  assert.ok(device);
+  // The unlock's start went to the worker as bytes, wiped after the call, and the password is nowhere else.
+  const starts = client.calls.filter((c) => c.method === "login_start");
+  assert.equal(starts.length, 2);
+  assert.ok(starts[1].args[0] instanceof Uint8Array && starts[1].args[0].every((/** @type {number} */ b) => b === 0));
+  const text = dump([server.calls, world.local.data, world.sessionStorage.data, world.ports.flatMap((p) => p.fromBackground)]);
+  for (const form of passwordForms()) assert.equal(text.includes(form), false);
+  // The unlock used the stored secret key: the page sent only the password.
+  assert.equal(starts[1].args[1], SK_CODE);
 });

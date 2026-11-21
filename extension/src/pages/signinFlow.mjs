@@ -28,6 +28,15 @@
  * }} SignInFields
  */
 
+/**
+ * The host permission of a server: a match pattern has no port, so it is the
+ * host's (it covers the server on any port). The background checks the same.
+ * @param {string} server an origin the background checked
+ */
+export function permissionOf(server) {
+  return `https://${new URL(server).hostname}/*`;
+}
+
 /** @param {unknown} value @returns {string} */
 const trimmed = (value) => (typeof value === "string" ? value.trim() : "");
 
@@ -75,7 +84,7 @@ export function createSignInFlow({ request, requestPermission }) {
     grant() {
       if (chosen === null) return Promise.resolve({ ok: false, reason: "server_invalid" });
       const asked = chosen;
-      return requestPermission({ origins: [`${asked.server}/*`] }).then(
+      return requestPermission({ origins: [permissionOf(asked.server)] }).then(
         (given) => {
           if (given !== true) return { ok: false, reason: "permission_refused" };
           asked.granted = true;

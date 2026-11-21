@@ -16,9 +16,12 @@ test("the_e2e_ca_is_trusted_and_the_stack_hosts_load_over_https", async () => {
       for (const host of readHosts().e2e) {
         await session.navigate(`https://${host}/`);
         const where = await session.content(() => document.documentURI);
-        // A fresh stack's admin origin sends the browser on to the vault's setup page: either host counts, an error page never.
-        const stack = readHosts().e2e.map((name) => `https://${name}/`);
-        assert.ok(stack.some((origin) => where.startsWith(origin)), `${channel}: ${host} loaded, not an error page (${where})`);
+        // A host loads its own page. The one exception: the admin origin sends a browser without an admin session on
+        // to the vault, to its setup page (a fresh stack has no administrator yet) or to its sign-in page, and only there.
+        const [vaultHost, adminHost] = readHosts().e2e;
+        const ownPage = where.startsWith(`https://${host}/`);
+        const setupRedirect = host === adminHost && [`https://${vaultHost}/vault/#/setup`, `https://${vaultHost}/vault/#/login`].includes(where);
+        assert.ok(ownPage || setupRedirect, `${channel}: ${host} loaded, not an error page (${where})`);
       }
     } finally {
       await session.quit();
