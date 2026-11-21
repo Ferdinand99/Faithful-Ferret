@@ -18,6 +18,7 @@
   "export.encrypted.submit": "Make the encrypted file",
   "export.error.export_item_unreadable": "These items do not open on this device, so no file was made: {names}. Reload the page and let it sync. If it stays, make a plain export of the other items, or tell whoever runs the server.",
   "export.error.input_same_as_master_password": "The export password is the same as your master password. Choose a different one.",
+  "export.error.input_too_short": "The export password is too short. It needs at least 12 characters.",
   "export.error.kdf_out_of_memory": "This browser could not set aside the 256 MiB the key needs. Close other tabs or try another browser or device. No file was made.",
   "export.error.kdf_out_of_range": "The key settings were below what an export needs. No file was made.",
   "export.error.nothing_to_export": "This device holds no items to export yet. Wait for the first sync and try again.",
