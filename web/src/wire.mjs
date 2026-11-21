@@ -270,7 +270,7 @@ export const SHAPES = Object.freeze({
   handoff_redeem_res: [["next", str]],
   session_res: [
     ["account_id", id, true], ["email", str], ["scope", oneOf(...SESSION_SCOPES)],
-    ["origin", oneOf("vault", "admin")], ["reauth_until", int(), true],
+    ["origin", oneOf("vault", "admin")], ["reauth_until", int(), true], ["admin", bool, true],
   ],
   methods_res: [["methods", list(wrap)], ["pk_a", b32], ["vk_epoch", int()], ["manifest", nested(sealedRow)]],
   change,

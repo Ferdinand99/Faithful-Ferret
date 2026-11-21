@@ -7,6 +7,7 @@ import { autoLockFor } from "../../src/lock.mjs";
 import { createI18n } from "../../src/i18n.mjs";
 import { createWipeScope } from "../../src/views/common.mjs";
 import { accountView, menuRoutes } from "../../src/views/account.mjs";
+import { sessionInfo } from "../../src/flows/signin.mjs";
 import { passwordView } from "../../src/views/password.mjs";
 import { SECURITY_ERRORS } from "../../src/views/securityError.mjs";
 import { shellView } from "../../src/views/shell.mjs";
@@ -357,6 +358,84 @@ test("the_account_route_lists_the_pages_and_opens_the_dialog_in_the_page", async
       r.done();
     }
   });
+});
+
+test("the_account_page_has_a_way_to_the_admin_pages_only_when_it_is_given_one", async () => {
+  await withDom(async () => {
+    // Nothing is given: nothing is shown.
+    assert.equal(find(accountView({ t: keyT, routes: [] }), "admin"), null);
+    assert.equal(find(accountView({ t: keyT, routes: [] }), "admin-row"), null);
+    // Given: the existing text of the sign-in panel, and a click starts it.
+    let started = 0;
+    const page = accountView({ t: keyT, routes: [], toAdmin: () => void (started += 1) });
+    const link = find(page, "admin");
+    assert.equal(textOf(link).trim(), "account.signedin.admin");
+    assert.equal(find(page, "admin-error").hidden, true);
+    await click(link);
+    await settle();
+    assert.equal(started, 1);
+    assert.equal(find(page, "admin-error").hidden, true);
+    // A hand-over that cannot start says so, with the text the sign-in panel has for it.
+    const broken = accountView({ t: keyT, routes: [], toAdmin: async () => { throw new Error("no"); } });
+    await click(find(broken, "admin"));
+    await settle();
+    assert.equal(find(broken, "admin-error").hidden, false);
+    assert.equal(textOf(find(broken, "admin-error")).trim(), "account.error.admin_unconfigured");
+  });
+});
+
+test("the_session_info_carries_whether_the_server_says_the_user_is_an_administrator", async () => {
+  const answer = (extra) => ({ account_id: "aa".repeat(16), email: "ada@example.test", scope: "full", origin: "vault", ...extra });
+  const info = (res) => sessionInfo({ api: { get: async () => res } });
+  assert.deepEqual(await info(answer({ admin: true })), { accountId: "aa".repeat(16), email: "ada@example.test", admin: true });
+  assert.equal((await info(answer({}))).admin, false);
+  assert.equal((await info(answer({ admin: false }))).admin, false);
+});
+
+test("the_account_route_offers_the_admin_pages_to_an_administrator_of_a_vault_with_an_admin_address", async () => {
+  const route = (await import("../../src/routes/account.route.mjs")).default;
+  const savedLocation = globalThis.location;
+  const meta = (content) => (selector) => (selector === 'meta[name="ferret-admin-url"]' ? { getAttribute: () => content } : null);
+  /** Loads the page with the admin address `content` in the page and the session saying `admin`. */
+  async function load({ content, admin, info }) {
+    return withDom(async () => {
+      const assigned = [];
+      globalThis.location = { origin: "https://vault.ferret.test", assign: (url) => assigned.push(url) };
+      globalThis.document.querySelector = meta(content);
+      const r = rig();
+      r.session.info = info ?? (async () => ({ accountId: "aa".repeat(16), email: "ada@example.test", admin }));
+      try {
+        const node = await route.load(r.ctx("/account"));
+        const link = find(node, "admin");
+        if (link) {
+          await click(link);
+          await settle();
+        }
+        return { link, assigned };
+      } finally {
+        r.done();
+      }
+    });
+  }
+  try {
+    // An administrator: the link starts the hand-over to the first admin page.
+    const shown = await load({ content: "https://admin.ferret.test", admin: true });
+    assert.ok(shown.link, "the link is there");
+    assert.deepEqual(shown.assigned, ["https://admin.ferret.test/auth/handoff/begin?next=%2Fsettings%2Fgeneral"]);
+    // Not an administrator, or the server leaves it out: nothing.
+    assert.equal((await load({ content: "https://admin.ferret.test", admin: false })).link, null);
+    assert.equal((await load({ content: "https://admin.ferret.test", admin: undefined })).link, null);
+    // An administrator of a vault with no usable admin address: nothing, and the server is not even asked.
+    const asked = async () => assert.fail("not asked");
+    for (const content of [null, "", "not a url", "https://vault.ferret.test"]) {
+      assert.equal((await load({ content, admin: true, info: asked })).link, null, String(content));
+    }
+    // A session answer that fails shows no link and no error.
+    assert.equal((await load({ content: "https://admin.ferret.test", info: async () => { throw new Error("offline"); } })).link, null);
+  } finally {
+    if (savedLocation === undefined) delete globalThis.location;
+    else globalThis.location = savedLocation;
+  }
 });
 
 test("the_frame_has_an_account_link_that_is_marked_on_the_pages_of_the_account", async () => {

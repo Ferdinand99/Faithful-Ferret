@@ -34,11 +34,14 @@ export function menuRoutes(routes) {
  *   fresh?: () => number | null,
  *   reauth?: () => Promise<"ok" | "cancelled">,
  *   locale?: string,
+ *   toAdmin?: () => void | Promise<void>,
  * }} options `fresh` says when the freshness of the password check ends (ms since 1970), or null. `reauth` opens the
- * dialog (`reauthDialog`) and answers how it ended; without it the page has no button.
+ * dialog (`reauthDialog`) and answers how it ended; without it the page has no button. `toAdmin` starts the hand-over
+ * to the admin pages; the page has a link for it only when it is given (the route gives it to an administrator of a
+ * vault that has an admin address).
  * @returns {HTMLElement}
  */
-export function accountView({ t, routes, email = null, fresh = () => null, reauth, locale }) {
+export function accountView({ t, routes, email = null, fresh = () => null, reauth, locale, toAdmin }) {
   const root = el("section", { class: "card account account-page", "data-role": "account-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "reauth-state" });
   const note = el("p", { class: "ok", role: "status", "data-role": "reauth-done" });
@@ -75,6 +78,23 @@ export function accountView({ t, routes, email = null, fresh = () => null, reaut
     reauthRow.appendChild(el("div", { class: "actions" }, button));
   }
 
+  /** The way to the admin pages, for an administrator. */
+  let adminRow = null;
+  if (toAdmin) {
+    const failed = el("p", { class: "error", role: "alert", "data-role": "admin-error" }, t("account.error.admin_unconfigured"));
+    failed.hidden = true;
+    const link = el("button", { type: "button", class: "btn btn-secondary", "data-role": "admin" }, t("account.signedin.admin"));
+    link.addEventListener("click", async () => {
+      failed.hidden = true;
+      try {
+        await toAdmin();
+      } catch {
+        failed.hidden = false;
+      }
+    });
+    adminRow = el("div", { class: "stack", "data-role": "admin-row" }, el("div", { class: "actions" }, link), failed);
+  }
+
   mount(root, ...[
     el("h1", null, t("security.account.heading")),
     email ? el("p", { "data-role": "account-email" }, t("security.account.signed_in", { email })) : null,
@@ -82,6 +102,7 @@ export function accountView({ t, routes, email = null, fresh = () => null, reaut
     el("h2", null, t("security.account.menu_heading")),
     pages.length > 0 ? list : el("p", { "data-role": "account-menu-empty" }, t("security.account.menu_empty")),
     reauthRow,
+    adminRow,
   ].filter((node) => node !== null));
   return root;
 }

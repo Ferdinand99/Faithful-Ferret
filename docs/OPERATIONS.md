@@ -259,6 +259,8 @@ file has the full list of what the host needs (Docker 28 or newer, buildx, compo
   Docker's address pools; change subnet and gateway together.) Your reverse proxy on the host points
   `https://vault.example.org` at `http://127.0.0.1:3041` and `https://admin.example.org` at `http://127.0.0.1:3040`. The
   two public names must differ, because cookies do not tell ports apart.
+  The admin address itself is the entry point: opening it takes an administrator to the admin pages, through the
+  sign-in on the vault address when there is no session yet.
 * **The rules that keep trusting the gateway safe.** The server believes `X-Forwarded-For` and `X-Forwarded-Proto` from the
   gateway, and only processes on the host can reach the loopback ports. Anything that lets a remote client connect to
   those ports through the tunnel client's own network path, instead of through the proxy's web layer, makes every such
