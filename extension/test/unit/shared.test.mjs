@@ -44,6 +44,7 @@ const EXPECTED_LIST = [
   "flows/forgetServer.mjs",
   "i18n.mjs",
   "store/cache.mjs",
+  "store/exportReminder.mjs",
   "store/forget.mjs",
   "store/idb.mjs",
   "store/outbox.mjs",
