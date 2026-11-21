@@ -1520,7 +1520,8 @@ async fn session_vault(
             scope: scope.as_str().to_string(),
             origin: OriginJson::Vault,
             reauth_until: reauth_until(&row, now),
-            admin,
+            // A reset session (from a one-time code) is told nothing of the role.
+            admin: (admin && scope == SessionScope::Full).then_some(true),
         })
         .into_response(),
     ))
@@ -1553,7 +1554,7 @@ async fn session_admin(
             scope: SessionScope::Full.as_str().to_string(),
             origin: OriginJson::Admin,
             reauth_until: None,
-            admin: false,
+            admin: None,
         })
         .into_response(),
     ))
