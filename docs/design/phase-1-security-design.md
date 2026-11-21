@@ -1067,6 +1067,7 @@ This is the rule, even though the implementation is step B:
   - the export format.
 - **KDF upgrade:** client-controlled (§ 4.2). The client moves to a higher `ksf_profile` at the next unlock with MP. This gives a new OPAQUE record, a new `KEK_pw` and a new password wrap in one signed change. The server can only say "upgrade available".
 - **Backward compatibility:** clients read all known `suite` and `schema` values and write the newest one they understand. Unknown fields are preserved (§ 5.2). A newer `schema` is read-only. The server rejects any `suite`, `version` and `kind` it does not know.
+- **API answers and the extension** *(clarified 2026-11-21)*: the web vault comes from its own server and refuses an API answer with a field it does not know. A device client (the browser extension) is released apart from the server, so it reads each answer field by field and drops the fields it does not know, at every depth; it still refuses a repeated field, a missing field and a known field with a wrong value. Requests are written strictly by every client, and the server keeps refusing an unknown request field. A server adds a field to an answer only when a client that ignores it stays correct; a change that an older client must not ignore (a new meaning for a field, a field that changes what the client must do) takes a new `Ferret-Protocol` value.
 
 ---
 

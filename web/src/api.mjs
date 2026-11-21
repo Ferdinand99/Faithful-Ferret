@@ -11,7 +11,10 @@
 // no request carries a cookie (`credentials: "omit"`), every request carries
 // `Ferret-Protocol: 1` (also GET and the event stream), and each attempt has
 // `Authorization: DPoP <access token>` and a new DPoP proof (spec Fase 1 § 7.6;
-// RFC 9449 § 7.1). Without `auth` nothing changes for the web vault.
+// RFC 9449 § 7.1). A device client also reads its answers with
+// `unknown: "ignore"` (`wire.mjs`): a field the shape does not name is dropped,
+// so an extension keeps working against a newer server. Without `auth` nothing
+// changes for the web vault: an unknown field is refused.
 import { b64u } from "./b64.mjs";
 import { checkStep, readJson, readWire, SHAPES } from "./wire.mjs";
 
@@ -122,6 +125,8 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
   }
   /** Cookies go with the web vault's requests only; a device's requests carry its token instead. */
   const credentials = auth === null ? "same-origin" : "omit";
+  /** The web vault comes from its own server and refuses an unknown answer field; a device client ignores it. */
+  const unknown = auth === null ? "refuse" : "ignore";
 
   /**
    * Sends a request and reads its answer with `read`. Without `auth` this is one
@@ -236,12 +241,12 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
 
       if (ok) {
         try {
-          return kind ? readWire(kind, text) : readJson(text);
+          return kind ? readWire(kind, text, { unknown }) : readJson(text);
         } catch {
           throw new ApiError(status, "bad_response", retryAfter);
         }
       }
-      throw errorOf(status, text, retryAfter);
+      throw errorOf(status, text, retryAfter, unknown);
     });
   }
 
@@ -300,7 +305,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
       } catch {
         throw new ApiError(status, "bad_response", retryAfter);
       }
-      throw errorOf(status, text, retryAfter);
+      throw errorOf(status, text, retryAfter, unknown);
     });
   }
 
@@ -344,8 +349,9 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
  * @param {number} status
  * @param {string} text
  * @param {number | null} retryAfter
+ * @param {"refuse" | "ignore"} unknown what the current row of a conflict does with a field its shape does not name
  */
-function errorOf(status, text, retryAfter) {
+function errorOf(status, text, retryAfter, unknown) {
   /** @type {any} */
   let body;
   try {
@@ -358,7 +364,7 @@ function errorOf(status, text, retryAfter) {
   }
   if (status === 409 && body !== null && typeof body === "object" && "current_rev" in body) {
     try {
-      const row = readWire("conflict_res", text);
+      const row = readWire("conflict_res", text, { unknown });
       checkStep("conflict_res", row);
       return new ApiError(status, "conflict", retryAfter, row);
     } catch {

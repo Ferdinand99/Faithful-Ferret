@@ -1,26 +1,37 @@
-// The account session of the web vault: registration, sign-in, unlock, lock
-// and sign-out, over the crypto client (the workers hold every key) and the
-// API client. No secret lives here: the password goes to the worker as a byte
-// array that is wiped after the call, the keys never leave the worker, and
-// what this object keeps is the account's ids and its pinned record, neither
-// of which is secret.
+// The account session: sign-in, unlock, lock and sign-out, over the crypto
+// client (the workers hold every key) and the API client. No secret lives
+// here: the password goes to the worker as a byte array that is wiped after
+// the call, the keys never leave the worker, and what this object keeps is the
+// account's ids and its pinned record, neither of which is secret.
+//
+// The web vault and the browser extension share this file (extension/shared.json),
+// so it imports only what the extension may carry. The web vault's other
+// account operations (registration, re-authentication, password change,
+// export, import, recovery key, secret key, emergency sheet) are added by
+// `vaultSession.mjs`, which only the web vault loads.
+//
+// Two modes (spec Fase 1 § 7.6):
+//   - "cookie" (the default): the web vault. Its server is the page's own
+//     origin, and the sign-in ends in the vault session's cookie, as it always did.
+//   - "device": a device client, the browser extension. It names its server
+//     (`serverUrl` is required: the extension's own origin is no server) and
+//     brings its device key (`deviceKey`, a new one from `generateDeviceKey`)
+//     and the tokens of that key (`tokens`, `createTokenAuth`); `api` is
+//     `createApi({ base: serverUrl, auth: tokens })`. The sign-in sends the
+//     device body with a proof of the key, and the answer's tokens and device
+//     id are kept by the tokens. A key signs in once: the server binds it to the
+//     new device, so another sign-in (and so every unlock: a device has no
+//     re-authentication) needs a new key, new tokens and a new session.
 //
 // The sync engine is reached through one small seam (`attachSync`): after an
 // unlock the session calls `sync.start({ accountId, vaultId, vkEpoch })`, and
 // on lock and sign-out `sync.stop()`. A sync that is not attached, or that
 // throws, never stops a sign-in.
-import { changePassword } from "../flows/changePassword.mjs";
 import { forgetSecretKey } from "../flows/deviceSecret.mjs";
-import { encryptedExport, plainExport } from "../flows/export.mjs";
-import { continueImport, discardImport, previewImport, runImport } from "../flows/import.mjs";
-import { reauthenticate } from "../flows/reauth.mjs";
-import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
-import { register } from "../flows/register.mjs";
-import { renewRecoveryKey } from "../flows/renewRecovery.mjs";
-import { accessSheet, showSecretKey } from "../flows/showSecretKey.mjs";
 import { readSetupQr } from "../flows/setupQr.mjs";
-import { deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
+import { DEVICE_NAME, deviceStatus, sessionInfo, signIn, unlock } from "../flows/signin.mjs";
 import { serverKey } from "../store/idb.mjs";
+import { encodeWire, PLATFORMS } from "../wire.mjs";
 import { AccountError } from "./errors.mjs";
 
 /** @typedef {import("./env.mjs").Env} Env */
@@ -28,6 +39,12 @@ import { AccountError } from "./errors.mjs";
 
 /** How long after a re-authentication a hand-over for it may still start. */
 export const REAUTH_FRESH_MS = 60_000;
+
+/** The modes of a session. */
+export const SESSION_MODES = Object.freeze(["cookie", "device"]);
+
+/** The calls a device session needs of its tokens (`auth/tokens.mjs`). */
+const TOKEN_CALLS = Object.freeze(["startSignIn", "finishSignIn", "revoke", "prepare"]);
 
 /**
  * The seam to the sync engine: `{ start(scope), stop() }`, attached later.
@@ -58,6 +75,32 @@ function createSyncSeam() {
 }
 
 /**
+ * Checks what a device session is given, before anything is sent: the tokens,
+ * the key of this server, and a name and platform the sign-in body takes.
+ * @param {string} server
+ * @param {{ tokens: any, deviceKey: any, deviceName: unknown, platform: unknown }} device
+ */
+function checkDevice(server, { tokens, deviceKey, deviceName, platform }) {
+  if (tokens === null || typeof tokens !== "object" || !TOKEN_CALLS.every((name) => typeof Reflect.get(tokens, name) === "function")) {
+    throw new TypeError("a device session needs the tokens of its key");
+  }
+  if (deviceKey === null || typeof deviceKey !== "object" || deviceKey.serverUrl !== server || deviceKey.publicJwk === null || typeof deviceKey.publicJwk !== "object") {
+    throw new TypeError("a device session needs a device key of its server");
+  }
+  if (typeof platform !== "string" || !PLATFORMS.includes(platform)) throw new TypeError(`the platform is one of ${PLATFORMS.join(", ")}`);
+  try {
+    // The name by the rule of the sign-in body: 1 to 64 characters, no control or invisible character.
+    encodeWire("login_finish_req_device", { login_id: "0".repeat(32), ke3: "A".repeat(86), client: "device", device_name: deviceName, platform });
+  } catch {
+    throw new TypeError("a device name has 1 to 64 characters and no control or invisible character");
+  }
+}
+
+/**
+ * The session and what the web vault's own operations build on
+ * (`vaultSession.mjs`): the flows' `env`, the lock, `opened`, and the state the
+ * lock resets. Only the web vault's session uses `inner`; everything else takes
+ * `createCryptoSession`.
  * @param {{
  *   client?: any,
  *   createClient?: () => any,
@@ -69,26 +112,59 @@ function createSyncSeam() {
  *   sync?: any,
  *   secrets?: import("../flows/deviceSecret.mjs").Env,
  *   createImportWorker?: () => any,
- * }} options `createImportWorker` makes the import worker (the page's own file, started through the Trusted Types policy)
+ *   mode?: "cookie" | "device",
+ *   deviceName?: string,
+ *   platform?: string,
+ *   tokens?: import("../auth/tokens.mjs").TokenAuth,
+ *   deviceKey?: import("../auth/deviceKey.mjs").DeviceKey,
+ * }} options `createImportWorker` makes the import worker (the page's own file, started through the Trusted Types
+ *   policy). `mode`, `deviceName`, `platform`, `tokens` and `deviceKey`: see the top of this file; `platform` is one of
+ *   the wire's platforms (a device only)
  */
-export function createCryptoSession({
+export function createSessionCore({
   client: given,
   createClient,
   api,
   store,
-  serverUrl = globalThis.location?.origin,
+  serverUrl,
   now = Date.now,
   rand = (bytes) => globalThis.crypto.getRandomValues(bytes),
   sync,
   secrets,
   createImportWorker,
+  mode = "cookie",
+  deviceName = DEVICE_NAME,
+  platform = "other",
+  tokens,
+  deviceKey,
 }) {
+  if (!SESSION_MODES.includes(mode)) throw new TypeError(`the mode of a session is one of ${SESSION_MODES.join(", ")}`);
+  const device = mode === "device";
+  // A device names its server: the page it runs in is not one.
+  if (device && serverUrl === undefined) throw new TypeError("a device session needs the address of its server");
+  if (!device && (tokens !== undefined || deviceKey !== undefined)) throw new TypeError("the web vault's session holds no device key and no tokens");
   const client = given ?? createClient?.();
   if (!client) throw new TypeError("the crypto session needs a client");
   // One form of the address reaches the core and the store.
-  const server = serverKey(serverUrl);
+  const server = serverKey(serverUrl === undefined ? globalThis.location?.origin : serverUrl);
+  if (device) checkDevice(server, { tokens, deviceKey, deviceName, platform });
   /** @type {Env} */
-  const env = { client, api, store, server, now, rand, secrets, lock: () => lock(), createImportWorker };
+  const env = {
+    client,
+    api,
+    store,
+    server,
+    now,
+    rand,
+    secrets,
+    lock: () => lock(),
+    createImportWorker,
+    mode,
+    deviceName,
+    platform: device ? platform : undefined,
+    tokens: device ? tokens : undefined,
+    deviceKey: device ? deviceKey : undefined,
+  };
 
   const seam = createSyncSeam();
   seam.attach(sync);
@@ -102,8 +178,6 @@ export function createCryptoSession({
   let locks = 0;
   /** @type {Set<() => void>} */
   const lockListeners = new Set();
-  /** The previews of an import that are held (sealed items, ciphertext): a lock lets go of them. @type {Set<object>} */
-  const previews = new Set();
 
   /**
    * @param {Unlocked} unlocked
@@ -124,8 +198,6 @@ export function createCryptoSession({
     try {
       await client.lock();
     } finally {
-      for (const preview of [...previews]) discardImport(preview);
-      previews.clear();
       for (const listener of [...lockListeners]) {
         try {
           listener();
@@ -136,10 +208,12 @@ export function createCryptoSession({
     }
   }
 
-  return {
+  const session = {
     client,
     /** The vault's address, as the core and the store see it. */
     serverUrl: server,
+    /** "cookie" (the web vault) or "device" (a device client). */
+    mode,
 
     /** Hands the sync engine over (see the top of this file). */
     attachSync(/** @type {any} */ target) {
@@ -149,7 +223,7 @@ export function createCryptoSession({
     /** The account that is open in this tab, or null when locked. */
     current: () => current,
 
-    /** The vault session the server knows, or null: `{ accountId, email }`. */
+    /** The vault session the server knows, or null: `{ accountId, email }`. A device has none: always null. */
     info: () => sessionInfo(env),
 
     /** What this device knows about an e-mail (no request): `{ pinned, skBit, skStored }`. */
@@ -160,7 +234,7 @@ export function createCryptoSession({
      * rest of what the sheet states. The sign-in reads the text again itself.
      * @param {string} text
      */
-    readSetupQr: (text) => readSetupQr(client, text),
+    readSetupQr: (/** @type {string} */ text) => readSetupQr(client, text),
 
     /**
      * Whether a re-authentication just succeeded, so that a hand-over for it
@@ -178,138 +252,6 @@ export function createCryptoSession({
      */
     reauthUntil() {
       return freshUntil !== null && freshUntil > now() ? freshUntil : null;
-    },
-
-    /**
-     * Confirms the master password again for the open session (spec Fase 1 § 4.6 (a)). The vault stays open.
-     * @param {Parameters<typeof reauthenticate>[1]} args
-     */
-    async reauthenticate(args) {
-      const before = locks;
-      const done = await reauthenticate(env, args);
-      if (locks === before) freshUntil = done.until;
-      return done;
-    },
-
-    /**
-     * Changes the master password of the open account (see `flows/changePassword.mjs`). The vault stays open
-     * and the session goes on; every other session of the account is ended by the server.
-     * @param {Parameters<typeof changePassword>[1]} args
-     */
-    async changePassword(args) {
-      if (current === null) throw new AccountError("session_ended");
-      const before = locks;
-      const done = await changePassword(env, args);
-      if (locks === before) freshUntil = done.until;
-      return done;
-    },
-
-    /**
-     * The encrypted export of the open vault (see `flows/export.mjs`): a fresh sign-in with the master password, then the
-     * file for the browser. The vault stays open; a lock while it runs ends it with `locked`.
-     * @param {Omit<Parameters<typeof encryptedExport>[1], "scope">} args
-     */
-    async exportEncrypted(args) {
-      if (current === null) throw new AccountError("session_ended");
-      const { accountId, vaultId, vkEpoch } = current;
-      return encryptedExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
-    },
-
-    /**
-     * The plain export of the open vault (see `flows/export.mjs`): behind the master password again and an explicit
-     * confirmation. The file holds every secret in the clear.
-     * @param {Omit<Parameters<typeof plainExport>[1], "scope">} args
-     */
-    async exportPlain(args) {
-      if (current === null) throw new AccountError("session_ended");
-      const { accountId, vaultId, vkEpoch } = current;
-      return plainExport(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
-    },
-
-    /**
-     * Reads an import file and says what is in it (see `flows/import.mjs`). The import worker reads a JSON or CSV file and
-     * the vault seals what it makes; the plain text never reaches this thread. A lock of the vault ends the worker and drops
-     * the preview. `engine` is the sync engine of the open vault. `signal`: the page that asked has gone (the user left it); the worker is
-     * ended and nothing is kept, as for a lock.
-     * @param {Blob & { name?: string }} file
-     * @param {{ engine: any, labels?: unknown, timeoutMs?: number, signal?: AbortSignal }} options
-     */
-    async importPreview(file, options) {
-      if (current === null) throw new AccountError("session_ended");
-      const { signal: given, ...rest } = options;
-      const controller = new AbortController();
-      const stop = () => controller.abort();
-      if (given?.aborted) throw new AccountError("locked");
-      given?.addEventListener("abort", stop, { once: true });
-      lockListeners.add(stop);
-      try {
-        const preview = await previewImport(env, file, { ...rest, signal: controller.signal });
-        // A lock that came while the worker was running leaves nothing behind.
-        if (controller.signal.aborted || current === null) {
-          discardImport(preview);
-          throw new AccountError("locked");
-        }
-        previews.add(preview);
-        return preview;
-      } finally {
-        lockListeners.delete(stop);
-        given?.removeEventListener("abort", stop);
-      }
-    },
-
-    /**
-     * Imports a previewed file (see `flows/import.mjs`): a fresh sign-in with the master password, an import window, and the
-     * engine stores all of it in the outbox before it sends anything. A lock while it runs ends it.
-     * @param {Parameters<typeof runImport>[1]} preview
-     * @param {Omit<Parameters<typeof runImport>[2], "signal">} args
-     */
-    async importRun(preview, args) {
-      if (current === null) throw new AccountError("session_ended");
-      const controller = new AbortController();
-      const stop = () => controller.abort();
-      lockListeners.add(stop);
-      try {
-        const done = await runImport(env, preview, { ...args, signal: controller.signal });
-        previews.delete(preview);
-        return done;
-      } finally {
-        lockListeners.delete(stop);
-      }
-    },
-
-    /**
-     * "Continue import" (see `flows/import.mjs`): a fresh sign-in, a new import window for the items that are left, and the
-     * engine sends only those.
-     * @param {Omit<Parameters<typeof continueImport>[1], never>} args
-     */
-    async importContinue(args) {
-      if (current === null) throw new AccountError("session_ended");
-      return continueImport(env, args);
-    },
-
-    /** Lets go of a preview (the sealed items it holds). @param {object} preview */
-    importDiscard(preview) {
-      previews.delete(preview);
-      discardImport(preview);
-    },
-
-    /**
-     * Registers an account up to the sheet. The returned flow's `finish()`
-     * also makes the new account the open one.
-     * @param {Parameters<typeof register>[1]} args
-     */
-    async register(args) {
-      if (current !== null) await lock();
-      const flow = await register(env, args);
-      const email = args.email.trim();
-      return {
-        ...flow,
-        async finish() {
-          const done = await flow.finish();
-          const unlocked = await opened({ ...done, email });
-          return { ...unlocked, accountId: done.accountId, vaultId: done.vaultId };
-        },
-      };
     },
 
     async signIn(/** @type {Parameters<typeof signIn>[1]} */ args) {
@@ -331,10 +273,10 @@ export function createCryptoSession({
 
     /**
      * Locks, clears the cached rows of the account and ends the server
-     * session. The pinned record and the device id stay. The server is always
-     * asked to end the session; if that fails, or it cannot be reached, the device
-     * is still wiped and the error is `signout_incomplete`: the server session
-     * may still be live.
+     * session (a device: signs the device out and forgets its tokens). The
+     * pinned record and the device id stay. The server is always asked; if that
+     * fails, or it cannot be reached, the device is still wiped and the error is
+     * `signout_incomplete`: the server session (or the device) may still be live.
      */
     async signOut() {
       /** @type {unknown} */
@@ -354,7 +296,9 @@ export function createCryptoSession({
         failure ??= error;
       }
       try {
-        await api.post("/api/auth/logout");
+        // A device's sign-out forgets its tokens whether or not the server answers.
+        if (device) await /** @type {import("../auth/tokens.mjs").TokenAuth} */ (tokens).revoke();
+        else await api.post("/api/auth/logout");
       } catch {
         // The server session may still be live: say so.
         throw new AccountError("signout_incomplete");
@@ -367,53 +311,37 @@ export function createCryptoSession({
       await forgetSecretKey(await store.open(), server, accountId);
     },
 
-    /**
-     * A new recovery key for the open account (see `flows/renewRecovery.mjs`). The vault stays open and no
-     * session ends.
-     * @param {Parameters<typeof renewRecoveryKey>[1]} args
-     */
-    async renewRecoveryKey(args) {
-      if (current === null) throw new AccountError("session_ended");
-      return renewRecoveryKey(env, args);
-    },
-
-    /** What "reapply the unlock methods" can do after an accepted restore (see `flows/reapplyMethods.mjs`). */
-    async reapplyOffer() {
-      if (current === null) throw new AccountError("session_ended");
-      return reapplyOffer(env);
-    },
-
-    /**
-     * Renews the recovery key over a wrap that went below the floor with an accepted restore.
-     * @param {Parameters<typeof reapplyMethods>[1]} args
-     */
-    async reapplyMethods(args) {
-      if (current === null) throw new AccountError("session_ended");
-      return reapplyMethods(env, args);
-    },
-
-    /**
-     * The secret key this device remembers, after the password check (see `flows/showSecretKey.mjs`).
-     * @param {Parameters<typeof showSecretKey>[1]} args
-     */
-    async showSecretKey(args) {
-      if (current === null) throw new AccountError("session_ended");
-      return showSecretKey(env, args);
-    },
-
-    /**
-     * Page 1 of the emergency sheet again, as a PDF (see `flows/showSecretKey.mjs`).
-     * @param {Parameters<typeof accessSheet>[1]} args
-     */
-    async accessSheet(args) {
-      if (current === null) throw new AccountError("session_ended");
-      return accessSheet(env, args);
-    },
-
     /** Calls `fn` when the vault is locked; returns the function that stops it. */
     onLock(/** @type {() => void} */ fn) {
       lockListeners.add(fn);
       return () => void lockListeners.delete(fn);
     },
   };
+
+  const inner = {
+    env,
+    lock,
+    opened,
+    /** The account that is open, or null. */
+    current: () => current,
+    /** How many locks there were: a call compares it before and after, and keeps its result only when no lock came. */
+    locks: () => locks,
+    /**
+     * Records the freshness a re-authentication gave, unless a lock came since `before` (`locks()`).
+     * @param {number} before
+     * @param {number | null} until
+     */
+    markFresh(before, until) {
+      if (locks === before) freshUntil = until;
+    },
+  };
+  return { session, inner };
+}
+
+/**
+ * The account session (see the top of this file).
+ * @param {Parameters<typeof createSessionCore>[0]} options
+ */
+export function createCryptoSession(options) {
+  return createSessionCore(options).session;
 }

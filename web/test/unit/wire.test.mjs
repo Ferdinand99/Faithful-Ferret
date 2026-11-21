@@ -1222,3 +1222,46 @@ test("the_dpop_jwk_fixture_is_a_public_p256_key_and_its_thumbprint", async () =>
   assert.equal(key.type, "public");
   assert.equal(key.asymmetricKeyDetails.namedCurve, "prime256v1");
 });
+
+test("an_answer_read_for_a_device_drops_unknown_fields_at_every_depth_and_nothing_else", () => {
+  const b = (/** @type {number} */ n, /** @type {number} */ fill) => Buffer.alloc(n, fill).toString("base64url");
+  const methods = {
+    methods: [{ method_id: "11".repeat(16), method_type: 1, kek_generation: 1, wrap: b(104, 5), later: 1 }],
+    pk_a: b(32, 3),
+    vk_epoch: 1,
+    manifest: { rev: 1, envelope: b(80, 4), tag: b(32, 5), later: { deep: true } },
+    later: [1, 2],
+  };
+  const text = JSON.stringify(methods);
+  // The web vault refuses every unknown field, as before; the default is to refuse.
+  assert.throws(() => readWire("methods_res", text), WireError);
+  assert.throws(() => readWire("methods_res", text, { unknown: "refuse" }), WireError);
+  // A device client reads what it knows, at every depth: the value it gets has no other field.
+  const read = readWire("methods_res", text, { unknown: "ignore" });
+  assert.deepEqual(Object.keys(read), ["methods", "pk_a", "vk_epoch", "manifest"]);
+  assert.deepEqual(Object.keys(read.methods[0]), ["method_id", "method_type", "kek_generation", "wrap"]);
+  assert.deepEqual(Object.keys(read.manifest), ["rev", "envelope", "tag"]);
+  // ...and the strict check passes on what it got.
+  assert.doesNotThrow(() => shape(SHAPES.methods_res, read));
+  // The rows of the list of devices too.
+  const devices = readWire("devices_res", JSON.stringify({
+    devices: [{ id: "33".repeat(16), kind: "web", name: "", created_at: 1, last_seen: 2, current: true, later: "x" }],
+    later: 1,
+  }), { unknown: "ignore" });
+  assert.deepEqual(Object.keys(devices.devices[0]), ["id", "kind", "name", "created_at", "last_seen", "current"]);
+
+  // Everything else is as strict as ever: a repeated field, a missing field, a known field of the wrong type or value.
+  const strict = (/** @type {string} */ kind, /** @type {string} */ body) => assert.throws(() => readWire(kind, body, { unknown: "ignore" }), WireError, body);
+  strict("token_res", `{"access_token":"${"A".repeat(43)}","access_token":"${"A".repeat(43)}","refresh_token":"${"A".repeat(43)}","token_type":"DPoP","expires_in":900}`);
+  strict("token_res", `{"refresh_token":"${"A".repeat(43)}","token_type":"DPoP","expires_in":900,"later":1}`);
+  strict("token_res", `{"access_token":"${"A".repeat(43)}","refresh_token":"${"A".repeat(43)}","token_type":"Bearer","expires_in":900}`);
+  strict("token_res", `{"access_token":"${"A".repeat(43)}","refresh_token":"${"A".repeat(43)}","token_type":"DPoP","expires_in":-1}`);
+  strict("methods_res", JSON.stringify({ ...methods, manifest: { ...methods.manifest, tag: b(31, 5) } }));
+  strict("methods_res", JSON.stringify({ ...methods, methods: [{ ...methods.methods[0], method_type: 9 }] }));
+  strict("methods_res", "[]");
+  strict("methods_res", JSON.stringify({ ...methods, manifest: "x" }));
+  strict("methods_res", '{"a":1.5}');
+  assert.throws(() => readWire("token_res", "{}", /** @type {any} */ ({ unknown: "keep" })), TypeError);
+  // Requests are written strictly on every client.
+  assert.throws(() => encodeWire("token_refresh_req", { refresh_token: "A".repeat(43), later: 1 }), WireError);
+});

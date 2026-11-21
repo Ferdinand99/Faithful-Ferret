@@ -41,6 +41,25 @@
 // older than this device has seen (`pinned_kek_generation`) and the server's restore epoch
 // is above the one this device stored. The server was restored from a backup, and the page
 // offers the recovery key (`pinnedRefusalAction`); that recovery runs in this session.
+//
+// Two modes (`env.mode`, spec Fase 1 § 7.6). The web vault's is "cookie": the
+// calls above, with the session cookie, byte for byte as they always were. A
+// device client (the browser extension) is "device": it signs in as a device
+// with its own tokens and no cookie.
+//   - `login/start` goes without a cookie, a token or a proof
+//     (`env.tokens.startSignIn`), with the purpose `login`; a device has no
+//     re-authentication, so its `unlock` is a new sign-in.
+//   - `login/finish` sends `{ login_id, ke3, client: "device", device_name,
+//     platform }` with a DPoP proof of the new device key
+//     (`env.tokens.finishSignIn`). The key is the proof's `jwk`; the body
+//     carries no key and no id, and the server names the device in its answer.
+//     The answer's tokens and device id are stored by the tokens (the refresh
+//     token in the key's record, the access token in memory) and never reach
+//     this file's result.
+//   - Every later call (`unlock-methods`, the restore check) carries the token.
+//   - A sign-in that does not open the vault signs the new device out
+//     (`env.tokens.revoke`, best effort), which forgets its tokens; there is no
+//     cookie session to end, and nothing is pinned.
 import { ApiError } from "../api.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { rowToCore, serverMethods, withPassword, wrapToCore } from "../crypto/convert.mjs";
@@ -77,6 +96,8 @@ function sameBytes(a, b) {
  *   an administrator (only then are the admin pages offered)
  */
 export async function sessionInfo(env) {
+  // A device has no vault session: the route takes the cookie only, and a token is refused there.
+  if (env.mode === "device") return null;
   try {
     const res = await env.api.get("/api/auth/session", { shape: "session_res" });
     if (res.origin !== "vault" || res.scope !== "full" || !hex16.is(res.account_id)) return null;
@@ -149,8 +170,13 @@ export async function decideSecretKey(env, db, record, args, qr = null) {
  */
 async function open(env, p) {
   const { client, api, store, server } = env;
+  const device = env.mode === "device";
+  if (device && p.purpose !== "login") throw new TypeError("a device has no re-authentication: it signs in again");
+  /** A device's tokens (the session checked them; unused in the web vault). */
+  const tokens = /** @type {import("../auth/tokens.mjs").TokenAuth} */ (env.tokens);
   const db = await store.open();
-  const deviceId = await store.deviceId(db, env.rand);
+  // A browser names itself with an id of its own; the server names a device.
+  const deviceId = device ? null : await store.deviceId(db, env.rand);
   const qr = p.qr ?? null;
 
   /** @type {Record<string, any>} */
@@ -161,11 +187,10 @@ async function open(env, p) {
     // The sheet is for this server or the sign-in does not start: nothing is sent to a server the sheet is not for.
     if (qr !== null) checkQrBeforeKe3(qr, { serverUrl: server });
     const ke1 = await withPassword(p.password, (mp) => client.vault.login_start(mp, p.skCode));
-    start = await api.post(
-      "/api/auth/opaque/login/start",
-      encodeWire("login_start_req", { email: p.email, ke1: b64u.encode(ke1), purpose: p.purpose }),
-      { shape: "login_start_res" },
-    );
+    const startBody = encodeWire("login_start_req", { email: p.email, ke1: b64u.encode(ke1), purpose: p.purpose });
+    start = device
+      ? await tokens.startSignIn(startBody)
+      : await api.post("/api/auth/opaque/login/start", startBody, { shape: "login_start_res" });
     try {
       // The password is not stretched for a profile below the sheet's.
       if (qr !== null) checkQrBeforeKe3(qr, { serverUrl: server, serverProfile: start.ksf_profile });
@@ -189,17 +214,27 @@ async function open(env, p) {
   /** @type {Record<string, any>} */
   let done;
   try {
-    done = await api.post(
-      "/api/auth/opaque/login/finish",
-      encodeWire("login_finish_req", {
-        login_id: start.login_id,
-        ke3: b64u.encode(ke3),
-        device_id: deviceId,
-        device_name: DEVICE_NAME,
-        purpose: p.purpose,
-      }),
-      { shape: "login_finish_res" },
-    );
+    done = device
+      ? await tokens.finishSignIn(
+        encodeWire("login_finish_req_device", {
+          login_id: start.login_id,
+          ke3: b64u.encode(ke3),
+          client: "device",
+          device_name: env.deviceName,
+          platform: env.platform,
+        }),
+      )
+      : await api.post(
+        "/api/auth/opaque/login/finish",
+        encodeWire("login_finish_req", {
+          login_id: start.login_id,
+          ke3: b64u.encode(ke3),
+          device_id: deviceId,
+          device_name: env.deviceName ?? DEVICE_NAME,
+          purpose: p.purpose,
+        }),
+        { shape: "login_finish_res" },
+      );
   } catch (error) {
     // No session was made: the job drops what it holds from the login.
     await Promise.resolve(client.vault.clear()).catch(() => undefined);
@@ -270,7 +305,9 @@ async function open(env, p) {
     // A sign-in that did not open the vault leaves no session behind; a
     // re-authentication must not end the session it was made for. The one
     // exception is the offer to recover: that recovery runs in this session.
-    if (p.purpose === "login" && offer !== "recover") await api.post("/api/auth/logout").catch(() => undefined);
+    // A device has no session for a recovery (that is the web vault's): its new tokens always go.
+    if (device) await tokens.revoke().catch(() => undefined);
+    else if (p.purpose === "login" && offer !== "recover") await api.post("/api/auth/logout").catch(() => undefined);
     throw error;
   }
 }
@@ -375,6 +412,11 @@ export async function signIn(env, args) {
  * @returns {Promise<Unlocked>}
  */
 export async function unlock(env, args) {
+  // A device has no session to re-authenticate: opening its vault again is a new sign-in (a new key and new tokens).
+  if (env.mode === "device") {
+    if (nonEmpty(args.email) === null) throw new AccountError("session_ended");
+    return signIn(env, /** @type {any} */ (args));
+  }
   const info = await sessionInfo(env);
   if (info === null) {
     if (nonEmpty(args.email) === null) throw new AccountError("session_ended");

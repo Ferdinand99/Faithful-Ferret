@@ -10,6 +10,11 @@
 //   rand     fills a byte array with random values
 //   secrets  options for the sealing of the secret key (WebCrypto and the random source), for tests
 //   createImportWorker  makes the import worker; only a page that imports needs it
+//   mode     "cookie" (the web vault, the default) or "device" (a device client: the extension)
+//   deviceName  what the server calls this client in the list of devices
+//   platform    a device's platform, one of the wire's words (a device only)
+//   tokens   a device's tokens (`auth/tokens.mjs`): its sign-in, its sign-out (a device only)
+//   deviceKey   a device's key, new for this sign-in (`auth/deviceKey.mjs`; a device only)
 
 /**
  * @typedef {object} Env
@@ -22,6 +27,11 @@
  * @property {(bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>} rand
  * @property {import("../flows/deviceSecret.mjs").Env} [secrets]
  * @property {() => any} [createImportWorker] makes the import worker (the page's own file, through the Trusted Types policy)
+ * @property {"cookie" | "device"} [mode] left out: "cookie"
+ * @property {string} [deviceName] left out: the web vault's name
+ * @property {string} [platform]
+ * @property {import("../auth/tokens.mjs").TokenAuth} [tokens]
+ * @property {import("../auth/deviceKey.mjs").DeviceKey} [deviceKey]
  */
 
 /**

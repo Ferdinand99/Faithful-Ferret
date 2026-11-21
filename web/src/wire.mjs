@@ -12,6 +12,16 @@
 // wrong as a missing one. The messages of a `WireError` can quote the input
 // (the JSON parser's message, a token, a field name): show or log `error.code`
 // only.
+//
+// One exception, for answers only: a device client (the browser extension,
+// released apart from the server) reads an answer with `unknown: "ignore"`.
+// Then a field the shape does not name is dropped, at every depth, before the
+// shape is checked, so the value it gets holds the known fields only; a
+// repeated field, a missing field and a known field with a wrong value are
+// refused as before. Requests are written strictly on every client. A server
+// adds a field to an answer only when a client that ignores it stays right;
+// a change that an older client must not ignore takes a new `Ferret-Protocol`
+// value. The web vault comes from its own server and keeps refusing them.
 import { b64u, hex16, WireError } from "./b64.mjs";
 
 export { WireError };
@@ -146,13 +156,31 @@ const bool = (v) => {
 const oneOf = (...words) => (v) => {
   if (!words.includes(v)) refuse(`not one of ${words}`);
 };
-/** @param {Spec} spec @returns {Check} */
-const list = (spec) => (v) => {
-  if (!Array.isArray(v)) refuse("not a list");
-  for (const item of v) shape(spec, item);
+/**
+ * The shape a check reads its value with, for the checks of a nested object
+ * (`nested`) or of a list of them (`list`): what lets a reader drop the fields
+ * a shape does not name at every depth (`prune`).
+ * @type {WeakMap<Check, { spec: Spec, many: boolean }>}
+ */
+const INNER = new WeakMap();
+/**
+ * @param {Check} check
+ * @param {Spec} spec
+ * @param {boolean} many
+ * @returns {Check}
+ */
+const withInner = (check, spec, many) => {
+  INNER.set(check, { spec, many });
+  return check;
 };
 /** @param {Spec} spec @returns {Check} */
-const nested = (spec) => (v) => shape(spec, v);
+const list = (spec) =>
+  withInner((v) => {
+    if (!Array.isArray(v)) refuse("not a list");
+    for (const item of v) shape(spec, item);
+  }, spec, true);
+/** @param {Spec} spec @returns {Check} */
+const nested = (spec) => withInner((v) => shape(spec, v), spec, false);
 const FORBIDDEN_IN_NAME = /[\p{Cc}؜​‎‏‪-‮⁠⁦-⁩﻿]/u;
 /** @type {Check} */
 const deviceName = (v) => {
@@ -251,10 +279,10 @@ const deviceRow = [
  * gets the first ones and, in `more`, how many were left out (see `checkStep`).
  * @type {Check}
  */
-const deviceList = (v) => {
+const deviceList = withInner((v) => {
   if (Array.isArray(v) && v.length > MAX_DEVICE_LIST) refuse("a list of devices has at most 200 rows");
   list(deviceRow)(v);
-};
+}, deviceRow, true);
 
 /** One operation of a batch: a put request with the item id in the body. @type {Spec} */
 const batchOp = [
@@ -415,14 +443,45 @@ function specOf(kind) {
 }
 
 /**
+ * Drops the fields of `value` that `spec` does not name, and those of the
+ * objects inside it that a `nested` or `list` check reads, at every depth. A
+ * value of the wrong type is left as it is, for the shape to refuse.
+ * @param {Spec} spec
+ * @param {any} value
+ */
+function prune(spec, value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+  const names = spec.map(([name]) => name);
+  for (const key of Object.keys(value)) {
+    if (!names.includes(key)) delete value[key];
+  }
+  for (const [name, check] of spec) {
+    const inner = INNER.get(check);
+    if (inner === undefined || !Object.hasOwn(value, name)) continue;
+    const field = value[name];
+    if (!inner.many) prune(inner.spec, field);
+    else if (Array.isArray(field)) for (const item of field) prune(inner.spec, item);
+  }
+}
+
+/**
  * Reads `text` as the shape `kind`: strict JSON, then the shape.
+ *
+ * `unknown: "ignore"` is for the answers a device client reads (see the top of
+ * this file): the fields the shape does not name are dropped first, at every
+ * depth. The JSON is read as strictly as ever (a repeated field is refused), and
+ * so is every field the shape names.
  * @param {string} kind a key of {@link SHAPES}
  * @param {string} text
+ * @param {{ unknown?: "refuse" | "ignore" }} [options]
  * @returns {any}
  */
-export function readWire(kind, text) {
+export function readWire(kind, text, { unknown = "refuse" } = {}) {
+  if (unknown !== "refuse" && unknown !== "ignore") throw new TypeError('unknown fields are "refuse"d or "ignore"d');
+  const spec = specOf(kind);
   const value = readJson(text);
-  shape(specOf(kind), value);
+  if (unknown === "ignore") prune(spec, value);
+  shape(spec, value);
   return value;
 }
 

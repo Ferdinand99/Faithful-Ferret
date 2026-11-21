@@ -29,6 +29,12 @@
 //   the request is sent once more with a new proof.
 // - A new sign-in signs the older device of the same server out first, when
 //   the server can be reached, and only then stores the new record.
+// - The sign-in itself (`startSignIn`, `finishSignIn`): `login/start` carries
+//   no cookie, no token and no proof; `login/finish` carries the device body
+//   and a proof of this key without `ath` (the key goes in the proof's `jwk`,
+//   never in the body), and its answer is accepted once. A key is sent in one
+//   sign-in only: the server binds its thumbprint to the new device, so a
+//   later sign-in makes a new key.
 import { ApiError, createApi } from "../api.mjs";
 import { serverKey, StoreError } from "../store/idb.mjs";
 import { SHAPES, shape } from "../wire.mjs";
@@ -39,6 +45,10 @@ import { createProof } from "./dpop.mjs";
 export const REFRESH_PATH = "/api/auth/token/refresh";
 /** The sign-out of a device. */
 export const REVOKE_PATH = "/api/auth/token/revoke";
+/** The first step of a sign-in: KE1 for KE2. */
+export const LOGIN_START_PATH = "/api/auth/opaque/login/start";
+/** The last step of a sign-in: KE3, and for a device its tokens. */
+export const LOGIN_FINISH_PATH = "/api/auth/opaque/login/finish";
 
 /** The codes after which a device's tokens are never used again. */
 const FINAL_CODES = Object.freeze(["device_revoked", "token_reused"]);
@@ -67,6 +77,11 @@ const NO_STORE = /(^|,)\s*no-store\s*(,|$)/i;
  *   access token has changed since
  * @property {(deviceLoginRes: unknown) => Promise<void>} accept takes the answer of a device sign-in
  * @property {() => Promise<void>} revoke signs the device out at the server, then forgets its tokens
+ * @property {(body: string) => Promise<any>} startSignIn
+ *   posts `login/start` (the text of a `login_start_req`) with no cookie, no token and no proof; gives the `login_start_res`
+ * @property {(body: string) => Promise<{ account_id: string, vault_id: string, vk_epoch: number, device_id: string }>} finishSignIn
+ *   posts `login/finish` (the text of a `login_finish_req_device`) with a proof of this key and accepts the answer; gives
+ *   the answer without its tokens. Once per key
  * @property {(code: string) => Promise<void>} refused
  *   tells the tokens the code a request with them was refused with; `device_revoked` and `token_reused` end them
  * @property {TokenState} state
@@ -123,6 +138,8 @@ export function createTokenAuth({
   let epoch = 0;
   /** The renewal under way. @type {Promise<void> | null} */
   let renewing = null;
+  /** Whether this key was sent in a sign-in: it is bound to a device then, and never signs in again. */
+  let spent = false;
 
   /** The error for a request made without tokens. */
   const withoutTokens = () => new ApiError(401, state === "revoked" ? "device_revoked" : "signed_out");
@@ -139,6 +156,25 @@ export function createTokenAuth({
       auth: {
         prepare: async (method, url) => ({ DPoP: await createProof(signer, { method, url, clock, rand }) }),
         observe,
+        refresh: async () => {
+          throw new TypeError("a request without an access token is never renewed");
+        },
+        refused: async () => {},
+      },
+    });
+
+  /**
+   * The API client for the requests of a device that has no tokens yet and
+   * proves nothing (`login/start`): no cookie, no token and no proof, and
+   * `Ferret-Protocol: 1` on every method.
+   */
+  const anonymous = () =>
+    createApi({
+      base: server,
+      fetchImpl,
+      auth: {
+        prepare: async () => ({}),
+        observe: () => {},
         refresh: async () => {
           throw new TypeError("a request without an access token is never renewed");
         },
@@ -302,6 +338,8 @@ export function createTokenAuth({
     } catch {
       throw new TypeError("not the answer of a device sign-in");
     }
+    // The key is bound to a device now: it never signs in again.
+    spent = true;
     await signOutOlder();
     const at = ++epoch;
     access = null;
@@ -315,6 +353,30 @@ export function createTokenAuth({
     if (epoch !== at) throw withoutTokens();
     access = answer.access_token;
     state = "ok";
+  }
+
+  /** @param {string} body the text of a `login_start_req` */
+  async function startSignIn(body) {
+    if (typeof body !== "string") throw new TypeError("a sign-in sends the text of its body");
+    if (state !== "signed_out" || spent) throw new TypeError("this device key has signed in already; a new sign-in makes a new key");
+    return anonymous().post(LOGIN_START_PATH, body, { shape: "login_start_res" });
+  }
+
+  /**
+   * Finishes the sign-in of this device: the body with a proof of this key
+   * (no `ath`; a `dpop_invalid` takes the server's clock once and sends a new
+   * proof, and the server keeps the sign-in state for that), then the answer
+   * is accepted as it came.
+   * @param {string} body the text of a `login_finish_req_device`
+   */
+  async function finishSignIn(body) {
+    if (typeof body !== "string") throw new TypeError("a sign-in sends the text of its body");
+    if (state !== "signed_out" || spent) throw new TypeError("this device key has signed in already; a new sign-in makes a new key");
+    spent = true;
+    const answer = await proofOnly(key).post(LOGIN_FINISH_PATH, body, { shape: "login_finish_res_device" });
+    await accept(answer);
+    // The tokens stay here: the caller gets the account, the vault, the epoch and the device.
+    return { account_id: answer.account_id, vault_id: answer.vault_id, vk_epoch: answer.vk_epoch, device_id: answer.device_id };
   }
 
   async function revoke() {
@@ -336,6 +398,8 @@ export function createTokenAuth({
     accept,
     revoke,
     refused,
+    startSignIn,
+    finishSignIn,
     get state() {
       return state;
     },
