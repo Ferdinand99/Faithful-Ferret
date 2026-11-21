@@ -162,6 +162,56 @@ async fn admin_guard_wraps_only_the_kit_router() {
 }
 
 #[tokio::test]
+async fn the_bare_admin_address_goes_through_sign_in_to_the_landing_page() {
+    let app = TestApp::new().await;
+    seed(&app, 1).await;
+
+    // No session: `/` is a redirect to the landing page and shows nothing, and
+    // the landing page's own guard sends the visitor to the sign-in.
+    for path in ["/", "/?x=1"] {
+        let res = get(&app, path).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(res.header("location"), "/settings/general", "{path}");
+        assert!(res.text().is_empty(), "{path}");
+    }
+    let landing = get(&app, "/settings/general").await;
+    assert_eq!(landing.status, StatusCode::SEE_OTHER);
+    assert!(landing.header("location").starts_with("/login?next="));
+    assert!(!landing.text().contains("<form"));
+
+    // The redirect opens nothing new: only a read of `/` is answered, and the
+    // vault listener's `/` is not this redirect.
+    for res in [
+        app.call(
+            Which::Admin,
+            Req::post("/").page_fetch(Which::Admin).build(),
+        )
+        .await,
+        app.call(Which::Vault, Req::get("/").build()).await,
+    ] {
+        assert_ne!(res.header("location"), "/settings/general");
+    }
+}
+
+#[tokio::test]
+async fn the_bare_admin_address_opens_the_landing_page_for_an_administrator() {
+    let app = TestApp::new_at_real_time().await;
+    admin_user(&app, 1).await;
+    let res = get(&app, "/").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.header("location"), "/settings/general");
+    let landing = get(&app, "/settings/general").await;
+    assert_eq!(landing.status, StatusCode::OK, "{}", landing.text());
+    // The kit's own header links lead to the same page.
+    assert!(
+        landing.text().contains("href=\"/settings/general\""),
+        "{}",
+        landing.text()
+    );
+    assert!(!landing.text().contains("href=\"/settings\""));
+}
+
+#[tokio::test]
 async fn a_new_install_sends_a_visitor_to_the_setup() {
     let app = TestApp::new().await;
     let res = get(&app, "/settings/general").await;

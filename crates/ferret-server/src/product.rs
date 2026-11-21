@@ -34,6 +34,10 @@ pub const SID_COOKIE: &str = "__Host-ferret_sid";
 pub const HANDOFF_COOKIE: &str = "__Host-ferret_handoff";
 /// The database file in the data directory.
 pub const DB_FILE: &str = "ferret.sqlite";
+/// The first page of the admin pages: the first tab of the settings. The bare
+/// admin address (`/`) and the kit's navigation lead here, and the web vault's
+/// "Go to the admin pages" buttons name the same page.
+pub const ADMIN_LANDING: &str = "/settings/general";
 
 /// Where the kit sends people for the passwords it does not take. Paths of the
 /// vault origin; the admin listener redirects them there.
@@ -171,7 +175,7 @@ pub static KIT: KitConfig = KitConfig {
         manifest: "/static/site.webmanifest",
         nav: &[NavItem {
             id: "settings",
-            href: "/settings",
+            href: ADMIN_LANDING,
             label: "nav.settings",
             short_label: "nav.settings",
             icon: "gear",
